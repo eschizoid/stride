@@ -1,0 +1,179 @@
+name: release
+
+# The version in app.roc (`version = "stride X.Y.Z"`) is the single source of truth.
+# Two ways to release:
+#   • one-click: Actions tab → "release" → Run workflow. No input — it reads the
+#     version from app.roc, tags vX.Y.Z, builds + publishes. (Bump app.roc first.)
+#   • tag push: git tag v0.1.0 && git push origin v0.1.0 (guarded to match app.roc)
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # create the tag, the Release, and upload assets
+
+jobs:
+  prepare:
+    name: resolve + tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: resolve
+        name: Resolve version from app.roc
+        # app.roc's `version = "stride X.Y.Z"` is the single source of truth.
+        # ref_name comes through env (not ${{ }} in the script) to avoid shell
+        # interpolation of a ref name.
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          have=$(grep -oE 'version = "stride [0-9]+\.[0-9]+\.[0-9]+"' app.roc | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          if [ -z "$have" ]; then
+            echo "::error::could not read a version from app.roc (expected: version = \"stride X.Y.Z\")"
+            exit 1
+          fi
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            tag="v$have" # derive the tag straight from app.roc — nothing to type
+          else
+            # manual tag push: the pushed tag must match app.roc, else they've drifted
+            tag="$REF_NAME"
+            if [ "${tag#v}" != "$have" ]; then
+              echo "::error::pushed tag $tag but app.roc says $have — bump app.roc or fix the tag"
+              exit 1
+            fi
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "releasing $tag (from app.roc version $have)"
+
+      - name: Create + push tag (manual dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::tag $TAG already exists — bump the version"
+            exit 1
+          fi
+          git tag "$TAG"
+          git push origin "$TAG"
+
+  build:
+    name: build ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false # one target failing shouldn't sink the others
+      matrix:
+        include:
+          - target: linux-x86_64
+            runs-on: ubuntu-latest
+            roc-asset: roc-linux_x86_64-alpha4-rolling.tar.gz
+            linker: "--linker=legacy" # surgical linker hits roc #3609 on linux
+          - target: linux-arm64
+            runs-on: ubuntu-24.04-arm
+            roc-asset: roc-linux_arm64-alpha4-rolling.tar.gz
+            linker: "--linker=legacy"
+          - target: macos-arm64
+            runs-on: macos-latest # Apple Silicon runner
+            roc-asset: roc-macos_apple_silicon-alpha4-rolling.tar.gz
+            linker: ""
+          - target: macos-x86_64
+            runs-on: macos-15-intel # current Intel runner, standard tier (free for public)
+            roc-asset: roc-macos_x86_64-alpha4-rolling.tar.gz
+            linker: ""
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }} # build the tagged commit
+
+      - name: Install roc (alpha4-rolling)
+        run: |
+          set -euo pipefail
+          curl -sL -o roc.tar.gz "https://github.com/roc-lang/roc/releases/download/alpha4-rolling/${{ matrix.roc-asset }}"
+          tar xzf roc.tar.gz
+          roc_dir=$(ls -d roc_nightly* 2>/dev/null | head -1)
+          if [ -z "$roc_dir" ]; then echo "roc extraction produced no roc_nightly dir" >&2; exit 1; fi
+          echo "$PWD/$roc_dir" >> "$GITHUB_PATH"
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          roc build app.roc --output "stride-${{ matrix.target }}" ${{ matrix.linker }}
+          test -f "stride-${{ matrix.target }}"
+
+      # the built binary reports its own version — confirm it agrees with the tag
+      # we're publishing. Every target builds on a native-arch runner, so each
+      # binary runs here.
+      - name: Verify binary version
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          out=$(./stride-${{ matrix.target }} --version)
+          [ "$out" = "stride ${TAG#v}" ] || { echo "::error::binary says '$out', tag is $TAG"; exit 1; }
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: stride-${{ matrix.target }}
+          path: stride-${{ matrix.target }}
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: [prepare, build]
+    # publish whatever built — a single target failing (or a flaky runner)
+    # shouldn't sink the release. Runs as long as the tag resolved.
+    if: ${{ always() && needs.prepare.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }} # for CHANGELOG.md at the tagged commit
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          ls stride-* >/dev/null 2>&1 || { echo "::error::no binaries built — nothing to publish"; exit 1; }
+          sha256sum stride-* > SHA256SUMS.txt
+
+      # parse-changelog: taiki-e's maintained Keep-a-Changelog parser (no git
+      # history needed — it reads CHANGELOG.md). Replaces a hand-rolled extractor.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: parse-changelog
+
+      - name: Extract release notes from CHANGELOG.md
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # exits non-zero if there's no section for this version — so a release
+          # can't go out without notes
+          parse-changelog CHANGELOG.md "${TAG#v}" > notes.md
+          test -s notes.md
+          echo "notes ($(wc -l < notes.md) lines):"; cat notes.md
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ needs.prepare.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --title "${{ needs.prepare.outputs.tag }}" \
+            --notes-file notes.md \
+            dist/stride-* dist/SHA256SUMS.txt

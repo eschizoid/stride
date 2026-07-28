@@ -1,0 +1,206 @@
+# stride — common actions. `just` alone runs the full test suite.
+
+# overridable for CI: ROC=roc STRIDE_LINKER="--linker=legacy" just test
+roc := env("ROC", env("HOME") / ".local/bin/roc")
+linker := env("STRIDE_LINKER", "")
+
+default: test
+
+# type-check without building
+check:
+    {{roc}} check app.roc
+
+# build the release binary
+build:
+    {{roc}} build app.roc --output stride {{linker}}
+
+# full suite: pure expects -> fresh build (must succeed!) -> effectful e2e
+test:
+    {{roc}} test Metrics.roc
+    {{roc}} test Render.roc
+    {{roc}} test Backfill.roc
+    just build
+    just e2e
+
+# build + refresh the ~/.local/bin symlink
+install: build
+    ln -sf "$PWD/stride" "$HOME/.local/bin/stride"
+
+# ── daily driving ────────────────────────────────────────────────────
+# these depend on `build` so a fresh clone's `just up` works without a
+# separate build step (the ./stride binary is gitignored)
+
+# pull new activities + streams from Strava
+sync: build
+    ./stride sync
+
+# recompute metrics + daily load, print the report
+analyze: build
+    ./stride analyze
+
+# weekly planning payload (human tables in a terminal)
+week: build
+    ./stride week
+
+# quick form check
+summary: build
+    ./stride summary
+
+# sync + analyze + summary in one go
+up: sync analyze summary
+
+# ── e2e test suite ───────────────────────────────────────────────────
+# Runs the real binary against a sandboxed HOME with seeded activities of
+# known math. No network required. (just runs this with cwd = repo root.)
+e2e:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export STRIDE_FORMAT=json  # test the machine contract; human mode smoke-tested at the end
+
+    STRIDE_BIN="${STRIDE_BIN:-$PWD/stride}"
+    # declare then export separately so a mktemp failure isn't masked by export's
+    # own exit status under `set -e` (a bare `export X=$(cmd)` always succeeds)
+    SANDBOX_HOME="$(mktemp -d)"
+    export HOME="$SANDBOX_HOME"
+    trap 'rm -rf "$SANDBOX_HOME"' EXIT
+    DB="$HOME/.stride/db.sqlite"
+
+    fail() { echo "FAIL: $1" >&2; exit 1; }
+
+    # ── init + config ────────────────────────────────────────────────
+    out=$("$STRIDE_BIN" init); grep -q initialized <<<"$out" || fail "init"
+    # before config exists, json mode must still emit valid JSON (not human prose)
+    "$STRIDE_BIN" summary | python3 -c 'import json,sys; assert json.load(sys.stdin)["error"] == "missing_config"; print("missing-config json contract OK")'
+    for kv in "ftp 200" "hr_z1_max 123" "hr_z2_max 153" "hr_z3_max 168" "hr_z4_max 183"; do
+      "$STRIDE_BIN" config set $kv >/dev/null
+    done
+
+    # ── seed: one power ride (NP 200 @ FTP 200, 1h -> TSS 100),
+    #          one HR-only row (avg 150 = Z2, 1h -> hrTSS 55) ─────────
+    TODAY=$(date -u +%F)
+    D1=$(date -u -v-3d +%F 2>/dev/null || date -u -d '3 days ago' +%F)
+    D2=$(date -u -v-1d +%F 2>/dev/null || date -u -d '1 day ago' +%F)
+    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,weighted_avg_watts) VALUES (101,'power ride','Ride','${D1}T10:00:00Z',3600,30000,100,200);"
+    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (102,'hr row','Rowing','${D2}T10:00:00Z',3600,9000,0,150);"
+
+    # ── analyze: TSS ladder + daily_load to today ────────────────────
+    out=$("$STRIDE_BIN" analyze); grep -q "computed metrics for 2" <<<"$out" || fail "analyze count"
+    "$STRIDE_BIN" summary | python3 -c '
+    import json, sys
+    s = json.load(sys.stdin); today = sys.argv[1]
+    assert s["as_of"] == today, f"as_of {s['"'"'as_of'"'"']} != {today} (daily_load must extend to today)"
+    assert abs(s["last_28d"]["tss"] - 155) < 1.0, f"expected 100 power + 55 hrTSS, got {s['"'"'last_28d'"'"']['"'"'tss'"'"']}"
+    assert s["ftp"]["stale"] == False
+    assert s["fitness_ctl"] > 0 and s["fatigue_atl"] > 0
+    print("summary math OK (power TSS 100 + hrTSS 55, as-of-today)")
+    ' "$TODAY"
+
+    # ── FTP auto-invalidation: change config -> analyze recomputes ───
+    "$STRIDE_BIN" config set ftp 100 >/dev/null
+    out=$("$STRIDE_BIN" analyze); grep -q "computed metrics for 2" <<<"$out" || fail "ftp change must recompute all rows"
+    "$STRIDE_BIN" summary | python3 -c '
+    import json, sys
+    s = json.load(sys.stdin)
+    assert abs(s["last_28d"]["tss"] - 455) < 1.0, f"NP200@FTP100 => TSS 400 (+55 hr), got {s['"'"'last_28d'"'"']['"'"'tss'"'"']}"
+    print("ftp_used auto-invalidation OK (TSS rescaled 100 -> 400)")
+    '
+
+    # ── prescription lifecycle: dedup, skip, re-prescribe, done ──────
+    out=$("$STRIDE_BIN" prescribe 2099-01-01 vo2max "d" "r"); grep -q '"id":1' <<<"$out" || fail "prescribe"
+    out=$("$STRIDE_BIN" prescribe 2099-01-01 threshold "d" "r"); grep -q date_already_prescribed <<<"$out" || fail "dedup guard"
+    out=$("$STRIDE_BIN" skip 1 "sick"); grep -q skipped_prescription <<<"$out" || fail "skip"
+    out=$("$STRIDE_BIN" prescribe 2099-01-01 threshold "d2" "r2"); grep -q '"id":2' <<<"$out" || fail "re-prescribe after skip"
+    out=$("$STRIDE_BIN" complete 2 101); grep -q completed_prescription <<<"$out" || fail "complete"
+    "$STRIDE_BIN" prescriptions | python3 -c '
+    import json, sys
+    ps = {p["id"]: p for p in json.load(sys.stdin)}
+    assert ps[1]["status"] == "skipped" and ps[1]["skipped_reason"] == "sick"
+    assert ps[2]["status"] == "done" and ps[2]["completed_activity_id"] == 101
+    print("prescription lifecycle OK (open -> skipped / done)")
+    '
+    # complete/skip must refuse ids that don't exist (no false success)
+    out=$("$STRIDE_BIN" complete 999 101); grep -q prescription_not_found <<<"$out" || fail "complete nonexistent prescription"
+    out=$("$STRIDE_BIN" complete 2 88888); grep -q activity_not_found <<<"$out" || fail "complete nonexistent activity"
+    out=$("$STRIDE_BIN" skip 999 "x"); grep -q prescription_not_found <<<"$out" || fail "skip nonexistent prescription"
+    out=$("$STRIDE_BIN" complete abc 101); grep -q bad_id <<<"$out" || fail "complete non-numeric id"
+    "$STRIDE_BIN" summary | python3 -c 'import json,sys; assert json.load(sys.stdin)["pending_prescriptions"] == 0; print("pending count OK")'
+    "$STRIDE_BIN" week | python3 -c 'import json,sys; assert json.load(sys.stdin)["open_prescriptions"] == []; print("week payload OK")'
+
+    # ── query commands: activities (+ sport filter), load, stats ─────
+    "$STRIDE_BIN" activities | python3 -c '
+    import json, sys
+    rows = {a["id"]: a for a in json.load(sys.stdin)}
+    assert len(rows) == 2, f"expected 2 activities, got {len(rows)}"
+    assert abs(rows[101]["tss"] - 400) < 1.0 and abs(rows[101]["intensity"] - 2.0) < 0.01, "power ride NP200@FTP100"
+    assert abs(rows[102]["tss"] - 55) < 1.0, "hr row hrTSS"
+    print("activities OK (tss + intensity math)")
+    '
+    "$STRIDE_BIN" activities 10 rowing | python3 -c '
+    import json, sys
+    rows = json.load(sys.stdin)
+    assert len(rows) == 1 and rows[0]["id"] == 102, "sport filter must be case-insensitive and exact"
+    print("activities sport filter OK")
+    '
+    "$STRIDE_BIN" load | python3 -c '
+    import json, sys, datetime
+    days = json.load(sys.stdin)
+    assert len(days) >= 4, "seeded 3 days ago -> at least 4 daily rows"
+    assert days[-1]["day"] == datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"), "must extend to today"
+    assert days[0]["day"] < days[-1]["day"] and days[-1]["ctl"] > 0, "chronological, nonzero fitness"
+    print("load OK (daily series to today)")
+    '
+    "$STRIDE_BIN" stats | python3 -c '
+    import json, sys
+    s = json.load(sys.stdin)
+    at = {r["sport"]: r for r in s["all_time"]}
+    assert at["Ride"]["sessions"] == 1 and abs(at["Ride"]["hours"] - 1.0) < 0.01 and abs(at["Ride"]["km"] - 30) < 0.1
+    assert at["Rowing"]["sessions"] == 1 and abs(at["Rowing"]["km"] - 9) < 0.1
+    assert isinstance(s["ytd_year"], int) and isinstance(s["ytd"], list)
+    print("stats OK (all-time totals)")
+    '
+    "$STRIDE_BIN" activity 101 | python3 -c '
+    import json, sys
+    a = json.load(sys.stdin)
+    assert a["id"] == 101 and abs(a["tss"] - 400) < 1.0 and abs(a["intensity"] - 2.0) < 0.01
+    assert a["power_bests"]["w60"] == 0, "no streams seeded -> bests are honest 0"
+    print("activity detail OK")
+    '
+    out=$("$STRIDE_BIN" activity 999); grep -q activity_not_found <<<"$out" || fail "activity not-found"
+
+    # corrupt stream data must be flagged, not silently read as honest zeros
+    sqlite3 "$DB" "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (101, 'not json at all');"
+    "$STRIDE_BIN" activity 101 | python3 -c '
+    import json, sys
+    assert json.load(sys.stdin)["streams_unreadable"] == True, "corrupt streams must set streams_unreadable"
+    print("activity unreadable-streams flag OK")
+    '
+    # force a recompute (ftp change invalidates via ftp_used) so analyze re-reads
+    # 101's now-corrupt streams and must report the count instead of hiding it
+    "$STRIDE_BIN" config set ftp 111 >/dev/null
+    out=$("$STRIDE_BIN" analyze); grep -q "unreadable stream data" <<<"$out" || fail "analyze must report stream decode errors"
+
+    # non-numeric count args must error, not silently default
+    out=$("$STRIDE_BIN" activities banana); grep -q bad_count <<<"$out" || fail "activities non-numeric count"
+    out=$("$STRIDE_BIN" load abc); grep -q bad_count <<<"$out" || fail "load non-numeric count"
+
+    # a malformed start_local must NOT explode the daily-load walk (regression:
+    # unparseable boundary date defaulted to epoch-day 0 -> walked from 1970)
+    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_hr) VALUES (103,'bad date','Ride','0000-0z-01T10:00:00Z',3600,150);"
+    "$STRIDE_BIN" analyze >/dev/null
+    rows=$(sqlite3 "$DB" "SELECT COUNT(*) FROM daily_load")
+    [ "$rows" -lt 400 ] || fail "malformed date must not explode daily_load (got $rows rows)"
+    echo "count-validation + bad-date resilience OK ($rows daily_load rows)"
+
+    # ── human output mode ────────────────────────────────────────────
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" prescriptions); grep -Eq "date +type +status" <<<"$out" || fail "human table header"
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" activities); grep -Eq "date +sport +name" <<<"$out" || fail "activities header"
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" load 7); grep -q "→ today: form" <<<"$out" || fail "load verdict line"
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" stats); grep -q "ALL TIME" <<<"$out" || fail "stats human"
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" activity 101); grep -Eq "^zones +Z1" <<<"$out" || fail "activity human zones row"
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" summary); grep -q "stride report" <<<"$out" || fail "human summary"
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" week); grep -q "OPEN PRESCRIPTIONS" <<<"$out" || fail "human week bundle"
+    # STRIDE_FORMAT is case/space-insensitive: uppercase still selects JSON
+    STRIDE_FORMAT=JSON "$STRIDE_BIN" summary | python3 -c 'import json,sys; json.load(sys.stdin); print("uppercase STRIDE_FORMAT OK")'
+    echo "human mode OK"
+
+    echo "ALL CLI TESTS PASS"
