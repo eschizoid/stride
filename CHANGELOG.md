@@ -4,6 +4,13 @@ All notable changes to stride are documented here. The release workflow publishe
 the section matching each version tag as that release's notes, so keep the newest
 version at the top in the format below (`## [X.Y.Z] - YYYY-MM-DD`).
 
+## [0.1.1](https://github.com/eschizoid/stride/compare/v0.1.0...v0.1.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* recompute metrics when HR zones change ([d5afaeb](https://github.com/eschizoid/stride/commit/d5afaeb5426d5f48f8135702b5833a0b51233d40))
+
 ## [0.1.0] - 2026-07-28
 
 First release — a local-first, multi-sport training engine written in Roc.
