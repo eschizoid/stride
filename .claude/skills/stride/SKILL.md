@@ -73,8 +73,8 @@ unconfigured → `{"error":"missing_config"}`, no auth → `{"error":"not_authen
   and **Strava edits** (a re-synced activity invalidates its metrics). So after a sync,
   always `analyze` to pick up recomputes. `ftp.stale: true` means estimated FTP (20-min
   best × 0.95) exceeds config by >5% — fix is `stride config set ftp <estimate> &&
-  stride analyze`; `detraining: true` means it's well below config. Suggest the user
-  also update their FTP on strava.com/settings.
+  stride analyze`; `detraining: true` means it's well below config. (config set ftp also
+  pushes the new FTP to Strava automatically, so their profile stays in sync.)
 - CTL/ATL/TSB are **as of today** (daily_load extends through today with 0-TSS rest
   days), so `form_tsb` is current — no mental decay adjustments needed. "Today" is the
   LOCAL day via config `utc_offset_minutes` (default 0 = UTC); without it, users west of

@@ -87,6 +87,15 @@ e2e:
     print("pz OK (7 power zones from FTP)")
     '
 
+    # ── config set ftp: stores locally + attempts Strava sync, gracefully ────
+    # (no auth in the sandbox, so the sync warns but the local set must succeed)
+    out=$("$STRIDE_BIN" config set ftp 195)
+    grep -q "ftp = 195" <<<"$out" || fail "config set ftp must store + report locally"
+    grep -q "not synced to Strava" <<<"$out" || fail "unauthed ftp set must warn (not crash) about Strava sync"
+    got=$("$STRIDE_BIN" config get ftp); [ "$got" = "195" ] || fail "ftp must be stored even when Strava sync can't run"
+    "$STRIDE_BIN" config set ftp 200 >/dev/null   # restore for the rest of the suite
+    echo "ftp Strava-sync OK (local set succeeds, unauthed sync degrades gracefully)"
+
     # ── seed: one power ride (NP 200 @ FTP 200, 1h -> TSS 100),
     #          one HR-only row (avg 150 = Z2, 1h -> hrTSS 55) ─────────
     TODAY=$(date -u +%F)

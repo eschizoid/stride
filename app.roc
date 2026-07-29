@@ -143,7 +143,33 @@ config_store! : Str, Str => Result {} _
 config_store! = |key, val|
     path = open_db!({})?
     config_set!(path, key, val)?
-    Stdout.line!("${key} = ${val}")
+    Stdout.line!("${key} = ${val}")?
+    # FTP is the one config that also lives on Strava — keep them in sync so
+    # Strava's own power features use the same number
+    if key == "ftp" then sync_ftp_to_strava!(path, val) else Ok({})
+
+# push a new FTP to Strava (PUT /athlete?ftp=). Best-effort: any failure just
+# warns — the local `config set` has already succeeded and been reported.
+sync_ftp_to_strava! : Str, Str => Result {} _
+sync_ftp_to_strava! = |path, ftp_str|
+    when Str.to_f64(ftp_str) is
+        Err(_) -> Ok({}) # non-numeric ftp — nothing sensible to push
+        Ok(_) ->
+            when get_valid_token!(path) is
+                Err(NotAuthed) -> Stdout.line!("  (not synced to Strava — run `stride auth` first)")
+                Err(_) -> Stdout.line!("  (couldn't sync FTP to Strava this time)")
+                Ok(token) ->
+                    resp = Http.send!({
+                        method: PUT,
+                        headers: [Http.header(("Authorization", "Bearer ${token}"))],
+                        uri: "https://www.strava.com/api/v3/athlete?ftp=${ftp_str}",
+                        body: [],
+                        timeout_ms: TimeoutMilliseconds(30000),
+                    })
+                    when resp is
+                        Ok(r) if r.status < 300 -> Stdout.line!("  → synced to Strava (athlete FTP = ${ftp_str})")
+                        Ok(r) -> Stdout.line!("  (Strava FTP sync failed: HTTP ${Num.to_str(r.status)} — set it at strava.com/settings)")
+                        Err(_) -> Stdout.line!("  (couldn't reach Strava to sync FTP — set it at strava.com/settings)")
 
 # ── paths ────────────────────────────────────────────────────────────
 
