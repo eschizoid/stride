@@ -62,6 +62,7 @@ help_text =
         activity <id>           one session in depth: zones, power bests, hard minutes
         load [days]             CTL/ATL/TSB series: daily <=14 days, weekly beyond (default 90)
         prescriptions           prescription log (open/done/skipped), calendar order
+                                with day-of-week (Mon-Sun) and rest days
 
     COACHING LOG
         prescribe <date> <type> <detail> <rationale>   record a prescribed session
