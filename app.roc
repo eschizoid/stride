@@ -60,7 +60,7 @@ help_text =
         activities [limit] [sport]   recent activities with metrics (default 30);
                                      sport filters, e.g. `activities 10 rowing`
         top <metric> [n] [sport]     best sessions ranked by a metric (default 10):
-                                     hr | tss | power | intensity | distance | time
+                                     hr | tss | power | intensity | distance | time | output
         activity <id>           one session in depth: zones, power bests, hard minutes
         load [days]             CTL/ATL/TSB series: daily <=14 days, weekly beyond (default 90)
         prescriptions           prescription log (open/done/skipped), calendar order
@@ -1548,6 +1548,7 @@ top_column = |m|
         "intensity" -> Ok("m.intensity_factor")
         "distance" -> Ok("a.distance")
         "time" -> Ok("a.moving_time")
+        "output" -> Ok("(a.avg_watts * a.moving_time)") # total work (Peloton kJ)
         _ -> Err(BadMetric)
 
 # ranked "best sessions": top N activities by a chosen metric (vs `activities`,
@@ -1557,7 +1558,7 @@ top! = |metric, limit, sport_filter|
     path = open_db!({})?
     when top_column(metric) is
         Err(_) ->
-            err_out!("bad_metric", "unknown metric '${metric}' — use: hr, tss, power, intensity, distance, time")
+            err_out!("bad_metric", "unknown metric '${metric}' — use: hr, tss, power, intensity, distance, time, output")
 
         Ok(col) ->
             sport_where =
@@ -1572,7 +1573,8 @@ top! = |metric, limit, sport_filter|
                        a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                        CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                        CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
-                       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr
+                       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
+                       CAST(COALESCE(a.avg_watts * a.moving_time / 1000.0, 0) AS REAL) AS output_kj
                 FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 WHERE ${col} > 0${sport_where}
                 ORDER BY ${col} DESC LIMIT ${Num.to_str(limit)}
@@ -1589,6 +1591,7 @@ top! = |metric, limit, sport_filter|
                     np_w: Sqlite.f64("np_w"),
                     intensity: Sqlite.f64("intensity"),
                     avg_hr: Sqlite.f64("avg_hr"),
+                    output_kj: Sqlite.f64("output_kj"),
                 },
             })?
             if json_mode!({}) then
@@ -1601,6 +1604,7 @@ top! = |metric, limit, sport_filter|
                         "power" -> "${Render.fmt0(r.np_w)}W"
                         "intensity" -> Render.fmt2(r.intensity)
                         "distance" -> "${Render.fmt0(r.distance_m / 1000.0)} km"
+                        "output" -> "${Render.fmt0(r.output_kj)} kJ"
                         _ -> Render.mins(r.moving_time)
                 Stdout.line!(Render.render_table(
                     ["date", "sport", metric, "name"],

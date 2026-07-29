@@ -80,7 +80,7 @@ e2e:
     TODAY=$(date -u +%F)
     D1=$(date -u -v-3d +%F 2>/dev/null || date -u -d '3 days ago' +%F)
     D2=$(date -u -v-1d +%F 2>/dev/null || date -u -d '1 day ago' +%F)
-    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,weighted_avg_watts) VALUES (101,'power ride','Ride','${D1}T10:00:00Z',3600,30000,100,200);"
+    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,weighted_avg_watts,avg_watts) VALUES (101,'power ride','Ride','${D1}T10:00:00Z',3600,30000,100,200,200);"
     sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (102,'hr row','Rowing','${D2}T10:00:00Z',3600,9000,0,150);"
 
     # ── analyze: TSS ladder + daily_load to today ────────────────────
@@ -168,6 +168,13 @@ e2e:
     rows = json.load(sys.stdin)
     assert len(rows) == 1 and rows[0]["id"] == 102, "top sport filter must apply"
     print("top sport filter OK")
+    '
+    "$STRIDE_BIN" top output | python3 -c '
+    import json, sys
+    rows = json.load(sys.stdin)
+    # 101: avg_watts 200 * 3600s / 1000 = 720 kJ; 102 has no watts (excluded)
+    assert rows[0]["id"] == 101 and abs(rows[0]["output_kj"] - 720) < 1.0, f"top output kJ, got {rows[0]}"
+    print("top output OK (kJ = avg_watts * time)")
     '
     out=$("$STRIDE_BIN" top bogus); grep -q bad_metric <<<"$out" || fail "top must reject unknown metrics"
     echo "top OK (metric ranking + filter + bad-metric guard)"
