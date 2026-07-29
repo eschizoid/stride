@@ -75,6 +75,18 @@ e2e:
       "$STRIDE_BIN" config set $kv >/dev/null
     done
 
+    # ── power zones: watt ranges derived from FTP (200) ──────────────
+    "$STRIDE_BIN" pz | python3 -c '
+    import json, sys
+    d = json.load(sys.stdin)
+    zs = d["zones"]
+    assert len(zs) == 7, f"expected 7 power zones, got {len(zs)}"
+    z4 = zs[3]  # threshold, 91-105% of FTP 200 = 182-210W
+    assert abs(z4["lo_w"] - 182) < 1 and abs(z4["hi_w"] - 210) < 1, f"Z4 range wrong: {z4}"
+    assert zs[0]["lo_w"] == 0 and zs[6]["hi_w"] == 0, "Z1 opens at 0, Z7 open above"
+    print("pz OK (7 power zones from FTP)")
+    '
+
     # ── seed: one power ride (NP 200 @ FTP 200, 1h -> TSS 100),
     #          one HR-only row (avg 150 = Z2, 1h -> hrTSS 55) ─────────
     TODAY=$(date -u +%F)

@@ -20,6 +20,7 @@ module [
     days_to_date_str,
     epoch_to_iso,
     day_of_week,
+    power_zones,
 ]
 
 # ── pure training-science math. no I/O, fully unit-tested. ──────────
@@ -256,6 +257,20 @@ ftp_calibration = |{ best_20min, ftp }|
         stale: est > ftp * 1.05,
         detraining: est < ftp * 0.9,
     }
+
+# ── power zones (Coggan / Peloton 7-zone model, watt ranges from FTP) ─
+# lo_w = 0 means the zone starts at 0 (Z1); hi_w = 0 means it is open above (Z7).
+power_zones : F64 -> List { z : Str, name : Str, lo_w : F64, hi_w : F64 }
+power_zones = |ftp|
+    [
+        { z: "Z1", name: "recovery", lo_w: 0.0, hi_w: ftp * 0.55 },
+        { z: "Z2", name: "endurance", lo_w: ftp * 0.56, hi_w: ftp * 0.75 },
+        { z: "Z3", name: "tempo", lo_w: ftp * 0.76, hi_w: ftp * 0.90 },
+        { z: "Z4", name: "threshold", lo_w: ftp * 0.91, hi_w: ftp * 1.05 },
+        { z: "Z5", name: "VO2max", lo_w: ftp * 1.06, hi_w: ftp * 1.20 },
+        { z: "Z6", name: "anaerobic", lo_w: ftp * 1.21, hi_w: ftp * 1.50 },
+        { z: "Z7", name: "neuromuscular", lo_w: ftp * 1.51, hi_w: 0.0 },
+    ]
 
 # ── HR sample validity ──────────────────────────────────────────────
 # Below 35 or above 220 bpm is not physiology, it's a dropped strap / noise.
@@ -552,6 +567,19 @@ expect
     !(c.stale) and !(c.detraining)
 
 expect valid_hr(150.0) and !(valid_hr(20.0)) and !(valid_hr(230.0)) and valid_hr(35.0) and valid_hr(220.0)
+
+# power zones: 7 zones; Z4 (threshold) is 91-105% FTP
+expect
+    zs = power_zones(200.0)
+    z4 = Result.with_default(List.get(zs, 3), { z: "", name: "", lo_w: 0.0, hi_w: 0.0 })
+    List.len(zs) == 7 and Num.abs(z4.lo_w - 182.0) < 0.001 and Num.abs(z4.hi_w - 210.0) < 0.001
+
+# Z1 opens at 0, Z7 is open above (hi_w = 0 sentinel)
+expect
+    zs = power_zones(243.0)
+    z1 = Result.with_default(List.first(zs), { z: "", name: "", lo_w: 9.0, hi_w: 0.0 })
+    z7 = Result.with_default(List.last(zs), { z: "", name: "", lo_w: 0.0, hi_w: 9.0 })
+    Num.abs(z1.lo_w) < 0.001 and Num.abs(z7.hi_w) < 0.001
 
 expect form_label(-20.0) == "deeply fatigued — rest"
 expect form_label(-9.0) == "carrying fatigue — keep it easy"

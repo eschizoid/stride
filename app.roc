@@ -61,6 +61,7 @@ help_text =
                                      sport filters, e.g. `activities 10 rowing`
         top <metric> [n] [sport]     best sessions ranked by a metric (default 10):
                                      hr | tss | power | intensity | distance | time | output
+        pz                           power-zone watt ranges (7 zones) from your FTP
         activity <id>           one session in depth: zones, power bests, hard minutes
         load [days]             CTL/ATL/TSB series: daily <=14 days, weekly beyond (default 90)
         prescriptions           prescription log (open/done/skipped), calendar order
@@ -100,6 +101,7 @@ main! = |raw_args|
         [_, "top", metric] -> top!(metric, 10, "")
         [_, "top", metric, n] -> with_count!(n, |c| top!(metric, c, ""))
         [_, "top", metric, n, sport] -> with_count!(n, |c| top!(metric, c, sport))
+        [_, "pz"] -> pz!({})
         [_, "activity", id_str] -> activity!(id_str)
         [_, "load"] -> load_series!(90)
         [_, "load", n] -> with_count!(n, |c| load_series!(c))
@@ -1609,6 +1611,31 @@ top! = |metric, limit, sport_filter|
                 Stdout.line!(Render.render_table(
                     ["date", "sport", metric, "name"],
                     List.map(rows, |r| [r.date, r.sport, val(r), r.name]),
+                ))
+
+# power-zone reference chart: the 7 Coggan/Peloton zones as watt ranges from your
+# configured FTP (the targets you'd set on a Power Zone ride).
+pz! : {} => Result {} _
+pz! = |{}|
+    path = open_db!({})?
+    when config_f64!(path, "ftp") is
+        Err(MissingConfig) -> err_out!("missing_config", "set your FTP first: stride config set ftp <watts>")
+        Err(other) -> Err(other)
+        Ok(ftp) ->
+            zones = Metrics.power_zones(ftp)
+            if json_mode!({}) then
+                print_json!({ ftp, zones })
+            else
+                range = |z|
+                    if z.lo_w <= 0.0 then
+                        "< ${Render.fmt0(z.hi_w)}"
+                    else if z.hi_w <= 0.0 then
+                        "${Render.fmt0(z.lo_w)}+"
+                    else
+                        "${Render.fmt0(z.lo_w)}-${Render.fmt0(z.hi_w)}"
+                Stdout.line!(Render.render_table(
+                    ["zone", "name", "watts (ftp ${Render.fmt0(ftp)})"],
+                    List.map(zones, |z| [z.z, z.name, range(z)]),
                 ))
 
 load_series! : U64 => Result {} _
