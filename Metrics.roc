@@ -237,11 +237,11 @@ all_seconds_in_zone = |secs, zone|
 
 load_step : { ctl_prev : F64, atl_prev : F64, tss : F64 } -> { ctl : F64, atl : F64, tsb : F64 }
 load_step = |{ ctl_prev, atl_prev, tss }|
-    {
-        ctl: ctl_prev + (tss - ctl_prev) / 42.0,
-        atl: atl_prev + (tss - atl_prev) / 7.0,
-        tsb: ctl_prev - atl_prev,
-    }
+    ctl = ctl_prev + (tss - ctl_prev) / 42.0
+    atl = atl_prev + (tss - atl_prev) / 7.0
+    # same-day form: today's fitness minus today's fatigue, so the number
+    # reconciles (tsb = ctl - atl) and reflects state AFTER today's training
+    { ctl, atl, tsb: ctl - atl }
 
 # ── FTP calibration ─────────────────────────────────────────────────
 # Estimate FTP from a recent 20-min best (× 0.95, the standard factor) and flag
@@ -520,19 +520,21 @@ expect
     w = Result.with_default(List.first(weeks), { week_start: 0, tss: 0, sessions: 9, ctl_end: 0, tsb_end: 0 })
     List.len(weeks) == 1 and w.sessions == 1 and Num.abs(w.tss - 73.0) < 0.001 and Num.abs(w.tsb_end - (-8.0)) < 0.001 and w.week_start == days_from_civil(2026, 7, 20)
 
-# load_step: form is yesterday's balance; a rest day (tss 0) decays both,
-# fatigue (7d) faster than fitness (42d)
+# load_step: same-day form (tsb = today's ctl - today's atl); a rest day (tss 0)
+# decays both, fatigue (7d) faster than fitness (42d)
 expect
     s = load_step({ ctl_prev: 50.0, atl_prev: 60.0, tss: 0.0 })
-    Num.abs(s.tsb - (-10.0)) < 0.001
-    and Num.abs(s.ctl - (50.0 - 50.0 / 42.0)) < 0.001
+    Num.abs(s.ctl - (50.0 - 50.0 / 42.0)) < 0.001
     and Num.abs(s.atl - (60.0 - 60.0 / 7.0)) < 0.001
+    and Num.abs(s.tsb - (s.ctl - s.atl)) < 0.001 # tsb reconciles same-day
     and (60.0 - s.atl) > (50.0 - s.ctl) # fatigue shed more than fitness on a rest day
 
-# load_step: a training day with tss above both raises fitness and fatigue
+# load_step: a hard day (tss above both) raises fitness and fatigue, and form
+# drops negative same-day because fatigue jumps faster than fitness
 expect
     s = load_step({ ctl_prev: 20.0, atl_prev: 20.0, tss: 90.0 })
-    s.ctl > 20.0 and s.atl > 20.0 and s.atl > s.ctl and Num.abs(s.tsb) < 0.001
+    s.ctl > 20.0 and s.atl > 20.0 and s.atl > s.ctl
+    and Num.abs(s.tsb - (s.ctl - s.atl)) < 0.001 and s.tsb < 0.0
 
 # ftp_calibration: 20-min best 256 -> est 243.2; against config 190 that's stale
 expect

@@ -1596,8 +1596,8 @@ load_series! = |days|
             Stdout.line!("trained (tss):  training stress score — how much load the day added")?
             Stdout.line!("fitness (ctl):  long-term base, 42d avg — want it climbing slowly")?
             Stdout.line!("fatigue (atl):  short-term tiredness, 7d avg — spikes after big days, fades with rest")?
-            Stdout.line!("form (tsb):     fitness - fatigue, measured at the START of the day —")?
-            Stdout.line!("                a hard day shows up in the next morning's form")
+            Stdout.line!("form (tsb):     fitness - fatigue (same day) — negative = fatigued,")?
+            Stdout.line!("                positive = fresh; a hard session drops it the same day")
 
 prescriptions! : {} => Result {} _
 prescriptions! = |{}|
