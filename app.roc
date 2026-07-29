@@ -1148,7 +1148,7 @@ activity_body! = |path, id_str, aid|
                     streams_unreadable: decoded.failed,
                 })
             else
-                dist_str = if a.distance_m >= 1000.0 then " · ${Render.fmt0(a.distance_m / 1000.0)} km" else ""
+                dist_str = if a.distance_m >= 1000.0 then " · ${Render.fmt1(a.distance_m / 1000.0)} km" else ""
                 Stdout.line!(a.name)?
                 Stdout.line!("${a.date} · ${a.sport} · ${Render.mins(a.moving_time)}${dist_str}")?
                 Stdout.line!("")?
@@ -1603,7 +1603,7 @@ top! = |metric, limit, sport_filter|
                         "tss" -> Render.fmt0(r.tss)
                         "power" -> "${Render.fmt0(r.np_w)}W"
                         "intensity" -> Render.fmt2(r.intensity)
-                        "distance" -> "${Render.fmt0(r.distance_m / 1000.0)} km"
+                        "distance" -> "${Render.fmt1(r.distance_m / 1000.0)} km"
                         "output" -> "${Render.fmt0(r.output_kj)} kJ"
                         _ -> Render.mins(r.moving_time)
                 Stdout.line!(Render.render_table(

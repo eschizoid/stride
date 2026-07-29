@@ -1,4 +1,4 @@
-module [render_table, fmt0, fmt2, mins]
+module [render_table, fmt0, fmt1, fmt2, mins]
 
 # ── pure text-rendering helpers for human CLI output ────────────────
 
@@ -54,6 +54,17 @@ fmt0 = |x|
     r = Num.round(x)
     Num.to_str(r)
 
+# one-decimal float, e.g. 12.34 -> "12.3" (for distances). Preserves the sign
+# for -1 < x < 0.
+fmt1 : F64 -> Str
+fmt1 = |x|
+    n : I64
+    n = Num.round(x * 10.0)
+    whole = n // 10
+    frac = Num.abs(n % 10)
+    sign = if n < 0 and whole == 0 then "-" else ""
+    "${sign}${Num.to_str(whole)}.${Num.to_str(frac)}"
+
 # two-decimal float, e.g. 0.979 -> "0.98". Preserves the sign for -1 < x < 0
 # (where the integer part rounds to 0 but the value is negative).
 fmt2 : F64 -> Str
@@ -76,6 +87,9 @@ mins = |secs|
 
 
 
+expect fmt1(12.34) == "12.3"
+expect fmt1(9.96) == "10.0"
+expect fmt1(0.0) == "0.0"
 expect fmt2(0.979) == "0.98"
 expect fmt2(1.0) == "1.00"
 expect fmt2(1.5) == "1.50"
