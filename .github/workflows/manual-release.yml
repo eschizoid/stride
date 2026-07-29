@@ -1,0 +1,130 @@
+name: manual-release
+
+# Manual, dispatch-only release cut — independent of release-please (which drives
+# 0.1.1+ automatically). Reads the version from app.roc, tags it, builds the 4
+# binaries, and publishes with notes from CHANGELOG.md. Use to (re-)cut a baseline
+# like v0.1.0. Do NOT dispatch while release-please has a pending release PR.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: resolve
+        run: |
+          set -euo pipefail
+          have=$(grep -oE 'version = "stride [0-9]+\.[0-9]+\.[0-9]+"' app.roc | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          [ -n "$have" ] || { echo "::error::no version in app.roc"; exit 1; }
+          echo "tag=v$have" >> "$GITHUB_OUTPUT"
+      - name: Create + push tag
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::tag $TAG already exists — delete it first or bump the version"
+            exit 1
+          fi
+          git tag "$TAG"
+          git push origin "$TAG"
+
+  build:
+    name: build ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            runs-on: ubuntu-latest
+            roc-asset: roc-linux_x86_64-alpha4-rolling.tar.gz
+            linker: "--linker=legacy"
+          - target: linux-arm64
+            runs-on: ubuntu-24.04-arm
+            roc-asset: roc-linux_arm64-alpha4-rolling.tar.gz
+            linker: "--linker=legacy"
+          - target: macos-arm64
+            runs-on: macos-latest
+            roc-asset: roc-macos_apple_silicon-alpha4-rolling.tar.gz
+            linker: ""
+          - target: macos-x86_64
+            runs-on: macos-15-intel
+            roc-asset: roc-macos_x86_64-alpha4-rolling.tar.gz
+            linker: ""
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - name: Install roc (alpha4-rolling)
+        run: |
+          set -euo pipefail
+          curl -sL -o roc.tar.gz "https://github.com/roc-lang/roc/releases/download/alpha4-rolling/${{ matrix.roc-asset }}"
+          tar xzf roc.tar.gz
+          roc_dir=$(ls -d roc_nightly* 2>/dev/null | head -1)
+          [ -n "$roc_dir" ] || { echo "no roc_nightly dir" >&2; exit 1; }
+          echo "$PWD/$roc_dir" >> "$GITHUB_PATH"
+      - name: Build
+        run: |
+          set -euo pipefail
+          roc build app.roc --output "stride-${{ matrix.target }}" ${{ matrix.linker }}
+          test -f "stride-${{ matrix.target }}"
+      - name: Verify binary version
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          out=$(./stride-${{ matrix.target }} --version)
+          [ "$out" = "stride ${TAG#v}" ] || { echo "::error::binary says '$out', tag is $TAG"; exit 1; }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stride-${{ matrix.target }}
+          path: stride-${{ matrix.target }}
+          if-no-files-found: error
+
+  publish:
+    needs: [prepare, build]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          ls stride-* >/dev/null 2>&1 || { echo "::error::no binaries built"; exit 1; }
+          sha256sum stride-* > SHA256SUMS.txt
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: parse-changelog
+      - name: Extract notes
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          parse-changelog CHANGELOG.md "${TAG#v}" > notes.md
+          test -s notes.md
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "$TAG" \
+            --notes-file notes.md \
+            dist/stride-* dist/SHA256SUMS.txt
