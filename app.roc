@@ -60,7 +60,7 @@ help_text =
         activities [limit] [sport]   recent activities with metrics (default 30);
                                      sport filters, e.g. `activities 10 rowing`
         activity <id>           one session in depth: zones, power bests, hard minutes
-        load [days]             daily CTL/ATL/TSB series (default 90)
+        load [days]             CTL/ATL/TSB series: daily <=14 days, weekly beyond (default 90)
         prescriptions           prescription log (open/done/skipped), calendar order
 
     COACHING LOG
