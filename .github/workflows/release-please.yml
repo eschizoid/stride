@@ -1,0 +1,108 @@
+name: release-please
+
+# Automated releases. release-please watches Conventional Commits on main
+# (feat:/fix:/…), maintains CHANGELOG.md and the version in app.roc, and opens a
+# "release PR". Merging that PR tags vX.Y.Z + creates the GitHub release; the
+# build/upload jobs below then attach the platform binaries to it.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write # tags, releases, and the version-bump commit
+  pull-requests: write # the release PR
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: rp
+        with:
+          token: ${{ github.token }}
+
+  build:
+    name: build ${{ matrix.target }}
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false # one target failing shouldn't sink the others
+      matrix:
+        include:
+          - target: linux-x86_64
+            runs-on: ubuntu-latest
+            roc-asset: roc-linux_x86_64-alpha4-rolling.tar.gz
+            linker: "--linker=legacy" # surgical linker hits roc #3609 on linux
+          - target: linux-arm64
+            runs-on: ubuntu-24.04-arm
+            roc-asset: roc-linux_arm64-alpha4-rolling.tar.gz
+            linker: "--linker=legacy"
+          - target: macos-arm64
+            runs-on: macos-latest # Apple Silicon
+            roc-asset: roc-macos_apple_silicon-alpha4-rolling.tar.gz
+            linker: ""
+          - target: macos-x86_64
+            runs-on: macos-15-intel # current Intel runner, standard tier (free for public)
+            roc-asset: roc-macos_x86_64-alpha4-rolling.tar.gz
+            linker: ""
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }} # the tagged commit
+
+      - name: Install roc (alpha4-rolling)
+        run: |
+          set -euo pipefail
+          curl -sL -o roc.tar.gz "https://github.com/roc-lang/roc/releases/download/alpha4-rolling/${{ matrix.roc-asset }}"
+          tar xzf roc.tar.gz
+          roc_dir=$(ls -d roc_nightly* 2>/dev/null | head -1)
+          [ -n "$roc_dir" ] || { echo "roc extraction produced no roc_nightly dir" >&2; exit 1; }
+          echo "$PWD/$roc_dir" >> "$GITHUB_PATH"
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          roc build app.roc --output "stride-${{ matrix.target }}" ${{ matrix.linker }}
+          test -f "stride-${{ matrix.target }}"
+
+      - name: Verify binary version
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          out=$(./stride-${{ matrix.target }} --version)
+          [ "$out" = "stride ${TAG#v}" ] || { echo "::error::binary says '$out', tag is $TAG"; exit 1; }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stride-${{ matrix.target }}
+          path: stride-${{ matrix.target }}
+          if-no-files-found: error
+
+  upload:
+    name: attach binaries to the release
+    needs: [release-please, build]
+    # publish whatever built — a single flaky target shouldn't block the rest
+    if: ${{ always() && needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums + attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          cd dist
+          ls stride-* >/dev/null 2>&1 || { echo "::error::no binaries built — nothing to attach"; exit 1; }
+          sha256sum stride-* > SHA256SUMS.txt
+          gh release upload "$TAG" stride-* SHA256SUMS.txt \
+            --repo "${{ github.repository }}" --clobber
