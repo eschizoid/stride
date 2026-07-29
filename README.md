@@ -146,6 +146,7 @@ stride week                                       # everything needed to plan a 
 | --- | --- |
 | `summary` | *Where do I stand today?* Form (with verdict), 7-day and 28-day zone mix + polarization, FTP calibration (flags when your 20-min best says your FTP is stale), date of your last hard session, per-sport breakdown. |
 | `activities [n] [sport]` | *What did each session actually contain?* Last *n* sessions (default 30), optionally filtered by sport (`activities 10 rowing`). Per session: load, intensity vs FTP, and minutes actually spent hard (Z4+Z5). |
+| `top <metric> [n] [sport]` | *What were my best sessions?* Ranks activities (default top 10) by a metric — `hr`, `tss`, `power`, `intensity`, `distance`, or `time` — optionally filtered by sport (`top tss 5 ride`). The leaderboard to `activities`' timeline. |
 | `load [days]` | *Is my training working over time?* Daily fitness/fatigue/form rows for windows ≤14 days; Monday-aligned **weekly rollups** (sessions, load, fitness trend) for longer windows (default 90). Ends with today's form verdict. |
 | `week` | *What should this week look like?* One call bundling `summary` + open prescriptions + the last 14 days of activities — the complete planning context. |
 | `prescriptions` | *What was planned, and did it happen?* The log (most recent 100) in calendar order with status: open / done / skipped. |

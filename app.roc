@@ -59,6 +59,8 @@ help_text =
                                 + last 14 days of activities (one call, plan a week)
         activities [limit] [sport]   recent activities with metrics (default 30);
                                      sport filters, e.g. `activities 10 rowing`
+        top <metric> [n] [sport]     best sessions ranked by a metric (default 10):
+                                     hr | tss | power | intensity | distance | time
         activity <id>           one session in depth: zones, power bests, hard minutes
         load [days]             CTL/ATL/TSB series: daily <=14 days, weekly beyond (default 90)
         prescriptions           prescription log (open/done/skipped), calendar order
@@ -95,6 +97,9 @@ main! = |raw_args|
         [_, "activities"] -> activities!(30, "")
         [_, "activities", n] -> with_count!(n, |c| activities!(c, ""))
         [_, "activities", n, sport] -> with_count!(n, |c| activities!(c, sport))
+        [_, "top", metric] -> top!(metric, 10, "")
+        [_, "top", metric, n] -> with_count!(n, |c| top!(metric, c, ""))
+        [_, "top", metric, n, sport] -> with_count!(n, |c| top!(metric, c, sport))
         [_, "activity", id_str] -> activity!(id_str)
         [_, "load"] -> load_series!(90)
         [_, "load", n] -> with_count!(n, |c| load_series!(c))
@@ -1531,6 +1536,76 @@ activities! = |limit, sport_filter|
         Stdout.line!("load (tss):     session stress — '-' means no usable data (e.g. dead HR strap)")?
         Stdout.line!("intensity (if): vs your FTP — ~0.7 easy · 0.85-0.95 tempo · ~1.0 threshold · 1.05+ vo2max")?
         Stdout.line!("hard:           minutes in HR Z4+Z5 — the column that shows if hard days were actually hard")
+
+# metric keyword -> its ORDER BY column. The column is HARDCODED per keyword, so
+# no user input ever reaches the SQL; an unknown metric errors before any query.
+top_column : Str -> Result Str [BadMetric]
+top_column = |m|
+    when m is
+        "hr" -> Ok("a.avg_hr")
+        "tss" -> Ok("m.tss")
+        "power" -> Ok("m.normalized_power")
+        "intensity" -> Ok("m.intensity_factor")
+        "distance" -> Ok("a.distance")
+        "time" -> Ok("a.moving_time")
+        _ -> Err(BadMetric)
+
+# ranked "best sessions": top N activities by a chosen metric (vs `activities`,
+# which is chronological). e.g. `top hr`, `top tss 5 rowing`.
+top! : Str, U64, Str => Result {} _
+top! = |metric, limit, sport_filter|
+    path = open_db!({})?
+    when top_column(metric) is
+        Err(_) ->
+            err_out!("bad_metric", "unknown metric '${metric}' — use: hr, tss, power, intensity, distance, time")
+
+        Ok(col) ->
+            sport_where =
+                if Str.is_empty(sport_filter) then "" else " AND a.sport_type = :sport COLLATE NOCASE"
+            sport_binding =
+                if Str.is_empty(sport_filter) then [] else [{ name: ":sport", value: String(sport_filter) }]
+            rows = Sqlite.query_many!({
+                path,
+                query:
+                """
+                SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport, a.name AS name,
+                       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
+                       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
+                       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
+                       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr
+                FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
+                WHERE ${col} > 0${sport_where}
+                ORDER BY ${col} DESC LIMIT ${Num.to_str(limit)}
+                """,
+                bindings: sport_binding,
+                rows: { Sqlite.decode_record <-
+                    id: Sqlite.i64("id"),
+                    date: Sqlite.str("date"),
+                    sport: Sqlite.str("sport"),
+                    name: Sqlite.str("name"),
+                    moving_time: Sqlite.i64("moving_time"),
+                    distance_m: Sqlite.f64("distance_m"),
+                    tss: Sqlite.f64("tss"),
+                    np_w: Sqlite.f64("np_w"),
+                    intensity: Sqlite.f64("intensity"),
+                    avg_hr: Sqlite.f64("avg_hr"),
+                },
+            })?
+            if json_mode!({}) then
+                print_json!(rows)
+            else
+                val = |r|
+                    when metric is
+                        "hr" -> "${Render.fmt0(r.avg_hr)} bpm"
+                        "tss" -> Render.fmt0(r.tss)
+                        "power" -> "${Render.fmt0(r.np_w)}W"
+                        "intensity" -> Render.fmt2(r.intensity)
+                        "distance" -> "${Render.fmt0(r.distance_m / 1000.0)} km"
+                        _ -> Render.mins(r.moving_time)
+                Stdout.line!(Render.render_table(
+                    ["date", "sport", metric, "name"],
+                    List.map(rows, |r| [r.date, r.sport, val(r), r.name]),
+                ))
 
 load_series! : U64 => Result {} _
 load_series! = |days|

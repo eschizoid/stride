@@ -149,6 +149,28 @@ e2e:
     assert len(rows) == 1 and rows[0]["id"] == 102, "sport filter must be case-insensitive and exact"
     print("activities sport filter OK")
     '
+    # ── top: ranked best-sessions view ───────────────────────────────
+    # 101 is the power ride (highest TSS, no HR); 102 is the HR row (avg_hr 150)
+    "$STRIDE_BIN" top tss | python3 -c '
+    import json, sys
+    rows = json.load(sys.stdin)
+    assert rows[0]["id"] == 101, f"top tss must rank the power ride first, got {rows[0]['"'"'id'"'"']}"
+    print("top tss OK (ranks by load desc)")
+    '
+    "$STRIDE_BIN" top hr | python3 -c '
+    import json, sys
+    ids = [r["id"] for r in json.load(sys.stdin)]
+    assert ids == [102], f"top hr must include only the HR activity (power ride has no HR), got {ids}"
+    print("top hr OK (excludes metric-less activities)")
+    '
+    "$STRIDE_BIN" top tss 5 rowing | python3 -c '
+    import json, sys
+    rows = json.load(sys.stdin)
+    assert len(rows) == 1 and rows[0]["id"] == 102, "top sport filter must apply"
+    print("top sport filter OK")
+    '
+    out=$("$STRIDE_BIN" top bogus); grep -q bad_metric <<<"$out" || fail "top must reject unknown metrics"
+    echo "top OK (metric ranking + filter + bad-metric guard)"
     "$STRIDE_BIN" load | python3 -c '
     import json, sys, datetime
     days = json.load(sys.stdin)
