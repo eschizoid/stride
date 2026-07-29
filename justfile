@@ -105,6 +105,14 @@ e2e:
     print("ftp_used auto-invalidation OK (TSS rescaled 100 -> 400)")
     '
 
+    # ── zone auto-invalidation: change a HR zone bound -> analyze recomputes ──
+    # (zones are a metric input like FTP; changing one must invalidate, not no-op)
+    "$STRIDE_BIN" config set hr_z2_max 140 >/dev/null
+    out=$("$STRIDE_BIN" analyze); grep -q "computed metrics for 2" <<<"$out" || fail "zone change must recompute all rows"
+    "$STRIDE_BIN" config set hr_z2_max 153 >/dev/null   # restore
+    out=$("$STRIDE_BIN" analyze); grep -q "computed metrics for 2" <<<"$out" || fail "restoring zone must recompute again"
+    echo "zones_used auto-invalidation OK (zone change forces recompute)"
+
     # ── prescription lifecycle: dedup, skip, re-prescribe, done ──────
     out=$("$STRIDE_BIN" prescribe 2099-01-01 vo2max "d" "r"); grep -q '"id":1' <<<"$out" || fail "prescribe"
     out=$("$STRIDE_BIN" prescribe 2099-01-01 threshold "d" "r"); grep -q date_already_prescribed <<<"$out" || fail "dedup guard"

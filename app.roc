@@ -740,8 +740,12 @@ compute_missing_metrics! = |path, ftp, zb|
         LEFT JOIN streams s ON s.activity_id = a.id
         LEFT JOIN activity_metrics m ON m.activity_id = a.id
         WHERE m.activity_id IS NULL OR COALESCE(m.ftp_used, 0) <> :ftp
+              OR COALESCE(m.zones_used, '') <> :zones
         """,
-        bindings: [{ name: ":ftp", value: Real(ftp) }],
+        bindings: [
+            { name: ":ftp", value: Real(ftp) },
+            { name: ":zones", value: String(zones_sig(zb)) },
+        ],
         rows: { Sqlite.decode_record <-
             id: Sqlite.i64("id"),
             start: Sqlite.str("start"),
@@ -786,6 +790,14 @@ stream_pairs = |time_opt, val_opt|
 
 zero_zones : Metrics.ZoneSeconds
 zero_zones = { z1: 0, z2: 0, z3: 0, z4: 0, z5: 0 }
+
+# a stable signature of the HR zone bounds a metrics row was computed with, so a
+# zone-config change invalidates + recomputes it (the same way ftp_used does for
+# FTP). Bounds are whole bpm, so fmt0 is lossless and deterministic on both the
+# write (compute_one!) and the compare (compute_missing_metrics! query).
+zones_sig : Metrics.ZoneBounds -> Str
+zones_sig = |zb|
+    "${Render.fmt0(zb.z1_max)},${Render.fmt0(zb.z2_max)},${Render.fmt0(zb.z3_max)},${Render.fmt0(zb.z4_max)}"
 
 empty_streams : StreamsResp
 empty_streams = { time: Option.none({}), heartrate: Option.none({}), watts: Option.none({}) }
@@ -865,11 +877,12 @@ compute_one! = |path, ftp, zb, row|
         query:
         """
         INSERT OR REPLACE INTO activity_metrics
-          (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used)
-        VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu)
+          (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used)
+        VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused)
         """,
         bindings: [
             { name: ":ftpu", value: Real(ftp) },
+            { name: ":zused", value: String(zones_sig(zb)) },
             { name: ":id", value: Integer(row.id) },
             { name: ":tss", value: Real(tss) },
             { name: ":np", value: np_binding },
@@ -1726,7 +1739,7 @@ skip! = |presc_id_str, reason|
 # bump when the schema changes; ensure_schema! re-runs migrations when the db's
 # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 # that post-date the original CREATE statements in Schema.roc.)
-schema_version = 2
+schema_version = 3
 
 run_migrations! : Str => Result {} _
 run_migrations! = |path|
@@ -1741,6 +1754,9 @@ run_migrations! = |path|
     alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN ftp_used REAL")?
     alter_add_column!(path, "ALTER TABLE prescriptions ADD COLUMN status TEXT")?
     alter_add_column!(path, "ALTER TABLE prescriptions ADD COLUMN skipped_reason TEXT")?
+    # v3: metrics record the HR zone bounds they were computed with, so a zone-
+    # config change invalidates + recomputes (like ftp_used does for FTP)
+    alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN zones_used TEXT")?
     # v2: index the column every date-range filter and the activities sort use
     # (queries now compare a.start_local directly — sargable — instead of substr)
     Sqlite.execute!({ path, query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })
