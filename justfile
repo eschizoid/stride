@@ -75,6 +75,11 @@ e2e:
       "$STRIDE_BIN" config set $kv >/dev/null
     done
 
+    # ── auth without creds: setup guidance, not a raw MissingEnv crash ──
+    out=$(env -u STRAVA_CLIENT_ID -u STRAVA_CLIENT_SECRET "$STRIDE_BIN" auth </dev/null)
+    grep -q missing_client_creds <<<"$out" || fail "credless auth must give setup guidance, not crash"
+    echo "auth credless-guidance OK"
+
     # ── power zones: watt ranges derived from FTP (200) ──────────────
     "$STRIDE_BIN" pz | python3 -c '
     import json, sys
@@ -92,7 +97,9 @@ e2e:
     out=$("$STRIDE_BIN" config set ftp 195)
     grep -q "ftp = 195" <<<"$out" || fail "config set ftp must store + report locally"
     grep -q "not synced to Strava" <<<"$out" || fail "unauthed ftp set must warn (not crash) about Strava sync"
-    got=$("$STRIDE_BIN" config get ftp); [ "$got" = "195" ] || fail "ftp must be stored even when Strava sync can't run"
+    got=$(STRIDE_FORMAT=human "$STRIDE_BIN" config get ftp); [ "$got" = "195" ] || fail "ftp must be stored even when Strava sync can't run"
+    "$STRIDE_BIN" config get ftp | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["value"] == "195", d; print("config get json OK")'
+    "$STRIDE_BIN" config get nope | python3 -c 'import json,sys; assert json.load(sys.stdin)["error"] == "not_set"; print("config get not_set OK")'
     "$STRIDE_BIN" config set ftp 200 >/dev/null   # restore for the rest of the suite
     echo "ftp Strava-sync OK (local set succeeds, unauthed sync degrades gracefully)"
 
@@ -105,7 +112,7 @@ e2e:
     sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (102,'hr row','Rowing','${D2}T10:00:00Z',3600,9000,0,150);"
 
     # ── analyze: TSS ladder + daily_load to today ────────────────────
-    out=$("$STRIDE_BIN" analyze); grep -q "computed metrics for 2" <<<"$out" || fail "analyze count"
+    out=$("$STRIDE_BIN" analyze); grep -q '"computed":2' <<<"$out" || fail "analyze count"
     "$STRIDE_BIN" summary | python3 -c '
     import json, sys
     s = json.load(sys.stdin); today = sys.argv[1]
@@ -118,7 +125,7 @@ e2e:
 
     # ── FTP auto-invalidation: change config -> analyze recomputes ───
     "$STRIDE_BIN" config set ftp 100 >/dev/null
-    out=$("$STRIDE_BIN" analyze); grep -q "computed metrics for 2" <<<"$out" || fail "ftp change must recompute all rows"
+    out=$("$STRIDE_BIN" analyze); grep -q '"computed":2' <<<"$out" || fail "ftp change must recompute all rows"
     "$STRIDE_BIN" summary | python3 -c '
     import json, sys
     s = json.load(sys.stdin)
@@ -129,9 +136,9 @@ e2e:
     # ── zone auto-invalidation: change a HR zone bound -> analyze recomputes ──
     # (zones are a metric input like FTP; changing one must invalidate, not no-op)
     "$STRIDE_BIN" config set hr_z2_max 140 >/dev/null
-    out=$("$STRIDE_BIN" analyze); grep -q "computed metrics for 2" <<<"$out" || fail "zone change must recompute all rows"
+    out=$("$STRIDE_BIN" analyze); grep -q '"computed":2' <<<"$out" || fail "zone change must recompute all rows"
     "$STRIDE_BIN" config set hr_z2_max 153 >/dev/null   # restore
-    out=$("$STRIDE_BIN" analyze); grep -q "computed metrics for 2" <<<"$out" || fail "restoring zone must recompute again"
+    out=$("$STRIDE_BIN" analyze); grep -q '"computed":2' <<<"$out" || fail "restoring zone must recompute again"
     echo "zones_used auto-invalidation OK (zone change forces recompute)"
 
     # ── prescription lifecycle: dedup, skip, re-prescribe, done ──────
@@ -235,7 +242,7 @@ e2e:
     # force a recompute (ftp change invalidates via ftp_used) so analyze re-reads
     # 101's now-corrupt streams and must report the count instead of hiding it
     "$STRIDE_BIN" config set ftp 111 >/dev/null
-    out=$("$STRIDE_BIN" analyze); grep -q "unreadable stream data" <<<"$out" || fail "analyze must report stream decode errors"
+    out=$("$STRIDE_BIN" analyze); grep -qE '"stream_errors":[1-9]' <<<"$out" || fail "analyze must report stream decode errors"
 
     # non-numeric count args must error, not silently default
     out=$("$STRIDE_BIN" activities banana); grep -q bad_count <<<"$out" || fail "activities non-numeric count"
@@ -255,14 +262,19 @@ e2e:
     "$STRIDE_BIN" analyze >/dev/null
     "$STRIDE_BIN" progress 2025-06-01 | python3 -c '
     import json, sys
-    rows = json.load(sys.stdin)
-    assert len(rows) == 2 and all(r["name"] == "Test Class" for r in rows), "date must resolve to that day workout: " + str(rows)
+    d = json.load(sys.stdin)
+    assert d["anchor_date"] == "2025-06-01", "anchor_date must echo the asked date: " + str(d)
+    g = d["groups"][0]
+    rows = g["sessions"]
+    assert len(rows) == 2 and g["name"] == "Test Class", "date must resolve to that day workout: " + str(d)
     assert rows[0]["date"] < rows[1]["date"], "must be chronological"
     # EF = NP/HR: 180/150 = 1.20, then 210/150 = 1.40 (improving)
     efs = [round(r["ef"], 3) for r in rows]
     assert abs(rows[0]["ef"] - 1.20) < 0.01 and abs(rows[1]["ef"] - 1.40) < 0.01, "EF wrong: " + str(efs)
     print("progress OK (date -> workout, EF chronological)")
     '
+    # JSON callers can distinguish the empty outcomes in-band
+    "$STRIDE_BIN" progress 1999-01-01 | python3 -c 'import json,sys; assert json.load(sys.stdin)["error"] == "no_workout_on_date"; print("progress json error OK")'
     # auto-named rides ("Morning Ride") are different routes: only similar-distance
     # (±10% of the anchor) instances may be compared
     sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (211,'Morning Ride','Ride','2025-03-01T08:00:00Z',3600,20000,150,150,140);"
@@ -271,7 +283,7 @@ e2e:
     "$STRIDE_BIN" analyze >/dev/null
     "$STRIDE_BIN" progress 2025-03-01 | python3 -c '
     import json, sys
-    rows = json.load(sys.stdin)
+    rows = json.load(sys.stdin)["groups"][0]["sessions"]
     dists = sorted(r["distance_m"] for r in rows)
     assert dists == [20000.0, 21000.0], "auto-name must gate to ±10% of anchor distance, got " + str(dists)
     print("progress auto-name OK (distance-gated, 40km ride excluded)")
@@ -284,9 +296,10 @@ e2e:
     # bare progress defaults to the latest EF-capable workout (Test Class, 2025-06-01 at this point)
     "$STRIDE_BIN" progress | python3 -c '
     import json, sys
-    rows = json.load(sys.stdin)
-    assert len(rows) == 2 and all(r["name"] == "Test Class" for r in rows), "bare progress must anchor on the latest EF-capable workout: " + str(rows)
-    assert rows[-1]["date"] == "2025-06-01", "anchor must be the latest EF-capable date: " + rows[-1]["date"]
+    d = json.load(sys.stdin)
+    assert d["anchor_date"] == "2025-06-01", "bare progress must report the anchor it resolved: " + str(d)
+    g = d["groups"][0]
+    assert len(g["sessions"]) == 2 and g["name"] == "Test Class", "bare progress must anchor on the latest EF-capable workout: " + str(d)
     print("progress no-arg OK (defaults to latest workout)")
     '
     # last-vs-best: a later weaker session (EF 1.0 < best 1.40) must surface the gap line

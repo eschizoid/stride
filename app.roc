@@ -62,7 +62,8 @@ help_text =
                                      sport filters, e.g. `activities 10 rowing`
         top <metric> [n] [sport]     best sessions ranked by a metric (default 10):
                                      hr | tss | power | intensity | distance | time | output
-        pz                           power-zone watt ranges (7 zones) from your FTP
+        zones                        power-zone watt ranges (7 zones) from your FTP
+                                     (alias: pz)
         progress [date]              am I improving on that day's workout? every
                                      comparable instance + EF trend (watts/HR).
                                      defaults to your latest workout; auto-named
@@ -106,6 +107,7 @@ main! = |raw_args|
         [_, "top", metric] -> top!(metric, 10, "")
         [_, "top", metric, n] -> with_count!(n, |c| top!(metric, c, ""))
         [_, "top", metric, n, sport] -> with_count!(n, |c| top!(metric, c, sport))
+        [_, "zones"] -> pz!({})
         [_, "pz"] -> pz!({})
         [_, "progress"] -> progress!("")
         [_, "progress", name] -> progress!(name)
@@ -143,8 +145,10 @@ config_show! : Str => Result {} _
 config_show! = |key|
     path = open_db!({})?
     when config_opt!(path, key)? is
-        Found(v) -> Stdout.line!(v)
-        NotFound -> Stdout.line!("(not set)")
+        Found(v) ->
+            if json_mode!({}) then print_json!({ key, value: v }) else Stdout.line!(v)
+
+        NotFound -> err_out!("not_set", "(not set)")
 
 config_store! : Str, Str => Result {} _
 config_store! = |key, val|
@@ -247,7 +251,9 @@ open_browser! = |url|
     when Cmd.new("open") |> Cmd.arg(url) |> Cmd.exec_output!() is
         Ok(_) -> Ok({})
         Err(_) ->
-            when Cmd.new("xdg-open") |> Cmd.arg(url) |> Cmd.exec_output!() is
+            # detach xdg-open: exec waits for the child, and xdg-open can resolve to
+            # a FOREGROUND handler (console browser) that would block auth forever
+            when Cmd.new("sh") |> Cmd.args(["-c", "xdg-open \"${url}\" >/dev/null 2>&1 &"]) |> Cmd.exec_output!() is
                 Ok(_) -> Ok({})
                 Err(_) -> Ok({})
 
@@ -272,9 +278,17 @@ client_cred! = |path, env_name, key|
 auth! : {} => Result {} _
 auth! = |{}|
     path = open_db!({})?
-    # env vars for first-time setup; re-auth falls back to the creds stored last time
-    client_id = client_cred!(path, "STRAVA_CLIENT_ID", "strava_client_id")?
-    client_secret = client_cred!(path, "STRAVA_CLIENT_SECRET", "strava_client_secret")?
+    # env vars for first-time setup; re-auth falls back to the creds stored last time.
+    # Genuinely-missing creds get setup guidance, not a raw MissingEnv crash.
+    when (client_cred!(path, "STRAVA_CLIENT_ID", "strava_client_id"), client_cred!(path, "STRAVA_CLIENT_SECRET", "strava_client_secret")) is
+        (Ok(client_id), Ok(client_secret)) -> auth_flow!(path, client_id, client_secret)
+        (Err(MissingEnv(name)), _) | (_, Err(MissingEnv(name))) ->
+            err_out!("missing_client_creds", "${name} not set and no stored credentials yet — create a (free) Strava API app at strava.com/settings/api, then run:\n  STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth")
+
+        (Err(other), _) | (_, Err(other)) -> Err(other)
+
+auth_flow! : Str, Str, Str => Result {} _
+auth_flow! = |path, client_id, client_secret|
     url = "https://www.strava.com/oauth/authorize?client_id=${client_id}&response_type=code&redirect_uri=http://localhost&approval_prompt=auto&scope=read,activity:read_all,profile:read_all,profile:write"
     Stdout.line!("1) Click Authorize in the browser tab that just opened (URL below if it didn't):")?
     Stdout.line!("")?
@@ -427,12 +441,15 @@ sync! = |{}|
             config_set!(path, "last_sync_epoch", Num.to_str(started))?
             streams_n = backfill_streams!(path, token)?
             remaining = pending_streams!(path)?
-            tail =
-                if remaining > 0 then
-                    " (${Num.to_str(remaining)} still need streams — run `stride backfill` to pull them all)"
-                else
-                    ""
-            Stdout.line!("synced ${Num.to_str(count)} activities, fetched streams for ${Num.to_str(streams_n)}${tail}")
+            if json_mode!({}) then
+                print_json!({ synced: count, streams_fetched: streams_n, pending_streams: remaining })
+            else
+                tail =
+                    if remaining > 0 then
+                        " (${Num.to_str(remaining)} still need streams — run `stride backfill` to pull them all)"
+                    else
+                        ""
+                Stdout.line!("synced ${Num.to_str(count)} activities, fetched streams for ${Num.to_str(streams_n)}${tail}")
 
 # fetch time/HR/watts streams for activities that don't have them yet,
 # newest first, capped per run to respect Strava's rate limits (~100 reads/15min)
@@ -739,23 +756,35 @@ analyze! = |{}|
         Ok({ ftp, zb }) ->
             res = compute_missing_metrics!(path, ftp, zb)?
             rebuild_daily_load!(path)?
-            Stdout.line!("computed metrics for ${Num.to_str(res.computed)} activities")?
-            (if res.stream_errors > 0 then
-                Stdout.line!("⚠ ${Num.to_str(res.stream_errors)} had unreadable stream data — computed from summary fields, will retry next sync")
+            form =
+                when Sqlite.query!({
+                    path,
+                    query: "SELECT tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
+                    bindings: [],
+                    row: Sqlite.f64("tsb"),
+                }) is
+                    Ok(tsb) -> Ok(Some(tsb))
+                    # no daily_load yet (nothing computed) is fine — skip the verdict;
+                    # a real query error propagates instead of being swallowed
+                    Err(NoRowsReturned) -> Ok(None)
+                    Err(other) -> Err(other)
+            tsb_opt = form?
+            if json_mode!({}) then
+                form_tsb =
+                    when tsb_opt is
+                        Some(tsb) -> tsb
+                        None -> 0.0
+                print_json!({ computed: res.computed, stream_errors: res.stream_errors, form_tsb })
             else
-                Ok({}))?
-            # one verdict line; the full report lives in `stride summary`
-            when Sqlite.query!({
-                path,
-                query: "SELECT tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
-                bindings: [],
-                row: Sqlite.f64("tsb"),
-            }) is
-                Ok(tsb) -> Stdout.line!("→ today: form ${Render.fmt0(tsb)} — ${Metrics.form_label(tsb)}")
-                # no daily_load yet (nothing computed) is fine — skip the verdict;
-                # a real query error propagates instead of being swallowed
-                Err(NoRowsReturned) -> Ok({})
-                Err(other) -> Err(other)
+                Stdout.line!("computed metrics for ${Num.to_str(res.computed)} activities")?
+                (if res.stream_errors > 0 then
+                    Stdout.line!("⚠ ${Num.to_str(res.stream_errors)} had unreadable stream data — computed from summary fields, will retry next sync")
+                else
+                    Ok({}))?
+                # one verdict line; the full report lives in `stride summary`
+                when tsb_opt is
+                    Some(tsb) -> Stdout.line!("→ today: form ${Render.fmt0(tsb)} — ${Metrics.form_label(tsb)}")
+                    None -> Ok({})
 
 load_zone_config! : Str => Result { ftp : F64, zb : Metrics.ZoneBounds } _
 load_zone_config! = |path|
@@ -1071,7 +1100,7 @@ json_mode! = |{}|
 err_out! : Str, Str => Result {} _
 err_out! = |code, msg|
     if json_mode!({}) then
-        print_json!({ error: code })
+        print_json!({ error: code, message: msg })
     else
         Stdout.line!(msg)
 
@@ -1191,7 +1220,11 @@ activity_body! = |path, id_str, aid|
                     np_w: a.np_w,
                     intensity: a.intensity,
                     ftp_used: a.ftp_used,
-                    zones: { z1_s: a.z1_s, z2_s: a.z2_s, z3_s: a.z3_s, z4_s: a.z4_s, z5_s: a.z5_s },
+                    z1_s: a.z1_s,
+                    z2_s: a.z2_s,
+                    z3_s: a.z3_s,
+                    z4_s: a.z4_s,
+                    z5_s: a.z5_s,
                     hard_s,
                     power_bests: { w60: best(60), w180: best(180), w300: best(300), w1200: best(1200) },
                     max_hr,
@@ -1757,13 +1790,11 @@ progress! = |date_arg|
         tss: r.tss,
     })
     groups = List.keep_oks(group_progress(with_ef), |g| anchor_filter(g, date))
-    flat = List.join(List.map(groups, |g| g.rows))
-    if json_mode!({}) then
-        print_json!(flat)
-    else if List.is_empty(groups) then
+    if List.is_empty(groups) then
+        # in-band errors in BOTH modes so JSON callers can tell the outcomes apart
         if Str.is_empty(date) then
             # bare `progress` and the db has no EF-capable workout at all
-            Stdout.line!("no workouts with both power and heart rate yet — `stride progress` needs at least one")
+            err_out!("no_ef_workouts", "no workouts with both power and heart rate yet — `stride progress` needs at least one")
         else
             # distinguish "nothing that day" from "workout exists but can't compute EF"
             on_date = Sqlite.query_many!({
@@ -1773,8 +1804,13 @@ progress! = |date_arg|
                 rows: { Sqlite.decode_record <- name: Sqlite.str("name"), sport: Sqlite.str("sport") },
             })?
             when List.first(on_date) is
-                Ok(a) -> Stdout.line!("found \"${a.name}\" on ${date}, but it has no usable power + HR — ef needs both")
-                Err(_) -> Stdout.line!("no workout found on ${date}")
+                Ok(a) -> err_out!("no_ef_data", "found \"${a.name}\" on ${date}, but it has no usable power + HR — ef needs both")
+                Err(_) -> err_out!("no_workout_on_date", "no workout found on ${date}")
+    else if json_mode!({}) then
+        print_json!({
+            anchor_date: date,
+            groups: List.map(groups, |g| { name: g.name, sessions: g.rows }),
+        })
     else
         body = Str.join_with(List.map(groups, |g| progress_section(g.name, g.rows, date)), "\n\n")
         Stdout.line!("${body}\n\nef = normalized power / avg HR (watts per heartbeat) — climbing = fitter\nbar = ef scaled worst→best · ◀ asked marks the asked date · ··· = a break over 90 days")

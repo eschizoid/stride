@@ -47,6 +47,9 @@ exports it, so you get JSON automatically) and **human tables otherwise**. Overr
 `STRIDE_FORMAT=json|human` (case-insensitive). If output ever looks like a table instead
 of JSON, prefix the command with `STRIDE_FORMAT=json`. Known error states are in-band:
 unconfigured → `{"error":"missing_config"}`, no auth → `{"error":"not_authenticated"}`.
+All errors carry a human `message` field alongside the `error` code. `sync` and `analyze`
+emit JSON results too (`{synced, streams_fetched, pending_streams}` / `{computed,
+stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
 
 ## Query commands (JSON for you, tables for humans)
 
@@ -55,7 +58,10 @@ unconfigured → `{"error":"missing_config"}`, no auth → `{"error":"not_authen
 | `stride week` | **planning bundle**: `summary` + `recent_activities_14d` + `open_prescriptions` |
 | `stride summary` | as_of, CTL/ATL/TSB, `last_7d` + `last_28d` zone blocks (seconds + easy/moderate/hard %), `last_hard_session_date` ('' = none on record), `pending_prescriptions`, FTP (config vs estimated, `stale` + `detraining` flags), HR zone bounds, per-sport 28d breakdown |
 | `stride activities [N] [sport]` | last N activities (default 30), optionally filtered by sport (case-insensitive, e.g. `activities 10 rowing`) — date, sport, tss, np_w, intensity, z1–z5 seconds, relative_effort, avg_hr |
-| `stride activity <id>` | one session in depth: zones, hard minutes, power bests (1/3/5/20min) from streams, plus `streams_unreadable` (true = the 0s are corrupt data, NOT a real zero) — use to review whether a prescribed session hit its targets before `complete`-ing it |
+| `stride top <metric> [n] [sport]` | best sessions ranked by `hr`, `tss`, `power`, `intensity`, `distance`, `time`, or `output` (kJ) — the leaderboard to `activities`' timeline |
+| `stride progress [date]` | "am I improving on this workout?": `{ anchor_date, groups: [{ name, sessions: [...] }] }` — every comparable instance of that day's workout (bare = latest EF-capable), each with `ef` (NP/avg HR). In-band errors: `no_workout_on_date`, `no_ef_data` (workout exists, lacks power/HR), `no_ef_workouts` |
+| `stride zones` (alias `pz`) | the 7 power zones as watt ranges from configured FTP: `{ ftp, zones: [{ z, name, lo_w, hi_w }] }` (0 = open-ended bound) |
+| `stride activity <id>` | one session in depth: flat z1_s–z5_s + hard_s, hard minutes, power bests (1/3/5/20min) from streams, plus `streams_unreadable` (true = the 0s are corrupt data, NOT a real zero) — use to review whether a prescribed session hit its targets before `complete`-ing it |
 | `stride stats` | career + year-to-date totals per sport (sessions, hours, km) |
 | `stride load [days]` | daily tss/ctl/atl/tsb series, chronological (default 90) |
 | `stride prescriptions` | prescription log with `status` (open/done/skipped) + `skipped_reason` |
