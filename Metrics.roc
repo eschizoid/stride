@@ -23,6 +23,9 @@ module [
     power_zones,
     trend_ends,
     is_auto_name,
+    mean,
+    pct_change,
+    scale_to_blocks,
 ]
 
 # ── pure training-science math. no I/O, fully unit-tested. ──────────
@@ -79,8 +82,8 @@ normalized_power = |watts_1s|
             |acc, i|
                 hi = get_or_zero(prefix, i + np_window)
                 lo = get_or_zero(prefix, i)
-                mean = (hi - lo) / Num.to_f64(np_window)
-                acc + (mean * mean * mean * mean),
+                window_avg = (hi - lo) / Num.to_f64(np_window)
+                acc + (window_avg * window_avg * window_avg * window_avg),
         )
         Ok(Num.pow(sum4 / Num.to_f64(window_count), 0.25))
 
@@ -105,8 +108,8 @@ best_rolling_mean = |xs_1s, window|
             List.range({ start: At(0), end: Before(n - window + 1) }),
             0.0f64,
             |acc, i|
-                mean = (get_or_zero(prefix, i + window) - get_or_zero(prefix, i)) / Num.to_f64(window)
-                Num.max(acc, mean),
+                window_avg = (get_or_zero(prefix, i + window) - get_or_zero(prefix, i)) / Num.to_f64(window)
+                Num.max(acc, window_avg),
         )
         Ok(best)
 
@@ -284,8 +287,24 @@ trend_ends = |xs|
         { early: 0.0, late: 0.0 }
     else
         k = Num.max(1, n // 3)
-        avg = |ys| if List.is_empty(ys) then 0.0 else List.sum(ys) / Num.to_f64(List.len(ys))
-        { early: avg(List.take_first(xs, k)), late: avg(List.take_last(xs, k)) }
+        { early: mean(List.take_first(xs, k)), late: mean(List.take_last(xs, k)) }
+
+# mean of a float list; 0.0 on empty
+mean : List F64 -> F64
+mean = |ys| if List.is_empty(ys) then 0.0 else List.sum(ys) / Num.to_f64(List.len(ys))
+
+# percent change from -> to; 0.0 when `from` isn't positive (no meaningful baseline)
+pct_change : F64, F64 -> F64
+pct_change = |from, to| if from > 0.0 then (to - from) / from * 100.0 else 0.0
+
+# scale a value in [lo, hi] to 1..blocks bar segments (lo -> 1, hi -> blocks);
+# degenerate range -> full bar
+scale_to_blocks : F64, F64, F64, U64 -> U64
+scale_to_blocks = |value, lo, hi, blocks|
+    if hi - lo < 0.001 then
+        blocks
+    else
+        1 + Num.round((value - lo) / (hi - lo) * Num.to_f64(blocks - 1))
 
 # ── Strava auto-names ───────────────────────────────────────────────
 # "Morning Ride", "Lunch Gravel Ride", ... are Strava's time-of-day defaults: the
@@ -593,6 +612,13 @@ expect
 expect valid_hr(150.0) and !(valid_hr(20.0)) and !(valid_hr(230.0)) and valid_hr(35.0) and valid_hr(220.0)
 
 expect is_auto_name("Morning Ride") and is_auto_name("Lunch Gravel Ride") and !(is_auto_name("45 min Power Zone Ride with Matt Wilpers"))
+
+expect Num.abs(mean([1.0, 2.0, 3.0]) - 2.0) < 0.001 and Num.abs(mean([])) < 0.001
+
+expect Num.abs(pct_change(2.0, 3.0) - 50.0) < 0.001 and Num.abs(pct_change(0.0, 3.0)) < 0.001
+
+# bar scaling: lo -> 1 block, hi -> all blocks, degenerate range -> all blocks
+expect scale_to_blocks(1.2, 1.2, 1.8, 12) == 1 and scale_to_blocks(1.8, 1.2, 1.8, 12) == 12 and scale_to_blocks(1.5, 1.5, 1.5, 12) == 12
 
 # trend_ends: first third avg vs last third avg (rising series -> late > early)
 expect

@@ -172,7 +172,7 @@ sync_ftp_to_strava! = |path, ftp_str|
                     })
                     when resp is
                         Ok(r) if r.status < 300 -> Stdout.line!("  → synced to Strava (athlete FTP = ${ftp_str})")
-                        Ok(r) -> Stdout.line!("  (Strava FTP sync failed: HTTP ${Num.to_str(r.status)} — set it at strava.com/settings)")
+                        Ok(r) -> Stdout.line!("  (Strava FTP sync failed: HTTP ${Num.to_str(r.status)} — re-run `stride auth` to grant profile:write, or set it at strava.com/settings)")
                         Err(_) -> Stdout.line!("  (couldn't reach Strava to sync FTP — set it at strava.com/settings)")
 
 # ── paths ────────────────────────────────────────────────────────────
@@ -255,7 +255,7 @@ auth! = |{}|
     path = open_db!({})?
     client_id = env_or_explain!("STRAVA_CLIENT_ID")?
     client_secret = env_or_explain!("STRAVA_CLIENT_SECRET")?
-    url = "https://www.strava.com/oauth/authorize?client_id=${client_id}&response_type=code&redirect_uri=http://localhost&approval_prompt=auto&scope=read,activity:read_all"
+    url = "https://www.strava.com/oauth/authorize?client_id=${client_id}&response_type=code&redirect_uri=http://localhost&approval_prompt=auto&scope=read,activity:read_all,profile:write"
     Stdout.line!("1) Open this URL in your browser and click Authorize:")?
     Stdout.line!("")?
     Stdout.line!("   ${url}")?
@@ -1569,18 +1569,19 @@ activities! = |limit, sport_filter|
         Stdout.line!("intensity (if): vs your FTP — ~0.7 easy · 0.85-0.95 tempo · ~1.0 threshold · 1.05+ vo2max")?
         Stdout.line!("hard:           minutes in HR Z4+Z5 — the column that shows if hard days were actually hard")
 
-# metric keyword -> its ORDER BY column. The column is HARDCODED per keyword, so
-# no user input ever reaches the SQL; an unknown metric errors before any query.
-top_column : Str -> Result Str [BadMetric]
-top_column = |m|
+# metric keyword -> its ORDER BY column + human table header. The column is HARDCODED
+# per keyword, so no user input ever reaches the SQL; an unknown metric errors before
+# any query. Single source of truth so column and header can't drift apart.
+top_metric : Str -> Result { col : Str, header : Str } [BadMetric]
+top_metric = |m|
     when m is
-        "hr" -> Ok("a.avg_hr")
-        "tss" -> Ok("m.tss")
-        "power" -> Ok("m.normalized_power")
-        "intensity" -> Ok("m.intensity_factor")
-        "distance" -> Ok("a.distance")
-        "time" -> Ok("a.moving_time")
-        "output" -> Ok("(a.avg_watts * a.moving_time)") # total work (Peloton kJ)
+        "hr" -> Ok({ col: "a.avg_hr", header: "heart rate (hr)" })
+        "tss" -> Ok({ col: "m.tss", header: "load (tss)" })
+        "power" -> Ok({ col: "m.normalized_power", header: "power (np)" })
+        "intensity" -> Ok({ col: "m.intensity_factor", header: "intensity (if)" })
+        "distance" -> Ok({ col: "a.distance", header: "distance (km)" })
+        "time" -> Ok({ col: "a.moving_time", header: "time (min)" })
+        "output" -> Ok({ col: "(a.avg_watts * a.moving_time)", header: "output (kj)" }) # total work (Peloton kJ)
         _ -> Err(BadMetric)
 
 # ranked "best sessions": top N activities by a chosen metric (vs `activities`,
@@ -1588,11 +1589,11 @@ top_column = |m|
 top! : Str, U64, Str => Result {} _
 top! = |metric, limit, sport_filter|
     path = open_db!({})?
-    when top_column(metric) is
+    when top_metric(metric) is
         Err(_) ->
             err_out!("bad_metric", "unknown metric '${metric}' — use: hr, tss, power, intensity, distance, time, output")
 
-        Ok(col) ->
+        Ok({ col, header }) ->
             sport_where =
                 if Str.is_empty(sport_filter) then "" else " AND a.sport_type = :sport COLLATE NOCASE"
             sport_binding =
@@ -1638,17 +1639,8 @@ top! = |metric, limit, sport_filter|
                         "distance" -> "${Render.fmt1(r.distance_m / 1000.0)} km"
                         "output" -> "${Render.fmt0(r.output_kj)} kJ"
                         _ -> Render.mins(r.moving_time)
-                metric_header =
-                    when metric is
-                        "hr" -> "heart rate (hr)"
-                        "tss" -> "load (tss)"
-                        "power" -> "power (np)"
-                        "intensity" -> "intensity (if)"
-                        "distance" -> "distance (km)"
-                        "output" -> "output (kj)"
-                        _ -> "time (min)"
                 Stdout.line!(Render.render_table(
-                    ["date", "sport", metric_header, "name"],
+                    ["date", "sport", header, "name"],
                     List.map(rows, |r| [r.date, r.sport, val(r), r.name]),
                 ))
 
@@ -1767,11 +1759,7 @@ progress_section = |name, rows, asked|
     # bar spans the OBSERVED range (worst session = 1 block, best = 12) so real
     # differences aren't squashed against a zero baseline
     ef_cell = |r|
-        n =
-            if max_ef - min_ef < 0.001 then
-                12
-            else
-                1 + Num.round((r.ef - min_ef) / (max_ef - min_ef) * 11.0)
+        n = Metrics.scale_to_blocks(r.ef, min_ef, max_ef, 12)
         mark = if r.date == asked then " ◀ asked" else ""
         "${Render.fmt2(r.ef)} ${Str.repeat("█", n)}${mark}"
     # a `···` row marks a break of >90 days between consecutive sessions
@@ -1799,10 +1787,10 @@ progress_section = |name, rows, asked|
         body_rows,
     )
     t = Metrics.trend_ends(List.map(rows, |r| r.ef))
-    pct = if t.early > 0.0 then (t.late - t.early) / t.early * 100.0 else 0.0
+    pct = Metrics.pct_change(t.early, t.late)
     label =
         if pct > 5.0 then "improving" else if pct < -5.0 then "declining" else "holding steady"
-    avg_ef = List.walk(rows, 0.0, |acc, r| acc + r.ef) / Num.to_f64(Num.max(List.len(rows), 1))
+    avg_ef = Metrics.mean(List.map(rows, |r| r.ef))
     verdict = "→ ef early avg ${Render.fmt2(t.early)} → recent avg ${Render.fmt2(t.late)} (overall avg ${Render.fmt2(avg_ef)}) over ${Num.to_str(List.len(rows))} sessions — ${label} (${Render.fmt0(pct)}%)"
     "── ${name} ──\n${table}\n\n${verdict}${last_vs_best(rows)}"
 
@@ -1815,7 +1803,7 @@ last_vs_best = |rows|
             if last.date == best.date or List.len(rows) < 2 then
                 ""
             else
-                gap = (best.ef - last.ef) / best.ef * 100.0
+                gap = -Metrics.pct_change(best.ef, last.ef) # % below best (best -> last is negative)
                 "\n→ last: ${Render.fmt2(last.ef)} (${last.date}) vs best: ${Render.fmt2(best.ef)} (${best.date}) — ${Render.fmt0(gap)}% below your best"
 
         _ -> ""

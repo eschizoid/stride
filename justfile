@@ -283,7 +283,8 @@ e2e:
     "$STRIDE_BIN" analyze >/dev/null
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" progress 2025-07-01)
     grep -q "below your best" <<<"$out" || fail "weaker last session must show the last-vs-best gap line"
-    grep -q "avg " <<<"$out" || fail "verdict must include the average EF"
+    # seeded EFs are 1.20, 1.40, 1.00 -> overall avg exactly 1.20 (asserts the math, not the template)
+    grep -q "(overall avg 1.20)" <<<"$out" || fail "verdict must compute the average EF (expected 1.20)"
     grep -q "████████████" <<<"$out" || fail "best session must render a full 12-char ef bar"
     grep -q "◀ asked" <<<"$out" || fail "asked-date row must carry the marker"
     grep -q "···" <<<"$out" || fail "sessions >90 days apart must show a ··· gap row"
