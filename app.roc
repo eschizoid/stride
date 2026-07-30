@@ -230,12 +230,6 @@ TokenResp : { access_token : Str, refresh_token : Str, expires_at : I64 }
 
 token_url = "https://www.strava.com/oauth/token"
 
-env_or_explain! : Str => Result Str _
-env_or_explain! = |name|
-    when Env.var!(name) is
-        Ok(v) -> Ok(v)
-        Err(_) -> Err(MissingEnv(name))
-
 # a stored token field: absent -> NotAuthed (genuine); db failure propagates
 token_field! : Str, Str => Result Str _
 token_field! = |path, key|
@@ -253,8 +247,9 @@ client_cred! = |path, env_name, key|
 auth! : {} => Result {} _
 auth! = |{}|
     path = open_db!({})?
-    client_id = env_or_explain!("STRAVA_CLIENT_ID")?
-    client_secret = env_or_explain!("STRAVA_CLIENT_SECRET")?
+    # env vars for first-time setup; re-auth falls back to the creds stored last time
+    client_id = client_cred!(path, "STRAVA_CLIENT_ID", "strava_client_id")?
+    client_secret = client_cred!(path, "STRAVA_CLIENT_SECRET", "strava_client_secret")?
     url = "https://www.strava.com/oauth/authorize?client_id=${client_id}&response_type=code&redirect_uri=http://localhost&approval_prompt=auto&scope=read,activity:read_all,profile:write"
     Stdout.line!("1) Open this URL in your browser and click Authorize:")?
     Stdout.line!("")?
