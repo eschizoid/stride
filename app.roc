@@ -1769,7 +1769,21 @@ progress_section = |name, rows|
     label =
         if pct > 5.0 then "improving" else if pct < -5.0 then "declining" else "holding steady"
     verdict = "→ EF ${Render.fmt2(t.early)} → ${Render.fmt2(t.late)} over ${Num.to_str(List.len(rows))} sessions — ${label} (${Render.fmt0(pct)}%)"
-    "── ${name} ──\n${table}\n\n${verdict}"
+    "── ${name} ──\n${table}\n\n${verdict}${last_vs_best(rows)}"
+
+# "last vs best" line: how the most recent session compares to the all-time best EF.
+# Empty when they're the same session (you just set your best) or <2 rows.
+last_vs_best : List ProgressRow -> Str
+last_vs_best = |rows|
+    when (List.last(rows), List.sort_with(rows, |a, b| Num.compare(b.ef, a.ef)) |> List.first) is
+        (Ok(last), Ok(best)) ->
+            if last.date == best.date or List.len(rows) < 2 then
+                ""
+            else
+                gap = (best.ef - last.ef) / best.ef * 100.0
+                "\n→ last: ${Render.fmt2(last.ef)} (${last.date}) vs best: ${Render.fmt2(best.ef)} (${best.date}) — ${Render.fmt0(gap)}% below your best"
+
+        _ -> ""
 
 load_series! : U64 => Result {} _
 load_series! = |days|

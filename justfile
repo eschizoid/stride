@@ -278,7 +278,12 @@ e2e:
     '
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" progress 1999-01-01)
     grep -q "no workout" <<<"$out" || fail "progress on an empty date must say so, not crash"
-    echo "progress OK (date anchor + distance gate + empty guard)"
+    # last-vs-best: a later weaker session (EF 1.0 < best 1.40) must surface the gap line
+    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (203,'Test Class','Ride','2025-07-01T10:00:00Z',3600,20000,150,150,150);"
+    "$STRIDE_BIN" analyze >/dev/null
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" progress 2025-07-01)
+    grep -q "below your best" <<<"$out" || fail "weaker last session must show the last-vs-best gap line"
+    echo "progress OK (date anchor + distance gate + last-vs-best + empty guard)"
 
     # ── human output mode ────────────────────────────────────────────
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" prescriptions); grep -Eq "date +type +status" <<<"$out" || fail "human table header"
