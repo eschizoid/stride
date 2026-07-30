@@ -27,6 +27,7 @@ import pf.Sleep
 import pf.Sqlite
 import pf.Cmd
 import json.Json
+import Streams
 import json.Option exposing [Option]
 import Metrics
 import Schema
@@ -732,9 +733,6 @@ upsert_activity! = |path, a|
 
 # ── analyze ──────────────────────────────────────────────────────────
 
-StreamSeq : { data : List (Option F64) }
-StreamsResp : { time : Option StreamSeq, heartrate : Option StreamSeq, watts : Option StreamSeq }
-
 zone_config_help =
     """
     analyze needs your FTP and HR zone upper bounds in config first:
@@ -862,23 +860,6 @@ process_rows! = |path, ftp, zb, rows, acc|
             }
             process_rows!(path, ftp, zb, rest, next)
 
-# pair up stream time+value samples, dropping nulls
-stream_pairs : Option StreamSeq, Option StreamSeq -> List { t : I64, v : F64 }
-stream_pairs = |time_opt, val_opt|
-    when (Option.get(time_opt), Option.get(val_opt)) is
-        (Some(ts), Some(vs)) ->
-            maybe_pairs = List.map2(
-                ts.data,
-                vs.data,
-                |ot, ov|
-                    when (Option.get(ot), Option.get(ov)) is
-                        (Some(t), Some(v)) -> Ok({ t: Num.round(t), v })
-                        _ -> Err({}),
-            )
-            List.keep_oks(maybe_pairs, |p| p)
-
-        _ -> []
-
 zero_zones : Metrics.ZoneSeconds
 zero_zones = { z1: 0, z2: 0, z3: 0, z4: 0, z5: 0 }
 
@@ -890,37 +871,19 @@ zones_sig : Metrics.ZoneBounds -> Str
 zones_sig = |zb|
     "${Render.fmt0(zb.z1_max)},${Render.fmt0(zb.z2_max)},${Render.fmt0(zb.z3_max)},${Render.fmt0(zb.z4_max)}"
 
-empty_streams : StreamsResp
-empty_streams = { time: Option.none({}), heartrate: Option.none({}), watts: Option.none({}) }
-
-# decode stored stream JSON, distinguishing a genuine "no streams" (Null, or the
-# {} 404-marker which decodes to all-None) from a real DECODE FAILURE (corrupt /
-# schema-drifted JSON) so callers can surface it instead of silently zeroing.
-decode_streams : [NotNull Str, Null] -> { streams : StreamsResp, failed : Bool }
-decode_streams = |raw|
-    when raw is
-        NotNull(text) ->
-            decoded : Result StreamsResp _
-            decoded = Decode.from_bytes(Str.to_utf8(text), Json.utf8)
-            when decoded is
-                Ok(s) -> { streams: s, failed: Bool.false }
-                Err(_) -> { streams: empty_streams, failed: Bool.true }
-
-        Null -> { streams: empty_streams, failed: Bool.false }
-
 # returns Bool: did the stored stream JSON fail to decode? (surfaced by analyze)
 compute_one! : Str, F64, Metrics.ZoneBounds, ActivityRow => Result Bool _
 compute_one! = |path, ftp, zb, row|
-    decoded = decode_streams(row.raw)
+    decoded = Streams.decode_streams(row.raw)
     streams = decoded.streams
 
     # sanity-filter HR: some sources (Peloton strength workouts) emit junk
     # near-zero samples — Metrics.valid_hr is the one place the bounds live
     hr_pairs = List.keep_if(
-        stream_pairs(streams.time, streams.heartrate),
+        Streams.stream_pairs(streams.time, streams.heartrate),
         |p| Metrics.valid_hr(p.v),
     )
-    watts_pairs = stream_pairs(streams.time, streams.watts)
+    watts_pairs = Streams.stream_pairs(streams.time, streams.watts)
     watts_1s = Metrics.resample_1s(List.map(watts_pairs, |p| { t: p.t, v: p.v }))
 
     zones = if List.is_empty(hr_pairs) then zero_zones else Metrics.time_in_zones(hr_pairs, zb)
@@ -1197,14 +1160,14 @@ activity_body! = |path, id_str, aid|
                 when List.first(raw_rows) is
                     Ok(text) -> NotNull(text)
                     Err(_) -> Null
-            decoded = decode_streams(raw_opt)
+            decoded = Streams.decode_streams(raw_opt)
             streams = decoded.streams
 
             hr_pairs = List.keep_if(
-                stream_pairs(streams.time, streams.heartrate),
+                Streams.stream_pairs(streams.time, streams.heartrate),
                 |p| Metrics.valid_hr(p.v),
             )
-            watts_1s = Metrics.resample_1s(stream_pairs(streams.time, streams.watts))
+            watts_1s = Metrics.resample_1s(Streams.stream_pairs(streams.time, streams.watts))
             best = |w|
                 when Metrics.best_rolling_mean(watts_1s, w) is
                     Ok(v) -> v

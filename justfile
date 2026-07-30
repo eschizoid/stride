@@ -19,6 +19,7 @@ test:
     {{roc}} test Metrics.roc
     {{roc}} test Render.roc
     {{roc}} test Backfill.roc
+    {{roc}} test --main app.roc Streams.roc
     just build
     just e2e
 
