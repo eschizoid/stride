@@ -141,6 +141,14 @@ e2e:
     out=$("$STRIDE_BIN" analyze); grep -q '"computed":2' <<<"$out" || fail "restoring zone must recompute again"
     echo "zones_used auto-invalidation OK (zone change forces recompute)"
 
+    # ── metrics_rev invalidation: an algorithm-revision bump recomputes everything ──
+    # (simulated by zeroing the stored rev — same effect as bumping the constant)
+    sqlite3 "$DB" "UPDATE activity_metrics SET metrics_rev = 0;"
+    out=$("$STRIDE_BIN" analyze); grep -q '"computed":2' <<<"$out" || fail "metrics_rev change must recompute all rows"
+    rev=$(sqlite3 "$DB" "SELECT DISTINCT metrics_rev FROM activity_metrics;")
+    [ "$rev" = "1" ] || fail "recomputed rows must carry the current metrics_rev, got '$rev'"
+    echo "metrics_rev invalidation OK (algorithm changes recompute)"
+
     # ── prescription lifecycle: dedup, skip, re-prescribe, done ──────
     out=$("$STRIDE_BIN" prescribe 2099-01-01 vo2max "d" "r"); grep -q '"id":1' <<<"$out" || fail "prescribe"
     out=$("$STRIDE_BIN" prescribe 2099-01-01 threshold "d" "r"); grep -q date_already_prescribed <<<"$out" || fail "dedup guard"

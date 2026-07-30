@@ -495,29 +495,24 @@ fetch_streams_all! = |path, token, ids, acc|
         [id, .. as rest] ->
             id_str = Num.to_str(id)
             uri = "https://www.strava.com/api/v3/activities/${id_str}/streams?keys=time,heartrate,watts&key_by_type=true"
-            when get_bearer!(uri, token) is
-                Ok(body) ->
-                    when Str.from_utf8(body) is
-                        Ok(text) ->
-                            store_streams!(path, id, text)?
-                            fetch_streams_all!(path, token, rest, acc + 1)
-
-                        Err(_) ->
-                            # non-utf8/corrupt body — do NOT store (storing would
-                            # mark it done forever); leave it to retry next sync
-                            fetch_streams_all!(path, token, rest, acc)
-
-                Err(HttpStatus(404, _)) ->
-                    # no streams recorded (manual entry etc.) — remember that so we don't refetch
-                    store_streams!(path, id, "{}")?
-                    fetch_streams_all!(path, token, rest, acc + 1)
-
-                Err(HttpStatus(429, _)) ->
-                    # rate limited — stop gracefully, next sync continues the backfill
-                    Stdout.line!("rate limited by Strava — stopping streams backfill for now (will resume next sync)")?
-                    Ok(acc)
-
-                Err(other) -> Err(other)
+            resp = Http.send!({
+                method: GET,
+                headers: [Http.header(("Authorization", "Bearer ${token}"))],
+                uri,
+                body: [],
+                timeout_ms: TimeoutMilliseconds(60000),
+            })?
+            if resp.status == 429 then
+                # rate limited — stop gracefully, next sync continues the backfill
+                Stdout.line!("rate limited by Strava — stopping streams backfill for now (will resume next sync)")?
+                Ok(acc)
+            else if resp.status >= 300 and resp.status != 404 then
+                Err(HttpStatus(resp.status, Result.with_default(Str.from_utf8(resp.body), "<non-utf8 body>")))
+            else
+                # 404/2xx/non-utf8 policy lives in store_stream_response! (shared with backfill)
+                when store_stream_response!(path, id, resp)? is
+                    Stored -> fetch_streams_all!(path, token, rest, acc + 1)
+                    SkippedNonUtf8 -> fetch_streams_all!(path, token, rest, acc)
 
 store_streams! : Str, I64, Str => Result {} _
 store_streams! = |path, id, text|
@@ -575,15 +570,21 @@ send_bearer! = |uri, token|
 
 # store a streams response like the sync path: 404 -> honest empty marker,
 # 2xx -> body (skip if non-utf8 so it retries), other -> propagate the error
-store_stream_response! : Str, I64, Http.Response => Result {} _
+# THE stream-response policy, shared by sync and backfill: 404 -> "{}" marker
+# (no streams recorded; don't refetch), 2xx -> store, non-utf8 -> skip WITHOUT
+# storing (storing would mark it done forever; it retries next run).
+store_stream_response! : Str, I64, Http.Response => Result [Stored, SkippedNonUtf8] _
 store_stream_response! = |path, id, resp|
     if resp.status == 404 then
-        store_streams!(path, id, "{}")
+        store_streams!(path, id, "{}")?
+        Ok(Stored)
     else if resp.status < 300 then
         when Str.from_utf8(resp.body) is
-            Ok(text) -> store_streams!(path, id, text)
-            Err(_) -> Ok({})
+            Ok(text) ->
+                store_streams!(path, id, text)?
+                Ok(Stored)
 
+            Err(_) -> Ok(SkippedNonUtf8)
     else
         text = Result.with_default(Str.from_utf8(resp.body), "<non-utf8 body>")
         Err(HttpStatus(resp.status, text))
@@ -657,7 +658,7 @@ drain_streams! = |path, token, ids, st|
 
                 Store({ done, window, after }) ->
                     # 404 -> empty marker, 2xx -> body, other -> error propagated
-                    store_stream_response!(path, id, resp)?
+                    _stored = store_stream_response!(path, id, resp)?
                     (if Num.rem(done, 50) == 0 then
                         Stdout.line!("  ...${Num.to_str(done)} fetched this run")
                     else
@@ -829,10 +830,12 @@ compute_missing_metrics! = |path, ftp, zb|
         LEFT JOIN activity_metrics m ON m.activity_id = a.id
         WHERE m.activity_id IS NULL OR COALESCE(m.ftp_used, 0) <> :ftp
               OR COALESCE(m.zones_used, '') <> :zones
+              OR COALESCE(m.metrics_rev, 0) <> :rev
         """,
         bindings: [
             { name: ":ftp", value: Real(ftp) },
             { name: ":zones", value: String(zones_sig(zb)) },
+            { name: ":rev", value: Integer(metrics_rev) },
         ],
         rows: { Sqlite.decode_record <-
             id: Sqlite.i64("id"),
@@ -965,12 +968,13 @@ compute_one! = |path, ftp, zb, row|
         query:
         """
         INSERT OR REPLACE INTO activity_metrics
-          (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used)
-        VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused)
+          (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev)
+        VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev)
         """,
         bindings: [
             { name: ":ftpu", value: Real(ftp) },
             { name: ":zused", value: String(zones_sig(zb)) },
+            { name: ":rev", value: Integer(metrics_rev) },
             { name: ":id", value: Integer(row.id) },
             { name: ":tss", value: Real(tss) },
             { name: ":np", value: np_binding },
@@ -2125,7 +2129,12 @@ skip! = |presc_id_str, reason|
 # bump when the schema changes; ensure_schema! re-runs migrations when the db's
 # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 # that post-date the original CREATE statements in Schema.roc.)
-schema_version = 3
+schema_version = 4
+
+# bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
+# HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
+# zones_used) can't catch algorithm changes
+metrics_rev = 1
 
 run_migrations! : Str => Result {} _
 run_migrations! = |path|
@@ -2143,6 +2152,9 @@ run_migrations! = |path|
     # v3: metrics record the HR zone bounds they were computed with, so a zone-
     # config change invalidates + recomputes (like ftp_used does for FTP)
     alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN zones_used TEXT")?
+    # v4: metrics record the algorithm revision they were computed with, so a
+    # change to the math itself (metrics_rev bump) invalidates + recomputes
+    alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN metrics_rev INTEGER")?
     # v2: index the column every date-range filter and the activities sort use
     # (queries now compare a.start_local directly — sargable — instead of substr)
     Sqlite.execute!({ path, query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })
