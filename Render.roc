@@ -299,7 +299,7 @@ summary_screen = |s|
                 "",
                 "  last 7 days: ${fmt0(s.last_7d.tss)} TSS — ${Num.to_str(s.last_7d.easy_pct)}% easy / ${Num.to_str(s.last_7d.moderate_pct)}% moderate / ${Num.to_str(s.last_7d.hard_pct)}% hard",
                 "  last hard session (5+ min Z4/Z5): ${last_hard_str}",
-                "  open prescriptions: ${Num.to_str(s.pending_prescriptions)}",
+                "  open planned sessions: ${Num.to_str(s.pending_sessions)}",
             ],
         ]),
         "\n",
@@ -328,7 +328,7 @@ expect
         last_7d: { tss: 50.0, easy_pct: 100i64, moderate_pct: 0i64, hard_pct: 0i64 },
         ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0, config_w: 200.0, stale: Bool.false, detraining: Bool.false },
         last_hard_session_date: "",
-        pending_prescriptions: 2i64,
+        pending_sessions: 2i64,
     }
     out = summary_screen(s)
     Str.contains(out, "stride report") and Str.contains(out, "zone gap") and Str.contains(out, "none on record")

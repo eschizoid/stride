@@ -13,7 +13,7 @@ app [main!] {
 #
 # Two consumers, one contract: humans get tables (with legends and a verdict),
 # LLM coaches get JSON (STRIDE_FORMAT=json or an agent env var). The engine
-# computes deterministically; the coach reasons and writes prescriptions back
+# computes deterministically; the coach reasons and writes the plan back
 # through the coaching-log commands. Neither does the other's job.
 
 import pf.Stdout
@@ -61,7 +61,7 @@ help_text =
                     or CLAUDECODE is set — for LLM/tool callers)
         summary                 coach-input payload: form, 7d/28d zones, FTP calibration
         stats                   career + year-to-date totals per sport
-        week                    weekly-planning bundle: summary + open prescriptions
+        week                    weekly-planning bundle: summary + open plan
                                 + last 14 days of activities (one call, plan a week)
         activities [limit] [sport]   recent activities with metrics (default 30);
                                      sport filters, e.g. `activities 10 rowing`
@@ -75,15 +75,15 @@ help_text =
                                      rides compare similar-distance only
         activity <id>           one session in depth: zones, power bests, hard minutes
         load [days]             CTL/ATL/TSB series: daily <=14 days, weekly beyond (default 90)
-        prescriptions           prescription log (open/done/skipped), calendar order
+        plan                    planned-session log (open/done/skipped), calendar order
                                 with day-of-week (Mon-Sun) and rest days
 
     COACHING LOG
-        prescribe <date> <type> <detail> <rationale>   record a prescribed session
+        plan <date> <type> <detail> <rationale>        record a planned session
                                                        (refuses if date already has an open one)
-        complete <prescription_id> <activity_id>       link a prescription to a done activity
-        complete <prescription_id>                     mark a REST day done (no activity to link)
-        skip <prescription_id> <reason>                mark a prescription as skipped
+        complete <session_id> <activity_id>            link a planned session to a done activity
+        complete <session_id>                          mark a REST day done (no activity to link)
+        skip <session_id> <reason>                     mark a planned session as skipped
 
     FLAGS
         --help      show this help
@@ -121,8 +121,8 @@ main! = |raw_args|
         [_, "activity", id_str] -> activity!(id_str)
         [_, "load"] -> load_series!(90)
         [_, "load", n] -> with_count!(n, |c| load_series!(c))
-        [_, "prescriptions"] -> prescriptions!({})
-        [_, "prescribe", date, session_type, detail, rationale] -> prescribe!(date, session_type, detail, rationale)
+        [_, "plan"] -> plan_view!({})
+        [_, "plan", date, session_type, detail, rationale] -> plan_add!(date, session_type, detail, rationale)
         [_, "complete", presc_id, activity_id] -> complete!(presc_id, activity_id)
         [_, "complete", presc_id] -> complete_rest!(presc_id)
         [_, "skip", presc_id, reason] -> skip!(presc_id, reason)
@@ -130,9 +130,9 @@ main! = |raw_args|
         [_, "config", "set", key, val] -> config_store!(key, val)
         [_, "--version"] -> Stdout.line!(version)
         # wrong arity on multi-arg commands: targeted usage, not the whole help
-        [_, "prescribe", ..] -> usage!("prescribe <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\"")
-        [_, "complete", ..] -> usage!("complete <prescription_id> <activity_id>")
-        [_, "skip", ..] -> usage!("skip <prescription_id> \"<reason>\"")
+        [_, "plan", ..] -> usage!("plan <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `plan` to view")
+        [_, "complete", ..] -> usage!("complete <session_id> [activity_id]")
+        [_, "skip", ..] -> usage!("skip <session_id> \"<reason>\"")
         [_, "activity", ..] -> usage!("activity <activity_id>")
         [_, "config", ..] -> usage!("config get <key>  |  config set <key> <value>")
         _ -> Stdout.line!(help_text)
@@ -1076,7 +1076,7 @@ json_mode! = |{}|
 
 # a known, user-fixable error: machine-readable JSON for tool callers, a plain
 # line for humans. Exit stays 0 (in-band errors are the codebase convention —
-# same as prescribe's dedup guard); the payload carries the failure.
+# same as plan-add's dedup guard); the payload carries the failure.
 err_out! : Str, Str => Result {} _
 err_out! = |code, msg|
     if json_mode!({}) then
@@ -1341,7 +1341,7 @@ week! = |{}|
                 """
                 SELECT id AS id, COALESCE(target_date,'') AS target_date, COALESCE(session_type,'') AS session_type,
                        COALESCE(detail,'') AS detail, COALESCE(rationale,'') AS rationale
-                FROM prescriptions WHERE COALESCE(status, 'open') = 'open'
+                FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'
                 ORDER BY target_date
                 """,
                 bindings: [],
@@ -1357,12 +1357,12 @@ week! = |{}|
                 print_json!({
                     summary: s,
                     recent_activities_14d: recent,
-                    open_prescriptions: open_p,
+                    open_sessions: open_p,
                 })
             else
                 Stdout.line!(Render.summary_screen(s))?
                 Stdout.line!("")?
-                Stdout.line!("OPEN PRESCRIPTIONS")?
+                Stdout.line!("OPEN PLAN")?
                 Stdout.line!(Render.render_table(
                     ["id", "date", "type", "detail"],
                     List.map(open_p, |p| [Num.to_str(p.id), p.target_date, p.session_type, p.detail]),
@@ -1426,7 +1426,7 @@ summary_payload! = |path, ftp, zb|
 
     pending = Sqlite.query!({
         path,
-        query: "SELECT COUNT(*) AS n FROM prescriptions WHERE COALESCE(status, 'open') = 'open'",
+        query: "SELECT COUNT(*) AS n FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'",
         bindings: [],
         row: Sqlite.i64("n"),
     })?
@@ -1458,7 +1458,7 @@ summary_payload! = |path, ftp, zb|
         fatigue_atl: latest.atl,
         form_tsb: latest.tsb,
         last_hard_session_date: last_hard,
-        pending_prescriptions: pending,
+        pending_sessions: pending,
         last_7d: {
             tss: zsum7.tss,
             z1_s: zsum7.z1,
@@ -1861,8 +1861,8 @@ load_series! = |days|
     ordered = List.reverse(rows)
     out!(ordered, Render.load_screen)
 
-prescriptions! : {} => Result {} _
-prescriptions! = |{}|
+plan_view! : {} => Result {} _
+plan_view! = |{}|
     path = open_db!({})?
     rows = Sqlite.query_many!({
         path,
@@ -1872,7 +1872,7 @@ prescriptions! = |{}|
                COALESCE(session_type,'') AS session_type, COALESCE(detail,'') AS detail,
                COALESCE(rationale,'') AS rationale, COALESCE(completed_activity_id,0) AS completed_activity_id,
                COALESCE(status,'open') AS status, COALESCE(skipped_reason,'') AS skipped_reason
-        FROM prescriptions ORDER BY target_date DESC, id DESC LIMIT 100
+        FROM planned_sessions ORDER BY target_date DESC, id DESC LIMIT 100
         """,
         bindings: [],
         rows: { Sqlite.decode_record <-
@@ -1914,31 +1914,31 @@ prescriptions! = |{}|
             List.map(ordered, |p| [dow(p.target_date), p.target_date, p.session_type, p.status, p.detail, Num.to_str(p.id)]),
         ))
 
-prescribe! : Str, Str, Str, Str => Result {} _
-prescribe! = |target_date, session_type, detail, rationale|
+plan_add! : Str, Str, Str, Str => Result {} _
+plan_add! = |target_date, session_type, detail, rationale|
     path = open_db!({})?
-    # guard: one open prescription per date — skip or complete the old one first
+    # guard: one open planned session per date — skip or complete the old one first
     existing = Sqlite.query!({
         path,
-        query: "SELECT COALESCE(MAX(id), 0) AS id FROM prescriptions WHERE target_date = :date AND COALESCE(status, 'open') = 'open'",
+        query: "SELECT COALESCE(MAX(id), 0) AS id FROM planned_sessions WHERE target_date = :date AND COALESCE(status, 'open') = 'open'",
         bindings: [{ name: ":date", value: String(target_date) }],
         row: Sqlite.i64("id"),
     })?
     if existing > 0 then
         if json_mode!({}) then
-            print_json!({ error: "date_already_prescribed", existing_id: existing, target_date })
+            print_json!({ error: "date_already_planned", existing_id: existing, target_date })
         else
-            Stdout.line!("${target_date} already has open prescription #${Num.to_str(existing)} — `stride skip ${Num.to_str(existing)} \"reason\"` first")
+            Stdout.line!("${target_date} already has open planned session #${Num.to_str(existing)} — `stride skip ${Num.to_str(existing)} \"reason\"` first")
     else
-        insert_prescription!(path, target_date, session_type, detail, rationale)
+        insert_planned_session!(path, target_date, session_type, detail, rationale)
 
-insert_prescription! : Str, Str, Str, Str, Str => Result {} _
-insert_prescription! = |path, target_date, session_type, detail, rationale|
+insert_planned_session! : Str, Str, Str, Str, Str => Result {} _
+insert_planned_session! = |path, target_date, session_type, detail, rationale|
     Sqlite.execute!({
         path,
         query:
         """
-        INSERT INTO prescriptions (created_at, target_date, session_type, detail, rationale, status)
+        INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status)
         VALUES (:at, :date, :type, :detail, :rationale, 'open')
         """,
         bindings: [
@@ -1951,14 +1951,14 @@ insert_prescription! = |path, target_date, session_type, detail, rationale|
     })?
     new_id = Sqlite.query!({
         path,
-        query: "SELECT MAX(id) AS id FROM prescriptions",
+        query: "SELECT MAX(id) AS id FROM planned_sessions",
         bindings: [],
         row: Sqlite.i64("id"),
     })?
     if json_mode!({}) then
         print_json!({ id: new_id, target_date, session_type })
     else
-        Stdout.line!("prescribed #${Num.to_str(new_id)}: ${session_type} on ${target_date}")
+        Stdout.line!("planned #${Num.to_str(new_id)}: ${session_type} on ${target_date}")
 
 complete! : Str, Str => Result {} _
 complete! = |presc_id_str, activity_id_str|
@@ -1967,27 +1967,27 @@ complete! = |presc_id_str, activity_id_str|
         (Ok(presc_id), Ok(activity_id)) ->
             # SQLite UPDATE matching 0 rows is not an error — check existence
             # ourselves so a typo'd id can't report false success and silently
-            # leave the prescription open / the coaching log out of sync
-            if !(row_exists!(path, "prescriptions", presc_id)?) then
-                err_out!("prescription_not_found", "no prescription #${Num.to_str(presc_id)} — run `stride prescriptions` to see ids")
+            # leave the planned session open / the coaching log out of sync
+            if !(row_exists!(path, "planned_sessions", presc_id)?) then
+                err_out!("session_not_found", "no planned session #${Num.to_str(presc_id)} — run `stride plan` to see ids")
             else if !(row_exists!(path, "activities", activity_id)?) then
                 err_out!("activity_not_found", "no activity ${Num.to_str(activity_id)} in the db — `stride sync` first?")
             else
                 Sqlite.execute!({
                     path,
-                    query: "UPDATE prescriptions SET completed_activity_id = :aid, status = 'done' WHERE id = :pid",
+                    query: "UPDATE planned_sessions SET completed_activity_id = :aid, status = 'done' WHERE id = :pid",
                     bindings: [
                         { name: ":aid", value: Integer(activity_id) },
                         { name: ":pid", value: Integer(presc_id) },
                     ],
                 })?
                 if json_mode!({}) then
-                    print_json!({ completed_prescription: presc_id, activity: activity_id })
+                    print_json!({ completed_session: presc_id, activity: activity_id })
                 else
-                    Stdout.line!("prescription #${Num.to_str(presc_id)} completed by activity ${Num.to_str(activity_id)}")
+                    Stdout.line!("planned session #${Num.to_str(presc_id)} completed by activity ${Num.to_str(activity_id)}")
 
         _ ->
-            err_out!("bad_id", "complete needs numeric ids: complete <prescription_id> <activity_id>")
+            err_out!("bad_id", "complete needs numeric ids: complete <session_id> <activity_id>")
 
 # rest days have no activity to link — `complete <id>` alone closes them. Any
 # other session type still demands its activity id: done means evidence.
@@ -1995,60 +1995,60 @@ complete_rest! : Str => Result {} _
 complete_rest! = |presc_id_str|
     path = open_db!({})?
     when Str.to_i64(presc_id_str) is
-        Err(_) -> err_out!("bad_id", "complete needs a numeric id: complete <prescription_id> [activity_id]")
+        Err(_) -> err_out!("bad_id", "complete needs a numeric id: complete <session_id> [activity_id]")
         Ok(presc_id) ->
-            if !(row_exists!(path, "prescriptions", presc_id)?) then
-                err_out!("prescription_not_found", "no prescription #${Num.to_str(presc_id)} — run `stride prescriptions` to see ids")
+            if !(row_exists!(path, "planned_sessions", presc_id)?) then
+                err_out!("session_not_found", "no planned session #${Num.to_str(presc_id)} — run `stride plan` to see ids")
             else
                 session_type = Sqlite.query!({
                     path,
-                    query: "SELECT COALESCE(session_type, '') AS t FROM prescriptions WHERE id = :pid",
+                    query: "SELECT COALESCE(session_type, '') AS t FROM planned_sessions WHERE id = :pid",
                     bindings: [{ name: ":pid", value: Integer(presc_id) }],
                     row: Sqlite.str("t"),
                 })?
                 if session_type != "rest" then
-                    err_out!("activity_required", "prescription #${Num.to_str(presc_id)} is '${session_type}' — completing it needs the activity id (only rest days close without one)")
+                    err_out!("activity_required", "planned session #${Num.to_str(presc_id)} is '${session_type}' — completing it needs the activity id (only rest days close without one)")
                 else
                     Sqlite.execute!({
                         path,
-                        query: "UPDATE prescriptions SET status = 'done' WHERE id = :pid",
+                        query: "UPDATE planned_sessions SET status = 'done' WHERE id = :pid",
                         bindings: [{ name: ":pid", value: Integer(presc_id) }],
                     })?
                     if json_mode!({}) then
-                        print_json!({ completed_prescription: presc_id, rest: Bool.true })
+                        print_json!({ completed_session: presc_id, rest: Bool.true })
                     else
-                        Stdout.line!("prescription #${Num.to_str(presc_id)} (rest) marked done")
+                        Stdout.line!("planned session #${Num.to_str(presc_id)} (rest) marked done")
 
 skip! : Str, Str => Result {} _
 skip! = |presc_id_str, reason|
     path = open_db!({})?
     when Str.to_i64(presc_id_str) is
         Ok(presc_id) ->
-            if !(row_exists!(path, "prescriptions", presc_id)?) then
-                err_out!("prescription_not_found", "no prescription #${Num.to_str(presc_id)} — run `stride prescriptions` to see ids")
+            if !(row_exists!(path, "planned_sessions", presc_id)?) then
+                err_out!("session_not_found", "no planned session #${Num.to_str(presc_id)} — run `stride plan` to see ids")
             else
                 Sqlite.execute!({
                     path,
-                    query: "UPDATE prescriptions SET status = 'skipped', skipped_reason = :why WHERE id = :pid",
+                    query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why WHERE id = :pid",
                     bindings: [
                         { name: ":why", value: String(reason) },
                         { name: ":pid", value: Integer(presc_id) },
                     ],
                 })?
                 if json_mode!({}) then
-                    print_json!({ skipped_prescription: presc_id, reason })
+                    print_json!({ skipped_session: presc_id, reason })
                 else
-                    Stdout.line!("prescription #${Num.to_str(presc_id)} skipped: ${reason}")
+                    Stdout.line!("planned session #${Num.to_str(presc_id)} skipped: ${reason}")
 
         Err(_) ->
-            err_out!("bad_id", "skip needs a numeric id: skip <prescription_id> \"<reason>\"")
+            err_out!("bad_id", "skip needs a numeric id: skip <session_id> \"<reason>\"")
 
 # ── migrations ───────────────────────────────────────────────────────
 
 # bump when the schema changes; ensure_schema! re-runs migrations when the db's
 # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 # that post-date the original CREATE statements in Schema.roc.)
-schema_version = 4
+schema_version = 5
 
 # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
 # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
@@ -2057,17 +2057,21 @@ metrics_rev = 1
 
 run_migrations! : Str => Result {} _
 run_migrations! = |path|
+    # v5: prescriptions -> planned_sessions ("a coach plans sessions" — the
+    # medical word is gone). MUST run before the CREATEs below, or an empty
+    # planned_sessions would shadow the old data.
+    rename_table_if_exists!(path, "prescriptions", "planned_sessions")?
     Sqlite.execute!({ path, query: Schema.activities, bindings: [] })?
     Sqlite.execute!({ path, query: Schema.metrics, bindings: [] })?
     Sqlite.execute!({ path, query: Schema.daily_load, bindings: [] })?
-    Sqlite.execute!({ path, query: Schema.prescriptions, bindings: [] })?
+    Sqlite.execute!({ path, query: Schema.planned_sessions, bindings: [] })?
     Sqlite.execute!({ path, query: Schema.config, bindings: [] })?
     Sqlite.execute!({ path, query: Schema.streams, bindings: [] })?
     alter_add_column!(path, "ALTER TABLE activities ADD COLUMN weighted_avg_watts REAL")?
     alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_20min_w REAL")?
     alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN ftp_used REAL")?
-    alter_add_column!(path, "ALTER TABLE prescriptions ADD COLUMN status TEXT")?
-    alter_add_column!(path, "ALTER TABLE prescriptions ADD COLUMN skipped_reason TEXT")?
+    alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN status TEXT")?
+    alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN skipped_reason TEXT")?
     # v3: metrics record the HR zone bounds they were computed with, so a zone-
     # config change invalidates + recomputes (like ftp_used does for FTP)
     alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN zones_used TEXT")?
@@ -2077,6 +2081,20 @@ run_migrations! = |path|
     # v2: index the column every date-range filter and the activities sort use
     # (queries now compare a.start_local directly — sargable — instead of substr)
     Sqlite.execute!({ path, query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })
+
+# rename old -> new when old exists and new doesn't (idempotent, data-preserving)
+rename_table_if_exists! : Str, Str, Str => Result {} _
+rename_table_if_exists! = |path, old, new|
+    count = Sqlite.query!({
+        path,
+        query: "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = :old",
+        bindings: [{ name: ":old", value: String(old) }],
+        row: Sqlite.i64("n"),
+    })?
+    if count > 0 then
+        Sqlite.execute!({ path, query: "ALTER TABLE ${old} RENAME TO ${new}", bindings: [] })
+    else
+        Ok({})
 
 # an additive ADD COLUMN. Swallows ONLY "duplicate column" (the expected re-run
 # case); a locked db, disk error, etc. propagate instead of failing silently.

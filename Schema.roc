@@ -1,10 +1,10 @@
-module [activities, metrics, daily_load, prescriptions, config, streams]
+module [activities, metrics, daily_load, planned_sessions, config, streams]
 
 # ── database schema (DDL only — pure strings, no decoders to drift from) ──
 #
 # These are the ORIGINAL CREATE statements. Columns added later live as additive
 # ALTERs in app.roc `run_migrations!` (weighted_avg_watts, best_20min_w, ftp_used,
-# prescriptions.status, prescriptions.skipped_reason) — look there, not here, if a
+# planned_sessions.status, planned_sessions.skipped_reason) — look there, not here, if a
 # column seems missing. (`relative_effort` is REAL as of schema v2; read sites keep
 # the CAST(... AS REAL) so pre-v2 dbs, where it was INTEGER, still decode.)
 
@@ -47,9 +47,9 @@ daily_load =
     )
     """
 
-prescriptions =
+planned_sessions =
     """
-    CREATE TABLE IF NOT EXISTS prescriptions (
+    CREATE TABLE IF NOT EXISTS planned_sessions (
       id                    INTEGER PRIMARY KEY,
       created_at            TEXT,
       target_date           TEXT,

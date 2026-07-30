@@ -30,7 +30,7 @@ $ stride summary
 
   last 7 days: 193 TSS — 37% easy / 63% moderate / 0% hard
   last hard session (5+ min Z4/Z5): 2025-10-08
-  open prescriptions: 4
+  open planned sessions: 4
 ```
 
 Every number above was computed locally, from raw activity streams, by pure
@@ -160,8 +160,8 @@ stride week                                       # everything needed to plan a 
 | `pz` | *What watts is each power zone for me?* The 7 Coggan/Peloton power zones as watt ranges derived from your FTP (they shift when FTP changes). The targets you'd set on a Power Zone ride. |
 | `progress [date]` | *Am I improving on this workout?* Resolves that day's workout(s) — bare `progress` uses your latest — and shows every comparable instance chronologically, with **Efficiency Factor** (normalized power ÷ avg HR — watts per heartbeat) and a trend verdict. Climbing EF = fitter. Named classes match exactly; auto-named rides ("Morning Ride" = different routes) compare only rides within ±10% of the anchor's distance. |
 | `load [days]` | *Is my training working over time?* Daily fitness/fatigue/form rows for windows ≤14 days; Monday-aligned **weekly rollups** (sessions, load, fitness trend) for longer windows (default 90). Ends with today's form verdict. |
-| `week` | *What should this week look like?* One call bundling `summary` + open prescriptions + the last 14 days of activities — the complete planning context. |
-| `prescriptions` | *What was planned, and did it happen?* The log (most recent 100) in calendar order with status: open / done / skipped. |
+| `week` | *What should this week look like?* One call bundling `summary` + the open plan + the last 14 days of activities — the complete planning context. |
+| `plan` | *What was planned, and did it happen?* The log (most recent 100) in calendar order with status: open / done / skipped. |
 | `activity <id>` | *How did one session actually go?* Deep view of a single activity: load, intensity, zone minutes, hard time, and power bests (1/3/5/20 min) computed from its streams. The session-review tool. |
 | `stats` | *What have I done, ever and this year?* Career and year-to-date totals per sport: sessions, hours, distance. |
 
@@ -169,9 +169,9 @@ stride week                                       # everything needed to plan a 
 
 | Command | What it does |
 | --- | --- |
-| `prescribe <date> <type> <detail> <rationale>` | Records a planned session. `type` is the intensity intent (vo2max, threshold, endurance, recovery, strength, rest); the sport goes in `detail`. Refuses a date that already has an open prescription. |
-| `complete <id> <activity_id>` | Marks a prescription done, linked to the activity that fulfilled it. Refuses ids that don't exist. |
-| `skip <id> <reason>` | Marks a prescription skipped, with the reason — so adherence history stays honest. |
+| `plan <date> <type> <detail> <rationale>` | Records a planned session. `type` is the intensity intent (vo2max, threshold, endurance, recovery, strength, rest); the sport goes in `detail`. Refuses a date that already has an open planned session. |
+| `complete <id> [activity_id]` | Marks a planned session done, linked to the activity that fulfilled it (rest days need no activity). Refuses ids that don't exist. |
+| `skip <id> <reason>` | Marks a planned session skipped, with the reason — so adherence history stays honest. |
 
 Every query command prints **human tables** in a terminal and **JSON** when
 `STRIDE_FORMAT=json` (agent environments are detected automatically). Malformed
@@ -200,17 +200,17 @@ The repo ships an agent skill at
 [`.claude/skills/stride/`](.claude/skills/stride/SKILL.md) that compatible LLM
 coding agents pick up automatically when run inside this repo. The LLM computes
 **none** of the metrics — it reads the engine's JSON, reasons about it in natural
-language, and writes its session prescriptions back through the coaching-log
+language, and writes its planned sessions back through the coaching-log
 commands:
 
 1. `stride sync && stride analyze`
 2. `stride week` → reason about polarization, zone gaps, form, sport balance
-3. reconcile: match open prescriptions to completed activities → `stride complete`
-4. plan: `stride prescribe` the coming week (the binary refuses double-booked dates)
+3. reconcile: match the open plan to completed activities → `stride complete`
+4. plan: `stride plan` the coming week (the binary refuses double-booked dates)
 5. sessions that didn't happen get `stride skip <id> "<reason>"` — adherence
    history stays honest
 
-The prescriptions table is what makes _"next session adapts"_ real: the coach can
+The planned-sessions table is what makes _"next session adapts"_ real: the coach can
 see what it asked for and what actually happened. Without an LLM, everything
 still works — the human tables carry the same numbers, legends, and verdicts.
 
@@ -220,10 +220,10 @@ still works — the human tables carry the same numbers, legends, and verdicts.
 Strava REST v3 ──▶ auth/sync ──▶ SQLite (~/.stride/db.sqlite) ──▶ analyze ──▶ queries
                    OAuth paste     activities · streams ·          pure math    JSON | tables
                    flow, tokens    metrics · daily_load ·          in Roc
-                   + creds in db   prescriptions · config          modules
+                   + creds in db   plan · config          modules
                                                                         ▲
                                               the LLM coach ────────────┘
-                                              reads summary/week, prescribes,
+                                              reads summary/week, plans,
                                               marks sessions done/skipped
 ```
 
@@ -276,7 +276,7 @@ just install   # build + symlink into ~/.local/bin
   safeguard.
 - **Tests:** 54 pure `expect`s + an end-to-end suite (`just e2e`) that runs the real
   binary against a sandboxed `HOME` with seeded activities of known math (power TSS
-  exactly 100, hrTSS exactly 55, FTP rescale 100→400, full prescription lifecycle,
+  exactly 100, hrTSS exactly 55, FTP rescale 100→400, full plan lifecycle,
   error contracts, corrupt-data resilience).
 - **CI:** GitHub Actions on every push runs the same `just test` (Linux needs
   `--linker=legacy`, roc issue #3609; the toolchain tarball is checksum-pinned).

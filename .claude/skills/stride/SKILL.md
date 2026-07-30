@@ -24,20 +24,20 @@ Never do training math yourself: read stride's numbers, add judgment.
 2. `stride analyze` — compute metrics for new/invalidated activities (idempotent;
    prints count + form verdict — the full report lives in `summary`). If any stored
    streams won't decode it says "N had unreadable stream data" (they retry next sync).
-3. **`stride week`** — THE weekly-planning payload: summary + open prescriptions +
+3. **`stride week`** — THE weekly-planning payload: summary + the open plan +
    last-14d activities in one call. Use `stride summary` alone for quick check-ins.
 4. Reason: polarization, zone gaps, form (TSB), FTP staleness, sport balance —
-   AND reconcile open prescriptions against recent activities (match by date/type,
-   then `stride complete <prescription_id> <activity_id>` for each match).
-5. Prescribe the coming week: `stride prescribe <YYYY-MM-DD> <type> "<detail>" "<rationale>"`
+   AND reconcile the open plan against recent activities (match by date/type,
+   then `stride complete <session_id> <activity_id>` for each match).
+5. Plan the coming week: `stride plan <YYYY-MM-DD> <type> "<detail>" "<rationale>"`
    - `type` is the INTENSITY INTENT, not the sport: vo2max | threshold | endurance |
      recovery | strength | rest (free-form ok). The sport/modality goes in `detail`
      ("easy row...", "outdoor ride..."): type answers *why/how hard*, detail answers
      *what exactly*.
-   - the binary REFUSES a date that already has an open prescription
-     (`{"error":"date_already_prescribed"}`) — `stride skip <id> "<reason>"` the old
-     one first if the plan changed, then re-prescribe.
-   - `complete`/`skip` also REFUSE unknown ids (`{"error":"prescription_not_found"}`
+   - the binary REFUSES a date that already has an open planned session
+     (`{"error":"date_already_planned"}`) — `stride skip <id> "<reason>"` the old
+     one first if the plan changed, then re-plan.
+   - `complete`/`skip` also REFUSE unknown ids (`{"error":"session_not_found"}`
      / `activity_not_found` / `bad_id`) — a typo can't silently desync the log, so
      check for an error field instead of assuming success.
    - a session that didn't happen: `stride skip <id> "<reason>"` (keeps adherence
@@ -61,16 +61,16 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
 
 | Command | Returns |
 |---|---|
-| `stride week` | **planning bundle**: `summary` + `recent_activities_14d` + `open_prescriptions` |
-| `stride summary` | as_of, CTL/ATL/TSB, `last_7d` + `last_28d` zone blocks (seconds + easy/moderate/hard %), `last_hard_session_date` ('' = none on record), `pending_prescriptions`, FTP (config vs estimated, `stale` + `detraining` flags), HR zone bounds, per-sport 28d breakdown |
+| `stride week` | **planning bundle**: `summary` + `recent_activities_14d` + `open_sessions` |
+| `stride summary` | as_of, CTL/ATL/TSB, `last_7d` + `last_28d` zone blocks (seconds + easy/moderate/hard %), `last_hard_session_date` ('' = none on record), `pending_sessions`, FTP (config vs estimated, `stale` + `detraining` flags), HR zone bounds, per-sport 28d breakdown |
 | `stride activities [N] [sport]` | last N activities (default 30), optionally filtered by sport (case-insensitive, e.g. `activities 10 rowing`) — date, sport, tss, np_w, intensity, z1–z5 seconds, relative_effort, avg_hr |
 | `stride top <metric> [n] [sport]` | best sessions ranked by `hr`, `tss`, `power`, `intensity`, `distance`, `time`, or `output` (kJ) — the leaderboard to `activities`' timeline |
 | `stride progress [date]` | "am I improving on this workout?": `{ anchor_date, groups: [{ name, sessions: [...] }] }` — every comparable instance of that day's workout (bare = latest EF-capable), each with `ef` (NP/avg HR). In-band errors: `no_workout_on_date`, `no_ef_data` (workout exists, lacks power/HR), `no_ef_workouts` |
 | `stride zones` (alias `pz`) | the 7 power zones as watt ranges from configured FTP: `{ ftp, zones: [{ z, name, lo_w, hi_w }] }` (0 = open-ended bound) |
-| `stride activity <id>` | one session in depth: flat z1_s–z5_s + hard_s, hard minutes, power bests (1/3/5/20min) from streams, plus `streams_unreadable` (true = the 0s are corrupt data, NOT a real zero) — use to review whether a prescribed session hit its targets before `complete`-ing it |
+| `stride activity <id>` | one session in depth: flat z1_s–z5_s + hard_s, hard minutes, power bests (1/3/5/20min) from streams, plus `streams_unreadable` (true = the 0s are corrupt data, NOT a real zero) — use to review whether a planned session hit its targets before `complete`-ing it |
 | `stride stats` | career + year-to-date totals per sport (sessions, hours, km) |
 | `stride load [days]` | daily tss/ctl/atl/tsb series, chronological (default 90) |
-| `stride prescriptions` | prescription log with `status` (open/done/skipped) + `skipped_reason` |
+| `stride plan` | planned-session log with `status` (open/done/skipped) + `skipped_reason` |
 
 ## Conventions & gotchas
 
@@ -96,7 +96,7 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
   (common on Peloton strength workouts) get near-0 TSS — that's honest "no data", not
   zero effort. Weigh strength by session count, not TSS. `avg_hr` in `activities` output
   is raw (unfiltered).
-- `created_at` in prescriptions is an ISO datetime string (UTC, e.g. `2026-07-27T18:04:22Z`).
+- `created_at` in planned sessions is an ISO datetime string (UTC, e.g. `2026-07-27T18:04:22Z`).
 - Streams backfill is rate-capped at 60/sync; older activities gain zone data over
   repeated syncs. `sqlite3 ~/.stride/db.sqlite "SELECT COUNT(*) FROM streams"` shows progress.
 

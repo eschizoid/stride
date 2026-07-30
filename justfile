@@ -151,34 +151,34 @@ e2e:
     [ "$rev" = "1" ] || fail "recomputed rows must carry the current metrics_rev, got '$rev'"
     echo "metrics_rev invalidation OK (algorithm changes recompute)"
 
-    # ── prescription lifecycle: dedup, skip, re-prescribe, done ──────
-    out=$("$STRIDE_BIN" prescribe 2099-01-01 vo2max "d" "r"); grep -q '"id":1' <<<"$out" || fail "prescribe"
-    out=$("$STRIDE_BIN" prescribe 2099-01-01 threshold "d" "r"); grep -q date_already_prescribed <<<"$out" || fail "dedup guard"
-    out=$("$STRIDE_BIN" skip 1 "sick"); grep -q skipped_prescription <<<"$out" || fail "skip"
-    out=$("$STRIDE_BIN" prescribe 2099-01-01 threshold "d2" "r2"); grep -q '"id":2' <<<"$out" || fail "re-prescribe after skip"
-    out=$("$STRIDE_BIN" complete 2 101); grep -q completed_prescription <<<"$out" || fail "complete"
-    "$STRIDE_BIN" prescriptions | python3 -c '
+    # ── plan lifecycle: dedup, skip, re-plan, done ───────────────────
+    out=$("$STRIDE_BIN" plan 2099-01-01 vo2max "d" "r"); grep -q '"id":1' <<<"$out" || fail "plan add"
+    out=$("$STRIDE_BIN" plan 2099-01-01 threshold "d" "r"); grep -q date_already_planned <<<"$out" || fail "dedup guard"
+    out=$("$STRIDE_BIN" skip 1 "sick"); grep -q '"skipped_session"' <<<"$out" || fail "skip"
+    out=$("$STRIDE_BIN" plan 2099-01-01 threshold "d2" "r2"); grep -q '"id":2' <<<"$out" || fail "re-plan after skip"
+    out=$("$STRIDE_BIN" complete 2 101); grep -q '"completed_session"' <<<"$out" || fail "complete"
+    "$STRIDE_BIN" plan | python3 -c '
     import json, sys
     ps = {p["id"]: p for p in json.load(sys.stdin)}
     assert ps[1]["status"] == "skipped" and ps[1]["skipped_reason"] == "sick"
     assert ps[2]["status"] == "done" and ps[2]["completed_activity_id"] == 101
-    print("prescription lifecycle OK (open -> skipped / done)")
+    print("plan lifecycle OK (open -> skipped / done)")
     '
     # complete/skip must refuse ids that don't exist (no false success)
-    out=$("$STRIDE_BIN" complete 999 101); grep -q prescription_not_found <<<"$out" || fail "complete nonexistent prescription"
+    out=$("$STRIDE_BIN" complete 999 101); grep -q session_not_found <<<"$out" || fail "complete nonexistent session"
     out=$("$STRIDE_BIN" complete 2 88888); grep -q activity_not_found <<<"$out" || fail "complete nonexistent activity"
-    out=$("$STRIDE_BIN" skip 999 "x"); grep -q prescription_not_found <<<"$out" || fail "skip nonexistent prescription"
+    out=$("$STRIDE_BIN" skip 999 "x"); grep -q session_not_found <<<"$out" || fail "skip nonexistent session"
     out=$("$STRIDE_BIN" complete abc 101); grep -q bad_id <<<"$out" || fail "complete non-numeric id"
     # rest days close WITHOUT an activity; anything else still demands evidence
-    out=$("$STRIDE_BIN" prescribe 2099-01-02 rest "planned rest" "recovery"); grep -q '"id":3' <<<"$out" || fail "prescribe rest"
-    out=$("$STRIDE_BIN" prescribe 2099-01-03 vo2max "intervals" "stimulus"); grep -q '"id":4' <<<"$out" || fail "prescribe vo2max"
+    out=$("$STRIDE_BIN" plan 2099-01-02 rest "planned rest" "recovery"); grep -q '"id":3' <<<"$out" || fail "plan rest"
+    out=$("$STRIDE_BIN" plan 2099-01-03 vo2max "intervals" "stimulus"); grep -q '"id":4' <<<"$out" || fail "plan vo2max"
     out=$("$STRIDE_BIN" complete 4); grep -q activity_required <<<"$out" || fail "non-rest bare complete must refuse"
     out=$("$STRIDE_BIN" complete 3); grep -q '"rest":true' <<<"$out" || fail "rest bare complete"
-    st=$(sqlite3 "$DB" "SELECT status FROM prescriptions WHERE id=3;"); [ "$st" = "done" ] || fail "rest must be done, got '$st'"
+    st=$(sqlite3 "$DB" "SELECT status FROM planned_sessions WHERE id=3;"); [ "$st" = "done" ] || fail "rest must be done, got '$st'"
     "$STRIDE_BIN" skip 4 "cleanup" >/dev/null
     echo "rest-day complete OK (bare complete for rest only)"
-    "$STRIDE_BIN" summary | python3 -c 'import json,sys; assert json.load(sys.stdin)["pending_prescriptions"] == 0; print("pending count OK")'
-    "$STRIDE_BIN" week | python3 -c 'import json,sys; assert json.load(sys.stdin)["open_prescriptions"] == []; print("week payload OK")'
+    "$STRIDE_BIN" summary | python3 -c 'import json,sys; assert json.load(sys.stdin)["pending_sessions"] == 0; print("pending count OK")'
+    "$STRIDE_BIN" week | python3 -c 'import json,sys; assert json.load(sys.stdin)["open_sessions"] == []; print("week payload OK")'
 
     # ── query commands: activities (+ sport filter), load, stats ─────
     "$STRIDE_BIN" activities | python3 -c '
@@ -373,13 +373,13 @@ e2e:
     echo "import OK (export dir + zip + idempotent + honest errors)"
 
     # ── human output mode ────────────────────────────────────────────
-    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" prescriptions); grep -Eq "date +type +status" <<<"$out" || fail "human table header"
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" plan); grep -Eq "date +type +status" <<<"$out" || fail "human table header"
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" activities); grep -Eq "date +sport +name" <<<"$out" || fail "activities header"
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" load 7); grep -q "→ today: form" <<<"$out" || fail "load verdict line"
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" stats); grep -q "ALL TIME" <<<"$out" || fail "stats human"
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" activity 101); grep -Eq "^zones +Z1" <<<"$out" || fail "activity human zones row"
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" summary); grep -q "stride report" <<<"$out" || fail "human summary"
-    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" week); grep -q "OPEN PRESCRIPTIONS" <<<"$out" || fail "human week bundle"
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" week); grep -q "OPEN PLAN" <<<"$out" || fail "human week bundle"
     # STRIDE_FORMAT is case/space-insensitive: uppercase still selects JSON
     STRIDE_FORMAT=JSON "$STRIDE_BIN" summary | python3 -c 'import json,sys; json.load(sys.stdin); print("uppercase STRIDE_FORMAT OK")'
     echo "human mode OK"
