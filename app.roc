@@ -1774,7 +1774,8 @@ progress_section = |name, rows, asked|
     pct = if t.early > 0.0 then (t.late - t.early) / t.early * 100.0 else 0.0
     label =
         if pct > 5.0 then "improving" else if pct < -5.0 then "declining" else "holding steady"
-    verdict = "→ EF ${Render.fmt2(t.early)} → ${Render.fmt2(t.late)} over ${Num.to_str(List.len(rows))} sessions — ${label} (${Render.fmt0(pct)}%)"
+    avg_ef = List.walk(rows, 0.0, |acc, r| acc + r.ef) / Num.to_f64(Num.max(List.len(rows), 1))
+    verdict = "→ EF ${Render.fmt2(t.early)} → ${Render.fmt2(t.late)} (avg ${Render.fmt2(avg_ef)}) over ${Num.to_str(List.len(rows))} sessions — ${label} (${Render.fmt0(pct)}%)"
     "── ${name} ──\n${table}\n\n${verdict}${last_vs_best(rows)}"
 
 # "last vs best" line: how the most recent session compares to the all-time best EF.
