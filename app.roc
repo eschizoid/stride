@@ -1721,8 +1721,8 @@ progress! = |date|
     else if List.is_empty(groups) then
         Stdout.line!("no workout with power + HR found on ${date}")
     else
-        body = Str.join_with(List.map(groups, |g| progress_section(g.name, g.rows)), "\n\n")
-        Stdout.line!("${body}\n\nef = normalized power / avg HR (watts per heartbeat) — climbing = fitter")
+        body = Str.join_with(List.map(groups, |g| progress_section(g.name, g.rows, date)), "\n\n")
+        Stdout.line!("${body}\n\nef = normalized power / avg HR (watts per heartbeat) — climbing = fitter\nbar = ef relative to the best session; < marks the asked date")
 
 # split rows (already sorted by name) into per-workout runs
 group_progress : List ProgressRow -> List { name : Str, rows : List ProgressRow }
@@ -1751,15 +1751,21 @@ anchor_filter = |g, date|
                 Ok({ name: "${g.name} (~${Render.fmt1(anchor.distance_m / 1000.0)} km rides)", rows: kept })
 
 # one workout's table + EF trend verdict as a string
-progress_section : Str, List ProgressRow -> Str
-progress_section = |name, rows|
+progress_section : Str, List ProgressRow, Str -> Str
+progress_section = |name, rows, asked|
+    max_ef = List.walk(rows, 0.0, |acc, r| Num.max(acc, r.ef))
+    bar = |r|
+        n = if max_ef > 0.0 then Num.round(r.ef / max_ef * 12.0) else 0
+        mark = if r.date == asked then " <" else ""
+        "${Str.repeat("#", n)}${mark}"
     table = Render.render_table(
-        ["date", "np", "hr", "ef", "kj", "tss"],
+        ["date", "np", "hr", "ef", "", "kj", "tss"],
         List.map(rows, |r| [
             r.date,
             Render.fmt0(r.np_w),
             Render.fmt0(r.avg_hr),
             Render.fmt2(r.ef),
+            bar(r),
             Render.fmt0(r.output_kj),
             Render.fmt0(r.tss),
         ]),
