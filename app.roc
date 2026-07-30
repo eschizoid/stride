@@ -25,6 +25,7 @@ import pf.Http
 import pf.Utc
 import pf.Sleep
 import pf.Sqlite
+import pf.Cmd
 import json.Json
 import json.Option exposing [Option]
 import Metrics
@@ -230,6 +231,17 @@ TokenResp : { access_token : Str, refresh_token : Str, expires_at : I64 }
 
 token_url = "https://www.strava.com/oauth/token"
 
+# best-effort browser launch: macOS `open`, then Linux `xdg-open`. Silent on
+# failure — the URL is always printed as the manual fallback.
+open_browser! : Str => Result {} _
+open_browser! = |url|
+    when Cmd.exec!("open", [url]) is
+        Ok({}) -> Ok({})
+        Err(_) ->
+            when Cmd.exec!("xdg-open", [url]) is
+                Ok({}) -> Ok({})
+                Err(_) -> Ok({})
+
 # a stored token field: absent -> NotAuthed (genuine); db failure propagates
 token_field! : Str, Str => Result Str _
 token_field! = |path, key|
@@ -251,10 +263,11 @@ auth! = |{}|
     client_id = client_cred!(path, "STRAVA_CLIENT_ID", "strava_client_id")?
     client_secret = client_cred!(path, "STRAVA_CLIENT_SECRET", "strava_client_secret")?
     url = "https://www.strava.com/oauth/authorize?client_id=${client_id}&response_type=code&redirect_uri=http://localhost&approval_prompt=auto&scope=read,activity:read_all,profile:read_all,profile:write"
-    Stdout.line!("1) Open this URL in your browser and click Authorize:")?
+    Stdout.line!("1) Click Authorize in the browser tab that just opened (URL below if it didn't):")?
     Stdout.line!("")?
     Stdout.line!("   ${url}")?
     Stdout.line!("")?
+    open_browser!(url)?
     Stdout.line!("2) You'll land on a localhost page that fails to load — that's expected.")?
     Stdout.line!("   Copy the code=XXXX value from the address bar and paste it here.")?
     Stdout.line!("")?
