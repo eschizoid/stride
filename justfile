@@ -249,6 +249,24 @@ e2e:
     [ "$rows" -lt 400 ] || fail "malformed date must not explode daily_load (got $rows rows)"
     echo "count-validation + bad-date resilience OK ($rows daily_load rows)"
 
+    # ── progress: repeated-workout trend (EF = NP/HR per instance) ───
+    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (201,'Test Class','Ride','2025-01-01T10:00:00Z',3600,20000,180,180,150);"
+    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (202,'Test Class','Ride','2025-06-01T10:00:00Z',3600,20000,210,210,150);"
+    "$STRIDE_BIN" analyze >/dev/null
+    "$STRIDE_BIN" progress "Test Class" | python3 -c '
+    import json, sys
+    rows = json.load(sys.stdin)
+    assert len(rows) == 2, f"expected 2 instances of the repeated class, got {len(rows)}"
+    assert rows[0]["date"] < rows[1]["date"], "must be chronological"
+    # EF = NP/HR: 180/150 = 1.20, then 210/150 = 1.40 (improving)
+    efs = [round(r["ef"], 3) for r in rows]
+    assert abs(rows[0]["ef"] - 1.20) < 0.01 and abs(rows[1]["ef"] - 1.40) < 0.01, "EF wrong: " + str(efs)
+    print("progress OK (EF per instance, chronological)")
+    '
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" progress "Nonexistent Class")
+    grep -q "no repeated sessions" <<<"$out" || fail "progress on unknown workout must say so, not crash"
+    echo "progress OK (trend + empty guard)"
+
     # ── human output mode ────────────────────────────────────────────
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" prescriptions); grep -Eq "date +type +status" <<<"$out" || fail "human table header"
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" activities); grep -Eq "date +sport +name" <<<"$out" || fail "activities header"

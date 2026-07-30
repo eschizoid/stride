@@ -21,6 +21,7 @@ module [
     epoch_to_iso,
     day_of_week,
     power_zones,
+    trend_ends,
 ]
 
 # ── pure training-science math. no I/O, fully unit-tested. ──────────
@@ -271,6 +272,19 @@ power_zones = |ftp|
         { z: "Z6", name: "anaerobic", lo_w: ftp * 1.21, hi_w: ftp * 1.50 },
         { z: "Z7", name: "neuromuscular", lo_w: ftp * 1.51, hi_w: 0.0 },
     ]
+
+# ── trend of a chronological series (for "am I improving?" verdicts) ─
+# average of the first third vs the last third (k = max(1, n/3) points each end),
+# so one outlier day doesn't decide the verdict. Empty -> zeros.
+trend_ends : List F64 -> { early : F64, late : F64 }
+trend_ends = |xs|
+    n = List.len(xs)
+    if n == 0 then
+        { early: 0.0, late: 0.0 }
+    else
+        k = Num.max(1, n // 3)
+        avg = |ys| if List.is_empty(ys) then 0.0 else List.sum(ys) / Num.to_f64(List.len(ys))
+        { early: avg(List.take_first(xs, k)), late: avg(List.take_last(xs, k)) }
 
 # ── HR sample validity ──────────────────────────────────────────────
 # Below 35 or above 220 bpm is not physiology, it's a dropped strap / noise.
@@ -567,6 +581,16 @@ expect
     !(c.stale) and !(c.detraining)
 
 expect valid_hr(150.0) and !(valid_hr(20.0)) and !(valid_hr(230.0)) and valid_hr(35.0) and valid_hr(220.0)
+
+# trend_ends: first third avg vs last third avg (rising series -> late > early)
+expect
+    e = trend_ends([1.0, 1.0, 1.0, 2.0, 2.0, 2.0])
+    Num.abs(e.early - 1.0) < 0.001 and Num.abs(e.late - 2.0) < 0.001
+
+# single point: early == late == that point (no trend)
+expect
+    e = trend_ends([1.5])
+    Num.abs(e.early - 1.5) < 0.001 and Num.abs(e.late - 1.5) < 0.001
 
 # power zones: 7 zones; Z4 (threshold) is 91-105% FTP
 expect
