@@ -263,6 +263,13 @@ e2e:
     assert abs(rows[0]["ef"] - 1.20) < 0.01 and abs(rows[1]["ef"] - 1.40) < 0.01, "EF wrong: " + str(efs)
     print("progress OK (EF per instance, chronological)")
     '
+    # by-date: a date resolves to that day's workout (no need to type the name)
+    "$STRIDE_BIN" progress 2025-06-01 | python3 -c '
+    import json, sys
+    rows = json.load(sys.stdin)
+    assert len(rows) == 2 and all(r["name"] == "Test Class" for r in rows), "date must resolve to that day workout: " + str(rows)
+    print("progress by-date OK (date -> workout)")
+    '
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" progress "Nonexistent Class")
     grep -q "no repeated sessions" <<<"$out" || fail "progress on unknown workout must say so, not crash"
     echo "progress OK (trend + empty guard)"

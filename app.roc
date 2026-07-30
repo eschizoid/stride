@@ -62,8 +62,9 @@ help_text =
         top <metric> [n] [sport]     best sessions ranked by a metric (default 10):
                                      hr | tss | power | intensity | distance | time | output
         pz                           power-zone watt ranges (7 zones) from your FTP
-        progress <name>              am I improving on a repeated workout? every
-                                     instance by exact name + EF trend (watts/HR)
+        progress <name|date>         am I improving on a repeated workout? every
+                                     instance + EF trend (watts/HR). Pass a class
+                                     name, or a date to resolve that day's workout
         activity <id>           one session in depth: zones, power bests, hard minutes
         load [days]             CTL/ATL/TSB series: daily <=14 days, weekly beyond (default 90)
         prescriptions           prescription log (open/done/skipped), calendar order
@@ -1667,26 +1668,33 @@ pz! = |{}|
                     List.map(zones, |z| [z.z, z.name, range(z)]),
                 ))
 
-# "am I improving on THIS workout?" — every instance of a repeated session (matched
-# by exact name), chronological, with Efficiency Factor (NP/HR) as the fitness tell.
+ProgressRow : { name : Str, date : Str, np_w : F64, avg_hr : F64, ef : F64, output_kj : F64, tss : F64 }
+
+# "am I improving on THIS workout?" — every instance of a repeated session, chronological,
+# with Efficiency Factor (NP/HR) as the fitness tell. The arg is EITHER an exact workout
+# name OR a date (YYYY-MM-DD): a date resolves to whatever workout(s) were done that day,
+# so you don't have to type the class name — `progress 2026-07-24`.
 progress! : Str => Result {} _
-progress! = |name|
+progress! = |arg|
     path = open_db!({})?
     rows = Sqlite.query_many!({
         path,
         query:
         """
-        SELECT substr(a.start_local, 1, 10) AS date,
+        SELECT a.name AS name, substr(a.start_local, 1, 10) AS date,
                CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
                CAST(COALESCE(a.avg_watts * a.moving_time / 1000.0, 0) AS REAL) AS output_kj,
                CAST(COALESCE(m.tss,0) AS REAL) AS tss
         FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
-        WHERE a.name = :name AND a.avg_hr > 0 AND m.normalized_power > 0
-        ORDER BY a.start_local
+        WHERE (a.name = :arg
+               OR a.name IN (SELECT name FROM activities WHERE substr(start_local, 1, 10) = :arg))
+          AND a.avg_hr > 0 AND m.normalized_power > 0
+        ORDER BY a.name, a.start_local
         """,
-        bindings: [{ name: ":name", value: String(name) }],
+        bindings: [{ name: ":arg", value: String(arg) }],
         rows: { Sqlite.decode_record <-
+            name: Sqlite.str("name"),
             date: Sqlite.str("date"),
             np_w: Sqlite.f64("np_w"),
             avg_hr: Sqlite.f64("avg_hr"),
@@ -1694,7 +1702,9 @@ progress! = |name|
             tss: Sqlite.f64("tss"),
         },
     })?
+    with_ef : List ProgressRow
     with_ef = List.map(rows, |r| {
+        name: r.name,
         date: r.date,
         np_w: r.np_w,
         avg_hr: r.avg_hr,
@@ -1705,27 +1715,44 @@ progress! = |name|
     if json_mode!({}) then
         print_json!(with_ef)
     else if List.is_empty(with_ef) then
-        Stdout.line!("no repeated sessions with power + HR found for \"${name}\"")
+        Stdout.line!("no repeated sessions with power + HR found for \"${arg}\"")
     else
-        Stdout.line!(Render.render_table(
-            ["date", "np", "hr", "ef", "kj", "tss"],
-            List.map(with_ef, |r| [
-                r.date,
-                Render.fmt0(r.np_w),
-                Render.fmt0(r.avg_hr),
-                Render.fmt2(r.ef),
-                Render.fmt0(r.output_kj),
-                Render.fmt0(r.tss),
-            ]),
-        ))?
-        t = Metrics.trend_ends(List.map(with_ef, |r| r.ef))
-        pct = if t.early > 0.0 then (t.late - t.early) / t.early * 100.0 else 0.0
-        label =
-            if pct > 5.0 then "improving" else if pct < -5.0 then "declining" else "holding steady"
-        Stdout.line!("")?
-        Stdout.line!("→ EF ${Render.fmt2(t.early)} → ${Render.fmt2(t.late)} over ${Num.to_str(List.len(with_ef))} sessions — ${label} (${Render.fmt0(pct)}%)")?
-        Stdout.line!("")?
-        Stdout.line!("ef = normalized power / avg HR (watts per heartbeat) — climbing = fitter")
+        groups = group_progress(with_ef)
+        multi = List.len(groups) > 1
+        body = Str.join_with(List.map(groups, |g| progress_section(g.name, g.rows, multi)), "\n\n")
+        Stdout.line!("${body}\n\nef = normalized power / avg HR (watts per heartbeat) — climbing = fitter")
+
+# split rows (already sorted by name) into per-workout runs
+group_progress : List ProgressRow -> List { name : Str, rows : List ProgressRow }
+group_progress = |rows|
+    List.walk(rows, [], |acc, r|
+        when List.last(acc) is
+            Ok(g) if g.name == r.name ->
+                List.set(acc, List.len(acc) - 1, { name: g.name, rows: List.append(g.rows, r) })
+
+            _ -> List.append(acc, { name: r.name, rows: [r] }))
+
+# one workout's table + EF trend verdict as a string (name header only when >1 group)
+progress_section : Str, List ProgressRow, Bool -> Str
+progress_section = |name, rows, multi|
+    table = Render.render_table(
+        ["date", "np", "hr", "ef", "kj", "tss"],
+        List.map(rows, |r| [
+            r.date,
+            Render.fmt0(r.np_w),
+            Render.fmt0(r.avg_hr),
+            Render.fmt2(r.ef),
+            Render.fmt0(r.output_kj),
+            Render.fmt0(r.tss),
+        ]),
+    )
+    t = Metrics.trend_ends(List.map(rows, |r| r.ef))
+    pct = if t.early > 0.0 then (t.late - t.early) / t.early * 100.0 else 0.0
+    label =
+        if pct > 5.0 then "improving" else if pct < -5.0 then "declining" else "holding steady"
+    verdict = "→ EF ${Render.fmt2(t.early)} → ${Render.fmt2(t.late)} over ${Num.to_str(List.len(rows))} sessions — ${label} (${Render.fmt0(pct)}%)"
+    header = if multi then "── ${name} ──\n" else ""
+    "${header}${table}\n\n${verdict}"
 
 load_series! : U64 => Result {} _
 load_series! = |days|
