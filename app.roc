@@ -250,7 +250,7 @@ auth! = |{}|
     # env vars for first-time setup; re-auth falls back to the creds stored last time
     client_id = client_cred!(path, "STRAVA_CLIENT_ID", "strava_client_id")?
     client_secret = client_cred!(path, "STRAVA_CLIENT_SECRET", "strava_client_secret")?
-    url = "https://www.strava.com/oauth/authorize?client_id=${client_id}&response_type=code&redirect_uri=http://localhost&approval_prompt=auto&scope=read,activity:read_all,profile:write"
+    url = "https://www.strava.com/oauth/authorize?client_id=${client_id}&response_type=code&redirect_uri=http://localhost&approval_prompt=auto&scope=read,activity:read_all,profile:read_all,profile:write"
     Stdout.line!("1) Open this URL in your browser and click Authorize:")?
     Stdout.line!("")?
     Stdout.line!("   ${url}")?
