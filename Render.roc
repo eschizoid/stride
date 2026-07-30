@@ -1,4 +1,4 @@
-module [render_table, fmt0, fmt1, fmt2, mins, progress_group_label, progress_section]
+module [render_table, fmt0, fmt1, fmt2, mins, progress_group_label, progress_section, load_screen, summary_screen]
 
 import Metrics
 
@@ -191,3 +191,144 @@ expect
     pr = |date, ef| { name: "X", date, distance_m: 0.0, np_w: ef * 100.0, avg_hr: 100.0, ef, output_kj: 0.0, tss: 0.0 }
     s = progress_section("X", [pr("2025-01-01", 1.5), pr("2025-08-01", 1.2)], "2025-08-01")
     Str.contains(s, "···") and Str.contains(s, "◀ asked") and Str.contains(s, "below your best")
+
+
+# ── load command screen ─────────────────────────────────────────────
+
+# daily fitness table for short windows; Mon-aligned weekly rollup beyond 14 days
+load_screen : List { day : Str, tss : F64, ctl : F64, atl : F64, tsb : F64 } -> Str
+load_screen = |ordered|
+    verdict =
+        when List.last(ordered) is
+            Ok(today) -> "→ today: form ${fmt0(today.tsb)} — ${Metrics.form_label(today.tsb)}"
+            Err(_) -> ""
+    if List.len(ordered) > 14 then
+        # long windows: weekly rollup (Mon-aligned) — trajectory, not noise
+        day_loads = List.map(ordered, |d| {
+            days: Result.with_default(Metrics.date_str_to_days(d.day), 0),
+            tss: d.tss,
+            ctl: d.ctl,
+            atl: d.atl,
+            tsb: d.tsb,
+        })
+        weeks = Metrics.weekly_rollup(day_loads)
+        table = render_table(
+            ["week of", "sessions", "load (tss)", "fitness end (ctl)", "form end (tsb)"],
+            List.map(weeks, |w| [
+                Metrics.days_to_date_str(w.week_start),
+                Num.to_str(w.sessions),
+                fmt0(w.tss),
+                fmt0(w.ctl_end),
+                fmt0(w.tsb_end),
+            ]),
+        )
+        legend =
+            """
+            one row per Mon-Sun week — is fitness (ctl) climbing? is weekly load steady or ramping?
+            (use `stride load 14` or fewer days for the daily view)
+            """
+        "${table}\n\n${verdict}\n\n${legend}"
+    else
+        table = render_table(
+            ["day", "trained (tss)", "fitness (ctl)", "fatigue (atl)", "form (tsb)"],
+            List.map(ordered, |d| [
+                d.day,
+                (if d.tss >= 1.0 then "${fmt0(d.tss)} TSS" else "rest"),
+                fmt0(d.ctl),
+                fmt0(d.atl),
+                fmt0(d.tsb),
+            ]),
+        )
+        legend =
+            """
+            trained (tss):  training stress score — how much load the day added
+            fitness (ctl):  long-term base, 42d avg — want it climbing slowly
+            fatigue (atl):  short-term tiredness, 7d avg — spikes after big days, fades with rest
+            form (tsb):     fitness - fatigue (same day) — negative = fatigued,
+                            positive = fresh; a hard session drops it the same day
+            """
+        "${table}\n\n${verdict}\n\n${legend}"
+
+# short window: daily table, rest rows, verdict; long window: weekly rollup
+expect
+    d = |day, tss| { day, tss, ctl: 10.0, atl: 5.0, tsb: 5.0 }
+    s = load_screen([d("2025-01-01", 50.0), d("2025-01-02", 0.0)])
+    Str.contains(s, "trained (tss)") and Str.contains(s, "rest") and Str.contains(s, "→ today: form 5")
+
+expect
+    d = |day, tss| { day, tss, ctl: 10.0, atl: 5.0, tsb: 5.0 }
+    many = List.map(List.range({ start: At(0), end: Before(21) }), |i| d(Metrics.days_to_date_str(20000 + i), 30.0))
+    Str.contains(load_screen(many), "week of")
+
+
+# ── summary command screen ──────────────────────────────────────────
+# renders the human report straight from the summary payload — ONE source of
+# numbers for the whole screen. (No type annotation: the payload is the summary
+# record, typed at the app.roc call site; inference keeps this open.)
+
+summary_screen = |s|
+    z = s.last_28d
+    zone_gap =
+        if z.z5_s == 0 then
+            ["    ⚠ zone gap: 0 minutes in Z5 — no VO2max stimulus in 28 days"]
+        else
+            []
+    ftp_lines =
+        if s.ftp.best_20min_w_60d > 0 then
+            ftp_calibration_lines(s.ftp)
+        else
+            []
+    last_hard_str = if s.last_hard_session_date == "" then "none on record" else s.last_hard_session_date
+    Str.join_with(
+        List.join([
+            [
+                "",
+                "── stride report (as of ${s.as_of}) ──────────────────",
+                "",
+                "  fitness (CTL): ${fmt0(s.fitness_ctl)}   fatigue (ATL): ${fmt0(s.fatigue_atl)}   form (TSB): ${fmt0(s.form_tsb)}",
+                "  → ${Metrics.form_label(s.form_tsb)}",
+                "",
+                "  last 28 days:",
+                "    training load: ${fmt0(z.tss)} TSS",
+                "    time in HR zones: Z1 ${Num.to_str(z.z1_s // 60)}m  Z2 ${Num.to_str(z.z2_s // 60)}m  Z3 ${Num.to_str(z.z3_s // 60)}m  Z4 ${Num.to_str(z.z4_s // 60)}m  Z5 ${Num.to_str(z.z5_s // 60)}m",
+                "    polarization: ${Num.to_str(z.easy_pct)}% easy (Z1-2) / ${Num.to_str(z.moderate_pct)}% moderate (Z3) / ${Num.to_str(z.hard_pct)}% hard (Z4-5)",
+            ],
+            zone_gap,
+            ftp_lines,
+            [
+                "",
+                "  last 7 days: ${fmt0(s.last_7d.tss)} TSS — ${Num.to_str(s.last_7d.easy_pct)}% easy / ${Num.to_str(s.last_7d.moderate_pct)}% moderate / ${Num.to_str(s.last_7d.hard_pct)}% hard",
+                "  last hard session (5+ min Z4/Z5): ${last_hard_str}",
+                "  open prescriptions: ${Num.to_str(s.pending_prescriptions)}",
+            ],
+        ]),
+        "\n",
+    )
+
+ftp_calibration_lines = |ftp|
+    base = [
+        "",
+        "  FTP calibration (60d): best 20-min power ${fmt0(ftp.best_20min_w_60d)}W -> estimated FTP ${fmt0(ftp.estimated_ftp_w)}W (config: ${fmt0(ftp.config_w)}W)",
+    ]
+    if ftp.stale then
+        List.append(base, "    ⚠ config FTP looks stale — consider: stride config set ftp ${fmt0(ftp.estimated_ftp_w)}")
+    else if ftp.detraining then
+        List.append(base, "    note: recent best power is well below config FTP (detraining or no hard efforts recorded)")
+    else
+        base
+
+# zone-gap warning fires on 0 Z5; empty last-hard reads as none on record
+expect
+    s = {
+        as_of: "2025-01-01",
+        fitness_ctl: 20.0,
+        fatigue_atl: 10.0,
+        form_tsb: 10.0,
+        last_28d: { tss: 100.0, z1_s: 600i64, z2_s: 0i64, z3_s: 0i64, z4_s: 0i64, z5_s: 0i64, easy_pct: 100i64, moderate_pct: 0i64, hard_pct: 0i64 },
+        last_7d: { tss: 50.0, easy_pct: 100i64, moderate_pct: 0i64, hard_pct: 0i64 },
+        ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0, config_w: 200.0, stale: Bool.false, detraining: Bool.false },
+        last_hard_session_date: "",
+        pending_prescriptions: 2i64,
+    }
+    out = summary_screen(s)
+    Str.contains(out, "stride report") and Str.contains(out, "zone gap") and Str.contains(out, "none on record")

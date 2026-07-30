@@ -1043,6 +1043,12 @@ zone_sum! = |path, cutoff|
 # ── machine interface (JSON output for LLM/tool consumption) ────────
 # Convention: numeric fields COALESCE to 0 when unknown (0 = "not available").
 
+# one payload, two mouths: JSON for machines, a pure Render screen for humans.
+# The pattern for query commands — payload record + Render.<cmd>_screen.
+out! : payload, (payload -> Str) => Result {} _ where payload implements Encoding
+out! = |payload, render|
+    if json_mode!({}) then print_json!(payload) else Stdout.line!(render(payload))
+
 print_json! : val => Result {} _ where val implements Encoding
 print_json! = |val|
     bytes = Encode.to_bytes(val, Json.utf8)
@@ -1280,49 +1286,7 @@ summary! = |{}|
         Err(other) -> Err(other)
         Ok({ ftp, zb }) ->
             payload = summary_payload!(path, ftp, zb)?
-            if json_mode!({}) then
-                print_json!(payload)
-            else
-                human_summary!(payload)
-
-# renders the human report straight from the payload — ONE source of numbers for
-# the whole screen (previously report! re-ran the same queries, so the top of the
-# screen could disagree with the bottom)
-human_summary! = |s|
-    z = s.last_28d
-    Stdout.line!("")?
-    Stdout.line!("── stride report (as of ${s.as_of}) ──────────────────")?
-    Stdout.line!("")?
-    Stdout.line!("  fitness (CTL): ${Render.fmt0(s.fitness_ctl)}   fatigue (ATL): ${Render.fmt0(s.fatigue_atl)}   form (TSB): ${Render.fmt0(s.form_tsb)}")?
-    Stdout.line!("  → ${Metrics.form_label(s.form_tsb)}")?
-    Stdout.line!("")?
-    Stdout.line!("  last 28 days:")?
-    Stdout.line!("    training load: ${Render.fmt0(z.tss)} TSS")?
-    Stdout.line!("    time in HR zones: Z1 ${Num.to_str(z.z1_s // 60)}m  Z2 ${Num.to_str(z.z2_s // 60)}m  Z3 ${Num.to_str(z.z3_s // 60)}m  Z4 ${Num.to_str(z.z4_s // 60)}m  Z5 ${Num.to_str(z.z5_s // 60)}m")?
-    Stdout.line!("    polarization: ${Num.to_str(z.easy_pct)}% easy (Z1-2) / ${Num.to_str(z.moderate_pct)}% moderate (Z3) / ${Num.to_str(z.hard_pct)}% hard (Z4-5)")?
-    (if z.z5_s == 0 then
-        Stdout.line!("    ⚠ zone gap: 0 minutes in Z5 — no VO2max stimulus in 28 days")
-    else
-        Ok({}))?
-    (if s.ftp.best_20min_w_60d > 0 then
-        ftp_calibration_lines!(s.ftp)
-    else
-        Ok({}))?
-    Stdout.line!("")?
-    Stdout.line!("  last 7 days: ${Render.fmt0(s.last_7d.tss)} TSS — ${Num.to_str(s.last_7d.easy_pct)}% easy / ${Num.to_str(s.last_7d.moderate_pct)}% moderate / ${Num.to_str(s.last_7d.hard_pct)}% hard")?
-    last_hard_str = if s.last_hard_session_date == "" then "none on record" else s.last_hard_session_date
-    Stdout.line!("  last hard session (5+ min Z4/Z5): ${last_hard_str}")?
-    Stdout.line!("  open prescriptions: ${Num.to_str(s.pending_prescriptions)}")
-
-ftp_calibration_lines! = |ftp|
-    Stdout.line!("")?
-    Stdout.line!("  FTP calibration (60d): best 20-min power ${Render.fmt0(ftp.best_20min_w_60d)}W -> estimated FTP ${Render.fmt0(ftp.estimated_ftp_w)}W (config: ${Render.fmt0(ftp.config_w)}W)")?
-    if ftp.stale then
-        Stdout.line!("    ⚠ config FTP looks stale — consider: stride config set ftp ${Render.fmt0(ftp.estimated_ftp_w)}")
-    else if ftp.detraining then
-        Stdout.line!("    note: recent best power is well below config FTP (detraining or no hard efforts recorded)")
-    else
-        Ok({})
+            out!(payload, Render.summary_screen)
 
 # weekly-planning bundle: everything the coach needs to plan a week, in one call
 week! : {} => Result {} _
@@ -1389,7 +1353,7 @@ week! = |{}|
                     open_prescriptions: open_p,
                 })
             else
-                human_summary!(s)?
+                Stdout.line!(Render.summary_screen(s))?
                 Stdout.line!("")?
                 Stdout.line!("OPEN PRESCRIPTIONS")?
                 Stdout.line!(Render.render_table(
@@ -1798,57 +1762,7 @@ load_series! = |days|
         },
     })?
     ordered = List.reverse(rows)
-    if json_mode!({}) then
-        print_json!(ordered)
-    else
-        verdict =
-            when List.last(ordered) is
-                Ok(today) -> "→ today: form ${Render.fmt0(today.tsb)} — ${Metrics.form_label(today.tsb)}"
-                Err(_) -> ""
-        if List.len(ordered) > 14 then
-            # long windows: weekly rollup (Mon-aligned) — trajectory, not noise
-            day_loads = List.map(ordered, |d| {
-                days: Result.with_default(Metrics.date_str_to_days(d.day), 0),
-                tss: d.tss,
-                ctl: d.ctl,
-                atl: d.atl,
-                tsb: d.tsb,
-            })
-            weeks = Metrics.weekly_rollup(day_loads)
-            Stdout.line!(Render.render_table(
-                ["week of", "sessions", "load (tss)", "fitness end (ctl)", "form end (tsb)"],
-                List.map(weeks, |w| [
-                    Metrics.days_to_date_str(w.week_start),
-                    Num.to_str(w.sessions),
-                    Render.fmt0(w.tss),
-                    Render.fmt0(w.ctl_end),
-                    Render.fmt0(w.tsb_end),
-                ]),
-            ))?
-            Stdout.line!("")?
-            Stdout.line!(verdict)?
-            Stdout.line!("")?
-            Stdout.line!("one row per Mon-Sun week — is fitness (ctl) climbing? is weekly load steady or ramping?")?
-            Stdout.line!("(use `stride load 14` or fewer days for the daily view)")
-        else
-            Stdout.line!(Render.render_table(
-                ["day", "trained (tss)", "fitness (ctl)", "fatigue (atl)", "form (tsb)"],
-                List.map(ordered, |d| [
-                    d.day,
-                    (if d.tss >= 1.0 then "${Render.fmt0(d.tss)} TSS" else "rest"),
-                    Render.fmt0(d.ctl),
-                    Render.fmt0(d.atl),
-                    Render.fmt0(d.tsb),
-                ]),
-            ))?
-            Stdout.line!("")?
-            Stdout.line!(verdict)?
-            Stdout.line!("")?
-            Stdout.line!("trained (tss):  training stress score — how much load the day added")?
-            Stdout.line!("fitness (ctl):  long-term base, 42d avg — want it climbing slowly")?
-            Stdout.line!("fatigue (atl):  short-term tiredness, 7d avg — spikes after big days, fades with rest")?
-            Stdout.line!("form (tsb):     fitness - fatigue (same day) — negative = fatigued,")?
-            Stdout.line!("                positive = fresh; a hard session drops it the same day")
+    out!(ordered, Render.load_screen)
 
 prescriptions! : {} => Result {} _
 prescriptions! = |{}|
