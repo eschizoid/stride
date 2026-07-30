@@ -56,8 +56,11 @@ was my last *real* hard session? Is my FTP stale? It solves different problems:
 
 ## Installation
 
-Everyone needs: `sqlite3`, and a free [Strava API application](https://www.strava.com/settings/api)
-(client id + secret — takes two minutes).
+Everyone needs: `sqlite3`, and a [Strava API application](https://www.strava.com/settings/api)
+(client id + secret — takes two minutes to create). Note: since June 2026, Strava
+requires an active Strava subscription to hold API credentials ([their announcement](https://communityhub.strava.com/insider-journal-9/an-update-to-our-developer-program-13428)).
+A subscription-free path via Strava's account export is planned — see
+[#6](https://github.com/eschizoid/stride/issues/6).
 
 ### Prebuilt binary (recommended)
 
