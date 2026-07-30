@@ -1731,7 +1731,7 @@ progress! = |date|
         Stdout.line!("no workout with power + HR found on ${date}")
     else
         body = Str.join_with(List.map(groups, |g| progress_section(g.name, g.rows, date)), "\n\n")
-        Stdout.line!("${body}\n\nef = normalized power / avg HR (watts per heartbeat) — climbing = fitter\nbar = ef relative to the best session; < marks the asked date")
+        Stdout.line!("${body}\n\nef = normalized power / avg HR (watts per heartbeat) — climbing = fitter\nbar = ef scaled worst→best · < asked marks the asked date · ··· = a break over 90 days")
 
 # split rows (already sorted by name) into per-workout runs
 group_progress : List ProgressRow -> List { name : Str, rows : List ProgressRow }
@@ -1763,20 +1763,40 @@ anchor_filter = |g, date|
 progress_section : Str, List ProgressRow, Str -> Str
 progress_section = |name, rows, asked|
     max_ef = List.walk(rows, 0.0, |acc, r| Num.max(acc, r.ef))
+    min_ef = List.walk(rows, max_ef, |acc, r| Num.min(acc, r.ef))
+    # bar spans the OBSERVED range (worst session = 1 block, best = 12) so real
+    # differences aren't squashed against a zero baseline
     ef_cell = |r|
-        n = if max_ef > 0.0 then Num.round(r.ef / max_ef * 12.0) else 0
-        mark = if r.date == asked then " <" else ""
+        n =
+            if max_ef - min_ef < 0.001 then
+                12
+            else
+                1 + Num.round((r.ef - min_ef) / (max_ef - min_ef) * 11.0)
+        mark = if r.date == asked then " < asked" else ""
         "${Render.fmt2(r.ef)} ${Str.repeat("█", n)}${mark}"
+    # a `···` row marks a break of >90 days between consecutive sessions
+    to_cells = |r| [
+        r.date,
+        Render.fmt0(r.np_w),
+        Render.fmt0(r.avg_hr),
+        ef_cell(r),
+        Render.fmt0(r.output_kj),
+        Render.fmt0(r.tss),
+    ]
+    gap_row = ["···", "", "", "", "", ""]
+    body_rows =
+        List.walk(rows, { prev: -1000000i64, cells: [] }, |acc, r|
+            days = Result.with_default(Metrics.date_str_to_days(r.date), acc.prev)
+            with_gap =
+                if acc.prev > -1000000 and days - acc.prev > 90 then
+                    List.append(acc.cells, gap_row)
+                else
+                    acc.cells
+            { prev: days, cells: List.append(with_gap, to_cells(r)) })
+        |> .cells
     table = Render.render_table(
         ["date", "power (np)", "heart rate (hr)", "efficiency (ef)", "output (kj)", "load (tss)"],
-        List.map(rows, |r| [
-            r.date,
-            Render.fmt0(r.np_w),
-            Render.fmt0(r.avg_hr),
-            ef_cell(r),
-            Render.fmt0(r.output_kj),
-            Render.fmt0(r.tss),
-        ]),
+        body_rows,
     )
     t = Metrics.trend_ends(List.map(rows, |r| r.ef))
     pct = if t.early > 0.0 then (t.late - t.early) / t.early * 100.0 else 0.0

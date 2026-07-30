@@ -285,7 +285,8 @@ e2e:
     grep -q "below your best" <<<"$out" || fail "weaker last session must show the last-vs-best gap line"
     grep -q "avg " <<<"$out" || fail "verdict must include the average EF"
     grep -q "████████████" <<<"$out" || fail "best session must render a full 12-char ef bar"
-    grep -q "< " <<<"$out" || grep -q "<$" <<<"$out" || fail "asked-date row must carry the < marker"
+    grep -q "< asked" <<<"$out" || fail "asked-date row must carry the '< asked' marker"
+    grep -q "···" <<<"$out" || fail "sessions >90 days apart must show a ··· gap row"
     echo "progress OK (date anchor + distance gate + last-vs-best + ef bar + empty guard)"
 
     # ── human output mode ────────────────────────────────────────────
