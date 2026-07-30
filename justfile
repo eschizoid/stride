@@ -277,7 +277,18 @@ e2e:
     print("progress auto-name OK (distance-gated, 40km ride excluded)")
     '
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" progress 1999-01-01)
-    grep -q "no workout" <<<"$out" || fail "progress on an empty date must say so, not crash"
+    grep -q "no workout found" <<<"$out" || fail "progress on an empty date must say so, not crash"
+    # a day with a workout that lacks HR must say WHY there's no EF, not claim no workout
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" progress "$D1")
+    grep -q 'found "power ride".*no usable power + HR' <<<"$out" || fail "HR-less workout day must explain EF needs power + HR"
+    # bare progress defaults to the latest EF-capable workout (Test Class, 2025-06-01 at this point)
+    "$STRIDE_BIN" progress | python3 -c '
+    import json, sys
+    rows = json.load(sys.stdin)
+    assert len(rows) == 2 and all(r["name"] == "Test Class" for r in rows), "bare progress must anchor on the latest EF-capable workout: " + str(rows)
+    assert rows[-1]["date"] == "2025-06-01", "anchor must be the latest EF-capable date: " + rows[-1]["date"]
+    print("progress no-arg OK (defaults to latest workout)")
+    '
     # last-vs-best: a later weaker session (EF 1.0 < best 1.40) must surface the gap line
     sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (203,'Test Class','Ride','2025-07-01T10:00:00Z',3600,20000,150,150,150);"
     "$STRIDE_BIN" analyze >/dev/null

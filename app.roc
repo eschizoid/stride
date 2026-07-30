@@ -63,9 +63,10 @@ help_text =
         top <metric> [n] [sport]     best sessions ranked by a metric (default 10):
                                      hr | tss | power | intensity | distance | time | output
         pz                           power-zone watt ranges (7 zones) from your FTP
-        progress <date>              am I improving on that day's workout? every
+        progress [date]              am I improving on that day's workout? every
                                      comparable instance + EF trend (watts/HR).
-                                     auto-named rides compare similar-distance only
+                                     defaults to your latest workout; auto-named
+                                     rides compare similar-distance only
         activity <id>           one session in depth: zones, power bests, hard minutes
         load [days]             CTL/ATL/TSB series: daily <=14 days, weekly beyond (default 90)
         prescriptions           prescription log (open/done/skipped), calendar order
@@ -106,6 +107,7 @@ main! = |raw_args|
         [_, "top", metric, n] -> with_count!(n, |c| top!(metric, c, ""))
         [_, "top", metric, n, sport] -> with_count!(n, |c| top!(metric, c, sport))
         [_, "pz"] -> pz!({})
+        [_, "progress"] -> progress!("")
         [_, "progress", name] -> progress!(name)
         [_, "activity", id_str] -> activity!(id_str)
         [_, "load"] -> load_series!(90)
@@ -1684,8 +1686,28 @@ ProgressRow : { name : Str, date : Str, distance_m : F64, np_w : F64, avg_hr : F
 # the fitness tell. Named classes match by exact name; Strava auto-names ("Morning Ride")
 # cover different routes, so those only compare rides within ±10% of the anchor's distance.
 progress! : Str => Result {} _
-progress! = |date|
+progress! = |date_arg|
     path = open_db!({})?
+    # bare `progress` defaults to the most recent workout that can compute EF
+    date =
+        if !(Str.is_empty(date_arg)) then
+            date_arg
+        else
+            latest = Sqlite.query_many!({
+                path,
+                query:
+                """
+                SELECT substr(a.start_local, 1, 10) AS d, a.name AS name
+                FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
+                WHERE a.avg_hr > 0 AND COALESCE(m.normalized_power, 0) > 0
+                ORDER BY a.start_local DESC LIMIT 1
+                """,
+                bindings: [],
+                rows: { Sqlite.decode_record <- d: Sqlite.str("d"), name: Sqlite.str("name") },
+            })?
+            when List.first(latest) is
+                Ok(r) -> r.d
+                Err(_) -> ""
     rows = Sqlite.query_many!({
         path,
         query:
@@ -1728,7 +1750,16 @@ progress! = |date|
     if json_mode!({}) then
         print_json!(flat)
     else if List.is_empty(groups) then
-        Stdout.line!("no workout with power + HR found on ${date}")
+        # distinguish "nothing that day" from "workout exists but can't compute EF"
+        on_date = Sqlite.query_many!({
+            path,
+            query: "SELECT name AS name, sport_type AS sport FROM activities WHERE substr(start_local, 1, 10) = :date LIMIT 1",
+            bindings: [{ name: ":date", value: String(date) }],
+            rows: { Sqlite.decode_record <- name: Sqlite.str("name"), sport: Sqlite.str("sport") },
+        })?
+        when List.first(on_date) is
+            Ok(a) -> Stdout.line!("found \"${a.name}\" on ${date}, but it has no usable power + HR — ef needs both")
+            Err(_) -> Stdout.line!("no workout found on ${date}")
     else
         body = Str.join_with(List.map(groups, |g| progress_section(g.name, g.rows, date)), "\n\n")
         Stdout.line!("${body}\n\nef = normalized power / avg HR (watts per heartbeat) — climbing = fitter\nbar = ef scaled worst→best · ◀ asked marks the asked date · ··· = a break over 90 days")
