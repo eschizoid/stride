@@ -1727,8 +1727,6 @@ pz! = |{}|
                     List.map(zones, |z| [z.z, z.name, range(z)]),
                 ))
 
-ProgressRow : { name : Str, date : Str, distance_m : F64, np_w : F64, avg_hr : F64, ef : F64, output_kj : F64, tss : F64 }
-
 # "am I improving on THIS workout?" — anchored on a date: resolves that day's workout(s)
 # and shows every comparable instance chronologically, with Efficiency Factor (NP/HR) as
 # the fitness tell. Named classes match by exact name; Strava auto-names ("Morning Ride")
@@ -1782,7 +1780,7 @@ progress! = |date_arg|
             tss: Sqlite.f64("tss"),
         },
     })?
-    with_ef : List ProgressRow
+    with_ef : List Metrics.ProgressRow
     with_ef = List.map(rows, |r| {
         name: r.name,
         date: r.date,
@@ -1793,7 +1791,9 @@ progress! = |date_arg|
         output_kj: r.output_kj,
         tss: r.tss,
     })
-    groups = List.keep_oks(group_progress(with_ef), |g| anchor_filter(g, date))
+    groups =
+        List.keep_oks(Metrics.group_progress(with_ef), |g| Metrics.anchor_filter(g, date))
+        |> List.map(|g| { name: Render.progress_group_label(g.name, g.kind), rows: g.rows })
     if List.is_empty(groups) then
         # in-band errors in BOTH modes so JSON callers can tell the outcomes apart
         if Str.is_empty(date) then
@@ -1816,93 +1816,8 @@ progress! = |date_arg|
             groups: List.map(groups, |g| { name: g.name, sessions: g.rows }),
         })
     else
-        body = Str.join_with(List.map(groups, |g| progress_section(g.name, g.rows, date)), "\n\n")
+        body = Str.join_with(List.map(groups, |g| Render.progress_section(g.name, g.rows, date)), "\n\n")
         Stdout.line!("${body}\n\nef = normalized power / avg HR (watts per heartbeat) — climbing = fitter\nbar = ef scaled worst→best · ◀ asked marks the asked date · ··· = a break over 90 days")
-
-# split rows (already sorted by name) into per-workout runs
-group_progress : List ProgressRow -> List { name : Str, rows : List ProgressRow }
-group_progress = |rows|
-    List.walk(rows, [], |acc, r|
-        when List.last(acc) is
-            Ok(g) if g.name == r.name ->
-                List.set(acc, List.len(acc) - 1, { name: g.name, rows: List.append(g.rows, r) })
-
-            _ -> List.append(acc, { name: r.name, rows: [r] }))
-
-# auto-named rides ("Morning Ride") are different routes under one name: keep only rows
-# within ±10% of the anchor ride's distance (the instance on the requested date).
-# Groups whose anchor isn't on the date, or auto-named anchors with no distance, drop.
-anchor_filter : { name : Str, rows : List ProgressRow }, Str -> Result { name : Str, rows : List ProgressRow } [NoAnchor]
-anchor_filter = |g, date|
-    when List.find_first(g.rows, |r| r.date == date) is
-        Err(_) -> Err(NoAnchor)
-        Ok(anchor) ->
-            if !(Metrics.is_auto_name(g.name)) then
-                Ok(g)
-            else if anchor.distance_m <= 0.0 then
-                # auto-named ride without a distance: can't find comparable rides,
-                # but the session itself is real — show it alone, don't lie about it
-                Ok({ name: "${g.name} (no distance recorded — can't match similar rides)", rows: [anchor] })
-            else
-                kept = List.keep_if(g.rows, |r| Num.abs(r.distance_m - anchor.distance_m) <= anchor.distance_m * 0.10)
-                Ok({ name: "${g.name} (~${Render.fmt1(anchor.distance_m / 1000.0)} km rides)", rows: kept })
-
-# one workout's table + EF trend verdict as a string
-progress_section : Str, List ProgressRow, Str -> Str
-progress_section = |name, rows, asked|
-    max_ef = List.walk(rows, 0.0, |acc, r| Num.max(acc, r.ef))
-    min_ef = List.walk(rows, max_ef, |acc, r| Num.min(acc, r.ef))
-    # bar spans the OBSERVED range (worst session = 1 block, best = 12) so real
-    # differences aren't squashed against a zero baseline
-    ef_cell = |r|
-        n = Metrics.scale_to_blocks(r.ef, min_ef, max_ef, 12)
-        mark = if r.date == asked then " ◀ asked" else ""
-        "${Render.fmt2(r.ef)} ${Str.repeat("█", n)}${mark}"
-    # a `···` row marks a break of >90 days between consecutive sessions
-    to_cells = |r| [
-        r.date,
-        Render.fmt0(r.np_w),
-        Render.fmt0(r.avg_hr),
-        ef_cell(r),
-        Render.fmt0(r.output_kj),
-        Render.fmt0(r.tss),
-    ]
-    gap_row = ["···", "", "", "", "", ""]
-    body_rows =
-        List.walk(rows, { prev: -1000000i64, cells: [] }, |acc, r|
-            days = Result.with_default(Metrics.date_str_to_days(r.date), acc.prev)
-            with_gap =
-                if acc.prev > -1000000 and days - acc.prev > 90 then
-                    List.append(acc.cells, gap_row)
-                else
-                    acc.cells
-            { prev: days, cells: List.append(with_gap, to_cells(r)) })
-        |> .cells
-    table = Render.render_table(
-        ["date", "power (np)", "heart rate (hr)", "efficiency (ef)", "output (kj)", "load (tss)"],
-        body_rows,
-    )
-    t = Metrics.trend_ends(List.map(rows, |r| r.ef))
-    pct = Metrics.pct_change(t.early, t.late)
-    label =
-        if pct > 5.0 then "improving" else if pct < -5.0 then "declining" else "holding steady"
-    avg_ef = Metrics.mean(List.map(rows, |r| r.ef))
-    verdict = "→ ef early avg ${Render.fmt2(t.early)} → recent avg ${Render.fmt2(t.late)} (overall avg ${Render.fmt2(avg_ef)}) over ${Num.to_str(List.len(rows))} sessions — ${label} (${Render.fmt0(pct)}%)"
-    "── ${name} ──\n${table}\n\n${verdict}${last_vs_best(rows)}"
-
-# "last vs best" line: how the most recent session compares to the all-time best EF.
-# Empty when they're the same session (you just set your best) or <2 rows.
-last_vs_best : List ProgressRow -> Str
-last_vs_best = |rows|
-    when (List.last(rows), List.sort_with(rows, |a, b| Num.compare(b.ef, a.ef)) |> List.first) is
-        (Ok(last), Ok(best)) ->
-            if last.date == best.date or List.len(rows) < 2 then
-                ""
-            else
-                gap = -Metrics.pct_change(best.ef, last.ef) # % below best (best -> last is negative)
-                "\n→ last: ${Render.fmt2(last.ef)} (${last.date}) vs best: ${Render.fmt2(best.ef)} (${best.date}) — ${Render.fmt0(gap)}% below your best"
-
-        _ -> ""
 
 load_series! : U64 => Result {} _
 load_series! = |days|

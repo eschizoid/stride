@@ -1,4 +1,6 @@
-module [render_table, fmt0, fmt1, fmt2, mins]
+module [render_table, fmt0, fmt1, fmt2, mins, progress_group_label, progress_section]
+
+import Metrics
 
 # ── pure text-rendering helpers for human CLI output ────────────────
 
@@ -113,3 +115,79 @@ expect
 expect
     t = render_table(["a", "bb"], [["x", "y"], ["long", "z"]])
     t == "a     bb\n----  --\nx     y\nlong  z"
+
+
+# ── progress command screens ────────────────────────────────────────
+
+# display label for a progress group, from anchor_filter's structured kind
+progress_group_label : Str, [Exact, SimilarDistance F64, LoneNoDistance] -> Str
+progress_group_label = |name, kind|
+    when kind is
+        Exact -> name
+        SimilarDistance(m) -> "${name} (~${fmt1(m / 1000.0)} km rides)"
+        LoneNoDistance -> "${name} (no distance recorded — can't match similar rides)"
+
+# one workout's table + EF trend verdict as a string
+progress_section : Str, List Metrics.ProgressRow, Str -> Str
+progress_section = |name, rows, asked|
+    max_ef = List.walk(rows, 0.0, |acc, r| Num.max(acc, r.ef))
+    min_ef = List.walk(rows, max_ef, |acc, r| Num.min(acc, r.ef))
+    # bar spans the OBSERVED range (worst session = 1 block, best = 12) so real
+    # differences aren't squashed against a zero baseline
+    ef_cell = |r|
+        n = Metrics.scale_to_blocks(r.ef, min_ef, max_ef, 12)
+        mark = if r.date == asked then " ◀ asked" else ""
+        "${fmt2(r.ef)} ${Str.repeat("█", n)}${mark}"
+    # a `···` row marks a break of >90 days between consecutive sessions
+    to_cells = |r| [
+        r.date,
+        fmt0(r.np_w),
+        fmt0(r.avg_hr),
+        ef_cell(r),
+        fmt0(r.output_kj),
+        fmt0(r.tss),
+    ]
+    gap_row = ["···", "", "", "", "", ""]
+    body_rows =
+        List.walk(rows, { prev: -1000000i64, cells: [] }, |acc, r|
+            days = Result.with_default(Metrics.date_str_to_days(r.date), acc.prev)
+            with_gap =
+                if acc.prev > -1000000 and days - acc.prev > 90 then
+                    List.append(acc.cells, gap_row)
+                else
+                    acc.cells
+            { prev: days, cells: List.append(with_gap, to_cells(r)) })
+        |> .cells
+    table = render_table(
+        ["date", "power (np)", "heart rate (hr)", "efficiency (ef)", "output (kj)", "load (tss)"],
+        body_rows,
+    )
+    t = Metrics.trend_ends(List.map(rows, |r| r.ef))
+    pct = Metrics.pct_change(t.early, t.late)
+    label =
+        if pct > 5.0 then "improving" else if pct < -5.0 then "declining" else "holding steady"
+    avg_ef = Metrics.mean(List.map(rows, |r| r.ef))
+    verdict = "→ ef early avg ${fmt2(t.early)} → recent avg ${fmt2(t.late)} (overall avg ${fmt2(avg_ef)}) over ${Num.to_str(List.len(rows))} sessions — ${label} (${fmt0(pct)}%)"
+    "── ${name} ──\n${table}\n\n${verdict}${last_vs_best(rows)}"
+
+# "last vs best" line: how the most recent session compares to the all-time best EF.
+# Empty when they're the same session (you just set your best) or <2 rows.
+last_vs_best : List Metrics.ProgressRow -> Str
+last_vs_best = |rows|
+    when (List.last(rows), List.sort_with(rows, |a, b| Num.compare(b.ef, a.ef)) |> List.first) is
+        (Ok(last), Ok(best)) ->
+            if last.date == best.date or List.len(rows) < 2 then
+                ""
+            else
+                gap = -Metrics.pct_change(best.ef, last.ef) # % below best (best -> last is negative)
+                "\n→ last: ${fmt2(last.ef)} (${last.date}) vs best: ${fmt2(best.ef)} (${best.date}) — ${fmt0(gap)}% below your best"
+
+        _ -> ""
+
+expect progress_group_label("Morning Ride", SimilarDistance(31400.0)) == "Morning Ride (~31.4 km rides)"
+
+# section: gap row for >90-day breaks, asked marker, last-vs-best line all present
+expect
+    pr = |date, ef| { name: "X", date, distance_m: 0.0, np_w: ef * 100.0, avg_hr: 100.0, ef, output_kj: 0.0, tss: 0.0 }
+    s = progress_section("X", [pr("2025-01-01", 1.5), pr("2025-08-01", 1.2)], "2025-08-01")
+    Str.contains(s, "···") and Str.contains(s, "◀ asked") and Str.contains(s, "below your best")

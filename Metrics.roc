@@ -26,6 +26,9 @@ module [
     mean,
     pct_change,
     scale_to_blocks,
+    ProgressRow,
+    group_progress,
+    anchor_filter,
 ]
 
 # ── pure training-science math. no I/O, fully unit-tested. ──────────
@@ -305,6 +308,37 @@ scale_to_blocks = |value, lo, hi, blocks|
         blocks
     else
         1 + Num.round((value - lo) / (hi - lo) * Num.to_f64(blocks - 1))
+
+# ── repeated-workout progress (the `progress` command's business rules) ─
+ProgressRow : { name : Str, date : Str, distance_m : F64, np_w : F64, avg_hr : F64, ef : F64, output_kj : F64, tss : F64 }
+
+# split rows (already sorted by name) into per-workout runs
+group_progress : List ProgressRow -> List { name : Str, rows : List ProgressRow }
+group_progress = |rows|
+    List.walk(rows, [], |acc, r|
+        when List.last(acc) is
+            Ok(g) if g.name == r.name ->
+                List.set(acc, List.len(acc) - 1, { name: g.name, rows: List.append(g.rows, r) })
+
+            _ -> List.append(acc, { name: r.name, rows: [r] }))
+
+# which comparison a group's anchor (the instance on the asked date) supports:
+# exact-named workouts compare every instance; auto-named rides ("Morning Ride")
+# are different routes under one name, so only rides within ±10% of the anchor's
+# distance compare — and with no distance recorded, only the anchor itself shows.
+# Groups whose anchor isn't on the asked date drop entirely.
+anchor_filter : { name : Str, rows : List ProgressRow }, Str -> Result { name : Str, kind : [Exact, SimilarDistance F64, LoneNoDistance], rows : List ProgressRow } [NoAnchor]
+anchor_filter = |g, date|
+    when List.find_first(g.rows, |r| r.date == date) is
+        Err(_) -> Err(NoAnchor)
+        Ok(anchor) ->
+            if !(is_auto_name(g.name)) then
+                Ok({ name: g.name, kind: Exact, rows: g.rows })
+            else if anchor.distance_m <= 0.0 then
+                Ok({ name: g.name, kind: LoneNoDistance, rows: [anchor] })
+            else
+                kept = List.keep_if(g.rows, |r| Num.abs(r.distance_m - anchor.distance_m) <= anchor.distance_m * 0.10)
+                Ok({ name: g.name, kind: SimilarDistance(anchor.distance_m), rows: kept })
 
 # ── Strava auto-names ───────────────────────────────────────────────
 # "Morning Ride", "Lunch Gravel Ride", ... are Strava's time-of-day defaults: the
@@ -612,6 +646,34 @@ expect
 expect valid_hr(150.0) and !(valid_hr(20.0)) and !(valid_hr(230.0)) and valid_hr(35.0) and valid_hr(220.0)
 
 expect is_auto_name("Morning Ride") and is_auto_name("Lunch Gravel Ride") and !(is_auto_name("45 min Power Zone Ride with Matt Wilpers"))
+
+# group_progress: adjacent same-name rows fold into one group per workout
+expect
+    pr = |name, date, dist| { name, date, distance_m: dist, np_w: 100.0, avg_hr: 100.0, ef: 1.0, output_kj: 0.0, tss: 0.0 }
+    gs = group_progress([pr("A", "2025-01-01", 0.0), pr("A", "2025-02-01", 0.0), pr("B", "2025-03-01", 0.0)])
+    List.len(gs) == 2 and (List.first(gs) |> Result.map_ok(|g| List.len(g.rows) == 2) |> Result.with_default(Bool.false))
+
+# anchor_filter: exact names pass through; auto-names gate to ±10% of anchor distance;
+# distance-less auto-name anchors show alone; off-date anchors drop the group
+expect
+    pr = |name, date, dist| { name, date, distance_m: dist, np_w: 100.0, avg_hr: 100.0, ef: 1.0, output_kj: 0.0, tss: 0.0 }
+    exact = anchor_filter({ name: "Class X", rows: [pr("Class X", "2025-01-01", 0.0)] }, "2025-01-01")
+    gated = anchor_filter({ name: "Morning Ride", rows: [pr("Morning Ride", "2025-01-01", 20000.0), pr("Morning Ride", "2025-02-01", 21000.0), pr("Morning Ride", "2025-03-01", 40000.0)] }, "2025-01-01")
+    lone = anchor_filter({ name: "Morning Ride", rows: [pr("Morning Ride", "2025-01-01", 0.0), pr("Morning Ride", "2025-02-01", 21000.0)] }, "2025-01-01")
+    off = anchor_filter({ name: "Class X", rows: [pr("Class X", "2025-01-01", 0.0)] }, "2025-09-09")
+    ok_exact = when exact is
+        Ok({ kind: Exact, rows }) -> List.len(rows) == 1
+        _ -> Bool.false
+    ok_gated = when gated is
+        Ok({ kind: SimilarDistance(d), rows }) -> List.len(rows) == 2 and Num.abs(d - 20000.0) < 0.001
+        _ -> Bool.false
+    ok_lone = when lone is
+        Ok({ kind: LoneNoDistance, rows }) -> List.len(rows) == 1
+        _ -> Bool.false
+    ok_off = when off is
+        Err(NoAnchor) -> Bool.true
+        _ -> Bool.false
+    ok_exact and ok_gated and ok_lone and ok_off
 
 expect Num.abs(mean([1.0, 2.0, 3.0]) - 2.0) < 0.001 and Num.abs(mean([])) < 0.001
 
