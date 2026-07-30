@@ -33,7 +33,7 @@ import Schema
 import Render
 import Backfill
 
-version = "stride 0.1.0" # x-release-please-version
+version = "stride 0.2.0" # x-release-please-version
 
 help_text =
     """
