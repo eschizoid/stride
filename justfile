@@ -283,7 +283,7 @@ e2e:
     "$STRIDE_BIN" analyze >/dev/null
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" progress 2025-07-01)
     grep -q "below your best" <<<"$out" || fail "weaker last session must show the last-vs-best gap line"
-    grep -q "############" <<<"$out" || fail "best session must render a full 12-char ef bar"
+    grep -q "████████████" <<<"$out" || fail "best session must render a full 12-char ef bar"
     grep -q "< " <<<"$out" || grep -q "<$" <<<"$out" || fail "asked-date row must carry the < marker"
     echo "progress OK (date anchor + distance gate + last-vs-best + ef bar + empty guard)"
 

@@ -1757,7 +1757,7 @@ progress_section = |name, rows, asked|
     bar = |r|
         n = if max_ef > 0.0 then Num.round(r.ef / max_ef * 12.0) else 0
         mark = if r.date == asked then " <" else ""
-        "${Str.repeat("#", n)}${mark}"
+        "${Str.repeat("█", n)}${mark}"
     table = Render.render_table(
         ["date", "np", "hr", "ef", "", "kj", "tss"],
         List.map(rows, |r| [
