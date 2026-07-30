@@ -1378,7 +1378,7 @@ week! = |{}|
                 Stdout.line!("")?
                 Stdout.line!("RECENT 14 DAYS")?
                 Stdout.line!(Render.render_table(
-                    ["date", "sport", "name", "time", "tss", "hard"],
+                    ["date", "sport", "name", "time", "load (tss)", "hard"],
                     List.map(recent, |a| [a.date, a.sport, a.name, Render.mins(a.moving_time), Render.fmt0(a.tss), Render.mins(a.z4_s + a.z5_s)]),
                 ))
 
@@ -1638,8 +1638,17 @@ top! = |metric, limit, sport_filter|
                         "distance" -> "${Render.fmt1(r.distance_m / 1000.0)} km"
                         "output" -> "${Render.fmt0(r.output_kj)} kJ"
                         _ -> Render.mins(r.moving_time)
+                metric_header =
+                    when metric is
+                        "hr" -> "heart rate (hr)"
+                        "tss" -> "load (tss)"
+                        "power" -> "power (np)"
+                        "intensity" -> "intensity (if)"
+                        "distance" -> "distance (km)"
+                        "output" -> "output (kj)"
+                        _ -> "time (min)"
                 Stdout.line!(Render.render_table(
-                    ["date", "sport", metric, "name"],
+                    ["date", "sport", metric_header, "name"],
                     List.map(rows, |r| [r.date, r.sport, val(r), r.name]),
                 ))
 
@@ -1754,18 +1763,17 @@ anchor_filter = |g, date|
 progress_section : Str, List ProgressRow, Str -> Str
 progress_section = |name, rows, asked|
     max_ef = List.walk(rows, 0.0, |acc, r| Num.max(acc, r.ef))
-    bar = |r|
+    ef_cell = |r|
         n = if max_ef > 0.0 then Num.round(r.ef / max_ef * 12.0) else 0
         mark = if r.date == asked then " <" else ""
-        "${Str.repeat("█", n)}${mark}"
+        "${Render.fmt2(r.ef)} ${Str.repeat("█", n)}${mark}"
     table = Render.render_table(
-        ["date", "np", "hr", "ef", "", "kj", "tss"],
+        ["date", "power (np)", "heart rate (hr)", "efficiency (ef)", "output (kj)", "load (tss)"],
         List.map(rows, |r| [
             r.date,
             Render.fmt0(r.np_w),
             Render.fmt0(r.avg_hr),
-            Render.fmt2(r.ef),
-            bar(r),
+            ef_cell(r),
             Render.fmt0(r.output_kj),
             Render.fmt0(r.tss),
         ]),
@@ -1775,7 +1783,7 @@ progress_section = |name, rows, asked|
     label =
         if pct > 5.0 then "improving" else if pct < -5.0 then "declining" else "holding steady"
     avg_ef = List.walk(rows, 0.0, |acc, r| acc + r.ef) / Num.to_f64(Num.max(List.len(rows), 1))
-    verdict = "→ EF ${Render.fmt2(t.early)} → ${Render.fmt2(t.late)} (avg ${Render.fmt2(avg_ef)}) over ${Num.to_str(List.len(rows))} sessions — ${label} (${Render.fmt0(pct)}%)"
+    verdict = "→ ef early avg ${Render.fmt2(t.early)} → recent avg ${Render.fmt2(t.late)} (overall avg ${Render.fmt2(avg_ef)}) over ${Num.to_str(List.len(rows))} sessions — ${label} (${Render.fmt0(pct)}%)"
     "── ${name} ──\n${table}\n\n${verdict}${last_vs_best(rows)}"
 
 # "last vs best" line: how the most recent session compares to the all-time best EF.
