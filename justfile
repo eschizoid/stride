@@ -253,26 +253,32 @@ e2e:
     sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (201,'Test Class','Ride','2025-01-01T10:00:00Z',3600,20000,180,180,150);"
     sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (202,'Test Class','Ride','2025-06-01T10:00:00Z',3600,20000,210,210,150);"
     "$STRIDE_BIN" analyze >/dev/null
-    "$STRIDE_BIN" progress "Test Class" | python3 -c '
-    import json, sys
-    rows = json.load(sys.stdin)
-    assert len(rows) == 2, f"expected 2 instances of the repeated class, got {len(rows)}"
-    assert rows[0]["date"] < rows[1]["date"], "must be chronological"
-    # EF = NP/HR: 180/150 = 1.20, then 210/150 = 1.40 (improving)
-    efs = [round(r["ef"], 3) for r in rows]
-    assert abs(rows[0]["ef"] - 1.20) < 0.01 and abs(rows[1]["ef"] - 1.40) < 0.01, "EF wrong: " + str(efs)
-    print("progress OK (EF per instance, chronological)")
-    '
-    # by-date: a date resolves to that day's workout (no need to type the name)
     "$STRIDE_BIN" progress 2025-06-01 | python3 -c '
     import json, sys
     rows = json.load(sys.stdin)
     assert len(rows) == 2 and all(r["name"] == "Test Class" for r in rows), "date must resolve to that day workout: " + str(rows)
-    print("progress by-date OK (date -> workout)")
+    assert rows[0]["date"] < rows[1]["date"], "must be chronological"
+    # EF = NP/HR: 180/150 = 1.20, then 210/150 = 1.40 (improving)
+    efs = [round(r["ef"], 3) for r in rows]
+    assert abs(rows[0]["ef"] - 1.20) < 0.01 and abs(rows[1]["ef"] - 1.40) < 0.01, "EF wrong: " + str(efs)
+    print("progress OK (date -> workout, EF chronological)")
     '
-    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" progress "Nonexistent Class")
-    grep -q "no repeated sessions" <<<"$out" || fail "progress on unknown workout must say so, not crash"
-    echo "progress OK (trend + empty guard)"
+    # auto-named rides ("Morning Ride") are different routes: only similar-distance
+    # (±10% of the anchor) instances may be compared
+    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (211,'Morning Ride','Ride','2025-03-01T08:00:00Z',3600,20000,150,150,140);"
+    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (212,'Morning Ride','Ride','2025-03-08T08:00:00Z',3600,21000,160,160,140);"
+    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (213,'Morning Ride','Ride','2025-03-15T08:00:00Z',7200,40000,170,170,140);"
+    "$STRIDE_BIN" analyze >/dev/null
+    "$STRIDE_BIN" progress 2025-03-01 | python3 -c '
+    import json, sys
+    rows = json.load(sys.stdin)
+    dists = sorted(r["distance_m"] for r in rows)
+    assert dists == [20000.0, 21000.0], "auto-name must gate to ±10% of anchor distance, got " + str(dists)
+    print("progress auto-name OK (distance-gated, 40km ride excluded)")
+    '
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" progress 1999-01-01)
+    grep -q "no workout" <<<"$out" || fail "progress on an empty date must say so, not crash"
+    echo "progress OK (date anchor + distance gate + empty guard)"
 
     # ── human output mode ────────────────────────────────────────────
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" prescriptions); grep -Eq "date +type +status" <<<"$out" || fail "human table header"

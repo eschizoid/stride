@@ -62,9 +62,9 @@ help_text =
         top <metric> [n] [sport]     best sessions ranked by a metric (default 10):
                                      hr | tss | power | intensity | distance | time | output
         pz                           power-zone watt ranges (7 zones) from your FTP
-        progress <name|date>         am I improving on a repeated workout? every
-                                     instance + EF trend (watts/HR). Pass a class
-                                     name, or a date to resolve that day's workout
+        progress <date>              am I improving on that day's workout? every
+                                     comparable instance + EF trend (watts/HR).
+                                     auto-named rides compare similar-distance only
         activity <id>           one session in depth: zones, power bests, hard minutes
         load [days]             CTL/ATL/TSB series: daily <=14 days, weekly beyond (default 90)
         prescriptions           prescription log (open/done/skipped), calendar order
@@ -1668,34 +1668,35 @@ pz! = |{}|
                     List.map(zones, |z| [z.z, z.name, range(z)]),
                 ))
 
-ProgressRow : { name : Str, date : Str, np_w : F64, avg_hr : F64, ef : F64, output_kj : F64, tss : F64 }
+ProgressRow : { name : Str, date : Str, distance_m : F64, np_w : F64, avg_hr : F64, ef : F64, output_kj : F64, tss : F64 }
 
-# "am I improving on THIS workout?" — every instance of a repeated session, chronological,
-# with Efficiency Factor (NP/HR) as the fitness tell. The arg is EITHER an exact workout
-# name OR a date (YYYY-MM-DD): a date resolves to whatever workout(s) were done that day,
-# so you don't have to type the class name — `progress 2026-07-24`.
+# "am I improving on THIS workout?" — anchored on a date: resolves that day's workout(s)
+# and shows every comparable instance chronologically, with Efficiency Factor (NP/HR) as
+# the fitness tell. Named classes match by exact name; Strava auto-names ("Morning Ride")
+# cover different routes, so those only compare rides within ±10% of the anchor's distance.
 progress! : Str => Result {} _
-progress! = |arg|
+progress! = |date|
     path = open_db!({})?
     rows = Sqlite.query_many!({
         path,
         query:
         """
         SELECT a.name AS name, substr(a.start_local, 1, 10) AS date,
+               CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
                CAST(COALESCE(a.avg_watts * a.moving_time / 1000.0, 0) AS REAL) AS output_kj,
                CAST(COALESCE(m.tss,0) AS REAL) AS tss
         FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
-        WHERE (a.name = :arg
-               OR a.name IN (SELECT name FROM activities WHERE substr(start_local, 1, 10) = :arg))
+        WHERE a.name IN (SELECT name FROM activities WHERE substr(start_local, 1, 10) = :date)
           AND a.avg_hr > 0 AND m.normalized_power > 0
         ORDER BY a.name, a.start_local
         """,
-        bindings: [{ name: ":arg", value: String(arg) }],
+        bindings: [{ name: ":date", value: String(date) }],
         rows: { Sqlite.decode_record <-
             name: Sqlite.str("name"),
             date: Sqlite.str("date"),
+            distance_m: Sqlite.f64("distance_m"),
             np_w: Sqlite.f64("np_w"),
             avg_hr: Sqlite.f64("avg_hr"),
             output_kj: Sqlite.f64("output_kj"),
@@ -1706,20 +1707,21 @@ progress! = |arg|
     with_ef = List.map(rows, |r| {
         name: r.name,
         date: r.date,
+        distance_m: r.distance_m,
         np_w: r.np_w,
         avg_hr: r.avg_hr,
         ef: r.np_w / r.avg_hr,
         output_kj: r.output_kj,
         tss: r.tss,
     })
+    groups = List.keep_oks(group_progress(with_ef), |g| anchor_filter(g, date))
+    flat = List.join(List.map(groups, |g| g.rows))
     if json_mode!({}) then
-        print_json!(with_ef)
-    else if List.is_empty(with_ef) then
-        Stdout.line!("no repeated sessions with power + HR found for \"${arg}\"")
+        print_json!(flat)
+    else if List.is_empty(groups) then
+        Stdout.line!("no workout with power + HR found on ${date}")
     else
-        groups = group_progress(with_ef)
-        multi = List.len(groups) > 1
-        body = Str.join_with(List.map(groups, |g| progress_section(g.name, g.rows, multi)), "\n\n")
+        body = Str.join_with(List.map(groups, |g| progress_section(g.name, g.rows)), "\n\n")
         Stdout.line!("${body}\n\nef = normalized power / avg HR (watts per heartbeat) — climbing = fitter")
 
 # split rows (already sorted by name) into per-workout runs
@@ -1732,9 +1734,25 @@ group_progress = |rows|
 
             _ -> List.append(acc, { name: r.name, rows: [r] }))
 
-# one workout's table + EF trend verdict as a string (name header only when >1 group)
-progress_section : Str, List ProgressRow, Bool -> Str
-progress_section = |name, rows, multi|
+# auto-named rides ("Morning Ride") are different routes under one name: keep only rows
+# within ±10% of the anchor ride's distance (the instance on the requested date).
+# Groups whose anchor isn't on the date, or auto-named anchors with no distance, drop.
+anchor_filter : { name : Str, rows : List ProgressRow }, Str -> Result { name : Str, rows : List ProgressRow } [NoAnchor]
+anchor_filter = |g, date|
+    when List.find_first(g.rows, |r| r.date == date) is
+        Err(_) -> Err(NoAnchor)
+        Ok(anchor) ->
+            if !(Metrics.is_auto_name(g.name)) then
+                Ok(g)
+            else if anchor.distance_m <= 0.0 then
+                Err(NoAnchor)
+            else
+                kept = List.keep_if(g.rows, |r| Num.abs(r.distance_m - anchor.distance_m) <= anchor.distance_m * 0.10)
+                Ok({ name: "${g.name} (~${Render.fmt1(anchor.distance_m / 1000.0)} km rides)", rows: kept })
+
+# one workout's table + EF trend verdict as a string
+progress_section : Str, List ProgressRow -> Str
+progress_section = |name, rows|
     table = Render.render_table(
         ["date", "np", "hr", "ef", "kj", "tss"],
         List.map(rows, |r| [
@@ -1751,8 +1769,7 @@ progress_section = |name, rows, multi|
     label =
         if pct > 5.0 then "improving" else if pct < -5.0 then "declining" else "holding steady"
     verdict = "→ EF ${Render.fmt2(t.early)} → ${Render.fmt2(t.late)} over ${Num.to_str(List.len(rows))} sessions — ${label} (${Render.fmt0(pct)}%)"
-    header = if multi then "── ${name} ──\n" else ""
-    "${header}${table}\n\n${verdict}"
+    "── ${name} ──\n${table}\n\n${verdict}"
 
 load_series! : U64 => Result {} _
 load_series! = |days|

@@ -22,6 +22,7 @@ module [
     day_of_week,
     power_zones,
     trend_ends,
+    is_auto_name,
 ]
 
 # ── pure training-science math. no I/O, fully unit-tested. ──────────
@@ -285,6 +286,15 @@ trend_ends = |xs|
         k = Num.max(1, n // 3)
         avg = |ys| if List.is_empty(ys) then 0.0 else List.sum(ys) / Num.to_f64(List.len(ys))
         { early: avg(List.take_first(xs, k)), late: avg(List.take_last(xs, k)) }
+
+# ── Strava auto-names ───────────────────────────────────────────────
+# "Morning Ride", "Lunch Gravel Ride", ... are Strava's time-of-day defaults: the
+# same name covers DIFFERENT routes, so name-matching them compares unlike efforts.
+is_auto_name : Str -> Bool
+is_auto_name = |name|
+    when Str.split_first(name, " ") is
+        Ok({ before }) -> List.contains(["Morning", "Lunch", "Afternoon", "Evening", "Night"], before)
+        Err(_) -> Bool.false
 
 # ── HR sample validity ──────────────────────────────────────────────
 # Below 35 or above 220 bpm is not physiology, it's a dropped strap / noise.
@@ -581,6 +591,8 @@ expect
     !(c.stale) and !(c.detraining)
 
 expect valid_hr(150.0) and !(valid_hr(20.0)) and !(valid_hr(230.0)) and valid_hr(35.0) and valid_hr(220.0)
+
+expect is_auto_name("Morning Ride") and is_auto_name("Lunch Gravel Ride") and !(is_auto_name("45 min Power Zone Ride with Matt Wilpers"))
 
 # trend_ends: first third avg vs last third avg (rising series -> late > early)
 expect
