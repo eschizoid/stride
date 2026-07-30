@@ -160,10 +160,15 @@ config_store! = |key, val|
 sync_ftp_to_strava! : Str, Str => Result {} _
 sync_ftp_to_strava! = |path, ftp_str|
     when Str.to_f64(ftp_str) is
-        Err(_) -> Ok({}) # non-numeric ftp — nothing sensible to push
+        Err(_) -> Stdout.line!("  (\"${ftp_str}\" isn't a number — not synced to Strava)")
         Ok(_) ->
             when get_valid_token!(path) is
                 Err(NotAuthed) -> Stdout.line!("  (not synced to Strava — run `stride auth` first)")
+                # HttpStatus here can only come from the token-refresh POST: a 4xx
+                # means the stored token is dead, and retrying won't fix it
+                Err(HttpStatus(status, _)) if status >= 400 and status < 500 ->
+                    Stdout.line!("  (Strava rejected the stored token — re-run `stride auth`, then set ftp again)")
+
                 Err(_) -> Stdout.line!("  (couldn't sync FTP to Strava this time)")
                 Ok(token) ->
                     resp = Http.send!({
@@ -234,14 +239,16 @@ TokenResp : { access_token : Str, refresh_token : Str, expires_at : I64 }
 token_url = "https://www.strava.com/oauth/token"
 
 # best-effort browser launch: macOS `open`, then Linux `xdg-open`. Silent on
-# failure — the URL is always printed as the manual fallback.
+# failure — the URL is always printed as the manual fallback. exec_output! (not
+# exec!) so a failing launcher can't spew stderr into the auth instructions or
+# hand the inherited TTY to a console browser on headless boxes.
 open_browser! : Str => Result {} _
 open_browser! = |url|
-    when Cmd.exec!("open", [url]) is
-        Ok({}) -> Ok({})
+    when Cmd.new("open") |> Cmd.arg(url) |> Cmd.exec_output!() is
+        Ok(_) -> Ok({})
         Err(_) ->
-            when Cmd.exec!("xdg-open", [url]) is
-                Ok({}) -> Ok({})
+            when Cmd.new("xdg-open") |> Cmd.arg(url) |> Cmd.exec_output!() is
+                Ok(_) -> Ok({})
                 Err(_) -> Ok({})
 
 # a stored token field: absent -> NotAuthed (genuine); db failure propagates
@@ -256,7 +263,11 @@ client_cred! : Str, Str, Str => Result Str _
 client_cred! = |path, env_name, key|
     when Env.var!(env_name) is
         Ok(v) -> Ok(v)
-        Err(_) -> Result.map_err(config_get!(path, key), |_| MissingEnv(env_name))
+        Err(_) ->
+            # config_opt! so a locked/corrupt db surfaces as a real error, not MissingEnv
+            when config_opt!(path, key)? is
+                Found(v) -> Ok(v)
+                NotFound -> Err(MissingEnv(env_name))
 
 auth! : {} => Result {} _
 auth! = |{}|
@@ -1750,16 +1761,20 @@ progress! = |date_arg|
     if json_mode!({}) then
         print_json!(flat)
     else if List.is_empty(groups) then
-        # distinguish "nothing that day" from "workout exists but can't compute EF"
-        on_date = Sqlite.query_many!({
-            path,
-            query: "SELECT name AS name, sport_type AS sport FROM activities WHERE substr(start_local, 1, 10) = :date LIMIT 1",
-            bindings: [{ name: ":date", value: String(date) }],
-            rows: { Sqlite.decode_record <- name: Sqlite.str("name"), sport: Sqlite.str("sport") },
-        })?
-        when List.first(on_date) is
-            Ok(a) -> Stdout.line!("found \"${a.name}\" on ${date}, but it has no usable power + HR — ef needs both")
-            Err(_) -> Stdout.line!("no workout found on ${date}")
+        if Str.is_empty(date) then
+            # bare `progress` and the db has no EF-capable workout at all
+            Stdout.line!("no workouts with both power and heart rate yet — `stride progress` needs at least one")
+        else
+            # distinguish "nothing that day" from "workout exists but can't compute EF"
+            on_date = Sqlite.query_many!({
+                path,
+                query: "SELECT name AS name, sport_type AS sport FROM activities WHERE substr(start_local, 1, 10) = :date LIMIT 1",
+                bindings: [{ name: ":date", value: String(date) }],
+                rows: { Sqlite.decode_record <- name: Sqlite.str("name"), sport: Sqlite.str("sport") },
+            })?
+            when List.first(on_date) is
+                Ok(a) -> Stdout.line!("found \"${a.name}\" on ${date}, but it has no usable power + HR — ef needs both")
+                Err(_) -> Stdout.line!("no workout found on ${date}")
     else
         body = Str.join_with(List.map(groups, |g| progress_section(g.name, g.rows, date)), "\n\n")
         Stdout.line!("${body}\n\nef = normalized power / avg HR (watts per heartbeat) — climbing = fitter\nbar = ef scaled worst→best · ◀ asked marks the asked date · ··· = a break over 90 days")
@@ -1785,7 +1800,9 @@ anchor_filter = |g, date|
             if !(Metrics.is_auto_name(g.name)) then
                 Ok(g)
             else if anchor.distance_m <= 0.0 then
-                Err(NoAnchor)
+                # auto-named ride without a distance: can't find comparable rides,
+                # but the session itself is real — show it alone, don't lie about it
+                Ok({ name: "${g.name} (no distance recorded — can't match similar rides)", rows: [anchor] })
             else
                 kept = List.keep_if(g.rows, |r| Num.abs(r.distance_m - anchor.distance_m) <= anchor.distance_m * 0.10)
                 Ok({ name: "${g.name} (~${Render.fmt1(anchor.distance_m / 1000.0)} km rides)", rows: kept })
