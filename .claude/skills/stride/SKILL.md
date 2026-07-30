@@ -42,6 +42,9 @@ Never do training math yourself: read stride's numbers, add judgment.
      check for an error field instead of assuming success.
    - a session that didn't happen: `stride skip <id> "<reason>"` (keeps adherence
      history honest — skipped ≠ silently open forever).
+   - a REST day that happened: `stride complete <id>` with no activity id (rest has
+     nothing to link; any other type still refuses without its activity —
+     `{"error":"activity_required"}`).
 
 ## Output modes
 

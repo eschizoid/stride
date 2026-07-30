@@ -169,6 +169,14 @@ e2e:
     out=$("$STRIDE_BIN" complete 2 88888); grep -q activity_not_found <<<"$out" || fail "complete nonexistent activity"
     out=$("$STRIDE_BIN" skip 999 "x"); grep -q prescription_not_found <<<"$out" || fail "skip nonexistent prescription"
     out=$("$STRIDE_BIN" complete abc 101); grep -q bad_id <<<"$out" || fail "complete non-numeric id"
+    # rest days close WITHOUT an activity; anything else still demands evidence
+    out=$("$STRIDE_BIN" prescribe 2099-01-02 rest "planned rest" "recovery"); grep -q '"id":3' <<<"$out" || fail "prescribe rest"
+    out=$("$STRIDE_BIN" prescribe 2099-01-03 vo2max "intervals" "stimulus"); grep -q '"id":4' <<<"$out" || fail "prescribe vo2max"
+    out=$("$STRIDE_BIN" complete 4); grep -q activity_required <<<"$out" || fail "non-rest bare complete must refuse"
+    out=$("$STRIDE_BIN" complete 3); grep -q '"rest":true' <<<"$out" || fail "rest bare complete"
+    st=$(sqlite3 "$DB" "SELECT status FROM prescriptions WHERE id=3;"); [ "$st" = "done" ] || fail "rest must be done, got '$st'"
+    "$STRIDE_BIN" skip 4 "cleanup" >/dev/null
+    echo "rest-day complete OK (bare complete for rest only)"
     "$STRIDE_BIN" summary | python3 -c 'import json,sys; assert json.load(sys.stdin)["pending_prescriptions"] == 0; print("pending count OK")'
     "$STRIDE_BIN" week | python3 -c 'import json,sys; assert json.load(sys.stdin)["open_prescriptions"] == []; print("week payload OK")'
 

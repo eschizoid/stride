@@ -82,6 +82,7 @@ help_text =
         prescribe <date> <type> <detail> <rationale>   record a prescribed session
                                                        (refuses if date already has an open one)
         complete <prescription_id> <activity_id>       link a prescription to a done activity
+        complete <prescription_id>                     mark a REST day done (no activity to link)
         skip <prescription_id> <reason>                mark a prescription as skipped
 
     FLAGS
@@ -123,6 +124,7 @@ main! = |raw_args|
         [_, "prescriptions"] -> prescriptions!({})
         [_, "prescribe", date, session_type, detail, rationale] -> prescribe!(date, session_type, detail, rationale)
         [_, "complete", presc_id, activity_id] -> complete!(presc_id, activity_id)
+        [_, "complete", presc_id] -> complete_rest!(presc_id)
         [_, "skip", presc_id, reason] -> skip!(presc_id, reason)
         [_, "config", "get", key] -> config_show!(key)
         [_, "config", "set", key, val] -> config_store!(key, val)
@@ -1986,6 +1988,36 @@ complete! = |presc_id_str, activity_id_str|
 
         _ ->
             err_out!("bad_id", "complete needs numeric ids: complete <prescription_id> <activity_id>")
+
+# rest days have no activity to link — `complete <id>` alone closes them. Any
+# other session type still demands its activity id: done means evidence.
+complete_rest! : Str => Result {} _
+complete_rest! = |presc_id_str|
+    path = open_db!({})?
+    when Str.to_i64(presc_id_str) is
+        Err(_) -> err_out!("bad_id", "complete needs a numeric id: complete <prescription_id> [activity_id]")
+        Ok(presc_id) ->
+            if !(row_exists!(path, "prescriptions", presc_id)?) then
+                err_out!("prescription_not_found", "no prescription #${Num.to_str(presc_id)} — run `stride prescriptions` to see ids")
+            else
+                session_type = Sqlite.query!({
+                    path,
+                    query: "SELECT COALESCE(session_type, '') AS t FROM prescriptions WHERE id = :pid",
+                    bindings: [{ name: ":pid", value: Integer(presc_id) }],
+                    row: Sqlite.str("t"),
+                })?
+                if session_type != "rest" then
+                    err_out!("activity_required", "prescription #${Num.to_str(presc_id)} is '${session_type}' — completing it needs the activity id (only rest days close without one)")
+                else
+                    Sqlite.execute!({
+                        path,
+                        query: "UPDATE prescriptions SET status = 'done' WHERE id = :pid",
+                        bindings: [{ name: ":pid", value: Integer(presc_id) }],
+                    })?
+                    if json_mode!({}) then
+                        print_json!({ completed_prescription: presc_id, rest: Bool.true })
+                    else
+                        Stdout.line!("prescription #${Num.to_str(presc_id)} (rest) marked done")
 
 skip! : Str, Str => Result {} _
 skip! = |presc_id_str, reason|
