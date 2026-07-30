@@ -26,6 +26,8 @@ import pf.Utc
 import pf.Sleep
 import pf.Sqlite
 import pf.Cmd
+import pf.File
+import Csv
 import json.Json
 import Streams
 import json.Option exposing [Option]
@@ -50,6 +52,8 @@ help_text =
         sync        pull new activities + streams (rolling 30d self-heal)
         backfill    re-pull the full activity list + ALL missing streams,
                     rate-limit-aware (first-time imports, deep reconcile)
+        import <zip|dir>  load a Strava account export (activities.csv) —
+                    no API credentials needed; summary-level data
         analyze     compute training metrics (TSS, zones, CTL/ATL/TSB)
         config      get/set config (e.g. ftp, hr zone bounds)
 
@@ -108,6 +112,7 @@ main! = |raw_args|
         [_, "top", metric] -> top!(metric, 10, "")
         [_, "top", metric, n] -> with_count!(n, |c| top!(metric, c, ""))
         [_, "top", metric, n, sport] -> with_count!(n, |c| top!(metric, c, sport))
+        [_, "import", src] -> import_archive!(src)
         [_, "zones"] -> pz!({})
         [_, "pz"] -> pz!({})
         [_, "progress"] -> progress!("")
@@ -1628,6 +1633,96 @@ top! = |metric, limit, sport_filter|
                     ["date", "sport", header, "name"],
                     List.map(rows, |r| [r.date, r.sport, val(r), r.name]),
                 ))
+
+# ── import from a Strava account export (no API credentials needed) ──
+# Phase 1 of the export path (#6): summary-level rows from activities.csv, fed
+# through the SAME upsert as sync — idempotent, metrics-invalidation intact.
+# Streams aren't in the CSV, so zone/NP metrics stay honestly absent; the TSS
+# ladder falls back to watts/HR/relative-effort exactly as with sparse API data.
+import_archive! : Str => Result {} _
+import_archive! = |src|
+    db = open_db!({})?
+    dir_result =
+        if Str.ends_with(src, ".zip") then
+            tmp = Cmd.new("mktemp") |> Cmd.arg("-d") |> Cmd.exec_output!() |> Result.map_err(|_| ImportTempDirFailed)?
+            tmp_dir = Str.trim(tmp.stdout_utf8)
+            when Cmd.new("unzip") |> Cmd.args(["-o", "-q", src, "-d", tmp_dir]) |> Cmd.exec_output!() is
+                Ok(_) -> Ok(tmp_dir)
+                Err(_) -> Err(UnzipFailed)
+        else
+            Ok(src)
+    when dir_result is
+        Err(UnzipFailed) -> err_out!("unzip_failed", "couldn't unzip ${src} — is `unzip` installed? (or extract it yourself and `stride import <dir>`)")
+        Err(other) -> Err(other)
+        Ok(dir) ->
+            csv_path = "${dir}/activities.csv"
+            when File.read_utf8!(csv_path) is
+                Err(_) -> err_out!("no_activities_csv", "no activities.csv in ${dir} — point me at a Strava account export (Settings → My Account → Download or Delete Your Account)")
+                Ok(text) ->
+                    when Csv.parse(text) is
+                        [headers, .. as rows] ->
+                            counts = import_rows!(db, headers, rows, { imported: 0u64, skipped: 0u64 })?
+                            if json_mode!({}) then
+                                print_json!(counts)
+                            else
+                                Stdout.line!("imported ${Num.to_str(counts.imported)} activities (${Num.to_str(counts.skipped)} rows skipped) — run `stride analyze` to compute metrics")
+
+                        _ -> err_out!("empty_csv", "activities.csv is empty")
+
+import_rows! : Str, List Str, List (List Str), { imported : U64, skipped : U64 } => Result { imported : U64, skipped : U64 } _
+import_rows! = |db, headers, rows, acc|
+    when rows is
+        [] -> Ok(acc)
+        [row, .. as rest] ->
+            when export_row_to_summary(headers, row) is
+                Ok(summary) ->
+                    upsert_activity!(db, summary)?
+                    import_rows!(db, headers, rest, { acc & imported: acc.imported + 1 })
+
+                Err(_) ->
+                    import_rows!(db, headers, rest, { acc & skipped: acc.skipped + 1 })
+
+# one CSV row -> the same ActivitySummary the API sync feeds to upsert_activity!.
+# Strava's export has DUPLICATE headers: the second Distance/Moving Time are the
+# precise ones (meters/seconds); the first Distance is km. English exports only.
+export_row_to_summary : List Str, List Str -> Result ActivitySummary [BadRow]
+export_row_to_summary = |headers, row|
+    field = |name, occurrence|
+        when Csv.column_index(headers, name, occurrence) is
+            Ok(i) -> Result.with_default(List.get(row, i), "")
+            Err(_) -> ""
+    opt_field = |name|
+        when Str.to_f64(field(name, 0)) is
+            Ok(v) -> Option.some(v)
+            Err(_) -> Option.none({})
+    id = Str.to_i64(field("Activity ID", 0)) |> Result.map_err(|_| BadRow)?
+    start = Metrics.export_date_to_iso(field("Activity Date", 0)) |> Result.map_err(|_| BadRow)?
+    moving_raw = field("Moving Time", 1)
+    moving_str = if Str.is_empty(moving_raw) then field("Moving Time", 0) else moving_raw
+    moving_f = Str.to_f64(moving_str) |> Result.map_err(|_| BadRow)?
+    distance =
+        when Str.to_f64(field("Distance", 1)) is
+            Ok(meters) -> meters
+            Err(_) ->
+                # single Distance column = km
+                when Str.to_f64(field("Distance", 0)) is
+                    Ok(km) -> km * 1000.0
+                    Err(_) -> 0.0
+    mt : I64
+    mt = Num.round(moving_f)
+    Ok({
+        id,
+        name: field("Activity Name", 0),
+        sport_type: field("Activity Type", 0),
+        start_date_local: start,
+        moving_time: mt,
+        distance,
+        total_elevation_gain: Result.with_default(Str.to_f64(field("Elevation Gain", 0)), 0.0),
+        suffer_score: opt_field("Relative Effort"),
+        average_watts: opt_field("Average Watts"),
+        average_heartrate: opt_field("Average Heart Rate"),
+        weighted_average_watts: opt_field("Weighted Average Power"),
+    })
 
 # power-zone reference chart: the 7 Coggan/Peloton zones as watt ranges from your
 # configured FTP (the targets you'd set on a Power Zone ride).

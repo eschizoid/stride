@@ -56,11 +56,17 @@ was my last *real* hard session? Is my FTP stale? It solves different problems:
 
 ## Installation
 
-Everyone needs: `sqlite3`, and a [Strava API application](https://www.strava.com/settings/api)
-(client id + secret — takes two minutes to create). Note: since June 2026, Strava
-requires an active Strava subscription to hold API credentials ([their announcement](https://communityhub.strava.com/insider-journal-9/an-update-to-our-developer-program-13428)).
-A subscription-free path via Strava's account export is planned — see
-[#6](https://github.com/eschizoid/stride/issues/6).
+Everyone needs `sqlite3`. Then pick a data path:
+
+- **API sync (best experience — live daily sync + full streams):** a
+  [Strava API application](https://www.strava.com/settings/api) (client id +
+  secret — takes two minutes to create). Note: since June 2026, Strava requires
+  an active Strava subscription to hold API credentials
+  ([their announcement](https://communityhub.strava.com/insider-journal-9/an-update-to-our-developer-program-13428)).
+- **Account export (free, no API app):** `stride import <export.zip>` loads the
+  archive Strava emails you from Settings → My Account → Download or Delete Your
+  Account. Summary-level data today; stream import is tracked in
+  [#6](https://github.com/eschizoid/stride/issues/6).
 
 ### Prebuilt binary (recommended)
 
@@ -141,6 +147,7 @@ stride week                                       # everything needed to plan a 
 | --- | --- |
 | `sync` | Pulls new activities + the next batch of HR/power streams. Re-pulls a rolling 30-day window so edits made on Strava self-heal. The fast daily command. |
 | `backfill` | Re-pulls the **full** activity list, then drains **all** missing stream history — hands-off, resumable, paced on Strava's rate-limit headers. First-time imports and deep reconciles (~after bulk edits older than 30 days). |
+| `import <zip\|dir>` | Loads a **Strava account export** (the ZIP from Settings → My Account → Download or Delete Your Account) — **no API credentials or subscription needed**. Summary-level data (no streams yet, so zone breakdowns stay honestly absent); re-import is idempotent. English-language exports only. |
 | `analyze` | Computes metrics for new (or invalidated) activities — TSS, time-in-zone, normalized power — then rebuilds the daily fitness/fatigue/form series through today. Prints what it did plus a one-line form verdict. |
 
 **Reading your training** (each answers a different question)

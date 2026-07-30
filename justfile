@@ -19,6 +19,7 @@ test:
     {{roc}} test Metrics.roc
     {{roc}} test Render.roc
     {{roc}} test Backfill.roc
+    {{roc}} test Csv.roc
     {{roc}} test --main app.roc Streams.roc
     just build
     just e2e
@@ -322,6 +323,46 @@ e2e:
     grep -q "◀ asked" <<<"$out" || fail "asked-date row must carry the marker"
     grep -q "···" <<<"$out" || fail "sessions >90 days apart must show a ··· gap row"
     echo "progress OK (date anchor + distance gate + last-vs-best + ef bar + empty guard)"
+
+    # ── import: Strava account export (activities.csv, no API creds) ──
+    # realistic shape: DUPLICATE Distance/Moving Time headers (2nd = precise),
+    # quoted name with comma, an unparseable junk row, an HR-only row
+    EXPORT_DIR=$(mktemp -d)
+    cat > "$EXPORT_DIR/activities.csv" <<'CSVEOF'
+    Activity ID,Activity Date,Activity Name,Activity Type,Elapsed Time,Distance,Relative Effort,Moving Time,Distance,Elevation Gain,Average Heart Rate,Average Watts,Weighted Average Power
+    9001,"Jul 1, 2025, 6:30:00 AM","Morning ride, easy one",Ride,3700,20.10,55,3600,20100.0,150,,180,190
+    9002,"Jul 2, 2025, 7:00:00 PM",Evening Row,Rowing,1900,5.00,30,1800,5000.0,0,145,,
+    junk,not a date,Broken Row,Ride,x,y,z,q,w,e,r,t,y
+    CSVEOF
+    # strip the heredoc indentation (just recipes indent continuation lines)
+    sed -i.bak 's/^    //' "$EXPORT_DIR/activities.csv" && rm -f "$EXPORT_DIR/activities.csv.bak"
+    "$STRIDE_BIN" import "$EXPORT_DIR" | python3 -c '
+    import json, sys
+    d = json.load(sys.stdin)
+    assert d["imported"] == 2 and d["skipped"] == 1, f"expected 2 imported / 1 junk skipped, got {d}"
+    print("import counts OK (2 imported, junk row skipped)")
+    '
+    row=$(sqlite3 "$DB" "SELECT name || '|' || sport_type || '|' || start_local || '|' || moving_time || '|' || CAST(distance AS INT) || '|' || weighted_avg_watts FROM activities WHERE id=9001;")
+    [ "$row" = "Morning ride, easy one|Ride|2025-07-01T06:30:00Z|3600|20100|190.0" ] || fail "imported row 9001 mismatch: $row"
+    hr=$(sqlite3 "$DB" "SELECT avg_hr FROM activities WHERE id=9002;")
+    [ "$hr" = "145.0" ] || fail "HR-only row must keep avg_hr, got '$hr'"
+    # analyze picks the imported rows up through the normal pipeline
+    out=$("$STRIDE_BIN" analyze); grep -qE '"computed":[0-9]+' <<<"$out" || fail "analyze after import"
+    tss=$(sqlite3 "$DB" "SELECT ROUND(tss) FROM activity_metrics WHERE activity_id=9001;")
+    [ -n "$tss" ] && [ "$tss" != "0.0" ] || fail "imported power ride must get TSS from the ladder, got '$tss'"
+    # idempotent: re-import updates in place, no duplicates
+    "$STRIDE_BIN" import "$EXPORT_DIR" >/dev/null
+    n=$(sqlite3 "$DB" "SELECT COUNT(*) FROM activities WHERE id IN (9001, 9002);")
+    [ "$n" = "2" ] || fail "re-import must be idempotent, got $n rows"
+    # a zip of the same export imports identically (exercises the unzip path)
+    if command -v zip >/dev/null; then
+      (cd "$EXPORT_DIR" && zip -q export.zip activities.csv)
+      "$STRIDE_BIN" import "$EXPORT_DIR/export.zip" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["imported"] == 2, d; print("import zip OK")'
+    fi
+    rm -rf "$EXPORT_DIR"
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" import /nonexistent-dir-xyz)
+    grep -q "no activities.csv" <<<"$out" || fail "missing export must explain itself"
+    echo "import OK (export dir + zip + idempotent + honest errors)"
 
     # ── human output mode ────────────────────────────────────────────
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" prescriptions); grep -Eq "date +type +status" <<<"$out" || fail "human table header"

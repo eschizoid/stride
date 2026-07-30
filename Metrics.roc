@@ -29,6 +29,7 @@ module [
     ProgressRow,
     group_progress,
     anchor_filter,
+    export_date_to_iso,
 ]
 
 # ── pure training-science math. no I/O, fully unit-tested. ──────────
@@ -340,6 +341,57 @@ anchor_filter = |g, date|
                 kept = List.keep_if(g.rows, |r| Num.abs(r.distance_m - anchor.distance_m) <= anchor.distance_m * 0.10)
                 Ok({ name: g.name, kind: SimilarDistance(anchor.distance_m), rows: kept })
 
+# ── Strava bulk-export date parsing ─────────────────────────────────
+# activities.csv dates look like "Feb 17, 2022, 12:18:26 PM" (English-language
+# exports only — that's a documented Strava export caveat, not ours).
+export_date_to_iso : Str -> Result Str [BadExportDate]
+export_date_to_iso = |raw|
+    when Str.split_on(Str.trim(raw), ", ") is
+        [month_day, year, clock] ->
+            when (Str.split_on(month_day, " "), Str.split_on(clock, " ")) is
+                ([mon, day], [hms, ampm]) ->
+                    month = month_num(mon)?
+                    day_n = Str.to_u64(day) |> Result.map_err(|_| BadExportDate)?
+                    hour24 = hour_24(hms, ampm)?
+                    rest =
+                        when Str.split_on(hms, ":") is
+                            [_, mi, se] -> Ok("${mi}:${se}")
+                            _ -> Err(BadExportDate)
+                    "${year}-${pad2(Num.to_i64(month))}-${pad2(Num.to_i64(day_n))}T${pad2(Num.to_i64(hour24))}:${rest?}Z" |> Ok
+
+                _ -> Err(BadExportDate)
+
+        _ -> Err(BadExportDate)
+
+month_num : Str -> Result U64 [BadExportDate]
+month_num = |m|
+    when m is
+        "Jan" -> Ok(1)
+        "Feb" -> Ok(2)
+        "Mar" -> Ok(3)
+        "Apr" -> Ok(4)
+        "May" -> Ok(5)
+        "Jun" -> Ok(6)
+        "Jul" -> Ok(7)
+        "Aug" -> Ok(8)
+        "Sep" -> Ok(9)
+        "Oct" -> Ok(10)
+        "Nov" -> Ok(11)
+        "Dec" -> Ok(12)
+        _ -> Err(BadExportDate)
+
+hour_24 : Str, Str -> Result U64 [BadExportDate]
+hour_24 = |hms, ampm|
+    h =
+        when Str.split_on(hms, ":") is
+            [hh, _, _] -> Str.to_u64(hh) |> Result.map_err(|_| BadExportDate)
+            _ -> Err(BadExportDate)
+    hour = h?
+    when ampm is
+        "AM" -> Ok(if hour == 12 then 0 else hour)
+        "PM" -> Ok(if hour == 12 then 12 else hour + 12)
+        _ -> Err(BadExportDate)
+
 # ── Strava auto-names ───────────────────────────────────────────────
 # "Morning Ride", "Lunch Gravel Ride", ... are Strava's time-of-day defaults: the
 # same name covers DIFFERENT routes, so name-matching them compares unlike efforts.
@@ -644,6 +696,11 @@ expect
     !(c.stale) and !(c.detraining)
 
 expect valid_hr(150.0) and !(valid_hr(20.0)) and !(valid_hr(230.0)) and valid_hr(35.0) and valid_hr(220.0)
+
+expect export_date_to_iso("Feb 17, 2022, 12:18:26 PM") == Ok("2022-02-17T12:18:26Z")
+expect export_date_to_iso("Jul 4, 2026, 6:05:09 AM") == Ok("2026-07-04T06:05:09Z")
+expect export_date_to_iso("Dec 31, 2025, 12:00:00 AM") == Ok("2025-12-31T00:00:00Z")
+expect export_date_to_iso("17 Feb 2022") == Err(BadExportDate)
 
 expect is_auto_name("Morning Ride") and is_auto_name("Lunch Gravel Ride") and !(is_auto_name("45 min Power Zone Ride with Matt Wilpers"))
 

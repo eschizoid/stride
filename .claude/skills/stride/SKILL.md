@@ -18,6 +18,9 @@ Never do training math yourself: read stride's numbers, add judgment.
    **First-time import or deep reconcile** (bulk edits older than 30 days): use
    `stride backfill` — it re-pulls the full activity list + ALL missing streams,
    rate-limit-aware and resumable across days (Strava caps reads at ~1000/day).
+   **No API credentials** (Strava requires a subscription for API access since
+   June 2026): `stride import <export.zip|dir>` loads a Strava account export —
+   summary-level activities (no streams), idempotent, English exports only.
 2. `stride analyze` — compute metrics for new/invalidated activities (idempotent;
    prints count + form verdict — the full report lives in `summary`). If any stored
    streams won't decode it says "N had unreadable stream data" (they retry next sync).
