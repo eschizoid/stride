@@ -1731,7 +1731,7 @@ progress! = |date|
         Stdout.line!("no workout with power + HR found on ${date}")
     else
         body = Str.join_with(List.map(groups, |g| progress_section(g.name, g.rows, date)), "\n\n")
-        Stdout.line!("${body}\n\nef = normalized power / avg HR (watts per heartbeat) — climbing = fitter\nbar = ef scaled worst→best · < asked marks the asked date · ··· = a break over 90 days")
+        Stdout.line!("${body}\n\nef = normalized power / avg HR (watts per heartbeat) — climbing = fitter\nbar = ef scaled worst→best · ◀ asked marks the asked date · ··· = a break over 90 days")
 
 # split rows (already sorted by name) into per-workout runs
 group_progress : List ProgressRow -> List { name : Str, rows : List ProgressRow }
@@ -1772,7 +1772,7 @@ progress_section = |name, rows, asked|
                 12
             else
                 1 + Num.round((r.ef - min_ef) / (max_ef - min_ef) * 11.0)
-        mark = if r.date == asked then " < asked" else ""
+        mark = if r.date == asked then " ◀ asked" else ""
         "${Render.fmt2(r.ef)} ${Str.repeat("█", n)}${mark}"
     # a `···` row marks a break of >90 days between consecutive sessions
     to_cells = |r| [
