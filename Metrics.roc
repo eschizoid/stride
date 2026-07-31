@@ -26,6 +26,9 @@ module [
     ProgressRow,
     group_progress,
     anchor_filter,
+    progress_lens,
+    lens_score,
+    lens_higher_better,
     export_date_to_iso,
 ]
 
@@ -339,13 +342,13 @@ pct_change = |from, to| if from > 0.0 then (to - from) / from * 100.0 else 0.0
 # degenerate range -> full bar
 scale_to_blocks : F64, F64, F64, U64 -> U64
 scale_to_blocks = |value, lo, hi, blocks|
-    if hi - lo < 0.001 then
+    if Num.abs(hi - lo) < 0.001 then
         blocks
     else
         1 + Num.round((value - lo) / (hi - lo) * Num.to_f64(blocks - 1))
 
 # ── repeated-workout progress (the `progress` command's business rules) ─
-ProgressRow : { name : Str, date : Str, distance_m : F64, np_w : F64, avg_hr : F64, ef : F64, output_kj : F64, tss : F64 }
+ProgressRow : { name : Str, date : Str, sport : Str, distance_m : F64, moving_time : I64, np_w : F64, avg_hr : F64, rpe : F64, output_kj : F64, tss : F64 }
 
 # split rows (already sorted by name) into per-workout runs
 group_progress : List ProgressRow -> List { name : Str, rows : List ProgressRow }
@@ -374,6 +377,54 @@ anchor_filter = |g, date|
             else
                 kept = List.keep_if(g.rows, |r| Num.abs(r.distance_m - anchor.distance_m) <= anchor.distance_m * 0.10)
                 Ok({ name: g.name, kind: SimilarDistance(anchor.distance_m), rows: kept })
+
+# ── progress lens: which "am I improving?" metric fits this workout ──
+# Power sports compare Efficiency Factor; distance sports without power compare
+# aerobic efficiency (speed per heartbeat); rated sessions (strength/HIIT/yoga)
+# compare RPE — and for a FIXED workout, a dropping RPE means you adapted, so
+# that lens is lower-is-better. Chosen by what data the group actually carries.
+Lens : [Ef, SpeedHr, Rpe]
+
+lens_score : Lens, ProgressRow -> Result F64 [Unscorable]
+lens_score = |lens, r|
+    when lens is
+        Ef -> if r.np_w > 0.0 and r.avg_hr > 0.0 then Ok(r.np_w / r.avg_hr) else Err(Unscorable)
+        SpeedHr ->
+            if r.distance_m > 0.0 and r.avg_hr > 0.0 and r.moving_time > 0 then
+                Ok((r.distance_m / Num.to_f64(r.moving_time) * 60.0) / r.avg_hr)
+            else
+                Err(Unscorable)
+
+        Rpe -> if r.rpe > 0.0 then Ok(r.rpe) else Err(Unscorable)
+
+# RPE is the only lens where a lower number is the better result
+lens_higher_better : Lens -> Bool
+lens_higher_better = |lens|
+    when lens is
+        Rpe -> Bool.false
+        _ -> Bool.true
+
+# pick the richest lens the group can actually compute (power > speed/HR > RPE)
+progress_lens : List ProgressRow -> [Ef, SpeedHr, Rpe, Unscorable]
+progress_lens = |rows|
+    scorable = |lens| List.any(rows, |r| Result.is_ok(lens_score(lens, r)))
+    if scorable(Ef) then Ef
+    else if scorable(SpeedHr) then SpeedHr
+    else if scorable(Rpe) then Rpe
+    else Unscorable
+
+# lens selection: power ride -> Ef, run with pace+HR -> SpeedHr, rated strength -> Rpe
+expect
+    row = |sport, np, dist, mt, rpe| { name: "X", date: "2025-01-01", sport, distance_m: dist, moving_time: mt, np_w: np, avg_hr: 150.0, rpe, output_kj: 0.0, tss: 0.0 }
+    progress_lens([row("Ride", 200.0, 0.0, 3600, 0.0)]) == Ef
+    and progress_lens([row("Run", 0.0, 10000.0, 3000, 0.0)]) == SpeedHr
+    and progress_lens([row("WeightTraining", 0.0, 0.0, 2700, 7.0)]) == Rpe
+    and progress_lens([row("Workout", 0.0, 0.0, 2700, 0.0)]) == Unscorable
+
+# EF = NP/HR; RPE is lower-is-better
+expect
+    r = { name: "X", date: "d", sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: 300.0, avg_hr: 150.0, rpe: 0.0, output_kj: 0.0, tss: 0.0 }
+    Num.abs(Result.with_default(lens_score(Ef, r), 0.0) - 2.0) < 0.001 and lens_higher_better(Ef) and !(lens_higher_better(Rpe))
 
 # ── Strava bulk-export date parsing ─────────────────────────────────
 # activities.csv dates look like "Feb 17, 2022, 12:18:26 PM" (English-language
@@ -771,14 +822,14 @@ expect is_auto_name("Morning Ride") and is_auto_name("Lunch Gravel Ride") and !(
 
 # group_progress: adjacent same-name rows fold into one group per workout
 expect
-    pr = |name, date, dist| { name, date, distance_m: dist, np_w: 100.0, avg_hr: 100.0, ef: 1.0, output_kj: 0.0, tss: 0.0 }
+    pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0 }
     gs = group_progress([pr("A", "2025-01-01", 0.0), pr("A", "2025-02-01", 0.0), pr("B", "2025-03-01", 0.0)])
     List.len(gs) == 2 and (List.first(gs) |> Result.map_ok(|g| List.len(g.rows) == 2) |> Result.with_default(Bool.false))
 
 # anchor_filter: exact names pass through; auto-names gate to ±10% of anchor distance;
 # distance-less auto-name anchors show alone; off-date anchors drop the group
 expect
-    pr = |name, date, dist| { name, date, distance_m: dist, np_w: 100.0, avg_hr: 100.0, ef: 1.0, output_kj: 0.0, tss: 0.0 }
+    pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0 }
     exact = anchor_filter({ name: "Class X", rows: [pr("Class X", "2025-01-01", 0.0)] }, "2025-01-01")
     gated = anchor_filter({ name: "Morning Ride", rows: [pr("Morning Ride", "2025-01-01", 20000.0), pr("Morning Ride", "2025-02-01", 21000.0), pr("Morning Ride", "2025-03-01", 40000.0)] }, "2025-01-01")
     lone = anchor_filter({ name: "Morning Ride", rows: [pr("Morning Ride", "2025-01-01", 0.0), pr("Morning Ride", "2025-02-01", 21000.0)] }, "2025-01-01")

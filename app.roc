@@ -1969,10 +1969,20 @@ pz! = |{}|
 # and shows every comparable instance chronologically, with Efficiency Factor (NP/HR) as
 # the fitness tell. Named classes match by exact name; Strava auto-names ("Morning Ride")
 # cover different routes, so those only compare rides within ±10% of the anchor's distance.
+# JSON tag for a chosen lens
+lens_name : [Ef, SpeedHr, Rpe] -> Str
+lens_name = |lens|
+    when lens is
+        Ef -> "ef"
+        SpeedHr -> "speed_hr"
+        Rpe -> "rpe"
+
+# "am I improving on THIS workout?" — anchored on a date, rendered through the
+# sport-aware lens each repeated workout supports (power->EF, distance->speed/HR,
+# rated strength->RPE). Bare `progress` uses your latest analyzed workout.
 progress! : Str => Result {} _
 progress! = |date_arg|
     path = open_db!({})?
-    # bare `progress` defaults to the most recent workout that can compute EF
     date =
         if !(Str.is_empty(date_arg)) then
             date_arg
@@ -1983,7 +1993,6 @@ progress! = |date_arg|
                 """
                 SELECT substr(a.start_local, 1, 10) AS d, a.name AS name
                 FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
-                WHERE a.avg_hr > 0 AND COALESCE(m.normalized_power, 0) > 0
                 ORDER BY a.start_local DESC LIMIT 1
                 """,
                 bindings: [],
@@ -1992,70 +2001,85 @@ progress! = |date_arg|
             when List.first(latest) is
                 Ok(r) -> r.d
                 Err(_) -> ""
-    rows = Sqlite.query_many!({
+    prows : List Metrics.ProgressRow
+    prows = Sqlite.query_many!({
         path,
         query:
         """
-        SELECT a.name AS name, substr(a.start_local, 1, 10) AS date,
-               CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
-               CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
-               CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
+        SELECT a.name AS name, substr(a.start_local, 1, 10) AS date, COALESCE(a.sport_type, '') AS sport,
+               CAST(COALESCE(a.distance,0) AS REAL) AS distance_m, a.moving_time AS moving_time,
+               CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w, CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
+               CAST(COALESCE(rt.rpe,0) AS REAL) AS rpe,
                CAST(COALESCE(a.avg_watts * a.moving_time / 1000.0, 0) AS REAL) AS output_kj,
                CAST(COALESCE(m.tss,0) AS REAL) AS tss
-        FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
+        FROM activities a
+        LEFT JOIN activity_metrics m ON m.activity_id = a.id
+        LEFT JOIN ratings rt ON rt.activity_id = a.id
         WHERE a.name IN (SELECT name FROM activities WHERE substr(start_local, 1, 10) = :date)
-          AND a.avg_hr > 0 AND m.normalized_power > 0
         ORDER BY a.name, a.start_local
         """,
         bindings: [{ name: ":date", value: String(date) }],
         rows: { Sqlite.decode_record <-
             name: Sqlite.str("name"),
             date: Sqlite.str("date"),
+            sport: Sqlite.str("sport"),
             distance_m: Sqlite.f64("distance_m"),
+            moving_time: Sqlite.i64("moving_time"),
             np_w: Sqlite.f64("np_w"),
             avg_hr: Sqlite.f64("avg_hr"),
+            rpe: Sqlite.f64("rpe"),
             output_kj: Sqlite.f64("output_kj"),
             tss: Sqlite.f64("tss"),
         },
     })?
-    with_ef : List Metrics.ProgressRow
-    with_ef = List.map(rows, |r| {
-        name: r.name,
-        date: r.date,
-        distance_m: r.distance_m,
-        np_w: r.np_w,
-        avg_hr: r.avg_hr,
-        ef: r.np_w / r.avg_hr,
-        output_kj: r.output_kj,
-        tss: r.tss,
-    })
-    groups =
-        List.keep_oks(Metrics.group_progress(with_ef), |g| Metrics.anchor_filter(g, date))
+    labeled =
+        List.keep_oks(Metrics.group_progress(prows), |g| Metrics.anchor_filter(g, date))
         |> List.map(|g| { name: Render.progress_group_label(g.name, g.kind), rows: g.rows })
-    if List.is_empty(groups) then
-        # in-band errors in BOTH modes so JSON callers can tell the outcomes apart
+    # choose each group's lens, keep only rows it can score; drop unscorable groups
+    keep_scored = |lens, g|
+        kept = List.keep_if(g.rows, |r| Result.is_ok(Metrics.lens_score(lens, r)))
+        if List.is_empty(kept) then Err(Skip) else Ok({ name: g.name, lens, rows: kept })
+    scored = List.keep_oks(labeled, |g|
+        when Metrics.progress_lens(g.rows) is
+            Ef -> keep_scored(Ef, g)
+            SpeedHr -> keep_scored(SpeedHr, g)
+            Rpe -> keep_scored(Rpe, g)
+            Unscorable -> Err(Skip))
+    if List.is_empty(scored) then
         if Str.is_empty(date) then
-            # bare `progress` and the db has no EF-capable workout at all
-            err_out!("no_ef_workouts", "no workouts with both power and heart rate yet — `stride progress` needs at least one")
+            err_out!("no_scorable_workouts", "nothing to compare yet — analyze activities first (and `stride rate` your strength sessions)")
         else
-            # distinguish "nothing that day" from "workout exists but can't compute EF"
             on_date = Sqlite.query_many!({
                 path,
-                query: "SELECT name AS name, sport_type AS sport FROM activities WHERE substr(start_local, 1, 10) = :date LIMIT 1",
+                query: "SELECT name AS name, id AS id FROM activities WHERE substr(start_local, 1, 10) = :date LIMIT 1",
                 bindings: [{ name: ":date", value: String(date) }],
-                rows: { Sqlite.decode_record <- name: Sqlite.str("name"), sport: Sqlite.str("sport") },
+                rows: { Sqlite.decode_record <- name: Sqlite.str("name"), id: Sqlite.i64("id") },
             })?
             when List.first(on_date) is
-                Ok(a) -> err_out!("no_ef_data", "found \"${a.name}\" on ${date}, but it has no usable power + HR — ef needs both")
+                Ok(a) -> err_out!("unscorable", "found \"${a.name}\" on ${date}, but it can't be compared — needs power+HR, distance+HR, or a rating (`stride rate <id> <1-10>`)")
                 Err(_) -> err_out!("no_workout_on_date", "no workout found on ${date}")
     else if json_mode!({}) then
         print_json!({
             anchor_date: date,
-            groups: List.map(groups, |g| { name: g.name, sessions: g.rows }),
+            groups: List.map(scored, |g| {
+                name: g.name,
+                lens: lens_name(g.lens),
+                sessions: List.map(g.rows, |r| {
+                    date: r.date,
+                    sport: r.sport,
+                    score: Result.with_default(Metrics.lens_score(g.lens, r), 0.0),
+                    np_w: r.np_w,
+                    avg_hr: r.avg_hr,
+                    distance_m: r.distance_m,
+                    moving_time: r.moving_time,
+                    rpe: r.rpe,
+                    output_kj: r.output_kj,
+                    tss: r.tss,
+                }),
+            }),
         })
     else
-        body = Str.join_with(List.map(groups, |g| Render.progress_section(g.name, g.rows, date)), "\n\n")
-        Stdout.line!("${body}\n\nef = normalized power / avg HR (watts per heartbeat) — climbing = fitter\nbar = ef scaled worst→best · ◀ asked marks the asked date · ··· = a break over 90 days")
+        Stdout.line!(Str.join_with(List.map(scored, |g| Render.progress_section(g.name, g.rows, date, g.lens)), "\n\n"))
 
 load_series! : U64 => Result {} _
 load_series! = |days|

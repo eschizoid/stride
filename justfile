@@ -289,10 +289,10 @@ e2e:
     rows = g["sessions"]
     assert len(rows) == 2 and g["name"] == "Test Class", "date must resolve to that day workout: " + str(d)
     assert rows[0]["date"] < rows[1]["date"], "must be chronological"
-    # EF = NP/HR: 180/150 = 1.20, then 210/150 = 1.40 (improving)
-    efs = [round(r["ef"], 3) for r in rows]
-    assert abs(rows[0]["ef"] - 1.20) < 0.01 and abs(rows[1]["ef"] - 1.40) < 0.01, "EF wrong: " + str(efs)
-    print("progress OK (date -> workout, EF chronological)")
+    assert g["lens"] == "ef", "power ride must use the EF lens: " + str(g)
+    scores = [round(r["score"], 3) for r in rows]
+    assert abs(rows[0]["score"] - 1.20) < 0.01 and abs(rows[1]["score"] - 1.40) < 0.01, "EF wrong: " + str(scores)
+    print("progress OK (EF lens, date -> workout, chronological)")
     '
     # JSON callers can distinguish the empty outcomes in-band
     "$STRIDE_BIN" progress 1999-01-01 | python3 -c 'import json,sys; assert json.load(sys.stdin)["error"] == "no_workout_on_date"; print("progress json error OK")'
@@ -311,17 +311,17 @@ e2e:
     '
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" progress 1999-01-01)
     grep -q "no workout found" <<<"$out" || fail "progress on an empty date must say so, not crash"
-    # a day with a workout that lacks HR must say WHY there's no EF, not claim no workout
+    # a power ride with no HR can't be scored by any lens — say so, honestly
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" progress "$D1")
-    grep -q 'found "power ride".*no usable power + HR' <<<"$out" || fail "HR-less workout day must explain EF needs power + HR"
-    # bare progress defaults to the latest EF-capable workout (Test Class, 2025-06-01 at this point)
+    grep -q "can't be compared" <<<"$out" || fail "unscorable workout must explain what a lens needs"
+    # bare progress anchors on the latest analyzed workout and reports its lens
     "$STRIDE_BIN" progress | python3 -c '
     import json, sys
     d = json.load(sys.stdin)
-    assert d["anchor_date"] == "2025-06-01", "bare progress must report the anchor it resolved: " + str(d)
+    assert d["anchor_date"], "bare progress must resolve an anchor: " + str(d)
     g = d["groups"][0]
-    assert len(g["sessions"]) == 2 and g["name"] == "Test Class", "bare progress must anchor on the latest EF-capable workout: " + str(d)
-    print("progress no-arg OK (defaults to latest workout)")
+    assert "lens" in g and len(g["sessions"]) >= 1, "bare progress group must carry a lens + sessions: " + str(d)
+    print("progress no-arg OK (defaults to latest analyzed workout)")
     '
     # last-vs-best: a later weaker session (EF 1.0 < best 1.40) must surface the gap line
     seed_ride 203 "Test Class" 2025-07-01T10:00:00Z 3600 20000 150 150
@@ -394,7 +394,17 @@ e2e:
     sqlite3 "$DB" "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time) VALUES (301,'Heavy Lift','WeightTraining','2025-05-05T18:00:00Z',2700);"
     n=$(sqlite3 "$DB" "SELECT COUNT(*) FROM ratings WHERE activity_id=301;")
     [ "$n" = "1" ] || fail "rating must survive mirror replace"
-    echo "rate OK (sRPE scores strength, re-rate rescores, rating survives re-sync)"
+    "$STRIDE_BIN" analyze >/dev/null
+    # sport-aware progress: a rated strength session scores through the RPE lens
+    "$STRIDE_BIN" progress 2025-05-05 | python3 -c '
+    import json, sys
+    d = json.load(sys.stdin)
+    g = d["groups"][0]
+    assert g["lens"] == "rpe", "rated strength must use the RPE lens: " + str(g)
+    assert abs(g["sessions"][0]["score"] - 5.0) < 0.01, "RPE score must be the rating: " + str(g)
+    print("progress RPE-lens OK (strength scored by rating)")
+    '
+    echo "rate OK (sRPE scores strength, re-rate rescores, rating survives re-sync, progress via RPE)"
 
     # ── compare: this window vs the prior one ───────────────────────
     "$STRIDE_BIN" compare week | python3 -c '

@@ -132,70 +132,116 @@ progress_group_label = |name, kind|
         SimilarDistance(m) -> "${name} (~${fmt1(m / 1000.0)} km rides)"
         LoneNoDistance -> "${name} (no distance recorded — can't match similar rides)"
 
-# one workout's table + EF trend verdict as a string
-progress_section : Str, List Metrics.ProgressRow, Str -> Str
-progress_section = |name, rows, asked|
-    max_ef = List.walk(rows, 0.0, |acc, r| Num.max(acc, r.ef))
-    min_ef = List.walk(rows, max_ef, |acc, r| Num.min(acc, r.ef))
-    # bar spans the OBSERVED range (worst session = 1 block, best = 12) so real
-    # differences aren't squashed against a zero baseline
-    ef_cell = |r|
-        n = Metrics.scale_to_blocks(r.ef, min_ef, max_ef, 12)
-        mark = if r.date == asked then " ◀ asked" else ""
-        "${fmt2(r.ef)} ${Str.repeat("█", n)}${mark}"
-    # a `···` row marks a break of >90 days between consecutive sessions
-    to_cells = |r| [
-        r.date,
-        fmt0(r.np_w),
-        fmt0(r.avg_hr),
-        ef_cell(r),
-        fmt0(r.output_kj),
-        fmt0(r.tss),
-    ]
-    gap_row = ["···", "", "", "", "", ""]
+# one workout's table + trend verdict, rendered through its sport-aware lens
+# (power->EF, distance->speed/HR, rated->RPE; RPE is lower-is-better)
+progress_section : Str, List Metrics.ProgressRow, Str, [Ef, SpeedHr, Rpe] -> Str
+progress_section = |name, rows, asked, lens|
+    higher = Metrics.lens_higher_better(lens)
+    sc = |row| Result.with_default(Metrics.lens_score(lens, row), 0.0)
+    scores = List.map(rows, sc)
+    max_s = List.walk(scores, 0.0, |acc, s| Num.max(acc, s))
+    min_s = List.walk(scores, max_s, |acc, s| Num.min(acc, s))
+    best = if higher then max_s else min_s
+    worst = if higher then min_s else max_s
+    pfmt = |v| when lens is
+        Rpe -> fmt0(v)
+        _ -> fmt2(v)
+    hr_of = |row| if row.avg_hr > 0.0 then fmt0(row.avg_hr) else "-"
+    prim_of = |row|
+        n = Metrics.scale_to_blocks(sc(row), worst, best, 12)
+        mark = if row.date == asked then " ◀ asked" else ""
+        "${pfmt(sc(row))} ${Str.repeat("█", n)}${mark}"
+    # each lens picks its own columns (list of header + per-row cell); the primary
+    # (bar) column direction is already handled by best/worst above
+    cols =
+        when lens is
+            Ef -> [
+                ("power (np)", |row| fmt0(row.np_w)),
+                ("heart rate (hr)", hr_of),
+                ("efficiency (ef)", prim_of),
+                ("output (kj)", |row| fmt0(row.output_kj)),
+                ("load (tss)", |row| fmt0(row.tss)),
+            ]
+            SpeedHr -> [
+                ("speed (m/min)", |row| fmt0(row.distance_m / Num.to_f64(row.moving_time) * 60.0)),
+                ("heart rate (hr)", hr_of),
+                ("aero eff (spd/hr)", prim_of),
+                ("distance (km)", |row| fmt1(row.distance_m / 1000.0)),
+                ("load (tss)", |row| fmt0(row.tss)),
+            ]
+            Rpe -> [
+                ("duration", |row| mins(row.moving_time)),
+                ("heart rate (hr)", hr_of),
+                ("effort (rpe)", prim_of),
+                ("load (tss)", |row| fmt0(row.tss)),
+            ]
+    headers = List.prepend(List.map(cols, |c| c.0), "date")
+    to_cells = |row| List.prepend(List.map(cols, |c| (c.1)(row)), row.date)
+    gap_row = List.map(headers, |_| "···")
     body_rows =
-        List.walk(rows, { prev: -1000000i64, cells: [] }, |acc, r|
-            days = Result.with_default(Metrics.date_str_to_days(r.date), acc.prev)
+        List.walk(rows, { prev: -1000000i64, cells: [] }, |acc, row|
+            days = Result.with_default(Metrics.date_str_to_days(row.date), acc.prev)
             with_gap =
                 if acc.prev > -1000000 and days - acc.prev > 90 then
                     List.append(acc.cells, gap_row)
                 else
                     acc.cells
-            { prev: days, cells: List.append(with_gap, to_cells(r)) })
+            { prev: days, cells: List.append(with_gap, to_cells(row)) })
         |> .cells
-    table = render_table(
-        ["date", "power (np)", "heart rate (hr)", "efficiency (ef)", "output (kj)", "load (tss)"],
-        body_rows,
-    )
-    t = Metrics.trend_ends(List.map(rows, |r| r.ef))
+    table = render_table(headers, body_rows)
+    t = Metrics.trend_ends(scores)
     pct = Metrics.pct_change(t.early, t.late)
-    label =
-        if pct > 5.0 then "improving" else if pct < -5.0 then "declining" else "holding steady"
-    avg_ef = Metrics.mean(List.map(rows, |r| r.ef))
-    verdict = "→ ef early avg ${fmt2(t.early)} → recent avg ${fmt2(t.late)} (overall avg ${fmt2(avg_ef)}) over ${Num.to_str(List.len(rows))} sessions — ${label} (${fmt0(pct)}%)"
-    "── ${name} ──\n${table}\n\n${verdict}${last_vs_best(rows)}"
+    improved = if higher then pct > 5.0 else pct < -5.0
+    declined = if higher then pct < -5.0 else pct > 5.0
+    label = if improved then "improving" else if declined then "declining" else "holding steady"
+    avg = Metrics.mean(scores)
+    short = when lens is
+        Ef -> "ef"
+        SpeedHr -> "aero-eff"
+        Rpe -> "rpe"
+    legend = when lens is
+        Ef -> "ef = normalized power / avg HR (watts per heartbeat) — climbing = fitter"
+        SpeedHr -> "aero-eff = speed per heartbeat (m/min ÷ bpm) — climbing = fitter"
+        Rpe -> "rpe = how hard it felt (1-10) — for a fixed workout, dropping = adapting"
+    verdict = "→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${Num.to_str(List.len(rows))} sessions — ${label} (${fmt0(pct)}%)"
+    footer = "${legend}\nbar = scaled worst→best · ◀ asked marks the asked date · ··· = a break over 90 days"
+    "── ${name} ──\n${table}\n\n${verdict}${last_vs_best(rows, lens)}\n\n${footer}"
 
-# "last vs best" line: how the most recent session compares to the all-time best EF.
-# Empty when they're the same session (you just set your best) or <2 rows.
-last_vs_best : List Metrics.ProgressRow -> Str
-last_vs_best = |rows|
-    when (List.last(rows), List.sort_with(rows, |a, b| Num.compare(b.ef, a.ef)) |> List.first) is
+# "last vs best" line: the most recent session vs the all-time best FOR THIS LENS
+# (highest score, or lowest for RPE). Empty when last IS the best, or <2 rows.
+last_vs_best : List Metrics.ProgressRow, [Ef, SpeedHr, Rpe] -> Str
+last_vs_best = |rows, lens|
+    higher = Metrics.lens_higher_better(lens)
+    sc = |row| Result.with_default(Metrics.lens_score(lens, row), 0.0)
+    pfmt = |v| when lens is
+        Rpe -> fmt0(v)
+        _ -> fmt2(v)
+    desc = List.sort_with(rows, |a, b| Num.compare(sc(b), sc(a)))
+    best_row = if higher then List.first(desc) else List.last(desc)
+    when (List.last(rows), best_row) is
         (Ok(last), Ok(best)) ->
             if last.date == best.date or List.len(rows) < 2 then
                 ""
             else
-                gap = -Metrics.pct_change(best.ef, last.ef) # % below best (best -> last is negative)
-                "\n→ last: ${fmt2(last.ef)} (${last.date}) vs best: ${fmt2(best.ef)} (${best.date}) — ${fmt0(gap)}% below your best"
+                gap = Num.abs(Metrics.pct_change(sc(best), sc(last)))
+                word = if higher then "below your best" else "above your easiest"
+                "\n→ last: ${pfmt(sc(last))} (${last.date}) vs best: ${pfmt(sc(best))} (${best.date}) — ${fmt0(gap)}% ${word}"
 
         _ -> ""
 
 expect progress_group_label("Morning Ride", SimilarDistance(31400.0)) == "Morning Ride (~31.4 km rides)"
 
-# section: gap row for >90-day breaks, asked marker, last-vs-best line all present
+# EF lens: gap row for >90-day breaks, asked marker, last-vs-best all present
 expect
-    pr = |date, ef| { name: "X", date, distance_m: 0.0, np_w: ef * 100.0, avg_hr: 100.0, ef, output_kj: 0.0, tss: 0.0 }
-    s = progress_section("X", [pr("2025-01-01", 1.5), pr("2025-08-01", 1.2)], "2025-08-01")
-    Str.contains(s, "···") and Str.contains(s, "◀ asked") and Str.contains(s, "below your best")
+    pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0 }
+    s = progress_section("X", [pr("2025-01-01", 1.5), pr("2025-08-01", 1.2)], "2025-08-01", Ef)
+    Str.contains(s, "···") and Str.contains(s, "◀ asked") and Str.contains(s, "below your best") and Str.contains(s, "declining")
+
+# RPE lens is lower-is-better: RPE dropping 8 -> 6 reads as improving, "above your easiest"
+expect
+    pr = |date, rpe| { name: "Lift", date, sport: "WeightTraining", distance_m: 0.0, moving_time: 2700, np_w: 0.0, avg_hr: 0.0, rpe, output_kj: 0.0, tss: 0.0 }
+    s = progress_section("Lift", [pr("2025-01-01", 8.0), pr("2025-02-01", 6.0), pr("2025-03-01", 7.0)], "2025-03-01", Rpe)
+    Str.contains(s, "effort (rpe)") and Str.contains(s, "improving") and Str.contains(s, "above your easiest")
 
 
 # ── load command screen ─────────────────────────────────────────────
