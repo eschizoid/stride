@@ -32,6 +32,8 @@ import json.Json
 import Streams
 import json.Option exposing [Option]
 import Metrics
+import Command
+import Config
 import Schema
 import Render
 import Backfill
@@ -97,74 +99,55 @@ help_text =
         After that, creds live in the db — no env vars needed again.
     """
 
+# main! stays thin: parse argv into a typed Command (pure, in Command.roc), then
+# dispatch. All arity/count validation lives in the parser and is unit-tested there.
 main! : List Arg => Result {} _
 main! = |raw_args|
     args = List.map(raw_args, Arg.display)
-    when args is
-        [_, "init"] -> init!({})
-        [_, "auth"] -> auth!({})
-        [_, "sync"] -> sync!({})
-        [_, "backfill"] -> backfill!({})
-        [_, "analyze"] -> analyze!({})
-        [_, "summary"] -> summary!({})
-        [_, "stats"] -> stats!({})
-        [_, "week"] -> week!({})
-        [_, "compare"] -> compare!("week")
-        [_, "compare", period] -> compare!(period)
-        [_, "activities"] -> activities!(30, "")
-        [_, "activities", n] -> with_count!(n, |c| activities!(c, ""))
-        [_, "activities", n, sport] -> with_count!(n, |c| activities!(c, sport))
-        [_, "top", metric] -> top!(metric, 10, "")
-        [_, "top", metric, n] -> with_count!(n, |c| top!(metric, c, ""))
-        [_, "top", metric, n, sport] -> with_count!(n, |c| top!(metric, c, sport))
-        [_, "import", src] -> import_archive!(src)
-        [_, "rate", target, rpe_str] -> rate!(target, rpe_str)
-        [_, "doctor"] -> doctor!({})
-        [_, "zones"] -> pz!({})
-        [_, "pz"] -> pz!({})
-        [_, "progress"] -> progress!("")
-        [_, "progress", name] -> progress!(name)
-        [_, "activity", id_str] -> activity!(id_str)
-        [_, "load"] -> load_series!(90)
-        [_, "load", n] -> with_count!(n, |c| load_series!(c))
-        [_, "plan"] -> plan_view!({})
-        [_, "plan", "add", date, session_type, detail, rationale] -> plan_add!(date, session_type, detail, rationale)
-        [_, "complete", session_id, activity_id] -> complete!(session_id, activity_id)
-        [_, "complete", session_id] -> complete_rest!(session_id)
-        [_, "skip", session_id, reason] -> skip!(session_id, reason)
-        [_, "config", "get", key] -> config_show!(key)
-        [_, "config", "set", key, val] -> config_store!(key, val)
-        [_, "--version"] -> Stdout.line!(version)
-        # wrong arity on multi-arg commands: targeted usage, not the whole help
-        [_, "plan", ..] -> usage!("plan add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `plan` to view the log")
-        [_, "complete", ..] -> usage!("complete <session_id> [activity_id]")
-        [_, "skip", ..] -> usage!("skip <session_id> \"<reason>\"")
-        [_, "activity", ..] -> usage!("activity <activity_id>")
-        [_, "config", ..] -> usage!("config get <key>  |  config set <key> <value>")
-        _ -> Stdout.line!(help_text)
+    when Command.parse(args) is
+        Err(ShowHelp) -> Stdout.line!(help_text)
+        Err(Usage(u)) -> usage!(u)
+        Err(BadCount(s)) -> err_out!("bad_count", "expected a number, got '${s}'")
+        Ok(cmd) -> dispatch!(cmd)
+
+dispatch! : Command.Command => Result {} _
+dispatch! = |cmd|
+    when cmd is
+        Init -> init!({})
+        Auth -> auth!({})
+        Sync -> sync!({})
+        Backfill -> backfill!({})
+        Analyze -> analyze!({})
+        Summary -> summary!({})
+        Stats -> stats!({})
+        Week -> week!({})
+        Doctor -> doctor!({})
+        Zones -> pz!({})
+        Version -> Stdout.line!(version)
+        Compare(period) -> compare!(period)
+        Activities(c, sport) -> activities!(c, sport)
+        Top(metric, c, sport) -> top!(metric, c, sport)
+        Import(src) -> import_archive!(src)
+        Rate(target, rpe_str) -> rate!(target, rpe_str)
+        Progress(name) -> progress!(name)
+        Activity(id_str) -> activity!(id_str)
+        Load(days) -> load_series!(days)
+        PlanView -> plan_view!({})
+        PlanAdd(date, session_type, detail, rationale) -> plan_add!(date, session_type, detail, rationale)
+        Complete(session_id, activity_id) -> complete!(session_id, activity_id)
+        CompleteRest(session_id) -> complete_rest!(session_id)
+        Skip(session_id, reason) -> skip!(session_id, reason)
+        ConfigGet(key) -> config_show!(key)
+        ConfigSet(key, val) -> config_store!(key, val)
 
 usage! : Str => Result {} _
 usage! = |u|
     Stdout.line!("usage: stride ${u}")
 
-# parse a count argument, or emit a clean error instead of silently defaulting
-# (so `stride activities banana` tells you it's wrong, not shows 30 rows)
-with_count! : Str, (U64 => Result {} _) => Result {} _
-with_count! = |s, f!|
-    when Str.to_u64(s) is
-        Ok(n) -> f!(n)
-        Err(_) -> err_out!("bad_count", "expected a number, got '${s}'")
-
-# credential keys — never surfaced through `config get` or any JSON. The db holds
-# these; reading them back through a query interface would defeat the point.
-secret_key : Str -> Bool
-secret_key = |k|
-    List.contains(["strava_access_token", "strava_refresh_token", "strava_client_secret"], k)
-
 config_show! : Str => Result {} _
 config_show! = |key|
     path = open_db!({})?
-    if secret_key(key) then
+    if Config.is_secret(key) then
         # confirm set-ness without leaking the value
         when config_opt!(path, key)? is
             Found(_) -> out!({ key, value: "<redacted>", redacted: Bool.true }, |_| "${key} = <redacted> (secret — stored in the db, not shown)")

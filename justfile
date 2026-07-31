@@ -20,6 +20,8 @@ test:
     {{roc}} test src/Render.roc
     {{roc}} test src/Backfill.roc
     {{roc}} test src/Csv.roc
+    {{roc}} test src/Command.roc
+    {{roc}} test src/Config.roc
     {{roc}} test --main src/app.roc src/Streams.roc
     just build
     just e2e
