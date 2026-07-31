@@ -186,7 +186,7 @@ sync_ftp_to_strava! = |path, ftp_str|
                     resp = Http.send!({
                         method: PUT,
                         headers: [Http.header(("Authorization", "Bearer ${token}"))],
-                        uri: "https://www.strava.com/api/v3/athlete?ftp=${ftp_str}",
+                        uri: "${api_base!({})}/api/v3/athlete?ftp=${ftp_str}",
                         body: [],
                         timeout_ms: TimeoutMilliseconds(30000),
                     })
@@ -248,7 +248,16 @@ config_set! = |path, key, value|
 
 TokenResp : { access_token : Str, refresh_token : Str, expires_at : I64 }
 
-token_url = "https://www.strava.com/oauth/token"
+# API base override (STRIDE_API_BASE) — lets the e2e point stride at a local
+# mock Strava; humans never set it. The browser authorize URL stays real always.
+api_base! : {} => Str
+api_base! = |{}|
+    when Env.var!("STRIDE_API_BASE") is
+        Ok(b) if !(Str.is_empty(b)) -> b
+        _ -> "https://www.strava.com"
+
+token_url! : {} => Str
+token_url! = |{}| "${api_base!({})}/oauth/token"
 
 # best-effort browser launch: macOS `open`, then Linux `xdg-open`. Silent on
 # failure — the URL is always printed as the manual fallback. exec_output! (not
@@ -310,7 +319,7 @@ auth_flow! = |path, client_id, client_secret|
     code_raw = Stdin.line!({})?
     code = Str.trim(code_raw)
     form = "client_id=${client_id}&client_secret=${client_secret}&code=${code}&grant_type=authorization_code"
-    body = post_form!(token_url, form)?
+    body = post_form!(token_url!({}), form)?
     tokens = decode_tokens(body)?
     save_tokens!(path, tokens)?
     # persist client creds so sync never needs env vars again
@@ -364,7 +373,7 @@ get_valid_token! = |path|
         client_id = client_cred!(path, "STRAVA_CLIENT_ID", "strava_client_id")?
         client_secret = client_cred!(path, "STRAVA_CLIENT_SECRET", "strava_client_secret")?
         form = "client_id=${client_id}&client_secret=${client_secret}&grant_type=refresh_token&refresh_token=${refresh}"
-        body = post_form!(token_url, form)?
+        body = post_form!(token_url!({}), form)?
         tokens = decode_tokens(body)?
         save_tokens!(path, tokens)?
         Ok(tokens.access_token)
@@ -502,7 +511,7 @@ fetch_streams_all! = |path, token, ids, acc|
         [] -> Ok(acc)
         [id, .. as rest] ->
             id_str = Num.to_str(id)
-            uri = "https://www.strava.com/api/v3/activities/${id_str}/streams?keys=time,heartrate,watts&key_by_type=true"
+            uri = "${api_base!({})}/api/v3/activities/${id_str}/streams?keys=time,heartrate,watts&key_by_type=true"
             resp = Http.send!({
                 method: GET,
                 headers: [Http.header(("Authorization", "Bearer ${token}"))],
@@ -642,7 +651,7 @@ drain_streams! = |path, token, ids, st|
     when ids is
         [] -> Stdout.line!("backfill complete — ${Num.to_str(st.done)} streams fetched this run; ${Num.to_str(pending_streams!(path)?)} still missing")
         [id, .. as rest] ->
-            uri = "https://www.strava.com/api/v3/activities/${Num.to_str(id)}/streams?keys=time,heartrate,watts&key_by_type=true"
+            uri = "${api_base!({})}/api/v3/activities/${Num.to_str(id)}/streams?keys=time,heartrate,watts&key_by_type=true"
             resp = send_bearer!(uri, token)?
             when Backfill.decide({ status: resp.status, done: st.done, window: st.window, retries: st.retries }, read_limits) is
                 Refresh ->
@@ -690,7 +699,7 @@ fetch_pages! : Str, Str, Str, U64, U64 => Result U64 _
 fetch_pages! = |path, token, after_param, page, acc|
     page_str = Num.to_str(page)
     per_str = Num.to_str(per_page)
-    uri = "https://www.strava.com/api/v3/athlete/activities?per_page=${per_str}&page=${page_str}${after_param}"
+    uri = "${api_base!({})}/api/v3/athlete/activities?per_page=${per_str}&page=${page_str}${after_param}"
     body = get_bearer!(uri, token)?
     decoded : Result (List ActivitySummary) _
     decoded = Decode.from_bytes(body, Json.utf8)
