@@ -29,6 +29,7 @@ module [
     progress_lens,
     lens_score,
     lens_higher_better,
+    load_confidence,
     export_date_to_iso,
 ]
 
@@ -377,6 +378,16 @@ anchor_filter = |g, date|
             else
                 kept = List.keep_if(g.rows, |r| Num.abs(r.distance_m - anchor.distance_m) <= anchor.distance_m * 0.10)
                 Ok({ name: g.name, kind: SimilarDistance(anchor.distance_m), rows: kept })
+
+# confidence in a load value, from which ladder rung produced it: measured power
+# is high, HR/RPE medium, Strava's relative_effort low, unscored none. Deterministic.
+load_confidence : Str -> Str
+load_confidence = |model|
+    when model is
+        "power_stream" | "weighted_watts" | "avg_watts" -> "high"
+        "hr_zones" | "hr_avg" | "session_rpe" -> "medium"
+        "relative_effort" -> "low"
+        _ -> "none"
 
 # ── progress lens: which "am I improving?" metric fits this workout ──
 # Power sports compare Efficiency Factor; distance sports without power compare
@@ -817,6 +828,8 @@ expect export_date_to_iso("Feb 17, 2022, 12:18:26 PM") == Ok("2022-02-17T12:18:2
 expect export_date_to_iso("Jul 4, 2026, 6:05:09 AM") == Ok("2026-07-04T06:05:09Z")
 expect export_date_to_iso("Dec 31, 2025, 12:00:00 AM") == Ok("2025-12-31T00:00:00Z")
 expect export_date_to_iso("17 Feb 2022") == Err(BadExportDate)
+
+expect load_confidence("power_stream") == "high" and load_confidence("hr_zones") == "medium" and load_confidence("session_rpe") == "medium" and load_confidence("relative_effort") == "low" and load_confidence("none") == "none"
 
 expect is_auto_name("Morning Ride") and is_auto_name("Lunch Gravel Ride") and !(is_auto_name("45 min Power Zone Ride with Matt Wilpers"))
 

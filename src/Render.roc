@@ -173,20 +173,20 @@ progress_section = |name, rows, asked, lens|
                 ("heart rate (hr)", hr_of),
                 ("efficiency (ef)", prim_of),
                 ("output (kj)", |row| fmt0(row.output_kj)),
-                ("load (tss)", |row| fmt0(row.tss)),
+                ("load", |row| fmt0(row.tss)),
             ]
             SpeedHr -> [
                 ("pace (min/km)", |row| pace_per_km(row.distance_m, row.moving_time)),
                 ("heart rate (hr)", hr_of),
                 ("aero eff (spd/hr)", prim_of),
                 ("distance (km)", |row| fmt1(row.distance_m / 1000.0)),
-                ("load (tss)", |row| fmt0(row.tss)),
+                ("load", |row| fmt0(row.tss)),
             ]
             Rpe -> [
                 ("duration", |row| mins(row.moving_time)),
                 ("heart rate (hr)", hr_of),
                 ("effort (rpe)", prim_of),
-                ("load (tss)", |row| fmt0(row.tss)),
+                ("load", |row| fmt0(row.tss)),
             ]
     headers = List.prepend(List.map(cols, |c| c.0), "date")
     to_cells = |row| List.prepend(List.map(cols, |c| (c.1)(row)), row.date)
@@ -277,7 +277,7 @@ load_screen = |ordered|
         })
         weeks = Metrics.weekly_rollup(day_loads)
         table = render_table(
-            ["week of", "sessions", "load (tss)", "fitness end (ctl)", "form end (tsb)"],
+            ["week of", "sessions", "load", "fitness end (ctl)", "form end (tsb)"],
             List.map(weeks, |w| [
                 Metrics.days_to_date_str(w.week_start),
                 Num.to_str(w.sessions),
@@ -294,10 +294,10 @@ load_screen = |ordered|
         "${table}\n\n${verdict}\n\n${legend}"
     else
         table = render_table(
-            ["day", "trained (tss)", "fitness (ctl)", "fatigue (atl)", "form (tsb)"],
+            ["day", "load", "fitness (ctl)", "fatigue (atl)", "form (tsb)"],
             List.map(ordered, |d| [
                 d.day,
-                (if d.tss >= 1.0 then "${fmt0(d.tss)} TSS" else "rest"),
+                (if d.tss >= 1.0 then fmt0(d.tss) else "rest"),
                 fmt0(d.ctl),
                 fmt0(d.atl),
                 fmt0(d.tsb),
@@ -305,7 +305,7 @@ load_screen = |ordered|
         )
         legend =
             """
-            trained (tss):  training stress score — how much load the day added
+            load:           training load the day added (power TSS, HR, or sRPE — see doctor)
             fitness (ctl):  long-term base, 42d avg — want it climbing slowly
             fatigue (atl):  short-term tiredness, 7d avg — spikes after big days, fades with rest
             form (tsb):     fitness - fatigue (same day) — negative = fatigued,
@@ -317,7 +317,7 @@ load_screen = |ordered|
 expect
     d = |day, tss| { day, tss, ctl: 10.0, atl: 5.0, tsb: 5.0 }
     s = load_screen([d("2025-01-01", 50.0), d("2025-01-02", 0.0)])
-    Str.contains(s, "trained (tss)") and Str.contains(s, "rest") and Str.contains(s, "→ today: form 5")
+    Str.contains(s, "load") and Str.contains(s, "rest") and Str.contains(s, "→ today: form 5")
 
 expect
     d = |day, tss| { day, tss, ctl: 10.0, atl: 5.0, tsb: 5.0 }
@@ -353,7 +353,7 @@ summary_screen = |s|
                 "  → ${Metrics.form_label(s.form_tsb)}",
                 "",
                 "  last 28 days:",
-                "    training load: ${fmt0(z.tss)} TSS",
+                "    training load: ${fmt0(z.tss)} (mixed-model — see doctor)",
                 "    time in HR zones: Z1 ${Num.to_str(z.z1_s // 60)}m  Z2 ${Num.to_str(z.z2_s // 60)}m  Z3 ${Num.to_str(z.z3_s // 60)}m  Z4 ${Num.to_str(z.z4_s // 60)}m  Z5 ${Num.to_str(z.z5_s // 60)}m",
                 "    polarization: ${Num.to_str(z.easy_pct)}% easy (Z1-2) / ${Num.to_str(z.moderate_pct)}% moderate (Z3) / ${Num.to_str(z.hard_pct)}% hard (Z4-5)",
             ],
@@ -361,7 +361,7 @@ summary_screen = |s|
             ftp_lines,
             [
                 "",
-                "  last 7 days: ${fmt0(s.last_7d.tss)} TSS — ${Num.to_str(s.last_7d.easy_pct)}% easy / ${Num.to_str(s.last_7d.moderate_pct)}% moderate / ${Num.to_str(s.last_7d.hard_pct)}% hard",
+                "  last 7 days: ${fmt0(s.last_7d.tss)} load — ${Num.to_str(s.last_7d.easy_pct)}% easy / ${Num.to_str(s.last_7d.moderate_pct)}% moderate / ${Num.to_str(s.last_7d.hard_pct)}% hard",
                 "  last hard session (5+ min Z4/Z5): ${last_hard_str}",
                 "  open planned sessions: ${Num.to_str(s.pending_sessions)}",
             ],
@@ -410,7 +410,7 @@ compare_screen = |p|
     table = render_table(
         ["metric", "prior ${lab}", "last ${lab}", "Δ"],
         [
-            ["load (tss)", fmt0(pr.tss), fmt0(c.tss), df(c.tss, pr.tss)],
+            ["load", fmt0(pr.tss), fmt0(c.tss), df(c.tss, pr.tss)],
             ["sessions", Num.to_str(pr.sessions), Num.to_str(c.sessions), di(c.sessions, pr.sessions)],
             ["hard (min)", Num.to_str(pr.hard_min), Num.to_str(c.hard_min), di(c.hard_min, pr.hard_min)],
             ["easy %", Num.to_str(pr.easy_pct), Num.to_str(c.easy_pct), di(c.easy_pct, pr.easy_pct)],
@@ -437,7 +437,7 @@ expect pace_per_km(10000.0, 3000) == "5:00" and pace_per_km(10000.0, 3070) == "5
 expect
     w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl }
     s = compare_screen({ period: "week", window_label: "7d", current: w(227.0, 6i64, 18i64, 17i64, 26.0), prior: w(193.0, 5i64, 12i64, 37i64, 24.0) })
-    Str.contains(s, "load (tss)") and Str.contains(s, "+34") and Str.contains(s, "ramping") and Str.contains(s, "building")
+    Str.contains(s, "load") and Str.contains(s, "+34") and Str.contains(s, "ramping") and Str.contains(s, "building")
 
 # zero prior TSS must NOT read as "steady 0%" — it's a resumption
 expect
