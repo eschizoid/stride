@@ -22,7 +22,7 @@ $ stride summary
   → balanced — good day for intensity if you feel it
 
   last 28 days:
-    training load: 819 (mixed-model — see doctor)
+    training load: 819 (79% measured — rest estimated from HR/RPE; see doctor)
     time in HR zones: Z1 409m  Z2 189m  Z3 276m  Z4 72m  Z5 0m
     polarization: 63% easy (Z1-2) / 29% moderate (Z3) / 8% hard (Z4-5)
     ⚠ zone gap: no Z5 heart-rate time in 28 days (could be no hard sessions, or

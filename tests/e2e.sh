@@ -83,6 +83,9 @@ import json, sys
 s = json.load(sys.stdin)["data"]; today = sys.argv[1]
 assert s["as_of"] == today, f"as_of {s['"'"'as_of'"'"']} != {today} (daily_load must extend to today)"
 assert abs(s["last_28d"]["tss"] - 155) < 1.0, f"expected 100 power + 55 hrTSS, got {s['"'"'last_28d'"'"']['"'"'tss'"'"']}"
+# grill #2: fitness carries its own confidence — 100 measured (power) / 155 total = ~65%
+mp = s["last_28d"]["measured_pct"]
+assert 60 <= mp <= 70, f"measured_pct should be ~65 (100 power / 155 total), got {mp}"
 assert s["ftp"]["stale"] == False
 assert s["fitness_ctl"] > 0 and s["fatigue_atl"] > 0
 print("summary math OK (power TSS 100 + hrTSS 55, as-of-today)")

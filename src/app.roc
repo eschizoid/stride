@@ -1091,14 +1091,17 @@ walk_days! = |path, by_day, day, last_day, ctl_prev, atl_prev|
 # ── shared queries ──────────────────────────────────────────────────
 
 # zone + TSS totals for activities on/after a cutoff date
-zone_sum! : Str, Str => Result { z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64 } _
+zone_sum! : Str, Str => Result { z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, measured : F64 } _
 zone_sum! = |path, cutoff|
     Sqlite.query!({
         path,
         query:
         """
         SELECT COALESCE(SUM(m.z1_s),0) AS z1, COALESCE(SUM(m.z2_s),0) AS z2, COALESCE(SUM(m.z3_s),0) AS z3,
-               COALESCE(SUM(m.z4_s),0) AS z4, COALESCE(SUM(m.z5_s),0) AS z5, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss
+               COALESCE(SUM(m.z4_s),0) AS z4, COALESCE(SUM(m.z5_s),0) AS z5, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
+               -- load that came from a measured power meter (high-confidence rungs),
+               -- vs estimated from HR/RPE/relative-effort — see the doctor confidence tiers
+               CAST(COALESCE(SUM(CASE WHEN m.load_model IN ('power_stream','weighted_watts','avg_watts') THEN m.tss ELSE 0 END),0) AS REAL) AS measured
         FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
         WHERE a.start_local >= :cutoff
         """,
@@ -1110,6 +1113,7 @@ zone_sum! = |path, cutoff|
             z4: Sqlite.i64("z4"),
             z5: Sqlite.i64("z5"),
             tss: Sqlite.f64("tss"),
+            measured: Sqlite.f64("measured"),
         },
     })
 
@@ -1590,6 +1594,9 @@ summary_payload! = |path, ftp, zb|
     total = zsum.z1 + zsum.z2 + zsum.z3 + zsum.z4 + zsum.z5
     easy = zsum.z1 + zsum.z2
     hard = zsum.z4 + zsum.z5
+    # what fraction of the 28d load is measured (power) vs estimated (HR/RPE/RE) —
+    # so the fitness number carries its own confidence, not just doctor's
+    measured_pct = if zsum.tss > 0.0 then Num.round((zsum.measured / zsum.tss) * 100.0) else 0
     total7 = zsum7.z1 + zsum7.z2 + zsum7.z3 + zsum7.z4 + zsum7.z5
     easy7 = zsum7.z1 + zsum7.z2
     hard7 = zsum7.z4 + zsum7.z5
@@ -1623,6 +1630,7 @@ summary_payload! = |path, ftp, zb|
             easy_pct: pct_num(easy, total),
             moderate_pct: pct_num(zsum.z3, total),
             hard_pct: pct_num(hard, total),
+            measured_pct: measured_pct,
         },
         ftp: {
             config_w: ftp,
