@@ -334,7 +334,7 @@ summary_screen = |s|
     z = s.last_28d
     zone_gap =
         if z.z5_s == 0 then
-            ["    ⚠ zone gap: 0 minutes in Z5 — no VO2max stimulus in 28 days"]
+            ["    ⚠ zone gap: no Z5 heart-rate time in 28 days (could be no hard sessions, or power-based / short intervals that didn't drive HR to Z5)"]
         else
             []
     ftp_lines =
