@@ -275,6 +275,11 @@ Strava REST v3 ──▶ auth/sync ──▶ SQLite (~/.stride/db.sqlite) ──
 - The schema versions itself — upgrading the binary against an existing db
   migrates on the next command.
 
+The decisions behind all of this — why Roc and why pinned, the effects-only module
+layout, the three data tiers, the mixed-model load, the versioned JSON envelope, and
+the Windows/compiler-migration situation — are recorded in
+[`docs/adr/0000-architecture.md`](docs/adr/0000-architecture.md).
+
 ## Local-first, by design
 
 The database is the product. Everything stride knows lives in one SQLite file on

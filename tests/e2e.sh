@@ -447,11 +447,11 @@ sqlite3 "$MIG_DB" "SELECT weighted_avg_watts FROM activities LIMIT 0;" >/dev/nul
 [ "$(sqlite3 "$MIG_DB" 'SELECT COUNT(*) FROM activities;')" = "2" ] || fail "activities must survive migration"
 # recompute works on the migrated db
 HOME="$MIG_HOME" "$STRIDE_BIN" analyze >/dev/null || fail "analyze must run on a migrated db"
-# idempotent: re-run stays at v6 with data intact
+# idempotent: re-run stays at the current version with data intact
 HOME="$MIG_HOME" "$STRIDE_BIN" config get ftp >/dev/null
 [ "$(sqlite3 "$MIG_DB" 'PRAGMA user_version;')" = "$MIG_V" ] || fail "re-run must be idempotent (version changed)"
 [ "$(sqlite3 "$MIG_DB" 'SELECT COUNT(*) FROM activities;')" = "2" ] || fail "re-run must not lose data"
 rm -rf "$MIG_HOME"
-echo "migration OK (legacy v1 db -> v6, rename + data preserved, idempotent)"
+echo "migration OK (legacy v1 db -> v$MIG_V, rename + data preserved, idempotent)"
 
 echo "ALL CLI TESTS PASS"
