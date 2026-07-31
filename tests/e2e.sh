@@ -399,4 +399,28 @@ out=$(STRIDE_FORMAT=human "$STRIDE_BIN" week); grep -q "OPEN PLAN" <<<"$out" || 
 STRIDE_FORMAT=JSON "$STRIDE_BIN" summary | python3 -c 'import json,sys; json.load(sys.stdin); print("uppercase STRIDE_FORMAT OK")'
 echo "human mode OK"
 
+# ── schema migration: a legacy db upgrades to current with data intact (P6) ──
+MIG_HOME=$(mktemp -d); mkdir -p "$MIG_HOME/.stride"
+MIG_DB="$MIG_HOME/.stride/db.sqlite"
+sqlite3 "$MIG_DB" < tests/fixtures/db/v1-legacy.sql
+[ "$(sqlite3 "$MIG_DB" 'PRAGMA user_version;')" = "1" ] || fail "fixture must start at user_version 1"
+# any command opens the db -> ensure_schema! runs migrations
+HOME="$MIG_HOME" "$STRIDE_BIN" config get ftp >/dev/null
+[ "$(sqlite3 "$MIG_DB" 'PRAGMA user_version;')" = "6" ] || fail "migration must reach schema v6"
+# the prescriptions -> planned_sessions RENAME preserved the row (the risky one)
+[ "$(sqlite3 "$MIG_DB" 'SELECT session_type FROM planned_sessions WHERE id=1;')" = "vo2max" ] || fail "rename must preserve the planned session row"
+# new table + additive columns exist; old data survives
+sqlite3 "$MIG_DB" "SELECT 1 FROM ratings LIMIT 0;" >/dev/null || fail "ratings table must be created"
+sqlite3 "$MIG_DB" "SELECT load_model, metrics_rev, zones_used FROM activity_metrics LIMIT 0;" >/dev/null || fail "metric provenance columns must be added"
+sqlite3 "$MIG_DB" "SELECT weighted_avg_watts FROM activities LIMIT 0;" >/dev/null || fail "weighted_avg_watts must be added"
+[ "$(sqlite3 "$MIG_DB" 'SELECT COUNT(*) FROM activities;')" = "2" ] || fail "activities must survive migration"
+# recompute works on the migrated db
+HOME="$MIG_HOME" "$STRIDE_BIN" analyze >/dev/null || fail "analyze must run on a migrated db"
+# idempotent: re-run stays at v6 with data intact
+HOME="$MIG_HOME" "$STRIDE_BIN" config get ftp >/dev/null
+[ "$(sqlite3 "$MIG_DB" 'PRAGMA user_version;')" = "6" ] || fail "re-run must stay at v6"
+[ "$(sqlite3 "$MIG_DB" 'SELECT COUNT(*) FROM activities;')" = "2" ] || fail "re-run must not lose data"
+rm -rf "$MIG_HOME"
+echo "migration OK (legacy v1 db -> v6, rename + data preserved, idempotent)"
+
 echo "ALL CLI TESTS PASS"
