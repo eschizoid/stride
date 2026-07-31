@@ -16,8 +16,15 @@ seed_ride() { sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_lo
 
 # ── init + config ────────────────────────────────────────────────
 out=$("$STRIDE_BIN" init); grep -q initialized <<<"$out" || fail "init"
-# before config exists, json mode must still emit valid JSON (not human prose)
-"$STRIDE_BIN" summary | python3 -c 'import json,sys; assert json.load(sys.stdin)["error"] == "missing_config"; print("missing-config json contract OK")'
+# before config exists, json mode must still emit valid JSON (not human prose).
+# also locks the P3 envelope: versioned wrapper, error under error.code (not bare).
+"$STRIDE_BIN" summary | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["schema_version"] == 1, f"envelope must be versioned: {d}"
+assert "data" not in d and d["error"]["code"] == "missing_config", f"error envelope: {d}"
+print("missing-config json contract OK (versioned error envelope)")
+'
 for kv in "ftp 200" "hr_z1_max 123" "hr_z2_max 153" "hr_z3_max 168" "hr_z4_max 183"; do
   "$STRIDE_BIN" config set $kv >/dev/null
 done
@@ -30,7 +37,7 @@ echo "auth credless-guidance OK"
 # ── power zones: watt ranges derived from FTP (200) ──────────────
 "$STRIDE_BIN" pz | python3 -c '
 import json, sys
-d = json.load(sys.stdin)
+d = json.load(sys.stdin)["data"]
 zs = d["zones"]
 assert len(zs) == 7, f"expected 7 power zones, got {len(zs)}"
 z4 = zs[3]  # threshold, 91-105% of FTP 200 = 182-210W
@@ -45,8 +52,8 @@ out=$("$STRIDE_BIN" config set ftp 195)
 grep -q "ftp = 195" <<<"$out" || fail "config set ftp must store + report locally"
 grep -q "not synced to Strava" <<<"$out" || fail "unauthed ftp set must warn (not crash) about Strava sync"
 got=$(STRIDE_FORMAT=human "$STRIDE_BIN" config get ftp); [ "$got" = "195" ] || fail "ftp must be stored even when Strava sync can't run"
-"$STRIDE_BIN" config get ftp | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["value"] == "195", d; print("config get json OK")'
-"$STRIDE_BIN" config get nope | python3 -c 'import json,sys; assert json.load(sys.stdin)["error"] == "not_set"; print("config get not_set OK")'
+"$STRIDE_BIN" config get ftp | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["value"] == "195", d; print("config get json OK")'
+"$STRIDE_BIN" config get nope | python3 -c 'import json,sys; assert json.load(sys.stdin)["error"]["code"] == "not_set"; print("config get not_set OK")'
 # ── credential safety (P4): secrets never surface, db is owner-only ──
 sqlite3 "$DB" "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_access_token','SECRETVAL123');"
 out=$("$STRIDE_BIN" config get strava_access_token)
@@ -70,7 +77,7 @@ sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_tim
 out=$("$STRIDE_BIN" analyze); grep -q '"computed":2' <<<"$out" || fail "analyze count"
 "$STRIDE_BIN" summary | python3 -c '
 import json, sys
-s = json.load(sys.stdin); today = sys.argv[1]
+s = json.load(sys.stdin)["data"]; today = sys.argv[1]
 assert s["as_of"] == today, f"as_of {s['"'"'as_of'"'"']} != {today} (daily_load must extend to today)"
 assert abs(s["last_28d"]["tss"] - 155) < 1.0, f"expected 100 power + 55 hrTSS, got {s['"'"'last_28d'"'"']['"'"'tss'"'"']}"
 assert s["ftp"]["stale"] == False
@@ -83,7 +90,7 @@ print("summary math OK (power TSS 100 + hrTSS 55, as-of-today)")
 out=$("$STRIDE_BIN" analyze); grep -q '"computed":2' <<<"$out" || fail "ftp change must recompute all rows"
 "$STRIDE_BIN" summary | python3 -c '
 import json, sys
-s = json.load(sys.stdin)
+s = json.load(sys.stdin)["data"]
 assert abs(s["last_28d"]["tss"] - 455) < 1.0, f"NP200@FTP100 => TSS 400 (+55 hr), got {s['"'"'last_28d'"'"']['"'"'tss'"'"']}"
 print("ftp_used auto-invalidation OK (TSS rescaled 100 -> 400)")
 '
@@ -113,7 +120,7 @@ out=$("$STRIDE_BIN" plan add 2099-01-01 threshold "d2" "r2"); grep -q '"id":2' <
 out=$("$STRIDE_BIN" complete 2 101); grep -q '"completed_session"' <<<"$out" || fail "complete"
 "$STRIDE_BIN" plan | python3 -c '
 import json, sys
-ps = {p["id"]: p for p in json.load(sys.stdin)}
+ps = {p["id"]: p for p in json.load(sys.stdin)["data"]}
 assert ps[1]["status"] == "skipped" and ps[1]["skipped_reason"] == "sick"
 assert ps[2]["status"] == "done" and ps[2]["completed_activity_id"] == 101
 print("plan lifecycle OK (open -> skipped / done)")
@@ -131,13 +138,13 @@ out=$("$STRIDE_BIN" complete 3); grep -q '"rest":true' <<<"$out" || fail "rest b
 st=$(sqlite3 "$DB" "SELECT status FROM planned_sessions WHERE id=3;"); [ "$st" = "done" ] || fail "rest must be done, got '$st'"
 "$STRIDE_BIN" skip 4 "cleanup" >/dev/null
 echo "rest-day complete OK (bare complete for rest only)"
-"$STRIDE_BIN" summary | python3 -c 'import json,sys; assert json.load(sys.stdin)["pending_sessions"] == 0; print("pending count OK")'
-"$STRIDE_BIN" week | python3 -c 'import json,sys; assert json.load(sys.stdin)["open_sessions"] == []; print("week payload OK")'
+"$STRIDE_BIN" summary | python3 -c 'import json,sys; assert json.load(sys.stdin)["data"]["pending_sessions"] == 0; print("pending count OK")'
+"$STRIDE_BIN" week | python3 -c 'import json,sys; assert json.load(sys.stdin)["data"]["open_sessions"] == []; print("week payload OK")'
 
 # ── query commands: activities (+ sport filter), load, stats ─────
 "$STRIDE_BIN" activities | python3 -c '
 import json, sys
-rows = {a["id"]: a for a in json.load(sys.stdin)}
+rows = {a["id"]: a for a in json.load(sys.stdin)["data"]}
 assert len(rows) == 2, f"expected 2 activities, got {len(rows)}"
 assert abs(rows[101]["tss"] - 400) < 1.0 and abs(rows[101]["intensity"] - 2.0) < 0.01, "power ride NP200@FTP100"
 assert abs(rows[102]["tss"] - 55) < 1.0, "hr row hrTSS"
@@ -145,7 +152,7 @@ print("activities OK (tss + intensity math)")
 '
 "$STRIDE_BIN" activities 10 rowing | python3 -c '
 import json, sys
-rows = json.load(sys.stdin)
+rows = json.load(sys.stdin)["data"]
 assert len(rows) == 1 and rows[0]["id"] == 102, "sport filter must be case-insensitive and exact"
 print("activities sport filter OK")
 '
@@ -153,25 +160,25 @@ print("activities sport filter OK")
 # 101 is the power ride (highest TSS, no HR); 102 is the HR row (avg_hr 150)
 "$STRIDE_BIN" top tss | python3 -c '
 import json, sys
-rows = json.load(sys.stdin)
+rows = json.load(sys.stdin)["data"]
 assert rows[0]["id"] == 101, f"top tss must rank the power ride first, got {rows[0]['"'"'id'"'"']}"
 print("top tss OK (ranks by load desc)")
 '
 "$STRIDE_BIN" top hr | python3 -c '
 import json, sys
-ids = [r["id"] for r in json.load(sys.stdin)]
+ids = [r["id"] for r in json.load(sys.stdin)["data"]]
 assert ids == [102], f"top hr must include only the HR activity (power ride has no HR), got {ids}"
 print("top hr OK (excludes metric-less activities)")
 '
 "$STRIDE_BIN" top tss 5 rowing | python3 -c '
 import json, sys
-rows = json.load(sys.stdin)
+rows = json.load(sys.stdin)["data"]
 assert len(rows) == 1 and rows[0]["id"] == 102, "top sport filter must apply"
 print("top sport filter OK")
 '
 "$STRIDE_BIN" top output | python3 -c '
 import json, sys
-rows = json.load(sys.stdin)
+rows = json.load(sys.stdin)["data"]
 # 101: avg_watts 200 * 3600s / 1000 = 720 kJ; 102 has no watts (excluded)
 assert rows[0]["id"] == 101 and abs(rows[0]["output_kj"] - 720) < 1.0, f"top output kJ, got {rows[0]}"
 print("top output OK (kJ = avg_watts * time)")
@@ -180,7 +187,7 @@ out=$("$STRIDE_BIN" top bogus); grep -q bad_metric <<<"$out" || fail "top must r
 echo "top OK (metric ranking + filter + bad-metric guard)"
 "$STRIDE_BIN" load | python3 -c '
 import json, sys, datetime
-days = json.load(sys.stdin)
+days = json.load(sys.stdin)["data"]
 assert len(days) >= 4, "seeded 3 days ago -> at least 4 daily rows"
 assert days[-1]["day"] == datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"), "must extend to today"
 assert days[0]["day"] < days[-1]["day"] and days[-1]["ctl"] > 0, "chronological, nonzero fitness"
@@ -188,7 +195,7 @@ print("load OK (daily series to today)")
 '
 "$STRIDE_BIN" stats | python3 -c '
 import json, sys
-s = json.load(sys.stdin)
+s = json.load(sys.stdin)["data"]
 at = {r["sport"]: r for r in s["all_time"]}
 assert at["Ride"]["sessions"] == 1 and abs(at["Ride"]["hours"] - 1.0) < 0.01 and abs(at["Ride"]["km"] - 30) < 0.1
 assert at["Rowing"]["sessions"] == 1 and abs(at["Rowing"]["km"] - 9) < 0.1
@@ -197,7 +204,7 @@ print("stats OK (all-time totals)")
 '
 "$STRIDE_BIN" activity 101 | python3 -c '
 import json, sys
-a = json.load(sys.stdin)
+a = json.load(sys.stdin)["data"]
 assert a["id"] == 101 and abs(a["tss"] - 400) < 1.0 and abs(a["intensity"] - 2.0) < 0.01
 assert a["power_bests"]["w60"] == 0, "no streams seeded -> bests are honest 0"
 print("activity detail OK")
@@ -208,7 +215,7 @@ out=$("$STRIDE_BIN" activity 999); grep -q activity_not_found <<<"$out" || fail 
 sqlite3 "$DB" "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (101, 'not json at all');"
 "$STRIDE_BIN" activity 101 | python3 -c '
 import json, sys
-assert json.load(sys.stdin)["streams_unreadable"] == True, "corrupt streams must set streams_unreadable"
+assert json.load(sys.stdin)["data"]["streams_unreadable"] == True, "corrupt streams must set streams_unreadable"
 print("activity unreadable-streams flag OK")
 '
 # force a recompute (ftp change invalidates via ftp_used) so analyze re-reads
@@ -234,7 +241,7 @@ seed_ride 202 "Test Class" 2025-06-01T10:00:00Z 3600 20000 210 150
 "$STRIDE_BIN" analyze >/dev/null
 "$STRIDE_BIN" progress 2025-06-01 | python3 -c '
 import json, sys
-d = json.load(sys.stdin)
+d = json.load(sys.stdin)["data"]
 assert d["anchor_date"] == "2025-06-01", "anchor_date must echo the asked date: " + str(d)
 g = d["groups"][0]
 rows = g["sessions"]
@@ -246,7 +253,7 @@ assert abs(rows[0]["score"] - 1.20) < 0.01 and abs(rows[1]["score"] - 1.40) < 0.
 print("progress OK (EF lens, date -> workout, chronological)")
 '
 # JSON callers can distinguish the empty outcomes in-band
-"$STRIDE_BIN" progress 1999-01-01 | python3 -c 'import json,sys; assert json.load(sys.stdin)["error"] == "no_workout_on_date"; print("progress json error OK")'
+"$STRIDE_BIN" progress 1999-01-01 | python3 -c 'import json,sys; assert json.load(sys.stdin)["error"]["code"] == "no_workout_on_date"; print("progress json error OK")'
 # auto-named rides ("Morning Ride") are different routes: only similar-distance
 # (±10% of the anchor) instances may be compared
 seed_ride 211 "Morning Ride" 2025-03-01T08:00:00Z 3600 20000 150 140
@@ -255,7 +262,7 @@ seed_ride 213 "Morning Ride" 2025-03-15T08:00:00Z 7200 40000 170 140
 "$STRIDE_BIN" analyze >/dev/null
 "$STRIDE_BIN" progress 2025-03-01 | python3 -c '
 import json, sys
-rows = json.load(sys.stdin)["groups"][0]["sessions"]
+rows = json.load(sys.stdin)["data"]["groups"][0]["sessions"]
 dists = sorted(r["distance_m"] for r in rows)
 assert dists == [20000.0, 21000.0], "auto-name must gate to ±10% of anchor distance, got " + str(dists)
 print("progress auto-name OK (distance-gated, 40km ride excluded)")
@@ -268,7 +275,7 @@ grep -q "can't be compared" <<<"$out" || fail "unscorable workout must explain w
 # bare progress anchors on the latest analyzed workout and reports its lens
 "$STRIDE_BIN" progress | python3 -c '
 import json, sys
-d = json.load(sys.stdin)
+d = json.load(sys.stdin)["data"]
 assert d["anchor_date"], "bare progress must resolve an anchor: " + str(d)
 g = d["groups"][0]
 assert "lens" in g and len(g["sessions"]) >= 1, "bare progress group must carry a lens + sessions: " + str(d)
@@ -304,7 +311,7 @@ CSVEOF
 sed -i.bak 's/^    //' "$EXPORT_DIR/activities.csv" && rm -f "$EXPORT_DIR/activities.csv.bak"
 "$STRIDE_BIN" import "$EXPORT_DIR" | python3 -c '
 import json, sys
-d = json.load(sys.stdin)
+d = json.load(sys.stdin)["data"]
 assert d["imported"] == 2 and d["skipped"] == 1, f"expected 2 imported / 1 junk skipped, got {d}"
 print("import counts OK (2 imported, junk row skipped)")
 '
@@ -323,7 +330,7 @@ n=$(sqlite3 "$DB" "SELECT COUNT(*) FROM activities WHERE id IN (9001, 9002);")
 # a zip of the same export imports identically (exercises the unzip path)
 if command -v zip >/dev/null; then
   (cd "$EXPORT_DIR" && zip -q export.zip activities.csv)
-  "$STRIDE_BIN" import "$EXPORT_DIR/export.zip" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["imported"] == 2, d; print("import zip OK")'
+  "$STRIDE_BIN" import "$EXPORT_DIR/export.zip" | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["imported"] == 2, d; print("import zip OK")'
 fi
 rm -rf "$EXPORT_DIR"
 out=$(STRIDE_FORMAT=human "$STRIDE_BIN" import /nonexistent-dir-xyz)
@@ -353,7 +360,7 @@ n=$(sqlite3 "$DB" "SELECT COUNT(*) FROM ratings WHERE activity_id=301;")
 # sport-aware progress: a rated strength session scores through the RPE lens
 "$STRIDE_BIN" progress 2025-05-05 | python3 -c '
 import json, sys
-d = json.load(sys.stdin)
+d = json.load(sys.stdin)["data"]
 g = d["groups"][0]
 assert g["lens"] == "rpe", "rated strength must use the RPE lens: " + str(g)
 assert abs(g["sessions"][0]["score"] - 5.0) < 0.01, "RPE score must be the rating: " + str(g)
@@ -364,7 +371,7 @@ echo "rate OK (sRPE scores strength, re-rate rescores, rating survives re-sync, 
 # ── compare: this window vs the prior one ───────────────────────
 "$STRIDE_BIN" compare week | python3 -c '
 import json, sys
-d = json.load(sys.stdin)
+d = json.load(sys.stdin)["data"]
 assert d["period"] == "week" and d["window_label"] == "7d", d
 for k in ("current", "prior"):
     for f in ("tss", "sessions", "hard_min", "easy_pct", "ctl"):
@@ -379,7 +386,7 @@ echo "compare OK (week/month + bad-period guard)"
 # ── doctor: coverage + provenance + honest gaps ──────────────────
 "$STRIDE_BIN" doctor | python3 -c '
 import json, sys
-d = json.load(sys.stdin)
+d = json.load(sys.stdin)["data"]
 assert d["activities"] > 0 and d["rated"] == 1, d
 assert d["strength_unrated"] == 0, f"the one strength session is rated: {d}"
 models = {m["model"]: m["n"] for m in d["scored_by"]}
@@ -396,14 +403,14 @@ print("doctor OK (coverage, provenance, confidence, config)")
 "$STRIDE_BIN" config set timezone America/Chicago >/dev/null
 "$STRIDE_BIN" doctor | python3 -c '
 import json, sys
-d = json.load(sys.stdin)
+d = json.load(sys.stdin)["data"]
 assert d["time_ok"] is True, d
 assert "America/Chicago" in d["time"] and "DST-aware" in d["time"], d
 '
 "$STRIDE_BIN" config set timezone Not/ARealZone >/dev/null
 "$STRIDE_BIN" doctor | python3 -c '
 import json, sys
-d = json.load(sys.stdin)
+d = json.load(sys.stdin)["data"]
 assert d["time_ok"] is False, f"bad zone must not report ok: {d}"
 assert "UNKNOWN" in d["time"], d
 '
@@ -419,7 +426,7 @@ out=$(STRIDE_FORMAT=human "$STRIDE_BIN" activity 101); grep -Eq "^zones +Z1" <<<
 out=$(STRIDE_FORMAT=human "$STRIDE_BIN" summary); grep -q "stride report" <<<"$out" || fail "human summary"
 out=$(STRIDE_FORMAT=human "$STRIDE_BIN" week); grep -q "OPEN PLAN" <<<"$out" || fail "human week bundle"
 # STRIDE_FORMAT is case/space-insensitive: uppercase still selects JSON
-STRIDE_FORMAT=JSON "$STRIDE_BIN" summary | python3 -c 'import json,sys; json.load(sys.stdin); print("uppercase STRIDE_FORMAT OK")'
+STRIDE_FORMAT=JSON "$STRIDE_BIN" summary | python3 -c 'import json,sys; json.load(sys.stdin)["data"]; print("uppercase STRIDE_FORMAT OK")'
 echo "human mode OK"
 
 # ── schema migration: a legacy db upgrades to current with data intact (P6) ──

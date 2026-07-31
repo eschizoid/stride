@@ -849,7 +849,7 @@ analyze! = |{}|
                     when tsb_opt is
                         Some(tsb) -> tsb
                         None -> 0.0
-                print_json!({ computed: res.computed, stream_errors: res.stream_errors, form_tsb })
+                emit_ok!({ computed: res.computed, stream_errors: res.stream_errors, form_tsb })
             else
                 Stdout.line!("computed metrics for ${Num.to_str(res.computed)} activities")?
                 (if res.stream_errors > 0 then
@@ -1196,9 +1196,26 @@ compare! = |period|
 
 # one payload, two mouths: JSON for machines, a pure Render screen for humans.
 # The pattern for query commands — payload record + Render.<cmd>_screen.
+# JSON envelope contract version. Bumped when the wrapper shape changes (NOT the
+# db schema_version / metrics_rev). Every machine response is versioned so tool
+# callers can detect a contract change.
+json_schema_version : I64
+json_schema_version = 1
+
 out! : payload, (payload -> Str) => Result {} _ where payload implements Encoding
 out! = |payload, render|
-    if json_mode!({}) then print_json!(payload) else Stdout.line!(render(payload))
+    if json_mode!({}) then emit_ok!(payload) else Stdout.line!(render(payload))
+
+# every JSON success is wrapped `{ schema_version, data }`; `data` is the command
+# payload. Errors go through emit_err! and are `{ schema_version, error }` instead —
+# a caller discriminates success from failure by which key is present.
+emit_ok! : val => Result {} _ where val implements Encoding
+emit_ok! = |val|
+    print_json!({ schema_version: json_schema_version, data: val })
+
+emit_err! : Str, Str => Result {} _
+emit_err! = |code, msg|
+    print_json!({ schema_version: json_schema_version, error: { code, message: msg } })
 
 print_json! : val => Result {} _ where val implements Encoding
 print_json! = |val|
@@ -1224,7 +1241,7 @@ json_mode! = |{}|
 err_out! : Str, Str => Result {} _
 err_out! = |code, msg|
     if json_mode!({}) then
-        print_json!({ error: code, message: msg })
+        emit_err!(code, msg)
     else
         Stdout.line!(msg)
 
@@ -1232,7 +1249,7 @@ err_out! = |code, msg|
 missing_config! : {} => Result {} _
 missing_config! = |{}|
     if json_mode!({}) then
-        print_json!({ error: "missing_config" })
+        emit_err!("missing_config", "set your FTP and HR zone bounds first — see `stride config`")
     else
         Stdout.line!(zone_config_help)
 
@@ -1300,12 +1317,7 @@ activity_body! = |path, id_str, aid|
         },
     })?
     when List.first(rows) is
-        Err(_) ->
-            if json_mode!({}) then
-                print_json!({ error: "activity_not_found", id: aid })
-            else
-                Stdout.line!("activity ${id_str} not found (run `stride activities` to list ids)")
-
+        Err(_) -> err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
         Ok(a) ->
             raw_rows = Sqlite.query_many!({
                 path,
@@ -1333,7 +1345,7 @@ activity_body! = |path, id_str, aid|
             hard_s = a.z4_s + a.z5_s
 
             if json_mode!({}) then
-                print_json!({
+                emit_ok!({
                     id: a.id,
                     date: a.date,
                     sport: a.sport,
@@ -1389,7 +1401,7 @@ stats! = |{}|
     all_time = stats_rows!(path, "0000-01-01")?
     ytd = stats_rows!(path, "${Num.to_str(year)}-01-01")?
     if json_mode!({}) then
-        print_json!({ all_time, ytd, ytd_year: year })
+        emit_ok!({ all_time, ytd, ytd_year: year })
     else
         to_table = |rows|
             Render.render_table(
@@ -1498,7 +1510,7 @@ week! = |{}|
                 },
             })?
             if json_mode!({}) then
-                print_json!({
+                emit_ok!({
                     summary: s,
                     recent_activities_14d: recent,
                     open_sessions: open_p,
@@ -1686,7 +1698,7 @@ activities! = |limit, sport_filter|
         },
     })?
     if json_mode!({}) then
-        print_json!(rows)
+        emit_ok!(rows)
     else
         Stdout.line!(Render.render_table(
             ["date", "sport", "name", "time", "load (tss)", "intensity (if)", "hard"],
@@ -1764,7 +1776,7 @@ top! = |metric, limit, sport_filter|
                 },
             })?
             if json_mode!({}) then
-                print_json!(rows)
+                emit_ok!(rows)
             else
                 val = |r|
                     when metric is
@@ -1809,7 +1821,7 @@ import_archive! = |src|
                         [headers, .. as rows] ->
                             counts = import_rows!(db, headers, rows, { imported: 0u64, skipped: 0u64 })?
                             if json_mode!({}) then
-                                print_json!(counts)
+                                emit_ok!(counts)
                             else
                                 Stdout.line!("imported ${Num.to_str(counts.imported)} activities (${Num.to_str(counts.skipped)} rows skipped) — run `stride analyze` to compute metrics")
 
@@ -2071,7 +2083,7 @@ pz! = |{}|
         Ok(ftp) ->
             zones = Metrics.power_zones(ftp)
             if json_mode!({}) then
-                print_json!({ ftp, zones })
+                emit_ok!({ ftp, zones })
             else
                 range = |z|
                     if z.lo_w <= 0.0 then
@@ -2179,7 +2191,7 @@ progress! = |date_arg|
                 Ok(a) -> err_out!("unscorable", "found \"${a.name}\" on ${date}, but it can't be compared — needs power+HR, distance+HR, or a rating (`stride rate <id> <1-10>`)")
                 Err(_) -> err_out!("no_workout_on_date", "no workout found on ${date}")
     else if json_mode!({}) then
-        print_json!({
+        emit_ok!({
             anchor_date: date,
             groups: List.map(scored, |g| {
                 name: g.name,
@@ -2282,10 +2294,7 @@ plan_add! = |target_date, session_type, detail, rationale|
         row: Sqlite.i64("id"),
     })?
     if existing > 0 then
-        if json_mode!({}) then
-            print_json!({ error: "date_already_planned", existing_id: existing, target_date })
-        else
-            Stdout.line!("${target_date} already has open planned session #${Num.to_str(existing)} — `stride skip ${Num.to_str(existing)} \"reason\"` first")
+        err_out!("date_already_planned", "${target_date} already has open planned session #${Num.to_str(existing)} — `stride skip ${Num.to_str(existing)} \"reason\"` first")
     else
         insert_planned_session!(path, target_date, session_type, detail, rationale)
 
