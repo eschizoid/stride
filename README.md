@@ -93,8 +93,9 @@ stride --version
 ```
 
 Verify the download against [`SHA256SUMS.txt`](https://github.com/eschizoid/stride/releases/latest)
-if you like: `sha256sum -c SHA256SUMS.txt`. (No Windows build — Roc's toolchain doesn't
-target it yet; on Windows, use WSL and the Linux binary.)
+if you like: `sha256sum -c SHA256SUMS.txt`. (No Windows build yet — not a Roc limitation: newer basic-cli ships a
+Windows host, but stride is pinned to basic-cli 0.20.0 which predates it,
+because 0.21+ needs Roc's new compiler. Use WSL + the Linux binary for now.)
 
 ### Build from source
 
