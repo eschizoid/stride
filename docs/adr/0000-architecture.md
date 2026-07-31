@@ -119,12 +119,22 @@ the inputs it was computed under, and recomputation is triggered by:
 
 Any new metric input must join this story.
 
-## 6. Schema self-migrates
+## 6. Schema self-migrates — but breaking it is fine while we're early
 
 The schema versions itself via `PRAGMA user_version`. Upgrading the binary against
 an existing db migrates on the next command; migrations converge to the current
 schema idempotently (rename first, then create-if-not-exists, then add-column).
 Legacy-db fixtures in `tests/fixtures/db/` prove upgrades preserve data.
+
+**Pre-1.0, the schema is not a stable contract.** With a tiny user base, a
+structural change does not need a backward-compatible migration path for every
+prior version — it's acceptable to change column types directly, drop/recreate the
+**mirror and computed** tables (they rebuild from `sync`/`analyze`), or reset a db
+outright when that's simpler than a migration. The one inviolable rule is the tier
+boundary from §3: a schema change must **never silently destroy judgment-tier data**
+(`ratings`, `planned_sessions`, `config`, including tokens) — that data exists only
+here and cannot be re-derived, so it must be migrated or explicitly, knowingly reset.
+Don't spend effort making migrations bulletproof against versions no real db is on.
 
 ## 7. Machine output is a versioned envelope
 
