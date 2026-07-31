@@ -40,56 +40,52 @@ version = "stride 0.1.0" # x-release-please-version
 
 help_text =
     """
-    stride — a local-first multi-sport training engine (built in Roc)
+    stride — a local-first, deterministic training analytics engine (built in Roc)
     Designed to be driven by an LLM coach (e.g. Claude Code) or by hand.
 
     USAGE
         stride <command>
 
-    DATA COMMANDS
+    Query commands print human tables in a terminal, JSON when STRIDE_FORMAT=json
+    or CLAUDECODE is set (for LLM/tool callers).
+
+    SETUP (once)
         init        create ~/.stride and migrate the SQLite db
         auth        authorize with Strava (one-time paste flow; stores creds)
-        sync        pull new activities + streams (rolling 30d self-heal)
-        backfill    re-pull the full activity list + ALL missing streams,
-                    rate-limit-aware (first-time imports, deep reconcile)
-        import <zip|dir>  load a Strava account export (activities.csv) —
-                    no API credentials needed; summary-level data
-        analyze     compute training metrics (TSS, zones, CTL/ATL/TSB)
         config      get/set config (e.g. ftp, hr zone bounds)
 
-    QUERY COMMANDS (human tables in a terminal; JSON when STRIDE_FORMAT=json
-                    or CLAUDECODE is set — for LLM/tool callers)
-        summary                 coach-input payload: form, 7d/28d zones, FTP calibration
-        stats                   career + year-to-date totals per sport
-        week                    weekly-planning bundle: summary + open plan
-        compare [week|month]    this period vs the one before it (load, fitness,
-                                sessions, polarization) — default week
-                                + last 14 days of activities (one call, plan a week)
-        activities [limit] [sport]   recent activities with metrics (default 30);
-                                     sport filters, e.g. `activities 10 rowing`
-        top <metric> [n] [sport]     best sessions ranked by a metric (default 10):
-                                     hr | tss | power | intensity | distance | time | output
-        zones                        power-zone watt ranges (7 zones) from your FTP
-                                     (alias: pz)
-        doctor                       dataset health: coverage, how each activity
-                                     was scored, what's unscored and why
-        progress [date]              am I improving on that day's workout? every
-                                     comparable instance + EF trend (watts/HR).
-                                     defaults to your latest workout; auto-named
-                                     rides compare similar-distance only
-        activity <id>           one session in depth: zones, power bests, hard minutes
-        load [days]             CTL/ATL/TSB series: daily <=14 days, weekly beyond (default 90)
-        plan                    planned-session log (open/done/skipped), calendar order
-                                with day-of-week (Mon-Sun) and rest days
+    GET DATA
+        sync        pull new activities + streams (rolling 30d self-heal)
+        backfill    re-pull the full activity list + ALL missing streams
+        import <zip|dir>  load a Strava account export — no API creds needed
+        analyze     compute training metrics (TSS, zones, CTL/ATL/TSB)
 
-    COACHING LOG
-        plan <date> <type> <detail> <rationale>        record a planned session
-                                                       (refuses if date already has an open one)
-        complete <session_id> <activity_id>            link a planned session to a done activity
-        complete <session_id>                          mark a REST day done (no activity to link)
-        skip <session_id> <reason>                     mark a planned session as skipped
-        rate <activity_id|latest> <1-10>               how hard did it feel? (session-RPE)
-                                                       scores strength/HIIT/yoga honestly
+    WHERE DO I STAND?
+        summary     form, 7d/28d zones + polarization, FTP calibration, per-sport
+        stats       career + year-to-date totals per sport
+        doctor      dataset health: coverage + how each activity was scored
+
+    AM I IMPROVING?
+        progress [date]         trend on a repeated workout, sport-aware lens
+                                (power→EF, distance→speed/HR, rated→RPE); latest by default
+        compare [week|month]    this period vs the one before it (default week)
+        top <metric> [n] [sport]   best sessions by hr|tss|power|intensity|distance|time|output
+
+    WHAT HAPPENED?
+        activities [limit] [sport]   recent sessions with metrics (default 30)
+        activity <id>                one session in depth: zones, power bests, hard min
+        load [days]                  fitness/fatigue/form series (default 90)
+
+    WHAT SHOULD I DO?
+        week                    planning bundle: summary + open plan + last 14 days
+        plan                    view the planned-session log (calendar order + day-of-week)
+        plan add <date> <type> <detail> <rationale>    add a planned session
+        complete <session_id> [activity_id]            mark done (bare = rest day)
+        skip <session_id> <reason>                     mark skipped, with reason
+        rate <activity_id|latest> <1-10>               session-RPE — scores strength honestly
+
+    REFERENCE
+        zones       power-zone watt ranges (7) from your FTP (alias: pz)
 
     FLAGS
         --help      show this help
@@ -132,7 +128,7 @@ main! = |raw_args|
         [_, "load"] -> load_series!(90)
         [_, "load", n] -> with_count!(n, |c| load_series!(c))
         [_, "plan"] -> plan_view!({})
-        [_, "plan", date, session_type, detail, rationale] -> plan_add!(date, session_type, detail, rationale)
+        [_, "plan", "add", date, session_type, detail, rationale] -> plan_add!(date, session_type, detail, rationale)
         [_, "complete", session_id, activity_id] -> complete!(session_id, activity_id)
         [_, "complete", session_id] -> complete_rest!(session_id)
         [_, "skip", session_id, reason] -> skip!(session_id, reason)
@@ -140,7 +136,7 @@ main! = |raw_args|
         [_, "config", "set", key, val] -> config_store!(key, val)
         [_, "--version"] -> Stdout.line!(version)
         # wrong arity on multi-arg commands: targeted usage, not the whole help
-        [_, "plan", ..] -> usage!("plan <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `plan` to view")
+        [_, "plan", ..] -> usage!("plan add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `plan` to view the log")
         [_, "complete", ..] -> usage!("complete <session_id> [activity_id]")
         [_, "skip", ..] -> usage!("skip <session_id> \"<reason>\"")
         [_, "activity", ..] -> usage!("activity <activity_id>")

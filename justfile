@@ -155,10 +155,10 @@ e2e:
     echo "metrics_rev invalidation OK (algorithm changes recompute)"
 
     # ── plan lifecycle: dedup, skip, re-plan, done ───────────────────
-    out=$("$STRIDE_BIN" plan 2099-01-01 vo2max "d" "r"); grep -q '"id":1' <<<"$out" || fail "plan add"
-    out=$("$STRIDE_BIN" plan 2099-01-01 threshold "d" "r"); grep -q date_already_planned <<<"$out" || fail "dedup guard"
+    out=$("$STRIDE_BIN" plan add 2099-01-01 vo2max "d" "r"); grep -q '"id":1' <<<"$out" || fail "plan add"
+    out=$("$STRIDE_BIN" plan add 2099-01-01 threshold "d" "r"); grep -q date_already_planned <<<"$out" || fail "dedup guard"
     out=$("$STRIDE_BIN" skip 1 "sick"); grep -q '"skipped_session"' <<<"$out" || fail "skip"
-    out=$("$STRIDE_BIN" plan 2099-01-01 threshold "d2" "r2"); grep -q '"id":2' <<<"$out" || fail "re-plan after skip"
+    out=$("$STRIDE_BIN" plan add 2099-01-01 threshold "d2" "r2"); grep -q '"id":2' <<<"$out" || fail "re-plan after skip"
     out=$("$STRIDE_BIN" complete 2 101); grep -q '"completed_session"' <<<"$out" || fail "complete"
     "$STRIDE_BIN" plan | python3 -c '
     import json, sys
@@ -173,8 +173,8 @@ e2e:
     out=$("$STRIDE_BIN" skip 999 "x"); grep -q session_not_found <<<"$out" || fail "skip nonexistent session"
     out=$("$STRIDE_BIN" complete abc 101); grep -q bad_id <<<"$out" || fail "complete non-numeric id"
     # rest days close WITHOUT an activity; anything else still demands evidence
-    out=$("$STRIDE_BIN" plan 2099-01-02 rest "planned rest" "recovery"); grep -q '"id":3' <<<"$out" || fail "plan rest"
-    out=$("$STRIDE_BIN" plan 2099-01-03 vo2max "intervals" "stimulus"); grep -q '"id":4' <<<"$out" || fail "plan vo2max"
+    out=$("$STRIDE_BIN" plan add 2099-01-02 rest "planned rest" "recovery"); grep -q '"id":3' <<<"$out" || fail "plan rest"
+    out=$("$STRIDE_BIN" plan add 2099-01-03 vo2max "intervals" "stimulus"); grep -q '"id":4' <<<"$out" || fail "plan vo2max"
     out=$("$STRIDE_BIN" complete 4); grep -q activity_required <<<"$out" || fail "non-rest bare complete must refuse"
     out=$("$STRIDE_BIN" complete 3); grep -q '"rest":true' <<<"$out" || fail "rest bare complete"
     st=$(sqlite3 "$DB" "SELECT status FROM planned_sessions WHERE id=3;"); [ "$st" = "done" ] || fail "rest must be done, got '$st'"

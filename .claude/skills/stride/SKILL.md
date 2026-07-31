@@ -29,7 +29,7 @@ Never do training math yourself: read stride's numbers, add judgment.
 4. Reason: polarization, zone gaps, form (TSB), FTP staleness, sport balance —
    AND reconcile the open plan against recent activities (match by date/type,
    then `stride complete <session_id> <activity_id>` for each match).
-5. Plan the coming week: `stride plan <YYYY-MM-DD> <type> "<detail>" "<rationale>"`
+5. Plan the coming week: `stride plan add <YYYY-MM-DD> <type> "<detail>" "<rationale>"`
    - `type` is the INTENSITY INTENT, not the sport: vo2max | threshold | endurance |
      recovery | strength | rest (free-form ok). The sport/modality goes in `detail`
      ("easy row...", "outdoor ride..."): type answers *why/how hard*, detail answers

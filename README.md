@@ -176,7 +176,7 @@ stride week                                       # everything needed to plan a 
 
 | Command | What it does |
 | --- | --- |
-| `plan <date> <type> <detail> <rationale>` | Records a planned session. `type` is the intensity intent (vo2max, threshold, endurance, recovery, strength, rest); the sport goes in `detail`. Refuses a date that already has an open planned session. |
+| `plan add <date> <type> <detail> <rationale>` | Records a planned session. `type` is the intensity intent (vo2max, threshold, endurance, recovery, strength, rest); the sport goes in `detail`. Refuses a date that already has an open planned session. |
 | `complete <id> [activity_id]` | Marks a planned session done, linked to the activity that fulfilled it (rest days need no activity). Refuses ids that don't exist. |
 | `skip <id> <reason>` | Marks a planned session skipped, with the reason — so adherence history stays honest. |
 
