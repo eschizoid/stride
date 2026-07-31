@@ -313,8 +313,10 @@ just install   # build + symlink into ~/.local/bin
 - **Tests:** 220 pure `expect`s + an end-to-end suite (`just e2e`) that runs the real
   binary against a sandboxed `HOME` with seeded activities of known math (power TSS
   exactly 100, hrTSS exactly 55, FTP rescale 100→400, full plan lifecycle, the
-  versioned JSON envelope, timezone precedence, migration from a legacy db,
-  error contracts, corrupt-data resilience).
+  versioned JSON envelope, timezone precedence, power-spike filtering, migration
+  from a legacy db, error contracts, corrupt-data resilience). A separate
+  `just e2e-sync` boots a mock Strava server (`tests/mock_strava.roc`) and drives
+  the real sync + token-refresh path network-free.
 - **CI:** GitHub Actions on every push runs the same `just test` (Linux needs
   `--linker=legacy`, roc issue #3609; the toolchain tarball is checksum-pinned).
 

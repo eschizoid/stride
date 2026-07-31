@@ -3,3 +3,6 @@
 .idea/
 .claude/PLAN.md
 .claude/CLAUDE.md
+
+# mock server binary (built on demand for e2e-sync)
+/mock_strava

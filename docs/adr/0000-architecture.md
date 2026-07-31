@@ -65,7 +65,11 @@ Effectful `expect`s segfault `roc test` on alpha4 (verified: `Cmd.exec_output!`
 inside an `expect` exits 139 before running anything). So Roc keeps the pure
 `expect`s (~220 of them), and end-to-end coverage is a bash+python suite
 (`tests/e2e.sh`) that drives the real binary against a sandboxed `HOME` with seeded
-activities of known math. Bash orchestrates; python asserts on JSON only.
+activities of known math. Bash orchestrates; python asserts on JSON only. The
+network path (sync + token refresh) has its own step, `just e2e-sync`, which boots
+`tests/mock_strava.roc` (a basic-webserver app) on a local port and points stride at
+it via `STRIDE_API_BASE` — kept out of `just test` because it binds a port, but run
+in CI. (Still a gap: 429 rate-limit backoff, which needs a stateful mock.)
 
 ## 3. Three data tiers, three recovery stories
 

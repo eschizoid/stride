@@ -26,6 +26,12 @@ test:
     just build
     just e2e
 
+# sync integration against the mock Strava server (token refresh + activity/stream
+# pull, network-free). Separate from `just test` because it binds a port.
+e2e-sync: build
+    {{roc}} build tests/mock_strava.roc --output mock_strava {{linker}}
+    tests/e2e_sync.sh
+
 # build + refresh the ~/.local/bin symlink
 install: build
     ln -sf "$PWD/stride" "$HOME/.local/bin/stride"

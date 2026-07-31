@@ -29,3 +29,11 @@ jobs:
         env:
           ROC: roc
           STRIDE_LINKER: --linker=legacy  # surgical linker hits roc issue #3609 on linux
+
+      # sync integration: boots the mock Strava server on a port and exercises the
+      # real sync + token-refresh path network-free (kept out of `just test`)
+      - name: Sync integration (mock Strava)
+        run: just e2e-sync
+        env:
+          ROC: roc
+          STRIDE_LINKER: --linker=legacy
