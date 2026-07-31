@@ -30,7 +30,6 @@ module [
     progress_lens,
     lens_score,
     lens_higher_better,
-    load_confidence,
     parse_utc_offset,
     export_date_to_iso,
 ]
@@ -381,15 +380,10 @@ anchor_filter = |g, date|
                 kept = List.keep_if(g.rows, |r| Num.abs(r.distance_m - anchor.distance_m) <= anchor.distance_m * 0.10)
                 Ok({ name: g.name, kind: SimilarDistance(anchor.distance_m), rows: kept })
 
-# confidence in a load value, from which ladder rung produced it: measured power
-# is high, HR/RPE medium, Strava's relative_effort low, unscored none. Deterministic.
-load_confidence : Str -> Str
-load_confidence = |model|
-    when model is
-        "power_stream" | "weighted_watts" | "avg_watts" -> "high"
-        "hr_zones" | "hr_avg" | "session_rpe" -> "medium"
-        "relative_effort" -> "low"
-        _ -> "none"
+# confidence tiers (high = measured power, medium = HR/RPE, low = relative_effort,
+# none = unscored) are derived from load_model at READ time in the doctor query
+# (see the CASE there). Not stored — it's a pure function of a column that already
+# exists, so a column would be redundant denormalization.
 
 # Parse a POSIX `date +%z` offset ("+HHMM" / "-HHMM", ASCII digits) into signed
 # minutes east of UTC: "-0500" -> -300, "+0530" -> 330. Used to turn a system
@@ -861,7 +855,6 @@ expect export_date_to_iso("Jul 4, 2026, 6:05:09 AM") == Ok("2026-07-04T06:05:09Z
 expect export_date_to_iso("Dec 31, 2025, 12:00:00 AM") == Ok("2025-12-31T00:00:00Z")
 expect export_date_to_iso("17 Feb 2022") == Err(BadExportDate)
 
-expect load_confidence("power_stream") == "high" and load_confidence("hr_zones") == "medium" and load_confidence("session_rpe") == "medium" and load_confidence("relative_effort") == "low" and load_confidence("none") == "none"
 
 expect parse_utc_offset("-0500") == Ok(-300)
 expect parse_utc_offset("+0530") == Ok(330)

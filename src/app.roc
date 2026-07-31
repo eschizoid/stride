@@ -1003,15 +1003,14 @@ compute_one! = |path, ftp, zb, row|
         query:
         """
         INSERT OR REPLACE INTO activity_metrics
-          (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, load_confidence)
-        VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :conf)
+          (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model)
+        VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model)
         """,
         bindings: [
             { name: ":ftpu", value: Real(ftp) },
             { name: ":zused", value: String(zones_sig(zb)) },
             { name: ":rev", value: Integer(metrics_rev) },
             { name: ":model", value: String(ladder.model) },
-            { name: ":conf", value: String(Metrics.load_confidence(ladder.model)) },
             { name: ":id", value: Integer(row.id) },
             { name: ":tss", value: Real(tss) },
             { name: ":np", value: np_binding },
@@ -1909,10 +1908,14 @@ doctor! = |{}|
         path,
         query:
         """
-        SELECT COALESCE(SUM(CASE WHEN load_confidence='high' THEN 1 ELSE 0 END),0) AS hi,
-               COALESCE(SUM(CASE WHEN load_confidence='medium' THEN 1 ELSE 0 END),0) AS med,
-               COALESCE(SUM(CASE WHEN load_confidence='low' THEN 1 ELSE 0 END),0) AS lo,
-               COALESCE(SUM(CASE WHEN COALESCE(load_confidence,'none')='none' THEN 1 ELSE 0 END),0) AS non
+        -- confidence tiers derived from load_model at read time (not stored): high =
+        -- measured power, medium = HR/RPE, low = relative_effort, none = unscored. The
+        -- e2e cross-checks the 'high' count against the power-rung provenance counts so
+        -- this mapping can't silently drift.
+        SELECT COALESCE(SUM(CASE WHEN load_model IN ('power_stream','weighted_watts','avg_watts') THEN 1 ELSE 0 END),0) AS hi,
+               COALESCE(SUM(CASE WHEN load_model IN ('hr_zones','hr_avg','session_rpe') THEN 1 ELSE 0 END),0) AS med,
+               COALESCE(SUM(CASE WHEN load_model='relative_effort' THEN 1 ELSE 0 END),0) AS lo,
+               COALESCE(SUM(CASE WHEN load_model IS NULL OR load_model NOT IN ('power_stream','weighted_watts','avg_watts','hr_zones','hr_avg','session_rpe','relative_effort') THEN 1 ELSE 0 END),0) AS non
         FROM activity_metrics
         """,
         bindings: [],
@@ -2395,7 +2398,7 @@ skip! = |session_id_str, reason|
 # bump when the schema changes; ensure_schema! re-runs migrations when the db's
 # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 # that post-date the original CREATE statements in Schema.roc.)
-schema_version = 7
+schema_version = 8
 
 # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
 # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
@@ -2428,8 +2431,10 @@ run_migrations! = |path|
     alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN metrics_rev INTEGER")?
     # v6: metrics record WHICH ladder rung scored them (load provenance)
     alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN load_model TEXT")?
-    # v7: confidence in the load value (derived from load_model) — the trust signal
-    alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN load_confidence TEXT")?
+    # v8: drop load_confidence — it was a pure function of load_model (v7), so storing
+    # it was redundant denormalization. Confidence is now derived from load_model at
+    # read time (doctor). The drop cleans up dbs that got the v7 column.
+    drop_column_if_exists!(path, "ALTER TABLE activity_metrics DROP COLUMN load_confidence")?
     # v2: index the column every date-range filter and the activities sort use
     # (queries now compare a.start_local directly — sargable — instead of substr)
     Sqlite.execute!({ path, query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })
@@ -2456,7 +2461,16 @@ alter_add_column! = |path, q|
         Ok({}) -> Ok({})
         Err(SqliteErr(Error, msg)) ->
             if Str.contains(msg, "duplicate column") then Ok({}) else Err(SqliteErr(Error, msg))
+        Err(other) -> Err(other)
 
+# idempotent column drop: a db that never had the column (fresh, or already dropped)
+# reports "no such column" — that's the converged state, not a failure.
+drop_column_if_exists! : Str, Str => Result {} _
+drop_column_if_exists! = |path, q|
+    when Sqlite.execute!({ path, query: q, bindings: [] }) is
+        Ok({}) -> Ok({})
+        Err(SqliteErr(Error, msg)) ->
+            if Str.contains(msg, "no such column") then Ok({}) else Err(SqliteErr(Error, msg))
         Err(other) -> Err(other)
 
 # run migrations exactly when the db is behind, then stamp the version. Called

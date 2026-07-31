@@ -410,6 +410,10 @@ models = {m["model"]: m["n"] for m in d["scored_by"]}
 assert models.get("session_rpe") == 1, models
 # confidence distribution + config completeness (P8)
 assert d["conf_high"] >= 1 and d["conf_medium"] >= 1, f"confidence must be populated: {d}"
+# grill #1: confidence is derived from load_model at read time, not stored. Pin the
+# SQL CASE to the provenance counts so the two mappings cannot drift apart.
+power = models.get("power_stream", 0) + models.get("weighted_watts", 0) + models.get("avg_watts", 0)
+assert d["conf_high"] == power, f"conf_high must equal power-rung provenance: {d['conf_high']} vs {power}"
 assert d["ftp_set"] is True and d["zones_set"] is True, f"config completeness: {d}"
 assert "pending_streams" in d, d
 print("doctor OK (coverage, provenance, confidence, config)")
