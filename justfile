@@ -68,6 +68,8 @@ e2e:
     DB="$HOME/.stride/db.sqlite"
 
     fail() { echo "FAIL: $1" >&2; exit 1; }
+    # seed_ride id name date secs meters watts hr  (watts/hr may be NULL)
+    seed_ride() { sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES ($1,'$2','Ride','$3',$4,$5,$6,$6,$7);"; }
 
     # ── init + config ────────────────────────────────────────────────
     out=$("$STRIDE_BIN" init); grep -q initialized <<<"$out" || fail "init"
@@ -275,8 +277,8 @@ e2e:
     echo "count-validation + bad-date resilience OK ($rows daily_load rows)"
 
     # ── progress: repeated-workout trend (EF = NP/HR per instance) ───
-    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (201,'Test Class','Ride','2025-01-01T10:00:00Z',3600,20000,180,180,150);"
-    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (202,'Test Class','Ride','2025-06-01T10:00:00Z',3600,20000,210,210,150);"
+    seed_ride 201 "Test Class" 2025-01-01T10:00:00Z 3600 20000 180 150
+    seed_ride 202 "Test Class" 2025-06-01T10:00:00Z 3600 20000 210 150
     "$STRIDE_BIN" analyze >/dev/null
     "$STRIDE_BIN" progress 2025-06-01 | python3 -c '
     import json, sys
@@ -295,9 +297,9 @@ e2e:
     "$STRIDE_BIN" progress 1999-01-01 | python3 -c 'import json,sys; assert json.load(sys.stdin)["error"] == "no_workout_on_date"; print("progress json error OK")'
     # auto-named rides ("Morning Ride") are different routes: only similar-distance
     # (±10% of the anchor) instances may be compared
-    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (211,'Morning Ride','Ride','2025-03-01T08:00:00Z',3600,20000,150,150,140);"
-    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (212,'Morning Ride','Ride','2025-03-08T08:00:00Z',3600,21000,160,160,140);"
-    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (213,'Morning Ride','Ride','2025-03-15T08:00:00Z',7200,40000,170,170,140);"
+    seed_ride 211 "Morning Ride" 2025-03-01T08:00:00Z 3600 20000 150 140
+    seed_ride 212 "Morning Ride" 2025-03-08T08:00:00Z 3600 21000 160 140
+    seed_ride 213 "Morning Ride" 2025-03-15T08:00:00Z 7200 40000 170 140
     "$STRIDE_BIN" analyze >/dev/null
     "$STRIDE_BIN" progress 2025-03-01 | python3 -c '
     import json, sys
@@ -321,7 +323,7 @@ e2e:
     print("progress no-arg OK (defaults to latest workout)")
     '
     # last-vs-best: a later weaker session (EF 1.0 < best 1.40) must surface the gap line
-    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (203,'Test Class','Ride','2025-07-01T10:00:00Z',3600,20000,150,150,150);"
+    seed_ride 203 "Test Class" 2025-07-01T10:00:00Z 3600 20000 150 150
     "$STRIDE_BIN" analyze >/dev/null
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" progress 2025-07-01)
     grep -q "below your best" <<<"$out" || fail "weaker last session must show the last-vs-best gap line"

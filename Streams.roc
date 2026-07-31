@@ -1,4 +1,4 @@
-module [StreamSeq, StreamsResp, stream_pairs, empty_streams, decode_streams]
+module [stream_pairs, decode_streams]
 
 import json.Json
 import json.Option exposing [Option]

@@ -123,9 +123,9 @@ main! = |raw_args|
         [_, "load", n] -> with_count!(n, |c| load_series!(c))
         [_, "plan"] -> plan_view!({})
         [_, "plan", date, session_type, detail, rationale] -> plan_add!(date, session_type, detail, rationale)
-        [_, "complete", presc_id, activity_id] -> complete!(presc_id, activity_id)
-        [_, "complete", presc_id] -> complete_rest!(presc_id)
-        [_, "skip", presc_id, reason] -> skip!(presc_id, reason)
+        [_, "complete", session_id, activity_id] -> complete!(session_id, activity_id)
+        [_, "complete", session_id] -> complete_rest!(session_id)
+        [_, "skip", session_id, reason] -> skip!(session_id, reason)
         [_, "config", "get", key] -> config_show!(key)
         [_, "config", "set", key, val] -> config_store!(key, val)
         [_, "--version"] -> Stdout.line!(version)
@@ -154,7 +154,7 @@ config_show! = |key|
     path = open_db!({})?
     when config_opt!(path, key)? is
         Found(v) ->
-            if json_mode!({}) then print_json!({ key, value: v }) else Stdout.line!(v)
+            out!({ key, value: v }, |p| p.value)
 
         NotFound -> err_out!("not_set", "(not set)")
 
@@ -393,14 +393,7 @@ post_form! = |uri, form|
 
 get_bearer! : Str, Str => Result (List U8) _
 get_bearer! = |uri, token|
-    resp = Http.send!({
-        method: GET,
-        headers: [Http.header(("Authorization", "Bearer ${token}"))],
-        uri,
-        body: [],
-        timeout_ms: TimeoutMilliseconds(60000),
-    })?
-    ok_body(resp)
+    ok_body(send_bearer!(uri, token)?)
 
 ok_body : { status : U16, headers : List { name : Str, value : Str }, body : List U8 } -> Result (List U8) _
 ok_body = |resp|
@@ -458,15 +451,13 @@ sync! = |{}|
             config_set!(path, "last_sync_epoch", Num.to_str(started))?
             streams_n = backfill_streams!(path, token)?
             remaining = pending_streams!(path)?
-            if json_mode!({}) then
-                print_json!({ synced: count, streams_fetched: streams_n, pending_streams: remaining })
-            else
+            out!({ synced: count, streams_fetched: streams_n, pending_streams: remaining }, |p|
                 tail =
-                    if remaining > 0 then
-                        " (${Num.to_str(remaining)} still need streams — run `stride backfill` to pull them all)"
+                    if p.pending_streams > 0 then
+                        " (${Num.to_str(p.pending_streams)} still need streams — run `stride backfill` to pull them all)"
                     else
                         ""
-                Stdout.line!("synced ${Num.to_str(count)} activities, fetched streams for ${Num.to_str(streams_n)}${tail}")
+                "synced ${Num.to_str(p.synced)} activities, fetched streams for ${Num.to_str(p.streams_fetched)}${tail}")
 
 # fetch time/HR/watts streams for activities that don't have them yet,
 # newest first, capped per run to respect Strava's rate limits (~100 reads/15min)
@@ -512,13 +503,7 @@ fetch_streams_all! = |path, token, ids, acc|
         [id, .. as rest] ->
             id_str = Num.to_str(id)
             uri = "${api_base!({})}/api/v3/activities/${id_str}/streams?keys=time,heartrate,watts&key_by_type=true"
-            resp = Http.send!({
-                method: GET,
-                headers: [Http.header(("Authorization", "Bearer ${token}"))],
-                uri,
-                body: [],
-                timeout_ms: TimeoutMilliseconds(60000),
-            })?
+            resp = send_bearer!(uri, token)?
             if resp.status == 429 then
                 # rate limited — stop gracefully, next sync continues the backfill
                 Stdout.line!("rate limited by Strava — stopping streams backfill for now (will resume next sync)")?
@@ -1902,25 +1887,24 @@ plan_view! = |{}|
         when Metrics.date_str_to_days(date_str) is
             Ok(d) -> Metrics.day_of_week(d)
             Err(_) -> ""
-    if json_mode!({}) then
-        # build a new record with the day added (Roc's `&` can only update
-        # existing fields, not add one — so construct it explicitly)
-        print_json!(List.map(ordered, |p| {
-            id: p.id,
-            created_at: p.created_at,
-            target_date: p.target_date,
-            day: dow(p.target_date),
-            session_type: p.session_type,
-            detail: p.detail,
-            rationale: p.rationale,
-            completed_activity_id: p.completed_activity_id,
-            status: p.status,
-            skipped_reason: p.skipped_reason,
-        }))
-    else
-        Stdout.line!(Render.render_table(
+    # enrich ONCE with the day-of-week; both output modes consume the same rows
+    # (constructed explicitly — Roc's `&` can only update fields, not add one)
+    enriched = List.map(ordered, |p| {
+        id: p.id,
+        created_at: p.created_at,
+        target_date: p.target_date,
+        day: dow(p.target_date),
+        session_type: p.session_type,
+        detail: p.detail,
+        rationale: p.rationale,
+        completed_activity_id: p.completed_activity_id,
+        status: p.status,
+        skipped_reason: p.skipped_reason,
+    })
+    out!(enriched, |rows_enriched|
+        Render.render_table(
             ["day", "date", "type", "status", "detail", "id"],
-            List.map(ordered, |p| [dow(p.target_date), p.target_date, p.session_type, p.status, p.detail, Num.to_str(p.id)]),
+            List.map(rows_enriched, |p| [p.day, p.target_date, p.session_type, p.status, p.detail, Num.to_str(p.id)]),
         ))
 
 plan_add! : Str, Str, Str, Str => Result {} _
@@ -1964,21 +1948,23 @@ insert_planned_session! = |path, target_date, session_type, detail, rationale|
         bindings: [],
         row: Sqlite.i64("id"),
     })?
-    if json_mode!({}) then
-        print_json!({ id: new_id, target_date, session_type })
-    else
-        Stdout.line!("planned #${Num.to_str(new_id)}: ${session_type} on ${target_date}")
+    out!({ id: new_id, target_date, session_type }, |p| "planned #${Num.to_str(p.id)}: ${p.session_type} on ${p.target_date}")
+
+# ONE not-found message for complete/complete-rest/skip — can't drift apart
+session_not_found! : I64 => Result {} _
+session_not_found! = |session_id|
+    err_out!("session_not_found", "no planned session #${Num.to_str(session_id)} — run `stride plan` to see ids")
 
 complete! : Str, Str => Result {} _
-complete! = |presc_id_str, activity_id_str|
+complete! = |session_id_str, activity_id_str|
     path = open_db!({})?
-    when (Str.to_i64(presc_id_str), Str.to_i64(activity_id_str)) is
-        (Ok(presc_id), Ok(activity_id)) ->
+    when (Str.to_i64(session_id_str), Str.to_i64(activity_id_str)) is
+        (Ok(session_id), Ok(activity_id)) ->
             # SQLite UPDATE matching 0 rows is not an error — check existence
             # ourselves so a typo'd id can't report false success and silently
             # leave the planned session open / the coaching log out of sync
-            if !(row_exists!(path, "planned_sessions", presc_id)?) then
-                err_out!("session_not_found", "no planned session #${Num.to_str(presc_id)} — run `stride plan` to see ids")
+            if !(row_exists!(path, "planned_sessions", session_id)?) then
+                session_not_found!(session_id)
             else if !(row_exists!(path, "activities", activity_id)?) then
                 err_out!("activity_not_found", "no activity ${Num.to_str(activity_id)} in the db — `stride sync` first?")
             else
@@ -1987,13 +1973,10 @@ complete! = |presc_id_str, activity_id_str|
                     query: "UPDATE planned_sessions SET completed_activity_id = :aid, status = 'done' WHERE id = :pid",
                     bindings: [
                         { name: ":aid", value: Integer(activity_id) },
-                        { name: ":pid", value: Integer(presc_id) },
+                        { name: ":pid", value: Integer(session_id) },
                     ],
                 })?
-                if json_mode!({}) then
-                    print_json!({ completed_session: presc_id, activity: activity_id })
-                else
-                    Stdout.line!("planned session #${Num.to_str(presc_id)} completed by activity ${Num.to_str(activity_id)}")
+                out!({ completed_session: session_id, activity: activity_id }, |p| "planned session #${Num.to_str(p.completed_session)} completed by activity ${Num.to_str(p.activity)}")
 
         _ ->
             err_out!("bad_id", "complete needs numeric ids: complete <session_id> <activity_id>")
@@ -2001,53 +1984,47 @@ complete! = |presc_id_str, activity_id_str|
 # rest days have no activity to link — `complete <id>` alone closes them. Any
 # other session type still demands its activity id: done means evidence.
 complete_rest! : Str => Result {} _
-complete_rest! = |presc_id_str|
+complete_rest! = |session_id_str|
     path = open_db!({})?
-    when Str.to_i64(presc_id_str) is
+    when Str.to_i64(session_id_str) is
         Err(_) -> err_out!("bad_id", "complete needs a numeric id: complete <session_id> [activity_id]")
-        Ok(presc_id) ->
-            if !(row_exists!(path, "planned_sessions", presc_id)?) then
-                err_out!("session_not_found", "no planned session #${Num.to_str(presc_id)} — run `stride plan` to see ids")
+        Ok(session_id) ->
+            if !(row_exists!(path, "planned_sessions", session_id)?) then
+                session_not_found!(session_id)
             else
                 session_type = Sqlite.query!({
                     path,
                     query: "SELECT COALESCE(session_type, '') AS t FROM planned_sessions WHERE id = :pid",
-                    bindings: [{ name: ":pid", value: Integer(presc_id) }],
+                    bindings: [{ name: ":pid", value: Integer(session_id) }],
                     row: Sqlite.str("t"),
                 })?
                 if session_type != "rest" then
-                    err_out!("activity_required", "planned session #${Num.to_str(presc_id)} is '${session_type}' — completing it needs the activity id (only rest days close without one)")
+                    err_out!("activity_required", "planned session #${Num.to_str(session_id)} is '${session_type}' — completing it needs the activity id (only rest days close without one)")
                 else
                     Sqlite.execute!({
                         path,
                         query: "UPDATE planned_sessions SET status = 'done' WHERE id = :pid",
-                        bindings: [{ name: ":pid", value: Integer(presc_id) }],
+                        bindings: [{ name: ":pid", value: Integer(session_id) }],
                     })?
-                    if json_mode!({}) then
-                        print_json!({ completed_session: presc_id, rest: Bool.true })
-                    else
-                        Stdout.line!("planned session #${Num.to_str(presc_id)} (rest) marked done")
+                    out!({ completed_session: session_id, rest: Bool.true }, |p| "planned session #${Num.to_str(p.completed_session)} (rest) marked done")
 
 skip! : Str, Str => Result {} _
-skip! = |presc_id_str, reason|
+skip! = |session_id_str, reason|
     path = open_db!({})?
-    when Str.to_i64(presc_id_str) is
-        Ok(presc_id) ->
-            if !(row_exists!(path, "planned_sessions", presc_id)?) then
-                err_out!("session_not_found", "no planned session #${Num.to_str(presc_id)} — run `stride plan` to see ids")
+    when Str.to_i64(session_id_str) is
+        Ok(session_id) ->
+            if !(row_exists!(path, "planned_sessions", session_id)?) then
+                session_not_found!(session_id)
             else
                 Sqlite.execute!({
                     path,
                     query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why WHERE id = :pid",
                     bindings: [
                         { name: ":why", value: String(reason) },
-                        { name: ":pid", value: Integer(presc_id) },
+                        { name: ":pid", value: Integer(session_id) },
                     ],
                 })?
-                if json_mode!({}) then
-                    print_json!({ skipped_session: presc_id, reason })
-                else
-                    Stdout.line!("planned session #${Num.to_str(presc_id)} skipped: ${reason}")
+                out!({ skipped_session: session_id, reason }, |p| "planned session #${Num.to_str(p.skipped_session)} skipped: ${p.reason}")
 
         Err(_) ->
             err_out!("bad_id", "skip needs a numeric id: skip <session_id> \"<reason>\"")
