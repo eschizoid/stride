@@ -6,6 +6,8 @@ module [
     time_in_zones,
     best_rolling_mean,
     tss_ladder,
+    sport_class,
+    srpe_load,
     load_step,
     ftp_calibration,
     valid_hr,
@@ -180,6 +182,22 @@ hr_tss = |zs|
 #   -> avg-HR classified into one zone -> relative_effort -> 0 (no data).
 # Returns the tss and the power figure used (Err NoPower if HR/RE path).
 
+# ── sport classification ────────────────────────────────────────────
+# Strength-class sports: HR-based load systematically underestimates them (the
+# aerobic model doesn't see bar weight), so user session-RPE outranks HR there.
+sport_class : Str -> [Endurance, StrengthLike]
+sport_class = |sport_type|
+    strengthish = ["WeightTraining", "Workout", "Crossfit", "HighIntensityIntervalTraining", "Yoga", "Pilates"]
+    if List.contains(strengthish, sport_type) then StrengthLike else Endurance
+
+# ── session-RPE load (Foster) ───────────────────────────────────────
+# hours × RPE × 10, so one hour at RPE 10 = 100 — TSS-commensurate BY
+# CONSTRUCTION. Raw Foster units (minutes × RPE) would be ~6x too large and
+# corrupt CTL/ATL; do not "simplify" this back to minutes.
+srpe_load : { rpe : F64, moving_time : I64 } -> F64
+srpe_load = |{ rpe, moving_time }|
+    (Num.to_f64(moving_time) / 3600.0) * rpe * 10.0
+
 tss_ladder :
     {
         np_stream : Result F64 [TooShort],
@@ -187,40 +205,61 @@ tss_ladder :
         avg_watts : Result F64 [Missing],
         avg_hr : Result F64 [Missing],
         relative_effort : Result F64 [Missing],
+        rpe : Result F64 [Missing],
+        sport_type : Str,
         zones : ZoneSeconds,
         zb : ZoneBounds,
         ftp : F64,
         dur_s : F64,
         moving_time : I64,
     }
-    -> { tss : F64, np : Result F64 [NoPower] }
+    -> { tss : F64, np : Result F64 [NoPower], model : Str }
 tss_ladder = |input|
     np_like =
         when input.np_stream is
-            Ok(np) -> Ok(np)
+            Ok(np) -> Ok({ w: np, m: "power_stream" })
             Err(_) ->
                 when input.weighted_watts is
-                    Ok(w) -> Ok(w)
+                    Ok(w) -> Ok({ w, m: "weighted_watts" })
                     Err(_) ->
                         when input.avg_watts is
-                            Ok(w) -> Ok(w)
+                            Ok(w) -> Ok({ w, m: "avg_watts" })
                             Err(_) -> Err(NoPower)
 
     zone_total = input.zones.z1 + input.zones.z2 + input.zones.z3 + input.zones.z4 + input.zones.z5
-    tss =
+    # measured HR load, when there is any usable HR at all
+    hr_scored =
+        if zone_total > 0 then
+            Ok({ t: hr_tss(input.zones), m: "hr_zones" })
+        else
+            when input.avg_hr is
+                Ok(hr) -> Ok({ t: hr_tss(all_seconds_in_zone(input.moving_time, zone_of(hr, input.zb))), m: "hr_avg" })
+                Err(_) -> Err(NoHr)
+    rpe_scored =
+        when input.rpe is
+            Ok(r) -> Ok({ t: srpe_load({ rpe: r, moving_time: input.moving_time }), m: "session_rpe" })
+            Err(_) -> Err(NoRpe)
+    re_scored =
+        when input.relative_effort is
+            Ok(re) -> Ok({ t: re, m: "relative_effort" })
+            Err(_) -> Err(NoRe)
+
+    # endurance: measured beats reported (power > HR > RPE > RE).
+    # strength-like: the athlete's rating beats HR (power still wins if present —
+    # a strength session with real watts is measured too).
+    ordered =
+        when sport_class(input.sport_type) is
+            Endurance -> [hr_scored, rpe_scored, re_scored]
+            StrengthLike -> [rpe_scored, hr_scored, re_scored]
+    scored =
         when np_like is
-            Ok(npv) -> tss_from_power({ np: npv, ftp: input.ftp, dur_s: input.dur_s })
+            Ok(p) -> { t: tss_from_power({ np: p.w, ftp: input.ftp, dur_s: input.dur_s }), m: p.m }
             Err(_) ->
-                if zone_total > 0 then
-                    hr_tss(input.zones)
-                else
-                    when input.avg_hr is
-                        Ok(hr) -> hr_tss(all_seconds_in_zone(input.moving_time, zone_of(hr, input.zb)))
-                        Err(_) ->
-                            when input.relative_effort is
-                                Ok(re) -> re
-                                Err(_) -> 0.0
-    { tss, np: np_like }
+                List.walk_until(ordered, { t: 0.0, m: "none" }, |acc, candidate|
+                    when candidate is
+                        Ok(pair) -> Break(pair)
+                        Err(_) -> Continue(acc))
+    { tss: scored.t, np: Result.map_ok(np_like, |p| p.w), model: scored.m }
 
 all_seconds_in_zone : I64, U8 -> ZoneSeconds
 all_seconds_in_zone = |secs, zone|
@@ -404,18 +443,20 @@ valid_hr = |hr|
 
 # ── form interpretation (standard TSB bands) ────────────────────────
 
+# verdicts describe MODELED load only — the engine can't see sleep, illness,
+# soreness, or life stress, so it suggests rather than commands
 form_label : F64 -> Str
 form_label = |tsb|
     if tsb <= -15.0 then
-        "deeply fatigued — rest"
+        "high modeled fatigue — consider recovery"
     else if tsb <= -5.0 then
-        "carrying fatigue — keep it easy"
+        "modeled fatigue building — favor easy work"
     else if tsb < 5.0 then
-        "ready — good day for intensity"
+        "balanced — good day for intensity if you feel it"
     else if tsb < 15.0 then
-        "fresh — race-day legs"
+        "fresh — good day for a big effort"
     else
-        "very fresh — detraining if this continues"
+        "very fresh — load has been light lately"
 
 # ── weekly rollup (Monday-aligned, the user's week convention) ──────
 # epoch day 0 = Thursday, so (days + 3) // 7 increments every Monday.
@@ -596,6 +637,8 @@ ladder_base = {
     avg_watts: Err(Missing),
     avg_hr: Err(Missing),
     relative_effort: Err(Missing),
+    rpe: Err(Missing),
+    sport_type: "Ride",
     zones: test_zeroz,
     zb: test_zb,
     ftp: 200.0,
@@ -633,10 +676,37 @@ expect
     r = tss_ladder({ ladder_base & relative_effort: Ok(42.0) })
     Num.abs(r.tss - 42.0) < 0.001
 
-# nothing at all -> honest zero
+# nothing at all -> honest zero, model "none"
 expect
     r = tss_ladder(ladder_base)
-    Num.abs(r.tss) < 0.001 and Result.is_err(r.np)
+    Num.abs(r.tss) < 0.001 and Result.is_err(r.np) and r.model == "none"
+
+# provenance: each rung reports which model scored it
+expect
+    a = tss_ladder({ ladder_base & np_stream: Ok(200.0) })
+    b = tss_ladder({ ladder_base & zones: { test_zeroz & z2: 3600 } })
+    c = tss_ladder({ ladder_base & relative_effort: Ok(42.0) })
+    a.model == "power_stream" and b.model == "hr_zones" and c.model == "relative_effort"
+
+# sRPE: 45min at RPE 7 -> 52.5 (hours x RPE x 10, TSS-commensurate)
+expect Num.abs(srpe_load({ rpe: 7.0, moving_time: 2700 }) - 52.5) < 0.001
+
+# ENDURANCE ride with HR AND rpe: measured HR wins over reported RPE
+expect
+    r = tss_ladder({ ladder_base & zones: { test_zeroz & z2: 3600 }, rpe: Ok(9.0) })
+    r.model == "hr_zones" and Num.abs(r.tss - 55.0) < 0.001
+
+# STRENGTH session with junk-free HR AND rpe: the athlete's rating wins
+expect
+    r = tss_ladder({ ladder_base & sport_type: "Workout", zones: { test_zeroz & z2: 3600 }, rpe: Ok(7.0), moving_time: 2700 })
+    r.model == "session_rpe" and Num.abs(r.tss - 52.5) < 0.001
+
+# strength WITHOUT a rating still falls back to HR (never zero when data exists)
+expect
+    r = tss_ladder({ ladder_base & sport_type: "Workout", zones: { test_zeroz & z2: 3600 } })
+    r.model == "hr_zones"
+
+expect sport_class("Ride") == Endurance and sport_class("WeightTraining") == StrengthLike and sport_class("Workout") == StrengthLike
 
 # Sun Jul 26 and Mon Jul 27 2026 land in different Monday-aligned weeks
 expect
@@ -757,11 +827,11 @@ expect
     z7 = Result.with_default(List.last(zs), { z: "", name: "", lo_w: 0.0, hi_w: 9.0 })
     Num.abs(z1.lo_w) < 0.001 and Num.abs(z7.hi_w) < 0.001
 
-expect form_label(-20.0) == "deeply fatigued — rest"
-expect form_label(-9.0) == "carrying fatigue — keep it easy"
-expect form_label(-1.0) == "ready — good day for intensity"
-expect form_label(8.0) == "fresh — race-day legs"
-expect form_label(20.0) == "very fresh — detraining if this continues"
+expect form_label(-20.0) == "high modeled fatigue — consider recovery"
+expect form_label(-9.0) == "modeled fatigue building — favor easy work"
+expect form_label(-1.0) == "balanced — good day for intensity if you feel it"
+expect form_label(8.0) == "fresh — good day for a big effort"
+expect form_label(20.0) == "very fresh — load has been light lately"
 
 # epoch day 0 is 1970-01-01, and roundtrips
 expect days_from_civil(1970, 1, 1) == 0

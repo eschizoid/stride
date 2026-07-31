@@ -69,6 +69,8 @@ help_text =
                                      hr | tss | power | intensity | distance | time | output
         zones                        power-zone watt ranges (7 zones) from your FTP
                                      (alias: pz)
+        doctor                       dataset health: coverage, how each activity
+                                     was scored, what's unscored and why
         progress [date]              am I improving on that day's workout? every
                                      comparable instance + EF trend (watts/HR).
                                      defaults to your latest workout; auto-named
@@ -84,6 +86,8 @@ help_text =
         complete <session_id> <activity_id>            link a planned session to a done activity
         complete <session_id>                          mark a REST day done (no activity to link)
         skip <session_id> <reason>                     mark a planned session as skipped
+        rate <activity_id|latest> <1-10>               how hard did it feel? (session-RPE)
+                                                       scores strength/HIIT/yoga honestly
 
     FLAGS
         --help      show this help
@@ -114,6 +118,8 @@ main! = |raw_args|
         [_, "top", metric, n] -> with_count!(n, |c| top!(metric, c, ""))
         [_, "top", metric, n, sport] -> with_count!(n, |c| top!(metric, c, sport))
         [_, "import", src] -> import_archive!(src)
+        [_, "rate", target, rpe_str] -> rate!(target, rpe_str)
+        [_, "doctor"] -> doctor!({})
         [_, "zones"] -> pz!({})
         [_, "pz"] -> pz!({})
         [_, "progress"] -> progress!("")
@@ -808,10 +814,12 @@ ActivityRow : {
     id : I64,
     start : Str,
     mt : I64,
+    sport : Str,
     re : [NotNull F64, Null],
     aw : [NotNull F64, Null],
     ahr : [NotNull F64, Null],
     waw : [NotNull F64, Null],
+    rpe : [NotNull F64, Null],
     raw : [NotNull Str, Null],
 }
 
@@ -822,10 +830,12 @@ compute_missing_metrics! = |path, ftp, zb|
         query:
         """
         SELECT a.id AS id, a.start_local AS start, a.moving_time AS mt,
+               COALESCE(a.sport_type, '') AS sport,
                CAST(a.relative_effort AS REAL) AS re, CAST(a.avg_watts AS REAL) AS aw, CAST(a.avg_hr AS REAL) AS ahr,
-               CAST(a.weighted_avg_watts AS REAL) AS waw, s.raw_json AS raw
+               CAST(a.weighted_avg_watts AS REAL) AS waw, CAST(r.rpe AS REAL) AS rpe, s.raw_json AS raw
         FROM activities a
         LEFT JOIN streams s ON s.activity_id = a.id
+        LEFT JOIN ratings r ON r.activity_id = a.id
         LEFT JOIN activity_metrics m ON m.activity_id = a.id
         WHERE m.activity_id IS NULL OR COALESCE(m.ftp_used, 0) <> :ftp
               OR COALESCE(m.zones_used, '') <> :zones
@@ -840,10 +850,12 @@ compute_missing_metrics! = |path, ftp, zb|
             id: Sqlite.i64("id"),
             start: Sqlite.str("start"),
             mt: Sqlite.i64("mt"),
+            sport: Sqlite.str("sport"),
             re: Sqlite.nullable_f64("re"),
             aw: Sqlite.nullable_f64("aw"),
             ahr: Sqlite.nullable_f64("ahr"),
             waw: Sqlite.nullable_f64("waw"),
+            rpe: Sqlite.nullable_f64("rpe"),
             raw: Sqlite.nullable_str("raw"),
         },
     })?
@@ -904,6 +916,8 @@ compute_one! = |path, ftp, zb, row|
         avg_watts: nn(row.aw),
         avg_hr: nn(row.ahr),
         relative_effort: nn(row.re),
+        rpe: nn(row.rpe),
+        sport_type: row.sport,
         zones,
         zb,
         ftp,
@@ -932,13 +946,14 @@ compute_one! = |path, ftp, zb, row|
         query:
         """
         INSERT OR REPLACE INTO activity_metrics
-          (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev)
-        VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev)
+          (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model)
+        VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model)
         """,
         bindings: [
             { name: ":ftpu", value: Real(ftp) },
             { name: ":zused", value: String(zones_sig(zb)) },
             { name: ":rev", value: Integer(metrics_rev) },
+            { name: ":model", value: String(ladder.model) },
             { name: ":id", value: Integer(row.id) },
             { name: ":tss", value: Real(tss) },
             { name: ":np", value: np_binding },
@@ -1720,6 +1735,142 @@ export_row_to_summary = |headers, row|
         weighted_average_watts: opt_field("Weighted Average Power"),
     })
 
+# dataset health report: how much of the history has usable data, which ladder
+# rung scored each activity, and what's honestly unscored. Trust, quantified.
+doctor! : {} => Result {} _
+doctor! = |{}|
+    path = open_db!({})?
+    cov = Sqlite.query!({
+        path,
+        query:
+        """
+        SELECT COUNT(*) AS total,
+               COALESCE(SUM(CASE WHEN a.avg_hr > 0 THEN 1 ELSE 0 END), 0) AS with_hr,
+               COALESCE(SUM(CASE WHEN COALESCE(a.avg_watts, a.weighted_avg_watts, 0) > 0 THEN 1 ELSE 0 END), 0) AS with_power,
+               COALESCE(SUM(CASE WHEN s.activity_id IS NOT NULL AND s.raw_json <> '{}' THEN 1 ELSE 0 END), 0) AS with_streams,
+               COALESCE(SUM(CASE WHEN m.activity_id IS NULL THEN 1 ELSE 0 END), 0) AS unanalyzed,
+               COALESCE(SUM(CASE WHEN COALESCE(m.tss, 0) = 0 AND m.activity_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS zero_load
+        FROM activities a
+        LEFT JOIN streams s ON s.activity_id = a.id
+        LEFT JOIN activity_metrics m ON m.activity_id = a.id
+        """,
+        bindings: [],
+        row: { Sqlite.decode_record <-
+            total: Sqlite.i64("total"),
+            with_hr: Sqlite.i64("with_hr"),
+            with_power: Sqlite.i64("with_power"),
+            with_streams: Sqlite.i64("with_streams"),
+            unanalyzed: Sqlite.i64("unanalyzed"),
+            zero_load: Sqlite.i64("zero_load"),
+        },
+    })?
+    models = Sqlite.query_many!({
+        path,
+        query: "SELECT COALESCE(load_model, 'unknown (pre-provenance)') AS model, COUNT(*) AS n FROM activity_metrics GROUP BY load_model ORDER BY n DESC",
+        bindings: [],
+        rows: { Sqlite.decode_record <- model: Sqlite.str("model"), n: Sqlite.i64("n") },
+    })?
+    # strength-class sessions without a rating: aggregate in Roc so the sport
+    # list can't drift from Metrics.sport_class
+    sports = Sqlite.query_many!({
+        path,
+        query: "SELECT COALESCE(a.sport_type, '') AS sport, CASE WHEN r.activity_id IS NULL THEN 0 ELSE 1 END AS rated FROM activities a LEFT JOIN ratings r ON r.activity_id = a.id",
+        bindings: [],
+        rows: { Sqlite.decode_record <- sport: Sqlite.str("sport"), rated: Sqlite.i64("rated") },
+    })?
+    strength_unrated = List.len(List.keep_if(sports, |r| Metrics.sport_class(r.sport) == StrengthLike and r.rated == 0))
+    rated_total = List.len(List.keep_if(sports, |r| r.rated == 1))
+    payload = {
+        activities: cov.total,
+        with_hr: cov.with_hr,
+        with_power: cov.with_power,
+        with_streams: cov.with_streams,
+        unanalyzed: cov.unanalyzed,
+        zero_load: cov.zero_load,
+        rated: rated_total,
+        strength_unrated: Num.to_i64(Num.to_u64(strength_unrated)),
+        scored_by: models,
+    }
+    out!(payload, |p|
+        model_lines = List.map(p.scored_by, |mrow| "    ${mrow.model}: ${Num.to_str(mrow.n)}")
+        hint =
+            if p.strength_unrated > 0 then
+                ["", "  → ${Num.to_str(p.strength_unrated)} strength-class sessions have no rating — `stride rate <id> <1-10>` scores them honestly"]
+            else
+                []
+        Str.join_with(
+            List.join([
+                [
+                    "",
+                    "── stride doctor ─────────────────────────────",
+                    "",
+                    "  activities: ${Num.to_str(p.activities)}",
+                    "    with heart rate: ${Num.to_str(p.with_hr)}",
+                    "    with power: ${Num.to_str(p.with_power)}",
+                    "    with streams: ${Num.to_str(p.with_streams)}",
+                    "    rated (session-RPE): ${Num.to_str(p.rated)}",
+                    "",
+                    "  scored by (load provenance):",
+                ],
+                model_lines,
+                [
+                    "",
+                    "  zero load (no usable data): ${Num.to_str(p.zero_load)}",
+                    "  not yet analyzed: ${Num.to_str(p.unanalyzed)}",
+                ],
+                hint,
+            ]),
+            "\n",
+        ))
+
+# session-RPE rating: the athlete is the sensor for sports without power meters.
+# Ratings live in their OWN table (the judgment tier) — never on the activities
+# mirror, which sync/import replace wholesale. Rating an activity invalidates its
+# metrics so the next analyze rescores it through the sport-aware ladder.
+rate! : Str, Str => Result {} _
+rate! = |target, rpe_str|
+    path = open_db!({})?
+    rpe_result =
+        when Str.to_f64(rpe_str) is
+            Ok(r) if r >= 1.0 and r <= 10.0 -> Ok(r)
+            _ -> Err(BadRpe)
+    when rpe_result is
+        Err(_) -> err_out!("bad_rpe", "rate needs an effort from 1 (easy) to 10 (max) — got '${rpe_str}'")
+        Ok(rpe) ->
+            id_result =
+                if target == "latest" then
+                    when Sqlite.query!({
+                        path,
+                        query: "SELECT COALESCE(MAX(id), 0) AS id FROM activities WHERE start_local = (SELECT MAX(start_local) FROM activities)",
+                        bindings: [],
+                        row: Sqlite.i64("id"),
+                    }) is
+                        Ok(0) -> Err(NoActivities)
+                        Ok(id) -> Ok(id)
+                        Err(e) -> Err(e)
+                else
+                    Str.to_i64(target) |> Result.map_err(|_| BadId)
+            when id_result is
+                Err(BadId) -> err_out!("bad_id", "rate needs an activity id or 'latest': rate <activity_id|latest> <1-10>")
+                Err(NoActivities) -> err_out!("no_activities", "nothing to rate yet — `stride sync` or `stride import` first")
+                Err(other) -> Err(other)
+                Ok(activity_id) ->
+                    if !(row_exists!(path, "activities", activity_id)?) then
+                        err_out!("activity_not_found", "no activity ${Num.to_str(activity_id)} in the db — `stride sync` first?")
+                    else
+                        Sqlite.execute!({
+                            path,
+                            query: "INSERT OR REPLACE INTO ratings (activity_id, rpe, rated_at) VALUES (:id, :rpe, :at)",
+                            bindings: [
+                                { name: ":id", value: Integer(activity_id) },
+                                { name: ":rpe", value: Real(rpe) },
+                                { name: ":at", value: String(Metrics.epoch_to_iso(now_secs!({}))) },
+                            ],
+                        })?
+                        # a rating is a metric input — invalidate so analyze rescores
+                        invalidate_metrics!(path, activity_id)?
+                        out!({ rated: activity_id, rpe }, |p| "activity ${Num.to_str(p.rated)} rated ${Render.fmt0(p.rpe)}/10 — run `stride analyze` to rescore")
+
 # power-zone reference chart: the 7 Coggan/Peloton zones as watt ranges from your
 # configured FTP (the targets you'd set on a Power Zone ride).
 pz! : {} => Result {} _
@@ -2034,12 +2185,12 @@ skip! = |session_id_str, reason|
 # bump when the schema changes; ensure_schema! re-runs migrations when the db's
 # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 # that post-date the original CREATE statements in Schema.roc.)
-schema_version = 5
+schema_version = 6
 
 # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
 # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
 # zones_used) can't catch algorithm changes
-metrics_rev = 1
+metrics_rev = 2
 
 run_migrations! : Str => Result {} _
 run_migrations! = |path|
@@ -2053,6 +2204,7 @@ run_migrations! = |path|
     Sqlite.execute!({ path, query: Schema.planned_sessions, bindings: [] })?
     Sqlite.execute!({ path, query: Schema.config, bindings: [] })?
     Sqlite.execute!({ path, query: Schema.streams, bindings: [] })?
+    Sqlite.execute!({ path, query: Schema.ratings, bindings: [] })?
     alter_add_column!(path, "ALTER TABLE activities ADD COLUMN weighted_avg_watts REAL")?
     alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_20min_w REAL")?
     alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN ftp_used REAL")?
@@ -2064,6 +2216,8 @@ run_migrations! = |path|
     # v4: metrics record the algorithm revision they were computed with, so a
     # change to the math itself (metrics_rev bump) invalidates + recomputes
     alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN metrics_rev INTEGER")?
+    # v6: metrics record WHICH ladder rung scored them (load provenance)
+    alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN load_model TEXT")?
     # v2: index the column every date-range filter and the activities sort use
     # (queries now compare a.start_local directly — sargable — instead of substr)
     Sqlite.execute!({ path, query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })

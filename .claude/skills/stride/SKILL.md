@@ -71,6 +71,7 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
 | `stride stats` | career + year-to-date totals per sport (sessions, hours, km) |
 | `stride load [days]` | daily tss/ctl/atl/tsb series, chronological (default 90) |
 | `stride plan` | planned-session log with `status` (open/done/skipped) + `skipped_reason` |
+| `stride doctor` | dataset health: coverage counts, per-model load provenance (`scored_by`), `strength_unrated` (strength sessions awaiting a rating) |
 
 ## Conventions & gotchas
 
@@ -92,6 +93,12 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
   LOCAL day via config `utc_offset_minutes` (default 0 = UTC); without it, users west of
   UTC get a phantom "tomorrow" row each evening — set it (e.g. -300) if `as_of` looks a
   day ahead. It's a fixed offset, so flip it seasonally for DST.
+- **Session-RPE**: after a strength/HIIT/yoga session, ask the user how hard it felt
+  (1-10) and run `stride rate <activity_id> <n>` — load = hours × RPE × 10
+  (TSS-commensurate). For strength-class sports the rating outranks HR in the load
+  ladder; for endurance, measured power/HR outrank it. Rating an activity
+  invalidates its metrics (re-`analyze` rescores). Ratings live in their own table
+  and survive re-syncs.
 - Junk HR (outside 35–220 bpm) is filtered at analyze time, so sessions with bad straps
   (common on Peloton strength workouts) get near-0 TSS — that's honest "no data", not
   zero effort. Weigh strength by session count, not TSS. `avg_hr` in `activities` output

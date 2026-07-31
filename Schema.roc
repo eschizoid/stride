@@ -1,4 +1,4 @@
-module [activities, metrics, daily_load, planned_sessions, config, streams]
+module [activities, metrics, daily_load, planned_sessions, config, streams, ratings]
 
 # ── database schema (DDL only — pure strings, no decoders to drift from) ──
 #
@@ -74,5 +74,17 @@ config =
     CREATE TABLE IF NOT EXISTS config (
       key   TEXT PRIMARY KEY,
       value TEXT
+    )
+    """
+
+# the judgment tier: user-entered effort ratings (Borg CR10 session-RPE).
+# NEVER a column on activities — that table is a replace-on-sync mirror,
+# and a re-sync would silently wipe anything a human typed into it.
+ratings =
+    """
+    CREATE TABLE IF NOT EXISTS ratings (
+      activity_id  INTEGER PRIMARY KEY,
+      rpe          REAL NOT NULL,
+      rated_at     TEXT
     )
     """

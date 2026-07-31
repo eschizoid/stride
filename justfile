@@ -150,7 +150,8 @@ e2e:
     sqlite3 "$DB" "UPDATE activity_metrics SET metrics_rev = 0;"
     out=$("$STRIDE_BIN" analyze); grep -q '"computed":2' <<<"$out" || fail "metrics_rev change must recompute all rows"
     rev=$(sqlite3 "$DB" "SELECT DISTINCT metrics_rev FROM activity_metrics;")
-    [ "$rev" = "1" ] || fail "recomputed rows must carry the current metrics_rev, got '$rev'"
+    # one uniform nonzero rev (whatever the binary's current constant is)
+    case "$rev" in ''|0|*$'\n'*) fail "recomputed rows must carry ONE current metrics_rev, got '$rev'";; esac
     echo "metrics_rev invalidation OK (algorithm changes recompute)"
 
     # ── plan lifecycle: dedup, skip, re-plan, done ───────────────────
@@ -373,6 +374,38 @@ e2e:
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" import /nonexistent-dir-xyz)
     grep -q "no activities.csv" <<<"$out" || fail "missing export must explain itself"
     echo "import OK (export dir + zip + idempotent + honest errors)"
+
+    # ── session-RPE: the athlete scores what sensors can't ──────────
+    sqlite3 "$DB" "INSERT INTO activities (id,name,sport_type,start_local,moving_time) VALUES (301,'Heavy Lift','WeightTraining','2025-05-05T18:00:00Z',2700);"
+    "$STRIDE_BIN" analyze >/dev/null
+    model=$(sqlite3 "$DB" "SELECT load_model FROM activity_metrics WHERE activity_id=301;")
+    [ "$model" = "none" ] || fail "sensorless strength must score none, got '$model'"
+    out=$("$STRIDE_BIN" rate 301 11); grep -q bad_rpe <<<"$out" || fail "rpe over 10 must be refused"
+    out=$("$STRIDE_BIN" rate 301 7); grep -q '"rated":301' <<<"$out" || fail "rate must confirm"
+    "$STRIDE_BIN" analyze >/dev/null
+    row=$(sqlite3 "$DB" "SELECT load_model || '|' || ROUND(tss, 1) FROM activity_metrics WHERE activity_id=301;")
+    [ "$row" = "session_rpe|52.5" ] || fail "45min @ RPE 7 must score 52.5 via session_rpe, got '$row'"
+    # re-rating invalidates + rescores (the judgment tier joins the invalidation story)
+    "$STRIDE_BIN" rate 301 5 >/dev/null
+    "$STRIDE_BIN" analyze >/dev/null
+    tss=$(sqlite3 "$DB" "SELECT ROUND(tss, 1) FROM activity_metrics WHERE activity_id=301;")
+    [ "$tss" = "37.5" ] || fail "re-rate to 5 must rescore to 37.5, got '$tss'"
+    # ratings survive a re-sync of the activities mirror (separate-table design)
+    sqlite3 "$DB" "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time) VALUES (301,'Heavy Lift','WeightTraining','2025-05-05T18:00:00Z',2700);"
+    n=$(sqlite3 "$DB" "SELECT COUNT(*) FROM ratings WHERE activity_id=301;")
+    [ "$n" = "1" ] || fail "rating must survive mirror replace"
+    echo "rate OK (sRPE scores strength, re-rate rescores, rating survives re-sync)"
+
+    # ── doctor: coverage + provenance + honest gaps ──────────────────
+    "$STRIDE_BIN" doctor | python3 -c '
+    import json, sys
+    d = json.load(sys.stdin)
+    assert d["activities"] > 0 and d["rated"] == 1, d
+    assert d["strength_unrated"] == 0, f"the one strength session is rated: {d}"
+    models = {m["model"]: m["n"] for m in d["scored_by"]}
+    assert models.get("session_rpe") == 1, models
+    print("doctor OK (coverage, provenance, rated counts)")
+    '
 
     # ── human output mode ────────────────────────────────────────────
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" plan); grep -Eq "date.+type.+status" <<<"$out" || fail "human table header"
