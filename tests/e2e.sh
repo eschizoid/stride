@@ -59,7 +59,10 @@ sqlite3 "$DB" "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_access_
 out=$("$STRIDE_BIN" config get strava_access_token)
 grep -q '"redacted":true' <<<"$out" || fail "secret key must report redacted"
 grep -q SECRETVAL123 <<<"$out" && fail "secret VALUE must never appear in output"
-perms=$(stat -f '%Lp' "$DB" 2>/dev/null || stat -c '%a' "$DB" 2>/dev/null)
+# GNU stat (-c) first: on Linux `stat -f` means --file-system and prints fs stats
+# (exit 0), which would shadow the fallback. macOS BSD stat has no -c, so it falls
+# through to -f '%Lp'. This order gives the perm bits on both.
+perms=$(stat -c '%a' "$DB" 2>/dev/null || stat -f '%Lp' "$DB" 2>/dev/null)
 [ "$perms" = "600" ] || fail "db must be chmod 600 after a command, got '$perms'"
 echo "credential safety OK (secret redacted, db 0600)"
 "$STRIDE_BIN" config set ftp 200 >/dev/null   # restore for the rest of the suite
