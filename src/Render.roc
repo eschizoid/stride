@@ -84,6 +84,19 @@ fmt2 = |x|
     sign = if n < 0 and whole == 0 then "-" else ""
     "${sign}${Num.to_str(whole)}.${frac_str}"
 
+# distance+time -> running pace "M:SS" per km (blank if no distance)
+pace_per_km : F64, I64 -> Str
+pace_per_km = |distance_m, moving_time|
+    if distance_m <= 0.0 or moving_time <= 0 then
+        "-"
+    else
+        total : I64
+        total = Num.round(Num.to_f64(moving_time) / (distance_m / 1000.0))
+        m = total // 60
+        s = total % 60
+        ss = if s < 10 then "0${Num.to_str(s)}" else Num.to_str(s)
+        "${Num.to_str(m)}:${ss}"
+
 # seconds -> "62m"
 mins : I64 -> Str
 mins = |secs|
@@ -163,7 +176,7 @@ progress_section = |name, rows, asked, lens|
                 ("load (tss)", |row| fmt0(row.tss)),
             ]
             SpeedHr -> [
-                ("speed (m/min)", |row| fmt0(row.distance_m / Num.to_f64(row.moving_time) * 60.0)),
+                ("pace (min/km)", |row| pace_per_km(row.distance_m, row.moving_time)),
                 ("heart rate (hr)", hr_of),
                 ("aero eff (spd/hr)", prim_of),
                 ("distance (km)", |row| fmt1(row.distance_m / 1000.0)),
@@ -201,7 +214,7 @@ progress_section = |name, rows, asked, lens|
         Rpe -> "rpe"
     legend = when lens is
         Ef -> "ef = normalized power / avg HR (watts per heartbeat) — climbing = fitter"
-        SpeedHr -> "aero-eff = speed per heartbeat (m/min ÷ bpm) — climbing = fitter"
+        SpeedHr -> "aero-eff = speed per heartbeat — climbing = fitter · pace is min/km"
         Rpe -> "rpe = how hard it felt (1-10) — for a fixed workout, dropping = adapting"
     verdict = "→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${Num.to_str(List.len(rows))} sessions — ${label} (${fmt0(pct)}%)"
     footer = "${legend}\nbar = scaled worst→best · ◀ asked marks the asked date · ··· = a break over 90 days"
@@ -406,7 +419,8 @@ compare_screen = |p|
     )
     load_pct = Metrics.pct_change(pr.tss, c.tss)
     load_word =
-        if load_pct > 10.0 then "load ramping (${fmt0(load_pct)}%)"
+        if pr.tss <= 0.0 and c.tss > 0.0 then "load resumed (${fmt0(c.tss)} TSS vs none the prior ${lab})"
+        else if load_pct > 10.0 then "load ramping (${fmt0(load_pct)}%)"
         else if load_pct < -10.0 then "load backed off (${fmt0(load_pct)}%)"
         else "load steady (${fmt0(load_pct)}%)"
     ctl_d = c.ctl - pr.ctl
@@ -416,8 +430,17 @@ compare_screen = |p|
         else "fitness holding"
     "${table}\n\n→ ${load_word} · ${fit_word}"
 
+# pace: 10km in 3000s = 5:00/km; padded seconds; no distance -> "-"
+expect pace_per_km(10000.0, 3000) == "5:00" and pace_per_km(10000.0, 3070) == "5:07" and pace_per_km(0.0, 100) == "-"
+
 # compare table + verdict render; ramp shows in the load word
 expect
     w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl }
     s = compare_screen({ period: "week", window_label: "7d", current: w(227.0, 6i64, 18i64, 17i64, 26.0), prior: w(193.0, 5i64, 12i64, 37i64, 24.0) })
     Str.contains(s, "load (tss)") and Str.contains(s, "+34") and Str.contains(s, "ramping") and Str.contains(s, "building")
+
+# zero prior TSS must NOT read as "steady 0%" — it's a resumption
+expect
+    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl }
+    s = compare_screen({ period: "week", window_label: "7d", current: w(200.0, 4i64, 10i64, 40i64, 20.0), prior: w(0.0, 0i64, 0i64, 0i64, 18.0) })
+    Str.contains(s, "load resumed") and !(Str.contains(s, "steady"))

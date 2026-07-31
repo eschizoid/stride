@@ -321,8 +321,12 @@ e2e:
     assert d["anchor_date"], "bare progress must resolve an anchor: " + str(d)
     g = d["groups"][0]
     assert "lens" in g and len(g["sessions"]) >= 1, "bare progress group must carry a lens + sessions: " + str(d)
-    print("progress no-arg OK (defaults to latest analyzed workout)")
+    assert g["lens"] == "speed_hr", "the HR+distance rowing anchor must use the speed/HR lens: " + str(g)
+    print("progress no-arg OK (latest analyzed; SpeedHr lens for the row)")
     '
+    # SpeedHr lens shows runner-friendly pace (min/km), not raw m/min
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" progress)
+    grep -q "pace (min/km)" <<<"$out" || fail "SpeedHr lens must show a pace column for runs/rows"
     # last-vs-best: a later weaker session (EF 1.0 < best 1.40) must surface the gap line
     seed_ride 203 "Test Class" 2025-07-01T10:00:00Z 3600 20000 150 150
     "$STRIDE_BIN" analyze >/dev/null
