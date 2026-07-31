@@ -118,9 +118,13 @@ stride config set hr_z1_max 120               # your HR zone upper bounds...
 stride config set hr_z2_max 150
 stride config set hr_z3_max 165
 stride config set hr_z4_max 180               # (z5 = everything above)
-stride config set utc_offset_minutes -300     # optional: your offset from UTC so
-                                              # "today" is your local day, not UTC's
-                                              # (default 0; set seasonally for DST)
+stride config set timezone America/Chicago    # optional: anchor "today" to your
+                                              # local day (not UTC's). An IANA name
+                                              # stays DST-correct automatically.
+                                              # Fixed alternative, no DST tracking:
+                                              #   stride config set utc_offset_minutes -300
+                                              # Precedence: timezone > offset > UTC.
+                                              # `stride doctor` shows which is active.
 stride backfill                               # pull all activities + all stream history
 stride analyze                                # compute everything
 ```
@@ -146,7 +150,7 @@ stride week                                       # everything needed to plan a 
 | --- | --- |
 | `init` | Creates `~/.stride/db.sqlite` and runs migrations. Idempotent — safe to re-run anytime. |
 | `auth` | One-time Strava OAuth: prints an authorize URL, you paste back the `code=` param. Stores tokens *and* client credentials in the db — no env vars needed afterward. |
-| `config set <key> <val>` / `config get <key>` | Your numbers: `ftp` (watts), HR zone bounds `hr_z1_max`…`hr_z4_max`, and `utc_offset_minutes`. Changing `ftp` auto-recomputes all history on the next `analyze`. |
+| `config set <key> <val>` / `config get <key>` | Your numbers: `ftp` (watts), HR zone bounds `hr_z1_max`…`hr_z4_max`, and either `timezone` (IANA, DST-aware) or `utc_offset_minutes` (fixed) to anchor "today". Changing `ftp` auto-recomputes all history on the next `analyze`. |
 
 **Data (daily)**
 

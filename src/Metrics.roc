@@ -30,6 +30,7 @@ module [
     lens_score,
     lens_higher_better,
     load_confidence,
+    parse_utc_offset,
     export_date_to_iso,
 ]
 
@@ -388,6 +389,22 @@ load_confidence = |model|
         "hr_zones" | "hr_avg" | "session_rpe" -> "medium"
         "relative_effort" -> "low"
         _ -> "none"
+
+# Parse a POSIX `date +%z` offset ("+HHMM" / "-HHMM", ASCII digits) into signed
+# minutes east of UTC: "-0500" -> -300, "+0530" -> 330. Used to turn a system
+# timezone into the current civil-day offset (DST-correct for today).
+parse_utc_offset : Str -> Result I64 [BadOffset]
+parse_utc_offset = |raw|
+    when Str.to_utf8(Str.trim(raw)) is
+        [sign, h1, h2, m1, m2] ->
+            digit = |b| if b >= 48 and b <= 57 then Ok(Num.to_i64(b) - 48) else Err(BadOffset)
+            hh = (digit(h1)? * 10) + digit(h2)?
+            mm = (digit(m1)? * 10) + digit(m2)?
+            mag = (hh * 60) + mm
+            if sign == 45 then Ok(-mag)
+            else if sign == 43 then Ok(mag)
+            else Err(BadOffset)
+        _ -> Err(BadOffset)
 
 # ── progress lens: which "am I improving?" metric fits this workout ──
 # Power sports compare Efficiency Factor; distance sports without power compare
@@ -830,6 +847,12 @@ expect export_date_to_iso("Dec 31, 2025, 12:00:00 AM") == Ok("2025-12-31T00:00:0
 expect export_date_to_iso("17 Feb 2022") == Err(BadExportDate)
 
 expect load_confidence("power_stream") == "high" and load_confidence("hr_zones") == "medium" and load_confidence("session_rpe") == "medium" and load_confidence("relative_effort") == "low" and load_confidence("none") == "none"
+
+expect parse_utc_offset("-0500") == Ok(-300)
+expect parse_utc_offset("+0530") == Ok(330)
+expect parse_utc_offset("+0000") == Ok(0)
+expect parse_utc_offset("INVALID") == Err(BadOffset)
+expect parse_utc_offset("-05:0") == Err(BadOffset)
 
 expect is_auto_name("Morning Ride") and is_auto_name("Lunch Gravel Ride") and !(is_auto_name("45 min Power Zone Ride with Matt Wilpers"))
 

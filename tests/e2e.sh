@@ -391,6 +391,25 @@ assert "pending_streams" in d, d
 print("doctor OK (coverage, provenance, confidence, config)")
 '
 
+# time mode (P2): a valid IANA zone is DST-aware; a bad name never silently
+# becomes UTC — it warns and falls back to the fixed offset.
+"$STRIDE_BIN" config set timezone America/Chicago >/dev/null
+"$STRIDE_BIN" doctor | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["time_ok"] is True, d
+assert "America/Chicago" in d["time"] and "DST-aware" in d["time"], d
+'
+"$STRIDE_BIN" config set timezone Not/ARealZone >/dev/null
+"$STRIDE_BIN" doctor | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["time_ok"] is False, f"bad zone must not report ok: {d}"
+assert "UNKNOWN" in d["time"], d
+'
+"$STRIDE_BIN" config set timezone "" >/dev/null
+echo "doctor time-mode OK (tz precedence + bad-zone fallback)"
+
 # ── human output mode ────────────────────────────────────────────
 out=$(STRIDE_FORMAT=human "$STRIDE_BIN" plan); grep -Eq "date.+type.+status" <<<"$out" || fail "human table header"
 out=$(STRIDE_FORMAT=human "$STRIDE_BIN" activities); grep -Eq "date.+sport.+name" <<<"$out" || fail "activities header"

@@ -370,19 +370,68 @@ now_secs! = |{}|
     millis = Utc.to_millis_since_epoch(Utc.now!({}))
     Num.to_i64(millis // 1000)
 
-# "today" as a LOCAL calendar day. The platform clock (Utc.now!) is UTC-only,
-# but every activity date is Strava's local civil date — so for any user west
-# of UTC, the UTC day rolls over hours before their local day, inserting a
-# phantom "tomorrow" into the load series each evening. config utc_offset_minutes
-# (default 0) re-anchors the day boundary to local time. Fixed offset — set it
-# seasonally if you observe DST (e.g. -300 CDT / -360 CST).
+# How "today"'s civil-day boundary is anchored. The platform clock (Utc.now!) is
+# UTC-only, but every activity date is Strava's local civil date — so for any user
+# west of UTC, the UTC day rolls over hours before their local day, inserting a
+# phantom "tomorrow" into the load series each evening.
+#   Zone       — config `timezone` (IANA, e.g. America/Chicago): DST-correct for
+#                the CURRENT date via the system tz database. Preferred.
+#   FixedOffset — config `utc_offset_minutes`: a fixed offset; set it seasonally
+#                if you observe DST (e.g. -300 CDT / -360 CST).
+#   BadZone    — `timezone` is set but the name isn't in the system tz database;
+#                we fall back to the fixed offset (NEVER silently to UTC) and warn.
+#   Utc        — neither configured.
+TimeMode : [Zone Str I64, FixedOffset I64, BadZone Str I64, Utc]
+
+# Read the current DST-correct offset (minutes east of UTC) for an IANA zone by
+# validating it against the system tz database, then reading `date +%z`. An
+# unknown name yields Err — we never let a typo silently become +0000 (UTC).
+zone_offset_now! : Str => Result I64 [BadTz]
+zone_offset_now! = |tz|
+    cmd = "if [ -f '/usr/share/zoneinfo/${tz}' ]; then TZ='${tz}' date +%z; else echo INVALID; fi"
+    when Cmd.new("sh") |> Cmd.args(["-c", cmd]) |> Cmd.exec_output!() is
+        Ok(out) -> Metrics.parse_utc_offset(out.stdout_utf8) |> Result.map_err(|_| BadTz)
+        Err(_) -> Err(BadTz)
+
+resolve_time_mode! : Str => Result TimeMode _
+resolve_time_mode! = |path|
+    fixed =
+        when config_get!(path, "utc_offset_minutes") is
+            Ok(s) -> Ok(Result.with_default(Str.to_i64(s), 0))
+            Err(_) -> Err(NoFixed)
+    tz =
+        when config_get!(path, "timezone") is
+            Ok(t) if t != "" -> Ok(t)
+            _ -> Err(NoTz)
+    when tz is
+        Ok(name) ->
+            when zone_offset_now!(name) is
+                Ok(off) -> Ok(Zone(name, off))
+                Err(_) -> Ok(BadZone(name, Result.with_default(fixed, 0)))
+        Err(_) ->
+            when fixed is
+                Ok(off) -> Ok(FixedOffset(off))
+                Err(_) -> Ok(Utc)
+
+time_mode_offset : TimeMode -> I64
+time_mode_offset = |mode|
+    when mode is
+        Zone(_, off) -> off
+        FixedOffset(off) -> off
+        BadZone(_, off) -> off
+        Utc -> 0
+
+# minutes east of UTC -> "±HH:MM" for display
+fmt_offset : I64 -> Str
+fmt_offset = |m|
+    a = Num.abs(m)
+    pad = |n| if n < 10 then "0${Num.to_str(n)}" else Num.to_str(n)
+    "${if m < 0 then "-" else "+"}${pad(a // 60)}:${pad(a % 60)}"
+
 local_today_days! : Str => Result I64 _
 local_today_days! = |path|
-    offset_min =
-        when config_get!(path, "utc_offset_minutes") is
-            Ok(s) -> Result.with_default(Str.to_i64(s), 0)
-            Err(_) -> 0
-    Ok((now_secs!({}) + offset_min * 60) // 86400)
+    mode = resolve_time_mode!(path)?
+    Ok((now_secs!({}) + time_mode_offset(mode) * 60) // 86400)
 
 # returns a valid access token, refreshing if expired; NotAuthed if never
 # authorized (a genuinely absent token — NOT a db read failure, which propagates)
@@ -1891,6 +1940,17 @@ doctor! = |{}|
     })?
     strength_unrated = List.len(List.keep_if(sports, |r| Metrics.sport_class(r.sport) == StrengthLike and r.rated == 0))
     rated_total = List.len(List.keep_if(sports, |r| r.rated == 1))
+    mode = resolve_time_mode!(path)?
+    time_desc =
+        when mode is
+            Zone(name, off) -> "timezone ${name} (${fmt_offset(off)} now, DST-aware)"
+            FixedOffset(off) -> "fixed offset ${fmt_offset(off)} (adjust seasonally for DST)"
+            BadZone(name, off) -> "timezone '${name}' UNKNOWN to system tz db — using ${fmt_offset(off)}; fix the name or set utc_offset_minutes"
+            Utc -> "UTC (set `timezone` or `utc_offset_minutes` if you're not on UTC)"
+    time_ok =
+        when mode is
+            BadZone(_, _) -> Bool.false
+            _ -> Bool.true
     payload = {
         activities: cov.total,
         with_hr: cov.with_hr,
@@ -1908,6 +1968,8 @@ doctor! = |{}|
         pending_streams: pending,
         ftp_set: cfg.ftp_set > 0,
         zones_set: cfg.zones_set >= 4,
+        time: time_desc,
+        time_ok: time_ok,
     }
     out!(payload, |p|
         model_lines = List.map(p.scored_by, |mrow| "    ${mrow.model}: ${Num.to_str(mrow.n)}")
@@ -1943,6 +2005,7 @@ doctor! = |{}|
                     "  not yet analyzed: ${Num.to_str(p.unanalyzed)}",
                     "  pending stream backfill: ${Num.to_str(p.pending_streams)}",
                     "  config: ftp ${if p.ftp_set then "set" else "MISSING"}, hr zones ${if p.zones_set then "set" else "incomplete"}",
+                    "  time: ${p.time}",
                 ],
                 hint,
             ]),
