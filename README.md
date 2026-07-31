@@ -4,7 +4,8 @@
 
 # stride
 
-A local-first training engine for endurance athletes, written in [Roc](https://www.roc-lang.org).
+A local-first, deterministic training analytics engine, written in [Roc](https://www.roc-lang.org).
+Strava is one ingestion layer; the analysis is yours.
 
 stride syncs your Strava history into a SQLite file you own, computes training
 metrics deterministically, and provides an optional LLM coaching layer built on
@@ -52,7 +53,10 @@ was my last *real* hard session? Is my FTP stale? It solves different problems:
   the affected history. Edit a ride on Strava and the metrics self-heal.
 - **Scriptable** — every command emits JSON for tools and agents, tables for humans.
 - **An honest data model** — a session with no usable data shows `-`, not an
-  invented number. Junk HR samples are filtered, and it says so.
+  invented number. Junk HR samples are filtered, and it says so. Strength, HIIT,
+  and yoga score through your own effort rating (`stride rate`) instead of
+  pretending an aerobic model fits them — and every computed load records which
+  method produced it.
 
 ## Installation
 
@@ -159,7 +163,7 @@ stride week                                       # everything needed to plan a 
 | `activities [n] [sport]` | *What did each session actually contain?* Last *n* sessions (default 30), optionally filtered by sport (`activities 10 rowing`). Per session: load, intensity vs FTP, and minutes actually spent hard (Z4+Z5). |
 | `top <metric> [n] [sport]` | *What were my best sessions?* Ranks activities (default top 10) by a metric — `hr`, `tss`, `power`, `intensity`, `distance`, `time`, or `output` (kJ) — optionally filtered by sport (`top tss 5 ride`). The leaderboard to `activities`' timeline. |
 | `doctor` | *Can I trust my data?* Coverage counts (HR/power/streams/ratings), which ladder rung scored every activity (load provenance), what's unscored and why. |
-| `pz` | *What watts is each power zone for me?* The 7 Coggan/Peloton power zones as watt ranges derived from your FTP (they shift when FTP changes). The targets you'd set on a Power Zone ride. |
+| `zones` (alias `pz`) | *What watts is each power zone for me?* The 7 Coggan/Peloton power zones as watt ranges derived from your FTP (they shift when FTP changes). The targets you'd set on a Power Zone ride. |
 | `progress [date]` | *Am I improving on this workout?* Resolves that day's workout(s) — bare `progress` uses your latest — and shows every comparable instance chronologically, with **Efficiency Factor** (normalized power ÷ avg HR — watts per heartbeat) and a trend verdict. Climbing EF = fitter. Named classes match exactly; auto-named rides ("Morning Ride" = different routes) compare only rides within ±10% of the anchor's distance. |
 | `load [days]` | *Is my training working over time?* Daily fitness/fatigue/form rows for windows ≤14 days; Monday-aligned **weekly rollups** (sessions, load, fitness trend) for longer windows (default 90). Ends with today's form verdict. |
 | `week` | *What should this week look like?* One call bundling `summary` + the open plan + the last 14 days of activities — the complete planning context. |
