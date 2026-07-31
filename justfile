@@ -373,8 +373,8 @@ e2e:
     echo "import OK (export dir + zip + idempotent + honest errors)"
 
     # ── human output mode ────────────────────────────────────────────
-    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" plan); grep -Eq "date +type +status" <<<"$out" || fail "human table header"
-    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" activities); grep -Eq "date +sport +name" <<<"$out" || fail "activities header"
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" plan); grep -Eq "date.+type.+status" <<<"$out" || fail "human table header"
+    out=$(STRIDE_FORMAT=human "$STRIDE_BIN" activities); grep -Eq "date.+sport.+name" <<<"$out" || fail "activities header"
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" load 7); grep -q "→ today: form" <<<"$out" || fail "load verdict line"
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" stats); grep -q "ALL TIME" <<<"$out" || fail "stats human"
     out=$(STRIDE_FORMAT=human "$STRIDE_BIN" activity 101); grep -Eq "^zones +Z1" <<<"$out" || fail "activity human zones row"

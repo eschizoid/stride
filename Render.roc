@@ -19,9 +19,14 @@ render_table = |headers, rows|
         cells = List.map_with_index(row, |cell, i|
             w = Result.with_default(List.get(widths, i), 0)
             pad_right(cell, w))
-        Str.trim_end(Str.join_with(cells, "  "))
-    sep = List.map(widths, |w| Str.repeat("─", w))
-    all_lines = List.concat([line(headers), line(sep)], List.map(rows, line))
+        "│ ${Str.join_with(cells, " │ ")} │"
+    border = |left, mid, right|
+        "${left}${Str.join_with(List.map(widths, |w| Str.repeat("─", w + 2)), mid)}${right}"
+    all_lines = List.join([
+        [border("╭", "┬", "╮"), line(headers), border("├", "┼", "┤")],
+        List.map(rows, line),
+        [border("╰", "┴", "╯")],
+    ])
     Str.join_with(all_lines, "\n")
 
 pad_right : Str, U64 -> Str
@@ -110,11 +115,11 @@ expect pad_right("██", 4) == "██  "
 # unicode bars must not skew column alignment
 expect
     t = render_table(["v", "x"], [["██", "y"]])
-    t == "v   x\n──  ─\n██  y"
+    t == "╭────┬───╮\n│ v  │ x │\n├────┼───┤\n│ ██ │ y │\n╰────┴───╯"
 
 expect
     t = render_table(["a", "bb"], [["x", "y"], ["long", "z"]])
-    t == "a     bb\n────  ──\nx     y\nlong  z"
+    t == "╭──────┬────╮\n│ a    │ bb │\n├──────┼────┤\n│ x    │ y  │\n│ long │ z  │\n╰──────┴────╯"
 
 
 # ── progress command screens ────────────────────────────────────────
