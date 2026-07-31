@@ -11,6 +11,7 @@ module [
     load_step,
     ftp_calibration,
     valid_hr,
+    valid_watts,
     form_label,
     weekly_rollup,
     civil_from_days,
@@ -520,6 +521,19 @@ valid_hr : F64 -> Bool
 valid_hr = |hr|
     hr >= 35.0 and hr <= 220.0
 
+# ── power sample validity ───────────────────────────────────────────
+# A negative watt is impossible; a 1-second sample above 2500 W exceeds the
+# highest human peak power ever recorded (elite track sprinters top out ~2500 W),
+# so it's a misreporting trainer / sensor glitch, not effort. Dropping the sample
+# stops one spike from inflating NP and the 20-min best that estimates FTP — and,
+# because an FTP change rescales all history, from corrupting the whole series.
+# This catches GLITCHES (impossible samples), not plausible-but-suspect *sustained*
+# values (e.g. a miscalibrated trainer reading a steady 489 W) — that's a coaching
+# judgment the doctor/coach flags, not something a filter should silently discard.
+valid_watts : F64 -> Bool
+valid_watts = |w|
+    w >= 0.0 and w <= 2500.0
+
 # ── form interpretation (standard TSB bands) ────────────────────────
 
 # verdicts describe MODELED load only — the engine can't see sleep, illness,
@@ -840,6 +854,7 @@ expect
     !(c.stale) and !(c.detraining)
 
 expect valid_hr(150.0) and !(valid_hr(20.0)) and !(valid_hr(230.0)) and valid_hr(35.0) and valid_hr(220.0)
+expect valid_watts(200.0) and valid_watts(0.0) and valid_watts(2500.0) and !(valid_watts(-5.0)) and !(valid_watts(9999.0))
 
 expect export_date_to_iso("Feb 17, 2022, 12:18:26 PM") == Ok("2022-02-17T12:18:26Z")
 expect export_date_to_iso("Jul 4, 2026, 6:05:09 AM") == Ok("2026-07-04T06:05:09Z")

@@ -948,7 +948,12 @@ compute_one! = |path, ftp, zb, row|
         Streams.stream_pairs(streams.time, streams.heartrate),
         |p| Metrics.valid_hr(p.v),
     )
-    watts_pairs = Streams.stream_pairs(streams.time, streams.watts)
+    # drop non-physiological power samples (sensor glitches) the same way HR is
+    # filtered — one 1s spike would inflate NP and the 20-min best behind FTP.
+    watts_pairs = List.keep_if(
+        Streams.stream_pairs(streams.time, streams.watts),
+        |p| Metrics.valid_watts(p.v),
+    )
     watts_1s = Metrics.resample_1s(List.map(watts_pairs, |p| { t: p.t, v: p.v }))
 
     zones = if List.is_empty(hr_pairs) then zero_zones else Metrics.time_in_zones(hr_pairs, zb)
@@ -1319,7 +1324,7 @@ activity_body! = |path, id_str, aid|
                 Streams.stream_pairs(streams.time, streams.heartrate),
                 |p| Metrics.valid_hr(p.v),
             )
-            watts_1s = Metrics.resample_1s(Streams.stream_pairs(streams.time, streams.watts))
+            watts_1s = Metrics.resample_1s(List.keep_if(Streams.stream_pairs(streams.time, streams.watts), |p| Metrics.valid_watts(p.v)))
             best = |w|
                 when Metrics.best_rolling_mean(watts_1s, w) is
                     Ok(v) -> v
@@ -2395,7 +2400,7 @@ schema_version = 7
 # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
 # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
 # zones_used) can't catch algorithm changes
-metrics_rev = 3
+metrics_rev = 4
 
 run_migrations! : Str => Result {} _
 run_migrations! = |path|

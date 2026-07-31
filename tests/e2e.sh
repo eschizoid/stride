@@ -214,6 +214,20 @@ print("activity detail OK")
 '
 out=$("$STRIDE_BIN" activity 999); grep -q activity_not_found <<<"$out" || fail "activity not-found"
 
+# power junk filter: a single 9999 W sensor spike must not inflate the power bests
+# (unfiltered, a 60s best over 59×200 + 1×9999 ≈ 363 W; filtered it stays ~200).
+SPIKE=$(python3 -c 'import json;n=120;d=[200.0]*n;d[60]=9999.0;print(json.dumps({"time":{"data":list(range(n))},"watts":{"data":d}}))')
+sqlite3 "$DB" "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (101, '$SPIKE');"
+sqlite3 "$DB" "DELETE FROM activity_metrics WHERE activity_id = 101;"
+"$STRIDE_BIN" analyze >/dev/null
+"$STRIDE_BIN" activity 101 | python3 -c '
+import json, sys
+a = json.load(sys.stdin)["data"]
+w = a["power_bests"]["w60"]
+assert 190 <= w <= 210, f"9999W spike must be filtered from bests, got w60={w}"
+print("power junk filter OK (>2500W spike dropped from bests)")
+'
+
 # corrupt stream data must be flagged, not silently read as honest zeros
 sqlite3 "$DB" "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (101, 'not json at all');"
 "$STRIDE_BIN" activity 101 | python3 -c '
