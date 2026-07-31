@@ -1856,6 +1856,31 @@ doctor! = |{}|
         bindings: [],
         rows: { Sqlite.decode_record <- model: Sqlite.str("model"), n: Sqlite.i64("n") },
     })?
+    conf = Sqlite.query!({
+        path,
+        query:
+        """
+        SELECT COALESCE(SUM(CASE WHEN load_confidence='high' THEN 1 ELSE 0 END),0) AS hi,
+               COALESCE(SUM(CASE WHEN load_confidence='medium' THEN 1 ELSE 0 END),0) AS med,
+               COALESCE(SUM(CASE WHEN load_confidence='low' THEN 1 ELSE 0 END),0) AS lo,
+               COALESCE(SUM(CASE WHEN COALESCE(load_confidence,'none')='none' THEN 1 ELSE 0 END),0) AS non
+        FROM activity_metrics
+        """,
+        bindings: [],
+        row: { Sqlite.decode_record <- hi: Sqlite.i64("hi"), med: Sqlite.i64("med"), lo: Sqlite.i64("lo"), non: Sqlite.i64("non") },
+    })?
+    pending = pending_streams!(path)?
+    cfg = Sqlite.query!({
+        path,
+        query:
+        """
+        SELECT COALESCE(SUM(CASE WHEN key='ftp' THEN 1 ELSE 0 END),0) AS ftp_set,
+               COALESCE(SUM(CASE WHEN key IN ('hr_z1_max','hr_z2_max','hr_z3_max','hr_z4_max') THEN 1 ELSE 0 END),0) AS zones_set
+        FROM config
+        """,
+        bindings: [],
+        row: { Sqlite.decode_record <- ftp_set: Sqlite.i64("ftp_set"), zones_set: Sqlite.i64("zones_set") },
+    })?
     # strength-class sessions without a rating: aggregate in Roc so the sport
     # list can't drift from Metrics.sport_class
     sports = Sqlite.query_many!({
@@ -1876,6 +1901,13 @@ doctor! = |{}|
         rated: rated_total,
         strength_unrated: Num.to_i64(Num.to_u64(strength_unrated)),
         scored_by: models,
+        conf_high: conf.hi,
+        conf_medium: conf.med,
+        conf_low: conf.lo,
+        conf_none: conf.non,
+        pending_streams: pending,
+        ftp_set: cfg.ftp_set > 0,
+        zones_set: cfg.zones_set >= 4,
     }
     out!(payload, |p|
         model_lines = List.map(p.scored_by, |mrow| "    ${mrow.model}: ${Num.to_str(mrow.n)}")
@@ -1901,8 +1933,16 @@ doctor! = |{}|
                 model_lines,
                 [
                     "",
+                    "  confidence (how measured each load is):",
+                    "    high (power): ${Num.to_str(p.conf_high)}",
+                    "    medium (HR / RPE): ${Num.to_str(p.conf_medium)}",
+                    "    low (relative effort): ${Num.to_str(p.conf_low)}",
+                    "    none (unscored): ${Num.to_str(p.conf_none)}",
+                    "",
                     "  zero load (no usable data): ${Num.to_str(p.zero_load)}",
                     "  not yet analyzed: ${Num.to_str(p.unanalyzed)}",
+                    "  pending stream backfill: ${Num.to_str(p.pending_streams)}",
+                    "  config: ftp ${if p.ftp_set then "set" else "MISSING"}, hr zones ${if p.zones_set then "set" else "incomplete"}",
                 ],
                 hint,
             ]),

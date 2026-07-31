@@ -384,7 +384,11 @@ assert d["activities"] > 0 and d["rated"] == 1, d
 assert d["strength_unrated"] == 0, f"the one strength session is rated: {d}"
 models = {m["model"]: m["n"] for m in d["scored_by"]}
 assert models.get("session_rpe") == 1, models
-print("doctor OK (coverage, provenance, rated counts)")
+# confidence distribution + config completeness (P8)
+assert d["conf_high"] >= 1 and d["conf_medium"] >= 1, f"confidence must be populated: {d}"
+assert d["ftp_set"] is True and d["zones_set"] is True, f"config completeness: {d}"
+assert "pending_streams" in d, d
+print("doctor OK (coverage, provenance, confidence, config)")
 '
 
 # ── human output mode ────────────────────────────────────────────
