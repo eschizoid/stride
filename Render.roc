@@ -1,4 +1,4 @@
-module [render_table, fmt0, fmt1, fmt2, mins, progress_group_label, progress_section, load_screen, summary_screen]
+module [render_table, fmt0, fmt1, fmt2, mins, progress_group_label, progress_section, load_screen, summary_screen, compare_screen]
 
 import Metrics
 
@@ -337,3 +337,41 @@ expect
     }
     out = summary_screen(s)
     Str.contains(out, "stride report") and Str.contains(out, "zone gap") and Str.contains(out, "none on record")
+
+
+# ── compare command screen ──────────────────────────────────────────
+# this rolling window vs the prior one, metric by metric, with a signed delta
+compare_screen = |p|
+    c = p.current
+    pr = p.prior
+    lab = p.window_label
+    signed = |x| if x >= 0.0 then "+${fmt0(x)}" else fmt0(x)
+    df = |cur, prev| signed(cur - prev)
+    di = |cur, prev| signed(Num.to_f64(cur) - Num.to_f64(prev))
+    table = render_table(
+        ["metric", "prior ${lab}", "last ${lab}", "Δ"],
+        [
+            ["load (tss)", fmt0(pr.tss), fmt0(c.tss), df(c.tss, pr.tss)],
+            ["sessions", Num.to_str(pr.sessions), Num.to_str(c.sessions), di(c.sessions, pr.sessions)],
+            ["hard (min)", Num.to_str(pr.hard_min), Num.to_str(c.hard_min), di(c.hard_min, pr.hard_min)],
+            ["easy %", Num.to_str(pr.easy_pct), Num.to_str(c.easy_pct), di(c.easy_pct, pr.easy_pct)],
+            ["fitness (ctl)", fmt0(pr.ctl), fmt0(c.ctl), df(c.ctl, pr.ctl)],
+        ],
+    )
+    load_pct = Metrics.pct_change(pr.tss, c.tss)
+    load_word =
+        if load_pct > 10.0 then "load ramping (${fmt0(load_pct)}%)"
+        else if load_pct < -10.0 then "load backed off (${fmt0(load_pct)}%)"
+        else "load steady (${fmt0(load_pct)}%)"
+    ctl_d = c.ctl - pr.ctl
+    fit_word =
+        if ctl_d > 0.5 then "fitness building"
+        else if ctl_d < -0.5 then "fitness slipping"
+        else "fitness holding"
+    "${table}\n\n→ ${load_word} · ${fit_word}"
+
+# compare table + verdict render; ramp shows in the load word
+expect
+    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl }
+    s = compare_screen({ period: "week", window_label: "7d", current: w(227.0, 6i64, 18i64, 17i64, 26.0), prior: w(193.0, 5i64, 12i64, 37i64, 24.0) })
+    Str.contains(s, "load (tss)") and Str.contains(s, "+34") and Str.contains(s, "ramping") and Str.contains(s, "building")

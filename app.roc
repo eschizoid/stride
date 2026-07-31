@@ -62,6 +62,8 @@ help_text =
         summary                 coach-input payload: form, 7d/28d zones, FTP calibration
         stats                   career + year-to-date totals per sport
         week                    weekly-planning bundle: summary + open plan
+        compare [week|month]    this period vs the one before it (load, fitness,
+                                sessions, polarization) — default week
                                 + last 14 days of activities (one call, plan a week)
         activities [limit] [sport]   recent activities with metrics (default 30);
                                      sport filters, e.g. `activities 10 rowing`
@@ -111,6 +113,8 @@ main! = |raw_args|
         [_, "summary"] -> summary!({})
         [_, "stats"] -> stats!({})
         [_, "week"] -> week!({})
+        [_, "compare"] -> compare!("week")
+        [_, "compare", period] -> compare!(period)
         [_, "activities"] -> activities!(30, "")
         [_, "activities", n] -> with_count!(n, |c| activities!(c, ""))
         [_, "activities", n, sport] -> with_count!(n, |c| activities!(c, sport))
@@ -1055,6 +1059,71 @@ zone_sum! = |path, cutoff|
             tss: Sqlite.f64("tss"),
         },
     })
+
+# activity stats within a half-open [from, to) date window (both are date strings
+# compared against start_local; ISO makes the lexical compare correct)
+window_stats! : Str, Str, Str => Result { z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, sessions : I64 } _
+window_stats! = |path, from_str, to_str|
+    Sqlite.query!({
+        path,
+        query:
+        """
+        SELECT COALESCE(SUM(m.z1_s),0) AS z1, COALESCE(SUM(m.z2_s),0) AS z2, COALESCE(SUM(m.z3_s),0) AS z3,
+               COALESCE(SUM(m.z4_s),0) AS z4, COALESCE(SUM(m.z5_s),0) AS z5,
+               CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss, COUNT(*) AS sessions
+        FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
+        WHERE a.start_local >= :from AND a.start_local < :to
+        """,
+        bindings: [{ name: ":from", value: String(from_str) }, { name: ":to", value: String(to_str) }],
+        row: { Sqlite.decode_record <-
+            z1: Sqlite.i64("z1"), z2: Sqlite.i64("z2"), z3: Sqlite.i64("z3"),
+            z4: Sqlite.i64("z4"), z5: Sqlite.i64("z5"),
+            tss: Sqlite.f64("tss"), sessions: Sqlite.i64("sessions"),
+        },
+    })
+
+# CTL as of a given day (most recent daily_load row on or before it); 0 if none
+ctl_at! : Str, Str => Result F64 _
+ctl_at! = |path, day_str|
+    when Sqlite.query!({
+        path,
+        query: "SELECT ctl AS ctl FROM daily_load WHERE day <= :d ORDER BY day DESC LIMIT 1",
+        bindings: [{ name: ":d", value: String(day_str) }],
+        row: Sqlite.f64("ctl"),
+    }) is
+        Ok(v) -> Ok(v)
+        Err(NoRowsReturned) -> Ok(0.0)
+        Err(e) -> Err(e)
+
+# period-over-period: this rolling window vs the one immediately before it
+compare! : Str => Result {} _
+compare! = |period|
+    path = open_db!({})?
+    if period != "week" and period != "month" then
+        err_out!("bad_period", "compare week | compare month (got '${period}')")
+    else
+        days = if period == "month" then 28 else 7
+        label = if period == "month" then "28d" else "7d"
+        when Sqlite.query!({ path, query: "SELECT day AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sqlite.str("day") }) is
+            Err(NoRowsReturned) -> err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
+            Err(e) -> Err(e)
+            Ok(latest_day) ->
+                anchor = Result.with_default(Metrics.date_str_to_days(latest_day), 0)
+                cur_from = Metrics.days_to_date_str(anchor - (days - 1))
+                cur_to = Metrics.days_to_date_str(anchor + 1)
+                pri_from = Metrics.days_to_date_str(anchor - (2 * days - 1))
+                cur = window_stats!(path, cur_from, cur_to)?
+                pri = window_stats!(path, pri_from, cur_from)?
+                cur_ctl = ctl_at!(path, Metrics.days_to_date_str(anchor))?
+                pri_ctl = ctl_at!(path, Metrics.days_to_date_str(anchor - days))?
+                block = |w, ctl| {
+                    tss: w.tss,
+                    sessions: w.sessions,
+                    hard_min: (w.z4 + w.z5) // 60,
+                    easy_pct: pct_num(w.z1 + w.z2, w.z1 + w.z2 + w.z3 + w.z4 + w.z5),
+                    ctl,
+                }
+                out!({ period, window_label: label, current: block(cur, cur_ctl), prior: block(pri, pri_ctl) }, Render.compare_screen)
 
 # ── machine interface (JSON output for LLM/tool consumption) ────────
 # Convention: numeric fields COALESCE to 0 when unknown (0 = "not available").

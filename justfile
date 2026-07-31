@@ -396,6 +396,21 @@ e2e:
     [ "$n" = "1" ] || fail "rating must survive mirror replace"
     echo "rate OK (sRPE scores strength, re-rate rescores, rating survives re-sync)"
 
+    # ── compare: this window vs the prior one ───────────────────────
+    "$STRIDE_BIN" compare week | python3 -c '
+    import json, sys
+    d = json.load(sys.stdin)
+    assert d["period"] == "week" and d["window_label"] == "7d", d
+    for k in ("current", "prior"):
+        for f in ("tss", "sessions", "hard_min", "easy_pct", "ctl"):
+            assert f in d[k], f"{k} missing {f}"
+    # seeded recent rides land in the current window, not the prior one
+    assert d["current"]["sessions"] >= 1, d
+    print("compare OK (current vs prior blocks, all metrics present)")
+    '
+    out=$("$STRIDE_BIN" compare year); grep -q bad_period <<<"$out" || fail "compare must reject unknown periods"
+    echo "compare OK (week/month + bad-period guard)"
+
     # ── doctor: coverage + provenance + honest gaps ──────────────────
     "$STRIDE_BIN" doctor | python3 -c '
     import json, sys
