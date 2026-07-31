@@ -20,8 +20,8 @@ jobs:
       - id: resolve
         run: |
           set -euo pipefail
-          have=$(grep -oE 'version = "stride [0-9]+\.[0-9]+\.[0-9]+"' app.roc | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-          [ -n "$have" ] || { echo "::error::no version in app.roc"; exit 1; }
+          have=$(grep -oE 'version = "stride [0-9]+\.[0-9]+\.[0-9]+"' src/app.roc | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          [ -n "$have" ] || { echo "::error::no version in src/app.roc"; exit 1; }
           echo "tag=v$have" >> "$GITHUB_OUTPUT"
       - name: Create + push tag
         env:
@@ -74,7 +74,7 @@ jobs:
       - name: Build
         run: |
           set -euo pipefail
-          roc build app.roc --output "stride-${{ matrix.target }}" ${{ matrix.linker }}
+          roc build src/app.roc --output "stride-${{ matrix.target }}" ${{ matrix.linker }}
           test -f "stride-${{ matrix.target }}"
       - name: Verify binary version
         env:

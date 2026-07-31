@@ -3,7 +3,7 @@
   "packages": {
     ".": {
       "release-type": "simple",
-      "extra-files": ["app.roc"],
+      "extra-files": ["src/app.roc"],
       "bump-minor-pre-major": true
     }
   }

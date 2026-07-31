@@ -8,19 +8,19 @@ default: test
 
 # type-check without building
 check:
-    {{roc}} check app.roc
+    {{roc}} check src/app.roc
 
 # build the release binary
 build:
-    {{roc}} build app.roc --output stride {{linker}}
+    {{roc}} build src/app.roc --output stride {{linker}}
 
 # full suite: pure expects -> fresh build (must succeed!) -> effectful e2e
 test:
-    {{roc}} test Metrics.roc
-    {{roc}} test Render.roc
-    {{roc}} test Backfill.roc
-    {{roc}} test Csv.roc
-    {{roc}} test --main app.roc Streams.roc
+    {{roc}} test src/Metrics.roc
+    {{roc}} test src/Render.roc
+    {{roc}} test src/Backfill.roc
+    {{roc}} test src/Csv.roc
+    {{roc}} test --main src/app.roc src/Streams.roc
     just build
     just e2e
 
