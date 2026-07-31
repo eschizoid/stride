@@ -104,6 +104,14 @@ e2e:
     got=$(STRIDE_FORMAT=human "$STRIDE_BIN" config get ftp); [ "$got" = "195" ] || fail "ftp must be stored even when Strava sync can't run"
     "$STRIDE_BIN" config get ftp | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["value"] == "195", d; print("config get json OK")'
     "$STRIDE_BIN" config get nope | python3 -c 'import json,sys; assert json.load(sys.stdin)["error"] == "not_set"; print("config get not_set OK")'
+    # ── credential safety (P4): secrets never surface, db is owner-only ──
+    sqlite3 "$DB" "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_access_token','SECRETVAL123');"
+    out=$("$STRIDE_BIN" config get strava_access_token)
+    grep -q '"redacted":true' <<<"$out" || fail "secret key must report redacted"
+    grep -q SECRETVAL123 <<<"$out" && fail "secret VALUE must never appear in output"
+    perms=$(stat -f '%Lp' "$DB" 2>/dev/null || stat -c '%a' "$DB" 2>/dev/null)
+    [ "$perms" = "600" ] || fail "db must be chmod 600 after a command, got '$perms'"
+    echo "credential safety OK (secret redacted, db 0600)"
     "$STRIDE_BIN" config set ftp 200 >/dev/null   # restore for the rest of the suite
     echo "ftp Strava-sync OK (local set succeeds, unauthed sync degrades gracefully)"
 

@@ -48,7 +48,9 @@ was my last *real* hard session? Is my FTP stale? It solves different problems:
 - **Deterministic metrics** — TSS, normalized power, intensity factor, CTL/ATL/TSB,
   time-in-zone, FTP calibration. Same inputs, same numbers, every time.
 - **A database you own** — everything lives in `~/.stride/db.sqlite`. Query it with
-  `sqlite3`, back it up with `cp`, inspect any computed value's inputs.
+  `sqlite3`, back it up with `cp`, inspect any computed value's inputs. It also holds
+  your Strava tokens and client secret, so stride locks `~/.stride` to `0700` and the
+  db to `0600` (owner-only) on every run, and `config get` never prints secret keys.
 - **Reproducible recomputation** — change your FTP and the engine recomputes exactly
   the affected history. Edit a ride on Strava and the metrics self-heal.
 - **Scriptable** — every command emits JSON for tools and agents, tables for humans.

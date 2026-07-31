@@ -155,14 +155,24 @@ with_count! = |s, f!|
         Ok(n) -> f!(n)
         Err(_) -> err_out!("bad_count", "expected a number, got '${s}'")
 
+# credential keys — never surfaced through `config get` or any JSON. The db holds
+# these; reading them back through a query interface would defeat the point.
+secret_key : Str -> Bool
+secret_key = |k|
+    List.contains(["strava_access_token", "strava_refresh_token", "strava_client_secret"], k)
+
 config_show! : Str => Result {} _
 config_show! = |key|
     path = open_db!({})?
-    when config_opt!(path, key)? is
-        Found(v) ->
-            out!({ key, value: v }, |p| p.value)
-
-        NotFound -> err_out!("not_set", "(not set)")
+    if secret_key(key) then
+        # confirm set-ness without leaking the value
+        when config_opt!(path, key)? is
+            Found(_) -> out!({ key, value: "<redacted>", redacted: Bool.true }, |_| "${key} = <redacted> (secret — stored in the db, not shown)")
+            NotFound -> err_out!("not_set", "(not set)")
+    else
+        when config_opt!(path, key)? is
+            Found(v) -> out!({ key, value: v }, |p| p.value)
+            NotFound -> err_out!("not_set", "(not set)")
 
 config_store! : Str, Str => Result {} _
 config_store! = |key, val|
@@ -216,7 +226,17 @@ init! = |{}|
     _ = Dir.create!(dir)
     path = "${dir}/db.sqlite"
     ensure_schema!(path)?
+    secure_perms!(dir)?
     Stdout.line!("initialized ${path}")
+
+# owner-only permissions on the credential store. basic-cli 0.20 has no mode API,
+# so shell out; best-effort (never fails the command — a platform without chmod
+# just doesn't get hardened, and we don't claim it did). Sidecars may not exist.
+secure_perms! : Str => Result {} _
+secure_perms! = |dir|
+    cmd = "chmod 700 '${dir}' 2>/dev/null; chmod 600 '${dir}/db.sqlite' '${dir}/db.sqlite-wal' '${dir}/db.sqlite-shm' '${dir}/db.sqlite-journal' 2>/dev/null; true"
+    _ = Cmd.new("sh") |> Cmd.args(["-c", cmd]) |> Cmd.exec_output!()
+    Ok({})
 
 # ── config key-value helpers ─────────────────────────────────────────
 
@@ -2361,6 +2381,9 @@ open_db! : {} => Result Str _
 open_db! = |{}|
     p = db_path!({})?
     ensure_schema!(p)?
+    # harden on every open so existing world-readable installs get fixed too
+    home = Env.var!("HOME")?
+    secure_perms!("${home}/.stride")?
     Ok(p)
 
 # (schema DDL lives in Schema.roc — pure strings, the one kind of SQL that
