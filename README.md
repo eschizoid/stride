@@ -16,26 +16,30 @@ structured evidence.
 ```
 $ stride summary
 
-── stride report (as of 2026-07-28) ──────────────────
+── stride report (as of 2026-07-31) ──────────────────
 
-  fitness (CTL): 24   fatigue (ATL): 22   form (TSB): -1
+  fitness (CTL): 25   fatigue (ATL): 25   form (TSB): 0
   → balanced — good day for intensity if you feel it
 
   last 28 days:
-    training load: 797 TSS
-    time in HR zones: Z1 432m  Z2 240m  Z3 272m  Z4 2m  Z5 0m
-    polarization: 71% easy (Z1-2) / 29% moderate (Z3) / 0% hard (Z4-5)
-    ⚠ zone gap: 0 minutes in Z5 — no VO2max stimulus in 28 days
+    training load: 819 (mixed-model — see doctor)
+    time in HR zones: Z1 409m  Z2 189m  Z3 276m  Z4 72m  Z5 0m
+    polarization: 63% easy (Z1-2) / 29% moderate (Z3) / 8% hard (Z4-5)
+    ⚠ zone gap: no Z5 heart-rate time in 28 days (could be no hard sessions, or
+      power-based / short intervals that didn't drive HR to Z5)
 
   FTP calibration (60d): best 20-min power 256W -> estimated FTP 243W (config: 243W)
 
-  last 7 days: 193 TSS — 37% easy / 63% moderate / 0% hard
-  last hard session (5+ min Z4/Z5): 2025-10-08
-  open planned sessions: 4
+  last 7 days: 208 load — 40% easy / 46% moderate / 14% hard
+  last hard session (5+ min Z4/Z5): 2026-07-28
+  open planned sessions: 3
 ```
 
 Every number above was computed locally, from raw activity streams, by pure
-functions with unit tests. No number came from a model.
+functions with unit tests. No number came from a model. "Training load" is a
+*mixed model* — power/HR sessions score in TSS, rated strength/HIIT sessions in
+session-RPE — so stride stops calling the blended total "TSS" and points you to
+`doctor` for the per-session confidence breakdown.
 
 ## Why stride, if I already have Strava?
 
@@ -54,11 +58,17 @@ was my last *real* hard session? Is my FTP stale? It solves different problems:
 - **Reproducible recomputation** — change your FTP and the engine recomputes exactly
   the affected history. Edit a ride on Strava and the metrics self-heal.
 - **Scriptable** — every command emits JSON for tools and agents, tables for humans.
+  The JSON is a versioned envelope (`{"schema_version":1,"data":…}`, or
+  `{"schema_version":1,"error":{"code","message"}}`), so a caller can detect a
+  contract change and always discriminate success from failure.
 - **An honest data model** — a session with no usable data shows `-`, not an
   invented number. Junk HR samples are filtered, and it says so. Strength, HIIT,
   and yoga score through your own effort rating (`stride rate`) instead of
-  pretending an aerobic model fits them — and every computed load records which
-  method produced it.
+  pretending an aerobic model fits them — and every computed load records both
+  which method produced it and a **confidence tier** (high = measured power,
+  medium = HR or session-RPE, low = Strava relative effort), which `doctor`
+  reports as a distribution so you know how much of your load is measured vs
+  estimated.
 
 ## Installation
 
@@ -169,7 +179,7 @@ stride week                                       # everything needed to plan a 
 | `summary` | *Where do I stand today?* Form (with verdict), 7-day and 28-day zone mix + polarization, FTP calibration (flags when your 20-min best says your FTP is stale), date of your last hard session, per-sport breakdown. |
 | `activities [n] [sport]` | *What did each session actually contain?* Last *n* sessions (default 30), optionally filtered by sport (`activities 10 rowing`). Per session: load, intensity vs FTP, and minutes actually spent hard (Z4+Z5). |
 | `top <metric> [n] [sport]` | *What were my best sessions?* Ranks activities (default top 10) by a metric — `hr`, `tss`, `power`, `intensity`, `distance`, `time`, or `output` (kJ) — optionally filtered by sport (`top tss 5 ride`). The leaderboard to `activities`' timeline. |
-| `doctor` | *Can I trust my data?* Coverage counts (HR/power/streams/ratings), which ladder rung scored every activity (load provenance), what's unscored and why. |
+| `doctor` | *Can I trust my data?* Coverage counts (HR/power/streams/ratings), which ladder rung scored every activity (load provenance), the **confidence distribution** (how much load is measured vs estimated), config completeness (FTP, HR zones), pending stream backfill, and which **time anchor** is active (IANA timezone / fixed offset / UTC). Every gap says what, why, and the fix. |
 | `zones` (alias `pz`) | *What watts is each power zone for me?* The 7 Coggan/Peloton power zones as watt ranges derived from your FTP (they shift when FTP changes). The targets you'd set on a Power Zone ride. |
 | `progress [date]` | *Am I improving on this workout?* Resolves that day's workout(s) — bare `progress` uses your latest — and shows every comparable instance chronologically with a **sport-aware lens**: power rides compare Efficiency Factor (NP ÷ HR), distance sports without power compare aerobic efficiency (speed ÷ HR), and rated strength/HIIT compare RPE (for a fixed workout, dropping = adapting). Trend verdict + last-vs-best. Named classes match exactly; auto-named rides compare only within ±10% of the anchor's distance. |
 | `load [days]` | *Is my training working over time?* Daily fitness/fatigue/form rows for windows ≤14 days; Monday-aligned **weekly rollups** (sessions, load, fitness trend) for longer windows (default 90). Ends with today's form verdict. |
@@ -188,25 +198,31 @@ stride week                                       # everything needed to plan a 
 | `skip <id> <reason>` | Marks a planned session skipped, with the reason — so adherence history stays honest. |
 
 Every query command prints **human tables** in a terminal and **JSON** when
-`STRIDE_FORMAT=json` (agent environments are detected automatically). Malformed
-invocations print a targeted `usage:` line; `stride --help` is the full
-one-screen manual.
+`STRIDE_FORMAT=json` (agent environments are detected automatically). The JSON is
+a versioned envelope: success is `{"schema_version":1,"data":{…}}`, an in-band
+error is `{"schema_version":1,"error":{"code":"…","message":"…"}}` (exit stays 0 —
+read the JSON, not `$?`). Malformed invocations print a targeted `usage:` line;
+`stride --help` is the full one-screen manual.
 
 An example of the honesty the tables are built for — `intensity 0.98` rides with
 `0m` hard time is the all-moderate trap this tool exists to make undeniable:
 
 ```
 $ stride activities 4
-date        sport    name                          time  load (tss)  intensity (if)  hard
-----------  -------  ----------------------------  ----  ----------  --------------  ----
-2026-07-25  Workout  45 min Full Body Strength...  46m   -           -               0m
-2026-07-24  Ride     45 min Power Zone Ride wi...  45m   72          0.98            0m
-2026-07-23  Rowing   45 min Pop Row with Alex ...  45m   23          0.55            0m
-2026-07-21  Ride     45 min 80s Ride with Hann...  45m   73          0.99            0m
+date        sport    name                          time  load  intensity (if)  hard
+----------  -------  ----------------------------  ----  ----  --------------  ----
+2026-07-30  Workout  45 min Full Body Strength...  45m   45    -               0m
+2026-07-28  Ride     45 min Metallica Ride wit...  45m   66    0.94            12m
+2026-07-27  Rowing   45 min Spring Cross-Train...  45m   25    0.57            0m
+2026-07-25  Workout  45 min Full Body Strength...  46m   -     -               0m
 
+load:           session stress — TSS for power/HR, session-RPE for rated sessions; '-' = no usable data (e.g. dead HR strap)
 intensity (if): vs your FTP — ~0.7 easy · 0.85-0.95 tempo · ~1.0 threshold · 1.05+ vo2max
 hard:           minutes in HR Z4+Z5 — the column that shows if hard days were actually hard
 ```
+
+(The strength session on 2026-07-30 shows `load 45` from a session-RPE rating and
+`-` intensity — no power meter, so there's no FTP-relative number to invent.)
 
 ## The coaching layer (optional)
 
@@ -275,7 +291,7 @@ your machine:
 ## Development
 
 ```bash
-just test      # pure expects (Metrics, Render) -> fresh build -> e2e suite
+just test      # pure expects (Metrics, Render, Command, Config, …) -> build -> e2e
 just build     # release binary
 just install   # build + symlink into ~/.local/bin
 ```
@@ -285,12 +301,14 @@ just install   # build + symlink into ~/.local/bin
   Do **not** bump basic-cli to 0.21.0-rc\* — those bundles target Roc's new compiler.
 - **Layout:** `app.roc` (all effects — in Roc only the app module can use platform
   effects), `Metrics.roc` (pure math, tested), `Render.roc` (pure tables/formatting,
-  tested), `Schema.roc` (pure DDL). Query strings live next to their row decoders on
-  purpose — the compiler can't check SQL aliases against decoders, so cohesion is the
-  safeguard.
-- **Tests:** 54 pure `expect`s + an end-to-end suite (`just e2e`) that runs the real
+  tested), `Command.roc` (pure argv → typed command parser, tested), `Config.roc`
+  (secret-key policy, tested), `Schema.roc` (pure DDL). Query strings live next to
+  their row decoders on purpose — the compiler can't check SQL aliases against
+  decoders, so cohesion is the safeguard.
+- **Tests:** 220 pure `expect`s + an end-to-end suite (`just e2e`) that runs the real
   binary against a sandboxed `HOME` with seeded activities of known math (power TSS
-  exactly 100, hrTSS exactly 55, FTP rescale 100→400, full plan lifecycle,
+  exactly 100, hrTSS exactly 55, FTP rescale 100→400, full plan lifecycle, the
+  versioned JSON envelope, timezone precedence, migration from a legacy db,
   error contracts, corrupt-data resilience).
 - **CI:** GitHub Actions on every push runs the same `just test` (Linux needs
   `--linker=legacy`, roc issue #3609; the toolchain tarball is checksum-pinned).

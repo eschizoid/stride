@@ -1509,7 +1509,7 @@ week! = |{}|
                 Stdout.line!("")?
                 Stdout.line!("RECENT 14 DAYS")?
                 Stdout.line!(Render.render_table(
-                    ["date", "sport", "name", "time", "load (tss)", "hard"],
+                    ["date", "sport", "name", "time", "load", "hard"],
                     List.map(recent, |a| [a.date, a.sport, a.name, Render.mins(a.moving_time), Render.fmt0(a.tss), Render.mins(a.z4_s + a.z5_s)]),
                 ))
 
@@ -1684,7 +1684,7 @@ activities! = |limit, sport_filter|
         emit_ok!(rows)
     else
         Stdout.line!(Render.render_table(
-            ["date", "sport", "name", "time", "load (tss)", "intensity (if)", "hard"],
+            ["date", "sport", "name", "time", "load", "intensity (if)", "hard"],
             List.map(rows, |a| [
                 a.date,
                 a.sport,
@@ -1696,7 +1696,7 @@ activities! = |limit, sport_filter|
             ]),
         ))?
         Stdout.line!("")?
-        Stdout.line!("load (tss):     session stress — '-' means no usable data (e.g. dead HR strap)")?
+        Stdout.line!("load:           session stress — TSS for power/HR, session-RPE for rated sessions; '-' = no usable data (e.g. dead HR strap)")?
         Stdout.line!("intensity (if): vs your FTP — ~0.7 easy · 0.85-0.95 tempo · ~1.0 threshold · 1.05+ vo2max")?
         Stdout.line!("hard:           minutes in HR Z4+Z5 — the column that shows if hard days were actually hard")
 
@@ -1707,7 +1707,7 @@ top_metric : Str -> Result { col : Str, header : Str } [BadMetric]
 top_metric = |m|
     when m is
         "hr" -> Ok({ col: "a.avg_hr", header: "heart rate (hr)" })
-        "tss" -> Ok({ col: "m.tss", header: "load (tss)" })
+        "tss" -> Ok({ col: "m.tss", header: "load" })
         "power" -> Ok({ col: "m.normalized_power", header: "power (np)" })
         "intensity" -> Ok({ col: "m.intensity_factor", header: "intensity (if)" })
         "distance" -> Ok({ col: "a.distance", header: "distance (km)" })
