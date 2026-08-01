@@ -171,7 +171,7 @@ config_store! = |key, val| {
 # warns — the local `config set` has already succeeded and been reported.
 sync_ftp_to_strava! : Str, Str => Try({}, _)
 sync_ftp_to_strava! = |path, ftp_str|
-    match Str.to_f64(ftp_str) {
+    match F64.from_str(ftp_str) {
         Err(_) => Stdout.line!("  (\"${ftp_str}\" isn't a number — not synced to Strava)")
         Ok(_) =>
             match get_valid_token!(path) {
@@ -192,7 +192,7 @@ sync_ftp_to_strava! = |path, ftp_str|
                     })
                     match resp {
                         Ok(r) if r.status < 300 => Stdout.line!("  → synced to Strava (athlete FTP = ${ftp_str})")
-                        Ok(r) => Stdout.line!("  (Strava FTP sync failed: HTTP ${Num.to_str(r.status)} — re-run `stride auth` to grant profile:write, or set it at strava.com/settings)")
+                        Ok(r) => Stdout.line!("  (Strava FTP sync failed: HTTP ${(r.status).to_str()} — re-run `stride auth` to grant profile:write, or set it at strava.com/settings)")
                         Err(_) => Stdout.line!("  (couldn't reach Strava to sync FTP — set it at strava.com/settings)")
 
                     }
@@ -432,8 +432,8 @@ time_mode_offset = |mode|
 # minutes east of UTC => "±HH:MM" for display
 fmt_offset : I64 -> Str
 fmt_offset = |m| {
-    a = Num.abs(m)
-    pad = |n| if n < 10 "0${Num.to_str(n)}" else Num.to_str(n)
+    a = (m).abs()
+    pad = |n| if n < 10 "0${(n).to_str()}" else (n).to_str()
     "${if m < 0 "-" else "+"}${pad(a // 60)}:${pad(a % 60)}"
 }
 local_today_days! : Str => Try(I64, _)
@@ -448,7 +448,7 @@ get_valid_token! = |path| {
     access = token_field!(path, "strava_access_token")?
     refresh = token_field!(path, "strava_refresh_token")?
     expires_str = token_field!(path, "strava_expires_at")?
-    expires_at = Result.map_err(Str.to_i64(expires_str), |_| CorruptToken)?
+    expires_at = (I64.from_str(expires_str)).map_err(|_| CorruptToken)?
     now = now_secs!({})
     if now < (expires_at - 60)
         Ok(access)
@@ -484,7 +484,7 @@ ok_body = |resp|
     if resp.status < 300
         Ok(resp.body)
     else {
-        text = Result.with_default(Str.from_utf8(resp.body), "<non-utf8 body>")
+        text = (Str.from_utf8(resp.body)).ok_or("<non-utf8 body>")
         Err(HttpStatus(resp.status, text))
     }
 # ── sync ─────────────────────────────────────────────────────────────
@@ -562,7 +562,7 @@ backfill_streams! = |path, token| {
             \\LEFT JOIN streams s ON s.activity_id = a.id
             \\WHERE s.activity_id IS NULL AND a.moving_time > 0
             \\ORDER BY a.start_local DESC
-            \\LIMIT ${Num.to_str(streams_per_run)}
+            \\LIMIT ${(streams_per_run).to_str()}
         ,
         bindings: [],
         rows: Sqlite.i64("id"),
@@ -589,7 +589,7 @@ fetch_streams_all! = |path, token, ids, acc|
     match ids {
         [] => Ok(acc)
         [id, .. as rest] => {
-            id_str = Num.to_str(id)
+            id_str = (id).to_str()
             uri = "${api_base!({})}/api/v3/activities/${id_str}/streams?keys=time,heartrate,watts&key_by_type=true"
             resp = send_bearer!(uri, token)?
             if resp.status == 429 {
@@ -784,8 +784,8 @@ per_page = 100
 
 fetch_pages! : Str, Str, Str, U64, U64 => Try(U64, _)
 fetch_pages! = |path, token, after_param, page, acc| {
-    page_str = Num.to_str(page)
-    per_str = Num.to_str(per_page)
+    page_str = (page).to_str()
+    per_str = (per_page).to_str()
     uri = "${api_base!({})}/api/v3/athlete/activities?per_page=${per_str}&page=${page_str}${after_param}"
     body = get_bearer!(uri, token)?
     text = Str.from_utf8(body).map_err(|_| ActivityDecodeFailed(page))?
@@ -910,7 +910,7 @@ config_f64! = |path, key|
     match config_opt!(path, key)? {
         NotFound => Err(MissingConfig)
         Found(s) =>
-            match Str.to_f64(s) {
+            match F64.from_str(s) {
                 Ok(v) => Ok(v)
                 Err(_) => Err(MissingConfig)
 
@@ -1004,7 +1004,7 @@ sport_ftp! = |path, sport| {
     key = Metrics.power_ftp_key(sport)
     configured =
         match config_get!(path, key) {
-            Ok(s) => Result.with_default(Str.to_f64(s), 0.0)
+            Ok(s) => (F64.from_str(s)).ok_or(0.0)
             Err(_) => 0.0
         }
     raw =
@@ -1013,7 +1013,7 @@ sport_ftp! = |path, sport| {
         # so power-intensity works for any power sport with stream history, zero config
         else derive_sport_ftp!(path, sport)?
     # whole watts — keeps the stored ftp_used and the invalidation CASE exactly equal
-    Ok(Num.to_f64(Num.round(raw)))
+    Ok(((raw).round_to_i64_try().ok_or(0)).to_f64())
 }
 derive_sport_ftp! : Str, Str => Try(F64, _)
 derive_sport_ftp! = |path, sport| {
@@ -1047,7 +1047,7 @@ build_ftp_whens! = |path, sports, acc|
         [] => Ok(acc)
         [s, .. as rest] => {
             f = sport_ftp!(path, s)?
-            build_ftp_whens!(path, rest, "${acc} WHEN '${s}' THEN ${Num.to_str(f)}")
+            build_ftp_whens!(path, rest, "${acc} WHEN '${s}' THEN ${(f).to_str()}")
         }
     }
 # returns Bool: did the stored stream JSON fail to decode? (surfaced by analyze)
@@ -1099,7 +1099,7 @@ compute_one! = |path, zb, row| {
         zones,
         zb,
         ftp: pi_ftp, # the SPORT's FTP, not cycling's — so rowing/running load is scaled right
-        dur_s: Num.to_f64(row.mt),
+        dur_s: (row.mt).to_f64(),
         moving_time: row.mt,
     })
     tss = ladder.tss
@@ -1174,7 +1174,7 @@ rebuild_daily_load! = |path| {
     # keep only rows whose date parses. Deriving the walk bounds from these VALID
     # days (not blindly from the first/last row) avoids the trap where a single
     # malformed start_local defaulted to epoch-day 0 and walked from 1970.
-    by_day = List.walk(
+    by_day = List.fold(
         day_rows,
         Dict.empty({}),
         |dict, r|
@@ -1187,10 +1187,10 @@ rebuild_daily_load! = |path| {
     match List.first(valid_days) {
         Err(_) => Ok({}) # nothing computed yet (or no parseable dates)
         Ok(seed) => {
-            bounds = List.walk(valid_days, { lo: seed, hi: seed }, |b, d| { lo: Num.min(b.lo, d), hi: Num.max(b.hi, d) })
+            bounds = List.fold(valid_days, { lo: seed, hi: seed }, |b, d| { lo: (b.lo).min(d), hi: (b.hi).max(d) })
             # extend through today so rest days decay ATL/CTL and TSB is true as-of-now
             today = local_today_days!(path)?
-            last_day = Num.max(bounds.hi, today)
+            last_day = (bounds.hi).max(today)
             Sqlite.execute!({ path, query: "DELETE FROM daily_load", bindings: [] })?
             walk_days!(path, by_day, bounds.lo, last_day, 0.0, 0.0)
         }
@@ -1201,7 +1201,7 @@ walk_days! = |path, by_day, day, last_day, ctl_prev, atl_prev|
     if day > last_day
         Ok({})
     else {
-        tss = Result.with_default(Dict.get(by_day, day), 0.0)
+        tss = (Dict.get(by_day, day)).ok_or(0.0)
         # the CTL/ATL/TSB recurrence lives in Metrics.load_step (pure, expect-tested)
         step = Metrics.load_step({ ctl_prev, atl_prev, tss })
         Sqlite.execute!({
@@ -1405,13 +1405,13 @@ pct_num = |part, total|
     if total == 0
         0
     else
-        Num.round(Num.to_f64(part) * 100.0 / Num.to_f64(total))
+        ((part).to_f64() * 100.0 / (total).to_f64()).round_to_i64_try().ok_or(0)
 
 # one session in depth: metrics + zones + power bests computed from local streams
 activity! : Str => Try({}, _)
 activity! = |id_str| {
     path = open_db!({})?
-    match Str.to_i64(id_str) {
+    match I64.from_str(id_str) {
         Err(_) => err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
         Ok(aid) => activity_body!(path, id_str, aid)
 
@@ -1482,7 +1482,7 @@ activity_body! = |path, id_str, aid| {
                     Ok(v) => v
                     Err(_) => 0.0
                 }
-            max_hr = List.walk(hr_pairs, 0.0.F64, |acc, p| Num.max(acc, p.v))
+            max_hr = List.fold(hr_pairs, 0.0.F64, |acc, p| (acc).max(p.v))
             hard_s = a.z4_s + a.z5_s
             # intensity from POWER (truer than HR for power sports — HR threshold can
             # sit on a zone boundary). Cycling uses the FTP the ride was scored with;
@@ -1529,7 +1529,7 @@ activity_body! = |path, id_str, aid| {
                 load_str = if a.tss >= 1.0 "${Render.fmt0(a.tss)} TSS" else "no usable data"
                 np_str = if a.np_w > 0 " · np ${Render.fmt0(a.np_w)}W @ ftp ${Render.fmt0(a.ftp_used)} (if ${Render.fmt2(a.intensity)})" else ""
                 Stdout.line!("load   ${load_str}${np_str}")?
-                Stdout.line!("zones  Z1 ${Num.to_str(a.z1_s // 60)}m · Z2 ${Num.to_str(a.z2_s // 60)}m · Z3 ${Num.to_str(a.z3_s // 60)}m · Z4 ${Num.to_str(a.z4_s // 60)}m · Z5 ${Num.to_str(a.z5_s // 60)}m")?
+                Stdout.line!("zones  Z1 ${(a.z1_s // 60).to_str()}m · Z2 ${(a.z2_s // 60).to_str()}m · Z3 ${(a.z3_s // 60).to_str()}m · Z4 ${(a.z4_s // 60).to_str()}m · Z5 ${(a.z5_s // 60).to_str()}m")?
                 (if has_power_intensity
                     Stdout.line!("hard   ${Render.mins(pintensity.hard_s)} at/above threshold (by power) · ${Render.mins(hard_s)} in HR Z4+Z5")
                 else
@@ -1557,7 +1557,7 @@ stats! = |{}| {
     today_days = local_today_days!(path)?
     year = (Metrics.civil_from_days(today_days)).y
     all_time = stats_rows!(path, "0000-01-01")?
-    ytd = stats_rows!(path, "${Num.to_str(year)}-01-01")?
+    ytd = stats_rows!(path, "${(year).to_str()}-01-01")?
     if json_mode!({})
         emit_ok!({ all_time, ytd, ytd_year: year })
     else {
@@ -1566,7 +1566,7 @@ stats! = |{}| {
                 ["sport", "sessions", "time", "distance"],
                 List.map(rows, |r| [
                     r.sport,
-                    Num.to_str(r.sessions),
+                    (r.sessions).to_str(),
                     "${Render.fmt0(r.hours)}h",
                     (if r.km >= 1.0 "${Render.fmt0(r.km)} km" else "-"),
                 ]),
@@ -1574,7 +1574,7 @@ stats! = |{}| {
         Stdout.line!("ALL TIME")?
         Stdout.line!(to_table(all_time))?
         Stdout.line!("")?
-        Stdout.line!("${Num.to_str(year)} YEAR TO DATE")?
+        Stdout.line!("${(year).to_str()} YEAR TO DATE")?
         Stdout.line!(to_table(ytd))
     }
 }
@@ -1621,7 +1621,7 @@ week! = |{}| {
         Err(other) => Err(other)
         Ok({ ftp, zb }) => {
             s = summary_payload!(path, ftp, zb)?
-            anchor = Result.with_default(Metrics.date_str_to_days(s.as_of), 0)
+            anchor = (Metrics.date_str_to_days(s.as_of)).ok_or(0)
             cutoff14 = Metrics.days_to_date_str(anchor - 14)
             recent = Sqlite.query_many!({
                 path,
@@ -1684,7 +1684,7 @@ week! = |{}| {
                 Stdout.line!("OPEN PLAN")?
                 Stdout.line!(Render.render_table(
                     ["id", "date", "type", "detail"],
-                    List.map(open_p, |p| [Num.to_str(p.id), p.target_date, p.session_type, p.detail]),
+                    List.map(open_p, |p| [(p.id).to_str(), p.target_date, p.session_type, p.detail]),
                 ))?
                 Stdout.line!("")?
                 Stdout.line!("RECENT 14 DAYS")?
@@ -1708,7 +1708,7 @@ summary_payload! = |path, ftp, zb| {
             Ok({ day, ctl, atl, tsb })
         },
     })?
-    anchor = Result.with_default(Metrics.date_str_to_days(latest.day), 0)
+    anchor = (Metrics.date_str_to_days(latest.day)).ok_or(0)
     cutoff28 = Metrics.days_to_date_str(anchor - 28)
     cutoff60 = Metrics.days_to_date_str(anchor - 60)
 
@@ -1771,7 +1771,7 @@ summary_payload! = |path, ftp, zb| {
     hard = zsum.hard
     # what fraction of the 28d load is measured (power) vs estimated (HR/RPE/RE) —
     # so the fitness number carries its own confidence, not just doctor's
-    measured_pct = if zsum.tss > 0.0 Num.round((zsum.measured / zsum.tss) * 100.0) else 0
+    measured_pct = if zsum.tss > 0.0 ((zsum.measured / zsum.tss) * 100.0).round_to_i64_try().ok_or(0) else 0
     total7 = zsum7.easy + zsum7.moderate + zsum7.hard
     easy7 = zsum7.easy
     hard7 = zsum7.hard
@@ -1847,7 +1847,7 @@ activities! = |limit, sport_filter| {
             \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr
             \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
             \\${where_clause}
-            \\ORDER BY a.start_local DESC LIMIT ${Num.to_str(limit)}
+            \\ORDER BY a.start_local DESC LIMIT ${(limit).to_str()}
         ,
         bindings: filter_bindings,
         rows: |cols| |stmt| {
@@ -1932,7 +1932,7 @@ top! = |metric, limit, sport_filter| {
                     \\       CAST(COALESCE(a.avg_watts * a.moving_time / 1000.0, 0) AS REAL) AS output_kj
                     \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                     \\WHERE ${col} > 0${sport_where}
-                    \\ORDER BY ${col} DESC LIMIT ${Num.to_str(limit)}
+                    \\ORDER BY ${col} DESC LIMIT ${(limit).to_str()}
                 ,
                 bindings: sport_binding,
                 rows: |cols| |stmt| {
@@ -2004,7 +2004,7 @@ import_archive! = |src| {
                             if json_mode!({})
                                 emit_ok!(counts)
                             else
-                                Stdout.line!("imported ${Num.to_str(counts.imported)} activities (${Num.to_str(counts.skipped)} rows skipped) — run `stride analyze` to compute metrics")
+                                Stdout.line!("imported ${(counts.imported).to_str()} activities (${(counts.skipped).to_str()} rows skipped) — run `stride analyze` to compute metrics")
                         }
                         _ => err_out!("empty_csv", "activities.csv is empty")
 
@@ -2035,31 +2035,31 @@ export_row_to_summary : List(Str), List(Str) -> Try(ActivitySummary, [BadRow])
 export_row_to_summary = |headers, row| {
     field = |name, occurrence|
         match Csv.column_index(headers, name, occurrence) {
-            Ok(i) => Result.with_default(List.get(row, i), "")
+            Ok(i) => (List.get(row, i)).ok_or("")
             Err(_) => ""
         }
     opt_field = |name|
-        match Str.to_f64(field(name, 0)) {
+        match F64.from_str(field(name, 0)) {
             Ok(v) => Ok(v)
             Err(_) => Err(Missing)
         }
-    id = Str.to_i64(field("Activity ID", 0)).map_err(|_| BadRow)?
+    id = I64.from_str(field("Activity ID", 0)).map_err(|_| BadRow)?
     start = Metrics.export_date_to_iso(field("Activity Date", 0)).map_err(|_| BadRow)?
     moving_raw = field("Moving Time", 1)
     moving_str = if Str.is_empty(moving_raw) field("Moving Time", 0) else moving_raw
-    moving_f = Str.to_f64(moving_str).map_err(|_| BadRow)?
+    moving_f = F64.from_str(moving_str).map_err(|_| BadRow)?
     distance =
-        match Str.to_f64(field("Distance", 1)) {
+        match F64.from_str(field("Distance", 1)) {
             Ok(meters) => meters
             Err(_) =>
                 # single Distance column = km
-                match Str.to_f64(field("Distance", 0)) {
+                match F64.from_str(field("Distance", 0)) {
                     Ok(km) => km * 1000.0
                     Err(_) => 0.0
                 }
         }
     mt : I64
-    mt = Num.round(moving_f)
+    mt = (moving_f).round_to_i64_try().ok_or(0)
     Ok({
         id,
         name: field("Activity Name", 0),
@@ -2067,7 +2067,7 @@ export_row_to_summary = |headers, row| {
         start_date_local: start,
         moving_time: mt,
         distance,
-        total_elevation_gain: Result.with_default(Str.to_f64(field("Elevation Gain", 0)), 0.0),
+        total_elevation_gain: (F64.from_str(field("Elevation Gain", 0))).ok_or(0.0),
         suffer_score: opt_field("Relative Effort"),
         average_watts: opt_field("Average Watts"),
         average_heartrate: opt_field("Average Heart Rate"),
@@ -2185,7 +2185,7 @@ doctor! = |{}| {
         unanalyzed: cov.unanalyzed,
         zero_load: cov.zero_load,
         rated: rated_total,
-        strength_unrated: Num.to_i64(Num.to_u64(strength_unrated)),
+        strength_unrated: strength_unrated.to_i64_wrap(),
         scored_by: models,
         conf_high: conf.hi,
         conf_medium: conf.med,
@@ -2198,10 +2198,10 @@ doctor! = |{}| {
         time_ok: time_ok,
     }
     out!(payload, |p| {
-        model_lines = List.map(p.scored_by, |mrow| "    ${mrow.model}: ${Num.to_str(mrow.n)}")
+        model_lines = List.map(p.scored_by, |mrow| "    ${mrow.model}: ${(mrow.n).to_str()}")
         hint =
             if p.strength_unrated > 0
-                ["", "  → ${Num.to_str(p.strength_unrated)} strength-class sessions have no rating — `stride rate <id> <1-10>` scores them honestly"]
+                ["", "  → ${(p.strength_unrated).to_str()} strength-class sessions have no rating — `stride rate <id> <1-10>` scores them honestly"]
             else
                 []
         Str.join_with(
@@ -2210,11 +2210,11 @@ doctor! = |{}| {
                     "",
                     "── stride doctor ─────────────────────────────",
                     "",
-                    "  activities: ${Num.to_str(p.activities)}",
-                    "    with heart rate: ${Num.to_str(p.with_hr)}",
-                    "    with power: ${Num.to_str(p.with_power)}",
-                    "    with streams: ${Num.to_str(p.with_streams)}",
-                    "    rated (session-RPE): ${Num.to_str(p.rated)}",
+                    "  activities: ${(p.activities).to_str()}",
+                    "    with heart rate: ${(p.with_hr).to_str()}",
+                    "    with power: ${(p.with_power).to_str()}",
+                    "    with streams: ${(p.with_streams).to_str()}",
+                    "    rated (session-RPE): ${(p.rated).to_str()}",
                     "",
                     "  scored by (load provenance):",
                 ],
@@ -2222,15 +2222,15 @@ doctor! = |{}| {
                 [
                     "",
                     "  confidence (how measured each load is):",
-                    "    high (power): ${Num.to_str(p.conf_high)}",
-                    "    medium (HR / RPE): ${Num.to_str(p.conf_medium)}",
-                    "    low (relative effort): ${Num.to_str(p.conf_low)}",
-                    "    none (unscored): ${Num.to_str(p.conf_none)}",
+                    "    high (power): ${(p.conf_high).to_str()}",
+                    "    medium (HR / RPE): ${(p.conf_medium).to_str()}",
+                    "    low (relative effort): ${(p.conf_low).to_str()}",
+                    "    none (unscored): ${(p.conf_none).to_str()}",
                     "",
-                    "  zero load (no usable data): ${Num.to_str(p.zero_load)}",
-                    "  not yet analyzed: ${Num.to_str(p.unanalyzed)}",
-                    "  pending stream backfill: ${Num.to_str(p.pending_streams)}",
-                    "  config: ${Num.to_str(p.ftp_configured)} sport FTP(s) set explicitly (others auto-derived from data), hr zones ${if p.zones_set "set" else "incomplete"}",
+                    "  zero load (no usable data): ${(p.zero_load).to_str()}",
+                    "  not yet analyzed: ${(p.unanalyzed).to_str()}",
+                    "  pending stream backfill: ${(p.pending_streams).to_str()}",
+                    "  config: ${(p.ftp_configured).to_str()} sport FTP(s) set explicitly (others auto-derived from data), hr zones ${if p.zones_set "set" else "incomplete"}",
                     "  time: ${p.time}",
                 ],
                 hint,
@@ -2247,7 +2247,7 @@ rate! : Str, Str => Try({}, _)
 rate! = |target, rpe_str| {
     path = open_db!({})?
     rpe_result =
-        match Str.to_f64(rpe_str) {
+        match F64.from_str(rpe_str) {
             Ok(r) if r >= 1.0 and r <= 10.0 => Ok(r)
             _ => Err(BadRpe)
         }
@@ -2458,7 +2458,7 @@ load_series! = |days| {
     path = open_db!({})?
     rows = Sqlite.query_many!({
         path,
-        query: "SELECT day AS day, tss AS tss, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT ${Num.to_str(days)}",
+        query: "SELECT day AS day, tss AS tss, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT ${(days).to_str()}",
         bindings: [],
         rows: |cols| |stmt| {
             day = Sqlite.str("day")(cols)(stmt)?
@@ -2469,7 +2469,7 @@ load_series! = |days| {
             Ok({ day, tss, ctl, atl, tsb })
         },
     })?
-    ordered = List.reverse(rows)
+    ordered = List.fold(rows, [], |acc, x| List.concat([x], acc))
     out!(ordered, Render.load_screen)
 }
 plan_view! : [ThisWeek, AllTime] => Try({}, _)
@@ -2479,7 +2479,7 @@ plan_view! = |scope| {
     # is "this week at a glance", not the whole history spilling into next week. The
     # Monday offset is rem(days+3,7) — the same convention as Metrics.day_of_week.
     today = local_today_days!(path)?
-    mon = today - Num.rem(today + 3, 7)
+    mon = today - (today + 3) % (7)
     week_filter =
         match scope {
             AllTime => ""
@@ -2509,7 +2509,7 @@ plan_view! = |scope| {
         },
     })?
     # most recent 100 by date, displayed in calendar order
-    ordered = List.reverse(rows)
+    ordered = List.fold(rows, [], |acc, x| List.concat([x], acc))
     dow = |date_str|
         match Metrics.date_str_to_days(date_str) {
             Ok(d) => Metrics.day_of_week(d)
@@ -2532,7 +2532,7 @@ plan_view! = |scope| {
     out!(enriched, |rows_enriched|
         Render.render_table(
             ["day", "date", "type", "status", "detail", "id"],
-            List.map(rows_enriched, |p| [p.day, p.target_date, p.session_type, p.status, p.detail, Num.to_str(p.id)]),
+            List.map(rows_enriched, |p| [p.day, p.target_date, p.session_type, p.status, p.detail, (p.id).to_str()]),
         ))
 }
 plan_add! : Str, Str, Str, Str => Try({}, _)
@@ -2546,7 +2546,7 @@ plan_add! = |target_date, session_type, detail, rationale| {
         row: Sqlite.i64("id"),
     })?
     if existing > 0
-        err_out!("date_already_planned", "${target_date} already has open planned session #${Num.to_str(existing)} — `stride skip ${Num.to_str(existing)} \"reason\"` first")
+        err_out!("date_already_planned", "${target_date} already has open planned session #${(existing).to_str()} — `stride skip ${(existing).to_str()} \"reason\"` first")
     else
         insert_planned_session!(path, target_date, session_type, detail, rationale)
 }
@@ -2572,12 +2572,12 @@ insert_planned_session! = |path, target_date, session_type, detail, rationale| {
         bindings: [],
         row: Sqlite.i64("id"),
     })?
-    out!({ id: new_id, target_date, session_type }, |p| "planned #${Num.to_str(p.id)}: ${p.session_type} on ${p.target_date}")
+    out!({ id: new_id, target_date, session_type }, |p| "planned #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}")
 }
 # ONE not-found message for complete/complete-rest/skip — can't drift apart
 session_not_found! : I64 => Try({}, _)
 session_not_found! = |session_id|
-    err_out!("session_not_found", "no planned session #${Num.to_str(session_id)} — run `stride plan` to see ids")
+    err_out!("session_not_found", "no planned session #${(session_id).to_str()} — run `stride plan` to see ids")
 
 complete! : Str, Str => Try({}, _)
 complete! = |session_id_str, activity_id_str| {
@@ -2612,7 +2612,7 @@ complete! = |session_id_str, activity_id_str| {
 complete_rest! : Str => Try({}, _)
 complete_rest! = |session_id_str| {
     path = open_db!({})?
-    match Str.to_i64(session_id_str) {
+    match I64.from_str(session_id_str) {
         Err(_) => err_out!("bad_id", "complete needs a numeric id: complete <session_id> [activity_id]")
         Ok(session_id) =>
             if !(row_exists!(path, "planned_sessions", session_id)?)
@@ -2625,14 +2625,14 @@ complete_rest! = |session_id_str| {
                     row: Sqlite.str("t"),
                 })?
                 if session_type != "rest"
-                    err_out!("activity_required", "planned session #${Num.to_str(session_id)} is '${session_type}' — completing it needs the activity id (only rest days close without one)")
+                    err_out!("activity_required", "planned session #${(session_id).to_str()} is '${session_type}' — completing it needs the activity id (only rest days close without one)")
                 else
                     Sqlite.execute!({
                         path,
                         query: "UPDATE planned_sessions SET status = 'done' WHERE id = :pid",
                         bindings: [{ name: ":pid", value: Integer(session_id) }],
                     })?
-                    out!({ completed_session: session_id, rest: True }, |p| "planned session #${Num.to_str(p.completed_session)} (rest) marked done")
+                    out!({ completed_session: session_id, rest: True }, |p| "planned session #${(p.completed_session).to_str()} (rest) marked done")
             }
     }
 }
@@ -2755,20 +2755,17 @@ drop_column_if_exists! = |path, q|
 # existing db self-migrates instead of failing with an opaque missing-column error.
 ensure_schema! : Str => Try({}, _)
 ensure_schema! = |path| {
-    v = Result.with_default(
-        Sqlite.query!({
+    v = (Sqlite.query!({
             path,
             query: "SELECT user_version AS v FROM pragma_user_version()",
             bindings: [],
             row: Sqlite.i64("v"),
-        }),
-        0,
-    )
+        })).ok_or(0)
     if v >= schema_version
         Ok({})
     else
         run_migrations!(path)?
-        Sqlite.execute!({ path, query: "PRAGMA user_version = ${Num.to_str(schema_version)}", bindings: [] })
+        Sqlite.execute!({ path, query: "PRAGMA user_version = ${(schema_version).to_str()}", bindings: [] })
 }
 # db path + guaranteed-current schema. Every command opens through this.
 open_db! : {} => Try(Str, _)
