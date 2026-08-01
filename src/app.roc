@@ -182,7 +182,7 @@ sync_ftp_to_strava! = |path, ftp_str|
                     Stdout.line!("  (Strava rejected the stored token — re-run `stride auth`, then set ftp_ride again)")
 
                 Err(_) => Stdout.line!("  (couldn't sync FTP to Strava this time)")
-                Ok(token) =>
+                Ok(token) => {
                     resp = Http.send!({
                         method: PUT,
                         headers: [Http.header(("Authorization", "Bearer ${token}"))],
@@ -196,6 +196,7 @@ sync_ftp_to_strava! = |path, ftp_str|
                         Err(_) => Stdout.line!("  (couldn't reach Strava to sync FTP — set it at strava.com/settings)")
 
                     }
+                }
             }
     }
 # ── paths ────────────────────────────────────────────────────────────
@@ -448,7 +449,7 @@ get_valid_token! = |path| {
     now = now_secs!({})
     if now < (expires_at - 60)
         Ok(access)
-    else
+    else {
         client_id = client_cred!(path, "STRAVA_CLIENT_ID", "strava_client_id")?
         client_secret = client_cred!(path, "STRAVA_CLIENT_SECRET", "strava_client_secret")?
         form = "client_id=${client_id}&client_secret=${client_secret}&grant_type=refresh_token&refresh_token=${refresh}"
@@ -456,6 +457,7 @@ get_valid_token! = |path| {
         tokens = decode_tokens(body)?
         save_tokens!(path, tokens)?
         Ok(tokens.access_token)
+    }
 }
 # ── http helpers ─────────────────────────────────────────────────────
 
@@ -478,10 +480,10 @@ ok_body : { status : U16, headers : List { name : Str, value : Str }, body : Lis
 ok_body = |resp|
     if resp.status < 300
         Ok(resp.body)
-    else
+    else {
         text = Result.with_default(Str.from_utf8(resp.body), "<non-utf8 body>")
         Err(HttpStatus(resp.status, text))
-
+    }
 # ── sync ─────────────────────────────────────────────────────────────
 
 ActivitySummary : {
@@ -514,7 +516,7 @@ sync! = |{}| {
             err_out!("not_authenticated", "not authenticated — run `stride auth` first")
 
         Err(other) => Err(other)
-        Ok(token) =>
+        Ok(token) => {
             started = now_secs!({})
             # incremental with a rolling 30-day overlap so recent edits on
             # Strava self-heal (`backfill` is the full re-pull when needed)
@@ -540,7 +542,7 @@ sync! = |{}| {
                     else
                         ""
                 "synced ${Num.to_str(p.synced)} activities, fetched streams for ${Num.to_str(p.streams_fetched)}${tail}")
-
+        }
     }
 }
 # fetch time/HR/watts streams for activities that don't have them yet,
@@ -582,7 +584,7 @@ fetch_streams_all! : Str, Str, List(I64), U64 => Try(U64, _)
 fetch_streams_all! = |path, token, ids, acc|
     match ids {
         [] => Ok(acc)
-        [id, .. as rest] =>
+        [id, .. as rest] => {
             id_str = Num.to_str(id)
             uri = "${api_base!({})}/api/v3/activities/${id_str}/streams?keys=time,heartrate,watts&key_by_type=true"
             resp = send_bearer!(uri, token)?
@@ -599,6 +601,7 @@ fetch_streams_all! = |path, token, ids, acc|
                     SkippedNonUtf8 => fetch_streams_all!(path, token, rest, acc)
 
                 }
+        }
     }
 store_streams! : Str, I64, Str => Try({}, _)
 store_streams! = |path, id, text|
@@ -672,17 +675,17 @@ store_stream_response! = |path, id, resp|
 
             Err(_) => Ok(SkippedNonUtf8)
         }
-    else
+    else {
         text = Result.with_default(Str.from_utf8(resp.body), "<non-utf8 body>")
         Err(HttpStatus(resp.status, text))
-
+    }
 backfill! : {} => Try({}, _)
 backfill! = |{}| {
     path = open_db!({})?
     match get_valid_token!(path) {
         Err(NotAuthed) => err_out!("not_authenticated", "not authenticated — run `stride auth` first")
         Err(other) => Err(other)
-        Ok(token) =>
+        Ok(token) => {
             # pull the full activity list first so backfill is self-sufficient —
             # no need to run `sync` beforehand (that's what made it two commands)
             Stdout.line!("backfill: refreshing the activity list...")?
@@ -705,7 +708,7 @@ backfill! = |{}| {
             else
                 Stdout.line!("backfill: ${Num.to_str(count)} activities, ${Num.to_str(missing)} need streams. Strava allows ~1000 reads/day, so a large first pull can span a few days — this run drains as far as today's limit allows and is resumable (just run `stride backfill` again).")?
                 drain_streams!(path, token, missing_ids, { done: 0, window: 0, retries: 0 })
-
+        }
     }
 }
 # Per-run drain state: `done` = reads this run (vs the daily cap), `window` = reads
@@ -721,11 +724,11 @@ drain_streams! : Str, Str, List(I64), DrainState => Try({}, _)
 drain_streams! = |path, token, ids, st|
     match ids {
         [] => Stdout.line!("backfill complete — ${Num.to_str(st.done)} streams fetched this run; ${Num.to_str(pending_streams!(path)?)} still missing")
-        [id, .. as rest] =>
+        [id, .. as rest] => {
             uri = "${api_base!({})}/api/v3/activities/${Num.to_str(id)}/streams?keys=time,heartrate,watts&key_by_type=true"
             resp = send_bearer!(uri, token)?
             match Backfill.decide({ status: resp.status, done: st.done, window: st.window, retries: st.retries }, read_limits) {
-                Refresh =>
+                Refresh => {
                     # multi-hour runs outlive the ~6h access token; refresh once and
                     # retry the same id. Same token back => real auth problem, stop.
                     fresh = get_valid_token!(path)?
@@ -734,17 +737,17 @@ drain_streams! = |path, token, ids, st|
                     else
                         Stdout.line!("  access token expired — refreshed, continuing...")?
                         drain_streams!(path, fresh, ids, st)
-
+                }
                 Backoff(retries) =>
                     Stdout.line!("  rate limited — pausing ~15 min, then resuming...")?
                     Sleep.millis!(window_sleep_ms)
                     drain_streams!(path, token, ids, { ..st, window: 0, retries })
 
-                GiveUp =>
+                GiveUp => {
                     left = pending_streams!(path)?
                     Stdout.line!("still rate-limited after backing off — likely today's Strava read cap (${Num.to_str(st.done)} fetched this run, ${Num.to_str(left)} to go). Run `stride backfill` again later or tomorrow.")
-
-                Store({ done, window, after }) =>
+                }
+                Store({ done, window, after }) => {
                     # 404 => empty marker, 2xx => body, other => error propagated
                     _stored = store_stream_response!(path, id, resp)?
                     (if Num.rem(done, 50) == 0
@@ -752,10 +755,10 @@ drain_streams! = |path, token, ids, st|
                     else
                         Ok({}))?
                     match after {
-                        StopRun =>
+                        StopRun => {
                             left = pending_streams!(path)?
                             Stdout.line!("reached this run's safe read budget — ${Num.to_str(done)} fetched, ${Num.to_str(left)} still to go. Run `stride backfill` again tomorrow to continue.")
-
+                        }
                         SleepWindow =>
                             Stdout.line!("  15-min read window nearly full (${Num.to_str(window)}) — sleeping ~15 min...")?
                             Sleep.millis!(window_sleep_ms)
@@ -765,7 +768,9 @@ drain_streams! = |path, token, ids, st|
                             drain_streams!(path, token, rest, { done, window, retries: 0 })
 
                     }
+                }
             }
+        }
     }
 per_page = 100
 
@@ -840,7 +845,7 @@ analyze! = |{}| {
     match load_zone_config!(path) {
         Err(MissingConfig) => missing_config!({})
         Err(other) => Err(other)
-        Ok(cfg) =>
+        Ok(cfg) => {
             res = compute_missing_metrics!(path, cfg.zb)?
             rebuild_daily_load!(path)?
             form =
@@ -875,6 +880,7 @@ analyze! = |{}| {
                     None => Ok({})
 
                 }
+        }
     }
 }
 load_zone_config! : Str => Result { ftp : F64, zb : Metrics.ZoneBounds } _
@@ -954,14 +960,14 @@ process_rows! : Str, Metrics.ZoneBounds, List(ActivityRow), { computed : U64, st
 process_rows! = |path, zb, rows, acc|
     match rows {
         [] => Ok(acc)
-        [row, .. as rest] =>
+        [row, .. as rest] => {
             failed = compute_one!(path, zb, row)?
             next = {
                 computed: acc.computed + 1,
                 stream_errors: acc.stream_errors + (if failed 1 else 0),
             }
             process_rows!(path, zb, rest, next)
-
+        }
     }
 zero_zones : Metrics.ZoneSeconds
 zero_zones = { z1: 0, z2: 0, z3: 0, z4: 0, z5: 0 }
@@ -1025,10 +1031,10 @@ build_ftp_whens! : Str, List(Str), Str => Try(Str, _)
 build_ftp_whens! = |path, sports, acc|
     match sports {
         [] => Ok(acc)
-        [s, .. as rest] =>
+        [s, .. as rest] => {
             f = sport_ftp!(path, s)?
             build_ftp_whens!(path, rest, "${acc} WHEN '${s}' THEN ${Num.to_str(f)}")
-
+        }
     }
 # returns Bool: did the stored stream JSON fail to decode? (surfaced by analyze)
 compute_one! : Str, Metrics.ZoneBounds, ActivityRow => Try(Bool, _)
@@ -1165,21 +1171,21 @@ rebuild_daily_load! = |path| {
     valid_days = Dict.keys(by_day)
     match List.first(valid_days) {
         Err(_) => Ok({}) # nothing computed yet (or no parseable dates)
-        Ok(seed) =>
+        Ok(seed) => {
             bounds = List.walk(valid_days, { lo: seed, hi: seed }, |b, d| { lo: Num.min(b.lo, d), hi: Num.max(b.hi, d) })
             # extend through today so rest days decay ATL/CTL and TSB is true as-of-now
             today = local_today_days!(path)?
             last_day = Num.max(bounds.hi, today)
             Sqlite.execute!({ path, query: "DELETE FROM daily_load", bindings: [] })?
             walk_days!(path, by_day, bounds.lo, last_day, 0.0, 0.0)
-
+        }
     }
 }
 walk_days! : Str, Dict I64 F64, I64, I64, F64, F64 => Try({}, _)
 walk_days! = |path, by_day, day, last_day, ctl_prev, atl_prev|
     if day > last_day
         Ok({})
-    else
+    else {
         tss = Result.with_default(Dict.get(by_day, day), 0.0)
         # the CTL/ATL/TSB recurrence lives in Metrics.load_step (pure, expect-tested)
         step = Metrics.load_step({ ctl_prev, atl_prev, tss })
@@ -1195,7 +1201,7 @@ walk_days! = |path, by_day, day, last_day, ctl_prev, atl_prev|
             ],
         })?
         walk_days!(path, by_day, day + 1, last_day, step.ctl, step.atl)
-
+    }
 # ── shared queries ──────────────────────────────────────────────────
 
 # zone + TSS totals for activities on/after a cutoff date
@@ -1273,13 +1279,13 @@ compare! = |period| {
     path = open_db!({})?
     if period != "week" and period != "month"
         err_out!("bad_period", "compare week | compare month (got '${period}')")
-    else
+    else {
         days = if period == "month" 28 else 7
         label = if period == "month" "28d" else "7d"
         match Sqlite.query!({ path, query: "SELECT day AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sqlite.str("day") }) {
             Err(NoRowsReturned) => err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
             Err(e) => Err(e)
-            Ok(latest_day) =>
+            Ok(latest_day) => {
                 anchor = Result.with_default(Metrics.date_str_to_days(latest_day), 0)
                 cur_from = Metrics.days_to_date_str(anchor - (days - 1))
                 cur_to = Metrics.days_to_date_str(anchor + 1)
@@ -1296,8 +1302,9 @@ compare! = |period| {
                     ctl,
                 }
                 out!({ period, window_label: label, current: block(cur, cur_ctl), prior: block(pri, pri_ctl) }, Render.compare_screen)
-
+            }
         }
+    }
 }
 # ── machine interface (JSON output for LLM/tool consumption) ────────
 # Convention: numeric fields COALESCE to 0 when unknown (0 = "not available").
@@ -1429,7 +1436,7 @@ activity_body! = |path, id_str, aid| {
     })?
     match List.first(rows) {
         Err(_) => err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
-        Ok(a) =>
+        Ok(a) => {
             raw_rows = Sqlite.query_many!({
                 path,
                 query: "SELECT raw_json AS raw FROM streams WHERE activity_id = :id",
@@ -1494,7 +1501,7 @@ activity_body! = |path, id_str, aid| {
                     # above are "unreadable", NOT "no power meter / no strap"
                     streams_unreadable: decoded.failed,
                 })
-            else
+            else {
                 dist_str = if a.distance_m >= 1000.0 " · ${Render.fmt1(a.distance_m / 1000.0)} km" else ""
                 Stdout.line!(a.name)?
                 Stdout.line!("${a.date} · ${a.sport} · ${Render.mins(a.moving_time)}${dist_str}")?
@@ -1519,7 +1526,8 @@ activity_body! = |path, id_str, aid| {
                     Stdout.line!("⚠ stored stream data for this activity is unreadable — zeros above are missing data, not real zeros")
                 else
                     Ok({})
-
+            }
+        }
     }
 }
 # career + year-to-date totals per sport
@@ -1532,7 +1540,7 @@ stats! = |{}| {
     ytd = stats_rows!(path, "${Num.to_str(year)}-01-01")?
     if json_mode!({})
         emit_ok!({ all_time, ytd, ytd_year: year })
-    else
+    else {
         to_table = |rows|
             Render.render_table(
                 ["sport", "sessions", "time", "distance"],
@@ -1548,6 +1556,7 @@ stats! = |{}| {
         Stdout.line!("")?
         Stdout.line!("${Num.to_str(year)} YEAR TO DATE")?
         Stdout.line!(to_table(ytd))
+    }
 }
 stats_rows! : Str, Str => Result (List { sport : Str, sessions : I64, hours : F64, km : F64 }) _
 stats_rows! = |path, cutoff|
@@ -1576,10 +1585,10 @@ summary! = |{}| {
     match load_zone_config!(path) {
         Err(MissingConfig) => missing_config!({})
         Err(other) => Err(other)
-        Ok({ ftp, zb }) =>
+        Ok({ ftp, zb }) => {
             payload = summary_payload!(path, ftp, zb)?
             out!(payload, Render.summary_screen)
-
+        }
     }
 }
 # weekly-planning bundle: everything the coach needs to plan a week, in one call
@@ -1589,7 +1598,7 @@ week! = |{}| {
     match load_zone_config!(path) {
         Err(MissingConfig) => missing_config!({})
         Err(other) => Err(other)
-        Ok({ ftp, zb }) =>
+        Ok({ ftp, zb }) => {
             s = summary_payload!(path, ftp, zb)?
             anchor = Result.with_default(Metrics.date_str_to_days(s.as_of), 0)
             cutoff14 = Metrics.days_to_date_str(anchor - 14)
@@ -1660,7 +1669,7 @@ week! = |{}| {
                     ["date", "sport", "name", "time", "load", "hard"],
                     List.map(recent, |a| [a.date, a.sport, a.name, Render.mins(a.moving_time), Render.fmt0(a.tss), Render.mins(a.hard_s)]),
                 ))
-
+        }
     }
 }
 summary_payload! = |path, ftp, zb| {
@@ -1881,7 +1890,7 @@ top! = |metric, limit, sport_filter| {
         Err(_) =>
             err_out!("bad_metric", "unknown metric '${metric}' — use: hr, tss, power, intensity, distance, time, output")
 
-        Ok({ col, header }) =>
+        Ok({ col, header }) => {
             sport_where =
                 if Str.is_empty(sport_filter) "" else " AND a.sport_type = :sport COLLATE NOCASE"
             sport_binding =
@@ -1916,7 +1925,7 @@ top! = |metric, limit, sport_filter| {
             })?
             if json_mode!({})
                 emit_ok!(rows)
-            else
+            else {
                 val = |r|
                     match metric {
                         "hr" => "${Render.fmt0(r.avg_hr)} bpm"
@@ -1931,7 +1940,8 @@ top! = |metric, limit, sport_filter| {
                     ["date", "sport", header, "name"],
                     List.map(rows, |r| [r.date, r.sport, val(r), r.name]),
                 ))
-
+            }
+        }
     }
 }
 # ── import from a Strava account export (no API credentials needed) ──
@@ -1943,35 +1953,37 @@ import_archive! : Str => Try({}, _)
 import_archive! = |src| {
     db = open_db!({})?
     dir_result =
-        if Str.ends_with(src, ".zip")
+        if Str.ends_with(src, ".zip") {
             tmp = Cmd.new("mktemp") |> Cmd.arg("-d") |> Cmd.exec_output!() |> Result.map_err(|_| ImportTempDirFailed)?
             tmp_dir = Str.trim(tmp.stdout_utf8)
             match Cmd.new("unzip") |> Cmd.args(["-o", "-q", src, "-d", tmp_dir]) |> Cmd.exec_output!() {
                 Ok(_) => Ok(tmp_dir)
                 Err(_) => Err(UnzipFailed)
             }
+        }
         else
             Ok(src)
     match dir_result {
         Err(UnzipFailed) => err_out!("unzip_failed", "couldn't unzip ${src} — is `unzip` installed? (or extract it yourself and `stride import <dir>`)")
         Err(other) => Err(other)
-        Ok(dir) =>
+        Ok(dir) => {
             csv_path = "${dir}/activities.csv"
             match File.read_utf8!(csv_path) {
                 Err(_) => err_out!("no_activities_csv", "no activities.csv in ${dir} — point me at a Strava account export (Settings → My Account → Download or Delete Your Account)")
                 Ok(text) =>
                     match Csv.parse(text) {
-                        [headers, .. as rows] =>
+                        [headers, .. as rows] => {
                             counts = import_rows!(db, headers, rows, { imported: 0.U64, skipped: 0.U64 })?
                             if json_mode!({})
                                 emit_ok!(counts)
                             else
                                 Stdout.line!("imported ${Num.to_str(counts.imported)} activities (${Num.to_str(counts.skipped)} rows skipped) — run `stride analyze` to compute metrics")
-
+                        }
                         _ => err_out!("empty_csv", "activities.csv is empty")
 
                     }
             }
+        }
     }
 }
 import_rows! : Str, List(Str), List(List(Str)), { imported : U64, skipped : U64 } => Result { imported : U64, skipped : U64 } _
@@ -2139,7 +2151,7 @@ doctor! = |{}| {
         time: time_desc,
         time_ok: time_ok,
     }
-    out!(payload, |p|
+    out!(payload, |p| {
         model_lines = List.map(p.scored_by, |mrow| "    ${mrow.model}: ${Num.to_str(mrow.n)}")
         hint =
             if p.strength_unrated > 0
@@ -2179,6 +2191,7 @@ doctor! = |{}| {
             ]),
             "\n",
         ))
+    }
 }
 # session-RPE rating: the athlete is the sensor for sports without power meters.
 # Ratings live in their OWN table (the judgment tier) — never on the activities
@@ -2240,11 +2253,11 @@ pz! = |{}| {
     match config_f64!(path, "ftp_ride") {
         Err(MissingConfig) => err_out!("missing_config", "set your FTP first: stride config set ftp_ride <watts>")
         Err(other) => Err(other)
-        Ok(ftp) =>
+        Ok(ftp) => {
             zones = Metrics.power_zones(ftp)
             if json_mode!({})
                 emit_ok!({ ftp, zones })
-            else
+            else {
                 range = |z|
                     if z.lo_w <= 0.0
                         "< ${Render.fmt0(z.hi_w)}"
@@ -2256,7 +2269,8 @@ pz! = |{}| {
                     ["zone", "name", "watts (ftp ${Render.fmt0(ftp)})"],
                     List.map(zones, |z| [z.z, z.name, range(z)]),
                 ))
-
+            }
+        }
     }
 }
 # "am I improving on THIS workout?" — anchored on a date: resolves that day's workout(s)
@@ -2281,7 +2295,7 @@ progress! = |date_arg| {
     date =
         if !(Str.is_empty(date_arg))
             date_arg
-        else
+        else {
             latest = Sqlite.query_many!({
                 path,
                 query:
@@ -2296,6 +2310,7 @@ progress! = |date_arg| {
                 Ok(r) => r.d
                 Err(_) => ""
             }
+        }
     prows : List(Metrics).ProgressRow
     prows = Sqlite.query_many!({
         path,
@@ -2330,9 +2345,10 @@ progress! = |date_arg| {
         List.keep_oks(Metrics.group_progress(prows), |g| Metrics.anchor_filter(g, date))
         |> List.map(|g| { name: Render.progress_group_label(g.name, g.kind), rows: g.rows })
     # choose each group's lens, keep only rows it can score; drop unscorable groups
-    keep_scored = |lens, g|
+    keep_scored = |lens, g| {
         kept = List.keep_if(g.rows, |r| Result.is_ok(Metrics.lens_score(lens, r)))
         if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, lens, rows: kept })
+    }
     scored = List.keep_oks(labeled, |g|
         match Metrics.progress_lens(g.rows) {
             Ef => keep_scored(Ef, g)
@@ -2343,7 +2359,7 @@ progress! = |date_arg| {
     if List.is_empty(scored)
         if Str.is_empty(date)
             err_out!("no_scorable_workouts", "nothing to compare yet — analyze activities first (and `stride rate` your strength sessions)")
-        else
+        else {
             on_date = Sqlite.query_many!({
                 path,
                 query: "SELECT name AS name, id AS id FROM activities WHERE substr(start_local, 1, 10) = :date LIMIT 1",
@@ -2354,6 +2370,7 @@ progress! = |date_arg| {
                 Ok(a) => err_out!("unscorable", "found \"${a.name}\" on ${date}, but it can't be compared — needs power+HR, distance+HR, or a rating (`stride rate <id> <1-10>`)")
                 Err(_) => err_out!("no_workout_on_date", "no workout found on ${date}")
             }
+        }
     else if json_mode!({})
         emit_ok!({
             anchor_date: date,
@@ -2539,7 +2556,7 @@ complete_rest! = |session_id_str| {
         Ok(session_id) =>
             if !(row_exists!(path, "planned_sessions", session_id)?)
                 session_not_found!(session_id)
-            else
+            else {
                 session_type = Sqlite.query!({
                     path,
                     query: "SELECT COALESCE(session_type, '') AS t FROM planned_sessions WHERE id = :pid",
@@ -2555,7 +2572,7 @@ complete_rest! = |session_id_str| {
                         bindings: [{ name: ":pid", value: Integer(session_id) }],
                     })?
                     out!({ completed_session: session_id, rest: True }, |p| "planned session #${Num.to_str(p.completed_session)} (rest) marked done")
-
+            }
     }
 }
 skip! : Str, Str => Try({}, _)
