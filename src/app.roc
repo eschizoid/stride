@@ -37,6 +37,7 @@ import Config
 import Schema
 import Render
 import Backfill
+import Db
 
 version = "stride 0.1.0" # x-release-please-version
 
@@ -148,15 +149,15 @@ usage! = |u|
 
 config_show! : Str => Try({}, _)
 config_show! = |key| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     if Config.is_secret(key)
         # confirm set-ness without leaking the value
-        match config_opt!(path, key)? {
+        match Db.config_opt!(path, key)? {
             Found(_) => out!({ key, value: "<redacted>", redacted: True }, |_| "${key} = <redacted> (secret — stored in the db, not shown)")
             NotFound => err_out!("not_set", "(not set)")
         }
     else
-        match config_opt!(path, key)? {
+        match Db.config_opt!(path, key)? {
             Found(v) => out!({ key, value: v }, |p| p.value)
             NotFound => err_out!("not_set", "(not set)")
 
@@ -164,8 +165,8 @@ config_show! = |key| {
 }
 config_store! : Str, Str => Try({}, _)
 config_store! = |key, val| {
-    path = open_db!({})?
-    config_set!(path, key, val)?
+    path = Db.open_db!({})?
+    Db.config_set!(path, key, val)?
     Stdout.line!("${key} = ${val}")?
     # FTP is the one config that also lives on Strava — keep them in sync so
     # Strava's own power features use the same number
@@ -203,13 +204,6 @@ sync_ftp_to_strava! = |path, ftp_str|
                 }
             }
     }
-# ── paths ────────────────────────────────────────────────────────────
-
-db_path! : {} => Try(Str, _)
-db_path! = |{}| {
-    home = Env.var_str!(OsStr.from_str("HOME"))?
-    Ok("${home}/.stride/db.sqlite")
-}
 init! : {} => Try({}, _)
 init! = |{}| {
     home = Env.var_str!(OsStr.from_str("HOME"))?
@@ -217,51 +211,10 @@ init! = |{}| {
     # ignore AlreadyExists — idempotent init
     _ = Path.create_dir!(Path.utf8(dir))
     path = "${dir}/db.sqlite"
-    ensure_schema!(path)?
-    secure_perms!(dir)?
+    Db.ensure_schema!(path)?
+    Db.secure_perms!(dir)?
     Stdout.line!("initialized ${path}")
 }
-# owner-only permissions on the credential store. basic-cli 0.20 has no mode API,
-# so shell out; best-effort (never fails the command — a platform without chmod
-# just doesn't get hardened, and we don't claim it did). Sidecars may not exist.
-secure_perms! : Str => Try({}, _)
-secure_perms! = |dir| {
-    cmd = "chmod 700 '${dir}' 2>/dev/null; chmod 600 '${dir}/db.sqlite' '${dir}/db.sqlite-wal' '${dir}/db.sqlite-shm' '${dir}/db.sqlite-journal' 2>/dev/null; true"
-    _ = Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", cmd], OsStr.from_str)).exec_output!()
-    Ok({})
-}
-# ── config key-value helpers ─────────────────────────────────────────
-
-config_get! : Str, Str => Try(Str, _)
-config_get! = |path, key|
-    Sqlite.query!({
-        path: Path.utf8(path),
-        query: "SELECT value FROM config WHERE key = :key",
-        bindings: [{ name: ":key", value: String(key) }],
-        row: Sqlite.str("value"),
-    })
-
-# read a config key, distinguishing "genuinely absent" from "the db read failed"
-# — so a locked/corrupt db surfaces as a real error instead of masquerading as
-# "not set" / "not authenticated" / "set your FTP".
-config_opt! : Str, Str => Try([Found(Str), NotFound], _)
-config_opt! = |path, key|
-    match config_get!(path, key) {
-        Ok(v) => Ok(Found(v))
-        Err(NoRowsReturned) => Ok(NotFound)
-        Err(other) => Err(other)
-
-    }
-config_set! : Str, Str, Str => Try({}, _)
-config_set! = |path, key, value|
-    Sqlite.execute!({
-        path: Path.utf8(path),
-        query: "INSERT OR REPLACE INTO config (key, value) VALUES (:key, :value)",
-        bindings: [
-            { name: ":key", value: String(key) },
-            { name: ":value", value: String(value) },
-        ],
-    })
 
 # ── strava oauth ─────────────────────────────────────────────────────
 
@@ -298,7 +251,7 @@ open_browser! = |url|
 # a stored token field: absent => NotAuthed (genuine); db failure propagates
 token_field! : Str, Str => Try(Str, _)
 token_field! = |path, key|
-    match config_opt!(path, key)? {
+    match Db.config_opt!(path, key)? {
         Found(v) => Ok(v)
         NotFound => Err(NotAuthed)
 
@@ -309,8 +262,8 @@ client_cred! = |path, env_name, key|
     match Env.var_str!(OsStr.from_str(env_name)) {
         Ok(v) => Ok(v)
         Err(_) =>
-            # config_opt! so a locked/corrupt db surfaces as a real error, not MissingEnv
-            match config_opt!(path, key)? {
+            # Db.config_opt! so a locked/corrupt db surfaces as a real error, not MissingEnv
+            match Db.config_opt!(path, key)? {
                 Found(v) => Ok(v)
                 NotFound => Err(MissingEnv(env_name))
 
@@ -318,7 +271,7 @@ client_cred! = |path, env_name, key|
     }
 auth! : {} => Try({}, _)
 auth! = |{}| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     # env vars for first-time setup; re-auth falls back to the creds stored last time.
     # Genuinely-missing creds get setup guidance, not a raw MissingEnv crash.
     match (client_cred!(path, "STRAVA_CLIENT_ID", "strava_client_id"), client_cred!(path, "STRAVA_CLIENT_SECRET", "strava_client_secret")) {
@@ -349,8 +302,8 @@ auth_flow! = |path, client_id, client_secret| {
     tokens = decode_tokens(body)?
     save_tokens!(path, tokens)?
     # persist client creds so sync never needs env vars again
-    config_set!(path, "strava_client_id", client_id)?
-    config_set!(path, "strava_client_secret", client_secret)?
+    Db.config_set!(path, "strava_client_id", client_id)?
+    Db.config_set!(path, "strava_client_secret", client_secret)?
     Stdout.line!("authorized — tokens stored. Run `stride sync` to pull your activities.")
 }
 decode_tokens : List(U8) -> Try(TokenResp, _)
@@ -362,87 +315,9 @@ decode_tokens = |body| {
 }
 save_tokens! : Str, TokenResp => Try({}, _)
 save_tokens! = |path, tokens| {
-    config_set!(path, "strava_access_token", tokens.access_token)?
-    config_set!(path, "strava_refresh_token", tokens.refresh_token)?
-    config_set!(path, "strava_expires_at", I64.to_str(tokens.expires_at))
-}
-
-now_secs! : {} => I64
-now_secs! = |{}| {
-    millis = Utc.to_millis_since_epoch(Utc.now!())
-    (millis // 1000).to_i64_wrap()
-}
-# How "today"'s civil-day boundary is anchored. The platform clock (Utc.now!) is
-# UTC-only, but every activity date is Strava's local civil date — so for any user
-# west of UTC, the UTC day rolls over hours before their local day, inserting a
-# phantom "tomorrow" into the load series each evening.
-#   Zone       — config `timezone` (IANA, e.g. America/Chicago): DST-correct for
-#                the CURRENT date via the system tz database. Preferred.
-#   FixedOffset — config `utc_offset_minutes`: a fixed offset; set it seasonally
-#                if you observe DST (e.g. -300 CDT / -360 CST).
-#   BadZone    — `timezone` is set but the name isn't in the system tz database;
-#                we fall back to the fixed offset (NEVER silently to UTC) and warn.
-#   Utc        — neither configured.
-TimeMode : [Zone(Str, I64), FixedOffset(I64), BadZone(Str, I64), Utc]
-
-# Read the current DST-correct offset (minutes east of UTC) for an IANA zone by
-# validating it against the system tz database, then reading `date +%z`. An
-# unknown name yields Err — we never let a typo silently become +0000 (UTC).
-zone_offset_now! : Str => Try(I64, [BadTz])
-zone_offset_now! = |tz| {
-    cmd = "if [ -f '/usr/share/zoneinfo/${tz}' ]; TZ='${tz}' date +%z; else echo INVALID; fi"
-    match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", cmd], OsStr.from_str)).exec_output!() {
-        Ok(out) => Metrics.parse_utc_offset(out.stdout_utf8).map_err(|_| BadTz)
-        Err(_) => Err(BadTz)
-
-    }
-}
-resolve_time_mode! : Str => TimeMode
-resolve_time_mode! = |path| {
-    fixed : Try(I64, [NoFixed])
-    fixed =
-        match config_get!(path, "utc_offset_minutes") {
-            Ok(s) => Ok(I64.from_str(s).ok_or(0))
-            Err(_) => Err(NoFixed)
-        }
-    tz =
-        match config_get!(path, "timezone") {
-            Ok(t) if t != "" => Ok(t)
-            _ => Err(NoTz)
-        }
-    match tz {
-        Ok(name) =>
-            match zone_offset_now!(name) {
-                Ok(off) => Zone(name, off)
-                Err(_) => BadZone(name, fixed.ok_or(0))
-            }
-        Err(_) =>
-            match fixed {
-                Ok(off) => FixedOffset(off)
-                Err(_) => Utc
-            }
-    }
-}
-time_mode_offset : TimeMode -> I64
-time_mode_offset = |mode|
-    match mode {
-        Zone(_, off) => off
-        FixedOffset(off) => off
-        BadZone(_, off) => off
-        Utc => 0
-
-    }
-# minutes east of UTC => "±HH:MM" for display
-fmt_offset : I64 -> Str
-fmt_offset = |m| {
-    a = (m).abs()
-    pad = |n| if n < 10 "0${(n).to_str()}" else (n).to_str()
-    "${if m < 0 "-" else "+"}${pad(a // 60)}:${pad(a % 60)}"
-}
-local_today_days! : Str => I64
-local_today_days! = |path| {
-    mode = resolve_time_mode!(path)
-    (now_secs!({}) + time_mode_offset(mode) * 60) // 86400
+    Db.config_set!(path, "strava_access_token", tokens.access_token)?
+    Db.config_set!(path, "strava_refresh_token", tokens.refresh_token)?
+    Db.config_set!(path, "strava_expires_at", I64.to_str(tokens.expires_at))
 }
 # returns a valid access token, refreshing if expired; NotAuthed if never
 # authorized (a genuinely absent token — NOT a db read failure, which propagates)
@@ -452,7 +327,7 @@ get_valid_token! = |path| {
     refresh = token_field!(path, "strava_refresh_token")?
     expires_str = token_field!(path, "strava_expires_at")?
     expires_at = (I64.from_str(expires_str)).map_err(|_| CorruptToken)?
-    now = now_secs!({})
+    now = Db.now_secs!({})
     if now < (expires_at - 60)
         Ok(access)
     else {
@@ -516,20 +391,20 @@ opt_real = |o|
     }
 sync! : {} => Try({}, _)
 sync! = |{}| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     match get_valid_token!(path) {
         Err(NotAuthed) =>
             err_out!("not_authenticated", "not authenticated — run `stride auth` first")
 
         Err(other) => Err(other)
         Ok(token) => {
-            started = now_secs!({})
+            started = Db.now_secs!({})
             # incremental with a rolling 30-day overlap so recent edits on
             # Strava self-heal (`backfill` is the full re-pull when needed)
             after_param =
                 # NotFound (never synced) = full pull is correct; a real db read
                 # error propagates instead of silently burning the rate budget
-                match config_opt!(path, "last_sync_epoch")? {
+                match Db.config_opt!(path, "last_sync_epoch")? {
                     NotFound => ""
                     Found(epoch_str) =>
                         match I64.from_str(epoch_str) {
@@ -538,7 +413,7 @@ sync! = |{}| {
                         }
                 }
             count = fetch_pages!(path, token, after_param, 1, 0)?
-            config_set!(path, "last_sync_epoch", I64.to_str(started))?
+            Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
             streams_n = backfill_streams!(path, token)?
             remaining = pending_streams!(path)?
             out!({ synced: count, streams_fetched: streams_n, pending_streams: remaining }, |p| {
@@ -688,7 +563,7 @@ store_stream_response! = |path, id, resp|
     }
 backfill! : {} => Try({}, _)
 backfill! = |{}| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     match get_valid_token!(path) {
         Err(NotAuthed) => err_out!("not_authenticated", "not authenticated — run `stride auth` first")
         Err(other) => Err(other)
@@ -697,7 +572,7 @@ backfill! = |{}| {
             # no need to run `sync` beforehand (that's what made it two commands)
             Stdout.line!("backfill: refreshing the activity list...")?
             count = fetch_pages!(path, token, "", 1, 0)?
-            config_set!(path, "last_sync_epoch", I64.to_str(now_secs!({})))?
+            Db.config_set!(path, "last_sync_epoch", I64.to_str(Db.now_secs!({})))?
             missing_ids = Sqlite.query_many!({
                 path: Path.utf8(path),
                 query:
@@ -853,7 +728,7 @@ zone_config_help =
 
 analyze! : {} => Try({}, _)
 analyze! = |{}| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     match load_zone_config!(path) {
         Err(MissingConfig) => missing_config!({})
         Err(other) => Err(other)
@@ -908,7 +783,7 @@ load_zone_config! = |path| {
 }
 config_f64! : Str, Str => Try(F64, _)
 config_f64! = |path, key|
-    match config_opt!(path, key)? {
+    match Db.config_opt!(path, key)? {
         NotFound => Err(MissingConfig)
         Found(s) =>
             match F64.from_str(s) {
@@ -994,38 +869,6 @@ zero_zones = { z1: 0, z2: 0, z3: 0, z4: 0, z5: 0 }
 zones_sig : Metrics.ZoneBounds -> Str
 zones_sig = |zb|
     "${Render.fmt0(zb.z1_max)},${Render.fmt0(zb.z2_max)},${Render.fmt0(zb.z3_max)},${Render.fmt0(zb.z4_max)}"
-
-# the power threshold (FTP) a sport's power is judged against, read from config key
-# `ftp_<sport>` (Metrics.power_ftp_key) — uniform for EVERY sport, cycling included
-# (`ftp_ride`). 0 when unset AND nothing to derive, in which case intensity/TSS fall
-# back to HR. Fully generic: a new sport needs no code, just its `ftp_<sport>` key —
-# or nothing, since we derive from the sport's own history.
-sport_ftp! : Str, Str => Try(F64, _)
-sport_ftp! = |path, sport| {
-    key = Metrics.power_ftp_key(sport)
-    configured =
-        match config_get!(path, key) {
-            Ok(s) => (F64.from_str(s)).ok_or(0.0)
-            Err(_) => 0.0
-        }
-    raw =
-        if configured > 0.0 configured
-        # no configured FTP → derive from this sport's OWN best 20-min power (× 0.95),
-        # so power-intensity works for any power sport with stream history, zero config
-        else derive_sport_ftp!(path, sport)?
-    # whole watts — keeps the stored ftp_used and the invalidation CASE exactly equal
-    Ok(((raw).round_to_i64_try().ok_or(0)).to_f64())
-}
-derive_sport_ftp! : Str, Str => Try(F64, _)
-derive_sport_ftp! = |path, sport| {
-    best = Sqlite.query!({
-        path: Path.utf8(path),
-        query: "SELECT CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_type = :sport",
-        bindings: [{ name: ":sport", value: String(sport) }],
-        row: Sqlite.f64("b"),
-    })?
-    Ok(best * 0.95)
-}
 # a SQL `CASE a.sport_type WHEN … THEN <ftp> … ELSE 0 END` mapping each sport to its
 # resolved FTP, so the analyze recompute-check compares each row's stored ftp_used to
 # ITS sport's current FTP (not one global number). Without this, per-sport ftp_used
@@ -1047,7 +890,7 @@ build_ftp_whens! = |path, sports, acc|
     match sports {
         [] => Ok(acc)
         [s, .. as rest] => {
-            f = sport_ftp!(path, s)?
+            f = Db.sport_ftp!(path, s)?
             build_ftp_whens!(path, rest, "${acc} WHEN '${s}' THEN ${(f).to_str()}")
         }
     }
@@ -1079,7 +922,7 @@ compute_one! = |path, zb, row| {
     # intensity from power, judged against the sport's own FTP (0 for no-power sports
     # → all-zero, and the display falls back to HR). Stored so the weekly polarization
     # and the activities "hard" column read power where it exists, HR where it doesn't.
-    pi_ftp = sport_ftp!(path, row.sport)?
+    pi_ftp = Db.sport_ftp!(path, row.sport)?
     pintensity = Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
 
     # the fallback chain lives in Metrics.tss_ladder (pure, expect-tested)
@@ -1147,7 +990,7 @@ compute_one! = |path, zb, row| {
             { name: ":z3", value: Integer(zones.z3) },
             { name: ":z4", value: Integer(zones.z4) },
             { name: ":z5", value: Integer(zones.z5) },
-            { name: ":at", value: String(Metrics.epoch_to_iso(now_secs!({}))) },
+            { name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
             { name: ":b20", value: best20_binding },
         ],
     })?
@@ -1190,7 +1033,7 @@ rebuild_daily_load! = |path| {
         Ok(seed) => {
             bounds = List.fold(valid_days, { lo: seed, hi: seed }, |b, d| { lo: (b.lo).min(d), hi: (b.hi).max(d) })
             # extend through today so rest days decay ATL/CTL and TSB is true as-of-now
-            today = local_today_days!(path)
+            today = Db.local_today_days!(path)
             last_day = (bounds.hi).max(today)
             Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM daily_load", bindings: [] })?
             walk_days!(path, by_day, bounds.lo, last_day, 0.0, 0.0)
@@ -1299,7 +1142,7 @@ ctl_at! = |path, day_str|
 # period-over-period: this rolling window vs the one immediately before it
 compare! : Str => Try({}, _)
 compare! = |period| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     if period != "week" and period != "month" {
         err_out!("bad_period", "compare week | compare month (got '${period}')")
     } else {
@@ -1414,7 +1257,7 @@ pct_num = |part, total|
 # one session in depth: metrics + zones + power bests computed from local streams
 activity! : Str => Try({}, _)
 activity! = |id_str| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     match I64.from_str(id_str) {
         Err(_) => err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
         Ok(aid) => activity_body!(path, id_str, aid)
@@ -1492,7 +1335,7 @@ activity_body! = |path, id_str, aid| {
             # sit on a zone boundary). Cycling uses the FTP the ride was scored with;
             # non-cycling power sports need their own threshold (not yet configured),
             # so they get 0 here and fall back to the HR "hard" signal.
-            pi_ftp = sport_ftp!(path, a.sport)?
+            pi_ftp = Db.sport_ftp!(path, a.sport)?
             pintensity = Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
             has_power_intensity = (pintensity.easy_s + pintensity.moderate_s + pintensity.hard_s) > 0
 
@@ -1557,8 +1400,8 @@ activity_body! = |path, id_str, aid| {
 # career + year-to-date totals per sport
 stats! : {} => Try({}, _)
 stats! = |{}| {
-    path = open_db!({})?
-    today_days = local_today_days!(path)
+    path = Db.open_db!({})?
+    today_days = Db.local_today_days!(path)
     year = (Metrics.civil_from_days(today_days)).y
     all_time = stats_rows!(path, "0000-01-01")?
     ytd = stats_rows!(path, "${(year).to_str()}-01-01")?
@@ -1606,7 +1449,7 @@ stats_rows! = |path, cutoff|
 # the one-call coach-input payload
 summary! : {} => Try({}, _)
 summary! = |{}| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     match load_zone_config!(path) {
         Err(MissingConfig) => missing_config!({})
         Err(other) => Err(other)
@@ -1619,7 +1462,7 @@ summary! = |{}| {
 # weekly-planning bundle: everything the coach needs to plan a week, in one call
 week! : {} => Try({}, _)
 week! = |{}| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     match load_zone_config!(path) {
         Err(MissingConfig) => missing_config!({})
         Err(other) => Err(other)
@@ -1825,7 +1668,7 @@ summary_payload! = |path, ftp, zb| {
 }
 activities! : U64, Str => Try({}, _)
 activities! = |limit, sport_filter| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     where_clause =
         if Str.is_empty(sport_filter)
             ""
@@ -1917,7 +1760,7 @@ top_metric = |m|
 # which is chronological). e.g. `top hr`, `top tss 5 rowing`.
 top! : Str, U64, Str => Try({}, _)
 top! = |metric, limit, sport_filter| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     match top_metric(metric) {
         Err(_) =>
             err_out!("bad_metric", "unknown metric '${metric}' — use: hr, tss, power, intensity, distance, time, output")
@@ -1984,7 +1827,7 @@ top! = |metric, limit, sport_filter| {
 # ladder falls back to watts/HR/relative-effort exactly as with sparse API data.
 import_archive! : Str => Try({}, _)
 import_archive! = |src| {
-    db = open_db!({})?
+    db = Db.open_db!({})?
     dir_result =
         if Str.ends_with(src, ".zip") {
             tmp = Cmd.new(OsStr.from_str("mktemp")).arg(OsStr.from_str("-d")).exec_output!().map_err(|_| ImportTempDirFailed)?
@@ -2084,7 +1927,7 @@ export_row_to_summary = |headers, row| {
 # rung scored each activity, and what's honestly unscored. Trust, quantified.
 doctor! : {} => Try({}, _)
 doctor! = |{}| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     cov = Sqlite.query!({
         path: Path.utf8(path),
         query:
@@ -2170,12 +2013,12 @@ doctor! = |{}| {
     })?
     strength_unrated = List.len(List.keep_if(sports, |r| Metrics.sport_class(r.sport) == StrengthLike and r.rated == 0))
     rated_total = List.len(List.keep_if(sports, |r| r.rated == 1))
-    mode = resolve_time_mode!(path)
+    mode = Db.resolve_time_mode!(path)
     time_desc =
         match mode {
-            Zone(name, off) => "timezone ${name} (${fmt_offset(off)} now, DST-aware)"
-            FixedOffset(off) => "fixed offset ${fmt_offset(off)} (adjust seasonally for DST)"
-            BadZone(name, off) => "timezone '${name}' UNKNOWN to system tz db — using ${fmt_offset(off)}; fix the name or set utc_offset_minutes"
+            Zone(name, off) => "timezone ${name} (${Db.fmt_offset(off)} now, DST-aware)"
+            FixedOffset(off) => "fixed offset ${Db.fmt_offset(off)} (adjust seasonally for DST)"
+            BadZone(name, off) => "timezone '${name}' UNKNOWN to system tz db — using ${Db.fmt_offset(off)}; fix the name or set utc_offset_minutes"
             Utc => "UTC (set `timezone` or `utc_offset_minutes` if you're not on UTC)"
         }
     time_ok =
@@ -2251,7 +2094,7 @@ doctor! = |{}| {
 # metrics so the next analyze rescores it through the sport-aware ladder.
 rate! : Str, Str => Try({}, _)
 rate! = |target, rpe_str| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     rpe_result =
         match F64.from_str(rpe_str) {
             Ok(r) if r >= 1.0 and r <= 10.0 => Ok(r)
@@ -2289,7 +2132,7 @@ rate! = |target, rpe_str| {
                             bindings: [
                                 { name: ":id", value: Integer(activity_id) },
                                 { name: ":rpe", value: Real(rpe) },
-                                { name: ":at", value: String(Metrics.epoch_to_iso(now_secs!({}))) },
+                                { name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
                             ],
                         })?
                         # a rating is a metric input — invalidate so analyze rescores
@@ -2304,7 +2147,7 @@ rate! = |target, rpe_str| {
 # configured FTP (the targets you'd set on a Power Zone ride).
 pz! : {} => Try({}, _)
 pz! = |{}| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     match config_f64!(path, "ftp_ride") {
         Err(MissingConfig) => err_out!("missing_config", "set your FTP first: stride config set ftp_ride <watts>")
         Err(other) => Err(other)
@@ -2346,7 +2189,7 @@ lens_name = |lens|
 # rated strength->RPE). Bare `progress` uses your latest analyzed workout.
 progress! : Str => Try({}, _)
 progress! = |date_arg| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     date =
         if !(Str.is_empty(date_arg))
             date_arg
@@ -2461,7 +2304,7 @@ progress! = |date_arg| {
 }
 load_series! : U64 => Try({}, _)
 load_series! = |days| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     rows = Sqlite.query_many!({
         path: Path.utf8(path),
         query: "SELECT day AS day, tss AS tss, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT ${(days).to_str()}",
@@ -2480,11 +2323,11 @@ load_series! = |days| {
 }
 plan_view! : [ThisWeek, AllTime] => Try({}, _)
 plan_view! = |scope| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     # default view is the CURRENT training week (Mon-Sun containing today) so `plan`
     # is "this week at a glance", not the whole history spilling into next week. The
     # Monday offset is rem(days+3,7) — the same convention as Metrics.day_of_week.
-    today = local_today_days!(path)
+    today = Db.local_today_days!(path)
     mon = today - (today + 3) % (7)
     week_filter =
         match scope {
@@ -2543,7 +2386,7 @@ plan_view! = |scope| {
 }
 plan_add! : Str, Str, Str, Str => Try({}, _)
 plan_add! = |target_date, session_type, detail, rationale| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     # guard: one open planned session per date — skip or complete the old one first
     existing = Sqlite.query!({
         path: Path.utf8(path),
@@ -2565,7 +2408,7 @@ insert_planned_session! = |path, target_date, session_type, detail, rationale| {
             \\VALUES (:at, :date, :type, :detail, :rationale, 'open')
         ,
         bindings: [
-            { name: ":at", value: String(Metrics.epoch_to_iso(now_secs!({}))) },
+            { name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
             { name: ":date", value: String(target_date) },
             { name: ":type", value: String(session_type) },
             { name: ":detail", value: String(detail) },
@@ -2587,7 +2430,7 @@ session_not_found! = |session_id|
 
 complete! : Str, Str => Try({}, _)
 complete! = |session_id_str, activity_id_str| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     match (I64.from_str(session_id_str), I64.from_str(activity_id_str)) {
         (Ok(session_id), Ok(activity_id)) =>
             # SQLite UPDATE matching 0 rows is not an error — check existence
@@ -2617,7 +2460,7 @@ complete! = |session_id_str, activity_id_str| {
 # other session type still demands its activity id: done means evidence.
 complete_rest! : Str => Try({}, _)
 complete_rest! = |session_id_str| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     match I64.from_str(session_id_str) {
         Err(_) => err_out!("bad_id", "complete needs a numeric id: complete <session_id> [activity_id]")
         Ok(session_id) =>
@@ -2645,7 +2488,7 @@ complete_rest! = |session_id_str| {
 }
 skip! : Str, Str => Try({}, _)
 skip! = |session_id_str, reason| {
-    path = open_db!({})?
+    path = Db.open_db!({})?
     match I64.from_str(session_id_str) {
         Ok(session_id) =>
             if !(row_exists!(path, "planned_sessions", session_id)?) {
@@ -2666,124 +2509,8 @@ skip! = |session_id_str, reason| {
 
     }
 }
-# ── migrations ───────────────────────────────────────────────────────
-
-# bump when the schema changes; ensure_schema! re-runs migrations when the db's
-# PRAGMA user_version is behind this. (The additive ALTERs below are the columns
-# that post-date the original CREATE statements in Schema.roc.)
-schema_version = 10
 
 # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
 # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
 # zones_used) can't catch algorithm changes
 metrics_rev = 6
-
-run_migrations! : Str => Try({}, _)
-run_migrations! = |path| {
-    # v5: prescriptions => planned_sessions ("a coach plans sessions" — the
-    # medical word is gone). MUST run before the CREATEs below, or an empty
-    # planned_sessions would shadow the old data.
-    rename_table_if_exists!(path, "prescriptions", "planned_sessions")?
-    Sqlite.execute!({ path: Path.utf8(path), query: Schema.activities, bindings: [] })?
-    Sqlite.execute!({ path: Path.utf8(path), query: Schema.metrics, bindings: [] })?
-    Sqlite.execute!({ path: Path.utf8(path), query: Schema.daily_load, bindings: [] })?
-    Sqlite.execute!({ path: Path.utf8(path), query: Schema.planned_sessions, bindings: [] })?
-    Sqlite.execute!({ path: Path.utf8(path), query: Schema.config, bindings: [] })?
-    Sqlite.execute!({ path: Path.utf8(path), query: Schema.streams, bindings: [] })?
-    Sqlite.execute!({ path: Path.utf8(path), query: Schema.ratings, bindings: [] })?
-    alter_add_column!(path, "ALTER TABLE activities ADD COLUMN weighted_avg_watts REAL")?
-    alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_20min_w REAL")?
-    alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN ftp_used REAL")?
-    alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN status TEXT")?
-    alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN skipped_reason TEXT")?
-    # v3: metrics record the HR zone bounds they were computed with, so a zone-
-    # config change invalidates + recomputes (like ftp_used does for FTP)
-    alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN zones_used TEXT")?
-    # v4: metrics record the algorithm revision they were computed with, so a
-    # change to the math itself (metrics_rev bump) invalidates + recomputes
-    alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN metrics_rev INTEGER")?
-    # v6: metrics record WHICH ladder rung scored them (load provenance)
-    alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN load_model TEXT")?
-    # v8: drop load_confidence — it was a pure function of load_model (v7), so storing
-    # it was redundant denormalization. Confidence is now derived from load_model at
-    # read time (doctor). The drop cleans up dbs that got the v7 column.
-    drop_column_if_exists!(path, "ALTER TABLE activity_metrics DROP COLUMN load_confidence")?
-    # v9: time-in-intensity from POWER (easy/moderate/hard seconds), judged against the
-    # sport's own FTP — the truer "how hard" for power sports than HR zones
-    alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN pi_easy_s INTEGER")?
-    alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN pi_moderate_s INTEGER")?
-    alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN pi_hard_s INTEGER")?
-    # v10: FTP is now per-sport under `ftp_<sport>` (uniform, no special cycling key).
-    # Move the old cycling `ftp` value to `ftp_ride` if it hasn't been set already.
-    Sqlite.execute!({ path: Path.utf8(path), query: "UPDATE config SET key = 'ftp_ride' WHERE key = 'ftp' AND (SELECT COUNT(*) FROM config WHERE key = 'ftp_ride') = 0", bindings: [] })?
-    # v2: index the column every date-range filter and the activities sort use
-    # (queries now compare a.start_local directly — sargable — instead of substr)
-    Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })
-}
-
-# rename old => new when old exists and new doesn't (idempotent, data-preserving)
-rename_table_if_exists! : Str, Str, Str => Try({}, _)
-rename_table_if_exists! = |path, old, new| {
-    count = Sqlite.query!({
-        path: Path.utf8(path),
-        query: "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = :old",
-        bindings: [{ name: ":old", value: String(old) }],
-        row: Sqlite.i64("n"),
-    })?
-    if count > 0
-        Sqlite.execute!({ path: Path.utf8(path), query: "ALTER TABLE ${old} RENAME TO ${new}", bindings: [] })
-    else
-        Ok({})
-}
-# an additive ADD COLUMN. Swallows ONLY "duplicate column" (the expected re-run
-# case); a locked db, disk error, etc. propagate instead of failing silently.
-alter_add_column! : Str, Str => Try({}, _)
-alter_add_column! = |path, q|
-    match Sqlite.execute!({ path: Path.utf8(path), query: q, bindings: [] }) {
-        Ok({}) => Ok({})
-        Err(SqliteErr(Error, msg)) =>
-            if Str.contains(msg, "duplicate column") Ok({}) else Err(SqliteErr(Error, msg))
-        Err(other) => Err(other)
-
-    }
-# idempotent column drop: a db that never had the column (fresh, or already dropped)
-# reports "no such column" — that's the converged state, not a failure.
-drop_column_if_exists! : Str, Str => Try({}, _)
-drop_column_if_exists! = |path, q|
-    match Sqlite.execute!({ path: Path.utf8(path), query: q, bindings: [] }) {
-        Ok({}) => Ok({})
-        Err(SqliteErr(Error, msg)) =>
-            if Str.contains(msg, "no such column") Ok({}) else Err(SqliteErr(Error, msg))
-        Err(other) => Err(other)
-
-    }
-# run migrations exactly when the db is behind, then stamp the version. Called
-# on every command entry (via open_db!) so upgrading the binary against an
-# existing db self-migrates instead of failing with an opaque missing-column error.
-ensure_schema! : Str => Try({}, _)
-ensure_schema! = |path| {
-    v = (Sqlite.query!({
-            path: Path.utf8(path),
-            query: "SELECT user_version AS v FROM pragma_user_version()",
-            bindings: [],
-            row: Sqlite.i64("v"),
-        })).ok_or(0)
-    if v >= schema_version {
-        Ok({})
-    } else {
-        run_migrations!(path)?
-        Sqlite.execute!({ path: Path.utf8(path), query: "PRAGMA user_version = ${(schema_version).to_str()}", bindings: [] })
-    }
-}
-# db path + guaranteed-current schema. Every command opens through this.
-open_db! : {} => Try(Str, _)
-open_db! = |{}| {
-    p = db_path!({})?
-    ensure_schema!(p)?
-    # harden on every open so existing world-readable installs get fixed too
-    home = Env.var_str!(OsStr.from_str("HOME"))?
-    secure_perms!("${home}/.stride")?
-    Ok(p)
-}
-# (schema DDL lives in Schema.roc — pure strings, the one kind of SQL that
-#  can move out of the app module without splitting a query from its decoder)
