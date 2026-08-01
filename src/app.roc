@@ -22,6 +22,7 @@ import pf.Env
 import pf.OsStr
 import pf.Http
 import http.Request
+import http.Response
 import http.Method
 import pf.Utc
 import pf.Sleep
@@ -194,8 +195,8 @@ sync_ftp_to_strava! = |path, ftp_str|
                         .with_timeout(TimeoutMilliseconds(30000)),
                     )
                     match resp {
-                        Ok(r) if r.status < 300 => Stdout.line!("  → synced to Strava (athlete FTP = ${ftp_str})")
-                        Ok(r) => Stdout.line!("  (Strava FTP sync failed: HTTP ${(r.status).to_str()} — re-run `stride auth` to grant profile:write, or set it at strava.com/settings)")
+                        Ok(r) if Response.status(r) < 300 => Stdout.line!("  → synced to Strava (athlete FTP = ${ftp_str})")
+                        Ok(r) => Stdout.line!("  (Strava FTP sync failed: HTTP ${(Response.status(r)).to_str()} — re-run `stride auth` to grant profile:write, or set it at strava.com/settings)")
                         Err(_) => Stdout.line!("  (couldn't reach Strava to sync FTP — set it at strava.com/settings)")
 
                     }
@@ -483,13 +484,13 @@ get_bearer! : Str, Str => Try(List(U8), _)
 get_bearer! = |uri, token|
     ok_body(send_bearer!(uri, token)?)
 
-ok_body : { status : U16, headers : List({ name : Str, value : Str }), body : List(U8) } -> Try(List(U8), _)
+ok_body : Response -> Try(List(U8), _)
 ok_body = |resp|
-    if resp.status < 300
-        Ok(resp.body)
+    if Response.status(resp) < 300
+        Ok(Response.body(resp))
     else {
-        text = (Str.from_utf8(resp.body)).ok_or("<non-utf8 body>")
-        Err(HttpStatus(resp.status, text))
+        text = (Str.from_utf8(Response.body(resp))).ok_or("<non-utf8 body>")
+        Err(HttpStatus(Response.status(resp), text))
     }
 # ── sync ─────────────────────────────────────────────────────────────
 
@@ -596,12 +597,12 @@ fetch_streams_all! = |path, token, ids, acc|
             id_str = (id).to_str()
             uri = "${api_base!({})}/api/v3/activities/${id_str}/streams?keys=time,heartrate,watts&key_by_type=true"
             resp = send_bearer!(uri, token)?
-            if resp.status == 429 {
+            if Response.status(resp) == 429 {
                 # rate limited — stop gracefully, next sync continues the backfill
                 Stdout.line!("rate limited by Strava — stopping streams backfill for now (will resume next sync)")?
                 Ok(acc)
-            } else if resp.status >= 300 and resp.status != 404 {
-                Err(HttpStatus(resp.status, Str.from_utf8(resp.body).ok_or("<non-utf8 body>")))
+            } else if Response.status(resp) >= 300 and Response.status(resp) != 404 {
+                Err(HttpStatus(Response.status(resp), Str.from_utf8(Response.body(resp)).ok_or("<non-utf8 body>")))
             } else {
                 # 404/2xx/non-utf8 policy lives in store_stream_response! (shared with backfill)
                 match store_stream_response!(path, id, resp)? {
@@ -672,11 +673,11 @@ send_bearer! = |uri, token|
 # (no streams recorded; don't refetch), 2xx => store, non-utf8 => skip WITHOUT
 # storing (storing would mark it done forever; it retries next run).
 store_stream_response! = |path, id, resp|
-    if resp.status == 404 {
+    if Response.status(resp) == 404 {
         store_streams!(path, id, "{}")?
         Ok(Stored)
-    } else if resp.status < 300 {
-        match Str.from_utf8(resp.body) {
+    } else if Response.status(resp) < 300 {
+        match Str.from_utf8(Response.body(resp)) {
             Ok(text) => {
                 store_streams!(path, id, text)?
                 Ok(Stored)
@@ -684,8 +685,8 @@ store_stream_response! = |path, id, resp|
             Err(_) => Ok(SkippedNonUtf8)
         }
     } else {
-        text = Str.from_utf8(resp.body).ok_or("<non-utf8 body>")
-        Err(HttpStatus(resp.status, text))
+        text = Str.from_utf8(Response.body(resp)).ok_or("<non-utf8 body>")
+        Err(HttpStatus(Response.status(resp), text))
     }
 backfill! : {} => Try({}, _)
 backfill! = |{}| {
@@ -736,7 +737,7 @@ drain_streams! = |path, token, ids, st|
         [id, .. as rest] => {
             uri = "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=time,heartrate,watts&key_by_type=true"
             resp = send_bearer!(uri, token)?
-            match Backfill.decide({ status: resp.status, done: st.done, window: st.window, retries: st.retries }, read_limits) {
+            match Backfill.decide({ status: Response.status(resp), done: st.done, window: st.window, retries: st.retries }, read_limits) {
                 Refresh => {
                     # multi-hour runs outlive the ~6h access token; refresh once and
                     # retry the same id. Same token back => real auth problem, stop.
