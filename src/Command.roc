@@ -95,33 +95,149 @@ Command :: [
 }
 
 # ── tests (ALL forms — migration preserves coverage, does not trim it) ──
-expect Command.parse(["stride", "init"]) == Ok(Init)
-expect Command.parse(["stride", "--version"]) == Ok(Version)
-expect Command.parse(["stride", "compare"]) == Ok(Compare("week"))
-expect Command.parse(["stride", "compare", "month"]) == Ok(Compare("month"))
-expect Command.parse(["stride", "activities"]) == Ok(Activities(30, ""))
-expect Command.parse(["stride", "activities", "10"]) == Ok(Activities(10, ""))
-expect Command.parse(["stride", "activities", "10", "rowing"]) == Ok(Activities(10, "rowing"))
-expect Command.parse(["stride", "activities", "banana"]) == Err(BadCount("banana"))
-expect Command.parse(["stride", "top", "tss"]) == Ok(Top("tss", 10, ""))
-expect Command.parse(["stride", "top", "tss", "5"]) == Ok(Top("tss", 5, ""))
-expect Command.parse(["stride", "top", "tss", "x"]) == Err(BadCount("x"))
-expect Command.parse(["stride", "load"]) == Ok(Load(90))
-expect Command.parse(["stride", "load", "7"]) == Ok(Load(7))
-expect Command.parse(["stride", "pz"]) == Ok(Zones)
-expect Command.parse(["stride", "zones"]) == Ok(Zones)
-expect Command.parse(["stride", "progress"]) == Ok(Progress(""))
-expect Command.parse(["stride", "progress", "2026-01-01"]) == Ok(Progress("2026-01-01"))
-expect Command.parse(["stride", "plan"]) == Ok(PlanView)
-expect Command.parse(["stride", "plan", "all"]) == Ok(PlanViewAll)
-expect Command.parse(["stride", "plan", "add", "2026-01-01", "vo2max", "d", "r"]) == Ok(PlanAdd("2026-01-01", "vo2max", "d", "r"))
-expect Command.parse(["stride", "complete", "3", "101"]) == Ok(Complete("3", "101"))
-expect Command.parse(["stride", "complete", "3"]) == Ok(CompleteRest("3"))
-expect Command.parse(["stride", "skip", "3", "sick"]) == Ok(Skip("3", "sick"))
-expect Command.parse(["stride", "config", "get", "ftp"]) == Ok(ConfigGet("ftp"))
-expect Command.parse(["stride", "config", "set", "ftp", "250"]) == Ok(ConfigSet("ftp", "250"))
-expect Command.parse(["stride", "plan", "add"]) == Err(Usage("plan add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `plan` to view the log"))
-expect Command.parse(["stride", "config"]) == Err(Usage("config get <key>  |  config set <key> <value>"))
-expect Command.parse(["stride", "wat"]) == Err(ShowHelp)
-expect Command.parse(["stride"]) == Err(ShowHelp)
+expect
+	match Command.parse(["stride", "init"]) {
+		Ok(Init) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "--version"]) {
+		Ok(Version) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "compare"]) {
+		Ok(Compare("week")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "compare", "month"]) {
+		Ok(Compare("month")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "activities"]) {
+		Ok(Activities(30, "")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "activities", "10"]) {
+		Ok(Activities(10, "")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "activities", "10", "rowing"]) {
+		Ok(Activities(10, "rowing")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "activities", "banana"]) {
+		Err(BadCount("banana")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "top", "tss"]) {
+		Ok(Top("tss", 10, "")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "top", "tss", "5"]) {
+		Ok(Top("tss", 5, "")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "top", "tss", "x"]) {
+		Err(BadCount("x")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "load"]) {
+		Ok(Load(90)) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "load", "7"]) {
+		Ok(Load(7)) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "pz"]) {
+		Ok(Zones) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "zones"]) {
+		Ok(Zones) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "progress"]) {
+		Ok(Progress("")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "progress", "2026-01-01"]) {
+		Ok(Progress("2026-01-01")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "plan"]) {
+		Ok(PlanView) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "plan", "all"]) {
+		Ok(PlanViewAll) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "plan", "add", "2026-01-01", "vo2max", "d", "r"]) {
+		Ok(PlanAdd("2026-01-01", "vo2max", "d", "r")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "complete", "3", "101"]) {
+		Ok(Complete("3", "101")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "complete", "3"]) {
+		Ok(CompleteRest("3")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "skip", "3", "sick"]) {
+		Ok(Skip("3", "sick")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "config", "get", "ftp"]) {
+		Ok(ConfigGet("ftp")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "config", "set", "ftp", "250"]) {
+		Ok(ConfigSet("ftp", "250")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "plan", "add"]) {
+		Err(Usage("plan add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `plan` to view the log")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "config"]) {
+		Err(Usage("config get <key>  |  config set <key> <value>")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "wat"]) {
+		Err(ShowHelp) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride"]) {
+		Err(ShowHelp) => True
+		_ => False
+	}
 

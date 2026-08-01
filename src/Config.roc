@@ -11,10 +11,11 @@ Config :: [].{
 	is_secret : Str -> Bool
 	is_secret = |k| List.contains(secret_keys, k)
 
-	expect is_secret("strava_access_token") == True
-	expect is_secret("strava_refresh_token") == True
-	expect is_secret("strava_client_secret") == True
-	expect is_secret("ftp") == False
-	expect is_secret("timezone") == False
-	expect is_secret("") == False
 }
+
+expect Config.is_secret("strava_access_token") == True
+expect Config.is_secret("strava_refresh_token") == True
+expect Config.is_secret("strava_client_secret") == True
+expect Config.is_secret("ftp") == False
+expect Config.is_secret("timezone") == False
+expect Config.is_secret("") == False
