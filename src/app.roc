@@ -352,9 +352,10 @@ auth_flow! = |path, client_id, client_secret| {
 }
 decode_tokens : List(U8) -> Try(TokenResp, _)
 decode_tokens = |body| {
+    text = Str.from_utf8(body).map_err(|_| TokenDecodeFailed)?
     decoded : Try(TokenResp, _)
-    decoded = Decode.from_bytes(body, Json.utf8)
-    Result.map_err(decoded, |_| TokenDecodeFailed)
+    decoded = Json.parse(text)
+    decoded.map_err(|_| TokenDecodeFailed)
 }
 save_tokens! : Str, TokenResp => Try({}, _)
 save_tokens! = |path, tokens| {
@@ -497,17 +498,17 @@ ActivitySummary : {
     distance : F64,
     total_elevation_gain : F64,
     # optional in Strava JSON — missing on activities without power/HR
-    suffer_score : Option F64,
-    average_watts : Option F64,
-    average_heartrate : Option F64,
-    weighted_average_watts : Option F64,
+    suffer_score : Try(F64, [Missing]),
+    average_watts : Try(F64, [Missing]),
+    average_heartrate : Try(F64, [Missing]),
+    weighted_average_watts : Try(F64, [Missing]),
 }
 
-opt_real : Option F64 -> [Real F64, Null]
+opt_real : Try(F64, [Missing]) -> [Real F64, Null]
 opt_real = |o|
-    match Option.get(o) {
-        Some(v) => Real(v)
-        None => Null
+    match o {
+        Ok(v) => Real(v)
+        Err(_) => Null
 
     }
 sync! : {} => Try({}, _)
@@ -590,23 +591,24 @@ fetch_streams_all! = |path, token, ids, acc|
             id_str = Num.to_str(id)
             uri = "${api_base!({})}/api/v3/activities/${id_str}/streams?keys=time,heartrate,watts&key_by_type=true"
             resp = send_bearer!(uri, token)?
-            if resp.status == 429
+            if resp.status == 429 {
                 # rate limited — stop gracefully, next sync continues the backfill
                 Stdout.line!("rate limited by Strava — stopping streams backfill for now (will resume next sync)")?
                 Ok(acc)
-            else if resp.status >= 300 and resp.status != 404
-                Err(HttpStatus(resp.status, Result.with_default(Str.from_utf8(resp.body), "<non-utf8 body>")))
-            else
+            } else if resp.status >= 300 and resp.status != 404 {
+                Err(HttpStatus(resp.status, Str.from_utf8(resp.body).ok_or("<non-utf8 body>")))
+            } else {
                 # 404/2xx/non-utf8 policy lives in store_stream_response! (shared with backfill)
                 match store_stream_response!(path, id, resp)? {
                     Stored => fetch_streams_all!(path, token, rest, acc + 1)
                     SkippedNonUtf8 => fetch_streams_all!(path, token, rest, acc)
 
                 }
+            }
         }
     }
 store_streams! : Str, I64, Str => Try({}, _)
-store_streams! = |path, id, text|
+store_streams! = |path, id, text| {
     Sqlite.execute!({
         path,
         query: "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (:id, :raw)",
@@ -618,6 +620,7 @@ store_streams! = |path, id, text|
     # streams just arrived — invalidate any metrics computed before them so the
     # next analyze recomputes zones/NP from the real data (they were frozen otherwise)
     invalidate_metrics!(path, id)
+}
 
 # drop an activity's computed metrics so the next analyze recomputes it. the
 # invalidation story: FTP change (ftp_used check), stream arrival, Strava edit.
@@ -782,9 +785,10 @@ fetch_pages! = |path, token, after_param, page, acc| {
     per_str = Num.to_str(per_page)
     uri = "${api_base!({})}/api/v3/athlete/activities?per_page=${per_str}&page=${page_str}${after_param}"
     body = get_bearer!(uri, token)?
+    text = Str.from_utf8(body).map_err(|_| ActivityDecodeFailed(page))?
     decoded : Try(List(ActivitySummary), _)
-    decoded = Decode.from_bytes(body, Json.utf8)
-    acts = Result.map_err(decoded, |_| ActivityDecodeFailed(page))?
+    decoded = Json.parse(text)
+    acts = decoded.map_err(|_| ActivityDecodeFailed(page))?
     upsert_all!(path, acts)?
     got = List.len(acts)
     total = acc + got
@@ -2031,8 +2035,8 @@ export_row_to_summary = |headers, row| {
         }
     opt_field = |name|
         match Str.to_f64(field(name, 0)) {
-            Ok(v) => Option.some(v)
-            Err(_) => Option.none({})
+            Ok(v) => Ok(v)
+            Err(_) => Err(Missing)
         }
     id = Str.to_i64(field("Activity ID", 0)).map_err(|_| BadRow)?
     start = Metrics.export_date_to_iso(field("Activity Date", 0)).map_err(|_| BadRow)?
