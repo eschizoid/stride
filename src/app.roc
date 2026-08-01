@@ -223,7 +223,7 @@ init! = |{}| {
 secure_perms! : Str => Try({}, _)
 secure_perms! = |dir| {
     cmd = "chmod 700 '${dir}' 2>/dev/null; chmod 600 '${dir}/db.sqlite' '${dir}/db.sqlite-wal' '${dir}/db.sqlite-shm' '${dir}/db.sqlite-journal' 2>/dev/null; true"
-    _ = Cmd.new("sh").args(["-c", cmd]).exec_output!()
+    _ = Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", cmd], OsStr.from_str)).exec_output!()
     Ok({})
 }
 # ── config key-value helpers ─────────────────────────────────────────
@@ -281,12 +281,12 @@ token_url! = |{}| "${api_base!({})}/oauth/token"
 # hand the inherited TTY to a console browser on headless boxes.
 open_browser! : Str => Try({}, _)
 open_browser! = |url|
-    match Cmd.new("open").arg(url).exec_output!() {
+    match Cmd.new(OsStr.from_str("open")).arg(OsStr.from_str(url)).exec_output!() {
         Ok(_) => Ok({})
         Err(_) =>
             # detach xdg-open: exec waits for the child, and xdg-open can resolve to
             # a FOREGROUND handler (console browser) that would block auth forever
-            match Cmd.new("sh").args(["-c", "xdg-open \"${url}\" >/dev/null 2>&1 &"]).exec_output!() {
+            match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", "xdg-open \"${url}\" >/dev/null 2>&1 &"], OsStr.from_str)).exec_output!() {
                 Ok(_) => Ok({})
                 Err(_) => Ok({})
 
@@ -388,7 +388,7 @@ TimeMode : [Zone(Str, I64), FixedOffset(I64), BadZone(Str, I64), Utc]
 zone_offset_now! : Str => Try(I64, [BadTz])
 zone_offset_now! = |tz| {
     cmd = "if [ -f '/usr/share/zoneinfo/${tz}' ]; TZ='${tz}' date +%z; else echo INVALID; fi"
-    match Cmd.new("sh").args(["-c", cmd]).exec_output!() {
+    match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", cmd], OsStr.from_str)).exec_output!() {
         Ok(out) => Metrics.parse_utc_offset(out.stdout_utf8).map_err(|_| BadTz)
         Err(_) => Err(BadTz)
 
@@ -471,7 +471,7 @@ post_form! = |uri, form| {
         method: POST,
         headers: [{ name: "Content-Type", value: "application/x-www-form-urlencoded" }],
         uri,
-        body: Str.to_utf8(form),
+        body: form.to_utf8(),
         timeout_ms: TimeoutMilliseconds(30000),
     })?
     ok_body(resp)
@@ -1977,9 +1977,9 @@ import_archive! = |src| {
     db = open_db!({})?
     dir_result =
         if Str.ends_with(src, ".zip") {
-            tmp = Cmd.new("mktemp").arg("-d").exec_output!().map_err(|_| ImportTempDirFailed)?
+            tmp = Cmd.new(OsStr.from_str("mktemp")).arg(OsStr.from_str("-d")).exec_output!().map_err(|_| ImportTempDirFailed)?
             tmp_dir = Str.trim(tmp.stdout_utf8)
-            match Cmd.new("unzip").args(["-o", "-q", src, "-d", tmp_dir]).exec_output!() {
+            match Cmd.new(OsStr.from_str("unzip")).args(List.map(["-o", "-q", src, "-d", tmp_dir], OsStr.from_str)).exec_output!() {
                 Ok(_) => Ok(tmp_dir)
                 Err(_) => Err(UnzipFailed)
             }
