@@ -804,13 +804,14 @@ upsert_all! : Str, List(ActivitySummary) => Try({}, _)
 upsert_all! = |path, acts|
     match acts {
         [] => Ok({})
-        [a, .. as rest] =>
+        [a, .. as rest] => {
             upsert_activity!(path, a)?
             upsert_all!(path, rest)
+        }
 
     }
 upsert_activity! : Str, ActivitySummary => Try({}, _)
-upsert_activity! = |path, a|
+upsert_activity! = |path, a| {
     Sqlite.execute!({
         path,
         query:
@@ -834,6 +835,7 @@ upsert_activity! = |path, a|
     # the row's raw fields may have changed (Strava edit within the rolling
     # window) — invalidate its metrics so "edits self-heal" is actually true
     invalidate_metrics!(path, a.id)
+}
 
 # ── analyze ──────────────────────────────────────────────────────────
 
@@ -858,29 +860,30 @@ analyze! = |{}| {
             res = compute_missing_metrics!(path, cfg.zb)?
             rebuild_daily_load!(path)?
             form =
-                when Sqlite.query!({
+                match Sqlite.query!({
                     path,
                     query: "SELECT tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
                     bindings: [],
                     row: Sqlite.f64("tsb"),
-                }) is
+                }) {
                     Ok(tsb) => Ok(Some(tsb))
                     # no daily_load yet (nothing computed) is fine — skip the verdict;
                     # a real query error propagates instead of being swallowed
                     Err(NoRowsReturned) => Ok(None)
                     Err(other) => Err(other)
+                }
             tsb_opt = form?
-            if json_mode!({})
+            if json_mode!({}) {
                 form_tsb =
                     match tsb_opt {
                         Some(tsb) => tsb
                         None => 0.0
                     }
                 emit_ok!({ computed: res.computed, stream_errors: res.stream_errors, form_tsb })
-            else
-                Stdout.line!("computed metrics for ${Num.to_str(res.computed)} activities")?
+            } else {
+                Stdout.line!("computed metrics for ${U64.to_str(res.computed)} activities")?
                 (if res.stream_errors > 0
-                    Stdout.line!("⚠ ${Num.to_str(res.stream_errors)} had unreadable stream data — computed from summary fields, will retry next sync")
+                    Stdout.line!("⚠ ${U64.to_str(res.stream_errors)} had unreadable stream data — computed from summary fields, will retry next sync")
                 else
                     Ok({}))?
                 # one verdict line; the full report lives in `stride summary`
@@ -889,6 +892,7 @@ analyze! = |{}| {
                     None => Ok({})
 
                 }
+            }
         }
     }
 }
@@ -1280,30 +1284,31 @@ window_stats! = |path, from_str, to_str|
 # CTL as of a given day (most recent daily_load row on or before it); 0 if none
 ctl_at! : Str, Str => Try(F64, _)
 ctl_at! = |path, day_str|
-    when Sqlite.query!({
+    match Sqlite.query!({
         path,
         query: "SELECT ctl AS ctl FROM daily_load WHERE day <= :d ORDER BY day DESC LIMIT 1",
         bindings: [{ name: ":d", value: String(day_str) }],
         row: Sqlite.f64("ctl"),
-    }) is
+    }) {
         Ok(v) => Ok(v)
         Err(NoRowsReturned) => Ok(0.0)
         Err(e) => Err(e)
+    }
 
 # period-over-period: this rolling window vs the one immediately before it
 compare! : Str => Try({}, _)
 compare! = |period| {
     path = open_db!({})?
-    if period != "week" and period != "month"
+    if period != "week" and period != "month" {
         err_out!("bad_period", "compare week | compare month (got '${period}')")
-    else {
+    } else {
         days = if period == "month" 28 else 7
         label = if period == "month" "28d" else "7d"
         match Sqlite.query!({ path, query: "SELECT day AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sqlite.str("day") }) {
             Err(NoRowsReturned) => err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
             Err(e) => Err(e)
             Ok(latest_day) => {
-                anchor = Result.with_default(Metrics.date_str_to_days(latest_day), 0)
+                anchor = Metrics.date_str_to_days(latest_day).ok_or(0)
                 cur_from = Metrics.days_to_date_str(anchor - (days - 1))
                 cur_to = Metrics.days_to_date_str(anchor + 1)
                 pri_from = Metrics.days_to_date_str(anchor - (2 * days - 1))
