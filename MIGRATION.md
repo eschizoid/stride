@@ -70,3 +70,8 @@ SEMANTICS + STDLIB (the deep layers — the real grind)
   JSON `null` → optional `Try(F64, [Missing])`. Drop `import json.*` entirely.
 
 Keep `main` on alpha4 until the whole thing is green on the new compiler.
+
+- Streams null-in-array: builtin Json.parse REJECTS null in a typed List(F64)
+  (whole decode Errs). Fix: Str-replace `null`->`-1` in the raw JSON before parse;
+  stream values are never negative, so downstream valid_hr/valid_watts drop the -1s,
+  preserving the old index-aligned drop-nulls behavior.
