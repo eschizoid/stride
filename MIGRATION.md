@@ -26,14 +26,25 @@ SYNTAX
 - **`expect`s go at file top level, OUTSIDE the `.{}` block, and reference members
   QUALIFIED** (`Command.parse(...)`). Inside the block they compile but `roc test`
   runs 0 of them — silent test loss, watch for it.
+- **Filename MUST match the module type name** (`Csv.roc` → `Csv :: …`).
+- **`if cond then a else b` → `if cond a else b`** (no `then`), or block form
+  `if cond { … } else { … }`. Record branches work inline: `if c { ..r, x: 1 } else …`.
+- **Record update `{ acc & f: v }` → spread `{ ..acc, f: v }`.**
+- **Blocks with local bindings need `{ }`** — a `parse = |x| { y = …; z }` body, a
+  match/if branch that binds, and an `expect { h = …; bool }` all need braces.
+- **Number suffix `0u64` → `0.U64`.**
 
-SEMANTICS (the deep one)
-- Tag unions are **NOMINAL**, and `==` needs an **`is_eq` method on the type** — there
-  is no auto-derive. So `Command.parse(x) == Ok(Init)` fails with "Command has no
-  is_eq". Two ways to migrate a module's equality-based tests:
-  1. Give the type an `is_eq` method (structural compare — big for a 27-variant union).
-  2. Rewrite the assert to `match` the result and compare only primitive fields.
-  Decide per type; primitives (Str, U64, Bool) already have `is_eq`.
+SEMANTICS + STDLIB (the deep layers — the real grind)
+- Tag unions are **NOMINAL**, and `==` needs an **`is_eq` method on the type** — no
+  auto-derive. Migrate equality-based tests to **match-based** asserts
+  (`match parse(x) { Ok(Init) => True; _ => False }`) — PROVEN on Command (29/29 pass).
+  Primitives (Str, U64, Bool) and `List`/records-of-them already compare with `==`.
+- **The stdlib is extensively renamed AND method-style (UFCS).** Confirmed so far:
+  `List.walk` → `List.fold` / `list.fold(init, |acc, e| …)`. Expect many more per
+  module (`walk_with_index`, `keep_oks`, `map2`, `with_default`, `Result.*` → `Try.*`,
+  `Str.*` variants). This is the bulk of the per-module work — fix them by iterating
+  `roc check`, which names each missing method precisely, and cross-check against
+  roc-lang/roc `test/` + `src/glue` .roc files for the new name.
 
 ## Module progress (pure first, then platform/app last)
 
