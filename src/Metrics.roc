@@ -750,6 +750,45 @@ Metrics :: [].{
         dur_s: 3600.0,
         moving_time: 3600,
     }
+
+    # ── grade-adjusted running: Minetti et al. (2002) ────────────────
+    # "Energy cost of walking and running at extreme uphill and downhill slopes."
+    # Metabolic cost of running as a 5th-order polynomial of gradient i (rise/run):
+    #   C(i) = 155.4*i^5 - 30.4*i^4 - 43.3*i^3 + 46.3*i^2 + 19.5*i + 3.6  (J/kg/m)
+    # minetti_ratio returns the flat-equivalent factor C(i)/C(0): how many flat metres
+    # a metre on this grade costs. Gradient is clamped to Minetti's measured +/-45%
+    # range; the factor is floored at 0.4 so a steep descent can't collapse distance.
+    minetti_ratio : F64 -> F64
+    minetti_ratio = |grade| {
+        i = grade.max(-0.45).min(0.45)
+        c = (155.4 * i * i * i * i * i) - (30.4 * i * i * i * i) - (43.3 * i * i * i) + (46.3 * i * i) + (19.5 * i) + 3.6
+        (c / 3.6).max(0.4)
+    }
+
+    # flat-equivalent distance: each segment's delta-distance weighted by its grade
+    # factor. dist = cumulative metres, alt = metres, index-aligned (Strava distance +
+    # altitude streams). Segments with non-positive delta-distance (GPS jitter / pauses)
+    # contribute nothing; fewer than two samples -> 0. Pace reuses Render.pace_per_km.
+    grade_adjusted_distance : List(F64), List(F64) -> F64
+    grade_adjusted_distance = |dist, alt| {
+        samples = List.map2(dist, alt, |d, a| { d, a })
+        res = List.fold(samples, { prev: Err(NoPrev), gad: 0.0 }, |acc, s|
+            match acc.prev {
+                Err(_) => { prev: Ok(s), gad: acc.gad }
+                Ok(p) => {
+                    dd = s.d - p.d
+                    if dd > 0.0 {
+                        grade = (s.a - p.a) / dd
+                        { prev: Ok(s), gad: acc.gad + (dd * minetti_ratio(grade)) }
+                    } else {
+                        # backwards/jitter/pause: keep the last VALID point as prev so
+                        # this bad sample can't skew the next segment's distance or grade
+                        acc
+                    }
+                }
+            })
+        res.gad
+    }
 }
 
 # ── tests ───────────────────────────────────────────────────────────
@@ -1110,3 +1149,21 @@ expect Metrics.day_of_week(0) == "Thu" # epoch day 0 = 1970-01-01 = Thursday
 # epoch -> ISO datetime (UTC)
 expect Metrics.epoch_to_iso(0) == "1970-01-01T00:00:00Z"
 expect Metrics.epoch_to_iso(1000000000) == "2001-09-09T01:46:40Z"
+
+# grade-adjusted running (Minetti 2002): flat = 1.0x, +10% grade ~1.66x, -10% ~0.60x
+expect (Metrics.minetti_ratio(0.0) - 1.0).abs() < 0.001
+expect (Metrics.minetti_ratio(0.1) - 1.658).abs() < 0.01
+expect (Metrics.minetti_ratio(-0.1) - 0.598).abs() < 0.01
+# gradient clamps to +/-45% (a cliff-like reading can't run away)
+expect (Metrics.minetti_ratio(2.0) - Metrics.minetti_ratio(0.45)).abs() < 0.001
+# flat course: grade-adjusted distance equals raw distance
+expect (Metrics.grade_adjusted_distance([0.0, 100.0, 200.0, 300.0], [10.0, 10.0, 10.0, 10.0]) - 300.0).abs() < 0.01
+# steady 10% climb inflates distance by ~1.66 per segment (100m*1.658*2)
+expect (Metrics.grade_adjusted_distance([0.0, 100.0, 200.0], [0.0, 10.0, 20.0]) - 331.6).abs() < 0.5
+# descent discounts it (100m*0.598*2)
+expect (Metrics.grade_adjusted_distance([0.0, 100.0, 200.0], [0.0, -10.0, -20.0]) - 119.5).abs() < 0.5
+# a pause (no delta-distance) contributes nothing; too few samples -> 0
+expect (Metrics.grade_adjusted_distance([0.0, 100.0, 100.0, 200.0], [0.0, 0.0, 0.0, 0.0]) - 200.0).abs() < 0.01
+expect (Metrics.grade_adjusted_distance([42.0], [1.0]) - 0.0).abs() < 0.001
+# a backwards GPS blip in cumulative distance doesn't inflate the total (jitter ignored)
+expect (Metrics.grade_adjusted_distance([0.0, 100.0, 50.0, 200.0], [0.0, 0.0, 0.0, 0.0]) - 200.0).abs() < 0.01
