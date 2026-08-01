@@ -396,6 +396,7 @@ zone_offset_now! = |tz| {
 }
 resolve_time_mode! : Str => Try(TimeMode, _)
 resolve_time_mode! = |path| {
+    fixed : Try(I64, [NoFixed])
     fixed =
         match config_get!(path, "utc_offset_minutes") {
             Ok(s) => Ok(I64.from_str(s).ok_or(0))
@@ -2378,7 +2379,7 @@ progress! = |date_arg| {
         bindings: [{ name: ":date", value: String(date) }],
         rows: |cols| |stmt| {
             name = Sqlite.str("name")(cols)(stmt)?
-            date = Sqlite.str("date")(cols)(stmt)?
+            row_date = Sqlite.str("date")(cols)(stmt)?
             sport = Sqlite.str("sport")(cols)(stmt)?
             distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
             moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
@@ -2387,7 +2388,7 @@ progress! = |date_arg| {
             rpe = Sqlite.f64("rpe")(cols)(stmt)?
             output_kj = Sqlite.f64("output_kj")(cols)(stmt)?
             tss = Sqlite.f64("tss")(cols)(stmt)?
-            Ok({ name, date, sport, distance_m, moving_time, np_w, avg_hr, rpe, output_kj, tss })
+            Ok({ name, date: row_date, sport, distance_m, moving_time, np_w, avg_hr, rpe, output_kj, tss })
         },
     })?
     labeled =
