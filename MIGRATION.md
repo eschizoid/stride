@@ -92,6 +92,20 @@ SEMANTICS + STDLIB (the deep layers — the real grind)
 - Streams: `StreamsResp`/`Option F64` decoders → a plain record type + `Json.parse`;
   JSON `null` → optional `Try(F64, [Missing])`. Drop `import json.*` entirely.
 
+## app.roc — basic-cli 0.21 platform notes (researched, not yet applied)
+- Header: `app [main!] { pf: platform "…/0.21.0-rc4/…tar.zst" }`.
+- `main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, [Exit(I32), ..])`.
+  Args are TAGGED now (no `Arg.display`): `List.map(raw, |a| match a { Utf8(s) => s, _ => "" })`.
+- **Sqlite API is ~UNCHANGED**: `Sqlite.query!({path, query, bindings, row})`,
+  `query_many!`, `execute!`; decoders `Sqlite.i64/str/f64/u64/nullable_*`;
+  `decode_record`; `Binding {name, value}`; `Value [Null, Real, Integer, String, Bytes]`
+  all identical. ONE change: `path` is `Path.Path`, not `Str` — wrap the db path via
+  `Path.from_str` (import pf.Path). So open_db! returns/uses a Path.
+- Modules exposed: Cmd, Env, File, Http, Sqlite, Stdin, Stdout, Stderr, Path, Utc, …
+  HTTP data types (Method/Request/Response) now come from the `http` package, not pf.
+- JSON: drop `Encode.to_bytes(v, Json.utf8)` → `Json.to_str(v)`; `Decode.from_bytes` →
+  `Json.parse`. See Streams.roc for the working pattern.
+
 Keep `main` on alpha4 until the whole thing is green on the new compiler.
 
 - Streams null-in-array: builtin Json.parse REJECTS null in a typed List(F64)
