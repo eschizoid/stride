@@ -357,15 +357,16 @@ decode_tokens = |body| {
     Result.map_err(decoded, |_| TokenDecodeFailed)
 }
 save_tokens! : Str, TokenResp => Try({}, _)
-save_tokens! = |path, tokens|
+save_tokens! = |path, tokens| {
     config_set!(path, "strava_access_token", tokens.access_token)?
     config_set!(path, "strava_refresh_token", tokens.refresh_token)?
-    config_set!(path, "strava_expires_at", Num.to_str(tokens.expires_at))
+    config_set!(path, "strava_expires_at", I64.to_str(tokens.expires_at))
+}
 
 now_secs! : {} => I64
 now_secs! = |{}| {
     millis = Utc.to_millis_since_epoch(Utc.now!({}))
-    Num.to_i64(millis // 1000)
+    (millis // 1000).to_i64_wrap()
 }
 # How "today"'s civil-day boundary is anchored. The platform clock (Utc.now!) is
 # UTC-only, but every activity date is Strava's local civil date — so for any user
@@ -393,10 +394,10 @@ zone_offset_now! = |tz| {
     }
 }
 resolve_time_mode! : Str => Try(TimeMode, _)
-resolve_time_mode! = |path|
+resolve_time_mode! = |path| {
     fixed =
         match config_get!(path, "utc_offset_minutes") {
-            Ok(s) => Ok(Result.with_default(Str.to_i64(s), 0))
+            Ok(s) => Ok(I64.from_str(s).ok_or(0))
             Err(_) => Err(NoFixed)
         }
     tz =
@@ -408,7 +409,7 @@ resolve_time_mode! = |path|
         Ok(name) =>
             match zone_offset_now!(name) {
                 Ok(off) => Ok(Zone(name, off))
-                Err(_) => Ok(BadZone(name, Result.with_default(fixed, 0)))
+                Err(_) => Ok(BadZone(name, fixed.ok_or(0)))
             }
         Err(_) =>
             match fixed {
@@ -417,6 +418,7 @@ resolve_time_mode! = |path|
 
             }
     }
+}
 time_mode_offset : TimeMode -> I64
 time_mode_offset = |mode|
     match mode {
