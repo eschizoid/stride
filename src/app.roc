@@ -1339,14 +1339,14 @@ compare! = |period| {
 json_schema_version : I64
 json_schema_version = 1
 
-out! : payload, (payload -> Str) => Try({}, _) where payload implements Encoding
+out! : payload, (payload -> Str) => Try({}, _) where [payload.encoder_for : JsonEncoding -> (payload, JsonEncodeState -> Try(JsonEncodeState, []))]
 out! = |payload, render|
     if json_mode!({}) emit_ok!(payload) else Stdout.line!(render(payload))
 
 # every JSON success is wrapped `{ schema_version, data }`; `data` is the command
 # payload. Errors go through emit_err! and are `{ schema_version, error }` instead —
 # a caller discriminates success from failure by which key is present.
-emit_ok! : val => Try({}, _) where val implements Encoding
+emit_ok! : val => Try({}, _) where [val.encoder_for : JsonEncoding -> (val, JsonEncodeState -> Try(JsonEncodeState, []))]
 emit_ok! = |val|
     print_json!({ schema_version: json_schema_version, data: val })
 
@@ -1354,12 +1354,9 @@ emit_err! : Str, Str => Try({}, _)
 emit_err! = |code, msg|
     print_json!({ schema_version: json_schema_version, error: { code, message: msg } })
 
-print_json! : val => Try({}, _) where val implements Encoding
-print_json! = |val| {
-    bytes = Encode.to_bytes(val, Json.utf8)
-    text = Result.with_default(Str.from_utf8(bytes), "{}")
-    Stdout.line!(text)
-}
+print_json! : val => Try({}, _) where [val.encoder_for : JsonEncoding -> (val, JsonEncodeState -> Try(JsonEncodeState, []))]
+print_json! = |val|
+    Stdout.line!(Json.to_str(val))
 # output mode: humans get tables by default; LLM callers set STRIDE_FORMAT=json
 # (CLAUDECODE env also flips to json for harnesses that set it)
 json_mode! : {} => Bool
