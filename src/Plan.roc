@@ -1,0 +1,255 @@
+import Db
+import Output
+import Strava
+import Report
+import pf.Sqlite
+import pf.Stdout
+import pf.Path
+import Metrics
+import Render
+
+Plan :: [].{
+    # session-RPE rating: the athlete is the sensor for sports without power meters.
+    # Ratings live in their OWN table (the judgment tier) — never on the activities
+    # mirror, which sync/import replace wholesale. Rating an activity invalidates its
+    # metrics so the next analyze rescores it through the sport-aware ladder.
+    rate! : Str, Str => Try({}, _)
+    rate! = |target, rpe_str| {
+        path = Db.open_db!({})?
+        rpe_result =
+            match F64.from_str(rpe_str) {
+                Ok(r) if r >= 1.0 and r <= 10.0 => Ok(r)
+                _ => Err(BadRpe)
+            }
+        match rpe_result {
+            Err(_) => Output.err_out!("bad_rpe", "rate needs an effort from 1 (easy) to 10 (max) — got '${rpe_str}'")
+            Ok(rpe) => {
+                id_result =
+                    if target == "latest" {
+                        match Sqlite.query!({
+                            path: Path.utf8(path),
+                            query: "SELECT COALESCE(MAX(id), 0) AS id FROM activities WHERE start_local = (SELECT MAX(start_local) FROM activities)",
+                            bindings: [],
+                            row: Sqlite.i64("id"),
+                        }) {
+                            Ok(0) => Err(NoActivities)
+                            Ok(id) => Ok(id)
+                            Err(e) => Err(e)
+                        }
+                    } else {
+                        I64.from_str(target).map_err(|_| BadId)
+                    }
+                match id_result {
+                    Err(BadId) => Output.err_out!("bad_id", "rate needs an activity id or 'latest': rate <activity_id|latest> <1-10>")
+                    Err(NoActivities) => Output.err_out!("no_activities", "nothing to rate yet — `stride sync` or `stride import` first")
+                    Err(other) => Err(other)
+                    Ok(activity_id) =>
+                        if !(Report.row_exists!(path, "activities", activity_id)?) {
+                            Output.err_out!("activity_not_found", "no activity ${I64.to_str(activity_id)} in the db — `stride sync` first?")
+                        } else {
+                            Sqlite.execute!({
+                                path: Path.utf8(path),
+                                query: "INSERT OR REPLACE INTO ratings (activity_id, rpe, rated_at) VALUES (:id, :rpe, :at)",
+                                bindings: [
+                                    { name: ":id", value: Integer(activity_id) },
+                                    { name: ":rpe", value: Real(rpe) },
+                                    { name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
+                                ],
+                            })?
+                            # a rating is a metric input — invalidate so analyze rescores
+                            Strava.invalidate_metrics!(path, activity_id)?
+                            Output.out!({ rated: activity_id, rpe }, |p| "activity ${I64.to_str(p.rated)} rated ${Render.fmt0(p.rpe)}/10 — run `stride analyze` to rescore")
+                        }
+                }
+            }
+        }
+    }
+    plan_view! : [ThisWeek, AllTime] => Try({}, _)
+    plan_view! = |scope| {
+        path = Db.open_db!({})?
+        # default view is the CURRENT training week (Mon-Sun containing today) so `plan`
+        # is "this week at a glance", not the whole history spilling into next week. The
+        # Monday offset is rem(days+3,7) — the same convention as Metrics.day_of_week.
+        today = Db.local_today_days!(path)
+        mon = today - (today + 3) % (7)
+        week_filter =
+            match scope {
+                AllTime => ""
+                ThisWeek => "WHERE COALESCE(target_date,'') >= '${Metrics.days_to_date_str(mon)}' AND COALESCE(target_date,'') <= '${Metrics.days_to_date_str(mon + 6)}'"
+            }
+        rows = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT id AS id, COALESCE(created_at,'') AS created_at, COALESCE(target_date,'') AS target_date,
+                \\       COALESCE(session_type,'') AS session_type, COALESCE(detail,'') AS detail,
+                \\       COALESCE(rationale,'') AS rationale, COALESCE(completed_activity_id,0) AS completed_activity_id,
+                \\       COALESCE(status,'open') AS status, COALESCE(skipped_reason,'') AS skipped_reason
+                \\FROM planned_sessions ${week_filter} ORDER BY target_date DESC, id DESC LIMIT 100
+            ,
+            bindings: [],
+            rows: |cols| |stmt| {
+                id = Sqlite.i64("id")(cols)(stmt)?
+                created_at = Sqlite.str("created_at")(cols)(stmt)?
+                target_date = Sqlite.str("target_date")(cols)(stmt)?
+                session_type = Sqlite.str("session_type")(cols)(stmt)?
+                detail = Sqlite.str("detail")(cols)(stmt)?
+                rationale = Sqlite.str("rationale")(cols)(stmt)?
+                completed_activity_id = Sqlite.i64("completed_activity_id")(cols)(stmt)?
+                status = Sqlite.str("status")(cols)(stmt)?
+                skipped_reason = Sqlite.str("skipped_reason")(cols)(stmt)?
+                Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, status, skipped_reason })
+            },
+        })?
+        # most recent 100 by date, displayed in calendar order
+        ordered = List.fold(rows, [], |acc, x| List.concat([x], acc))
+        dow = |date_str|
+            match Metrics.date_str_to_days(date_str) {
+                Ok(d) => Metrics.day_of_week(d)
+                Err(_) => ""
+            }
+        # enrich ONCE with the day-of-week; both output modes consume the same rows
+        # (constructed explicitly — Roc's `&` can only update fields, not add one)
+        enriched = List.map(ordered, |p| {
+            id: p.id,
+            created_at: p.created_at,
+            target_date: p.target_date,
+            day: dow(p.target_date),
+            session_type: p.session_type,
+            detail: p.detail,
+            rationale: p.rationale,
+            completed_activity_id: p.completed_activity_id,
+            status: p.status,
+            skipped_reason: p.skipped_reason,
+        })
+        Output.out!(enriched, |rows_enriched|
+            Render.render_table(
+                ["day", "date", "type", "status", "detail", "id"],
+                List.map(rows_enriched, |p| [p.day, p.target_date, p.session_type, p.status, p.detail, (p.id).to_str()]),
+            ))
+    }
+    plan_add! : Str, Str, Str, Str => Try({}, _)
+    plan_add! = |target_date, session_type, detail, rationale| {
+        path = Db.open_db!({})?
+        # guard: one open planned session per date — skip or complete the old one first
+        existing = Sqlite.query!({
+            path: Path.utf8(path),
+            query: "SELECT COALESCE(MAX(id), 0) AS id FROM planned_sessions WHERE target_date = :date AND COALESCE(status, 'open') = 'open'",
+            bindings: [{ name: ":date", value: String(target_date) }],
+            row: Sqlite.i64("id"),
+        })?
+        if existing > 0
+            Output.err_out!("date_already_planned", "${target_date} already has open planned session #${(existing).to_str()} — `stride skip ${(existing).to_str()} \"reason\"` first")
+        else
+            insert_planned_session!(path, target_date, session_type, detail, rationale)
+    }
+    insert_planned_session! : Str, Str, Str, Str, Str => Try({}, _)
+    insert_planned_session! = |path, target_date, session_type, detail, rationale| {
+        Sqlite.execute!({
+            path: Path.utf8(path),
+            query:
+                \\INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status)
+                \\VALUES (:at, :date, :type, :detail, :rationale, 'open')
+            ,
+            bindings: [
+                { name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
+                { name: ":date", value: String(target_date) },
+                { name: ":type", value: String(session_type) },
+                { name: ":detail", value: String(detail) },
+                { name: ":rationale", value: String(rationale) },
+            ],
+        })?
+        new_id = Sqlite.query!({
+            path: Path.utf8(path),
+            query: "SELECT MAX(id) AS id FROM planned_sessions",
+            bindings: [],
+            row: Sqlite.i64("id"),
+        })?
+        Output.out!({ id: new_id, target_date, session_type }, |p| "planned #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}")
+    }
+    # ONE not-found message for complete/complete-rest/skip — can't drift apart
+    session_not_found! : I64 => Try({}, _)
+    session_not_found! = |session_id|
+        Output.err_out!("session_not_found", "no planned session #${(session_id).to_str()} — run `stride plan` to see ids")
+
+    complete! : Str, Str => Try({}, _)
+    complete! = |session_id_str, activity_id_str| {
+        path = Db.open_db!({})?
+        match (I64.from_str(session_id_str), I64.from_str(activity_id_str)) {
+            (Ok(session_id), Ok(activity_id)) =>
+                # SQLite UPDATE matching 0 rows is not an error — check existence
+                # ourselves so a typo'd id can't report false success and silently
+                # leave the planned session open / the coaching log out of sync
+                if !(Report.row_exists!(path, "planned_sessions", session_id)?) {
+                    session_not_found!(session_id)
+                } else if !(Report.row_exists!(path, "activities", activity_id)?) {
+                    Output.err_out!("activity_not_found", "no activity ${I64.to_str(activity_id)} in the db — `stride sync` first?")
+                } else {
+                    Sqlite.execute!({
+                        path: Path.utf8(path),
+                        query: "UPDATE planned_sessions SET completed_activity_id = :aid, status = 'done' WHERE id = :pid",
+                        bindings: [
+                            { name: ":aid", value: Integer(activity_id) },
+                            { name: ":pid", value: Integer(session_id) },
+                        ],
+                    })?
+                    Output.out!({ completed_session: session_id, activity: activity_id }, |p| "planned session #${I64.to_str(p.completed_session)} completed by activity ${I64.to_str(p.activity)}")
+                }
+            _ =>
+                Output.err_out!("bad_id", "complete needs numeric ids: complete <session_id> <activity_id>")
+
+        }
+    }
+    # rest days have no activity to link — `complete <id>` alone closes them. Any
+    # other session type still demands its activity id: done means evidence.
+    complete_rest! : Str => Try({}, _)
+    complete_rest! = |session_id_str| {
+        path = Db.open_db!({})?
+        match I64.from_str(session_id_str) {
+            Err(_) => Output.err_out!("bad_id", "complete needs a numeric id: complete <session_id> [activity_id]")
+            Ok(session_id) =>
+                if !(Report.row_exists!(path, "planned_sessions", session_id)?)
+                    session_not_found!(session_id)
+                else {
+                    session_type = Sqlite.query!({
+                        path: Path.utf8(path),
+                        query: "SELECT COALESCE(session_type, '') AS t FROM planned_sessions WHERE id = :pid",
+                        bindings: [{ name: ":pid", value: Integer(session_id) }],
+                        row: Sqlite.str("t"),
+                    })?
+                    if session_type != "rest" {
+                        Output.err_out!("activity_required", "planned session #${(session_id).to_str()} is '${session_type}' — completing it needs the activity id (only rest days close without one)")
+                    } else {
+                        Sqlite.execute!({
+                            path: Path.utf8(path),
+                            query: "UPDATE planned_sessions SET status = 'done' WHERE id = :pid",
+                            bindings: [{ name: ":pid", value: Integer(session_id) }],
+                        })?
+                        Output.out!({ completed_session: session_id, rest: True }, |p| "planned session #${(p.completed_session).to_str()} (rest) marked done")
+                    }
+                }
+        }
+    }
+    skip! : Str, Str => Try({}, _)
+    skip! = |session_id_str, reason| {
+        path = Db.open_db!({})?
+        match I64.from_str(session_id_str) {
+            Ok(session_id) =>
+                if !(Report.row_exists!(path, "planned_sessions", session_id)?) {
+                    session_not_found!(session_id)
+                } else {
+                    Sqlite.execute!({
+                        path: Path.utf8(path),
+                        query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why WHERE id = :pid",
+                        bindings: [
+                            { name: ":why", value: String(reason) },
+                            { name: ":pid", value: Integer(session_id) },
+                        ],
+                    })?
+                    Output.out!({ skipped_session: session_id, reason }, |p| "planned session #${I64.to_str(p.skipped_session)} skipped: ${p.reason}")
+                }
+            Err(_) =>
+                Output.err_out!("bad_id", "skip needs a numeric id: skip <session_id> \"<reason>\"")
+
+        }
+    }
+}
