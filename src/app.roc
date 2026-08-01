@@ -1,5 +1,6 @@
 app [main!] {
     pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.21.0/4rAQg8kUYZ3Vksr4qMQHpaFYNiHSn9GgS7gVxghd1XYV.tar.zst",
+    http: "https://github.com/roc-lang/http/releases/download/1.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 }
 
 # stride — a local-first multi-sport training engine.
@@ -20,6 +21,8 @@ import pf.Stdin
 import pf.Env
 import pf.OsStr
 import pf.Http
+import http.Request
+import http.Method
 import pf.Utc
 import pf.Sleep
 import pf.Sqlite
@@ -183,13 +186,13 @@ sync_ftp_to_strava! = |path, ftp_str|
 
                 Err(_) => Stdout.line!("  (couldn't sync FTP to Strava this time)")
                 Ok(token) => {
-                    resp = Http.send!({
-                        method: PUT,
-                        headers: [{ name: "Authorization", value: "Bearer ${token}" }],
-                        uri: "${api_base!({})}/api/v3/athlete?ftp=${ftp_str}",
-                        body: [],
-                        timeout_ms: TimeoutMilliseconds(30000),
-                    })
+                    resp = Http.send!(
+                        Request.from_method(Method.PUT)
+                        .with_uri("${api_base!({})}/api/v3/athlete?ftp=${ftp_str}")
+                        .add_header("Authorization", "Bearer ${token}")
+                        .with_body([])
+                        .with_timeout(TimeoutMilliseconds(30000)),
+                    )
                     match resp {
                         Ok(r) if r.status < 300 => Stdout.line!("  → synced to Strava (athlete FTP = ${ftp_str})")
                         Ok(r) => Stdout.line!("  (Strava FTP sync failed: HTTP ${(r.status).to_str()} — re-run `stride auth` to grant profile:write, or set it at strava.com/settings)")
@@ -467,13 +470,13 @@ get_valid_token! = |path| {
 
 post_form! : Str, Str => Try(List(U8), _)
 post_form! = |uri, form| {
-    resp = Http.send!({
-        method: POST,
-        headers: [{ name: "Content-Type", value: "application/x-www-form-urlencoded" }],
-        uri,
-        body: form.to_utf8(),
-        timeout_ms: TimeoutMilliseconds(30000),
-    })?
+    resp = Http.send!(
+        Request.from_method(Method.POST)
+        .with_uri(uri)
+        .add_header("Content-Type", "application/x-www-form-urlencoded")
+        .with_body(form.to_utf8())
+        .with_timeout(TimeoutMilliseconds(30000)),
+    )?
     ok_body(resp)
 }
 get_bearer! : Str, Str => Try(List(U8), _)
@@ -655,13 +658,13 @@ read_limits = {
 }
 
 send_bearer! = |uri, token|
-    Http.send!({
-        method: GET,
-        headers: [{ name: "Authorization", value: "Bearer ${token}" }],
-        uri,
-        body: [],
-        timeout_ms: TimeoutMilliseconds(60000),
-    })
+    Http.send!(
+        Request.from_method(Method.GET)
+        .with_uri(uri)
+        .add_header("Authorization", "Bearer ${token}")
+        .with_body([])
+        .with_timeout(TimeoutMilliseconds(60000)),
+    )
 
 # store a streams response like the sync path: 404 => honest empty marker,
 # 2xx => body (skip if non-utf8 so it retries), other => propagate the error
