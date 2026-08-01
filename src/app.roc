@@ -240,7 +240,7 @@ config_get! = |path, key|
 # read a config key, distinguishing "genuinely absent" from "the db read failed"
 # — so a locked/corrupt db surfaces as a real error instead of masquerading as
 # "not set" / "not authenticated" / "set your FTP".
-config_opt! : Str, Str => Result [Found Str, NotFound] _
+config_opt! : Str, Str => Try([Found(Str), NotFound], _)
 config_opt! = |path, key|
     match config_get!(path, key) {
         Ok(v) => Ok(Found(v))
@@ -476,7 +476,7 @@ get_bearer! : Str, Str => Try(List(U8), _)
 get_bearer! = |uri, token|
     ok_body(send_bearer!(uri, token)?)
 
-ok_body : { status : U16, headers : List { name : Str, value : Str }, body : List(U8) } -> Try(List(U8), _)
+ok_body : { status : U16, headers : List({ name : Str, value : Str }), body : List(U8) } -> Try(List(U8), _)
 ok_body = |resp|
     if resp.status < 300
         Ok(resp.body)
@@ -662,7 +662,7 @@ send_bearer! = |uri, token|
 # THE stream-response policy, shared by sync and backfill: 404 => "{}" marker
 # (no streams recorded; don't refetch), 2xx => store, non-utf8 => skip WITHOUT
 # storing (storing would mark it done forever; it retries next run).
-store_stream_response! : Str, I64, Http.Response => Result [Stored, SkippedNonUtf8] _
+store_stream_response! : Str, I64, Http.Response => Try([Stored, SkippedNonUtf8], _)
 store_stream_response! = |path, id, resp|
     if resp.status == 404
         store_streams!(path, id, "{}")?
@@ -883,7 +883,7 @@ analyze! = |{}| {
         }
     }
 }
-load_zone_config! : Str => Result { ftp : F64, zb : Metrics.ZoneBounds } _
+load_zone_config! : Str => Try({ ftp : F64, zb : Metrics.ZoneBounds }, _)
 load_zone_config! = |path| {
     ftp = config_f64!(path, "ftp_ride")?
     z1 = config_f64!(path, "hr_z1_max")?
@@ -916,7 +916,7 @@ ActivityRow : {
     raw : [NotNull Str, Null],
 }
 
-compute_missing_metrics! : Str, Metrics.ZoneBounds => Result { computed : U64, stream_errors : U64 } _
+compute_missing_metrics! : Str, Metrics.ZoneBounds => Try({ computed : U64, stream_errors : U64 }, _)
 compute_missing_metrics! = |path, zb| {
     # recompute a row when its stored ftp_used no longer matches ITS sport's current
     # FTP (per-sport, via the CASE), or the HR zones / metrics_rev changed.
@@ -957,7 +957,7 @@ compute_missing_metrics! = |path, zb| {
     })?
     process_rows!(path, zb, rows, { computed: 0, stream_errors: 0 })
 }
-process_rows! : Str, Metrics.ZoneBounds, List(ActivityRow), { computed : U64, stream_errors : U64 } => Result { computed : U64, stream_errors : U64 } _
+process_rows! : Str, Metrics.ZoneBounds, List(ActivityRow), { computed : U64, stream_errors : U64 } => Try({ computed : U64, stream_errors : U64 }, _)
 process_rows! = |path, zb, rows, acc|
     match rows {
         [] => Ok(acc)
@@ -1183,7 +1183,7 @@ rebuild_daily_load! = |path| {
         }
     }
 }
-walk_days! : Str, Dict I64 F64, I64, I64, F64, F64 => Try({}, _)
+walk_days! : Str, Dict(I64, F64), I64, I64, F64, F64 => Try({}, _)
 walk_days! = |path, by_day, day, last_day, ctl_prev, atl_prev|
     if day > last_day
         Ok({})
@@ -1207,7 +1207,7 @@ walk_days! = |path, by_day, day, last_day, ctl_prev, atl_prev|
 # ── shared queries ──────────────────────────────────────────────────
 
 # zone + TSS totals for activities on/after a cutoff date
-zone_sum! : Str, Str => Result { z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, measured : F64, easy : I64, moderate : I64, hard : I64 } _
+zone_sum! : Str, Str => Try({ z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, measured : F64, easy : I64, moderate : I64, hard : I64 }, _)
 zone_sum! = |path, cutoff|
     Sqlite.query!({
         path,
@@ -1244,7 +1244,7 @@ zone_sum! = |path, cutoff|
 
 # activity stats within a half-open [from, to) date window (both are date strings
 # compared against start_local; ISO makes the lexical compare correct)
-window_stats! : Str, Str, Str => Result { z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, sessions : I64 } _
+window_stats! : Str, Str, Str => Try({ z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, sessions : I64 }, _)
 window_stats! = |path, from_str, to_str|
     Sqlite.query!({
         path,
@@ -1257,10 +1257,14 @@ window_stats! = |path, from_str, to_str|
         ,
         bindings: [{ name: ":from", value: String(from_str) }, { name: ":to", value: String(to_str) }],
         row: |cols| |stmt| {
-            z1 = Sqlite.i64("z1"), z2: Sqlite.i64("z2"), z3: Sqlite.i64("z3")(cols)(stmt)?
-            z4 = Sqlite.i64("z4"), z5: Sqlite.i64("z5")(cols)(stmt)?
-            tss = Sqlite.f64("tss"), sessions: Sqlite.i64("sessions")(cols)(stmt)?
-            Ok({ z1, z4, tss })
+            z1 = Sqlite.i64("z1")(cols)(stmt)?
+            z2 = Sqlite.i64("z2")(cols)(stmt)?
+            z3 = Sqlite.i64("z3")(cols)(stmt)?
+            z4 = Sqlite.i64("z4")(cols)(stmt)?
+            z5 = Sqlite.i64("z5")(cols)(stmt)?
+            tss = Sqlite.f64("tss")(cols)(stmt)?
+            sessions = Sqlite.i64("sessions")(cols)(stmt)?
+            Ok({ z1, z2, z3, z4, z5, tss, sessions })
         },
     })
 
@@ -1563,7 +1567,7 @@ stats! = |{}| {
         Stdout.line!(to_table(ytd))
     }
 }
-stats_rows! : Str, Str => Try(List { sport : Str, sessions : I64, hours : F64, km : F64 }, _)
+stats_rows! : Str, Str => Try(List({ sport : Str, sessions : I64, hours : F64, km : F64 }), _)
 stats_rows! = |path, cutoff|
     Sqlite.query_many!({
         path,
@@ -1879,7 +1883,7 @@ activities! = |limit, sport_filter| {
 # metric keyword => its ORDER BY column + human table header. The column is HARDCODED
 # per keyword, so no user input ever reaches the SQL; an unknown metric errors before
 # any query. Single source of truth so column and header can't drift apart.
-top_metric : Str -> Result { col : Str, header : Str } [BadMetric]
+top_metric : Str -> Try({ col : Str, header : Str }, [BadMetric])
 top_metric = |m|
     match m {
         "hr" => Ok({ col: "a.avg_hr", header: "heart rate (hr)" })
@@ -1998,7 +2002,7 @@ import_archive! = |src| {
         }
     }
 }
-import_rows! : Str, List(Str), List(List(Str)), { imported : U64, skipped : U64 } => Result { imported : U64, skipped : U64 } _
+import_rows! : Str, List(Str), List(List(Str)), { imported : U64, skipped : U64 } => Try({ imported : U64, skipped : U64 }, _)
 import_rows! = |db, headers, rows, acc|
     match rows {
         [] => Ok(acc)
