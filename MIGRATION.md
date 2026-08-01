@@ -131,3 +131,17 @@ Keep `main` on alpha4 until the whole thing is green on the new compiler.
   (whole decode Errs). Fix: Str-replace `null`->`-1` in the raw JSON before parse;
   stream values are never negative, so downstream valid_hr/valid_watts drop the -1s,
   preserving the old index-aligned drop-nulls behavior.
+
+## Sqlite ROW DECODER syntax change (affects EVERY query in app.roc)
+The alpha4 record-builder `row: { Sqlite.decode_record <- id: Sqlite.i64("id"), name: Sqlite.str("name") }`
+is GONE. New form is an explicit two-stage decoder function:
+```
+row: |cols| |stmt| {
+    id = Sqlite.i64("id")(cols)(stmt)?
+    name = Sqlite.str("name")(cols)(stmt)?
+    Ok({ id, name })
+}
+```
+i.e. each `field: Sqlite.TYPE("col")` -> `field = Sqlite.TYPE("col")(cols)(stmt)?`, wrapped in
+`|cols| |stmt| { ... Ok({ field, field, ... }) }`. Single-column stays `row: Sqlite.str("x")`.
+Also: `?` can map errors `... ? |err| Tag(err)`; `for x in list { }` loops exist; `path` is a Path.
