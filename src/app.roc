@@ -2632,6 +2632,7 @@ complete_rest! = |session_id_str| {
                     })?
                     out!({ completed_session: session_id, rest: True }, |p| "planned session #${(p.completed_session).to_str()} (rest) marked done")
                 }
+            }
     }
 }
 skip! : Str, Str => Try({}, _)
