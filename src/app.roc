@@ -2019,10 +2019,10 @@ import_rows! = |db, headers, rows, acc|
         [] => Ok(acc)
         [row, .. as rest] =>
             match export_row_to_summary(headers, row) {
-                Ok(summary) =>
+                Ok(summary) => {
                     upsert_activity!(db, summary)?
                     import_rows!(db, headers, rest, { ..acc, imported: acc.imported + 1 })
-
+                }
                 Err(_) =>
                     import_rows!(db, headers, rest, { ..acc, skipped: acc.skipped + 1 })
 
@@ -2253,28 +2253,30 @@ rate! = |target, rpe_str| {
         }
     match rpe_result {
         Err(_) => err_out!("bad_rpe", "rate needs an effort from 1 (easy) to 10 (max) — got '${rpe_str}'")
-        Ok(rpe) =>
+        Ok(rpe) => {
             id_result =
-                if target == "latest"
-                    when Sqlite.query!({
+                if target == "latest" {
+                    match Sqlite.query!({
                         path,
                         query: "SELECT COALESCE(MAX(id), 0) AS id FROM activities WHERE start_local = (SELECT MAX(start_local) FROM activities)",
                         bindings: [],
                         row: Sqlite.i64("id"),
-                    }) is
+                    }) {
                         Ok(0) => Err(NoActivities)
                         Ok(id) => Ok(id)
                         Err(e) => Err(e)
-                else
-                    Str.to_i64(target).map_err(|_| BadId)
+                    }
+                } else {
+                    I64.from_str(target).map_err(|_| BadId)
+                }
             match id_result {
                 Err(BadId) => err_out!("bad_id", "rate needs an activity id or 'latest': rate <activity_id|latest> <1-10>")
                 Err(NoActivities) => err_out!("no_activities", "nothing to rate yet — `stride sync` or `stride import` first")
                 Err(other) => Err(other)
                 Ok(activity_id) =>
-                    if !(row_exists!(path, "activities", activity_id)?)
-                        err_out!("activity_not_found", "no activity ${Num.to_str(activity_id)} in the db — `stride sync` first?")
-                    else
+                    if !(row_exists!(path, "activities", activity_id)?) {
+                        err_out!("activity_not_found", "no activity ${I64.to_str(activity_id)} in the db — `stride sync` first?")
+                    } else {
                         Sqlite.execute!({
                             path,
                             query: "INSERT OR REPLACE INTO ratings (activity_id, rpe, rated_at) VALUES (:id, :rpe, :at)",
@@ -2286,9 +2288,10 @@ rate! = |target, rpe_str| {
                         })?
                         # a rating is a metric input — invalidate so analyze rescores
                         invalidate_metrics!(path, activity_id)?
-                        out!({ rated: activity_id, rpe }, |p| "activity ${Num.to_str(p.rated)} rated ${Render.fmt0(p.rpe)}/10 — run `stride analyze` to rescore")
-
+                        out!({ rated: activity_id, rpe }, |p| "activity ${I64.to_str(p.rated)} rated ${Render.fmt0(p.rpe)}/10 — run `stride analyze` to rescore")
+                    }
             }
+        }
     }
 }
 # power-zone reference chart: the 7 Coggan/Peloton zones as watt ranges from your
