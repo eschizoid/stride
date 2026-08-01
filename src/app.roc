@@ -2364,7 +2364,7 @@ progress! = |date_arg| {
                 Err(_) => ""
             }
         }
-    prows : List(Metrics).ProgressRow
+    prows : List(Metrics.ProgressRow)
     prows = Sqlite.query_many!({
         path,
         query:
@@ -2400,7 +2400,7 @@ progress! = |date_arg| {
        .map(|g| { name: Render.progress_group_label(g.name, g.kind), rows: g.rows })
     # choose each group's lens, keep only rows it can score; drop unscorable groups
     keep_scored = |lens, g| {
-        kept = List.keep_if(g.rows, |r| Result.is_ok(Metrics.lens_score(lens, r)))
+        kept = List.keep_if(g.rows, |r| Metrics.lens_score(lens, r).is_ok())
         if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, lens, rows: kept })
     }
     scored = List.keep_oks(labeled, |g|
@@ -2408,12 +2408,12 @@ progress! = |date_arg| {
             Ef => keep_scored(Ef, g)
             SpeedHr => keep_scored(SpeedHr, g)
             Rpe => keep_scored(Rpe, g)
-            Unscorable => Err(Skip))
-        }
-    if List.is_empty(scored)
-        if Str.is_empty(date)
+            Unscorable => Err(Skip)
+        })
+    if List.is_empty(scored) {
+        if Str.is_empty(date) {
             err_out!("no_scorable_workouts", "nothing to compare yet — analyze activities first (and `stride rate` your strength sessions)")
-        else {
+        } else {
             on_date = Sqlite.query_many!({
                 path,
                 query: "SELECT name AS name, id AS id FROM activities WHERE substr(start_local, 1, 10) = :date LIMIT 1",
@@ -2429,7 +2429,7 @@ progress! = |date_arg| {
                 Err(_) => err_out!("no_workout_on_date", "no workout found on ${date}")
             }
         }
-    else if json_mode!({})
+    } else if json_mode!({}) {
         emit_ok!({
             anchor_date: date,
             groups: List.map(scored, |g| {
@@ -2438,7 +2438,7 @@ progress! = |date_arg| {
                 sessions: List.map(g.rows, |r| {
                     date: r.date,
                     sport: r.sport,
-                    score: Result.with_default(Metrics.lens_score(g.lens, r), 0.0),
+                    score: Metrics.lens_score(g.lens, r).ok_or(0.0),
                     np_w: r.np_w,
                     avg_hr: r.avg_hr,
                     distance_m: r.distance_m,
@@ -2449,8 +2449,9 @@ progress! = |date_arg| {
                 }),
             }),
         })
-    else
+    } else {
         Stdout.line!(Str.join_with(List.map(scored, |g| Render.progress_section(g.name, g.rows, date, g.lens)), "\n\n"))
+    }
 }
 load_series! : U64 => Try({}, _)
 load_series! = |days| {
