@@ -124,7 +124,8 @@ out=$("$STRIDE_BIN" plan add 2099-01-01 threshold "d" "r"); grep -q date_already
 out=$("$STRIDE_BIN" skip 1 "sick"); grep -q '"skipped_session"' <<<"$out" || fail "skip"
 out=$("$STRIDE_BIN" plan add 2099-01-01 threshold "d2" "r2"); grep -q '"id":2' <<<"$out" || fail "re-plan after skip"
 out=$("$STRIDE_BIN" complete 2 101); grep -q '"completed_session"' <<<"$out" || fail "complete"
-"$STRIDE_BIN" plan | python3 -c '
+# `plan` defaults to the current week; the seeded sessions are far-future, so use `plan all`
+"$STRIDE_BIN" plan all | python3 -c '
 import json, sys
 ps = {p["id"]: p for p in json.load(sys.stdin)["data"]}
 assert ps[1]["status"] == "skipped" and ps[1]["skipped_reason"] == "sick"
@@ -447,7 +448,9 @@ assert "UNKNOWN" in d["time"], d
 echo "doctor time-mode OK (tz precedence + bad-zone fallback)"
 
 # ── human output mode ────────────────────────────────────────────
-out=$(STRIDE_FORMAT=human "$STRIDE_BIN" plan); grep -Eq "date.+type.+status" <<<"$out" || fail "human table header"
+out=$(STRIDE_FORMAT=human "$STRIDE_BIN" plan all); grep -Eq "date.+type.+status" <<<"$out" || fail "human table header"
+# `plan` (no arg) is week-scoped: the far-future seeded sessions must NOT appear
+out=$("$STRIDE_BIN" plan); python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert all(p["target_date"] < "2099" for p in d), "plan must be current-week only"' <<<"$out" || fail "plan week scope"
 out=$(STRIDE_FORMAT=human "$STRIDE_BIN" activities); grep -Eq "date.+sport.+name" <<<"$out" || fail "activities header"
 out=$(STRIDE_FORMAT=human "$STRIDE_BIN" load 7); grep -q "→ today: form" <<<"$out" || fail "load verdict line"
 out=$(STRIDE_FORMAT=human "$STRIDE_BIN" stats); grep -q "ALL TIME" <<<"$out" || fail "stats human"

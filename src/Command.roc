@@ -24,7 +24,8 @@ Command : [
     Progress Str, # workout name/date ("" = latest)
     Activity Str, # activity id
     Load U64, # days
-    PlanView,
+    PlanView, # current training week (Mon-Sun)
+    PlanViewAll, # the full log
     PlanAdd Str Str Str Str, # date, type, detail, rationale
     Complete Str Str, # session id, activity id
     CompleteRest Str, # session id (rest days need no activity)
@@ -71,6 +72,7 @@ parse = |args|
         [_, "load"] -> Ok(Load(90))
         [_, "load", n] -> count(n, |c| Load(c))
         [_, "plan"] -> Ok(PlanView)
+        [_, "plan", "all"] -> Ok(PlanViewAll)
         [_, "plan", "add", date, session_type, detail, rationale] -> Ok(PlanAdd(date, session_type, detail, rationale))
         [_, "complete", session_id, activity_id] -> Ok(Complete(session_id, activity_id))
         [_, "complete", session_id] -> Ok(CompleteRest(session_id))
@@ -112,6 +114,7 @@ expect parse(["stride", "zones"]) == Ok(Zones)
 expect parse(["stride", "progress"]) == Ok(Progress(""))
 expect parse(["stride", "progress", "2026-01-01"]) == Ok(Progress("2026-01-01"))
 expect parse(["stride", "plan"]) == Ok(PlanView)
+expect parse(["stride", "plan", "all"]) == Ok(PlanViewAll)
 expect parse(["stride", "plan", "add", "2026-01-01", "vo2max", "d", "r"]) == Ok(PlanAdd("2026-01-01", "vo2max", "d", "r"))
 expect parse(["stride", "complete", "3", "101"]) == Ok(Complete("3", "101"))
 expect parse(["stride", "complete", "3"]) == Ok(CompleteRest("3"))

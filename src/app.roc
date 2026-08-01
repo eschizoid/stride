@@ -80,7 +80,7 @@ help_text =
 
     WHAT SHOULD I DO?
         week                    planning bundle: summary + open plan + last 14 days
-        plan                    view the planned-session log (calendar order + day-of-week)
+        plan                    this week's plan (Mon-Sun); `plan all` for the full log
         plan add <date> <type> <detail> <rationale>    add a planned session
         complete <session_id> [activity_id]            mark done (bare = rest day)
         skip <session_id> <reason>                     mark skipped, with reason
@@ -132,7 +132,8 @@ dispatch! = |cmd|
         Progress(name) -> progress!(name)
         Activity(id_str) -> activity!(id_str)
         Load(days) -> load_series!(days)
-        PlanView -> plan_view!({})
+        PlanView -> plan_view!(ThisWeek)
+        PlanViewAll -> plan_view!(AllTime)
         PlanAdd(date, session_type, detail, rationale) -> plan_add!(date, session_type, detail, rationale)
         Complete(session_id, activity_id) -> complete!(session_id, activity_id)
         CompleteRest(session_id) -> complete_rest!(session_id)
@@ -2291,9 +2292,18 @@ load_series! = |days|
     ordered = List.reverse(rows)
     out!(ordered, Render.load_screen)
 
-plan_view! : {} => Result {} _
-plan_view! = |{}|
+plan_view! : [ThisWeek, AllTime] => Result {} _
+plan_view! = |scope|
     path = open_db!({})?
+    # default view is the CURRENT training week (Mon-Sun containing today) so `plan`
+    # is "this week at a glance", not the whole history spilling into next week. The
+    # Monday offset is rem(days+3,7) — the same convention as Metrics.day_of_week.
+    today = local_today_days!(path)?
+    mon = today - Num.rem(today + 3, 7)
+    week_filter =
+        when scope is
+            AllTime -> ""
+            ThisWeek -> "WHERE COALESCE(target_date,'') >= '${Metrics.days_to_date_str(mon)}' AND COALESCE(target_date,'') <= '${Metrics.days_to_date_str(mon + 6)}'"
     rows = Sqlite.query_many!({
         path,
         query:
@@ -2302,7 +2312,7 @@ plan_view! = |{}|
                COALESCE(session_type,'') AS session_type, COALESCE(detail,'') AS detail,
                COALESCE(rationale,'') AS rationale, COALESCE(completed_activity_id,0) AS completed_activity_id,
                COALESCE(status,'open') AS status, COALESCE(skipped_reason,'') AS skipped_reason
-        FROM planned_sessions ORDER BY target_date DESC, id DESC LIMIT 100
+        FROM planned_sessions ${week_filter} ORDER BY target_date DESC, id DESC LIMIT 100
         """,
         bindings: [],
         rows: { Sqlite.decode_record <-
