@@ -96,7 +96,7 @@ help_text =
 # main! stays thin: parse argv into a typed Command (pure, in Command.roc), then
 # dispatch. All arity/count validation lives in the parser and is unit-tested there.
 main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, [Exit(I32), ..])
-main! = |raw_args|
+main! = |raw_args| {
     args = List.map(raw_args, Arg.display)
     match Command.parse(args) {
         Err(ShowHelp) => Stdout.line!(help_text)
@@ -105,6 +105,7 @@ main! = |raw_args|
         Ok(cmd) => dispatch!(cmd)
 
     }
+}
 dispatch! : Command.Command => Try({}, _)
 dispatch! = |cmd|
     match cmd {
@@ -142,7 +143,7 @@ usage! = |u|
     Stdout.line!("usage: stride ${u}")
 
 config_show! : Str => Try({}, _)
-config_show! = |key|
+config_show! = |key| {
     path = open_db!({})?
     if Config.is_secret(key)
         # confirm set-ness without leaking the value
@@ -156,15 +157,16 @@ config_show! = |key|
             NotFound => err_out!("not_set", "(not set)")
 
         }
+}
 config_store! : Str, Str => Try({}, _)
-config_store! = |key, val|
+config_store! = |key, val| {
     path = open_db!({})?
     config_set!(path, key, val)?
     Stdout.line!("${key} = ${val}")?
     # FTP is the one config that also lives on Strava — keep them in sync so
     # Strava's own power features use the same number
     if key == "ftp_ride" sync_ftp_to_strava!(path, val) else Ok({})
-
+}
 # push a new FTP to Strava (PUT /athlete?ftp=). Best-effort: any failure just
 # warns — the local `config set` has already succeeded and been reported.
 sync_ftp_to_strava! : Str, Str => Try({}, _)
@@ -199,12 +201,12 @@ sync_ftp_to_strava! = |path, ftp_str|
 # ── paths ────────────────────────────────────────────────────────────
 
 db_path! : {} => Try(Str, _)
-db_path! = |{}|
+db_path! = |{}| {
     home = Env.var!("HOME")?
     Ok("${home}/.stride/db.sqlite")
-
+}
 init! : {} => Try({}, _)
-init! = |{}|
+init! = |{}| {
     home = Env.var!("HOME")?
     dir = "${home}/.stride"
     # ignore AlreadyExists — idempotent init
@@ -213,16 +215,16 @@ init! = |{}|
     ensure_schema!(path)?
     secure_perms!(dir)?
     Stdout.line!("initialized ${path}")
-
+}
 # owner-only permissions on the credential store. basic-cli 0.20 has no mode API,
 # so shell out; best-effort (never fails the command — a platform without chmod
 # just doesn't get hardened, and we don't claim it did). Sidecars may not exist.
 secure_perms! : Str => Try({}, _)
-secure_perms! = |dir|
+secure_perms! = |dir| {
     cmd = "chmod 700 '${dir}' 2>/dev/null; chmod 600 '${dir}/db.sqlite' '${dir}/db.sqlite-wal' '${dir}/db.sqlite-shm' '${dir}/db.sqlite-journal' 2>/dev/null; true"
     _ = Cmd.new("sh") |> Cmd.args(["-c", cmd]) |> Cmd.exec_output!()
     Ok({})
-
+}
 # ── config key-value helpers ─────────────────────────────────────────
 
 config_get! : Str, Str => Try(Str, _)
@@ -311,7 +313,7 @@ client_cred! = |path, env_name, key|
             }
     }
 auth! : {} => Try({}, _)
-auth! = |{}|
+auth! = |{}| {
     path = open_db!({})?
     # env vars for first-time setup; re-auth falls back to the creds stored last time.
     # Genuinely-missing creds get setup guidance, not a raw MissingEnv crash.
@@ -323,8 +325,9 @@ auth! = |{}|
         (Err(other), _) | (_, Err(other)) => Err(other)
 
     }
+}
 auth_flow! : Str, Str, Str => Try({}, _)
-auth_flow! = |path, client_id, client_secret|
+auth_flow! = |path, client_id, client_secret| {
     url = "https://www.strava.com/oauth/authorize?client_id=${client_id}&response_type=code&redirect_uri=http://localhost&approval_prompt=auto&scope=read,activity:read_all,profile:read_all,profile:write"
     Stdout.line!("1) Click Authorize in the browser tab that just opened (URL below if it didn't):")?
     Stdout.line!("")?
@@ -345,13 +348,13 @@ auth_flow! = |path, client_id, client_secret|
     config_set!(path, "strava_client_id", client_id)?
     config_set!(path, "strava_client_secret", client_secret)?
     Stdout.line!("authorized — tokens stored. Run `stride sync` to pull your activities.")
-
+}
 decode_tokens : List(U8) -> Try(TokenResp, _)
-decode_tokens = |body|
+decode_tokens = |body| {
     decoded : Try(TokenResp, _)
     decoded = Decode.from_bytes(body, Json.utf8)
     Result.map_err(decoded, |_| TokenDecodeFailed)
-
+}
 save_tokens! : Str, TokenResp => Try({}, _)
 save_tokens! = |path, tokens|
     config_set!(path, "strava_access_token", tokens.access_token)?
@@ -359,10 +362,10 @@ save_tokens! = |path, tokens|
     config_set!(path, "strava_expires_at", Num.to_str(tokens.expires_at))
 
 now_secs! : {} => I64
-now_secs! = |{}|
+now_secs! = |{}| {
     millis = Utc.to_millis_since_epoch(Utc.now!({}))
     Num.to_i64(millis // 1000)
-
+}
 # How "today"'s civil-day boundary is anchored. The platform clock (Utc.now!) is
 # UTC-only, but every activity date is Strava's local civil date — so for any user
 # west of UTC, the UTC day rolls over hours before their local day, inserting a
@@ -380,13 +383,14 @@ TimeMode : [Zone Str I64, FixedOffset I64, BadZone Str I64, Utc]
 # validating it against the system tz database, then reading `date +%z`. An
 # unknown name yields Err — we never let a typo silently become +0000 (UTC).
 zone_offset_now! : Str => Try(I64, [BadTz])
-zone_offset_now! = |tz|
+zone_offset_now! = |tz| {
     cmd = "if [ -f '/usr/share/zoneinfo/${tz}' ]; TZ='${tz}' date +%z; else echo INVALID; fi"
     match Cmd.new("sh") |> Cmd.args(["-c", cmd]) |> Cmd.exec_output!() {
         Ok(out) => Metrics.parse_utc_offset(out.stdout_utf8) |> Result.map_err(|_| BadTz)
         Err(_) => Err(BadTz)
 
     }
+}
 resolve_time_mode! : Str => Try(TimeMode, _)
 resolve_time_mode! = |path|
     fixed =
@@ -423,20 +427,20 @@ time_mode_offset = |mode|
     }
 # minutes east of UTC -> "±HH:MM" for display
 fmt_offset : I64 -> Str
-fmt_offset = |m|
+fmt_offset = |m| {
     a = Num.abs(m)
     pad = |n| if n < 10 "0${Num.to_str(n)}" else Num.to_str(n)
     "${if m < 0 "-" else "+"}${pad(a // 60)}:${pad(a % 60)}"
-
+}
 local_today_days! : Str => Try(I64, _)
-local_today_days! = |path|
+local_today_days! = |path| {
     mode = resolve_time_mode!(path)?
     Ok((now_secs!({}) + time_mode_offset(mode) * 60) // 86400)
-
+}
 # returns a valid access token, refreshing if expired; NotAuthed if never
 # authorized (a genuinely absent token — NOT a db read failure, which propagates)
 get_valid_token! : Str => Try(Str, _)
-get_valid_token! = |path|
+get_valid_token! = |path| {
     access = token_field!(path, "strava_access_token")?
     refresh = token_field!(path, "strava_refresh_token")?
     expires_str = token_field!(path, "strava_expires_at")?
@@ -452,11 +456,11 @@ get_valid_token! = |path|
         tokens = decode_tokens(body)?
         save_tokens!(path, tokens)?
         Ok(tokens.access_token)
-
+}
 # ── http helpers ─────────────────────────────────────────────────────
 
 post_form! : Str, Str => Result (List(U8)) _
-post_form! = |uri, form|
+post_form! = |uri, form| {
     resp = Http.send!({
         method: POST,
         headers: [Http.header(("Content-Type", "application/x-www-form-urlencoded"))],
@@ -465,7 +469,7 @@ post_form! = |uri, form|
         timeout_ms: TimeoutMilliseconds(30000),
     })?
     ok_body(resp)
-
+}
 get_bearer! : Str, Str => Result (List(U8)) _
 get_bearer! = |uri, token|
     ok_body(send_bearer!(uri, token)?)
@@ -503,7 +507,7 @@ opt_real = |o|
 
     }
 sync! : {} => Try({}, _)
-sync! = |{}|
+sync! = |{}| {
     path = open_db!({})?
     match get_valid_token!(path) {
         Err(NotAuthed) ->
@@ -538,12 +542,13 @@ sync! = |{}|
                 "synced ${Num.to_str(p.synced)} activities, fetched streams for ${Num.to_str(p.streams_fetched)}${tail}")
 
     }
+}
 # fetch time/HR/watts streams for activities that don't have them yet,
 # newest first, capped per run to respect Strava's rate limits (~100 reads/15min)
 streams_per_run = 60
 
 backfill_streams! : Str, Str => Try(U64, _)
-backfill_streams! = |path, token|
+backfill_streams! = |path, token| {
     ids = Sqlite.query_many!({
         path,
         query:
@@ -557,7 +562,7 @@ backfill_streams! = |path, token|
         rows: Sqlite.i64("id"),
     })?
     fetch_streams_all!(path, token, ids, 0)
-
+}
 # count activities still lacking streams (so sync can report incomplete backfill
 # honestly instead of letting the 60/run cap look like completion)
 pending_streams! : Str => Try(I64, _)
@@ -672,7 +677,7 @@ store_stream_response! = |path, id, resp|
         Err(HttpStatus(resp.status, text))
 
 backfill! : {} => Try({}, _)
-backfill! = |{}|
+backfill! = |{}| {
     path = open_db!({})?
     match get_valid_token!(path) {
         Err(NotAuthed) => err_out!("not_authenticated", "not authenticated — run `stride auth` first")
@@ -702,6 +707,7 @@ backfill! = |{}|
                 drain_streams!(path, token, missing_ids, { done: 0, window: 0, retries: 0 })
 
     }
+}
 # Per-run drain state: `done` = reads this run (vs the daily cap), `window` = reads
 # since the last window sleep (vs the 15-min cap), `retries` = consecutive 429s
 # after a sleep (to detect the daily cap without headers).
@@ -764,7 +770,7 @@ drain_streams! = |path, token, ids, st|
 per_page = 100
 
 fetch_pages! : Str, Str, Str, U64, U64 => Try(U64, _)
-fetch_pages! = |path, token, after_param, page, acc|
+fetch_pages! = |path, token, after_param, page, acc| {
     page_str = Num.to_str(page)
     per_str = Num.to_str(per_page)
     uri = "${api_base!({})}/api/v3/athlete/activities?per_page=${per_str}&page=${page_str}${after_param}"
@@ -779,7 +785,7 @@ fetch_pages! = |path, token, after_param, page, acc|
         Ok(total)
     else
         fetch_pages!(path, token, after_param, page + 1, total)
-
+}
 upsert_all! : Str, List(ActivitySummary) => Try({}, _)
 upsert_all! = |path, acts|
     match acts {
@@ -829,7 +835,7 @@ zone_config_help =
         \\(find yours at strava.com/settings/heartrate — z5 is everything above z4_max)
 
 analyze! : {} => Try({}, _)
-analyze! = |{}|
+analyze! = |{}| {
     path = open_db!({})?
     match load_zone_config!(path) {
         Err(MissingConfig) => missing_config!({})
@@ -870,15 +876,16 @@ analyze! = |{}|
 
                 }
     }
+}
 load_zone_config! : Str => Result { ftp : F64, zb : Metrics.ZoneBounds } _
-load_zone_config! = |path|
+load_zone_config! = |path| {
     ftp = config_f64!(path, "ftp_ride")?
     z1 = config_f64!(path, "hr_z1_max")?
     z2 = config_f64!(path, "hr_z2_max")?
     z3 = config_f64!(path, "hr_z3_max")?
     z4 = config_f64!(path, "hr_z4_max")?
     Ok({ ftp, zb: { z1_max: z1, z2_max: z2, z3_max: z3, z4_max: z4 } })
-
+}
 config_f64! : Str, Str => Try(F64, _)
 config_f64! = |path, key|
     match config_opt!(path, key)? {
@@ -904,7 +911,7 @@ ActivityRow : {
 }
 
 compute_missing_metrics! : Str, Metrics.ZoneBounds => Result { computed : U64, stream_errors : U64 } _
-compute_missing_metrics! = |path, zb|
+compute_missing_metrics! = |path, zb| {
     # recompute a row when its stored ftp_used no longer matches ITS sport's current
     # FTP (per-sport, via the CASE), or the HR zones / metrics_rev changed.
     ftp_case = sport_ftp_case!(path)?
@@ -942,7 +949,7 @@ compute_missing_metrics! = |path, zb|
         },
     })?
     process_rows!(path, zb, rows, { computed: 0, stream_errors: 0 })
-
+}
 process_rows! : Str, Metrics.ZoneBounds, List(ActivityRow), { computed : U64, stream_errors : U64 } => Result { computed : U64, stream_errors : U64 } _
 process_rows! = |path, zb, rows, acc|
     match rows {
@@ -973,7 +980,7 @@ zones_sig = |zb|
 # back to HR. Fully generic: a new sport needs no code, just its `ftp_<sport>` key —
 # or nothing, since we derive from the sport's own history.
 sport_ftp! : Str, Str => Try(F64, _)
-sport_ftp! = |path, sport|
+sport_ftp! = |path, sport| {
     key = Metrics.power_ftp_key(sport)
     configured =
         match config_get!(path, key) {
@@ -987,9 +994,9 @@ sport_ftp! = |path, sport|
         else derive_sport_ftp!(path, sport)?
     # whole watts — keeps the stored ftp_used and the invalidation CASE exactly equal
     Ok(Num.to_f64(Num.round(raw)))
-
+}
 derive_sport_ftp! : Str, Str => Try(F64, _)
-derive_sport_ftp! = |path, sport|
+derive_sport_ftp! = |path, sport| {
     best = Sqlite.query!({
         path,
         query: "SELECT CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_type = :sport",
@@ -997,14 +1004,14 @@ derive_sport_ftp! = |path, sport|
         row: Sqlite.f64("b"),
     })?
     Ok(best * 0.95)
-
+}
 # a SQL `CASE a.sport_type WHEN … THEN <ftp> … ELSE 0 END` mapping each sport to its
 # resolved FTP, so the analyze recompute-check compares each row's stored ftp_used to
 # ITS sport's current FTP (not one global number). Without this, per-sport ftp_used
 # would never equal the single cycling ftp and rowing/running rows would recompute
 # every run. Sport names come from Strava (no quotes in practice; local single-user).
 sport_ftp_case! : Str => Try(Str, _)
-sport_ftp_case! = |path|
+sport_ftp_case! = |path| {
     sports = Sqlite.query_many!({
         path,
         query: "SELECT DISTINCT sport_type AS s FROM activities WHERE sport_type IS NOT NULL AND sport_type <> ''",
@@ -1013,7 +1020,7 @@ sport_ftp_case! = |path|
     })?
     whens = build_ftp_whens!(path, sports, "")?
     Ok("CASE a.sport_type${whens} ELSE 0 END")
-
+}
 build_ftp_whens! : Str, List(Str), Str => Try(Str, _)
 build_ftp_whens! = |path, sports, acc|
     match sports {
@@ -1025,7 +1032,7 @@ build_ftp_whens! = |path, sports, acc|
     }
 # returns Bool: did the stored stream JSON fail to decode? (surfaced by analyze)
 compute_one! : Str, Metrics.ZoneBounds, ActivityRow => Try(Bool, _)
-compute_one! = |path, zb, row|
+compute_one! = |path, zb, row| {
     decoded = Streams.decode_streams(row.raw)
     streams = decoded.streams
 
@@ -1124,11 +1131,11 @@ compute_one! = |path, zb, row|
         ],
     })?
     Ok(decoded.failed)
-
+}
 # ── daily load (CTL/ATL/TSB) ────────────────────────────────────────
 
 rebuild_daily_load! : Str => Try({}, _)
-rebuild_daily_load! = |path|
+rebuild_daily_load! = |path| {
     day_rows = Sqlite.query_many!({
         path,
         query:
@@ -1167,6 +1174,7 @@ rebuild_daily_load! = |path|
             walk_days!(path, by_day, bounds.lo, last_day, 0.0, 0.0)
 
     }
+}
 walk_days! : Str, Dict I64 F64, I64, I64, F64, F64 => Try({}, _)
 walk_days! = |path, by_day, day, last_day, ctl_prev, atl_prev|
     if day > last_day
@@ -1261,7 +1269,7 @@ ctl_at! = |path, day_str|
 
 # period-over-period: this rolling window vs the one immediately before it
 compare! : Str => Try({}, _)
-compare! = |period|
+compare! = |period| {
     path = open_db!({})?
     if period != "week" and period != "month"
         err_out!("bad_period", "compare week | compare month (got '${period}')")
@@ -1290,6 +1298,7 @@ compare! = |period|
                 out!({ period, window_label: label, current: block(cur, cur_ctl), prior: block(pri, pri_ctl) }, Render.compare_screen)
 
         }
+}
 # ── machine interface (JSON output for LLM/tool consumption) ────────
 # Convention: numeric fields COALESCE to 0 when unknown (0 = "not available").
 
@@ -1317,11 +1326,11 @@ emit_err! = |code, msg|
     print_json!({ schema_version: json_schema_version, error: { code, message: msg } })
 
 print_json! : val => Try({}, _) where val implements Encoding
-print_json! = |val|
+print_json! = |val| {
     bytes = Encode.to_bytes(val, Json.utf8)
     text = Result.with_default(Str.from_utf8(bytes), "{}")
     Stdout.line!(text)
-
+}
 # output mode: humans get tables by default; LLM callers set STRIDE_FORMAT=json
 # (CLAUDECODE env also flips to json for harnesses that set it)
 json_mode! : {} => Bool
@@ -1356,7 +1365,7 @@ missing_config! = |{}|
 
 # does a row with this id exist? (table is an internal literal, never user input)
 row_exists! : Str, Str, I64 => Try(Bool, _)
-row_exists! = |path, table, id|
+row_exists! = |path, table, id| {
     n = Sqlite.query!({
         path,
         query: "SELECT COUNT(*) AS n FROM ${table} WHERE id = :id",
@@ -1364,7 +1373,7 @@ row_exists! = |path, table, id|
         row: Sqlite.i64("n"),
     })?
     Ok(n > 0)
-
+}
 pct_num : I64, I64 -> I64
 pct_num = |part, total|
     if total == 0
@@ -1374,15 +1383,16 @@ pct_num = |part, total|
 
 # one session in depth: metrics + zones + power bests computed from local streams
 activity! : Str => Try({}, _)
-activity! = |id_str|
+activity! = |id_str| {
     path = open_db!({})?
     match Str.to_i64(id_str) {
         Err(_) => err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
         Ok(aid) => activity_body!(path, id_str, aid)
 
     }
+}
 activity_body! : Str, Str, I64 => Try({}, _)
-activity_body! = |path, id_str, aid|
+activity_body! = |path, id_str, aid| {
     rows = Sqlite.query_many!({
         path,
         query:
@@ -1511,9 +1521,10 @@ activity_body! = |path, id_str, aid|
                     Ok({})
 
     }
+}
 # career + year-to-date totals per sport
 stats! : {} => Try({}, _)
-stats! = |{}|
+stats! = |{}| {
     path = open_db!({})?
     today_days = local_today_days!(path)?
     year = (Metrics.civil_from_days(today_days)).y
@@ -1537,7 +1548,7 @@ stats! = |{}|
         Stdout.line!("")?
         Stdout.line!("${Num.to_str(year)} YEAR TO DATE")?
         Stdout.line!(to_table(ytd))
-
+}
 stats_rows! : Str, Str => Result (List { sport : Str, sessions : I64, hours : F64, km : F64 }) _
 stats_rows! = |path, cutoff|
     Sqlite.query_many!({
@@ -1560,7 +1571,7 @@ stats_rows! = |path, cutoff|
 
 # the one-call coach-input payload
 summary! : {} => Try({}, _)
-summary! = |{}|
+summary! = |{}| {
     path = open_db!({})?
     match load_zone_config!(path) {
         Err(MissingConfig) => missing_config!({})
@@ -1570,9 +1581,10 @@ summary! = |{}|
             out!(payload, Render.summary_screen)
 
     }
+}
 # weekly-planning bundle: everything the coach needs to plan a week, in one call
 week! : {} => Try({}, _)
-week! = |{}|
+week! = |{}| {
     path = open_db!({})?
     match load_zone_config!(path) {
         Err(MissingConfig) => missing_config!({})
@@ -1650,7 +1662,8 @@ week! = |{}|
                 ))
 
     }
-summary_payload! = |path, ftp, zb|
+}
+summary_payload! = |path, ftp, zb| {
     latest = Sqlite.query!({
         path,
         query: "SELECT day AS day, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
@@ -1770,9 +1783,9 @@ summary_payload! = |path, ftp, zb|
         hr_zones: { z1_max: zb.z1_max, z2_max: zb.z2_max, z3_max: zb.z3_max, z4_max: zb.z4_max },
         sports_28d: sports,
     })
-
+}
 activities! : U64, Str => Try({}, _)
-activities! = |limit, sport_filter|
+activities! = |limit, sport_filter| {
     path = open_db!({})?
     where_clause =
         if Str.is_empty(sport_filter)
@@ -1842,7 +1855,7 @@ activities! = |limit, sport_filter|
         Stdout.line!("load:           session stress — TSS for power/HR, session-RPE for rated sessions; '-' = no usable data (e.g. dead HR strap)")?
         Stdout.line!("intensity (if): vs your FTP — ~0.7 easy · 0.85-0.95 tempo · ~1.0 threshold · 1.05+ vo2max")?
         Stdout.line!("hard:           minutes at/above threshold — by power (vs the sport's FTP) where there's power, else HR Z4+Z5")
-
+}
 # metric keyword -> its ORDER BY column + human table header. The column is HARDCODED
 # per keyword, so no user input ever reaches the SQL; an unknown metric errors before
 # any query. Single source of truth so column and header can't drift apart.
@@ -1862,7 +1875,7 @@ top_metric = |m|
 # ranked "best sessions": top N activities by a chosen metric (vs `activities`,
 # which is chronological). e.g. `top hr`, `top tss 5 rowing`.
 top! : Str, U64, Str => Try({}, _)
-top! = |metric, limit, sport_filter|
+top! = |metric, limit, sport_filter| {
     path = open_db!({})?
     match top_metric(metric) {
         Err(_) ->
@@ -1920,13 +1933,14 @@ top! = |metric, limit, sport_filter|
                 ))
 
     }
+}
 # ── import from a Strava account export (no API credentials needed) ──
 # Phase 1 of the export path (#6): summary-level rows from activities.csv, fed
 # through the SAME upsert as sync — idempotent, metrics-invalidation intact.
 # Streams aren't in the CSV, so zone/NP metrics stay honestly absent; the TSS
 # ladder falls back to watts/HR/relative-effort exactly as with sparse API data.
 import_archive! : Str => Try({}, _)
-import_archive! = |src|
+import_archive! = |src| {
     db = open_db!({})?
     dir_result =
         if Str.ends_with(src, ".zip")
@@ -1959,6 +1973,7 @@ import_archive! = |src|
                     }
             }
     }
+}
 import_rows! : Str, List(Str), List(List(Str)), { imported : U64, skipped : U64 } => Result { imported : U64, skipped : U64 } _
 import_rows! = |db, headers, rows, acc|
     match rows {
@@ -1978,7 +1993,7 @@ import_rows! = |db, headers, rows, acc|
 # Strava's export has DUPLICATE headers: the second Distance/Moving Time are the
 # precise ones (meters/seconds); the first Distance is km. English exports only.
 export_row_to_summary : List(Str), List(Str) -> Try(ActivitySummary, [BadRow])
-export_row_to_summary = |headers, row|
+export_row_to_summary = |headers, row| {
     field = |name, occurrence|
         match Csv.column_index(headers, name, occurrence) {
             Ok(i) => Result.with_default(List.get(row, i), "")
@@ -2019,11 +2034,11 @@ export_row_to_summary = |headers, row|
         average_heartrate: opt_field("Average Heart Rate"),
         weighted_average_watts: opt_field("Weighted Average Power"),
     })
-
+}
 # dataset health report: how much of the history has usable data, which ladder
 # rung scored each activity, and what's honestly unscored. Trust, quantified.
 doctor! : {} => Try({}, _)
-doctor! = |{}|
+doctor! = |{}| {
     path = open_db!({})?
     cov = Sqlite.query!({
         path,
@@ -2164,13 +2179,13 @@ doctor! = |{}|
             ]),
             "\n",
         ))
-
+}
 # session-RPE rating: the athlete is the sensor for sports without power meters.
 # Ratings live in their OWN table (the judgment tier) — never on the activities
 # mirror, which sync/import replace wholesale. Rating an activity invalidates its
 # metrics so the next analyze rescores it through the sport-aware ladder.
 rate! : Str, Str => Try({}, _)
-rate! = |target, rpe_str|
+rate! = |target, rpe_str| {
     path = open_db!({})?
     rpe_result =
         match Str.to_f64(rpe_str) {
@@ -2216,10 +2231,11 @@ rate! = |target, rpe_str|
 
             }
     }
+}
 # power-zone reference chart: the 7 Coggan/Peloton zones as watt ranges from your
 # configured FTP (the targets you'd set on a Power Zone ride).
 pz! : {} => Try({}, _)
-pz! = |{}|
+pz! = |{}| {
     path = open_db!({})?
     match config_f64!(path, "ftp_ride") {
         Err(MissingConfig) => err_out!("missing_config", "set your FTP first: stride config set ftp_ride <watts>")
@@ -2242,6 +2258,7 @@ pz! = |{}|
                 ))
 
     }
+}
 # "am I improving on THIS workout?" — anchored on a date: resolves that day's workout(s)
 # and shows every comparable instance chronologically, with Efficiency Factor (NP/HR) as
 # the fitness tell. Named classes match by exact name; Strava auto-names ("Morning Ride")
@@ -2259,7 +2276,7 @@ lens_name = |lens|
 # sport-aware lens each repeated workout supports (power->EF, distance->speed/HR,
 # rated strength->RPE). Bare `progress` uses your latest analyzed workout.
 progress! : Str => Try({}, _)
-progress! = |date_arg|
+progress! = |date_arg| {
     path = open_db!({})?
     date =
         if !(Str.is_empty(date_arg))
@@ -2359,9 +2376,9 @@ progress! = |date_arg|
         })
     else
         Stdout.line!(Str.join_with(List.map(scored, |g| Render.progress_section(g.name, g.rows, date, g.lens)), "\n\n"))
-
+}
 load_series! : U64 => Try({}, _)
-load_series! = |days|
+load_series! = |days| {
     path = open_db!({})?
     rows = Sqlite.query_many!({
         path,
@@ -2377,9 +2394,9 @@ load_series! = |days|
     })?
     ordered = List.reverse(rows)
     out!(ordered, Render.load_screen)
-
+}
 plan_view! : [ThisWeek, AllTime] => Try({}, _)
-plan_view! = |scope|
+plan_view! = |scope| {
     path = open_db!({})?
     # default view is the CURRENT training week (Mon-Sun containing today) so `plan`
     # is "this week at a glance", not the whole history spilling into next week. The
@@ -2439,9 +2456,9 @@ plan_view! = |scope|
             ["day", "date", "type", "status", "detail", "id"],
             List.map(rows_enriched, |p| [p.day, p.target_date, p.session_type, p.status, p.detail, Num.to_str(p.id)]),
         ))
-
+}
 plan_add! : Str, Str, Str, Str => Try({}, _)
-plan_add! = |target_date, session_type, detail, rationale|
+plan_add! = |target_date, session_type, detail, rationale| {
     path = open_db!({})?
     # guard: one open planned session per date — skip or complete the old one first
     existing = Sqlite.query!({
@@ -2454,9 +2471,9 @@ plan_add! = |target_date, session_type, detail, rationale|
         err_out!("date_already_planned", "${target_date} already has open planned session #${Num.to_str(existing)} — `stride skip ${Num.to_str(existing)} \"reason\"` first")
     else
         insert_planned_session!(path, target_date, session_type, detail, rationale)
-
+}
 insert_planned_session! : Str, Str, Str, Str, Str => Try({}, _)
-insert_planned_session! = |path, target_date, session_type, detail, rationale|
+insert_planned_session! = |path, target_date, session_type, detail, rationale| {
     Sqlite.execute!({
         path,
         query:
@@ -2478,14 +2495,14 @@ insert_planned_session! = |path, target_date, session_type, detail, rationale|
         row: Sqlite.i64("id"),
     })?
     out!({ id: new_id, target_date, session_type }, |p| "planned #${Num.to_str(p.id)}: ${p.session_type} on ${p.target_date}")
-
+}
 # ONE not-found message for complete/complete-rest/skip — can't drift apart
 session_not_found! : I64 => Try({}, _)
 session_not_found! = |session_id|
     err_out!("session_not_found", "no planned session #${Num.to_str(session_id)} — run `stride plan` to see ids")
 
 complete! : Str, Str => Try({}, _)
-complete! = |session_id_str, activity_id_str|
+complete! = |session_id_str, activity_id_str| {
     path = open_db!({})?
     match (Str.to_i64(session_id_str), Str.to_i64(activity_id_str)) {
         (Ok(session_id), Ok(activity_id)) ->
@@ -2511,10 +2528,11 @@ complete! = |session_id_str, activity_id_str|
             err_out!("bad_id", "complete needs numeric ids: complete <session_id> <activity_id>")
 
     }
+}
 # rest days have no activity to link — `complete <id>` alone closes them. Any
 # other session type still demands its activity id: done means evidence.
 complete_rest! : Str => Try({}, _)
-complete_rest! = |session_id_str|
+complete_rest! = |session_id_str| {
     path = open_db!({})?
     match Str.to_i64(session_id_str) {
         Err(_) => err_out!("bad_id", "complete needs a numeric id: complete <session_id> [activity_id]")
@@ -2539,8 +2557,9 @@ complete_rest! = |session_id_str|
                     out!({ completed_session: session_id, rest: True }, |p| "planned session #${Num.to_str(p.completed_session)} (rest) marked done")
 
     }
+}
 skip! : Str, Str => Try({}, _)
-skip! = |session_id_str, reason|
+skip! = |session_id_str, reason| {
     path = open_db!({})?
     match Str.to_i64(session_id_str) {
         Ok(session_id) ->
@@ -2561,6 +2580,7 @@ skip! = |session_id_str, reason|
             err_out!("bad_id", "skip needs a numeric id: skip <session_id> \"<reason>\"")
 
     }
+}
 # ── migrations ───────────────────────────────────────────────────────
 
 # bump when the schema changes; ensure_schema! re-runs migrations when the db's
@@ -2617,7 +2637,7 @@ run_migrations! = |path|
 
 # rename old -> new when old exists and new doesn't (idempotent, data-preserving)
 rename_table_if_exists! : Str, Str, Str => Try({}, _)
-rename_table_if_exists! = |path, old, new|
+rename_table_if_exists! = |path, old, new| {
     count = Sqlite.query!({
         path,
         query: "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = :old",
@@ -2628,7 +2648,7 @@ rename_table_if_exists! = |path, old, new|
         Sqlite.execute!({ path, query: "ALTER TABLE ${old} RENAME TO ${new}", bindings: [] })
     else
         Ok({})
-
+}
 # an additive ADD COLUMN. Swallows ONLY "duplicate column" (the expected re-run
 # case); a locked db, disk error, etc. propagate instead of failing silently.
 alter_add_column! : Str, Str => Try({}, _)
@@ -2655,7 +2675,7 @@ drop_column_if_exists! = |path, q|
 # on every command entry (via open_db!) so upgrading the binary against an
 # existing db self-migrates instead of failing with an opaque missing-column error.
 ensure_schema! : Str => Try({}, _)
-ensure_schema! = |path|
+ensure_schema! = |path| {
     v = Result.with_default(
         Sqlite.query!({
             path,
@@ -2670,16 +2690,16 @@ ensure_schema! = |path|
     else
         run_migrations!(path)?
         Sqlite.execute!({ path, query: "PRAGMA user_version = ${Num.to_str(schema_version)}", bindings: [] })
-
+}
 # db path + guaranteed-current schema. Every command opens through this.
 open_db! : {} => Try(Str, _)
-open_db! = |{}|
+open_db! = |{}| {
     p = db_path!({})?
     ensure_schema!(p)?
     # harden on every open so existing world-readable installs get fixed too
     home = Env.var!("HOME")?
     secure_perms!("${home}/.stride")?
     Ok(p)
-
+}
 # (schema DDL lives in Schema.roc — pure strings, the one kind of SQL that
 #  can move out of the app module without splitting a query from its decoder)
