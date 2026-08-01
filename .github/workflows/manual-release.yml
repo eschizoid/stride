@@ -38,6 +38,12 @@ jobs:
   build:
     name: build ${{ matrix.target }}
     needs: prepare
+    # DISABLED until a native roc build of app.roc works again (roc-lang/roc#10469).
+    # alpha4 (installed below) can't parse the migrated new-compiler source, and the
+    # new compiler stalls Specialization for minutes — no target builds. Restore by
+    # removing this `if: false` and switching the alpha4 install + `roc build` steps
+    # to roc-lang/setup-roc (version: nightly-new-compiler), per build.yml.
+    if: false
     runs-on: ${{ matrix.runs-on }}
     strategy:
       fail-fast: false
@@ -91,7 +97,9 @@ jobs:
 
   publish:
     needs: [prepare, build]
-    if: ${{ always() }}
+    # DISABLED with `build` above (roc-lang/roc#10469) — no artifacts to publish
+    # until binaries build again. Restore alongside `build`:  if: ${{ always() }}
+    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

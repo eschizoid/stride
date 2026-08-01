@@ -2,8 +2,15 @@ name: release-please
 
 # Automated releases. release-please watches Conventional Commits on main
 # (feat:/fix:/…), maintains CHANGELOG.md and the version in app.roc, and opens a
-# "release PR". Merging that PR tags vX.Y.Z + creates the GitHub release; the
-# build/upload jobs below then attach the platform binaries to it.
+# "release PR". Merging that PR tags vX.Y.Z + creates the GitHub release.
+#
+# NOTE: the binary build/upload jobs are DISABLED (if: false) until a native `roc
+# build` of app.roc works again — see roc-lang/roc#10469. After the new-compiler
+# migration, main's source is new-compiler syntax that the old alpha4 toolchain
+# these jobs use CANNOT parse, and the new compiler stalls the Specialization phase
+# for minutes on app.roc, so no target can produce a binary. Merging a release PR
+# still cuts a source-only GitHub release (tag + changelog); prebuilt binaries just
+# aren't attached until the build is unblocked.
 on:
   push:
     branches: [main]
@@ -27,7 +34,13 @@ jobs:
   build:
     name: build ${{ matrix.target }}
     needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    # DISABLED until a native roc build of app.roc works again (roc-lang/roc#10469).
+    # alpha4 (installed below) can't parse the migrated source, and the new compiler
+    # stalls Specialization for minutes — no target builds. To restore: flip this to
+    #   if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    # and switch the alpha4 install + `roc build` steps to roc-lang/setup-roc
+    # (version: nightly-new-compiler), matching .github/workflows/build.yml.
+    if: false
     runs-on: ${{ matrix.runs-on }}
     strategy:
       fail-fast: false # one target failing shouldn't sink the others
@@ -86,8 +99,10 @@ jobs:
   upload:
     name: attach binaries to the release
     needs: [release-please, build]
-    # publish whatever built — a single flaky target shouldn't block the rest
-    if: ${{ always() && needs.release-please.outputs.release_created == 'true' }}
+    # DISABLED with `build` above (roc-lang/roc#10469) — nothing to attach until
+    # binaries build again. Restore alongside `build`:
+    #   if: ${{ always() && needs.release-please.outputs.release_created == 'true' }}
+    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
