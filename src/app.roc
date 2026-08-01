@@ -509,7 +509,7 @@ ActivitySummary : {
     weighted_average_watts : Try(F64, [Missing]),
 }
 
-opt_real : Try(F64, [Missing]) -> [Real F64, Null]
+opt_real : Try(F64, [Missing]) -> [Real(F64), Null]
 opt_real = |o|
     match o {
         Ok(v) => Real(v)
@@ -924,12 +924,12 @@ ActivityRow : {
     start : Str,
     mt : I64,
     sport : Str,
-    re : [NotNull F64, Null],
-    aw : [NotNull F64, Null],
-    ahr : [NotNull F64, Null],
-    waw : [NotNull F64, Null],
-    rpe : [NotNull F64, Null],
-    raw : [NotNull Str, Null],
+    re : [NotNull(F64), Null],
+    aw : [NotNull(F64), Null],
+    ahr : [NotNull(F64), Null],
+    waw : [NotNull(F64), Null],
+    rpe : [NotNull(F64), Null],
+    raw : [NotNull(Str), Null],
 }
 
 compute_missing_metrics! : Str, Metrics.ZoneBounds => Try({ computed : U64, stream_errors : U64 }, _)
