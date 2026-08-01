@@ -54,7 +54,7 @@ help_text =
     SETUP (once)
         init        create ~/.stride and migrate the SQLite db
         auth        authorize with Strava (one-time paste flow; stores creds)
-        config      get/set config (e.g. ftp, hr zone bounds)
+        config      get/set config (e.g. ftp_ride, ftp_rowing, hr zone bounds)
 
     GET DATA
         sync        pull new activities + streams (rolling 30d self-heal)
@@ -165,7 +165,7 @@ config_store! = |key, val|
     Stdout.line!("${key} = ${val}")?
     # FTP is the one config that also lives on Strava — keep them in sync so
     # Strava's own power features use the same number
-    if key == "ftp" then sync_ftp_to_strava!(path, val) else Ok({})
+    if key == "ftp_ride" then sync_ftp_to_strava!(path, val) else Ok({})
 
 # push a new FTP to Strava (PUT /athlete?ftp=). Best-effort: any failure just
 # warns — the local `config set` has already succeeded and been reported.
@@ -179,7 +179,7 @@ sync_ftp_to_strava! = |path, ftp_str|
                 # HttpStatus here can only come from the token-refresh POST: a 4xx
                 # means the stored token is dead, and retrying won't fix it
                 Err(HttpStatus(status, _)) if status >= 400 and status < 500 ->
-                    Stdout.line!("  (Strava rejected the stored token — re-run `stride auth`, then set ftp again)")
+                    Stdout.line!("  (Strava rejected the stored token — re-run `stride auth`, then set ftp_ride again)")
 
                 Err(_) -> Stdout.line!("  (couldn't sync FTP to Strava this time)")
                 Ok(token) ->
@@ -797,7 +797,7 @@ zone_config_help =
     """
     analyze needs your FTP and HR zone upper bounds in config first:
 
-        stride config set ftp 190
+        stride config set ftp_ride 190
         stride config set hr_z1_max 123
         stride config set hr_z2_max 153
         stride config set hr_z3_max 168
@@ -812,8 +812,8 @@ analyze! = |{}|
     when load_zone_config!(path) is
         Err(MissingConfig) -> missing_config!({})
         Err(other) -> Err(other)
-        Ok({ ftp, zb }) ->
-            res = compute_missing_metrics!(path, ftp, zb)?
+        Ok(cfg) ->
+            res = compute_missing_metrics!(path, cfg.zb)?
             rebuild_daily_load!(path)?
             form =
                 when Sqlite.query!({
@@ -847,7 +847,7 @@ analyze! = |{}|
 
 load_zone_config! : Str => Result { ftp : F64, zb : Metrics.ZoneBounds } _
 load_zone_config! = |path|
-    ftp = config_f64!(path, "ftp")?
+    ftp = config_f64!(path, "ftp_ride")?
     z1 = config_f64!(path, "hr_z1_max")?
     z2 = config_f64!(path, "hr_z2_max")?
     z3 = config_f64!(path, "hr_z3_max")?
@@ -876,8 +876,11 @@ ActivityRow : {
     raw : [NotNull Str, Null],
 }
 
-compute_missing_metrics! : Str, F64, Metrics.ZoneBounds => Result { computed : U64, stream_errors : U64 } _
-compute_missing_metrics! = |path, ftp, zb|
+compute_missing_metrics! : Str, Metrics.ZoneBounds => Result { computed : U64, stream_errors : U64 } _
+compute_missing_metrics! = |path, zb|
+    # recompute a row when its stored ftp_used no longer matches ITS sport's current
+    # FTP (per-sport, via the CASE), or the HR zones / metrics_rev changed.
+    ftp_case = sport_ftp_case!(path)?
     rows = Sqlite.query_many!({
         path,
         query:
@@ -890,12 +893,12 @@ compute_missing_metrics! = |path, ftp, zb|
         LEFT JOIN streams s ON s.activity_id = a.id
         LEFT JOIN ratings r ON r.activity_id = a.id
         LEFT JOIN activity_metrics m ON m.activity_id = a.id
-        WHERE m.activity_id IS NULL OR COALESCE(m.ftp_used, 0) <> :ftp
+        WHERE m.activity_id IS NULL
+              OR CAST(COALESCE(m.ftp_used, 0) AS INTEGER) <> CAST((${ftp_case}) AS INTEGER)
               OR COALESCE(m.zones_used, '') <> :zones
               OR COALESCE(m.metrics_rev, 0) <> :rev
         """,
         bindings: [
-            { name: ":ftp", value: Real(ftp) },
             { name: ":zones", value: String(zones_sig(zb)) },
             { name: ":rev", value: Integer(metrics_rev) },
         ],
@@ -912,19 +915,19 @@ compute_missing_metrics! = |path, ftp, zb|
             raw: Sqlite.nullable_str("raw"),
         },
     })?
-    process_rows!(path, ftp, zb, rows, { computed: 0, stream_errors: 0 })
+    process_rows!(path, zb, rows, { computed: 0, stream_errors: 0 })
 
-process_rows! : Str, F64, Metrics.ZoneBounds, List ActivityRow, { computed : U64, stream_errors : U64 } => Result { computed : U64, stream_errors : U64 } _
-process_rows! = |path, ftp, zb, rows, acc|
+process_rows! : Str, Metrics.ZoneBounds, List ActivityRow, { computed : U64, stream_errors : U64 } => Result { computed : U64, stream_errors : U64 } _
+process_rows! = |path, zb, rows, acc|
     when rows is
         [] -> Ok(acc)
         [row, .. as rest] ->
-            failed = compute_one!(path, ftp, zb, row)?
+            failed = compute_one!(path, zb, row)?
             next = {
                 computed: acc.computed + 1,
                 stream_errors: acc.stream_errors + (if failed then 1 else 0),
             }
-            process_rows!(path, ftp, zb, rest, next)
+            process_rows!(path, zb, rest, next)
 
 zero_zones : Metrics.ZoneSeconds
 zero_zones = { z1: 0, z2: 0, z3: 0, z4: 0, z5: 0 }
@@ -938,28 +941,24 @@ zones_sig = |zb|
     "${Render.fmt0(zb.z1_max)},${Render.fmt0(zb.z2_max)},${Render.fmt0(zb.z3_max)},${Render.fmt0(zb.z4_max)}"
 
 # the power threshold (FTP) a sport's power is judged against, read from config key
-# `ftp_<sport>` (Metrics.power_ftp_key). 0 when unset or a no-power sport, in which
-# case intensity falls back to HR. Fully generic — a new sport needs no code, only its
-# `ftp_<sport>` config key. One back-compat tie: cycling's threshold is the entrenched
-# `ftp` key (also used for TSS), so `ftp_ride` falls back to it when not set explicitly.
+# `ftp_<sport>` (Metrics.power_ftp_key) — uniform for EVERY sport, cycling included
+# (`ftp_ride`). 0 when unset AND nothing to derive, in which case intensity/TSS fall
+# back to HR. Fully generic: a new sport needs no code, just its `ftp_<sport>` key —
+# or nothing, since we derive from the sport's own history.
 sport_ftp! : Str, Str => Result F64 _
 sport_ftp! = |path, sport|
     key = Metrics.power_ftp_key(sport)
-    read! = |k|
-        when config_get!(path, k) is
+    configured =
+        when config_get!(path, key) is
             Ok(s) -> Result.with_default(Str.to_f64(s), 0.0)
             Err(_) -> 0.0
-    primary = read!(key)
-    legacy = if key == "ftp_ride" then read!("ftp") else 0.0 # cycling's entrenched key
-    if primary > 0.0 then
-        Ok(primary)
-    else if legacy > 0.0 then
-        Ok(legacy)
-    else
-        # empirical fallback: no configured FTP → derive from this sport's OWN best
-        # 20-min power (× 0.95). So power-intensity works for ANY power sport with
-        # stream history, zero config; sports with no power stream derive 0 → HR.
-        derive_sport_ftp!(path, sport)
+    raw =
+        if configured > 0.0 then configured
+        # no configured FTP → derive from this sport's OWN best 20-min power (× 0.95),
+        # so power-intensity works for any power sport with stream history, zero config
+        else derive_sport_ftp!(path, sport)?
+    # whole watts — keeps the stored ftp_used and the invalidation CASE exactly equal
+    Ok(Num.to_f64(Num.round(raw)))
 
 derive_sport_ftp! : Str, Str => Result F64 _
 derive_sport_ftp! = |path, sport|
@@ -971,9 +970,33 @@ derive_sport_ftp! = |path, sport|
     })?
     Ok(best * 0.95)
 
+# a SQL `CASE a.sport_type WHEN … THEN <ftp> … ELSE 0 END` mapping each sport to its
+# resolved FTP, so the analyze recompute-check compares each row's stored ftp_used to
+# ITS sport's current FTP (not one global number). Without this, per-sport ftp_used
+# would never equal the single cycling ftp and rowing/running rows would recompute
+# every run. Sport names come from Strava (no quotes in practice; local single-user).
+sport_ftp_case! : Str => Result Str _
+sport_ftp_case! = |path|
+    sports = Sqlite.query_many!({
+        path,
+        query: "SELECT DISTINCT sport_type AS s FROM activities WHERE sport_type IS NOT NULL AND sport_type <> ''",
+        bindings: [],
+        rows: Sqlite.str("s"),
+    })?
+    whens = build_ftp_whens!(path, sports, "")?
+    Ok("CASE a.sport_type${whens} ELSE 0 END")
+
+build_ftp_whens! : Str, List Str, Str => Result Str _
+build_ftp_whens! = |path, sports, acc|
+    when sports is
+        [] -> Ok(acc)
+        [s, .. as rest] ->
+            f = sport_ftp!(path, s)?
+            build_ftp_whens!(path, rest, "${acc} WHEN '${s}' THEN ${Num.to_str(f)}")
+
 # returns Bool: did the stored stream JSON fail to decode? (surfaced by analyze)
-compute_one! : Str, F64, Metrics.ZoneBounds, ActivityRow => Result Bool _
-compute_one! = |path, ftp, zb, row|
+compute_one! : Str, Metrics.ZoneBounds, ActivityRow => Result Bool _
+compute_one! = |path, zb, row|
     decoded = Streams.decode_streams(row.raw)
     streams = decoded.streams
 
@@ -1018,7 +1041,7 @@ compute_one! = |path, ftp, zb, row|
         sport_type: row.sport,
         zones,
         zb,
-        ftp,
+        ftp: pi_ftp, # the SPORT's FTP, not cycling's — so rowing/running load is scaled right
         dur_s: Num.to_f64(row.mt),
         moving_time: row.mt,
     })
@@ -1031,7 +1054,7 @@ compute_one! = |path, ftp, zb, row|
 
     if_binding =
         when ladder.np is
-            Ok(npv) -> (if ftp > 0 then Real(npv / ftp) else Null)
+            Ok(npv) -> (if pi_ftp > 0.0 then Real(npv / pi_ftp) else Null)
             Err(_) -> Null
 
     best20_binding =
@@ -1051,7 +1074,7 @@ compute_one! = |path, ftp, zb, row|
             { name: ":pie", value: Integer(pintensity.easy_s) },
             { name: ":pim", value: Integer(pintensity.moderate_s) },
             { name: ":pih", value: Integer(pintensity.hard_s) },
-            { name: ":ftpu", value: Real(ftp) },
+            { name: ":ftpu", value: Real(pi_ftp) },
             { name: ":zused", value: String(zones_sig(zb)) },
             { name: ":rev", value: Integer(metrics_rev) },
             { name: ":model", value: String(ladder.model) },
@@ -2010,12 +2033,12 @@ doctor! = |{}|
         path,
         query:
         """
-        SELECT COALESCE(SUM(CASE WHEN key='ftp' THEN 1 ELSE 0 END),0) AS ftp_set,
+        SELECT COALESCE(SUM(CASE WHEN substr(key,1,4)='ftp_' THEN 1 ELSE 0 END),0) AS ftp_count,
                COALESCE(SUM(CASE WHEN key IN ('hr_z1_max','hr_z2_max','hr_z3_max','hr_z4_max') THEN 1 ELSE 0 END),0) AS zones_set
         FROM config
         """,
         bindings: [],
-        row: { Sqlite.decode_record <- ftp_set: Sqlite.i64("ftp_set"), zones_set: Sqlite.i64("zones_set") },
+        row: { Sqlite.decode_record <- ftp_count: Sqlite.i64("ftp_count"), zones_set: Sqlite.i64("zones_set") },
     })?
     # strength-class sessions without a rating: aggregate in Roc so the sport
     # list can't drift from Metrics.sport_class
@@ -2053,7 +2076,7 @@ doctor! = |{}|
         conf_low: conf.lo,
         conf_none: conf.non,
         pending_streams: pending,
-        ftp_set: cfg.ftp_set > 0,
+        ftp_configured: cfg.ftp_count,
         zones_set: cfg.zones_set >= 4,
         time: time_desc,
         time_ok: time_ok,
@@ -2091,7 +2114,7 @@ doctor! = |{}|
                     "  zero load (no usable data): ${Num.to_str(p.zero_load)}",
                     "  not yet analyzed: ${Num.to_str(p.unanalyzed)}",
                     "  pending stream backfill: ${Num.to_str(p.pending_streams)}",
-                    "  config: ftp ${if p.ftp_set then "set" else "MISSING"}, hr zones ${if p.zones_set then "set" else "incomplete"}",
+                    "  config: ${Num.to_str(p.ftp_configured)} sport FTP(s) set explicitly (others auto-derived from data), hr zones ${if p.zones_set then "set" else "incomplete"}",
                     "  time: ${p.time}",
                 ],
                 hint,
@@ -2152,8 +2175,8 @@ rate! = |target, rpe_str|
 pz! : {} => Result {} _
 pz! = |{}|
     path = open_db!({})?
-    when config_f64!(path, "ftp") is
-        Err(MissingConfig) -> err_out!("missing_config", "set your FTP first: stride config set ftp <watts>")
+    when config_f64!(path, "ftp_ride") is
+        Err(MissingConfig) -> err_out!("missing_config", "set your FTP first: stride config set ftp_ride <watts>")
         Err(other) -> Err(other)
         Ok(ftp) ->
             zones = Metrics.power_zones(ftp)
@@ -2491,12 +2514,12 @@ skip! = |session_id_str, reason|
 # bump when the schema changes; ensure_schema! re-runs migrations when the db's
 # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 # that post-date the original CREATE statements in Schema.roc.)
-schema_version = 9
+schema_version = 10
 
 # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
 # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
 # zones_used) can't catch algorithm changes
-metrics_rev = 5
+metrics_rev = 6
 
 run_migrations! : Str => Result {} _
 run_migrations! = |path|
@@ -2533,6 +2556,9 @@ run_migrations! = |path|
     alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN pi_easy_s INTEGER")?
     alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN pi_moderate_s INTEGER")?
     alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN pi_hard_s INTEGER")?
+    # v10: FTP is now per-sport under `ftp_<sport>` (uniform, no special cycling key).
+    # Move the old cycling `ftp` value to `ftp_ride` if it hasn't been set already.
+    Sqlite.execute!({ path, query: "UPDATE config SET key = 'ftp_ride' WHERE key = 'ftp' AND (SELECT COUNT(*) FROM config WHERE key = 'ftp_ride') = 0", bindings: [] })?
     # v2: index the column every date-range filter and the activities sort use
     # (queries now compare a.start_local directly — sargable — instead of substr)
     Sqlite.execute!({ path, query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })

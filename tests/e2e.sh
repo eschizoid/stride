@@ -25,7 +25,7 @@ assert d["schema_version"] == 1, f"envelope must be versioned: {d}"
 assert "data" not in d and d["error"]["code"] == "missing_config", f"error envelope: {d}"
 print("missing-config json contract OK (versioned error envelope)")
 '
-for kv in "ftp 200" "hr_z1_max 123" "hr_z2_max 153" "hr_z3_max 168" "hr_z4_max 183"; do
+for kv in "ftp_ride 200" "hr_z1_max 123" "hr_z2_max 153" "hr_z3_max 168" "hr_z4_max 183"; do
   "$STRIDE_BIN" config set $kv >/dev/null
 done
 
@@ -46,13 +46,13 @@ assert zs[0]["lo_w"] == 0 and zs[6]["hi_w"] == 0, "Z1 opens at 0, Z7 open above"
 print("pz OK (7 power zones from FTP)")
 '
 
-# ── config set ftp: stores locally + attempts Strava sync, gracefully ────
+# ── config set ftp_ride: stores locally + attempts Strava sync, gracefully ────
 # (no auth in the sandbox, so the sync warns but the local set must succeed)
-out=$("$STRIDE_BIN" config set ftp 195)
-grep -q "ftp = 195" <<<"$out" || fail "config set ftp must store + report locally"
+out=$("$STRIDE_BIN" config set ftp_ride 195)
+grep -q "ftp_ride = 195" <<<"$out" || fail "config set ftp_ride must store + report locally"
 grep -q "not synced to Strava" <<<"$out" || fail "unauthed ftp set must warn (not crash) about Strava sync"
-got=$(STRIDE_FORMAT=human "$STRIDE_BIN" config get ftp); [ "$got" = "195" ] || fail "ftp must be stored even when Strava sync can't run"
-"$STRIDE_BIN" config get ftp | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["value"] == "195", d; print("config get json OK")'
+got=$(STRIDE_FORMAT=human "$STRIDE_BIN" config get ftp_ride); [ "$got" = "195" ] || fail "ftp must be stored even when Strava sync can't run"
+"$STRIDE_BIN" config get ftp_ride | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["value"] == "195", d; print("config get json OK")'
 "$STRIDE_BIN" config get nope | python3 -c 'import json,sys; assert json.load(sys.stdin)["error"]["code"] == "not_set"; print("config get not_set OK")'
 # ── credential safety (P4): secrets never surface, db is owner-only ──
 sqlite3 "$DB" "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_access_token','SECRETVAL123');"
@@ -65,7 +65,7 @@ grep -q SECRETVAL123 <<<"$out" && fail "secret VALUE must never appear in output
 perms=$(stat -c '%a' "$DB" 2>/dev/null || stat -f '%Lp' "$DB" 2>/dev/null)
 [ "$perms" = "600" ] || fail "db must be chmod 600 after a command, got '$perms'"
 echo "credential safety OK (secret redacted, db 0600)"
-"$STRIDE_BIN" config set ftp 200 >/dev/null   # restore for the rest of the suite
+"$STRIDE_BIN" config set ftp_ride 200 >/dev/null   # restore for the rest of the suite
 echo "ftp Strava-sync OK (local set succeeds, unauthed sync degrades gracefully)"
 
 # ── seed: one power ride (NP 200 @ FTP 200, 1h -> TSS 100),
@@ -91,14 +91,15 @@ assert s["fitness_ctl"] > 0 and s["fatigue_atl"] > 0
 print("summary math OK (power TSS 100 + hrTSS 55, as-of-today)")
 ' "$TODAY"
 
-# ── FTP auto-invalidation: change config -> analyze recomputes ───
-"$STRIDE_BIN" config set ftp 100 >/dev/null
-out=$("$STRIDE_BIN" analyze); grep -q '"computed":2' <<<"$out" || fail "ftp change must recompute all rows"
+# ── per-sport FTP auto-invalidation: changing ftp_ride recomputes ONLY the cycling
+# ride, not the rowing row (per-sport ftp_used — that's the whole point) ───
+"$STRIDE_BIN" config set ftp_ride 100 >/dev/null
+out=$("$STRIDE_BIN" analyze); grep -q '"computed":1' <<<"$out" || fail "ftp_ride change must recompute only the cycling ride"
 "$STRIDE_BIN" summary | python3 -c '
 import json, sys
 s = json.load(sys.stdin)["data"]
 assert abs(s["last_28d"]["tss"] - 455) < 1.0, f"NP200@FTP100 => TSS 400 (+55 hr), got {s['"'"'last_28d'"'"']['"'"'tss'"'"']}"
-print("ftp_used auto-invalidation OK (TSS rescaled 100 -> 400)")
+print("per-sport ftp invalidation OK (cycling rescaled 100->400, rowing untouched)")
 '
 
 # ── zone auto-invalidation: change a HR zone bound -> analyze recomputes ──
@@ -246,7 +247,7 @@ print("activity unreadable-streams flag OK")
 '
 # force a recompute (ftp change invalidates via ftp_used) so analyze re-reads
 # 101's now-corrupt streams and must report the count instead of hiding it
-"$STRIDE_BIN" config set ftp 111 >/dev/null
+"$STRIDE_BIN" config set ftp_ride 111 >/dev/null
 out=$("$STRIDE_BIN" analyze); grep -qE '"stream_errors":[1-9]' <<<"$out" || fail "analyze must report stream decode errors"
 
 # non-numeric count args must error, not silently default
@@ -423,7 +424,7 @@ assert d["conf_high"] >= 1 and d["conf_medium"] >= 1, f"confidence must be popul
 # SQL CASE to the provenance counts so the two mappings cannot drift apart.
 power = models.get("power_stream", 0) + models.get("weighted_watts", 0) + models.get("avg_watts", 0)
 assert d["conf_high"] == power, f"conf_high must equal power-rung provenance: {d['conf_high']} vs {power}"
-assert d["ftp_set"] is True and d["zones_set"] is True, f"config completeness: {d}"
+assert d["ftp_configured"] >= 1 and d["zones_set"] is True, f"config completeness: {d}"
 assert "pending_streams" in d, d
 print("doctor OK (coverage, provenance, confidence, config)")
 '
@@ -467,7 +468,7 @@ MIG_DB="$MIG_HOME/.stride/db.sqlite"
 sqlite3 "$MIG_DB" < tests/fixtures/db/v1-legacy.sql
 [ "$(sqlite3 "$MIG_DB" 'PRAGMA user_version;')" = "1" ] || fail "fixture must start at user_version 1"
 # any command opens the db -> ensure_schema! runs migrations
-HOME="$MIG_HOME" "$STRIDE_BIN" config get ftp >/dev/null
+HOME="$MIG_HOME" "$STRIDE_BIN" config get ftp_ride >/dev/null
 MIG_V=$(sqlite3 "$MIG_DB" 'PRAGMA user_version;')
 [ "$MIG_V" -gt 1 ] || fail "migration must advance the schema version (got $MIG_V)"
 # the prescriptions -> planned_sessions RENAME preserved the row (the risky one)
@@ -480,7 +481,7 @@ sqlite3 "$MIG_DB" "SELECT weighted_avg_watts FROM activities LIMIT 0;" >/dev/nul
 # recompute works on the migrated db
 HOME="$MIG_HOME" "$STRIDE_BIN" analyze >/dev/null || fail "analyze must run on a migrated db"
 # idempotent: re-run stays at the current version with data intact
-HOME="$MIG_HOME" "$STRIDE_BIN" config get ftp >/dev/null
+HOME="$MIG_HOME" "$STRIDE_BIN" config get ftp_ride >/dev/null
 [ "$(sqlite3 "$MIG_DB" 'PRAGMA user_version;')" = "$MIG_V" ] || fail "re-run must be idempotent (version changed)"
 [ "$(sqlite3 "$MIG_DB" 'SELECT COUNT(*) FROM activities;')" = "2" ] || fail "re-run must not lose data"
 rm -rf "$MIG_HOME"
