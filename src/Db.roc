@@ -80,8 +80,10 @@ Db :: [].{
     # unknown name yields Err — we never let a typo silently become +0000 (UTC).
     zone_offset_now! : Str => Try(I64, [BadTz])
     zone_offset_now! = |tz| {
-        cmd = "if [ -f '/usr/share/zoneinfo/${tz}' ]; TZ='${tz}' date +%z; else echo INVALID; fi"
-        match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", cmd], OsStr.from_str)).exec_output!() {
+        # tz is passed as the positional $1 (never interpolated) so a crafted timezone
+        # string can't break out of the quoting or inject shell syntax.
+        cmd = "if [ -f \"/usr/share/zoneinfo/$1\" ]; then TZ=\"$1\" date +%z; else echo INVALID; fi"
+        match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", cmd, "sh", tz], OsStr.from_str)).exec_output!() {
             Ok(out) => Metrics.parse_utc_offset(out.stdout_utf8).map_err(|_| BadTz)
             Err(_) => Err(BadTz)
 

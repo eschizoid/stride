@@ -175,7 +175,10 @@ Analyze :: [].{
             [] => Ok(acc)
             [s, .. as rest] => {
                 f = Db.sport_ftp!(path, s)?
-                build_ftp_whens!(path, rest, "${acc} WHEN '${s}' THEN ${(f).to_str()}")
+                # SQL-escape single quotes in the sport name so a name like "d'Or"
+                # can't break the CASE expression or inject SQL.
+                s_esc = Str.replace_each(s, "'", "''")
+                build_ftp_whens!(path, rest, "${acc} WHEN '${s_esc}' THEN ${(f).to_str()}")
             }
         }
     # returns Bool: did the stored stream JSON fail to decode? (surfaced by analyze)

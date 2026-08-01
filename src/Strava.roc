@@ -77,7 +77,7 @@ Strava :: [].{
             Err(_) =>
                 # detach xdg-open: exec waits for the child, and xdg-open can resolve to
                 # a FOREGROUND handler (console browser) that would block auth forever
-                match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", "xdg-open \"${url}\" >/dev/null 2>&1 &"], OsStr.from_str)).exec_output!() {
+                match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", "xdg-open \"$1\" >/dev/null 2>&1 &", "sh", url], OsStr.from_str)).exec_output!() {
                     Ok(_) => {}
                     Err(_) => {}
                 }
