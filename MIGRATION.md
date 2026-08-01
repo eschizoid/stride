@@ -33,6 +33,10 @@ SYNTAX
 - **Blocks with local bindings need `{ }`** — a `parse = |x| { y = …; z }` body, a
   match/if branch that binds, and an `expect { h = …; bool }` all need braces.
 - **Number suffix `0u64` → `0.U64`.**
+- **Multiline strings: `"""…"""` is GONE** → line-prefixed, each line starts with `\\`
+  (Zig-style). Convert every triple-quoted SQL block to `\\`-prefixed lines with the
+  CONTENTS byte-identical (SQL text/alignment/comments unchanged) — only the Roc
+  delimiter changes. Critical for app.roc's many `"""` query blocks.
 
 SEMANTICS + STDLIB (the deep layers — the real grind)
 - Tag unions are **NOMINAL**, and `==` needs an **`is_eq` method on the type** — no
@@ -55,5 +59,14 @@ SEMANTICS + STDLIB (the deep layers — the real grind)
 - [ ] `Csv.roc`, `Schema.roc`, `Backfill.roc`, `Metrics.roc`, `Render.roc` (pure)
 - [ ] `Streams.roc` — builtin JSON API (replaces roc-json Decode/Option)
 - [ ] `app.roc` — basic-cli 0.20→0.21 (Http/Sqlite/Cmd/File) + builtin JSON. LAST.
+
+## Builtin JSON (roc-json is DROPPED — this is the replacement)
+- **Decode**: annotate the target type, then `Json.parse(str)`. Type-directed, no manual
+  decoders. Returns `Try(T, [InvalidJson(Str), MissingRequiredField(Str), ..])`.
+  `Json.parse_trailing_commas(str)` for lenient. Optional field: `Try(T, [Missing])`.
+  So `Decode.from_bytes(Str.to_utf8(text), Json.utf8)` → `Json.parse(text)`.
+- **Encode**: `Json.to_str(value) -> Str`. So `Encode.to_bytes(v, Json.utf8)` → `Json.to_str(v)`.
+- Streams: `StreamsResp`/`Option F64` decoders → a plain record type + `Json.parse`;
+  JSON `null` → optional `Try(F64, [Missing])`. Drop `import json.*` entirely.
 
 Keep `main` on alpha4 until the whole thing is green on the new compiler.
