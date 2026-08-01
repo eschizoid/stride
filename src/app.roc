@@ -507,7 +507,7 @@ ActivitySummary : {
     weighted_average_watts : Try(F64, [Missing]),
 }
 
-opt_real : Try(F64, [Missing]) -> [Real(F64), Null]
+opt_real : Try(F64, [Missing]) -> [Real(F64), Null, ..]
 opt_real = |o|
     match o {
         Ok(v) => Real(v)
