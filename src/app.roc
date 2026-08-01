@@ -2236,8 +2236,8 @@ doctor! = |{}| {
                 hint,
             ]),
             "\n",
-        ))
-    }
+        )
+    })
 }
 # session-RPE rating: the athlete is the sensor for sports without power meters.
 # Ratings live in their OWN table (the judgment tier) — never on the activities
@@ -2582,16 +2582,16 @@ session_not_found! = |session_id|
 complete! : Str, Str => Try({}, _)
 complete! = |session_id_str, activity_id_str| {
     path = open_db!({})?
-    match (Str.to_i64(session_id_str), Str.to_i64(activity_id_str)) {
+    match (I64.from_str(session_id_str), I64.from_str(activity_id_str)) {
         (Ok(session_id), Ok(activity_id)) =>
             # SQLite UPDATE matching 0 rows is not an error — check existence
             # ourselves so a typo'd id can't report false success and silently
             # leave the planned session open / the coaching log out of sync
-            if !(row_exists!(path, "planned_sessions", session_id)?)
+            if !(row_exists!(path, "planned_sessions", session_id)?) {
                 session_not_found!(session_id)
-            else if !(row_exists!(path, "activities", activity_id)?)
-                err_out!("activity_not_found", "no activity ${Num.to_str(activity_id)} in the db — `stride sync` first?")
-            else
+            } else if !(row_exists!(path, "activities", activity_id)?) {
+                err_out!("activity_not_found", "no activity ${I64.to_str(activity_id)} in the db — `stride sync` first?")
+            } else {
                 Sqlite.execute!({
                     path,
                     query: "UPDATE planned_sessions SET completed_activity_id = :aid, status = 'done' WHERE id = :pid",
@@ -2600,8 +2600,8 @@ complete! = |session_id_str, activity_id_str| {
                         { name: ":pid", value: Integer(session_id) },
                     ],
                 })?
-                out!({ completed_session: session_id, activity: activity_id }, |p| "planned session #${Num.to_str(p.completed_session)} completed by activity ${Num.to_str(p.activity)}")
-
+                out!({ completed_session: session_id, activity: activity_id }, |p| "planned session #${I64.to_str(p.completed_session)} completed by activity ${I64.to_str(p.activity)}")
+            }
         _ =>
             err_out!("bad_id", "complete needs numeric ids: complete <session_id> <activity_id>")
 
@@ -2639,11 +2639,11 @@ complete_rest! = |session_id_str| {
 skip! : Str, Str => Try({}, _)
 skip! = |session_id_str, reason| {
     path = open_db!({})?
-    match Str.to_i64(session_id_str) {
+    match I64.from_str(session_id_str) {
         Ok(session_id) =>
-            if !(row_exists!(path, "planned_sessions", session_id)?)
+            if !(row_exists!(path, "planned_sessions", session_id)?) {
                 session_not_found!(session_id)
-            else
+            } else {
                 Sqlite.execute!({
                     path,
                     query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why WHERE id = :pid",
@@ -2652,8 +2652,8 @@ skip! = |session_id_str, reason| {
                         { name: ":pid", value: Integer(session_id) },
                     ],
                 })?
-                out!({ skipped_session: session_id, reason }, |p| "planned session #${Num.to_str(p.skipped_session)} skipped: ${p.reason}")
-
+                out!({ skipped_session: session_id, reason }, |p| "planned session #${I64.to_str(p.skipped_session)} skipped: ${p.reason}")
+            }
         Err(_) =>
             err_out!("bad_id", "skip needs a numeric id: skip <session_id> \"<reason>\"")
 
@@ -2672,7 +2672,7 @@ schema_version = 10
 metrics_rev = 6
 
 run_migrations! : Str => Try({}, _)
-run_migrations! = |path|
+run_migrations! = |path| {
     # v5: prescriptions => planned_sessions ("a coach plans sessions" — the
     # medical word is gone). MUST run before the CREATEs below, or an empty
     # planned_sessions would shadow the old data.
@@ -2712,6 +2712,7 @@ run_migrations! = |path|
     # v2: index the column every date-range filter and the activities sort use
     # (queries now compare a.start_local directly — sargable — instead of substr)
     Sqlite.execute!({ path, query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })
+}
 
 # rename old => new when old exists and new doesn't (idempotent, data-preserving)
 rename_table_if_exists! : Str, Str, Str => Try({}, _)
