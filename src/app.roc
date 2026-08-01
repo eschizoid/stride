@@ -23,7 +23,6 @@ import pf.Utc
 import pf.Sleep
 import pf.Sqlite
 import pf.Cmd
-import pf.File
 import pf.Path
 import Csv
 import Streams
@@ -185,7 +184,7 @@ sync_ftp_to_strava! = |path, ftp_str|
                 Ok(token) => {
                     resp = Http.send!({
                         method: PUT,
-                        headers: [Http.header(("Authorization", "Bearer ${token}"))],
+                        headers: [{ name: "Authorization", value: "Bearer ${token}" }],
                         uri: "${api_base!({})}/api/v3/athlete?ftp=${ftp_str}",
                         body: [],
                         timeout_ms: TimeoutMilliseconds(30000),
@@ -211,7 +210,7 @@ init! = |{}| {
     home = Env.var!("HOME")?
     dir = "${home}/.stride"
     # ignore AlreadyExists — idempotent init
-    _ = Dir.create!(dir)
+    _ = Path.create_dir!(Path.from_str(dir))
     path = "${dir}/db.sqlite"
     ensure_schema!(path)?
     secure_perms!(dir)?
@@ -468,7 +467,7 @@ post_form! : Str, Str => Try(List(U8), _)
 post_form! = |uri, form| {
     resp = Http.send!({
         method: POST,
-        headers: [Http.header(("Content-Type", "application/x-www-form-urlencoded"))],
+        headers: [{ name: "Content-Type", value: "application/x-www-form-urlencoded" }],
         uri,
         body: Str.to_utf8(form),
         timeout_ms: TimeoutMilliseconds(30000),
@@ -657,7 +656,7 @@ send_bearer! : Str, Str => Try(Http.Response, _)
 send_bearer! = |uri, token|
     Http.send!({
         method: GET,
-        headers: [Http.header(("Authorization", "Bearer ${token}"))],
+        headers: [{ name: "Authorization", value: "Bearer ${token}" }],
         uri,
         body: [],
         timeout_ms: TimeoutMilliseconds(60000),
@@ -1995,7 +1994,7 @@ import_archive! = |src| {
         Err(other) => Err(other)
         Ok(dir) => {
             csv_path = "${dir}/activities.csv"
-            match File.read_utf8!(csv_path) {
+            match Path.read_utf8!(Path.from_str(csv_path)) {
                 Err(_) => err_out!("no_activities_csv", "no activities.csv in ${dir} — point me at a Strava account export (Settings → My Account → Download or Delete Your Account)")
                 Ok(text) =>
                     match Csv.parse(text) {
