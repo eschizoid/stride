@@ -38,6 +38,7 @@ import Schema
 import Render
 import Backfill
 import Db
+import Output
 
 version = "stride 0.1.0" # x-release-please-version
 
@@ -105,8 +106,8 @@ main! = |raw_args| {
     args = List.map(raw_args, |a| match a { Utf8(s) => s, _ => "" })
     match Command.parse(args) {
         Err(ShowHelp) => Stdout.line!(help_text)
-        Err(Usage(u)) => usage!(u)
-        Err(BadCount(s)) => err_out!("bad_count", "expected a number, got '${s}'")
+        Err(Usage(u)) => Output.usage!(u)
+        Err(BadCount(s)) => Output.err_out!("bad_count", "expected a number, got '${s}'")
         Ok(cmd) => dispatch!(cmd)
 
     }
@@ -143,9 +144,6 @@ dispatch! = |cmd|
         Command.ConfigSet(key, val) => config_store!(key, val)
 
     }
-usage! : Str => Try({}, _)
-usage! = |u|
-    Stdout.line!("usage: stride ${u}")
 
 config_show! : Str => Try({}, _)
 config_show! = |key| {
@@ -153,13 +151,13 @@ config_show! = |key| {
     if Config.is_secret(key)
         # confirm set-ness without leaking the value
         match Db.config_opt!(path, key)? {
-            Found(_) => out!({ key, value: "<redacted>", redacted: True }, |_| "${key} = <redacted> (secret — stored in the db, not shown)")
-            NotFound => err_out!("not_set", "(not set)")
+            Found(_) => Output.out!({ key, value: "<redacted>", redacted: True }, |_| "${key} = <redacted> (secret — stored in the db, not shown)")
+            NotFound => Output.err_out!("not_set", "(not set)")
         }
     else
         match Db.config_opt!(path, key)? {
-            Found(v) => out!({ key, value: v }, |p| p.value)
-            NotFound => err_out!("not_set", "(not set)")
+            Found(v) => Output.out!({ key, value: v }, |p| p.value)
+            NotFound => Output.err_out!("not_set", "(not set)")
 
         }
 }
@@ -277,7 +275,7 @@ auth! = |{}| {
     match (client_cred!(path, "STRAVA_CLIENT_ID", "strava_client_id"), client_cred!(path, "STRAVA_CLIENT_SECRET", "strava_client_secret")) {
         (Ok(client_id), Ok(client_secret)) => auth_flow!(path, client_id, client_secret)
         (Err(MissingEnv(name)), _) | (_, Err(MissingEnv(name))) =>
-            err_out!("missing_client_creds", "${name} not set and no stored credentials yet — create a (free) Strava API app at strava.com/settings/api, then run:\n  STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth")
+            Output.err_out!("missing_client_creds", "${name} not set and no stored credentials yet — create a (free) Strava API app at strava.com/settings/api, then run:\n  STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth")
 
         (Err(other), _) | (_, Err(other)) => Err(other)
 
@@ -394,7 +392,7 @@ sync! = |{}| {
     path = Db.open_db!({})?
     match get_valid_token!(path) {
         Err(NotAuthed) =>
-            err_out!("not_authenticated", "not authenticated — run `stride auth` first")
+            Output.err_out!("not_authenticated", "not authenticated — run `stride auth` first")
 
         Err(other) => Err(other)
         Ok(token) => {
@@ -416,7 +414,7 @@ sync! = |{}| {
             Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
             streams_n = backfill_streams!(path, token)?
             remaining = pending_streams!(path)?
-            out!({ synced: count, streams_fetched: streams_n, pending_streams: remaining }, |p| {
+            Output.out!({ synced: count, streams_fetched: streams_n, pending_streams: remaining }, |p| {
                 tail =
                     if p.pending_streams > 0
                         " (${I64.to_str(p.pending_streams)} still need streams — run `stride backfill` to pull them all)"
@@ -565,7 +563,7 @@ backfill! : {} => Try({}, _)
 backfill! = |{}| {
     path = Db.open_db!({})?
     match get_valid_token!(path) {
-        Err(NotAuthed) => err_out!("not_authenticated", "not authenticated — run `stride auth` first")
+        Err(NotAuthed) => Output.err_out!("not_authenticated", "not authenticated — run `stride auth` first")
         Err(other) => Err(other)
         Ok(token) => {
             # pull the full activity list first so backfill is self-sufficient —
@@ -713,24 +711,11 @@ upsert_activity! = |path, a| {
     invalidate_metrics!(path, a.id)
 }
 
-# ── analyze ──────────────────────────────────────────────────────────
-
-zone_config_help =
-        \\analyze needs your FTP and HR zone upper bounds in config first:
-        \\
-        \\    stride config set ftp_ride 190
-        \\    stride config set hr_z1_max 123
-        \\    stride config set hr_z2_max 153
-        \\    stride config set hr_z3_max 168
-        \\    stride config set hr_z4_max 183
-        \\
-        \\(find yours at strava.com/settings/heartrate — z5 is everything above z4_max)
-
 analyze! : {} => Try({}, _)
 analyze! = |{}| {
     path = Db.open_db!({})?
     match load_zone_config!(path) {
-        Err(MissingConfig) => missing_config!({})
+        Err(MissingConfig) => Output.missing_config!({})
         Err(other) => Err(other)
         Ok(cfg) => {
             res = compute_missing_metrics!(path, cfg.zb)?
@@ -749,13 +734,13 @@ analyze! = |{}| {
                     Err(other) => Err(other)
                 }
             tsb_opt = form?
-            if json_mode!({}) {
+            if Output.json_mode!({}) {
                 form_tsb =
                     match tsb_opt {
                         Some(tsb) => tsb
                         None => 0.0
                     }
-                emit_ok!({ computed: res.computed, stream_errors: res.stream_errors, form_tsb })
+                Output.emit_ok!({ computed: res.computed, stream_errors: res.stream_errors, form_tsb })
             } else {
                 Stdout.line!("computed metrics for ${U64.to_str(res.computed)} activities")?
                 (if res.stream_errors > 0
@@ -1144,12 +1129,12 @@ compare! : Str => Try({}, _)
 compare! = |period| {
     path = Db.open_db!({})?
     if period != "week" and period != "month" {
-        err_out!("bad_period", "compare week | compare month (got '${period}')")
+        Output.err_out!("bad_period", "compare week | compare month (got '${period}')")
     } else {
         days = if period == "month" 28 else 7
         label = if period == "month" "28d" else "7d"
         match Sqlite.query!({ path: Path.utf8(path), query: "SELECT day AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sqlite.str("day") }) {
-            Err(NoRowsReturned) => err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
+            Err(NoRowsReturned) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
             Err(e) => Err(e)
             Ok(latest_day) => {
                 anchor = Metrics.date_str_to_days(latest_day).ok_or(0)
@@ -1167,74 +1152,11 @@ compare! = |period| {
                     easy_pct: pct_num(w.z1 + w.z2, w.z1 + w.z2 + w.z3 + w.z4 + w.z5),
                     ctl,
                 }
-                out!({ period, window_label: label, current: block(cur, cur_ctl), prior: block(pri, pri_ctl) }, Render.compare_screen)
+                Output.out!({ period, window_label: label, current: block(cur, cur_ctl), prior: block(pri, pri_ctl) }, Render.compare_screen)
             }
         }
     }
 }
-# ── machine interface (JSON output for LLM/tool consumption) ────────
-# Convention: numeric fields COALESCE to 0 when unknown (0 = "not available").
-
-# one payload, two mouths: JSON for machines, a pure Render screen for humans.
-# The pattern for query commands — payload record + Render.<cmd>_screen.
-# JSON envelope contract version. Bumped when the wrapper shape changes (NOT the
-# db schema_version / metrics_rev). Every machine response is versioned so tool
-# callers can detect a contract change.
-json_schema_version : I64
-json_schema_version = 1
-
-out! = |payload, render|
-    if json_mode!({}) emit_ok!(payload) else Stdout.line!(render(payload))
-
-# every JSON success is wrapped `{ schema_version, data }`; `data` is the command
-# payload. Errors go through emit_err! and are `{ schema_version, error }` instead —
-# a caller discriminates success from failure by which key is present.
-emit_ok! = |val| {
-    # The new compiler can't derive an encoder for a record literal with a generic
-    # field inside a generic function (roc #10162), and Json.to_str demands infallible
-    # field encoders (encode_f64 can fail on NaN/Infinity). Encoding the payload
-    # DIRECTLY with the Try variant sidesteps both: it monomorphizes at each concrete
-    # call site (like the platform's send_json!) and tolerates float edge cases. The
-    # {schema_version, data} envelope is then assembled by interpolation. Our floats
-    # are always finite, so Err never fires.
-    d = Json.to_str_try(val) ? JsonEncodeFailed
-    Stdout.line!("{\"schema_version\":${(json_schema_version).to_str()},\"data\":${d}}")
-}
-
-emit_err! : Str, Str => Try({}, _)
-emit_err! = |code, msg|
-    Stdout.line!(Json.to_str({ schema_version: json_schema_version, error: { code, message: msg } }))
-# output mode: humans get tables by default; LLM callers set STRIDE_FORMAT=json
-# (CLAUDECODE env also flips to json for harnesses that set it)
-json_mode! : {} => Bool
-json_mode! = |{}|
-    match Env.var_str!(OsStr.from_str("STRIDE_FORMAT")) {
-        Ok(v) => Str.with_ascii_lowercased(Str.trim(v)) == "json"
-        Err(_) =>
-            match Env.var_str!(OsStr.from_str("CLAUDECODE")) {
-                # set-but-empty is not "on" — require a non-empty value
-                Ok(v) => !(Str.is_empty(v))
-                Err(_) => False
-
-            }
-    }
-# a known, user-fixable error: machine-readable JSON for tool callers, a plain
-# line for humans. Exit stays 0 (in-band errors are the codebase convention —
-# same as plan-add's dedup guard); the payload carries the failure.
-err_out! : Str, Str => Try({}, _)
-err_out! = |code, msg|
-    if json_mode!({})
-        emit_err!(code, msg)
-    else
-        Stdout.line!(msg)
-
-# unconfigured zones/FTP: JSON error for tools, the setup help for humans
-missing_config! : {} => Try({}, _)
-missing_config! = |{}|
-    if json_mode!({})
-        emit_err!("missing_config", "set your FTP and HR zone bounds first — see `stride config`")
-    else
-        Stdout.line!(zone_config_help)
 
 # does a row with this id exist? (table is an internal literal, never user input)
 row_exists! : Str, Str, I64 => Try(Bool, _)
@@ -1259,7 +1181,7 @@ activity! : Str => Try({}, _)
 activity! = |id_str| {
     path = Db.open_db!({})?
     match I64.from_str(id_str) {
-        Err(_) => err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
+        Err(_) => Output.err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
         Ok(aid) => activity_body!(path, id_str, aid)
 
     }
@@ -1302,7 +1224,7 @@ activity_body! = |path, id_str, aid| {
         },
     })?
     match List.first(rows) {
-        Err(_) => err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
+        Err(_) => Output.err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
         Ok(a) => {
             raw_rows = Sqlite.query_many!({
                 path: Path.utf8(path),
@@ -1339,8 +1261,8 @@ activity_body! = |path, id_str, aid| {
             pintensity = Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
             has_power_intensity = (pintensity.easy_s + pintensity.moderate_s + pintensity.hard_s) > 0
 
-            if json_mode!({})
-                emit_ok!({
+            if Output.json_mode!({})
+                Output.emit_ok!({
                     id: a.id,
                     date: a.date,
                     sport: a.sport,
@@ -1405,8 +1327,8 @@ stats! = |{}| {
     year = (Metrics.civil_from_days(today_days)).y
     all_time = stats_rows!(path, "0000-01-01")?
     ytd = stats_rows!(path, "${(year).to_str()}-01-01")?
-    if json_mode!({})
-        emit_ok!({ all_time, ytd, ytd_year: year })
+    if Output.json_mode!({})
+        Output.emit_ok!({ all_time, ytd, ytd_year: year })
     else {
         to_table = |rows|
             Render.render_table(
@@ -1451,11 +1373,11 @@ summary! : {} => Try({}, _)
 summary! = |{}| {
     path = Db.open_db!({})?
     match load_zone_config!(path) {
-        Err(MissingConfig) => missing_config!({})
+        Err(MissingConfig) => Output.missing_config!({})
         Err(other) => Err(other)
         Ok({ ftp, zb }) => {
             payload = summary_payload!(path, ftp, zb)?
-            out!(payload, Render.summary_screen)
+            Output.out!(payload, Render.summary_screen)
         }
     }
 }
@@ -1464,7 +1386,7 @@ week! : {} => Try({}, _)
 week! = |{}| {
     path = Db.open_db!({})?
     match load_zone_config!(path) {
-        Err(MissingConfig) => missing_config!({})
+        Err(MissingConfig) => Output.missing_config!({})
         Err(other) => Err(other)
         Ok({ ftp, zb }) => {
             s = summary_payload!(path, ftp, zb)?
@@ -1519,8 +1441,8 @@ week! = |{}| {
                     Ok({ id, target_date, session_type, detail, rationale })
                 },
             })?
-            if json_mode!({}) {
-                emit_ok!({
+            if Output.json_mode!({}) {
+                Output.emit_ok!({
                     summary: s,
                     recent_activities_14d: recent,
                     open_sessions: open_p,
@@ -1719,8 +1641,8 @@ activities! = |limit, sport_filter| {
             Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, z1_s, z2_s, z3_s, z4_s, z5_s, hard_s, relative_effort, avg_hr })
         },
     })?
-    if json_mode!({})
-        emit_ok!(rows)
+    if Output.json_mode!({})
+        Output.emit_ok!(rows)
     else {
         Stdout.line!(Render.render_table(
             ["date", "sport", "name", "time", "load", "intensity (if)", "hard"],
@@ -1763,7 +1685,7 @@ top! = |metric, limit, sport_filter| {
     path = Db.open_db!({})?
     match top_metric(metric) {
         Err(_) =>
-            err_out!("bad_metric", "unknown metric '${metric}' — use: hr, tss, power, intensity, distance, time, output")
+            Output.err_out!("bad_metric", "unknown metric '${metric}' — use: hr, tss, power, intensity, distance, time, output")
 
         Ok({ col, header }) => {
             sport_where =
@@ -1799,8 +1721,8 @@ top! = |metric, limit, sport_filter| {
                     Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, avg_hr, output_kj })
                 },
             })?
-            if json_mode!({})
-                emit_ok!(rows)
+            if Output.json_mode!({})
+                Output.emit_ok!(rows)
             else {
                 val = |r|
                     match metric {
@@ -1840,22 +1762,22 @@ import_archive! = |src| {
         else
             Ok(src)
     match dir_result {
-        Err(UnzipFailed) => err_out!("unzip_failed", "couldn't unzip ${src} — is `unzip` installed? (or extract it yourself and `stride import <dir>`)")
+        Err(UnzipFailed) => Output.err_out!("unzip_failed", "couldn't unzip ${src} — is `unzip` installed? (or extract it yourself and `stride import <dir>`)")
         Err(other) => Err(other)
         Ok(dir) => {
             csv_path = "${dir}/activities.csv"
             match Path.read_utf8!(Path.utf8(csv_path)) {
-                Err(_) => err_out!("no_activities_csv", "no activities.csv in ${dir} — point me at a Strava account export (Settings → My Account → Download or Delete Your Account)")
+                Err(_) => Output.err_out!("no_activities_csv", "no activities.csv in ${dir} — point me at a Strava account export (Settings → My Account → Download or Delete Your Account)")
                 Ok(text) =>
                     match Csv.parse(text) {
                         [headers, .. as rows] => {
                             counts = import_rows!(db, headers, rows, { imported: 0.U64, skipped: 0.U64 })?
-                            if json_mode!({})
-                                emit_ok!(counts)
+                            if Output.json_mode!({})
+                                Output.emit_ok!(counts)
                             else
                                 Stdout.line!("imported ${(counts.imported).to_str()} activities (${(counts.skipped).to_str()} rows skipped) — run `stride analyze` to compute metrics")
                         }
-                        _ => err_out!("empty_csv", "activities.csv is empty")
+                        _ => Output.err_out!("empty_csv", "activities.csv is empty")
 
                     }
             }
@@ -2046,7 +1968,7 @@ doctor! = |{}| {
         time: time_desc,
         time_ok: time_ok,
     }
-    out!(payload, |p| {
+    Output.out!(payload, |p| {
         model_lines = List.map(p.scored_by, |mrow| "    ${mrow.model}: ${(mrow.n).to_str()}")
         hint =
             if p.strength_unrated > 0
@@ -2101,7 +2023,7 @@ rate! = |target, rpe_str| {
             _ => Err(BadRpe)
         }
     match rpe_result {
-        Err(_) => err_out!("bad_rpe", "rate needs an effort from 1 (easy) to 10 (max) — got '${rpe_str}'")
+        Err(_) => Output.err_out!("bad_rpe", "rate needs an effort from 1 (easy) to 10 (max) — got '${rpe_str}'")
         Ok(rpe) => {
             id_result =
                 if target == "latest" {
@@ -2119,12 +2041,12 @@ rate! = |target, rpe_str| {
                     I64.from_str(target).map_err(|_| BadId)
                 }
             match id_result {
-                Err(BadId) => err_out!("bad_id", "rate needs an activity id or 'latest': rate <activity_id|latest> <1-10>")
-                Err(NoActivities) => err_out!("no_activities", "nothing to rate yet — `stride sync` or `stride import` first")
+                Err(BadId) => Output.err_out!("bad_id", "rate needs an activity id or 'latest': rate <activity_id|latest> <1-10>")
+                Err(NoActivities) => Output.err_out!("no_activities", "nothing to rate yet — `stride sync` or `stride import` first")
                 Err(other) => Err(other)
                 Ok(activity_id) =>
                     if !(row_exists!(path, "activities", activity_id)?) {
-                        err_out!("activity_not_found", "no activity ${I64.to_str(activity_id)} in the db — `stride sync` first?")
+                        Output.err_out!("activity_not_found", "no activity ${I64.to_str(activity_id)} in the db — `stride sync` first?")
                     } else {
                         Sqlite.execute!({
                             path: Path.utf8(path),
@@ -2137,7 +2059,7 @@ rate! = |target, rpe_str| {
                         })?
                         # a rating is a metric input — invalidate so analyze rescores
                         invalidate_metrics!(path, activity_id)?
-                        out!({ rated: activity_id, rpe }, |p| "activity ${I64.to_str(p.rated)} rated ${Render.fmt0(p.rpe)}/10 — run `stride analyze` to rescore")
+                        Output.out!({ rated: activity_id, rpe }, |p| "activity ${I64.to_str(p.rated)} rated ${Render.fmt0(p.rpe)}/10 — run `stride analyze` to rescore")
                     }
             }
         }
@@ -2149,12 +2071,12 @@ pz! : {} => Try({}, _)
 pz! = |{}| {
     path = Db.open_db!({})?
     match config_f64!(path, "ftp_ride") {
-        Err(MissingConfig) => err_out!("missing_config", "set your FTP first: stride config set ftp_ride <watts>")
+        Err(MissingConfig) => Output.err_out!("missing_config", "set your FTP first: stride config set ftp_ride <watts>")
         Err(other) => Err(other)
         Ok(ftp) => {
             zones = Metrics.power_zones(ftp)
-            if json_mode!({})
-                emit_ok!({ ftp, zones })
+            if Output.json_mode!({})
+                Output.emit_ok!({ ftp, zones })
             else {
                 range = |z|
                     if z.lo_w <= 0.0
@@ -2261,7 +2183,7 @@ progress! = |date_arg| {
         })
     if List.is_empty(scored) {
         if Str.is_empty(date) {
-            err_out!("no_scorable_workouts", "nothing to compare yet — analyze activities first (and `stride rate` your strength sessions)")
+            Output.err_out!("no_scorable_workouts", "nothing to compare yet — analyze activities first (and `stride rate` your strength sessions)")
         } else {
             on_date = Sqlite.query_many!({
                 path: Path.utf8(path),
@@ -2274,12 +2196,12 @@ progress! = |date_arg| {
                 },
             })?
             match List.first(on_date) {
-                Ok(a) => err_out!("unscorable", "found \"${a.name}\" on ${date}, but it can't be compared — needs power+HR, distance+HR, or a rating (`stride rate <id> <1-10>`)")
-                Err(_) => err_out!("no_workout_on_date", "no workout found on ${date}")
+                Ok(a) => Output.err_out!("unscorable", "found \"${a.name}\" on ${date}, but it can't be compared — needs power+HR, distance+HR, or a rating (`stride rate <id> <1-10>`)")
+                Err(_) => Output.err_out!("no_workout_on_date", "no workout found on ${date}")
             }
         }
-    } else if json_mode!({}) {
-        emit_ok!({
+    } else if Output.json_mode!({}) {
+        Output.emit_ok!({
             anchor_date: date,
             groups: List.map(scored, |g| {
                 name: g.name,
@@ -2319,7 +2241,7 @@ load_series! = |days| {
         },
     })?
     ordered = List.fold(rows, [], |acc, x| List.concat([x], acc))
-    out!(ordered, Render.load_screen)
+    Output.out!(ordered, Render.load_screen)
 }
 plan_view! : [ThisWeek, AllTime] => Try({}, _)
 plan_view! = |scope| {
@@ -2378,7 +2300,7 @@ plan_view! = |scope| {
         status: p.status,
         skipped_reason: p.skipped_reason,
     })
-    out!(enriched, |rows_enriched|
+    Output.out!(enriched, |rows_enriched|
         Render.render_table(
             ["day", "date", "type", "status", "detail", "id"],
             List.map(rows_enriched, |p| [p.day, p.target_date, p.session_type, p.status, p.detail, (p.id).to_str()]),
@@ -2395,7 +2317,7 @@ plan_add! = |target_date, session_type, detail, rationale| {
         row: Sqlite.i64("id"),
     })?
     if existing > 0
-        err_out!("date_already_planned", "${target_date} already has open planned session #${(existing).to_str()} — `stride skip ${(existing).to_str()} \"reason\"` first")
+        Output.err_out!("date_already_planned", "${target_date} already has open planned session #${(existing).to_str()} — `stride skip ${(existing).to_str()} \"reason\"` first")
     else
         insert_planned_session!(path, target_date, session_type, detail, rationale)
 }
@@ -2421,12 +2343,12 @@ insert_planned_session! = |path, target_date, session_type, detail, rationale| {
         bindings: [],
         row: Sqlite.i64("id"),
     })?
-    out!({ id: new_id, target_date, session_type }, |p| "planned #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}")
+    Output.out!({ id: new_id, target_date, session_type }, |p| "planned #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}")
 }
 # ONE not-found message for complete/complete-rest/skip — can't drift apart
 session_not_found! : I64 => Try({}, _)
 session_not_found! = |session_id|
-    err_out!("session_not_found", "no planned session #${(session_id).to_str()} — run `stride plan` to see ids")
+    Output.err_out!("session_not_found", "no planned session #${(session_id).to_str()} — run `stride plan` to see ids")
 
 complete! : Str, Str => Try({}, _)
 complete! = |session_id_str, activity_id_str| {
@@ -2439,7 +2361,7 @@ complete! = |session_id_str, activity_id_str| {
             if !(row_exists!(path, "planned_sessions", session_id)?) {
                 session_not_found!(session_id)
             } else if !(row_exists!(path, "activities", activity_id)?) {
-                err_out!("activity_not_found", "no activity ${I64.to_str(activity_id)} in the db — `stride sync` first?")
+                Output.err_out!("activity_not_found", "no activity ${I64.to_str(activity_id)} in the db — `stride sync` first?")
             } else {
                 Sqlite.execute!({
                     path: Path.utf8(path),
@@ -2449,10 +2371,10 @@ complete! = |session_id_str, activity_id_str| {
                         { name: ":pid", value: Integer(session_id) },
                     ],
                 })?
-                out!({ completed_session: session_id, activity: activity_id }, |p| "planned session #${I64.to_str(p.completed_session)} completed by activity ${I64.to_str(p.activity)}")
+                Output.out!({ completed_session: session_id, activity: activity_id }, |p| "planned session #${I64.to_str(p.completed_session)} completed by activity ${I64.to_str(p.activity)}")
             }
         _ =>
-            err_out!("bad_id", "complete needs numeric ids: complete <session_id> <activity_id>")
+            Output.err_out!("bad_id", "complete needs numeric ids: complete <session_id> <activity_id>")
 
     }
 }
@@ -2462,7 +2384,7 @@ complete_rest! : Str => Try({}, _)
 complete_rest! = |session_id_str| {
     path = Db.open_db!({})?
     match I64.from_str(session_id_str) {
-        Err(_) => err_out!("bad_id", "complete needs a numeric id: complete <session_id> [activity_id]")
+        Err(_) => Output.err_out!("bad_id", "complete needs a numeric id: complete <session_id> [activity_id]")
         Ok(session_id) =>
             if !(row_exists!(path, "planned_sessions", session_id)?)
                 session_not_found!(session_id)
@@ -2474,14 +2396,14 @@ complete_rest! = |session_id_str| {
                     row: Sqlite.str("t"),
                 })?
                 if session_type != "rest" {
-                    err_out!("activity_required", "planned session #${(session_id).to_str()} is '${session_type}' — completing it needs the activity id (only rest days close without one)")
+                    Output.err_out!("activity_required", "planned session #${(session_id).to_str()} is '${session_type}' — completing it needs the activity id (only rest days close without one)")
                 } else {
                     Sqlite.execute!({
                         path: Path.utf8(path),
                         query: "UPDATE planned_sessions SET status = 'done' WHERE id = :pid",
                         bindings: [{ name: ":pid", value: Integer(session_id) }],
                     })?
-                    out!({ completed_session: session_id, rest: True }, |p| "planned session #${(p.completed_session).to_str()} (rest) marked done")
+                    Output.out!({ completed_session: session_id, rest: True }, |p| "planned session #${(p.completed_session).to_str()} (rest) marked done")
                 }
             }
     }
@@ -2502,10 +2424,10 @@ skip! = |session_id_str, reason| {
                         { name: ":pid", value: Integer(session_id) },
                     ],
                 })?
-                out!({ skipped_session: session_id, reason }, |p| "planned session #${I64.to_str(p.skipped_session)} skipped: ${p.reason}")
+                Output.out!({ skipped_session: session_id, reason }, |p| "planned session #${I64.to_str(p.skipped_session)} skipped: ${p.reason}")
             }
         Err(_) =>
-            err_out!("bad_id", "skip needs a numeric id: skip <session_id> \"<reason>\"")
+            Output.err_out!("bad_id", "skip needs a numeric id: skip <session_id> \"<reason>\"")
 
     }
 }
