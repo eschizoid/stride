@@ -75,13 +75,32 @@ SEMANTICS + STDLIB (the deep layers — the real grind)
 
 ## Module progress (pure first, then platform/app last)
 
-- [x] `Config.roc` — compiles clean (namespace type-module).
-- [~] `Command.roc` — compiles clean; `match`/`Try`/`U64.from_str`/type-module done,
-      29 expects now RUN. **Remaining: nominal `is_eq`** — the equality-based expects
-      need an `is_eq` on `Command`/`ParseErr` OR match-based rewrites.
-- [ ] `Csv.roc`, `Schema.roc`, `Backfill.roc`, `Metrics.roc`, `Render.roc` (pure)
-- [ ] `Streams.roc` — builtin JSON API (replaces roc-json Decode/Option)
-- [ ] `app.roc` — basic-cli 0.20→0.21 (Http/Sqlite/Cmd/File) + builtin JSON. LAST.
+**8 of 9 GREEN + committed** on the new compiler (branch `new-compiler-migration`),
+160 tests passing, main untouched:
+- [x] `Config.roc` (6) · `Command.roc` (29, match-based) · `Csv.roc` (4) · `Schema.roc`
+      (0, DDL) · `Backfill.roc` (10) · `Metrics.roc` (79) · `Render.roc` (28) ·
+      `Streams.roc` (4, builtin JSON, roc-json dropped).
+- [~] `app.roc` — WIP, NOT green (>1000 errors, display-capped). Done: header→0.21.0
+      real bundle, all 27 SQL blocks→`\\` byte-identical, `when→match`, `if-then`, arm
+      arrows (incl. EOL/guarded), most body-braces, patterns, `|>`→methods, `Result→Try`
+      annotations. Cleared MISSING-MATCH-ARROW 184→~6, PATTERN 98→~4.
+
+### app.roc — resume plan (do these in order)
+1. **OPENING MOVE (biggest win):** a robust body-brace wrapper for the sites the
+   statement-level one missed — **mid-expression lambdas** (`out!({…}, |p| { body })`
+   whose body has a binding) and **value-defs** (`name =` on its own line with a
+   binding body). This is ~630 of the EXPRESSION+STATEMENT errors and should drop the
+   count UNDER the 1000 cap, making the rest measurable. Test on a copy, brace-balance,
+   apply, confirm error count DROPS (monotonic rule).
+2. Remaining type-parens: `List X`→`List(X)`, tag-payload `Tag T`→`Tag(T)` (~180).
+3. THEN the stdlib layer surfaces (use the rename table above) — hasn't appeared yet
+   because the file doesn't parse.
+4. THEN platform APIs surface: Sqlite `path : Path.Path` (import pf.Path, `Path.from_str`);
+   JSON `Json.parse`/`Json.to_str` (5 sites); Http/Cmd/File/Env renames — curl
+   `raw.githubusercontent.com/roc-lang/basic-cli/0.21.0/platform/<Module>.roc`.
+5. Green `roc-new check` → `roc-new test` (0 expects in app.roc; other modules must stay green).
+   THEN: justfile→roc-new; e2e as a Roc PROGRAM (effects in main!, NOT expects — those
+   crash); the ADR-0001 file-split. Discipline: one region at a time, error count only DROPS.
 
 ## Builtin JSON (roc-json is DROPPED — this is the replacement)
 - **Decode**: annotate the target type, then `Json.parse(str)`. Type-directed, no manual
