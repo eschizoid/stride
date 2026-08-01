@@ -99,7 +99,7 @@ help_text =
 
 # main! stays thin: parse argv into a typed Command (pure, in Command.roc), then
 # dispatch. All arity/count validation lives in the parser and is unit-tested there.
-main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, [Exit(I32), ..])
+main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
 main! = |raw_args| {
     args = List.map(raw_args, |a| match a { Utf8(s) => s, _ => "" })
     match Command.parse(args) {
