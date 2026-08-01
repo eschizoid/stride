@@ -1327,13 +1327,21 @@ activity_body! = |path, id_str, aid|
                 Streams.stream_pairs(streams.time, streams.heartrate),
                 |p| Metrics.valid_hr(p.v),
             )
-            watts_1s = Metrics.resample_1s(List.keep_if(Streams.stream_pairs(streams.time, streams.watts), |p| Metrics.valid_watts(p.v)))
+            watts_pairs = List.keep_if(Streams.stream_pairs(streams.time, streams.watts), |p| Metrics.valid_watts(p.v))
+            watts_1s = Metrics.resample_1s(watts_pairs)
             best = |w|
                 when Metrics.best_rolling_mean(watts_1s, w) is
                     Ok(v) -> v
                     Err(_) -> 0.0
             max_hr = List.walk(hr_pairs, 0.0f64, |acc, p| Num.max(acc, p.v))
             hard_s = a.z4_s + a.z5_s
+            # intensity from POWER (truer than HR for power sports — HR threshold can
+            # sit on a zone boundary). Cycling uses the FTP the ride was scored with;
+            # non-cycling power sports need their own threshold (not yet configured),
+            # so they get 0 here and fall back to the HR "hard" signal.
+            pi_ftp = if List.contains(["Ride", "VirtualRide", "GravelRide", "EBikeRide"], a.sport) then a.ftp_used else 0.0
+            pintensity = Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
+            has_power_intensity = (pintensity.easy_s + pintensity.moderate_s + pintensity.hard_s) > 0
 
             if json_mode!({}) then
                 emit_ok!({
@@ -1353,6 +1361,10 @@ activity_body! = |path, id_str, aid|
                     z4_s: a.z4_s,
                     z5_s: a.z5_s,
                     hard_s,
+                    # intensity from power (0s when no power/threshold — then read hard_s).
+                    # hard_by_power_s is the honest "how hard" for a power ride.
+                    power_intensity: { easy_s: pintensity.easy_s, moderate_s: pintensity.moderate_s, hard_s: pintensity.hard_s },
+                    hard_by_power_s: if has_power_intensity then pintensity.hard_s else 0,
                     power_bests: { w60: best(60), w180: best(180), w300: best(300), w1200: best(1200) },
                     max_hr,
                     avg_hr: a.avg_hr,
@@ -1369,7 +1381,10 @@ activity_body! = |path, id_str, aid|
                 np_str = if a.np_w > 0 then " · np ${Render.fmt0(a.np_w)}W @ ftp ${Render.fmt0(a.ftp_used)} (if ${Render.fmt2(a.intensity)})" else ""
                 Stdout.line!("load   ${load_str}${np_str}")?
                 Stdout.line!("zones  Z1 ${Num.to_str(a.z1_s // 60)}m · Z2 ${Num.to_str(a.z2_s // 60)}m · Z3 ${Num.to_str(a.z3_s // 60)}m · Z4 ${Num.to_str(a.z4_s // 60)}m · Z5 ${Num.to_str(a.z5_s // 60)}m")?
-                Stdout.line!("hard   ${Render.mins(hard_s)} in Z4+Z5")?
+                (if has_power_intensity then
+                    Stdout.line!("hard   ${Render.mins(pintensity.hard_s)} at/above threshold (by power) · ${Render.mins(hard_s)} in HR Z4+Z5")
+                else
+                    Stdout.line!("hard   ${Render.mins(hard_s)} in Z4+Z5"))?
                 if best(60) > 0 then
                     Stdout.line!("power  1min ${Render.fmt0(best(60))}W · 3min ${Render.fmt0(best(180))}W · 5min ${Render.fmt0(best(300))}W · 20min ${Render.fmt0(best(1200))}W")?
                 else

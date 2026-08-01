@@ -228,7 +228,12 @@ import json, sys
 a = json.load(sys.stdin)["data"]
 w = a["power_bests"]["w60"]
 assert 190 <= w <= 210, f"9999W spike must be filtered from bests, got w60={w}"
-print("power junk filter OK (>2500W spike dropped from bests)")
+# power ride reports intensity from power, not just HR (grill fix)
+pi = a["power_intensity"]
+assert set(pi) == {"easy_s", "moderate_s", "hard_s"}, pi
+assert pi["easy_s"] + pi["moderate_s"] + pi["hard_s"] > 0, "power ride must have power-intensity time"
+assert "hard_by_power_s" in a, a
+print("power junk filter OK + power-intensity present on a power ride")
 '
 
 # corrupt stream data must be flagged, not silently read as honest zeros

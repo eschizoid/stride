@@ -4,6 +4,7 @@ module [
     resample_1s,
     normalized_power,
     time_in_zones,
+    time_in_power_intensity,
     best_rolling_mean,
     tss_ladder,
     sport_class,
@@ -160,6 +161,41 @@ time_in_zones = |samples, zb|
                     { acc & z: updated, prev_t: s.t },
     )
     state.z
+
+# Intensity split from POWER, for a sport with a known threshold (FTP). Mirrors the
+# HR easy/moderate/hard split, but off power zones: easy < 76% FTP (Z1-2), moderate
+# 76-90% (Z3), hard >= 91% FTP (Z4+). For a power-equipped ride this is the truer
+# "how hard was it" — an athlete's threshold HR can sit right on a zone boundary, so
+# a genuine threshold effort reads as moderate by HR while the power says threshold.
+# Same 30s gap cap as the HR walk so a paused/dropped stream can't invent time.
+PowerIntensity : { easy_s : I64, moderate_s : I64, hard_s : I64 }
+
+time_in_power_intensity : List { t : I64, v : F64 }, F64 -> PowerIntensity
+time_in_power_intensity = |samples, ftp|
+    if ftp <= 0.0 then
+        { easy_s: 0, moderate_s: 0, hard_s: 0 }
+    else
+        mod_lo = ftp * 0.76
+        hard_lo = ftp * 0.91
+        state = List.walk(
+            samples,
+            { i: { easy_s: 0i64, moderate_s: 0i64, hard_s: 0i64 }, prev_t: 0i64, started: Bool.false },
+            |acc, s|
+                if !(acc.started) then
+                    { acc & prev_t: s.t, started: Bool.true }
+                else
+                    dt = Num.min(s.t - acc.prev_t, 30)
+                    if dt <= 0 then
+                        { acc & prev_t: s.t }
+                    else
+                        i = acc.i
+                        updated =
+                            if s.v < mod_lo then { i & easy_s: i.easy_s + dt }
+                            else if s.v < hard_lo then { i & moderate_s: i.moderate_s + dt }
+                            else { i & hard_s: i.hard_s + dt }
+                        { acc & i: updated, prev_t: s.t },
+        )
+        state.i
 
 # ── training stress ─────────────────────────────────────────────────
 
@@ -849,6 +885,18 @@ expect
 
 expect valid_hr(150.0) and !(valid_hr(20.0)) and !(valid_hr(230.0)) and valid_hr(35.0) and valid_hr(220.0)
 expect valid_watts(200.0) and valid_watts(0.0) and valid_watts(2500.0) and !(valid_watts(-5.0)) and !(valid_watts(9999.0))
+
+# power intensity split (ftp 243): 100W=41% easy, 200W=82% moderate, 243W=100% hard
+expect
+    r = time_in_power_intensity([{ t: 0, v: 100.0 }, { t: 1, v: 100.0 }, { t: 2, v: 100.0 }], 243.0)
+    r.easy_s == 2 and r.moderate_s == 0 and r.hard_s == 0
+expect
+    r = time_in_power_intensity([{ t: 0, v: 200.0 }, { t: 1, v: 200.0 }, { t: 2, v: 200.0 }], 243.0)
+    r.moderate_s == 2 and r.easy_s == 0 and r.hard_s == 0
+expect
+    r = time_in_power_intensity([{ t: 0, v: 243.0 }, { t: 1, v: 243.0 }, { t: 2, v: 243.0 }], 243.0)
+    r.hard_s == 2 and r.easy_s == 0 and r.moderate_s == 0
+expect time_in_power_intensity([{ t: 0, v: 243.0 }], 0.0) == { easy_s: 0, moderate_s: 0, hard_s: 0 }
 
 expect export_date_to_iso("Feb 17, 2022, 12:18:26 PM") == Ok("2022-02-17T12:18:26Z")
 expect export_date_to_iso("Jul 4, 2026, 6:05:09 AM") == Ok("2026-07-04T06:05:09Z")
