@@ -397,7 +397,7 @@ zone_offset_now! = |tz| {
 
     }
 }
-resolve_time_mode! : Str => Try(TimeMode, _)
+resolve_time_mode! : Str => TimeMode
 resolve_time_mode! = |path| {
     fixed : Try(I64, [NoFixed])
     fixed =
@@ -413,14 +413,13 @@ resolve_time_mode! = |path| {
     match tz {
         Ok(name) =>
             match zone_offset_now!(name) {
-                Ok(off) => Ok(Zone(name, off))
-                Err(_) => Ok(BadZone(name, fixed.ok_or(0)))
+                Ok(off) => Zone(name, off)
+                Err(_) => BadZone(name, fixed.ok_or(0))
             }
         Err(_) =>
             match fixed {
-                Ok(off) => Ok(FixedOffset(off))
-                Err(_) => Ok(Utc)
-
+                Ok(off) => FixedOffset(off)
+                Err(_) => Utc
             }
     }
 }
@@ -440,10 +439,10 @@ fmt_offset = |m| {
     pad = |n| if n < 10 "0${(n).to_str()}" else (n).to_str()
     "${if m < 0 "-" else "+"}${pad(a // 60)}:${pad(a % 60)}"
 }
-local_today_days! : Str => Try(I64, _)
+local_today_days! : Str => I64
 local_today_days! = |path| {
-    mode = resolve_time_mode!(path)?
-    Ok((now_secs!({}) + time_mode_offset(mode) * 60) // 86400)
+    mode = resolve_time_mode!(path)
+    (now_secs!({}) + time_mode_offset(mode) * 60) // 86400
 }
 # returns a valid access token, refreshing if expired; NotAuthed if never
 # authorized (a genuinely absent token — NOT a db read failure, which propagates)
@@ -1191,7 +1190,7 @@ rebuild_daily_load! = |path| {
         Ok(seed) => {
             bounds = List.fold(valid_days, { lo: seed, hi: seed }, |b, d| { lo: (b.lo).min(d), hi: (b.hi).max(d) })
             # extend through today so rest days decay ATL/CTL and TSB is true as-of-now
-            today = local_today_days!(path)?
+            today = local_today_days!(path)
             last_day = (bounds.hi).max(today)
             Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM daily_load", bindings: [] })?
             walk_days!(path, by_day, bounds.lo, last_day, 0.0, 0.0)
@@ -1550,7 +1549,7 @@ activity_body! = |path, id_str, aid| {
 stats! : {} => Try({}, _)
 stats! = |{}| {
     path = open_db!({})?
-    today_days = local_today_days!(path)?
+    today_days = local_today_days!(path)
     year = (Metrics.civil_from_days(today_days)).y
     all_time = stats_rows!(path, "0000-01-01")?
     ytd = stats_rows!(path, "${(year).to_str()}-01-01")?
@@ -2162,7 +2161,7 @@ doctor! = |{}| {
     })?
     strength_unrated = List.len(List.keep_if(sports, |r| Metrics.sport_class(r.sport) == StrengthLike and r.rated == 0))
     rated_total = List.len(List.keep_if(sports, |r| r.rated == 1))
-    mode = resolve_time_mode!(path)?
+    mode = resolve_time_mode!(path)
     time_desc =
         match mode {
             Zone(name, off) => "timezone ${name} (${fmt_offset(off)} now, DST-aware)"
@@ -2476,7 +2475,7 @@ plan_view! = |scope| {
     # default view is the CURRENT training week (Mon-Sun containing today) so `plan`
     # is "this week at a glance", not the whole history spilling into next week. The
     # Monday offset is rem(days+3,7) — the same convention as Metrics.day_of_week.
-    today = local_today_days!(path)?
+    today = local_today_days!(path)
     mon = today - (today + 3) % (7)
     week_filter =
         match scope {
