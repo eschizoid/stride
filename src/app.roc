@@ -230,7 +230,7 @@ secure_perms! = |dir| {
 config_get! : Str, Str => Try(Str, _)
 config_get! = |path, key|
     Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query: "SELECT value FROM config WHERE key = :key",
         bindings: [{ name: ":key", value: String(key) }],
         row: Sqlite.str("value"),
@@ -250,7 +250,7 @@ config_opt! = |path, key|
 config_set! : Str, Str, Str => Try({}, _)
 config_set! = |path, key, value|
     Sqlite.execute!({
-        path,
+        path: Path.utf8(path),
         query: "INSERT OR REPLACE INTO config (key, value) VALUES (:key, :value)",
         bindings: [
             { name: ":key", value: String(key) },
@@ -555,7 +555,7 @@ streams_per_run = 60
 backfill_streams! : Str, Str => Try(U64, _)
 backfill_streams! = |path, token| {
     ids = Sqlite.query_many!({
-        path,
+        path: Path.utf8(path),
         query:
             \\SELECT a.id AS id FROM activities a
             \\LEFT JOIN streams s ON s.activity_id = a.id
@@ -573,7 +573,7 @@ backfill_streams! = |path, token| {
 pending_streams! : Str => Try(I64, _)
 pending_streams! = |path|
     Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query:
             \\SELECT COUNT(*) AS n FROM activities a
             \\LEFT JOIN streams s ON s.activity_id = a.id
@@ -610,7 +610,7 @@ fetch_streams_all! = |path, token, ids, acc|
 store_streams! : Str, I64, Str => Try({}, _)
 store_streams! = |path, id, text| {
     Sqlite.execute!({
-        path,
+        path: Path.utf8(path),
         query: "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (:id, :raw)",
         bindings: [
             { name: ":id", value: Integer(id) },
@@ -627,7 +627,7 @@ store_streams! = |path, id, text| {
 invalidate_metrics! : Str, I64 => Try({}, _)
 invalidate_metrics! = |path, id|
     Sqlite.execute!({
-        path,
+        path: Path.utf8(path),
         query: "DELETE FROM activity_metrics WHERE activity_id = :id",
         bindings: [{ name: ":id", value: Integer(id) }],
     })
@@ -697,7 +697,7 @@ backfill! = |{}| {
             count = fetch_pages!(path, token, "", 1, 0)?
             config_set!(path, "last_sync_epoch", I64.to_str(now_secs!({})))?
             missing_ids = Sqlite.query_many!({
-                path,
+                path: Path.utf8(path),
                 query:
                     \\SELECT a.id AS id FROM activities a
                     \\LEFT JOIN streams s ON s.activity_id = a.id
@@ -812,7 +812,7 @@ upsert_all! = |path, acts|
 upsert_activity! : Str, ActivitySummary => Try({}, _)
 upsert_activity! = |path, a| {
     Sqlite.execute!({
-        path,
+        path: Path.utf8(path),
         query:
             \\INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance, elevation, relative_effort, avg_watts, avg_hr, weighted_avg_watts)
             \\VALUES (:id, :name, :sport, :start, :mt, :dist, :elev, :re, :aw, :ahr, :waw)
@@ -860,7 +860,7 @@ analyze! = |{}| {
             rebuild_daily_load!(path)?
             form =
                 match Sqlite.query!({
-                    path,
+                    path: Path.utf8(path),
                     query: "SELECT tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
                     bindings: [],
                     row: Sqlite.f64("tsb"),
@@ -934,7 +934,7 @@ compute_missing_metrics! = |path, zb| {
     # FTP (per-sport, via the CASE), or the HR zones / metrics_rev changed.
     ftp_case = sport_ftp_case!(path)?
     rows = Sqlite.query_many!({
-        path,
+        path: Path.utf8(path),
         query:
             \\SELECT a.id AS id, a.start_local AS start, a.moving_time AS mt,
             \\       COALESCE(a.sport_type, '') AS sport,
@@ -1017,7 +1017,7 @@ sport_ftp! = |path, sport| {
 derive_sport_ftp! : Str, Str => Try(F64, _)
 derive_sport_ftp! = |path, sport| {
     best = Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query: "SELECT CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_type = :sport",
         bindings: [{ name: ":sport", value: String(sport) }],
         row: Sqlite.f64("b"),
@@ -1032,7 +1032,7 @@ derive_sport_ftp! = |path, sport| {
 sport_ftp_case! : Str => Try(Str, _)
 sport_ftp_case! = |path| {
     sports = Sqlite.query_many!({
-        path,
+        path: Path.utf8(path),
         query: "SELECT DISTINCT sport_type AS s FROM activities WHERE sport_type IS NOT NULL AND sport_type <> ''",
         bindings: [],
         rows: Sqlite.str("s"),
@@ -1122,7 +1122,7 @@ compute_one! = |path, zb, row| {
 
         }
     Sqlite.execute!({
-        path,
+        path: Path.utf8(path),
         query:
             \\INSERT OR REPLACE INTO activity_metrics
             \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s)
@@ -1156,7 +1156,7 @@ compute_one! = |path, zb, row| {
 rebuild_daily_load! : Str => Try({}, _)
 rebuild_daily_load! = |path| {
     day_rows = Sqlite.query_many!({
-        path,
+        path: Path.utf8(path),
         query:
             \\SELECT substr(a.start_local, 1, 10) AS day, SUM(m.tss) AS t
             \\FROM activity_metrics m
@@ -1190,7 +1190,7 @@ rebuild_daily_load! = |path| {
             # extend through today so rest days decay ATL/CTL and TSB is true as-of-now
             today = local_today_days!(path)?
             last_day = (bounds.hi).max(today)
-            Sqlite.execute!({ path, query: "DELETE FROM daily_load", bindings: [] })?
+            Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM daily_load", bindings: [] })?
             walk_days!(path, by_day, bounds.lo, last_day, 0.0, 0.0)
         }
     }
@@ -1204,7 +1204,7 @@ walk_days! = |path, by_day, day, last_day, ctl_prev, atl_prev|
         # the CTL/ATL/TSB recurrence lives in Metrics.load_step (pure, expect-tested)
         step = Metrics.load_step({ ctl_prev, atl_prev, tss })
         Sqlite.execute!({
-            path,
+            path: Path.utf8(path),
             query: "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES (:day, :tss, :ctl, :atl, :tsb)",
             bindings: [
                 { name: ":day", value: String(Metrics.days_to_date_str(day)) },
@@ -1222,7 +1222,7 @@ walk_days! = |path, by_day, day, last_day, ctl_prev, atl_prev|
 zone_sum! : Str, Str => Try({ z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, measured : F64, easy : I64, moderate : I64, hard : I64 }, _)
 zone_sum! = |path, cutoff|
     Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query:
             \\SELECT COALESCE(SUM(m.z1_s),0) AS z1, COALESCE(SUM(m.z2_s),0) AS z2, COALESCE(SUM(m.z3_s),0) AS z3,
             \\       COALESCE(SUM(m.z4_s),0) AS z4, COALESCE(SUM(m.z5_s),0) AS z5, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
@@ -1259,7 +1259,7 @@ zone_sum! = |path, cutoff|
 window_stats! : Str, Str, Str => Try({ z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, sessions : I64 }, _)
 window_stats! = |path, from_str, to_str|
     Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query:
             \\SELECT COALESCE(SUM(m.z1_s),0) AS z1, COALESCE(SUM(m.z2_s),0) AS z2, COALESCE(SUM(m.z3_s),0) AS z3,
             \\       COALESCE(SUM(m.z4_s),0) AS z4, COALESCE(SUM(m.z5_s),0) AS z5,
@@ -1284,7 +1284,7 @@ window_stats! = |path, from_str, to_str|
 ctl_at! : Str, Str => Try(F64, _)
 ctl_at! = |path, day_str|
     match Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query: "SELECT ctl AS ctl FROM daily_load WHERE day <= :d ORDER BY day DESC LIMIT 1",
         bindings: [{ name: ":d", value: String(day_str) }],
         row: Sqlite.f64("ctl"),
@@ -1303,7 +1303,7 @@ compare! = |period| {
     } else {
         days = if period == "month" 28 else 7
         label = if period == "month" "28d" else "7d"
-        match Sqlite.query!({ path, query: "SELECT day AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sqlite.str("day") }) {
+        match Sqlite.query!({ path: Path.utf8(path), query: "SELECT day AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sqlite.str("day") }) {
             Err(NoRowsReturned) => err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
             Err(e) => Err(e)
             Ok(latest_day) => {
@@ -1389,7 +1389,7 @@ missing_config! = |{}|
 row_exists! : Str, Str, I64 => Try(Bool, _)
 row_exists! = |path, table, id| {
     n = Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query: "SELECT COUNT(*) AS n FROM ${table} WHERE id = :id",
         bindings: [{ name: ":id", value: Integer(id) }],
         row: Sqlite.i64("n"),
@@ -1416,7 +1416,7 @@ activity! = |id_str| {
 activity_body! : Str, Str, I64 => Try({}, _)
 activity_body! = |path, id_str, aid| {
     rows = Sqlite.query_many!({
-        path,
+        path: Path.utf8(path),
         query:
             \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport, a.name AS name,
             \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
@@ -1454,7 +1454,7 @@ activity_body! = |path, id_str, aid| {
         Err(_) => err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
         Ok(a) => {
             raw_rows = Sqlite.query_many!({
-                path,
+                path: Path.utf8(path),
                 query: "SELECT raw_json AS raw FROM streams WHERE activity_id = :id",
                 bindings: [{ name: ":id", value: Integer(aid) }],
                 rows: Sqlite.str("raw"),
@@ -1577,7 +1577,7 @@ stats! = |{}| {
 stats_rows! : Str, Str => Try(List({ sport : Str, sessions : I64, hours : F64, km : F64 }), _)
 stats_rows! = |path, cutoff|
     Sqlite.query_many!({
-        path,
+        path: Path.utf8(path),
         query:
             \\SELECT sport_type AS sport, COUNT(*) AS sessions,
             \\       CAST(SUM(moving_time) / 3600.0 AS REAL) AS hours,
@@ -1620,7 +1620,7 @@ week! = |{}| {
             anchor = (Metrics.date_str_to_days(s.as_of)).ok_or(0)
             cutoff14 = Metrics.days_to_date_str(anchor - 14)
             recent = Sqlite.query_many!({
-                path,
+                path: Path.utf8(path),
                 query:
                     \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport, a.name AS name,
                     \\       a.moving_time AS moving_time, CAST(COALESCE(m.tss,0) AS REAL) AS tss,
@@ -1651,7 +1651,7 @@ week! = |{}| {
                 },
             })?
             open_p = Sqlite.query_many!({
-                path,
+                path: Path.utf8(path),
                 query:
                     \\SELECT id AS id, COALESCE(target_date,'') AS target_date, COALESCE(session_type,'') AS session_type,
                     \\       COALESCE(detail,'') AS detail, COALESCE(rationale,'') AS rationale
@@ -1693,7 +1693,7 @@ week! = |{}| {
 }
 summary_payload! = |path, ftp, zb| {
     latest = Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query: "SELECT day AS day, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
         bindings: [],
         row: |cols| |stmt| {
@@ -1711,7 +1711,7 @@ summary_payload! = |path, ftp, zb| {
     zsum = zone_sum!(path, cutoff28)?
 
     best20_row = Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query:
             \\SELECT CAST(COALESCE(MAX(m.best_20min_w),0) AS REAL) AS b FROM activity_metrics m
             \\JOIN activities a ON a.id = m.activity_id
@@ -1722,7 +1722,7 @@ summary_payload! = |path, ftp, zb| {
     })?
 
     sports = Sqlite.query_many!({
-        path,
+        path: Path.utf8(path),
         query:
             \\SELECT a.sport_type AS sport, COUNT(*) AS sessions, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss
             \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
@@ -1742,7 +1742,7 @@ summary_payload! = |path, ftp, zb| {
     zsum7 = zone_sum!(path, cutoff7)?
 
     pending = Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query: "SELECT COUNT(*) AS n FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'",
         bindings: [],
         row: Sqlite.i64("n"),
@@ -1750,7 +1750,7 @@ summary_payload! = |path, ftp, zb| {
 
     # most recent day with a real hard stimulus (5+ min in Z4/Z5); '' = never
     last_hard = Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query:
             \\SELECT COALESCE(MAX(substr(a.start_local, 1, 10)), '') AS d
             \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
@@ -1828,7 +1828,7 @@ activities! = |limit, sport_filter| {
         else
             [{ name: ":sport", value: String(sport_filter) }]
     rows = Sqlite.query_many!({
-        path,
+        path: Path.utf8(path),
         query:
             \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport, a.name AS name,
             \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
@@ -1918,7 +1918,7 @@ top! = |metric, limit, sport_filter| {
             sport_binding =
                 if Str.is_empty(sport_filter) [] else [{ name: ":sport", value: String(sport_filter) }]
             rows = Sqlite.query_many!({
-                path,
+                path: Path.utf8(path),
                 query:
                     \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport, a.name AS name,
                     \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
@@ -2076,7 +2076,7 @@ doctor! : {} => Try({}, _)
 doctor! = |{}| {
     path = open_db!({})?
     cov = Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query:
             \\SELECT COUNT(*) AS total,
             \\       COALESCE(SUM(CASE WHEN a.avg_hr > 0 THEN 1 ELSE 0 END), 0) AS with_hr,
@@ -2100,7 +2100,7 @@ doctor! = |{}| {
         },
     })?
     models = Sqlite.query_many!({
-        path,
+        path: Path.utf8(path),
         query: "SELECT COALESCE(load_model, 'unknown (pre-provenance)') AS model, COUNT(*) AS n FROM activity_metrics GROUP BY load_model ORDER BY n DESC",
         bindings: [],
         rows: |cols| |stmt| {
@@ -2110,7 +2110,7 @@ doctor! = |{}| {
         },
     })?
     conf = Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query:
             \\-- confidence tiers derived from load_model at read time (not stored): high =
             \\-- measured power, medium = HR/RPE, low = relative_effort, none = unscored. The
@@ -2133,7 +2133,7 @@ doctor! = |{}| {
     })?
     pending = pending_streams!(path)?
     cfg = Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query:
             \\SELECT COALESCE(SUM(CASE WHEN substr(key,1,4)='ftp_' THEN 1 ELSE 0 END),0) AS ftp_count,
             \\       COALESCE(SUM(CASE WHEN key IN ('hr_z1_max','hr_z2_max','hr_z3_max','hr_z4_max') THEN 1 ELSE 0 END),0) AS zones_set
@@ -2149,7 +2149,7 @@ doctor! = |{}| {
     # strength-class sessions without a rating: aggregate in Roc so the sport
     # list can't drift from Metrics.sport_class
     sports = Sqlite.query_many!({
-        path,
+        path: Path.utf8(path),
         query: "SELECT COALESCE(a.sport_type, '') AS sport, CASE WHEN r.activity_id IS NULL THEN 0 ELSE 1 END AS rated FROM activities a LEFT JOIN ratings r ON r.activity_id = a.id",
         bindings: [],
         rows: |cols| |stmt| {
@@ -2253,7 +2253,7 @@ rate! = |target, rpe_str| {
             id_result =
                 if target == "latest" {
                     match Sqlite.query!({
-                        path,
+                        path: Path.utf8(path),
                         query: "SELECT COALESCE(MAX(id), 0) AS id FROM activities WHERE start_local = (SELECT MAX(start_local) FROM activities)",
                         bindings: [],
                         row: Sqlite.i64("id"),
@@ -2274,7 +2274,7 @@ rate! = |target, rpe_str| {
                         err_out!("activity_not_found", "no activity ${I64.to_str(activity_id)} in the db — `stride sync` first?")
                     } else {
                         Sqlite.execute!({
-                            path,
+                            path: Path.utf8(path),
                             query: "INSERT OR REPLACE INTO ratings (activity_id, rpe, rated_at) VALUES (:id, :rpe, :at)",
                             bindings: [
                                 { name: ":id", value: Integer(activity_id) },
@@ -2342,7 +2342,7 @@ progress! = |date_arg| {
             date_arg
         else {
             latest = Sqlite.query_many!({
-                path,
+                path: Path.utf8(path),
                 query:
                     \\SELECT substr(a.start_local, 1, 10) AS d, a.name AS name
                     \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
@@ -2362,7 +2362,7 @@ progress! = |date_arg| {
         }
     prows : List(Metrics.ProgressRow)
     prows = Sqlite.query_many!({
-        path,
+        path: Path.utf8(path),
         query:
             \\SELECT a.name AS name, substr(a.start_local, 1, 10) AS date, COALESCE(a.sport_type, '') AS sport,
             \\       CAST(COALESCE(a.distance,0) AS REAL) AS distance_m, a.moving_time AS moving_time,
@@ -2411,7 +2411,7 @@ progress! = |date_arg| {
             err_out!("no_scorable_workouts", "nothing to compare yet — analyze activities first (and `stride rate` your strength sessions)")
         } else {
             on_date = Sqlite.query_many!({
-                path,
+                path: Path.utf8(path),
                 query: "SELECT name AS name, id AS id FROM activities WHERE substr(start_local, 1, 10) = :date LIMIT 1",
                 bindings: [{ name: ":date", value: String(date) }],
                 rows: |cols| |stmt| {
@@ -2453,7 +2453,7 @@ load_series! : U64 => Try({}, _)
 load_series! = |days| {
     path = open_db!({})?
     rows = Sqlite.query_many!({
-        path,
+        path: Path.utf8(path),
         query: "SELECT day AS day, tss AS tss, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT ${(days).to_str()}",
         bindings: [],
         rows: |cols| |stmt| {
@@ -2482,7 +2482,7 @@ plan_view! = |scope| {
             ThisWeek => "WHERE COALESCE(target_date,'') >= '${Metrics.days_to_date_str(mon)}' AND COALESCE(target_date,'') <= '${Metrics.days_to_date_str(mon + 6)}'"
         }
     rows = Sqlite.query_many!({
-        path,
+        path: Path.utf8(path),
         query:
             \\SELECT id AS id, COALESCE(created_at,'') AS created_at, COALESCE(target_date,'') AS target_date,
             \\       COALESCE(session_type,'') AS session_type, COALESCE(detail,'') AS detail,
@@ -2536,7 +2536,7 @@ plan_add! = |target_date, session_type, detail, rationale| {
     path = open_db!({})?
     # guard: one open planned session per date — skip or complete the old one first
     existing = Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query: "SELECT COALESCE(MAX(id), 0) AS id FROM planned_sessions WHERE target_date = :date AND COALESCE(status, 'open') = 'open'",
         bindings: [{ name: ":date", value: String(target_date) }],
         row: Sqlite.i64("id"),
@@ -2549,7 +2549,7 @@ plan_add! = |target_date, session_type, detail, rationale| {
 insert_planned_session! : Str, Str, Str, Str, Str => Try({}, _)
 insert_planned_session! = |path, target_date, session_type, detail, rationale| {
     Sqlite.execute!({
-        path,
+        path: Path.utf8(path),
         query:
             \\INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status)
             \\VALUES (:at, :date, :type, :detail, :rationale, 'open')
@@ -2563,7 +2563,7 @@ insert_planned_session! = |path, target_date, session_type, detail, rationale| {
         ],
     })?
     new_id = Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query: "SELECT MAX(id) AS id FROM planned_sessions",
         bindings: [],
         row: Sqlite.i64("id"),
@@ -2589,7 +2589,7 @@ complete! = |session_id_str, activity_id_str| {
                 err_out!("activity_not_found", "no activity ${I64.to_str(activity_id)} in the db — `stride sync` first?")
             } else {
                 Sqlite.execute!({
-                    path,
+                    path: Path.utf8(path),
                     query: "UPDATE planned_sessions SET completed_activity_id = :aid, status = 'done' WHERE id = :pid",
                     bindings: [
                         { name: ":aid", value: Integer(activity_id) },
@@ -2615,7 +2615,7 @@ complete_rest! = |session_id_str| {
                 session_not_found!(session_id)
             else {
                 session_type = Sqlite.query!({
-                    path,
+                    path: Path.utf8(path),
                     query: "SELECT COALESCE(session_type, '') AS t FROM planned_sessions WHERE id = :pid",
                     bindings: [{ name: ":pid", value: Integer(session_id) }],
                     row: Sqlite.str("t"),
@@ -2624,7 +2624,7 @@ complete_rest! = |session_id_str| {
                     err_out!("activity_required", "planned session #${(session_id).to_str()} is '${session_type}' — completing it needs the activity id (only rest days close without one)")
                 else
                     Sqlite.execute!({
-                        path,
+                        path: Path.utf8(path),
                         query: "UPDATE planned_sessions SET status = 'done' WHERE id = :pid",
                         bindings: [{ name: ":pid", value: Integer(session_id) }],
                     })?
@@ -2641,7 +2641,7 @@ skip! = |session_id_str, reason| {
                 session_not_found!(session_id)
             } else {
                 Sqlite.execute!({
-                    path,
+                    path: Path.utf8(path),
                     query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why WHERE id = :pid",
                     bindings: [
                         { name: ":why", value: String(reason) },
@@ -2673,13 +2673,13 @@ run_migrations! = |path| {
     # medical word is gone). MUST run before the CREATEs below, or an empty
     # planned_sessions would shadow the old data.
     rename_table_if_exists!(path, "prescriptions", "planned_sessions")?
-    Sqlite.execute!({ path, query: Schema.activities, bindings: [] })?
-    Sqlite.execute!({ path, query: Schema.metrics, bindings: [] })?
-    Sqlite.execute!({ path, query: Schema.daily_load, bindings: [] })?
-    Sqlite.execute!({ path, query: Schema.planned_sessions, bindings: [] })?
-    Sqlite.execute!({ path, query: Schema.config, bindings: [] })?
-    Sqlite.execute!({ path, query: Schema.streams, bindings: [] })?
-    Sqlite.execute!({ path, query: Schema.ratings, bindings: [] })?
+    Sqlite.execute!({ path: Path.utf8(path), query: Schema.activities, bindings: [] })?
+    Sqlite.execute!({ path: Path.utf8(path), query: Schema.metrics, bindings: [] })?
+    Sqlite.execute!({ path: Path.utf8(path), query: Schema.daily_load, bindings: [] })?
+    Sqlite.execute!({ path: Path.utf8(path), query: Schema.planned_sessions, bindings: [] })?
+    Sqlite.execute!({ path: Path.utf8(path), query: Schema.config, bindings: [] })?
+    Sqlite.execute!({ path: Path.utf8(path), query: Schema.streams, bindings: [] })?
+    Sqlite.execute!({ path: Path.utf8(path), query: Schema.ratings, bindings: [] })?
     alter_add_column!(path, "ALTER TABLE activities ADD COLUMN weighted_avg_watts REAL")?
     alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_20min_w REAL")?
     alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN ftp_used REAL")?
@@ -2704,23 +2704,23 @@ run_migrations! = |path| {
     alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN pi_hard_s INTEGER")?
     # v10: FTP is now per-sport under `ftp_<sport>` (uniform, no special cycling key).
     # Move the old cycling `ftp` value to `ftp_ride` if it hasn't been set already.
-    Sqlite.execute!({ path, query: "UPDATE config SET key = 'ftp_ride' WHERE key = 'ftp' AND (SELECT COUNT(*) FROM config WHERE key = 'ftp_ride') = 0", bindings: [] })?
+    Sqlite.execute!({ path: Path.utf8(path), query: "UPDATE config SET key = 'ftp_ride' WHERE key = 'ftp' AND (SELECT COUNT(*) FROM config WHERE key = 'ftp_ride') = 0", bindings: [] })?
     # v2: index the column every date-range filter and the activities sort use
     # (queries now compare a.start_local directly — sargable — instead of substr)
-    Sqlite.execute!({ path, query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })
+    Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })
 }
 
 # rename old => new when old exists and new doesn't (idempotent, data-preserving)
 rename_table_if_exists! : Str, Str, Str => Try({}, _)
 rename_table_if_exists! = |path, old, new| {
     count = Sqlite.query!({
-        path,
+        path: Path.utf8(path),
         query: "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = :old",
         bindings: [{ name: ":old", value: String(old) }],
         row: Sqlite.i64("n"),
     })?
     if count > 0
-        Sqlite.execute!({ path, query: "ALTER TABLE ${old} RENAME TO ${new}", bindings: [] })
+        Sqlite.execute!({ path: Path.utf8(path), query: "ALTER TABLE ${old} RENAME TO ${new}", bindings: [] })
     else
         Ok({})
 }
@@ -2728,7 +2728,7 @@ rename_table_if_exists! = |path, old, new| {
 # case); a locked db, disk error, etc. propagate instead of failing silently.
 alter_add_column! : Str, Str => Try({}, _)
 alter_add_column! = |path, q|
-    match Sqlite.execute!({ path, query: q, bindings: [] }) {
+    match Sqlite.execute!({ path: Path.utf8(path), query: q, bindings: [] }) {
         Ok({}) => Ok({})
         Err(SqliteErr(Error, msg)) =>
             if Str.contains(msg, "duplicate column") Ok({}) else Err(SqliteErr(Error, msg))
@@ -2739,7 +2739,7 @@ alter_add_column! = |path, q|
 # reports "no such column" — that's the converged state, not a failure.
 drop_column_if_exists! : Str, Str => Try({}, _)
 drop_column_if_exists! = |path, q|
-    match Sqlite.execute!({ path, query: q, bindings: [] }) {
+    match Sqlite.execute!({ path: Path.utf8(path), query: q, bindings: [] }) {
         Ok({}) => Ok({})
         Err(SqliteErr(Error, msg)) =>
             if Str.contains(msg, "no such column") Ok({}) else Err(SqliteErr(Error, msg))
@@ -2752,7 +2752,7 @@ drop_column_if_exists! = |path, q|
 ensure_schema! : Str => Try({}, _)
 ensure_schema! = |path| {
     v = (Sqlite.query!({
-            path,
+            path: Path.utf8(path),
             query: "SELECT user_version AS v FROM pragma_user_version()",
             bindings: [],
             row: Sqlite.i64("v"),
@@ -2761,7 +2761,7 @@ ensure_schema! = |path| {
         Ok({})
     else
         run_migrations!(path)?
-        Sqlite.execute!({ path, query: "PRAGMA user_version = ${(schema_version).to_str()}", bindings: [] })
+        Sqlite.execute!({ path: Path.utf8(path), query: "PRAGMA user_version = ${(schema_version).to_str()}", bindings: [] })
 }
 # db path + guaranteed-current schema. Every command opens through this.
 open_db! : {} => Try(Str, _)
