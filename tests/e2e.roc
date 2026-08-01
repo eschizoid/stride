@@ -8,7 +8,7 @@ app [main!] {
 # extracts its field with `jq` in the same shell pipeline (`stride … | jq -r …`),
 # because deriving a Roc `Json.parse` decoder per response shape triggers the
 # compiler's SpecConstr blow-up (roc-lang/roc#10469) and stalls the build — one
-# decoder builds in ~2s, a dozen never finishes. jq extraction keeps the harness
+# decoder builds in ~2s, a dozen never finish. jq extraction keeps the harness
 # building in seconds while staying a native Roc program. (Same reason there's no
 # `import pf.Sqlite`: its closure-in-record decoders trip the same bug.)
 #
@@ -26,10 +26,10 @@ Ctx : { bin : Str, home : Str, db : Str, today : Str, d1 : Str, d2 : Str }
 main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
 main! = |_args| {
     bin = env_or!("STRIDE_BIN", "./stride")
-    home = Str.trim(sh!("mktemp -d"))
-    today = Str.trim(sh!("date -u +%F"))
-    d1 = Str.trim(sh!("date -u -v-3d +%F 2>/dev/null || date -u -d '3 days ago' +%F"))
-    d2 = Str.trim(sh!("date -u -v-1d +%F 2>/dev/null || date -u -d '1 day ago' +%F"))
+    home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+    today = need("date +%F", Str.trim(sh!("date -u +%F")))?
+    d1 = need("date -3d", Str.trim(sh!("date -u -v-3d +%F 2>/dev/null || date -u -d '3 days ago' +%F")))?
+    d2 = need("date -1d", Str.trim(sh!("date -u -v-1d +%F 2>/dev/null || date -u -d '1 day ago' +%F")))?
     ctx = { bin, home, db: "${home}/.stride/db.sqlite", today, d1, d2 }
     b_init_config!(ctx)?
     b_auth!(ctx)?
@@ -417,6 +417,11 @@ env_or! = |name, dflt|
         Ok(v) if !(Str.is_empty(v)) => v
         _ => dflt
     }
+
+# a required setup value: empty (a failed mktemp/date shellout) aborts the run instead
+# of silently building bad paths like "/.stride/db.sqlite" or seeding empty dates
+need : Str, Str -> Try(Str, [SetupFailed(Str), ..])
+need = |what, v| if Str.is_empty(v) { Err(SetupFailed(what)) } else { Ok(v) }
 
 sh! : Str => Str
 sh! = |script|
