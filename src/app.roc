@@ -941,17 +941,18 @@ compute_missing_metrics! = |path, zb| {
             { name: ":zones", value: String(zones_sig(zb)) },
             { name: ":rev", value: Integer(metrics_rev) },
         ],
-        rows: { Sqlite.decode_record <-
-            id: Sqlite.i64("id"),
-            start: Sqlite.str("start"),
-            mt: Sqlite.i64("mt"),
-            sport: Sqlite.str("sport"),
-            re: Sqlite.nullable_f64("re"),
-            aw: Sqlite.nullable_f64("aw"),
-            ahr: Sqlite.nullable_f64("ahr"),
-            waw: Sqlite.nullable_f64("waw"),
-            rpe: Sqlite.nullable_f64("rpe"),
-            raw: Sqlite.nullable_str("raw"),
+        rows: |cols| |stmt| {
+            id = Sqlite.i64("id")(cols)(stmt)?
+            start = Sqlite.str("start")(cols)(stmt)?
+            mt = Sqlite.i64("mt")(cols)(stmt)?
+            sport = Sqlite.str("sport")(cols)(stmt)?
+            re = Sqlite.nullable_f64("re")(cols)(stmt)?
+            aw = Sqlite.nullable_f64("aw")(cols)(stmt)?
+            ahr = Sqlite.nullable_f64("ahr")(cols)(stmt)?
+            waw = Sqlite.nullable_f64("waw")(cols)(stmt)?
+            rpe = Sqlite.nullable_f64("rpe")(cols)(stmt)?
+            raw = Sqlite.nullable_str("raw")(cols)(stmt)?
+            Ok({ id, start, mt, sport, re, aw, ahr, waw, rpe, raw })
         },
     })?
     process_rows!(path, zb, rows, { computed: 0, stream_errors: 0 })
@@ -1151,9 +1152,10 @@ rebuild_daily_load! = |path| {
             \\GROUP BY day ORDER BY day
         ,
         bindings: [],
-        rows: { Sqlite.decode_record <-
-            day: Sqlite.str("day"),
-            t: Sqlite.f64("t"),
+        rows: |cols| |stmt| {
+            day = Sqlite.str("day")(cols)(stmt)?
+            t = Sqlite.f64("t")(cols)(stmt)?
+            Ok({ day, t })
         },
     })?
     # keep only rows whose date parses. Deriving the walk bounds from these VALID
@@ -1225,17 +1227,18 @@ zone_sum! = |path, cutoff|
             \\WHERE a.start_local >= :cutoff
         ,
         bindings: [{ name: ":cutoff", value: String(cutoff) }],
-        row: { Sqlite.decode_record <-
-            z1: Sqlite.i64("z1"),
-            z2: Sqlite.i64("z2"),
-            z3: Sqlite.i64("z3"),
-            z4: Sqlite.i64("z4"),
-            z5: Sqlite.i64("z5"),
-            tss: Sqlite.f64("tss"),
-            measured: Sqlite.f64("measured"),
-            easy: Sqlite.i64("easy"),
-            moderate: Sqlite.i64("moderate"),
-            hard: Sqlite.i64("hard"),
+        row: |cols| |stmt| {
+            z1 = Sqlite.i64("z1")(cols)(stmt)?
+            z2 = Sqlite.i64("z2")(cols)(stmt)?
+            z3 = Sqlite.i64("z3")(cols)(stmt)?
+            z4 = Sqlite.i64("z4")(cols)(stmt)?
+            z5 = Sqlite.i64("z5")(cols)(stmt)?
+            tss = Sqlite.f64("tss")(cols)(stmt)?
+            measured = Sqlite.f64("measured")(cols)(stmt)?
+            easy = Sqlite.i64("easy")(cols)(stmt)?
+            moderate = Sqlite.i64("moderate")(cols)(stmt)?
+            hard = Sqlite.i64("hard")(cols)(stmt)?
+            Ok({ z1, z2, z3, z4, z5, tss, measured, easy, moderate, hard })
         },
     })
 
@@ -1253,10 +1256,11 @@ window_stats! = |path, from_str, to_str|
             \\WHERE a.start_local >= :from AND a.start_local < :to
         ,
         bindings: [{ name: ":from", value: String(from_str) }, { name: ":to", value: String(to_str) }],
-        row: { Sqlite.decode_record <-
-            z1: Sqlite.i64("z1"), z2: Sqlite.i64("z2"), z3: Sqlite.i64("z3"),
-            z4: Sqlite.i64("z4"), z5: Sqlite.i64("z5"),
-            tss: Sqlite.f64("tss"), sessions: Sqlite.i64("sessions"),
+        row: |cols| |stmt| {
+            z1 = Sqlite.i64("z1"), z2: Sqlite.i64("z2"), z3: Sqlite.i64("z3")(cols)(stmt)?
+            z4 = Sqlite.i64("z4"), z5: Sqlite.i64("z5")(cols)(stmt)?
+            tss = Sqlite.f64("tss"), sessions: Sqlite.i64("sessions")(cols)(stmt)?
+            Ok({ z1, z4, tss })
         },
     })
 
@@ -1415,23 +1419,24 @@ activity_body! = |path, id_str, aid| {
             \\WHERE a.id = :id LIMIT 1
         ,
         bindings: [{ name: ":id", value: Integer(aid) }],
-        rows: { Sqlite.decode_record <-
-            id: Sqlite.i64("id"),
-            date: Sqlite.str("date"),
-            sport: Sqlite.str("sport"),
-            name: Sqlite.str("name"),
-            moving_time: Sqlite.i64("moving_time"),
-            distance_m: Sqlite.f64("distance_m"),
-            tss: Sqlite.f64("tss"),
-            np_w: Sqlite.f64("np_w"),
-            intensity: Sqlite.f64("intensity"),
-            ftp_used: Sqlite.f64("ftp_used"),
-            z1_s: Sqlite.i64("z1_s"),
-            z2_s: Sqlite.i64("z2_s"),
-            z3_s: Sqlite.i64("z3_s"),
-            z4_s: Sqlite.i64("z4_s"),
-            z5_s: Sqlite.i64("z5_s"),
-            avg_hr: Sqlite.f64("avg_hr"),
+        rows: |cols| |stmt| {
+            id = Sqlite.i64("id")(cols)(stmt)?
+            date = Sqlite.str("date")(cols)(stmt)?
+            sport = Sqlite.str("sport")(cols)(stmt)?
+            name = Sqlite.str("name")(cols)(stmt)?
+            moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
+            distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
+            tss = Sqlite.f64("tss")(cols)(stmt)?
+            np_w = Sqlite.f64("np_w")(cols)(stmt)?
+            intensity = Sqlite.f64("intensity")(cols)(stmt)?
+            ftp_used = Sqlite.f64("ftp_used")(cols)(stmt)?
+            z1_s = Sqlite.i64("z1_s")(cols)(stmt)?
+            z2_s = Sqlite.i64("z2_s")(cols)(stmt)?
+            z3_s = Sqlite.i64("z3_s")(cols)(stmt)?
+            z4_s = Sqlite.i64("z4_s")(cols)(stmt)?
+            z5_s = Sqlite.i64("z5_s")(cols)(stmt)?
+            avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
+            Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr })
         },
     })?
     match List.first(rows) {
@@ -1570,11 +1575,12 @@ stats_rows! = |path, cutoff|
             \\GROUP BY sport_type ORDER BY sessions DESC
         ,
         bindings: [{ name: ":cutoff", value: String(cutoff) }],
-        rows: { Sqlite.decode_record <-
-            sport: Sqlite.str("sport"),
-            sessions: Sqlite.i64("sessions"),
-            hours: Sqlite.f64("hours"),
-            km: Sqlite.f64("km"),
+        rows: |cols| |stmt| {
+            sport = Sqlite.str("sport")(cols)(stmt)?
+            sessions = Sqlite.i64("sessions")(cols)(stmt)?
+            hours = Sqlite.f64("hours")(cols)(stmt)?
+            km = Sqlite.f64("km")(cols)(stmt)?
+            Ok({ sport, sessions, hours, km })
         },
     })
 
@@ -1616,20 +1622,21 @@ week! = |{}| {
                     \\ORDER BY a.start_local DESC
                 ,
                 bindings: [{ name: ":cutoff", value: String(cutoff14) }],
-                rows: { Sqlite.decode_record <-
-                    id: Sqlite.i64("id"),
-                    date: Sqlite.str("date"),
-                    sport: Sqlite.str("sport"),
-                    name: Sqlite.str("name"),
-                    moving_time: Sqlite.i64("moving_time"),
-                    tss: Sqlite.f64("tss"),
-                    intensity: Sqlite.f64("intensity"),
-                    z1_s: Sqlite.i64("z1_s"),
-                    z2_s: Sqlite.i64("z2_s"),
-                    z3_s: Sqlite.i64("z3_s"),
-                    z4_s: Sqlite.i64("z4_s"),
-                    z5_s: Sqlite.i64("z5_s"),
-                    hard_s: Sqlite.i64("hard_s"),
+                rows: |cols| |stmt| {
+                    id = Sqlite.i64("id")(cols)(stmt)?
+                    date = Sqlite.str("date")(cols)(stmt)?
+                    sport = Sqlite.str("sport")(cols)(stmt)?
+                    name = Sqlite.str("name")(cols)(stmt)?
+                    moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
+                    tss = Sqlite.f64("tss")(cols)(stmt)?
+                    intensity = Sqlite.f64("intensity")(cols)(stmt)?
+                    z1_s = Sqlite.i64("z1_s")(cols)(stmt)?
+                    z2_s = Sqlite.i64("z2_s")(cols)(stmt)?
+                    z3_s = Sqlite.i64("z3_s")(cols)(stmt)?
+                    z4_s = Sqlite.i64("z4_s")(cols)(stmt)?
+                    z5_s = Sqlite.i64("z5_s")(cols)(stmt)?
+                    hard_s = Sqlite.i64("hard_s")(cols)(stmt)?
+                    Ok({ id, date, sport, name, moving_time, tss, intensity, z1_s, z2_s, z3_s, z4_s, z5_s, hard_s })
                 },
             })?
             open_p = Sqlite.query_many!({
@@ -1641,12 +1648,13 @@ week! = |{}| {
                     \\ORDER BY target_date
                 ,
                 bindings: [],
-                rows: { Sqlite.decode_record <-
-                    id: Sqlite.i64("id"),
-                    target_date: Sqlite.str("target_date"),
-                    session_type: Sqlite.str("session_type"),
-                    detail: Sqlite.str("detail"),
-                    rationale: Sqlite.str("rationale"),
+                rows: |cols| |stmt| {
+                    id = Sqlite.i64("id")(cols)(stmt)?
+                    target_date = Sqlite.str("target_date")(cols)(stmt)?
+                    session_type = Sqlite.str("session_type")(cols)(stmt)?
+                    detail = Sqlite.str("detail")(cols)(stmt)?
+                    rationale = Sqlite.str("rationale")(cols)(stmt)?
+                    Ok({ id, target_date, session_type, detail, rationale })
                 },
             })?
             if json_mode!({})
@@ -1677,11 +1685,12 @@ summary_payload! = |path, ftp, zb| {
         path,
         query: "SELECT day AS day, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
         bindings: [],
-        row: { Sqlite.decode_record <-
-            day: Sqlite.str("day"),
-            ctl: Sqlite.f64("ctl"),
-            atl: Sqlite.f64("atl"),
-            tsb: Sqlite.f64("tsb"),
+        row: |cols| |stmt| {
+            day = Sqlite.str("day")(cols)(stmt)?
+            ctl = Sqlite.f64("ctl")(cols)(stmt)?
+            atl = Sqlite.f64("atl")(cols)(stmt)?
+            tsb = Sqlite.f64("tsb")(cols)(stmt)?
+            Ok({ day, ctl, atl, tsb })
         },
     })?
     anchor = Result.with_default(Metrics.date_str_to_days(latest.day), 0)
@@ -1710,10 +1719,11 @@ summary_payload! = |path, ftp, zb| {
             \\GROUP BY a.sport_type ORDER BY tss DESC
         ,
         bindings: [{ name: ":cutoff", value: String(cutoff28) }],
-        rows: { Sqlite.decode_record <-
-            sport: Sqlite.str("sport"),
-            sessions: Sqlite.i64("sessions"),
-            tss: Sqlite.f64("tss"),
+        rows: |cols| |stmt| {
+            sport = Sqlite.str("sport")(cols)(stmt)?
+            sessions = Sqlite.i64("sessions")(cols)(stmt)?
+            tss = Sqlite.f64("tss")(cols)(stmt)?
+            Ok({ sport, sessions, tss })
         },
     })?
 
@@ -1825,24 +1835,25 @@ activities! = |limit, sport_filter| {
             \\ORDER BY a.start_local DESC LIMIT ${Num.to_str(limit)}
         ,
         bindings: filter_bindings,
-        rows: { Sqlite.decode_record <-
-            id: Sqlite.i64("id"),
-            date: Sqlite.str("date"),
-            sport: Sqlite.str("sport"),
-            name: Sqlite.str("name"),
-            moving_time: Sqlite.i64("moving_time"),
-            distance_m: Sqlite.f64("distance_m"),
-            tss: Sqlite.f64("tss"),
-            np_w: Sqlite.f64("np_w"),
-            intensity: Sqlite.f64("intensity"),
-            z1_s: Sqlite.i64("z1_s"),
-            z2_s: Sqlite.i64("z2_s"),
-            z3_s: Sqlite.i64("z3_s"),
-            z4_s: Sqlite.i64("z4_s"),
-            z5_s: Sqlite.i64("z5_s"),
-            hard_s: Sqlite.i64("hard_s"),
-            relative_effort: Sqlite.f64("relative_effort"),
-            avg_hr: Sqlite.f64("avg_hr"),
+        rows: |cols| |stmt| {
+            id = Sqlite.i64("id")(cols)(stmt)?
+            date = Sqlite.str("date")(cols)(stmt)?
+            sport = Sqlite.str("sport")(cols)(stmt)?
+            name = Sqlite.str("name")(cols)(stmt)?
+            moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
+            distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
+            tss = Sqlite.f64("tss")(cols)(stmt)?
+            np_w = Sqlite.f64("np_w")(cols)(stmt)?
+            intensity = Sqlite.f64("intensity")(cols)(stmt)?
+            z1_s = Sqlite.i64("z1_s")(cols)(stmt)?
+            z2_s = Sqlite.i64("z2_s")(cols)(stmt)?
+            z3_s = Sqlite.i64("z3_s")(cols)(stmt)?
+            z4_s = Sqlite.i64("z4_s")(cols)(stmt)?
+            z5_s = Sqlite.i64("z5_s")(cols)(stmt)?
+            hard_s = Sqlite.i64("hard_s")(cols)(stmt)?
+            relative_effort = Sqlite.f64("relative_effort")(cols)(stmt)?
+            avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
+            Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, z1_s, z2_s, z3_s, z4_s, z5_s, hard_s, relative_effort, avg_hr })
         },
     })?
     if json_mode!({})
@@ -1909,18 +1920,19 @@ top! = |metric, limit, sport_filter| {
                     \\ORDER BY ${col} DESC LIMIT ${Num.to_str(limit)}
                 ,
                 bindings: sport_binding,
-                rows: { Sqlite.decode_record <-
-                    id: Sqlite.i64("id"),
-                    date: Sqlite.str("date"),
-                    sport: Sqlite.str("sport"),
-                    name: Sqlite.str("name"),
-                    moving_time: Sqlite.i64("moving_time"),
-                    distance_m: Sqlite.f64("distance_m"),
-                    tss: Sqlite.f64("tss"),
-                    np_w: Sqlite.f64("np_w"),
-                    intensity: Sqlite.f64("intensity"),
-                    avg_hr: Sqlite.f64("avg_hr"),
-                    output_kj: Sqlite.f64("output_kj"),
+                rows: |cols| |stmt| {
+                    id = Sqlite.i64("id")(cols)(stmt)?
+                    date = Sqlite.str("date")(cols)(stmt)?
+                    sport = Sqlite.str("sport")(cols)(stmt)?
+                    name = Sqlite.str("name")(cols)(stmt)?
+                    moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
+                    distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
+                    tss = Sqlite.f64("tss")(cols)(stmt)?
+                    np_w = Sqlite.f64("np_w")(cols)(stmt)?
+                    intensity = Sqlite.f64("intensity")(cols)(stmt)?
+                    avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
+                    output_kj = Sqlite.f64("output_kj")(cols)(stmt)?
+                    Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, avg_hr, output_kj })
                 },
             })?
             if json_mode!({})
@@ -2066,20 +2078,25 @@ doctor! = |{}| {
             \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
         ,
         bindings: [],
-        row: { Sqlite.decode_record <-
-            total: Sqlite.i64("total"),
-            with_hr: Sqlite.i64("with_hr"),
-            with_power: Sqlite.i64("with_power"),
-            with_streams: Sqlite.i64("with_streams"),
-            unanalyzed: Sqlite.i64("unanalyzed"),
-            zero_load: Sqlite.i64("zero_load"),
+        row: |cols| |stmt| {
+            total = Sqlite.i64("total")(cols)(stmt)?
+            with_hr = Sqlite.i64("with_hr")(cols)(stmt)?
+            with_power = Sqlite.i64("with_power")(cols)(stmt)?
+            with_streams = Sqlite.i64("with_streams")(cols)(stmt)?
+            unanalyzed = Sqlite.i64("unanalyzed")(cols)(stmt)?
+            zero_load = Sqlite.i64("zero_load")(cols)(stmt)?
+            Ok({ total, with_hr, with_power, with_streams, unanalyzed, zero_load })
         },
     })?
     models = Sqlite.query_many!({
         path,
         query: "SELECT COALESCE(load_model, 'unknown (pre-provenance)') AS model, COUNT(*) AS n FROM activity_metrics GROUP BY load_model ORDER BY n DESC",
         bindings: [],
-        rows: { Sqlite.decode_record <- model: Sqlite.str("model"), n: Sqlite.i64("n") },
+        rows: |cols| |stmt| {
+            model = Sqlite.str("model")(cols)(stmt)?
+            n = Sqlite.i64("n")(cols)(stmt)?
+            Ok({ model, n })
+        },
     })?
     conf = Sqlite.query!({
         path,
@@ -2095,7 +2112,13 @@ doctor! = |{}| {
             \\FROM activity_metrics
         ,
         bindings: [],
-        row: { Sqlite.decode_record <- hi: Sqlite.i64("hi"), med: Sqlite.i64("med"), lo: Sqlite.i64("lo"), non: Sqlite.i64("non") },
+        row: |cols| |stmt| {
+            hi = Sqlite.i64("hi")(cols)(stmt)?
+            med = Sqlite.i64("med")(cols)(stmt)?
+            lo = Sqlite.i64("lo")(cols)(stmt)?
+            non = Sqlite.i64("non")(cols)(stmt)?
+            Ok({ hi, med, lo, non })
+        },
     })?
     pending = pending_streams!(path)?
     cfg = Sqlite.query!({
@@ -2106,7 +2129,11 @@ doctor! = |{}| {
             \\FROM config
         ,
         bindings: [],
-        row: { Sqlite.decode_record <- ftp_count: Sqlite.i64("ftp_count"), zones_set: Sqlite.i64("zones_set") },
+        row: |cols| |stmt| {
+            ftp_count = Sqlite.i64("ftp_count")(cols)(stmt)?
+            zones_set = Sqlite.i64("zones_set")(cols)(stmt)?
+            Ok({ ftp_count, zones_set })
+        },
     })?
     # strength-class sessions without a rating: aggregate in Roc so the sport
     # list can't drift from Metrics.sport_class
@@ -2114,7 +2141,11 @@ doctor! = |{}| {
         path,
         query: "SELECT COALESCE(a.sport_type, '') AS sport, CASE WHEN r.activity_id IS NULL THEN 0 ELSE 1 END AS rated FROM activities a LEFT JOIN ratings r ON r.activity_id = a.id",
         bindings: [],
-        rows: { Sqlite.decode_record <- sport: Sqlite.str("sport"), rated: Sqlite.i64("rated") },
+        rows: |cols| |stmt| {
+            sport = Sqlite.str("sport")(cols)(stmt)?
+            rated = Sqlite.i64("rated")(cols)(stmt)?
+            Ok({ sport, rated })
+        },
     })?
     strength_unrated = List.len(List.keep_if(sports, |r| Metrics.sport_class(r.sport) == StrengthLike and r.rated == 0))
     rated_total = List.len(List.keep_if(sports, |r| r.rated == 1))
@@ -2304,7 +2335,11 @@ progress! = |date_arg| {
                     \\ORDER BY a.start_local DESC LIMIT 1
                 ,
                 bindings: [],
-                rows: { Sqlite.decode_record <- d: Sqlite.str("d"), name: Sqlite.str("name") },
+                rows: |cols| |stmt| {
+                    d = Sqlite.str("d")(cols)(stmt)?
+                    name = Sqlite.str("name")(cols)(stmt)?
+                    Ok({ d, name })
+                },
             })?
             match List.first(latest) {
                 Ok(r) => r.d
@@ -2328,17 +2363,18 @@ progress! = |date_arg| {
             \\ORDER BY a.name, a.start_local
         ,
         bindings: [{ name: ":date", value: String(date) }],
-        rows: { Sqlite.decode_record <-
-            name: Sqlite.str("name"),
-            date: Sqlite.str("date"),
-            sport: Sqlite.str("sport"),
-            distance_m: Sqlite.f64("distance_m"),
-            moving_time: Sqlite.i64("moving_time"),
-            np_w: Sqlite.f64("np_w"),
-            avg_hr: Sqlite.f64("avg_hr"),
-            rpe: Sqlite.f64("rpe"),
-            output_kj: Sqlite.f64("output_kj"),
-            tss: Sqlite.f64("tss"),
+        rows: |cols| |stmt| {
+            name = Sqlite.str("name")(cols)(stmt)?
+            date = Sqlite.str("date")(cols)(stmt)?
+            sport = Sqlite.str("sport")(cols)(stmt)?
+            distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
+            moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
+            np_w = Sqlite.f64("np_w")(cols)(stmt)?
+            avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
+            rpe = Sqlite.f64("rpe")(cols)(stmt)?
+            output_kj = Sqlite.f64("output_kj")(cols)(stmt)?
+            tss = Sqlite.f64("tss")(cols)(stmt)?
+            Ok({ name, date, sport, distance_m, moving_time, np_w, avg_hr, rpe, output_kj, tss })
         },
     })?
     labeled =
@@ -2364,7 +2400,11 @@ progress! = |date_arg| {
                 path,
                 query: "SELECT name AS name, id AS id FROM activities WHERE substr(start_local, 1, 10) = :date LIMIT 1",
                 bindings: [{ name: ":date", value: String(date) }],
-                rows: { Sqlite.decode_record <- name: Sqlite.str("name"), id: Sqlite.i64("id") },
+                rows: |cols| |stmt| {
+                    name = Sqlite.str("name")(cols)(stmt)?
+                    id = Sqlite.i64("id")(cols)(stmt)?
+                    Ok({ name, id })
+                },
             })?
             match List.first(on_date) {
                 Ok(a) => err_out!("unscorable", "found \"${a.name}\" on ${date}, but it can't be compared — needs power+HR, distance+HR, or a rating (`stride rate <id> <1-10>`)")
@@ -2401,12 +2441,13 @@ load_series! = |days| {
         path,
         query: "SELECT day AS day, tss AS tss, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT ${Num.to_str(days)}",
         bindings: [],
-        rows: { Sqlite.decode_record <-
-            day: Sqlite.str("day"),
-            tss: Sqlite.f64("tss"),
-            ctl: Sqlite.f64("ctl"),
-            atl: Sqlite.f64("atl"),
-            tsb: Sqlite.f64("tsb"),
+        rows: |cols| |stmt| {
+            day = Sqlite.str("day")(cols)(stmt)?
+            tss = Sqlite.f64("tss")(cols)(stmt)?
+            ctl = Sqlite.f64("ctl")(cols)(stmt)?
+            atl = Sqlite.f64("atl")(cols)(stmt)?
+            tsb = Sqlite.f64("tsb")(cols)(stmt)?
+            Ok({ day, tss, ctl, atl, tsb })
         },
     })?
     ordered = List.reverse(rows)
@@ -2435,16 +2476,17 @@ plan_view! = |scope| {
             \\FROM planned_sessions ${week_filter} ORDER BY target_date DESC, id DESC LIMIT 100
         ,
         bindings: [],
-        rows: { Sqlite.decode_record <-
-            id: Sqlite.i64("id"),
-            created_at: Sqlite.str("created_at"),
-            target_date: Sqlite.str("target_date"),
-            session_type: Sqlite.str("session_type"),
-            detail: Sqlite.str("detail"),
-            rationale: Sqlite.str("rationale"),
-            completed_activity_id: Sqlite.i64("completed_activity_id"),
-            status: Sqlite.str("status"),
-            skipped_reason: Sqlite.str("skipped_reason"),
+        rows: |cols| |stmt| {
+            id = Sqlite.i64("id")(cols)(stmt)?
+            created_at = Sqlite.str("created_at")(cols)(stmt)?
+            target_date = Sqlite.str("target_date")(cols)(stmt)?
+            session_type = Sqlite.str("session_type")(cols)(stmt)?
+            detail = Sqlite.str("detail")(cols)(stmt)?
+            rationale = Sqlite.str("rationale")(cols)(stmt)?
+            completed_activity_id = Sqlite.i64("completed_activity_id")(cols)(stmt)?
+            status = Sqlite.str("status")(cols)(stmt)?
+            skipped_reason = Sqlite.str("skipped_reason")(cols)(stmt)?
+            Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, status, skipped_reason })
         },
     })?
     # most recent 100 by date, displayed in calendar order
