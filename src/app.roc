@@ -173,16 +173,16 @@ sync_ftp_to_strava! : Str, Str => Try({}, _)
 sync_ftp_to_strava! = |path, ftp_str|
     match Str.to_f64(ftp_str) {
         Err(_) => Stdout.line!("  (\"${ftp_str}\" isn't a number — not synced to Strava)")
-        Ok(_) ->
+        Ok(_) =>
             match get_valid_token!(path) {
                 Err(NotAuthed) => Stdout.line!("  (not synced to Strava — run `stride auth` first)")
                 # HttpStatus here can only come from the token-refresh POST: a 4xx
                 # means the stored token is dead, and retrying won't fix it
-                Err(HttpStatus(status, _)) if status >= 400 and status < 500 ->
+                Err(HttpStatus(status, _)) if status >= 400 and status < 500 =>
                     Stdout.line!("  (Strava rejected the stored token — re-run `stride auth`, then set ftp_ride again)")
 
                 Err(_) => Stdout.line!("  (couldn't sync FTP to Strava this time)")
-                Ok(token) ->
+                Ok(token) =>
                     resp = Http.send!({
                         method: PUT,
                         headers: [Http.header(("Authorization", "Bearer ${token}"))],
@@ -282,7 +282,7 @@ open_browser! : Str => Try({}, _)
 open_browser! = |url|
     match Cmd.new("open") |> Cmd.arg(url) |> Cmd.exec_output!() {
         Ok(_) => Ok({})
-        Err(_) ->
+        Err(_) =>
             # detach xdg-open: exec waits for the child, and xdg-open can resolve to
             # a FOREGROUND handler (console browser) that would block auth forever
             match Cmd.new("sh") |> Cmd.args(["-c", "xdg-open \"${url}\" >/dev/null 2>&1 &"]) |> Cmd.exec_output!() {
@@ -291,7 +291,7 @@ open_browser! = |url|
 
             }
     }
-# a stored token field: absent -> NotAuthed (genuine); db failure propagates
+# a stored token field: absent => NotAuthed (genuine); db failure propagates
 token_field! : Str, Str => Try(Str, _)
 token_field! = |path, key|
     match config_opt!(path, key)? {
@@ -304,7 +304,7 @@ client_cred! : Str, Str, Str => Try(Str, _)
 client_cred! = |path, env_name, key|
     match Env.var!(env_name) {
         Ok(v) => Ok(v)
-        Err(_) ->
+        Err(_) =>
             # config_opt! so a locked/corrupt db surfaces as a real error, not MissingEnv
             match config_opt!(path, key)? {
                 Found(v) => Ok(v)
@@ -319,7 +319,7 @@ auth! = |{}| {
     # Genuinely-missing creds get setup guidance, not a raw MissingEnv crash.
     match (client_cred!(path, "STRAVA_CLIENT_ID", "strava_client_id"), client_cred!(path, "STRAVA_CLIENT_SECRET", "strava_client_secret")) {
         (Ok(client_id), Ok(client_secret)) => auth_flow!(path, client_id, client_secret)
-        (Err(MissingEnv(name)), _) | (_, Err(MissingEnv(name))) ->
+        (Err(MissingEnv(name)), _) | (_, Err(MissingEnv(name))) =>
             err_out!("missing_client_creds", "${name} not set and no stored credentials yet — create a (free) Strava API app at strava.com/settings/api, then run:\n  STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth")
 
         (Err(other), _) | (_, Err(other)) => Err(other)
@@ -404,12 +404,12 @@ resolve_time_mode! = |path|
             _ => Err(NoTz)
         }
     match tz {
-        Ok(name) ->
+        Ok(name) =>
             match zone_offset_now!(name) {
                 Ok(off) => Ok(Zone(name, off))
                 Err(_) => Ok(BadZone(name, Result.with_default(fixed, 0)))
             }
-        Err(_) ->
+        Err(_) =>
             match fixed {
                 Ok(off) => Ok(FixedOffset(off))
                 Err(_) => Ok(Utc)
@@ -425,7 +425,7 @@ time_mode_offset = |mode|
         Utc => 0
 
     }
-# minutes east of UTC -> "±HH:MM" for display
+# minutes east of UTC => "±HH:MM" for display
 fmt_offset : I64 -> Str
 fmt_offset = |m| {
     a = Num.abs(m)
@@ -510,11 +510,11 @@ sync! : {} => Try({}, _)
 sync! = |{}| {
     path = open_db!({})?
     match get_valid_token!(path) {
-        Err(NotAuthed) ->
+        Err(NotAuthed) =>
             err_out!("not_authenticated", "not authenticated — run `stride auth` first")
 
         Err(other) => Err(other)
-        Ok(token) ->
+        Ok(token) =>
             started = now_secs!({})
             # incremental with a rolling 30-day overlap so recent edits on
             # Strava self-heal (`backfill` is the full re-pull when needed)
@@ -523,7 +523,7 @@ sync! = |{}| {
                 # error propagates instead of silently burning the rate budget
                 match config_opt!(path, "last_sync_epoch")? {
                     NotFound => ""
-                    Found(epoch_str) ->
+                    Found(epoch_str) =>
                         match Str.to_i64(epoch_str) {
                             Ok(e) => "&after=${Num.to_str(Num.max(e - 2592000, 0))}"
                             Err(_) => ""
@@ -582,7 +582,7 @@ fetch_streams_all! : Str, Str, List(I64), U64 => Try(U64, _)
 fetch_streams_all! = |path, token, ids, acc|
     match ids {
         [] => Ok(acc)
-        [id, .. as rest] ->
+        [id, .. as rest] =>
             id_str = Num.to_str(id)
             uri = "${api_base!({})}/api/v3/activities/${id_str}/streams?keys=time,heartrate,watts&key_by_type=true"
             resp = send_bearer!(uri, token)?
@@ -654,10 +654,10 @@ send_bearer! = |uri, token|
         timeout_ms: TimeoutMilliseconds(60000),
     })
 
-# store a streams response like the sync path: 404 -> honest empty marker,
-# 2xx -> body (skip if non-utf8 so it retries), other -> propagate the error
-# THE stream-response policy, shared by sync and backfill: 404 -> "{}" marker
-# (no streams recorded; don't refetch), 2xx -> store, non-utf8 -> skip WITHOUT
+# store a streams response like the sync path: 404 => honest empty marker,
+# 2xx => body (skip if non-utf8 so it retries), other => propagate the error
+# THE stream-response policy, shared by sync and backfill: 404 => "{}" marker
+# (no streams recorded; don't refetch), 2xx => store, non-utf8 => skip WITHOUT
 # storing (storing would mark it done forever; it retries next run).
 store_stream_response! : Str, I64, Http.Response => Result [Stored, SkippedNonUtf8] _
 store_stream_response! = |path, id, resp|
@@ -666,7 +666,7 @@ store_stream_response! = |path, id, resp|
         Ok(Stored)
     else if resp.status < 300
         match Str.from_utf8(resp.body) {
-            Ok(text) ->
+            Ok(text) =>
                 store_streams!(path, id, text)?
                 Ok(Stored)
 
@@ -682,7 +682,7 @@ backfill! = |{}| {
     match get_valid_token!(path) {
         Err(NotAuthed) => err_out!("not_authenticated", "not authenticated — run `stride auth` first")
         Err(other) => Err(other)
-        Ok(token) ->
+        Ok(token) =>
             # pull the full activity list first so backfill is self-sufficient —
             # no need to run `sync` beforehand (that's what made it two commands)
             Stdout.line!("backfill: refreshing the activity list...")?
@@ -721,11 +721,11 @@ drain_streams! : Str, Str, List(I64), DrainState => Try({}, _)
 drain_streams! = |path, token, ids, st|
     match ids {
         [] => Stdout.line!("backfill complete — ${Num.to_str(st.done)} streams fetched this run; ${Num.to_str(pending_streams!(path)?)} still missing")
-        [id, .. as rest] ->
+        [id, .. as rest] =>
             uri = "${api_base!({})}/api/v3/activities/${Num.to_str(id)}/streams?keys=time,heartrate,watts&key_by_type=true"
             resp = send_bearer!(uri, token)?
             match Backfill.decide({ status: resp.status, done: st.done, window: st.window, retries: st.retries }, read_limits) {
-                Refresh ->
+                Refresh =>
                     # multi-hour runs outlive the ~6h access token; refresh once and
                     # retry the same id. Same token back => real auth problem, stop.
                     fresh = get_valid_token!(path)?
@@ -735,33 +735,33 @@ drain_streams! = |path, token, ids, st|
                         Stdout.line!("  access token expired — refreshed, continuing...")?
                         drain_streams!(path, fresh, ids, st)
 
-                Backoff(retries) ->
+                Backoff(retries) =>
                     Stdout.line!("  rate limited — pausing ~15 min, then resuming...")?
                     Sleep.millis!(window_sleep_ms)
                     drain_streams!(path, token, ids, { ..st, window: 0, retries })
 
-                GiveUp ->
+                GiveUp =>
                     left = pending_streams!(path)?
                     Stdout.line!("still rate-limited after backing off — likely today's Strava read cap (${Num.to_str(st.done)} fetched this run, ${Num.to_str(left)} to go). Run `stride backfill` again later or tomorrow.")
 
-                Store({ done, window, after }) ->
-                    # 404 => empty marker, 2xx -> body, other -> error propagated
+                Store({ done, window, after }) =>
+                    # 404 => empty marker, 2xx => body, other => error propagated
                     _stored = store_stream_response!(path, id, resp)?
                     (if Num.rem(done, 50) == 0
                         Stdout.line!("  ...${Num.to_str(done)} fetched this run")
                     else
                         Ok({}))?
                     match after {
-                        StopRun ->
+                        StopRun =>
                             left = pending_streams!(path)?
                             Stdout.line!("reached this run's safe read budget — ${Num.to_str(done)} fetched, ${Num.to_str(left)} still to go. Run `stride backfill` again tomorrow to continue.")
 
-                        SleepWindow ->
+                        SleepWindow =>
                             Stdout.line!("  15-min read window nearly full (${Num.to_str(window)}) — sleeping ~15 min...")?
                             Sleep.millis!(window_sleep_ms)
                             drain_streams!(path, token, rest, { done, window: 0, retries: 0 })
 
-                        Continue ->
+                        Continue =>
                             drain_streams!(path, token, rest, { done, window, retries: 0 })
 
                     }
@@ -790,7 +790,7 @@ upsert_all! : Str, List(ActivitySummary) => Try({}, _)
 upsert_all! = |path, acts|
     match acts {
         [] => Ok({})
-        [a, .. as rest] ->
+        [a, .. as rest] =>
             upsert_activity!(path, a)?
             upsert_all!(path, rest)
 
@@ -840,7 +840,7 @@ analyze! = |{}| {
     match load_zone_config!(path) {
         Err(MissingConfig) => missing_config!({})
         Err(other) => Err(other)
-        Ok(cfg) ->
+        Ok(cfg) =>
             res = compute_missing_metrics!(path, cfg.zb)?
             rebuild_daily_load!(path)?
             form =
@@ -890,7 +890,7 @@ config_f64! : Str, Str => Try(F64, _)
 config_f64! = |path, key|
     match config_opt!(path, key)? {
         NotFound => Err(MissingConfig)
-        Found(s) ->
+        Found(s) =>
             match Str.to_f64(s) {
                 Ok(v) => Ok(v)
                 Err(_) => Err(MissingConfig)
@@ -954,7 +954,7 @@ process_rows! : Str, Metrics.ZoneBounds, List(ActivityRow), { computed : U64, st
 process_rows! = |path, zb, rows, acc|
     match rows {
         [] => Ok(acc)
-        [row, .. as rest] ->
+        [row, .. as rest] =>
             failed = compute_one!(path, zb, row)?
             next = {
                 computed: acc.computed + 1,
@@ -1025,7 +1025,7 @@ build_ftp_whens! : Str, List(Str), Str => Try(Str, _)
 build_ftp_whens! = |path, sports, acc|
     match sports {
         [] => Ok(acc)
-        [s, .. as rest] ->
+        [s, .. as rest] =>
             f = sport_ftp!(path, s)?
             build_ftp_whens!(path, rest, "${acc} WHEN '${s}' THEN ${Num.to_str(f)}")
 
@@ -1165,7 +1165,7 @@ rebuild_daily_load! = |path| {
     valid_days = Dict.keys(by_day)
     match List.first(valid_days) {
         Err(_) => Ok({}) # nothing computed yet (or no parseable dates)
-        Ok(seed) ->
+        Ok(seed) =>
             bounds = List.walk(valid_days, { lo: seed, hi: seed }, |b, d| { lo: Num.min(b.lo, d), hi: Num.max(b.hi, d) })
             # extend through today so rest days decay ATL/CTL and TSB is true as-of-now
             today = local_today_days!(path)?
@@ -1263,9 +1263,9 @@ ctl_at! = |path, day_str|
         bindings: [{ name: ":d", value: String(day_str) }],
         row: Sqlite.f64("ctl"),
     }) is
-        Ok(v) -> Ok(v)
-        Err(NoRowsReturned) -> Ok(0.0)
-        Err(e) -> Err(e)
+        Ok(v) => Ok(v)
+        Err(NoRowsReturned) => Ok(0.0)
+        Err(e) => Err(e)
 
 # period-over-period: this rolling window vs the one immediately before it
 compare! : Str => Try({}, _)
@@ -1279,7 +1279,7 @@ compare! = |period| {
         match Sqlite.query!({ path, query: "SELECT day AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sqlite.str("day") }) {
             Err(NoRowsReturned) => err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
             Err(e) => Err(e)
-            Ok(latest_day) ->
+            Ok(latest_day) =>
                 anchor = Result.with_default(Metrics.date_str_to_days(latest_day), 0)
                 cur_from = Metrics.days_to_date_str(anchor - (days - 1))
                 cur_to = Metrics.days_to_date_str(anchor + 1)
@@ -1337,7 +1337,7 @@ json_mode! : {} => Bool
 json_mode! = |{}|
     match Env.var!("STRIDE_FORMAT") {
         Ok(v) => Str.with_ascii_lowercased(Str.trim(v)) == "json"
-        Err(_) ->
+        Err(_) =>
             match Env.var!("CLAUDECODE") {
                 # set-but-empty is not "on" — require a non-empty value
                 Ok(v) => !(Str.is_empty(v))
@@ -1429,7 +1429,7 @@ activity_body! = |path, id_str, aid| {
     })?
     match List.first(rows) {
         Err(_) => err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
-        Ok(a) ->
+        Ok(a) =>
             raw_rows = Sqlite.query_many!({
                 path,
                 query: "SELECT raw_json AS raw FROM streams WHERE activity_id = :id",
@@ -1576,7 +1576,7 @@ summary! = |{}| {
     match load_zone_config!(path) {
         Err(MissingConfig) => missing_config!({})
         Err(other) => Err(other)
-        Ok({ ftp, zb }) ->
+        Ok({ ftp, zb }) =>
             payload = summary_payload!(path, ftp, zb)?
             out!(payload, Render.summary_screen)
 
@@ -1589,7 +1589,7 @@ week! = |{}| {
     match load_zone_config!(path) {
         Err(MissingConfig) => missing_config!({})
         Err(other) => Err(other)
-        Ok({ ftp, zb }) ->
+        Ok({ ftp, zb }) =>
             s = summary_payload!(path, ftp, zb)?
             anchor = Result.with_default(Metrics.date_str_to_days(s.as_of), 0)
             cutoff14 = Metrics.days_to_date_str(anchor - 14)
@@ -1856,7 +1856,7 @@ activities! = |limit, sport_filter| {
         Stdout.line!("intensity (if): vs your FTP — ~0.7 easy · 0.85-0.95 tempo · ~1.0 threshold · 1.05+ vo2max")?
         Stdout.line!("hard:           minutes at/above threshold — by power (vs the sport's FTP) where there's power, else HR Z4+Z5")
 }
-# metric keyword -> its ORDER BY column + human table header. The column is HARDCODED
+# metric keyword => its ORDER BY column + human table header. The column is HARDCODED
 # per keyword, so no user input ever reaches the SQL; an unknown metric errors before
 # any query. Single source of truth so column and header can't drift apart.
 top_metric : Str -> Result { col : Str, header : Str } [BadMetric]
@@ -1878,10 +1878,10 @@ top! : Str, U64, Str => Try({}, _)
 top! = |metric, limit, sport_filter| {
     path = open_db!({})?
     match top_metric(metric) {
-        Err(_) ->
+        Err(_) =>
             err_out!("bad_metric", "unknown metric '${metric}' — use: hr, tss, power, intensity, distance, time, output")
 
-        Ok({ col, header }) ->
+        Ok({ col, header }) =>
             sport_where =
                 if Str.is_empty(sport_filter) "" else " AND a.sport_type = :sport COLLATE NOCASE"
             sport_binding =
@@ -1955,13 +1955,13 @@ import_archive! = |src| {
     match dir_result {
         Err(UnzipFailed) => err_out!("unzip_failed", "couldn't unzip ${src} — is `unzip` installed? (or extract it yourself and `stride import <dir>`)")
         Err(other) => Err(other)
-        Ok(dir) ->
+        Ok(dir) =>
             csv_path = "${dir}/activities.csv"
             match File.read_utf8!(csv_path) {
                 Err(_) => err_out!("no_activities_csv", "no activities.csv in ${dir} — point me at a Strava account export (Settings → My Account → Download or Delete Your Account)")
-                Ok(text) ->
+                Ok(text) =>
                     match Csv.parse(text) {
-                        [headers, .. as rows] ->
+                        [headers, .. as rows] =>
                             counts = import_rows!(db, headers, rows, { imported: 0.U64, skipped: 0.U64 })?
                             if json_mode!({})
                                 emit_ok!(counts)
@@ -1978,18 +1978,18 @@ import_rows! : Str, List(Str), List(List(Str)), { imported : U64, skipped : U64 
 import_rows! = |db, headers, rows, acc|
     match rows {
         [] => Ok(acc)
-        [row, .. as rest] ->
+        [row, .. as rest] =>
             match export_row_to_summary(headers, row) {
-                Ok(summary) ->
+                Ok(summary) =>
                     upsert_activity!(db, summary)?
                     import_rows!(db, headers, rest, { ..acc, imported: acc.imported + 1 })
 
-                Err(_) ->
+                Err(_) =>
                     import_rows!(db, headers, rest, { ..acc, skipped: acc.skipped + 1 })
 
             }
     }
-# one CSV row -> the same ActivitySummary the API sync feeds to upsert_activity!.
+# one CSV row => the same ActivitySummary the API sync feeds to upsert_activity!.
 # Strava's export has DUPLICATE headers: the second Distance/Moving Time are the
 # precise ones (meters/seconds); the first Distance is km. English exports only.
 export_row_to_summary : List(Str), List(Str) -> Try(ActivitySummary, [BadRow])
@@ -2012,7 +2012,7 @@ export_row_to_summary = |headers, row| {
     distance =
         match Str.to_f64(field("Distance", 1)) {
             Ok(meters) => meters
-            Err(_) ->
+            Err(_) =>
                 # single Distance column = km
                 match Str.to_f64(field("Distance", 0)) {
                     Ok(km) => km * 1000.0
@@ -2194,7 +2194,7 @@ rate! = |target, rpe_str| {
         }
     match rpe_result {
         Err(_) => err_out!("bad_rpe", "rate needs an effort from 1 (easy) to 10 (max) — got '${rpe_str}'")
-        Ok(rpe) ->
+        Ok(rpe) =>
             id_result =
                 if target == "latest"
                     when Sqlite.query!({
@@ -2212,7 +2212,7 @@ rate! = |target, rpe_str| {
                 Err(BadId) => err_out!("bad_id", "rate needs an activity id or 'latest': rate <activity_id|latest> <1-10>")
                 Err(NoActivities) => err_out!("no_activities", "nothing to rate yet — `stride sync` or `stride import` first")
                 Err(other) => Err(other)
-                Ok(activity_id) ->
+                Ok(activity_id) =>
                     if !(row_exists!(path, "activities", activity_id)?)
                         err_out!("activity_not_found", "no activity ${Num.to_str(activity_id)} in the db — `stride sync` first?")
                     else
@@ -2240,7 +2240,7 @@ pz! = |{}| {
     match config_f64!(path, "ftp_ride") {
         Err(MissingConfig) => err_out!("missing_config", "set your FTP first: stride config set ftp_ride <watts>")
         Err(other) => Err(other)
-        Ok(ftp) ->
+        Ok(ftp) =>
             zones = Metrics.power_zones(ftp)
             if json_mode!({})
                 emit_ok!({ ftp, zones })
@@ -2505,7 +2505,7 @@ complete! : Str, Str => Try({}, _)
 complete! = |session_id_str, activity_id_str| {
     path = open_db!({})?
     match (Str.to_i64(session_id_str), Str.to_i64(activity_id_str)) {
-        (Ok(session_id), Ok(activity_id)) ->
+        (Ok(session_id), Ok(activity_id)) =>
             # SQLite UPDATE matching 0 rows is not an error — check existence
             # ourselves so a typo'd id can't report false success and silently
             # leave the planned session open / the coaching log out of sync
@@ -2524,7 +2524,7 @@ complete! = |session_id_str, activity_id_str| {
                 })?
                 out!({ completed_session: session_id, activity: activity_id }, |p| "planned session #${Num.to_str(p.completed_session)} completed by activity ${Num.to_str(p.activity)}")
 
-        _ ->
+        _ =>
             err_out!("bad_id", "complete needs numeric ids: complete <session_id> <activity_id>")
 
     }
@@ -2536,7 +2536,7 @@ complete_rest! = |session_id_str| {
     path = open_db!({})?
     match Str.to_i64(session_id_str) {
         Err(_) => err_out!("bad_id", "complete needs a numeric id: complete <session_id> [activity_id]")
-        Ok(session_id) ->
+        Ok(session_id) =>
             if !(row_exists!(path, "planned_sessions", session_id)?)
                 session_not_found!(session_id)
             else
@@ -2562,7 +2562,7 @@ skip! : Str, Str => Try({}, _)
 skip! = |session_id_str, reason| {
     path = open_db!({})?
     match Str.to_i64(session_id_str) {
-        Ok(session_id) ->
+        Ok(session_id) =>
             if !(row_exists!(path, "planned_sessions", session_id)?)
                 session_not_found!(session_id)
             else
@@ -2576,7 +2576,7 @@ skip! = |session_id_str, reason| {
                 })?
                 out!({ skipped_session: session_id, reason }, |p| "planned session #${Num.to_str(p.skipped_session)} skipped: ${p.reason}")
 
-        Err(_) ->
+        Err(_) =>
             err_out!("bad_id", "skip needs a numeric id: skip <session_id> \"<reason>\"")
 
     }
@@ -2595,7 +2595,7 @@ metrics_rev = 6
 
 run_migrations! : Str => Try({}, _)
 run_migrations! = |path|
-    # v5: prescriptions -> planned_sessions ("a coach plans sessions" — the
+    # v5: prescriptions => planned_sessions ("a coach plans sessions" — the
     # medical word is gone). MUST run before the CREATEs below, or an empty
     # planned_sessions would shadow the old data.
     rename_table_if_exists!(path, "prescriptions", "planned_sessions")?
@@ -2635,7 +2635,7 @@ run_migrations! = |path|
     # (queries now compare a.start_local directly — sargable — instead of substr)
     Sqlite.execute!({ path, query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })
 
-# rename old -> new when old exists and new doesn't (idempotent, data-preserving)
+# rename old => new when old exists and new doesn't (idempotent, data-preserving)
 rename_table_if_exists! : Str, Str, Str => Try({}, _)
 rename_table_if_exists! = |path, old, new| {
     count = Sqlite.query!({
@@ -2655,7 +2655,7 @@ alter_add_column! : Str, Str => Try({}, _)
 alter_add_column! = |path, q|
     match Sqlite.execute!({ path, query: q, bindings: [] }) {
         Ok({}) => Ok({})
-        Err(SqliteErr(Error, msg)) ->
+        Err(SqliteErr(Error, msg)) =>
             if Str.contains(msg, "duplicate column") Ok({}) else Err(SqliteErr(Error, msg))
         Err(other) => Err(other)
 
@@ -2666,7 +2666,7 @@ drop_column_if_exists! : Str, Str => Try({}, _)
 drop_column_if_exists! = |path, q|
     match Sqlite.execute!({ path, query: q, bindings: [] }) {
         Ok({}) => Ok({})
-        Err(SqliteErr(Error, msg)) ->
+        Err(SqliteErr(Error, msg)) =>
             if Str.contains(msg, "no such column") Ok({}) else Err(SqliteErr(Error, msg))
         Err(other) => Err(other)
 
