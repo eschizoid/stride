@@ -18,6 +18,7 @@ app [main!] {
 import pf.Stdout
 import pf.Stdin
 import pf.Env
+import pf.OsStr
 import pf.Http
 import pf.Utc
 import pf.Sleep
@@ -202,12 +203,12 @@ sync_ftp_to_strava! = |path, ftp_str|
 
 db_path! : {} => Try(Str, _)
 db_path! = |{}| {
-    home = Env.var!("HOME")?
+    home = Env.var_str!(OsStr.from_str("HOME"))?
     Ok("${home}/.stride/db.sqlite")
 }
 init! : {} => Try({}, _)
 init! = |{}| {
-    home = Env.var!("HOME")?
+    home = Env.var_str!(OsStr.from_str("HOME"))?
     dir = "${home}/.stride"
     # ignore AlreadyExists — idempotent init
     _ = Path.create_dir!(Path.utf8(dir))
@@ -266,7 +267,7 @@ TokenResp : { access_token : Str, refresh_token : Str, expires_at : I64 }
 # mock Strava; humans never set it. The browser authorize URL stays real always.
 api_base! : {} => Str
 api_base! = |{}|
-    match Env.var!("STRIDE_API_BASE") {
+    match Env.var_str!(OsStr.from_str("STRIDE_API_BASE")) {
         Ok(b) if !(Str.is_empty(b)) => b
         _ => "https://www.strava.com"
 
@@ -302,7 +303,7 @@ token_field! = |path, key|
 # client credentials: env var wins, else stored config (written by `auth`)
 client_cred! : Str, Str, Str => Try(Str, _)
 client_cred! = |path, env_name, key|
-    match Env.var!(env_name) {
+    match Env.var_str!(OsStr.from_str(env_name)) {
         Ok(v) => Ok(v)
         Err(_) =>
             # config_opt! so a locked/corrupt db surfaces as a real error, not MissingEnv
@@ -338,7 +339,7 @@ auth_flow! = |path, client_id, client_secret| {
     Stdout.line!("   Copy the code=XXXX value from the address bar and paste it here.")?
     Stdout.line!("")?
     Stdout.write!("code: ")?
-    code_raw = Stdin.line!({})?
+    code_raw = Stdin.line!()?
     code = Str.trim(code_raw)
     form = "client_id=${client_id}&client_secret=${client_secret}&code=${code}&grant_type=authorization_code"
     body = post_form!(token_url!({}), form)?
@@ -365,7 +366,7 @@ save_tokens! = |path, tokens| {
 
 now_secs! : {} => I64
 now_secs! = |{}| {
-    millis = Utc.to_millis_since_epoch(Utc.now!({}))
+    millis = Utc.to_millis_since_epoch(Utc.now!())
     (millis // 1000).to_i64_wrap()
 }
 # How "today"'s civil-day boundary is anchored. The platform clock (Utc.now!) is
@@ -1355,10 +1356,10 @@ print_json! = |val|
 # (CLAUDECODE env also flips to json for harnesses that set it)
 json_mode! : {} => Bool
 json_mode! = |{}|
-    match Env.var!("STRIDE_FORMAT") {
+    match Env.var_str!(OsStr.from_str("STRIDE_FORMAT")) {
         Ok(v) => Str.with_ascii_lowercased(Str.trim(v)) == "json"
         Err(_) =>
-            match Env.var!("CLAUDECODE") {
+            match Env.var_str!(OsStr.from_str("CLAUDECODE")) {
                 # set-but-empty is not "on" — require a non-empty value
                 Ok(v) => !(Str.is_empty(v))
                 Err(_) => False
@@ -2767,7 +2768,7 @@ open_db! = |{}| {
     p = db_path!({})?
     ensure_schema!(p)?
     # harden on every open so existing world-readable installs get fixed too
-    home = Env.var!("HOME")?
+    home = Env.var_str!(OsStr.from_str("HOME"))?
     secure_perms!("${home}/.stride")?
     Ok(p)
 }
