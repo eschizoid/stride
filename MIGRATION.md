@@ -38,6 +38,29 @@ SYNTAX
   CONTENTS byte-identical (SQL text/alignment/comments unchanged) — only the Roc
   delimiter changes. Critical for app.roc's many `"""` query blocks.
 
+## STDLIB RENAME TABLE (from the Metrics migration — use for app.roc)
+- `List.walk` → `List.fold`; `List.walk_until` → `List.fold_until`; `List.walk_with_index`
+  → `List.fold_with_index` (closure `|acc, elem, index|`).
+- `List.range(...)` + walk → **`Iter.fold(a..<b, init, fn)`** (or `a..=b` inclusive).
+  The **`|>` pipe operator is REMOVED**. `List.range`/`At`/`Before` gone.
+- `List.set(l,i,v)` now returns `Try(List, [OutOfBounds])` → chain `.ok_or(acc)`.
+- `Str.to_u64` → `U64.from_str`; `Str.to_i64` → `I64.from_str` (err tag `BadNumStr`).
+- `Num.to_str(x)` → `<Type>.to_str(x)` e.g. `I64.to_str`. `Num.to_f64(x)` → `x.to_f64()`;
+  `Num.to_u64`(I64→U64) → `x.to_u64_wrap()`; `Num.to_i64`(U64→I64) → `x.to_i64_wrap()`.
+- `Num.pow(x,y)` → `x.pow(y)`; `Num.max/min` → `x.max(y)/x.min(y)`; `Num.abs(x)` → `x.abs()`;
+  `Num.rem(a,b)` → `a % b`; `Num.round(x)` → `x.round_to_u64_try().ok_or(0)` (or `_i64_`).
+- **`Result` module is GONE → `Try` + methods**: `Result.with_default(r,d)` → `r.ok_or(d)`;
+  `Result.map_ok` → `.map_ok`; `Result.map_err` → `.map_err`; `Result.is_ok/is_err` →
+  `.is_ok()/.is_err()`.
+- `Str.to_utf8(s)` → `s.to_utf8()` (method). `Str.split_first` err is now `NotFound`.
+- **Record patterns are CLOSED by default** → partial destructure needs `{ field, .. }`.
+- Number literals carry a typed suffix: `0.I64`, `0.0.F64`, `0.U64`, `3.5.F64`.
+- Tag-union + `Try` equality IS auto-derived here, so `== Ok(x)` / `== SomeTag` often
+  compiles — keep `==` when it does; fall back to match-based only when it errors.
+- Unchanged: `List.sum/all/any/is_empty/len/append/concat/repeat/first/last/get/map/map2/
+  contains/find_first/keep_if/take_first/take_last`, `Str.trim/split_on/with_ascii_lowercased`,
+  `${}` interpolation.
+
 SEMANTICS + STDLIB (the deep layers — the real grind)
 - Tag unions are **NOMINAL**, and `==` needs an **`is_eq` method on the type** — no
   auto-derive. Migrate equality-based tests to **match-based** asserts
