@@ -2,7 +2,7 @@
 ## HERE (the pure layer), so the effectful `main!` never re-parses argv — it just
 ## dispatches on the tag. Keeping parsing pure makes every arg form unit-testable
 ## without a database or a process.
-Command :: [
+Command := [
 	Init,
 	Auth,
 	Sync,
