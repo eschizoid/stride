@@ -160,21 +160,28 @@ An unknown timezone name never silently becomes UTC — it falls back to the fix
 offset and `doctor` flags it. Historical per-activity dates already use Strava's
 civil date, so only the today boundary needs this.
 
-## 9. Compiler migration and Windows — blocked, not chosen
+## 9. Compiler migration and Windows — IN PROGRESS (roc-json was never the blocker)
 
 stride ships Linux (x64/arm64) and macOS (arm64/Intel) binaries. There is **no
-Windows build**, and that is *not* a Roc limitation: the Roc compiler targets
+Windows build** yet, and that is *not* a Roc limitation: the Roc compiler targets
 Windows and newer basic-cli ships an x64win host. stride can't build for Windows
 only because it is pinned to basic-cli 0.20.0 (which predates that host), and it is
 pinned there because 0.21+ needs the new compiler.
 
-The new compiler is obtainable and the platform is ready, but the migration is
-hard-blocked on **roc-json**: all JSON decode/encode goes through it, and it has no
-new-compiler port (dormant repo). A port is a bounded but pioneering syntax
-migration on a pre-0.1, still-crashy compiler. **Decision: do not migrate now.**
-Windows users are served by WSL + the Linux binary. Revisit when a new-compiler
-roc-json release (or a stdlib JSON replacement) appears — that same migration also
-unlocks Windows and native effectful-expect e2e.
+**CORRECTION (2026-08-01): the earlier "hard-blocked on roc-json" conclusion was
+wrong.** It assumed all JSON had to go through a roc-json port. But roc-json's
+maintainer confirmed (lukewilliamboswell/roc-json#52) that **JSON parsing is now a
+builtin in the new compiler** — so roc-json is simply dropped, not ported. The
+migration is unblocked and underway on branch `new-compiler-migration`:
+- New compiler installed side-by-side (`~/.local/roc-new`); alpha4 stays the shipping
+  compiler on `main` until the migration is green.
+- Target: basic-cli 0.21 + builtin JSON, new type-module syntax (`Name :: [].{}`,
+  `List(X)`, `Result`→`Try`, `True`/`False`). Ruleset + progress in `MIGRATION.md`.
+- Scope is real: ~4500 lines, a new language dialect, new JSON + platform APIs — a
+  multi-session grind, done pure-modules-first, app.roc last.
+This migration also unlocks Windows and native effectful-expect e2e. Lesson worth
+keeping: "blocked" was an untested assumption stated as fact — verify with the source
+(here, just asking the maintainer) before writing a constraint into the record.
 
 ## 10. Deliberately out of scope
 
