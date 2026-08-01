@@ -223,7 +223,7 @@ init! = |{}| {
 secure_perms! : Str => Try({}, _)
 secure_perms! = |dir| {
     cmd = "chmod 700 '${dir}' 2>/dev/null; chmod 600 '${dir}/db.sqlite' '${dir}/db.sqlite-wal' '${dir}/db.sqlite-shm' '${dir}/db.sqlite-journal' 2>/dev/null; true"
-    _ = Cmd.new("sh") |> Cmd.args(["-c", cmd]) |> Cmd.exec_output!()
+    _ = Cmd.new("sh").args(["-c", cmd]).exec_output!()
     Ok({})
 }
 # ── config key-value helpers ─────────────────────────────────────────
@@ -281,12 +281,12 @@ token_url! = |{}| "${api_base!({})}/oauth/token"
 # hand the inherited TTY to a console browser on headless boxes.
 open_browser! : Str => Try({}, _)
 open_browser! = |url|
-    match Cmd.new("open") |> Cmd.arg(url) |> Cmd.exec_output!() {
+    match Cmd.new("open").arg(url).exec_output!() {
         Ok(_) => Ok({})
         Err(_) =>
             # detach xdg-open: exec waits for the child, and xdg-open can resolve to
             # a FOREGROUND handler (console browser) that would block auth forever
-            match Cmd.new("sh") |> Cmd.args(["-c", "xdg-open \"${url}\" >/dev/null 2>&1 &"]) |> Cmd.exec_output!() {
+            match Cmd.new("sh").args(["-c", "xdg-open \"${url}\" >/dev/null 2>&1 &"]).exec_output!() {
                 Ok(_) => Ok({})
                 Err(_) => Ok({})
 
@@ -386,8 +386,8 @@ TimeMode : [Zone Str I64, FixedOffset I64, BadZone Str I64, Utc]
 zone_offset_now! : Str => Try(I64, [BadTz])
 zone_offset_now! = |tz| {
     cmd = "if [ -f '/usr/share/zoneinfo/${tz}' ]; TZ='${tz}' date +%z; else echo INVALID; fi"
-    match Cmd.new("sh") |> Cmd.args(["-c", cmd]) |> Cmd.exec_output!() {
-        Ok(out) => Metrics.parse_utc_offset(out.stdout_utf8) |> Result.map_err(|_| BadTz)
+    match Cmd.new("sh").args(["-c", cmd]).exec_output!() {
+        Ok(out) => Metrics.parse_utc_offset(out.stdout_utf8).map_err(|_| BadTz)
         Err(_) => Err(BadTz)
 
     }
@@ -461,7 +461,7 @@ get_valid_token! = |path| {
 }
 # ── http helpers ─────────────────────────────────────────────────────
 
-post_form! : Str, Str => Result (List(U8)) _
+post_form! : Str, Str => Try(List(U8), _)
 post_form! = |uri, form| {
     resp = Http.send!({
         method: POST,
@@ -472,11 +472,11 @@ post_form! = |uri, form| {
     })?
     ok_body(resp)
 }
-get_bearer! : Str, Str => Result (List(U8)) _
+get_bearer! : Str, Str => Try(List(U8), _)
 get_bearer! = |uri, token|
     ok_body(send_bearer!(uri, token)?)
 
-ok_body : { status : U16, headers : List { name : Str, value : Str }, body : List(U8) } -> Result (List(U8)) _
+ok_body : { status : U16, headers : List { name : Str, value : Str }, body : List(U8) } -> Try(List(U8), _)
 ok_body = |resp|
     if resp.status < 300
         Ok(resp.body)
@@ -647,7 +647,7 @@ read_limits = {
     max_consecutive_429: 2, # this many 429s after a sleep => assume daily cap, stop
 }
 
-send_bearer! : Str, Str => Result Http.Response _
+send_bearer! : Str, Str => Try(Http.Response, _)
 send_bearer! = |uri, token|
     Http.send!({
         method: GET,
@@ -780,7 +780,7 @@ fetch_pages! = |path, token, after_param, page, acc| {
     per_str = Num.to_str(per_page)
     uri = "${api_base!({})}/api/v3/athlete/activities?per_page=${per_str}&page=${page_str}${after_param}"
     body = get_bearer!(uri, token)?
-    decoded : Result (List(ActivitySummary)) _
+    decoded : Try(List(ActivitySummary), _)
     decoded = Decode.from_bytes(body, Json.utf8)
     acts = Result.map_err(decoded, |_| ActivityDecodeFailed(page))?
     upsert_all!(path, acts)?
@@ -1558,7 +1558,7 @@ stats! = |{}| {
         Stdout.line!(to_table(ytd))
     }
 }
-stats_rows! : Str, Str => Result (List { sport : Str, sessions : I64, hours : F64, km : F64 }) _
+stats_rows! : Str, Str => Try(List { sport : Str, sessions : I64, hours : F64, km : F64 }, _)
 stats_rows! = |path, cutoff|
     Sqlite.query_many!({
         path,
@@ -1954,9 +1954,9 @@ import_archive! = |src| {
     db = open_db!({})?
     dir_result =
         if Str.ends_with(src, ".zip") {
-            tmp = Cmd.new("mktemp") |> Cmd.arg("-d") |> Cmd.exec_output!() |> Result.map_err(|_| ImportTempDirFailed)?
+            tmp = Cmd.new("mktemp").arg("-d").exec_output!().map_err(|_| ImportTempDirFailed)?
             tmp_dir = Str.trim(tmp.stdout_utf8)
-            match Cmd.new("unzip") |> Cmd.args(["-o", "-q", src, "-d", tmp_dir]) |> Cmd.exec_output!() {
+            match Cmd.new("unzip").args(["-o", "-q", src, "-d", tmp_dir]).exec_output!() {
                 Ok(_) => Ok(tmp_dir)
                 Err(_) => Err(UnzipFailed)
             }
@@ -2016,11 +2016,11 @@ export_row_to_summary = |headers, row| {
             Ok(v) => Option.some(v)
             Err(_) => Option.none({})
         }
-    id = Str.to_i64(field("Activity ID", 0)) |> Result.map_err(|_| BadRow)?
-    start = Metrics.export_date_to_iso(field("Activity Date", 0)) |> Result.map_err(|_| BadRow)?
+    id = Str.to_i64(field("Activity ID", 0)).map_err(|_| BadRow)?
+    start = Metrics.export_date_to_iso(field("Activity Date", 0)).map_err(|_| BadRow)?
     moving_raw = field("Moving Time", 1)
     moving_str = if Str.is_empty(moving_raw) field("Moving Time", 0) else moving_raw
-    moving_f = Str.to_f64(moving_str) |> Result.map_err(|_| BadRow)?
+    moving_f = Str.to_f64(moving_str).map_err(|_| BadRow)?
     distance =
         match Str.to_f64(field("Distance", 1)) {
             Ok(meters) => meters
@@ -2220,7 +2220,7 @@ rate! = |target, rpe_str| {
                         Ok(id) => Ok(id)
                         Err(e) => Err(e)
                 else
-                    Str.to_i64(target) |> Result.map_err(|_| BadId)
+                    Str.to_i64(target).map_err(|_| BadId)
             match id_result {
                 Err(BadId) => err_out!("bad_id", "rate needs an activity id or 'latest': rate <activity_id|latest> <1-10>")
                 Err(NoActivities) => err_out!("no_activities", "nothing to rate yet — `stride sync` or `stride import` first")
@@ -2343,7 +2343,7 @@ progress! = |date_arg| {
     })?
     labeled =
         List.keep_oks(Metrics.group_progress(prows), |g| Metrics.anchor_filter(g, date))
-        |> List.map(|g| { name: Render.progress_group_label(g.name, g.kind), rows: g.rows })
+       .map(|g| { name: Render.progress_group_label(g.name, g.kind), rows: g.rows })
     # choose each group's lens, keep only rows it can score; drop unscorable groups
     keep_scored = |lens, g| {
         kept = List.keep_if(g.rows, |r| Result.is_ok(Metrics.lens_score(lens, r)))
