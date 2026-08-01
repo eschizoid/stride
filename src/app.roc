@@ -379,7 +379,7 @@ now_secs! = |{}| {
 #   BadZone    — `timezone` is set but the name isn't in the system tz database;
 #                we fall back to the fixed offset (NEVER silently to UTC) and warn.
 #   Utc        — neither configured.
-TimeMode : [Zone Str I64, FixedOffset I64, BadZone Str I64, Utc]
+TimeMode : [Zone(Str, I64), FixedOffset(I64), BadZone(Str, I64), Utc]
 
 # Read the current DST-correct offset (minutes east of UTC) for an IANA zone by
 # validating it against the system tz database, then reading `date +%z`. An
@@ -652,7 +652,6 @@ read_limits = {
     max_consecutive_429: 2, # this many 429s after a sleep => assume daily cap, stop
 }
 
-send_bearer! : Str, Str => Try(Http.Response, _)
 send_bearer! = |uri, token|
     Http.send!({
         method: GET,
@@ -667,7 +666,6 @@ send_bearer! = |uri, token|
 # THE stream-response policy, shared by sync and backfill: 404 => "{}" marker
 # (no streams recorded; don't refetch), 2xx => store, non-utf8 => skip WITHOUT
 # storing (storing would mark it done forever; it retries next run).
-store_stream_response! : Str, I64, Http.Response => Try([Stored, SkippedNonUtf8], _)
 store_stream_response! = |path, id, resp|
     if resp.status == 404 {
         store_streams!(path, id, "{}")?
