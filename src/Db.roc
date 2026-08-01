@@ -10,9 +10,19 @@ import Metrics
 Db :: [].{
     # ── paths ────────────────────────────────────────────────────────────
 
+    # home directory, cross-platform: HOME on unix, USERPROFILE on Windows (where HOME
+    # is usually unset). Without this every command would fail on Windows before opening
+    # the db, even though we now target it.
+    home_dir! : {} => Try(Str, _)
+    home_dir! = |{}|
+        match Env.var_str!(OsStr.from_str("HOME")) {
+            Ok(h) if !(Str.is_empty(h)) => Ok(h)
+            _ => Env.var_str!(OsStr.from_str("USERPROFILE"))
+        }
+
     db_path! : {} => Try(Str, _)
     db_path! = |{}| {
-        home = Env.var_str!(OsStr.from_str("HOME"))?
+        home = home_dir!({})?
         Ok("${home}/.stride/db.sqlite")
     }
     # owner-only permissions on the credential store. basic-cli 0.20 has no mode API,
@@ -280,7 +290,7 @@ Db :: [].{
         p = db_path!({})?
         ensure_schema!(p)?
         # harden on every open so existing world-readable installs get fixed too
-        home = Env.var_str!(OsStr.from_str("HOME"))?
+        home = home_dir!({})?
         secure_perms!("${home}/.stride")?
         Ok(p)
     }
