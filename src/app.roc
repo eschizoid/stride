@@ -529,22 +529,23 @@ sync! = |{}| {
                 match config_opt!(path, "last_sync_epoch")? {
                     NotFound => ""
                     Found(epoch_str) =>
-                        match Str.to_i64(epoch_str) {
-                            Ok(e) => "&after=${Num.to_str(Num.max(e - 2592000, 0))}"
+                        match I64.from_str(epoch_str) {
+                            Ok(e) => "&after=${I64.to_str((e - 2592000).max(0))}"
                             Err(_) => ""
                         }
                 }
             count = fetch_pages!(path, token, after_param, 1, 0)?
-            config_set!(path, "last_sync_epoch", Num.to_str(started))?
+            config_set!(path, "last_sync_epoch", I64.to_str(started))?
             streams_n = backfill_streams!(path, token)?
             remaining = pending_streams!(path)?
-            out!({ synced: count, streams_fetched: streams_n, pending_streams: remaining }, |p|
+            out!({ synced: count, streams_fetched: streams_n, pending_streams: remaining }, |p| {
                 tail =
                     if p.pending_streams > 0
-                        " (${Num.to_str(p.pending_streams)} still need streams — run `stride backfill` to pull them all)"
+                        " (${I64.to_str(p.pending_streams)} still need streams — run `stride backfill` to pull them all)"
                     else
                         ""
-                "synced ${Num.to_str(p.synced)} activities, fetched streams for ${Num.to_str(p.streams_fetched)}${tail}")
+                "synced ${U64.to_str(p.synced)} activities, fetched streams for ${U64.to_str(p.streams_fetched)}${tail}"
+            })
         }
     }
 }
@@ -669,19 +670,19 @@ send_bearer! = |uri, token|
 # storing (storing would mark it done forever; it retries next run).
 store_stream_response! : Str, I64, Http.Response => Try([Stored, SkippedNonUtf8], _)
 store_stream_response! = |path, id, resp|
-    if resp.status == 404
+    if resp.status == 404 {
         store_streams!(path, id, "{}")?
         Ok(Stored)
-    else if resp.status < 300
+    } else if resp.status < 300 {
         match Str.from_utf8(resp.body) {
-            Ok(text) =>
+            Ok(text) => {
                 store_streams!(path, id, text)?
                 Ok(Stored)
-
+            }
             Err(_) => Ok(SkippedNonUtf8)
         }
-    else {
-        text = Result.with_default(Str.from_utf8(resp.body), "<non-utf8 body>")
+    } else {
+        text = Str.from_utf8(resp.body).ok_or("<non-utf8 body>")
         Err(HttpStatus(resp.status, text))
     }
 backfill! : {} => Try({}, _)
@@ -695,7 +696,7 @@ backfill! = |{}| {
             # no need to run `sync` beforehand (that's what made it two commands)
             Stdout.line!("backfill: refreshing the activity list...")?
             count = fetch_pages!(path, token, "", 1, 0)?
-            config_set!(path, "last_sync_epoch", Num.to_str(now_secs!({})))?
+            config_set!(path, "last_sync_epoch", I64.to_str(now_secs!({})))?
             missing_ids = Sqlite.query_many!({
                 path,
                 query:
@@ -708,11 +709,12 @@ backfill! = |{}| {
                 rows: Sqlite.i64("id"),
             })?
             missing = List.len(missing_ids)
-            if missing == 0
-                Stdout.line!("backfill: ${Num.to_str(count)} activities, all streams already present — nothing to do")
-            else
-                Stdout.line!("backfill: ${Num.to_str(count)} activities, ${Num.to_str(missing)} need streams. Strava allows ~1000 reads/day, so a large first pull can span a few days — this run drains as far as today's limit allows and is resumable (just run `stride backfill` again).")?
+            if missing == 0 {
+                Stdout.line!("backfill: ${U64.to_str(count)} activities, all streams already present — nothing to do")
+            } else {
+                Stdout.line!("backfill: ${U64.to_str(count)} activities, ${U64.to_str(missing)} need streams. Strava allows ~1000 reads/day, so a large first pull can span a few days — this run drains as far as today's limit allows and is resumable (just run `stride backfill` again).")?
                 drain_streams!(path, token, missing_ids, { done: 0, window: 0, retries: 0 })
+            }
         }
     }
 }
@@ -728,47 +730,48 @@ DrainState : { done : I64, window : I64, retries : I64 }
 drain_streams! : Str, Str, List(I64), DrainState => Try({}, _)
 drain_streams! = |path, token, ids, st|
     match ids {
-        [] => Stdout.line!("backfill complete — ${Num.to_str(st.done)} streams fetched this run; ${Num.to_str(pending_streams!(path)?)} still missing")
+        [] => Stdout.line!("backfill complete — ${I64.to_str(st.done)} streams fetched this run; ${I64.to_str(pending_streams!(path)?)} still missing")
         [id, .. as rest] => {
-            uri = "${api_base!({})}/api/v3/activities/${Num.to_str(id)}/streams?keys=time,heartrate,watts&key_by_type=true"
+            uri = "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=time,heartrate,watts&key_by_type=true"
             resp = send_bearer!(uri, token)?
             match Backfill.decide({ status: resp.status, done: st.done, window: st.window, retries: st.retries }, read_limits) {
                 Refresh => {
                     # multi-hour runs outlive the ~6h access token; refresh once and
                     # retry the same id. Same token back => real auth problem, stop.
                     fresh = get_valid_token!(path)?
-                    if fresh == token
+                    if fresh == token {
                         Err(HttpStatus(401, "token refresh did not help — re-run `stride auth`"))
-                    else
+                    } else {
                         Stdout.line!("  access token expired — refreshed, continuing...")?
                         drain_streams!(path, fresh, ids, st)
+                    }
                 }
-                Backoff(retries) =>
+                Backoff(retries) => {
                     Stdout.line!("  rate limited — pausing ~15 min, then resuming...")?
                     Sleep.millis!(window_sleep_ms)
                     drain_streams!(path, token, ids, { ..st, window: 0, retries })
-
+                }
                 GiveUp => {
                     left = pending_streams!(path)?
-                    Stdout.line!("still rate-limited after backing off — likely today's Strava read cap (${Num.to_str(st.done)} fetched this run, ${Num.to_str(left)} to go). Run `stride backfill` again later or tomorrow.")
+                    Stdout.line!("still rate-limited after backing off — likely today's Strava read cap (${I64.to_str(st.done)} fetched this run, ${I64.to_str(left)} to go). Run `stride backfill` again later or tomorrow.")
                 }
                 Store({ done, window, after }) => {
                     # 404 => empty marker, 2xx => body, other => error propagated
                     _stored = store_stream_response!(path, id, resp)?
-                    (if Num.rem(done, 50) == 0
-                        Stdout.line!("  ...${Num.to_str(done)} fetched this run")
+                    (if done % 50 == 0
+                        Stdout.line!("  ...${I64.to_str(done)} fetched this run")
                     else
                         Ok({}))?
                     match after {
                         StopRun => {
                             left = pending_streams!(path)?
-                            Stdout.line!("reached this run's safe read budget — ${Num.to_str(done)} fetched, ${Num.to_str(left)} still to go. Run `stride backfill` again tomorrow to continue.")
+                            Stdout.line!("reached this run's safe read budget — ${I64.to_str(done)} fetched, ${I64.to_str(left)} still to go. Run `stride backfill` again tomorrow to continue.")
                         }
-                        SleepWindow =>
-                            Stdout.line!("  15-min read window nearly full (${Num.to_str(window)}) — sleeping ~15 min...")?
+                        SleepWindow => {
+                            Stdout.line!("  15-min read window nearly full (${I64.to_str(window)}) — sleeping ~15 min...")?
                             Sleep.millis!(window_sleep_ms)
                             drain_streams!(path, token, rest, { done, window: 0, retries: 0 })
-
+                        }
                         Continue =>
                             drain_streams!(path, token, rest, { done, window, retries: 0 })
 
