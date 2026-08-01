@@ -950,12 +950,26 @@ sport_ftp! = |path, sport|
             Ok(s) -> Result.with_default(Str.to_f64(s), 0.0)
             Err(_) -> 0.0
     primary = read!(key)
+    legacy = if key == "ftp_ride" then read!("ftp") else 0.0 # cycling's entrenched key
     if primary > 0.0 then
         Ok(primary)
-    else if key == "ftp_ride" then
-        Ok(read!("ftp")) # cycling back-compat: the primary FTP everyone already sets
+    else if legacy > 0.0 then
+        Ok(legacy)
     else
-        Ok(0.0)
+        # empirical fallback: no configured FTP → derive from this sport's OWN best
+        # 20-min power (× 0.95). So power-intensity works for ANY power sport with
+        # stream history, zero config; sports with no power stream derive 0 → HR.
+        derive_sport_ftp!(path, sport)
+
+derive_sport_ftp! : Str, Str => Result F64 _
+derive_sport_ftp! = |path, sport|
+    best = Sqlite.query!({
+        path,
+        query: "SELECT CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_type = :sport",
+        bindings: [{ name: ":sport", value: String(sport) }],
+        row: Sqlite.f64("b"),
+    })?
+    Ok(best * 0.95)
 
 # returns Bool: did the stored stream JSON fail to decode? (surfaced by analyze)
 compute_one! : Str, F64, Metrics.ZoneBounds, ActivityRow => Result Bool _
