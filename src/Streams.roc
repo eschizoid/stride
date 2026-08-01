@@ -11,13 +11,16 @@ Streams :: [].{
 	# {} 404-marker which decodes to all-absent) from a real DECODE FAILURE (corrupt /
 	# schema-drifted JSON) so callers can surface it instead of silently zeroing.
 	# Strava data arrays contain JSON null (sensor dropouts); builtin Json.parse rejects
-	# null inside List(F64), so null is replaced with a -1 sentinel first — stream values
-	# are never negative, so stream_pairs drops the sentinels, preserving old behavior.
+	# null inside List(F64), so null is replaced with a sentinel first. The sentinel is
+	# -99999, chosen BELOW any real reading (altitude bottoms out near -430m at the Dead
+	# Sea; hr/watts/distance are >= 0), so a null is always distinguishable from a genuine
+	# value — including a legitimately negative altitude. The pairing helpers drop the
+	# sentinel; stream_pairs additionally drops negatives (hr/watts can never be < 0).
 	decode_streams : [NotNull(Str), Null] -> { streams : StreamsResp, failed : Bool }
 	decode_streams = |raw|
 		match raw {
 			NotNull(text) => {
-				cleaned = Str.replace_each(text, "null", "-1")
+				cleaned = Str.replace_each(text, "null", "-99999")
 				decoded : Try(StreamsResp, [InvalidJson(Str), MissingRequiredField(Str)])
 				decoded = Json.parse(cleaned)
 				match decoded {
@@ -28,7 +31,7 @@ Streams :: [].{
 			Null => { streams: empty_streams, failed: False }
 		}
 
-	# pair up stream time+value samples by index, dropping null (-1 sentinel) samples
+	# pair up stream time+value samples by index, dropping null (-99999 sentinel) samples
 	stream_pairs : Try(StreamSeq, [Missing]), Try(StreamSeq, [Missing]) -> List({ t : I64, v : F64 })
 	stream_pairs = |time_opt, val_opt|
 		match (time_opt, val_opt) {
@@ -40,15 +43,15 @@ Streams :: [].{
 		}
 
 	# pair cumulative-distance + altitude samples by index, for grade-adjusted pace.
-	# Unlike stream_pairs, altitude is KEPT when negative (below sea level is real) —
-	# only distance sentinels (-1, a replaced null in the monotonic distance stream)
-	# drop out. Feed the aligned {dist, alt} to Metrics.grade_adjusted_distance.
+	# A pair drops out only when either value is the -99999 null sentinel; a genuinely
+	# negative altitude (below sea level) is KEPT — the whole point of a sentinel far below
+	# any real reading. Feed the aligned {dist, alt} to Metrics.grade_adjusted_distance.
 	dist_alt_pairs : Try(StreamSeq, [Missing]), Try(StreamSeq, [Missing]) -> { dist : List(F64), alt : List(F64) }
 	dist_alt_pairs = |dist_opt, alt_opt|
 		match (dist_opt, alt_opt) {
 			(Ok(ds), Ok(al)) => {
 				paired = List.map2(ds.data, al.data, |d, a| { d, a })
-				kept = List.keep_if(paired, |p| p.d >= 0.0)
+				kept = List.keep_if(paired, |p| p.d > -99998.0 and p.a > -99998.0)
 				{ dist: List.map(kept, |p| p.d), alt: List.map(kept, |p| p.a) }
 			}
 			_ => { dist: [], alt: [] }
@@ -95,4 +98,12 @@ expect {
 	d = Streams.decode_streams(NotNull("{\"time\":{\"data\":[0,1]}}"))
 	p = Streams.dist_alt_pairs(d.streams.distance, d.streams.altitude)
 	!(d.failed) and List.is_empty(p.dist) and List.is_empty(p.alt)
+}
+
+# a null altitude becomes the sentinel and drops out; a real negative altitude is KEPT
+expect {
+	d = Streams.decode_streams(NotNull("{\"distance\":{\"data\":[0,100,200]},\"altitude\":{\"data\":[-30,null,-25]}}"))
+	p = Streams.dist_alt_pairs(d.streams.distance, d.streams.altitude)
+	near = |xs, ys| List.len(xs) == List.len(ys) and List.all(List.map2(xs, ys, |a, b| (a - b).abs() < 0.001), |ok| ok)
+	List.len(p.dist) == 2 and near(p.alt, [-30.0, -25.0])
 }

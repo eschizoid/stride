@@ -781,7 +781,9 @@ Metrics :: [].{
                         grade = (s.a - p.a) / dd
                         { prev: Ok(s), gad: acc.gad + (dd * minetti_ratio(grade)) }
                     } else {
-                        { prev: Ok(s), gad: acc.gad }
+                        # backwards/jitter/pause: keep the last VALID point as prev so
+                        # this bad sample can't skew the next segment's distance or grade
+                        acc
                     }
                 }
             })
@@ -1163,3 +1165,5 @@ expect (Metrics.grade_adjusted_distance([0.0, 100.0, 200.0], [0.0, -10.0, -20.0]
 # a pause (no delta-distance) contributes nothing; too few samples -> 0
 expect (Metrics.grade_adjusted_distance([0.0, 100.0, 100.0, 200.0], [0.0, 0.0, 0.0, 0.0]) - 200.0).abs() < 0.01
 expect (Metrics.grade_adjusted_distance([42.0], [1.0]) - 0.0).abs() < 0.001
+# a backwards GPS blip in cumulative distance doesn't inflate the total (jitter ignored)
+expect (Metrics.grade_adjusted_distance([0.0, 100.0, 50.0, 200.0], [0.0, 0.0, 0.0, 0.0]) - 200.0).abs() < 0.01
