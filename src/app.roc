@@ -1346,8 +1346,17 @@ out! = |payload, render|
 # every JSON success is wrapped `{ schema_version, data }`; `data` is the command
 # payload. Errors go through emit_err! and are `{ schema_version, error }` instead —
 # a caller discriminates success from failure by which key is present.
-emit_ok! = |val|
-    Stdout.line!(Json.to_str({ schema_version: json_schema_version, data: val }))
+emit_ok! = |val| {
+    # The new compiler can't derive an encoder for a record literal with a generic
+    # field inside a generic function (roc #10162), and Json.to_str demands infallible
+    # field encoders (encode_f64 can fail on NaN/Infinity). Encoding the payload
+    # DIRECTLY with the Try variant sidesteps both: it monomorphizes at each concrete
+    # call site (like the platform's send_json!) and tolerates float edge cases. The
+    # {schema_version, data} envelope is then assembled by interpolation. Our floats
+    # are always finite, so Err never fires.
+    d = Json.to_str_try(val) ? JsonEncodeFailed
+    Stdout.line!("{\"schema_version\":${(json_schema_version).to_str()},\"data\":${d}}")
+}
 
 emit_err! : Str, Str => Try({}, _)
 emit_err! = |code, msg|
