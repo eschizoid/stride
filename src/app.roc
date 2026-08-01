@@ -283,17 +283,16 @@ token_url! = |{}| "${api_base!({})}/oauth/token"
 # failure — the URL is always printed as the manual fallback. exec_output! (not
 # exec!) so a failing launcher can't spew stderr into the auth instructions or
 # hand the inherited TTY to a console browser on headless boxes.
-open_browser! : Str => Try({}, _)
+open_browser! : Str => {}
 open_browser! = |url|
     match Cmd.new(OsStr.from_str("open")).arg(OsStr.from_str(url)).exec_output!() {
-        Ok(_) => Ok({})
+        Ok(_) => {}
         Err(_) =>
             # detach xdg-open: exec waits for the child, and xdg-open can resolve to
             # a FOREGROUND handler (console browser) that would block auth forever
             match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", "xdg-open \"${url}\" >/dev/null 2>&1 &"], OsStr.from_str)).exec_output!() {
-                Ok(_) => Ok({})
-                Err(_) => Ok({})
-
+                Ok(_) => {}
+                Err(_) => {}
             }
     }
 # a stored token field: absent => NotAuthed (genuine); db failure propagates
@@ -338,7 +337,7 @@ auth_flow! = |path, client_id, client_secret| {
     Stdout.line!("")?
     Stdout.line!("   ${url}")?
     Stdout.line!("")?
-    open_browser!(url)?
+    open_browser!(url)
     Stdout.line!("2) You'll land on a localhost page that fails to load — that's expected.")?
     Stdout.line!("   Copy the code=XXXX value from the address bar and paste it here.")?
     Stdout.line!("")?
@@ -1669,13 +1668,13 @@ week! = |{}| {
                     Ok({ id, target_date, session_type, detail, rationale })
                 },
             })?
-            if json_mode!({})
+            if json_mode!({}) {
                 emit_ok!({
                     summary: s,
                     recent_activities_14d: recent,
                     open_sessions: open_p,
                 })
-            else
+            } else {
                 Stdout.line!(Render.summary_screen(s))?
                 Stdout.line!("")?
                 Stdout.line!("OPEN PLAN")?
@@ -1689,6 +1688,7 @@ week! = |{}| {
                     ["date", "sport", "name", "time", "load", "hard"],
                     List.map(recent, |a| [a.date, a.sport, a.name, Render.mins(a.moving_time), Render.fmt0(a.tss), Render.mins(a.hard_s)]),
                 ))
+            }
         }
     }
 }
@@ -1870,7 +1870,7 @@ activities! = |limit, sport_filter| {
     })?
     if json_mode!({})
         emit_ok!(rows)
-    else
+    else {
         Stdout.line!(Render.render_table(
             ["date", "sport", "name", "time", "load", "intensity (if)", "hard"],
             List.map(rows, |a| [
@@ -1887,6 +1887,7 @@ activities! = |limit, sport_filter| {
         Stdout.line!("load:           session stress — TSS for power/HR, session-RPE for rated sessions; '-' = no usable data (e.g. dead HR strap)")?
         Stdout.line!("intensity (if): vs your FTP — ~0.7 easy · 0.85-0.95 tempo · ~1.0 threshold · 1.05+ vo2max")?
         Stdout.line!("hard:           minutes at/above threshold — by power (vs the sport's FTP) where there's power, else HR Z4+Z5")
+    }
 }
 # metric keyword => its ORDER BY column + human table header. The column is HARDCODED
 # per keyword, so no user input ever reaches the SQL; an unknown metric errors before
@@ -2621,16 +2622,16 @@ complete_rest! = |session_id_str| {
                     bindings: [{ name: ":pid", value: Integer(session_id) }],
                     row: Sqlite.str("t"),
                 })?
-                if session_type != "rest"
+                if session_type != "rest" {
                     err_out!("activity_required", "planned session #${(session_id).to_str()} is '${session_type}' — completing it needs the activity id (only rest days close without one)")
-                else
+                } else {
                     Sqlite.execute!({
                         path: Path.utf8(path),
                         query: "UPDATE planned_sessions SET status = 'done' WHERE id = :pid",
                         bindings: [{ name: ":pid", value: Integer(session_id) }],
                     })?
                     out!({ completed_session: session_id, rest: True }, |p| "planned session #${(p.completed_session).to_str()} (rest) marked done")
-            }
+                }
     }
 }
 skip! : Str, Str => Try({}, _)
@@ -2758,11 +2759,12 @@ ensure_schema! = |path| {
             bindings: [],
             row: Sqlite.i64("v"),
         })).ok_or(0)
-    if v >= schema_version
+    if v >= schema_version {
         Ok({})
-    else
+    } else {
         run_migrations!(path)?
         Sqlite.execute!({ path: Path.utf8(path), query: "PRAGMA user_version = ${(schema_version).to_str()}", bindings: [] })
+    }
 }
 # db path + guaranteed-current schema. Every command opens through this.
 open_db! : {} => Try(Str, _)
