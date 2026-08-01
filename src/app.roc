@@ -1179,7 +1179,7 @@ rebuild_daily_load! = |path| {
     # malformed start_local defaulted to epoch-day 0 and walked from 1970.
     by_day = List.fold(
         day_rows,
-        Dict.empty({}),
+        Dict.empty(),
         |dict, r|
             match Metrics.date_str_to_days(r.day) {
                 Ok(d) => Dict.insert(dict, d, r.t)
@@ -1349,14 +1349,11 @@ out! = |payload, render|
 # payload. Errors go through emit_err! and are `{ schema_version, error }` instead —
 # a caller discriminates success from failure by which key is present.
 emit_ok! = |val|
-    print_json!({ schema_version: json_schema_version, data: val })
+    Stdout.line!(Json.to_str({ schema_version: json_schema_version, data: val }))
 
 emit_err! : Str, Str => Try({}, _)
 emit_err! = |code, msg|
-    print_json!({ schema_version: json_schema_version, error: { code, message: msg } })
-
-print_json! = |val|
-    Stdout.line!(Json.to_str(val))
+    Stdout.line!(Json.to_str({ schema_version: json_schema_version, error: { code, message: msg } }))
 # output mode: humans get tables by default; LLM callers set STRIDE_FORMAT=json
 # (CLAUDECODE env also flips to json for harnesses that set it)
 json_mode! : {} => Bool
