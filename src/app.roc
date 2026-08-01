@@ -936,6 +936,26 @@ zones_sig : Metrics.ZoneBounds -> Str
 zones_sig = |zb|
     "${Render.fmt0(zb.z1_max)},${Render.fmt0(zb.z2_max)},${Render.fmt0(zb.z3_max)},${Render.fmt0(zb.z4_max)}"
 
+# the power threshold (FTP) a sport's power is judged against, read from config key
+# `ftp_<sport>` (Metrics.power_ftp_key). 0 when unset or a no-power sport, in which
+# case intensity falls back to HR. Fully generic — a new sport needs no code, only its
+# `ftp_<sport>` config key. One back-compat tie: cycling's threshold is the entrenched
+# `ftp` key (also used for TSS), so `ftp_ride` falls back to it when not set explicitly.
+sport_ftp! : Str, Str => Result F64 _
+sport_ftp! = |path, sport|
+    key = Metrics.power_ftp_key(sport)
+    read! = |k|
+        when config_get!(path, k) is
+            Ok(s) -> Result.with_default(Str.to_f64(s), 0.0)
+            Err(_) -> 0.0
+    primary = read!(key)
+    if primary > 0.0 then
+        Ok(primary)
+    else if key == "ftp_ride" then
+        Ok(read!("ftp")) # cycling back-compat: the primary FTP everyone already sets
+    else
+        Ok(0.0)
+
 # returns Bool: did the stored stream JSON fail to decode? (surfaced by analyze)
 compute_one! : Str, F64, Metrics.ZoneBounds, ActivityRow => Result Bool _
 compute_one! = |path, ftp, zb, row|
@@ -960,6 +980,12 @@ compute_one! = |path, ftp, zb, row|
 
     np_stream = Metrics.normalized_power(watts_1s)
     best20 = Metrics.best_rolling_mean(watts_1s, 1200)
+
+    # intensity from power, judged against the sport's own FTP (0 for no-power sports
+    # → all-zero, and the display falls back to HR). Stored so the weekly polarization
+    # and the activities "hard" column read power where it exists, HR where it doesn't.
+    pi_ftp = sport_ftp!(path, row.sport)?
+    pintensity = Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
 
     # the fallback chain lives in Metrics.tss_ladder (pure, expect-tested)
     nn = |x|
@@ -1003,10 +1029,13 @@ compute_one! = |path, ftp, zb, row|
         query:
         """
         INSERT OR REPLACE INTO activity_metrics
-          (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model)
-        VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model)
+          (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s)
+        VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih)
         """,
         bindings: [
+            { name: ":pie", value: Integer(pintensity.easy_s) },
+            { name: ":pim", value: Integer(pintensity.moderate_s) },
+            { name: ":pih", value: Integer(pintensity.hard_s) },
             { name: ":ftpu", value: Real(ftp) },
             { name: ":zused", value: String(zones_sig(zb)) },
             { name: ":rev", value: Integer(metrics_rev) },
@@ -1091,7 +1120,7 @@ walk_days! = |path, by_day, day, last_day, ctl_prev, atl_prev|
 # ── shared queries ──────────────────────────────────────────────────
 
 # zone + TSS totals for activities on/after a cutoff date
-zone_sum! : Str, Str => Result { z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, measured : F64 } _
+zone_sum! : Str, Str => Result { z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, measured : F64, easy : I64, moderate : I64, hard : I64 } _
 zone_sum! = |path, cutoff|
     Sqlite.query!({
         path,
@@ -1101,7 +1130,13 @@ zone_sum! = |path, cutoff|
                COALESCE(SUM(m.z4_s),0) AS z4, COALESCE(SUM(m.z5_s),0) AS z5, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
                -- load that came from a measured power meter (high-confidence rungs),
                -- vs estimated from HR/RPE/relative-effort — see the doctor confidence tiers
-               CAST(COALESCE(SUM(CASE WHEN m.load_model IN ('power_stream','weighted_watts','avg_watts') THEN m.tss ELSE 0 END),0) AS REAL) AS measured
+               CAST(COALESCE(SUM(CASE WHEN m.load_model IN ('power_stream','weighted_watts','avg_watts') THEN m.tss ELSE 0 END),0) AS REAL) AS measured,
+               -- polarization intensity per activity: POWER split when the activity has
+               -- power-intensity time, else the HR zones. So a power ride's threshold
+               -- work counts as hard even when HR sat on a zone boundary.
+               COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_easy_s ELSE m.z1_s + m.z2_s END),0) AS easy,
+               COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_moderate_s ELSE m.z3_s END),0) AS moderate,
+               COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END),0) AS hard
         FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
         WHERE a.start_local >= :cutoff
         """,
@@ -1114,6 +1149,9 @@ zone_sum! = |path, cutoff|
             z5: Sqlite.i64("z5"),
             tss: Sqlite.f64("tss"),
             measured: Sqlite.f64("measured"),
+            easy: Sqlite.i64("easy"),
+            moderate: Sqlite.i64("moderate"),
+            hard: Sqlite.i64("hard"),
         },
     })
 
@@ -1339,7 +1377,7 @@ activity_body! = |path, id_str, aid|
             # sit on a zone boundary). Cycling uses the FTP the ride was scored with;
             # non-cycling power sports need their own threshold (not yet configured),
             # so they get 0 here and fall back to the HR "hard" signal.
-            pi_ftp = if List.contains(["Ride", "VirtualRide", "GravelRide", "EBikeRide"], a.sport) then a.ftp_used else 0.0
+            pi_ftp = sport_ftp!(path, a.sport)?
             pintensity = Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
             has_power_intensity = (pintensity.easy_s + pintensity.moderate_s + pintensity.hard_s) > 0
 
@@ -1476,7 +1514,8 @@ week! = |{}|
                        a.moving_time AS moving_time, CAST(COALESCE(m.tss,0) AS REAL) AS tss,
                        CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
                        COALESCE(m.z1_s,0) AS z1_s, COALESCE(m.z2_s,0) AS z2_s, COALESCE(m.z3_s,0) AS z3_s,
-                       COALESCE(m.z4_s,0) AS z4_s, COALESCE(m.z5_s,0) AS z5_s
+                       COALESCE(m.z4_s,0) AS z4_s, COALESCE(m.z5_s,0) AS z5_s,
+                       COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) AS hard_s
                 FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 WHERE a.start_local >= :cutoff
                 ORDER BY a.start_local DESC
@@ -1495,6 +1534,7 @@ week! = |{}|
                     z3_s: Sqlite.i64("z3_s"),
                     z4_s: Sqlite.i64("z4_s"),
                     z5_s: Sqlite.i64("z5_s"),
+                    hard_s: Sqlite.i64("hard_s"),
                 },
             })?
             open_p = Sqlite.query_many!({
@@ -1533,7 +1573,7 @@ week! = |{}|
                 Stdout.line!("RECENT 14 DAYS")?
                 Stdout.line!(Render.render_table(
                     ["date", "sport", "name", "time", "load", "hard"],
-                    List.map(recent, |a| [a.date, a.sport, a.name, Render.mins(a.moving_time), Render.fmt0(a.tss), Render.mins(a.z4_s + a.z5_s)]),
+                    List.map(recent, |a| [a.date, a.sport, a.name, Render.mins(a.moving_time), Render.fmt0(a.tss), Render.mins(a.hard_s)]),
                 ))
 
 summary_payload! = |path, ftp, zb|
@@ -1606,15 +1646,17 @@ summary_payload! = |path, ftp, zb|
         row: Sqlite.str("d"),
     })?
 
-    total = zsum.z1 + zsum.z2 + zsum.z3 + zsum.z4 + zsum.z5
-    easy = zsum.z1 + zsum.z2
-    hard = zsum.z4 + zsum.z5
+    # polarization is power-aware: easy/moderate/hard come from POWER zones for
+    # activities that have power-intensity, HR zones otherwise (zone_sum! per-activity)
+    total = zsum.easy + zsum.moderate + zsum.hard
+    easy = zsum.easy
+    hard = zsum.hard
     # what fraction of the 28d load is measured (power) vs estimated (HR/RPE/RE) —
     # so the fitness number carries its own confidence, not just doctor's
     measured_pct = if zsum.tss > 0.0 then Num.round((zsum.measured / zsum.tss) * 100.0) else 0
-    total7 = zsum7.z1 + zsum7.z2 + zsum7.z3 + zsum7.z4 + zsum7.z5
-    easy7 = zsum7.z1 + zsum7.z2
-    hard7 = zsum7.z4 + zsum7.z5
+    total7 = zsum7.easy + zsum7.moderate + zsum7.hard
+    easy7 = zsum7.easy
+    hard7 = zsum7.hard
     cal = Metrics.ftp_calibration({ best_20min: best20_row, ftp })
 
     Ok({
@@ -1632,7 +1674,7 @@ summary_payload! = |path, ftp, zb|
             z4_s: zsum7.z4,
             z5_s: zsum7.z5,
             easy_pct: pct_num(easy7, total7),
-            moderate_pct: pct_num(zsum7.z3, total7),
+            moderate_pct: pct_num(zsum7.moderate, total7),
             hard_pct: pct_num(hard7, total7),
         },
         last_28d: {
@@ -1643,7 +1685,7 @@ summary_payload! = |path, ftp, zb|
             z4_s: zsum.z4,
             z5_s: zsum.z5,
             easy_pct: pct_num(easy, total),
-            moderate_pct: pct_num(zsum.z3, total),
+            moderate_pct: pct_num(zsum.moderate, total),
             hard_pct: pct_num(hard, total),
             measured_pct: measured_pct,
         },
@@ -1681,6 +1723,9 @@ activities! = |limit, sport_filter|
                CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
                COALESCE(m.z1_s,0) AS z1_s, COALESCE(m.z2_s,0) AS z2_s, COALESCE(m.z3_s,0) AS z3_s,
                COALESCE(m.z4_s,0) AS z4_s, COALESCE(m.z5_s,0) AS z5_s,
+               -- hard time: power (at/above threshold) when the activity has power-
+               -- intensity, else HR Z4+Z5. So a power ride's threshold work counts.
+               COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) AS hard_s,
                CAST(COALESCE(a.relative_effort,0) AS REAL) AS relative_effort,
                CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr
         FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
@@ -1703,6 +1748,7 @@ activities! = |limit, sport_filter|
             z3_s: Sqlite.i64("z3_s"),
             z4_s: Sqlite.i64("z4_s"),
             z5_s: Sqlite.i64("z5_s"),
+            hard_s: Sqlite.i64("hard_s"),
             relative_effort: Sqlite.f64("relative_effort"),
             avg_hr: Sqlite.f64("avg_hr"),
         },
@@ -1719,13 +1765,13 @@ activities! = |limit, sport_filter|
                 Render.mins(a.moving_time),
                 (if a.tss >= 1.0 then Render.fmt0(a.tss) else "-"),
                 (if a.intensity > 0 then Render.fmt2(a.intensity) else "-"),
-                Render.mins(a.z4_s + a.z5_s),
+                Render.mins(a.hard_s),
             ]),
         ))?
         Stdout.line!("")?
         Stdout.line!("load:           session stress — TSS for power/HR, session-RPE for rated sessions; '-' = no usable data (e.g. dead HR strap)")?
         Stdout.line!("intensity (if): vs your FTP — ~0.7 easy · 0.85-0.95 tempo · ~1.0 threshold · 1.05+ vo2max")?
-        Stdout.line!("hard:           minutes in HR Z4+Z5 — the column that shows if hard days were actually hard")
+        Stdout.line!("hard:           minutes at/above threshold — by power (vs the sport's FTP) where there's power, else HR Z4+Z5")
 
 # metric keyword -> its ORDER BY column + human table header. The column is HARDCODED
 # per keyword, so no user input ever reaches the SQL; an unknown metric errors before
@@ -2421,12 +2467,12 @@ skip! = |session_id_str, reason|
 # bump when the schema changes; ensure_schema! re-runs migrations when the db's
 # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 # that post-date the original CREATE statements in Schema.roc.)
-schema_version = 8
+schema_version = 9
 
 # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
 # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
 # zones_used) can't catch algorithm changes
-metrics_rev = 4
+metrics_rev = 5
 
 run_migrations! : Str => Result {} _
 run_migrations! = |path|
@@ -2458,6 +2504,11 @@ run_migrations! = |path|
     # it was redundant denormalization. Confidence is now derived from load_model at
     # read time (doctor). The drop cleans up dbs that got the v7 column.
     drop_column_if_exists!(path, "ALTER TABLE activity_metrics DROP COLUMN load_confidence")?
+    # v9: time-in-intensity from POWER (easy/moderate/hard seconds), judged against the
+    # sport's own FTP — the truer "how hard" for power sports than HR zones
+    alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN pi_easy_s INTEGER")?
+    alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN pi_moderate_s INTEGER")?
+    alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN pi_hard_s INTEGER")?
     # v2: index the column every date-range filter and the activities sort use
     # (queries now compare a.start_local directly — sargable — instead of substr)
     Sqlite.execute!({ path, query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })

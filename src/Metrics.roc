@@ -5,6 +5,7 @@ module [
     normalized_power,
     time_in_zones,
     time_in_power_intensity,
+    power_ftp_key,
     best_rolling_mean,
     tss_ladder,
     sport_class,
@@ -196,6 +197,17 @@ time_in_power_intensity = |samples, ftp|
                         { acc & i: updated, prev_t: s.t },
         )
         state.i
+
+# The config key holding a sport's power threshold. Fully generic and data-driven:
+# `ftp_<sport>` for EVERY sport (ftp_ride, ftp_rowing, ftp_swim, ftp_soccer, …), so a
+# sport gets power-based intensity the instant its key is set and falls back to HR
+# otherwise. No hardcoded list of sports to fall out of date — power lives on a
+# different scale per sport (a 150 W row ≠ a 150 W ride), and WHICH sports the athlete
+# has a threshold for is their config, not our code. Cycling's primary key is the
+# entrenched `ftp` (see sport_ftp! for that one back-compat tie).
+power_ftp_key : Str -> Str
+power_ftp_key = |sport|
+    "ftp_${Str.with_ascii_lowercased(sport)}"
 
 # ── training stress ─────────────────────────────────────────────────
 
@@ -897,6 +909,15 @@ expect
     r = time_in_power_intensity([{ t: 0, v: 243.0 }, { t: 1, v: 243.0 }, { t: 2, v: 243.0 }], 243.0)
     r.hard_s == 2 and r.easy_s == 0 and r.moderate_s == 0
 expect time_in_power_intensity([{ t: 0, v: 243.0 }], 0.0) == { easy_s: 0, moderate_s: 0, hard_s: 0 }
+
+# generic: every sport maps to its own config key, no hardcoded allowlist. A sport
+# without that key set (or with no power meter) resolves to 0 in sport_ftp! and falls
+# back to HR — so swimming, soccer, paddleboard all "just work" once configured.
+expect power_ftp_key("Ride") == "ftp_ride"
+expect power_ftp_key("Rowing") == "ftp_rowing"
+expect power_ftp_key("Swim") == "ftp_swim"
+expect power_ftp_key("Soccer") == "ftp_soccer"
+expect power_ftp_key("StandUpPaddling") == "ftp_standuppaddling"
 
 expect export_date_to_iso("Feb 17, 2022, 12:18:26 PM") == Ok("2022-02-17T12:18:26Z")
 expect export_date_to_iso("Jul 4, 2026, 6:05:09 AM") == Ok("2026-07-04T06:05:09Z")
