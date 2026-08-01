@@ -20,8 +20,10 @@ Db :: [].{
     # just doesn't get hardened, and we don't claim it did). Sidecars may not exist.
     secure_perms! : Str => Try({}, _)
     secure_perms! = |dir| {
-        cmd = "chmod 700 '${dir}' 2>/dev/null; chmod 600 '${dir}/db.sqlite' '${dir}/db.sqlite-wal' '${dir}/db.sqlite-shm' '${dir}/db.sqlite-journal' 2>/dev/null; true"
-        _ = Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", cmd], OsStr.from_str)).exec_output!()
+        # dir is the sh -c positional $1 (double-quoted), never interpolated, so a path
+        # with a quote or shell metachar can't break out — same pattern as zone_offset_now!.
+        cmd = "chmod 700 \"$1\" 2>/dev/null; chmod 600 \"$1/db.sqlite\" \"$1/db.sqlite-wal\" \"$1/db.sqlite-shm\" \"$1/db.sqlite-journal\" 2>/dev/null; true"
+        _ = Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", cmd, "sh", dir], OsStr.from_str)).exec_output!()
         Ok({})
     }
     # ── config key-value helpers ─────────────────────────────────────────
