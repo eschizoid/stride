@@ -1,12 +1,17 @@
 # ADR 0003 — Multi-sport by design: score the full Strava sport space
 
-Status: proposed (grilled 2026-08-02)
+Status: accepted (grilled + fleet-reviewed 2026-08-02)
 
 Generalizes [ADR 0002](0002-power-based-intensity.md) (power-based, per-sport intensity)
 and the mixed load model of [ADR 0000 §4](0000-architecture.md). 0002 made *intensity*
 per-sport for **power** sports; this ADR extends the same "per-sport, best-available
 model, no sport rejected" principle to the **whole** sport space — including the
 pace-native and HR-native sports 0002's power lens does not serve.
+
+**Reverses ADR 0000 §10**, which listed "a generic every-sport model" as *deliberately
+out of scope, revisited only when dogfooding demands*. Dogfooding demands it (friends run
+and swim), so §10 is updated in the same commit. The single-user/local-first boundary of
+§1 is untouched (see Scope boundary).
 
 ## Context — the mission vs. the reality
 
@@ -41,9 +46,14 @@ models** — and three of the four already exist:
 | **HR-zone** (hrTSS from time-in-zone) | **soccer, basketball, tennis**, hike, and the long tail | ✅ works — needs per-sport zones |
 | **RPE / relative-effort** | strength, yoga, skill; final fallback | ✅ have it |
 
-The team/racket/misc sports that dominate the tail are **HR-intensity sports** — hrTSS is
-the *correct* model for them, not a fallback. So the whole space reduces to: **add one
-pace rung, make HR zones per-sport, and route every sport to the right rung without ever
+The team/racket/misc sports that dominate the tail are **HR-driven sports** — hrTSS is the
+**best-available** model given HR-only consumer data (not a mere fallback), with known
+biases we must not oversell: HR lag smears burst/rest intervals into the mid-zones, it
+misses mechanical/neuromuscular load (accels, jumps, cuts — the real cost of team sports),
+and the roughly-linear per-zone coefficients under-weight the Z4/Z5 spikes those sports
+live in. Session-RPE is arguably a **peer**, not a lower fallback, for team/racket sports —
+worth ranking RPE alongside HR there specifically. Still, the space reduces to: **add one
+pace rung, make HR zones per-sport, and route every sport to a sensible rung without ever
 rejecting an unknown one.**
 
 ## Decision
@@ -53,14 +63,32 @@ rejecting an unknown one.**
    default** (HR-first, then RPE/relative-effort) and is labeled honestly — never silently
    misrouted into a cycling frame.
 
-2. **Add the pace rung.** The ladder becomes `power → pace → HR-zone → session-RPE →
-   relative-effort`. Pace load is **rTSS/sTSS built by reusing the existing power
-   machinery** — same `IF²·hours·100` shape, pace swapped for watts:
-   - **NGP** (normalized graded pace) ↔ NP. This is what **wires the dead GAP code**:
-     `grade_adjusted_distance` → normalize → NGP (run).
-   - **threshold pace** ↔ FTP, stored per sport as `threshold_pace_<sport>` (mirrors
-     `ftp_<sport>`), zero-config-derived from that sport's own best sustained effort.
+2. **Add the pace rung.** A pace rung joins the ladder for pace-native endurance sports:
+   `power → pace → HR-zone → session-RPE → relative-effort`. **Ordering stays
+   sport-class-conditional** — power still wins whenever a power stream is present, and
+   StrengthLike still ranks session-RPE above HR (ADR 0000 §4, `Metrics.tss_ladder`); the
+   pace rung slots in for endurance sports without a power stream. Pace load is
+   **rTSS/sTSS** (the TrainingPeaks model), built by reusing the `IF²·hours·100` machinery —
+   but the naïve "swap watts for pace" hides two corrections that would otherwise produce a
+   *wrong* number:
+   - **NGP is a normalized speed *stream*, not a scalar.** Normalized Graded Pace applies
+     NP's own 30 s-rolling + 4th-power weighting (`normalized_power`, already generic over
+     `List(F64)`) to a **grade-adjusted instantaneous speed stream** (grade factor per
+     sample × per-sample speed). The existing `grade_adjusted_distance` collapses the whole
+     activity to one flat-equivalent **scalar** — the *wrong shape* for NGP; dividing it by
+     time yields *average* graded pace and discards exactly the surge/hill variability
+     normalization exists to capture. So the real work is **add a grade-adjusted-speed-
+     stream producer** (reuse `minetti_ratio` per sample) and feed it through
+     `normalized_power` — not "call the dead scalar GAP function."
+   - **IF must not invert.** stride carries pace as **seconds/km** (`Render.pace_per_km`),
+     where faster = *smaller*. So pace intensity is `IF = threshold_pace / NGP` (or convert
+     both to speed first) — **NOT** `NGP / threshold_pace`, which is the power form and would
+     score hard efforts *easy*. `threshold_pace_<sport>` mirrors `ftp_<sport>`, zero-config-
+     derived from a **stored best-sustained-pace column** (the pace analog of `best_20min_w`;
+     protocol is per-sport — run ≈ best ~30-60 min pace, swim CSS from a 400/200 pair).
    - Swim uses **NSS/CSS** (normalized swim speed vs critical swim speed); no grade term.
+     Caveat: 25 m / 50 m / open-water paces are **not comparable**, so a CSS derived from
+     mixed pool-contexts won't transfer — scope CSS per pool-context or flag the mix.
 
 3. **Route via config, not a hardcoded taxonomy.** A per-sport `intensity_model` key
    (`model_<sport>` ∈ {power, pace, css, hr, rpe}) selects the rung, shipped with a small
@@ -74,8 +102,13 @@ rejecting an unknown one.**
    carry their own LTHR for the HR fallback path.
 
 5. **Kill the cycling favoritism.** Remove the hardcoded `ftp_ride` special-cases
-   (`Analyze.load_zone_config!`, the Strava FTP sync, the `Report.roc` gate) so the
-   "generic" layer is actually generic.
+   (`Analyze.load_zone_config!`, the Strava FTP sync in `app.roc`, the `Report.roc` command
+   gate) so the "generic" layer is actually generic. Two things to handle, not just delete:
+   (a) `load_zone_config!` also returns `Err(MissingConfig)` when `ftp_ride` is unset — a
+   **behavior change**, not just code cleanup: a runner with no bike FTP must still be able
+   to `analyze`, so the gate becomes "has *any* usable threshold/zone for the sports
+   present," not "has `ftp_ride`"; (b) summary's FTP calibration is a 4th consumer of
+   `cfg.ftp` (`Report.roc` summary path) that must read the per-sport key.
 
 ## Scope boundary (load-bearing — do not drift)
 
@@ -88,11 +121,20 @@ product (per-athlete isolation, config namespacing, per-athlete tokens) and woul
 
 ## Consequences
 
-- **Gives the dead GAP code a job** (NGP), and removes it as a maintained liability.
+- **Gives the GAP theory a job** — `minetti_ratio` becomes the per-sample grade factor
+  feeding the new NGP speed stream (the scalar `grade_adjusted_distance` is *not* the NGP
+  input; see Decision 2), retiring the dead code as a real dependency.
 - New config keys and new `activity_metrics` inputs need a schema change + a recompute —
   see **Migration story** below. It is deliberately **not** a data backfill.
-- `Metrics.sport_class`'s boolean widens (or is subsumed) by the `intensity_model` routing;
-  `sport_class`-dependent reporting (strength-unrated nudges) migrates onto it.
+- **`intensity_model` and `sport_class` are orthogonal — do NOT fold them.** `intensity_model`
+  picks the *rung*; `sport_class` sets *fallback priority* (StrengthLike ranks RPE above HR,
+  but power still wins if present). Collapsing sport_class into `model_<sport>` would regress
+  "a rated strength session with real watts is still measured." Both stay.
+- **Intensity, not just load, must go per-pace** — or ADR 0002 regresses. The easy/moderate/
+  hard split + polarization read power-intensity and fall back to **HR zones** when power is
+  absent, so a pace-scored run/swim would fall to HR and re-introduce the exact threshold-
+  mislabeling 0002 killed. A pace-intensity (`pi_*` analog, from pace zones vs threshold
+  pace) is required — not just the pace *load* columns; per-sport HR zones do not fix it.
 - The honesty caveat from ADR 0002 carries over intact: pace/HR/CSS numbers are only as
   good as the thresholds feeding them — **trust the direction, not the decimals**, and
   caveat estimated thresholds.
@@ -102,11 +144,23 @@ product (per-athlete isolation, config namespacing, per-athlete tokens) and woul
 The three-data-tiers design means this large capability change touches disk in a
 deliberately small way. Do **not** write a data-transform migration for the metrics.
 
-1. **Schema migration — YES (the only hand-written one).** New `activity_metrics` inputs —
-   `ngp` / `threshold_pace_used` (pace analog of `ftp_used`) and the pace/zone entries in
-   the `zones_used` / model signature — are new columns. Add them, bump `schema_version`,
-   append the `ALTER`/rebuild to `run_migrations!` (ADR 0000 §schema). Pre-1.0 the schema
-   is not a stable contract, so DROP+recreate the computed tables is fair game if simpler.
+1. **Schema migration — YES, and it's more than columns.** New `activity_metrics` columns:
+   `ngp` + `threshold_pace_used` (pace analogs of NP + `ftp_used`), a **pace-intensity**
+   `pi_*` set (analog of the power-intensity split — see Consequences), and a **best-
+   sustained-pace** column (analog of `best_20min_w`, so `threshold_pace_<sport>` can
+   zero-config-derive). Bump `schema_version`, append to `run_migrations!`. But two
+   "additive" decisions are really the **same scalar→per-sport-CASE plumbing FTP already
+   needed**, not just columns:
+   - *Per-sport HR zones* (Decision 4): `compute_missing_metrics!` threads one global
+     `ZoneBounds` and compares a scalar `zones_sig(zb)` in its invalidation WHERE — making
+     zones per-sport needs a `zones_sig_case!` SQL CASE (like `sport_ftp_case!`) + per-row
+     `zb` resolution, else rows never invalidate or recompute every run.
+   - *Pace provenance* (Decision 2): new `load_model` strings (`ngp`/`rtss`/`css`) must join
+     **every** `load_model IN(...)` list in `Report.roc` — the *measured* set, the `doctor`
+     confidence tiers, and the catch-all → `non` bucket — declared **high (measured)** like
+     power; miss it and GPS-measured pace silently reports as *unmeasured*. `doctor`'s
+     config-completeness (exact `hr_z*_max` list + `ftp_` prefix) must also learn the new
+     `hr_z*_max_<sport>` / `model_<sport>` keys.
 
 2. **Computed data — RECOMPUTE, do not transform.** `activity_metrics` and `daily_load` are
    the disposable computed tier: **bump the `metrics_rev` constant** and the next `analyze`

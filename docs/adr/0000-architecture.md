@@ -185,9 +185,15 @@ keeping: "blocked" was an untested assumption stated as fact — verify with the
 
 ## 10. Deliberately out of scope
 
-TUI, MCP server, cloud/web sync, a generic every-sport model, injury/medical
-claims, replacing SQLite, and moving any math into the LLM. The query-repository
-split is blocked (§2). These are revisited only when dogfooding demands them.
+TUI, MCP server, cloud/web sync, injury/medical claims, replacing SQLite, and moving
+any math into the LLM. The query-repository split is blocked (§2). These are revisited
+only when dogfooding demands them.
+
+**Promoted into scope:** a generic every-sport model. This list previously called it out
+of scope; dogfooding demanded it (friends who run and swim can't be scored honestly by
+the power+HR ladder), which is exactly the "revisited when dogfooding demands" trigger.
+It is now [ADR 0003](0003-multi-sport-scoring.md). Single-user local-first (§1) is
+unchanged — sport-completeness is not multi-tenancy.
 
 ---
 
