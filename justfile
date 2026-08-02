@@ -3,6 +3,8 @@
 # overridable for CI: ROC=roc STRIDE_LINKER="--linker=legacy" just test
 roc := env("ROC", env("HOME") / ".local/bin/roc")
 linker := env("STRIDE_LINKER", "")
+# new (Zig) compiler — builds the native-Roc test programs (tests/*.roc) and the mock
+roc_new := env("ROC_NEW", env("HOME") / ".local/roc-new/roc")
 
 default: test
 
@@ -26,11 +28,12 @@ test:
     just build
     just e2e
 
-# sync integration against the mock Strava server (token refresh + activity/stream
-# pull, network-free). Separate from `just test` because it binds a port.
-e2e-sync: build
-    {{roc}} build tests/mock_strava.roc --output mock_strava {{linker}}
-    tests/e2e_sync.sh
+# sync integration: ONE binary in two roles — a mock Strava server (E2E_MODE=mock)
+# and a sync driver (E2E_MODE=sync) that runs real sync + token-refresh against it.
+# Binds a port, so it's separate from `just test`. Runs against the ./stride binary.
+e2e-sync:
+    {{roc_new}} build tests/e2e.roc --output=e2e
+    E2E_MODE=mock MOCK_PORT=8799 ./e2e & MOCK=$!; E2E_MODE=sync STRIDE_API_BASE=http://127.0.0.1:8799 ./e2e; R=$?; kill $MOCK 2>/dev/null; exit $R
 
 # build + refresh the ~/.local/bin symlink
 install: build
@@ -59,6 +62,7 @@ summary: build
 # sync + analyze + summary in one go
 up: sync analyze summary
 
-# ── e2e test suite (implementation: tests/e2e.sh — sandboxed HOME, no network) ──
+# ── e2e test suite (native Roc: tests/e2e.roc — sandboxed HOME, no network) ──
 e2e:
-    tests/e2e.sh
+    {{roc_new}} build tests/e2e.roc --output=e2e
+    ./e2e
