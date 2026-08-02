@@ -315,8 +315,9 @@ just install   # build + symlink into ~/.local/bin
   exactly 100, hrTSS exactly 55, FTP rescale 100→400, full plan lifecycle, the
   versioned JSON envelope, timezone precedence, power-spike filtering, migration
   from a legacy db, error contracts, corrupt-data resilience). A separate
-  `just e2e-sync` boots a mock Strava server (`tests/mock_strava.roc`) and drives
-  the real sync + token-refresh path network-free.
+  `just e2e-sync` runs that same `tests/e2e.roc` in two roles — a mock Strava server
+  (`E2E_MODE=mock`) and a sync driver — to exercise the real sync + token-refresh
+  path network-free.
 - **CI:** GitHub Actions on every push runs the same `just test` (Linux needs
   `--linker=legacy`, roc issue #3609; the toolchain tarball is checksum-pinned).
 

@@ -1,8 +1,16 @@
-app [main!] {
-    pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.21.0/4rAQg8kUYZ3Vksr4qMQHpaFYNiHSn9GgS7gVxghd1XYV.tar.zst",
+app [Context, program] {
+    pf: platform "https://github.com/roc-lang/basic-webserver/releases/download/0.15.0/HcMFsVT26qeMvqWtG5rfNhVMWjceYbKh1An4uYpheBVW.tar.zst",
+    http: "https://github.com/roc-lang/http/releases/download/1.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 }
 
-# End-to-end suite as a native Roc program (replaces the bash+python e2e).
+# The whole native-Roc test harness in ONE basic-webserver app. `E2E_MODE` picks a role:
+#   • (default / "e2e") run the ~140-check offline suite in init!, then exit
+#   • "sync"            drive the real sync path (token refresh + activity/stream pull)
+#                       against a running mock, then exit
+#   • "mock"            serve the four Strava endpoints the sync test hits, and listen
+# One binary, three roles — `just e2e` runs the offline suite; `just e2e-sync` starts a
+# mock instance and points a sync-driver instance at it.
+#
 # It shells out to the built `stride` binary plus `sqlite3`/`jq`/`mktemp`/`date`/`awk`
 # via Cmd. It deliberately does NO Roc-side JSON DECODING: every value assertion
 # extracts its field with `jq` in the same shell pipeline (`stride … | jq -r …`),
@@ -12,19 +20,122 @@ app [main!] {
 # building in seconds while staying a native Roc program. (Same reason there's no
 # `import pf.Sqlite`: its closure-in-record decoders trip the same bug.)
 #
-# Binary under test: $STRIDE_BIN (default ./stride). Mirrors tests/e2e.sh
-# assertion-for-assertion: grep-style checks -> Str.contains on raw output;
-# python numeric/structural asserts -> jq field extraction + Roc comparison.
+# WHY basic-webserver (not basic-cli): the offline suite fires ~350 subprocess spawns.
+# basic-cli's host loses a child's exit code intermittently under that volume
+# (FailedToGetExitCode), which the harness reads as an empty result and a spurious
+# failure (~2/3 of runs). basic-webserver's exec host reaps children cleanly (proven
+# 300/300). So the suite runs every check in init! and exits WITHOUT ever listening;
+# only "mock" mode actually serves (via respond!).
+#
+# Binary under test: $STRIDE_BIN (default ./stride). Mirrors the old tests/e2e.sh +
+# tests/e2e_sync.sh assertion-for-assertion: grep-style checks -> Str.contains on raw
+# output; python numeric/structural asserts -> jq field extraction + Roc comparison.
 
 import pf.Stdout
 import pf.Cmd
 import pf.OsStr
 import pf.Env
+import pf.Server
+import pf.Sleep
+import http.Response
 
 Ctx : { bin : Str, home : Str, db : Str, today : Str, d1 : Str, d2 : Str }
 
-main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
-main! = |_args| {
+Context : {}
+program = { init!, respond!, shutdown! }
+
+# Run the entire suite in init!, then exit — the server never listens. Exit 0 on
+# all-pass, 1 on the first failed check (which run_all! surfaces as an Err).
+init! : () => Try({ config : Server.Config, context : Context }, [Exit(I64), ..])
+init! = ||
+    match env_or!("E2E_MODE", "e2e") {
+        # serve the mock Strava API (the sync test's counterpart); listen + serve
+        "mock" => {
+            port = match U16.from_str(env_or!("MOCK_PORT", "8799")) {
+                Ok(p) => p
+                Err(_) => 8799
+            }
+            Ok({ config: Server.default_config.with_listen({ host: "127.0.0.1", port }), context: {} })
+        }
+        # drive the sync integration test against a running mock, then exit
+        "sync" =>
+            match run_sync!() {
+                Ok(_) => Err(Exit(0))
+                Err(_) => Err(Exit(1))
+            }
+        # default: run the offline suite, then exit (never listens)
+        _ =>
+            match run_all!() {
+                Ok(_) => Err(Exit(0))
+                Err(_) => Err(Exit(1))
+            }
+    }
+
+# ── mock mode: serve the four Strava endpoints sync/auth/ftp use ─────────────
+# Deterministic fixtures; page 2+ is empty so fetch_pages! terminates. Routing
+# matches the reconstructed path?query, as the old bw-0.13.1 mock matched req.uri.
+respond! : Server.Request, Context => Try(Server.Outcome, [ServerErr(Str), ..])
+respond! = |req, _ctx| {
+    uri =
+        match req.target() {
+            Resource({ raw_path, raw_query }) =>
+                match raw_query {
+                    Present(q) => "${raw_path}?${q}"
+                    Absent => raw_path
+                }
+            _ => ""
+        }
+
+    if Str.contains(uri, "/oauth/token") {
+        body =
+            \\{"access_token":"mock-access","refresh_token":"mock-refresh","expires_at":9999999999}
+        Ok(mock_json(body))
+    } else if Str.contains(uri, "/api/v3/athlete/activities") {
+        if Str.contains(uri, "page=1") {
+            body =
+                \\[{"id":501,"name":"Mock Power Ride","sport_type":"Ride","start_date_local":"2026-07-28T10:00:00Z","moving_time":3600,"distance":30000.0,"total_elevation_gain":100.0,"average_watts":200.0,"weighted_average_watts":205.0},
+                \\ {"id":502,"name":"Mock HR Row","sport_type":"Rowing","start_date_local":"2026-07-29T10:00:00Z","moving_time":1800,"distance":5000.0,"total_elevation_gain":0.0,"average_heartrate":150.0}]
+            Ok(mock_json(body))
+        } else {
+            Ok(mock_json("[]"))
+        }
+    } else if Str.contains(uri, "/streams") {
+        if Str.contains(uri, "/activities/501/") {
+            # 60 samples, 30s apart: constant 200W, HR ramp — enough for NP + zones
+            body =
+                \\{"time":{"data":[0,30,60,90,120,150,180,210,240,270,300,330,360,390,420,450,480,510,540,570,600,630,660,690,720,750,780,810,840,870,900,930,960,990,1020,1050,1080,1110,1140,1170,1200,1230,1260,1290,1320,1350,1380,1410,1440,1470,1500,1530,1560,1590,1620,1650,1680,1710,1740,1770]},"watts":{"data":[200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200]},"heartrate":{"data":[120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179]}}
+            Ok(mock_json(body))
+        } else {
+            # 404 = "no streams recorded" — exercises the {} marker path
+            Ok(mock_not_found("{}"))
+        }
+    } else if Str.contains(uri, "/api/v3/athlete") {
+        # PUT ftp update (and GET athlete) — echo success
+        body =
+            \\{"id":1,"ftp":243}
+        Ok(mock_json(body))
+    } else {
+        Ok(mock_not_found("not found"))
+    }
+}
+
+mock_json : Str -> Server.Outcome
+mock_json = |body|
+    Server.respond(
+        Response.from_status(200)
+        .add_header("Content-Type", "application/json")
+        .with_body(Str.to_utf8(body)),
+    )
+
+mock_not_found : Str -> Server.Outcome
+mock_not_found = |body|
+    Server.respond(Response.from_status(404).with_body(Str.to_utf8(body)))
+
+shutdown! : Server.ShutdownReason, Context => Try({}, [Exit(I64), ..])
+shutdown! = |_reason, _ctx| Ok({})
+
+run_all! : () => Try({}, _)
+run_all! = || {
     bin = env_or!("STRIDE_BIN", "./stride")
     home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
     today = need("date +%F", Str.trim(sh!("date -u +%F")))?
@@ -55,6 +166,76 @@ main! = |_args| {
     _ = sh!("rm -rf '${home}'")
     Stdout.line!("ALL E2E CHECKS PASS")
 }
+
+# ── sync mode: drive the real sync path against a running mock (a sibling instance
+# started with E2E_MODE=mock). Seeds an EXPIRED token so sync must refresh first,
+# then asserts token refresh + activity/stream pull. Mirrors old tests/e2e_sync.sh.
+# TSS reads the per-sport ftp_<sport> key, not the legacy bare `ftp` — the power Ride
+# (501) scores via ftp_ride. ftp_rowing is seeded too for completeness; the HR-only
+# Rowing row (502) scores from HR, not power. ────────────────────────────────────────
+run_sync! : () => Try({}, _)
+run_sync! = || {
+    bin = env_or!("STRIDE_BIN", "./stride")
+    base = env_or!("STRIDE_API_BASE", "http://127.0.0.1:8799")
+    home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+    db = "${home}/.stride/db.sqlite"
+
+    _ = wait_ready!(base, 50)
+    check!("mock strava came up on ${base}", mock_up!(base))?
+
+    _ = sync_stride!(bin, home, base, ["init"])
+    _ = sync_stride!(bin, home, base, ["config", "set", "ftp_ride", "200"])
+    _ = sync_stride!(bin, home, base, ["config", "set", "ftp_rowing", "200"])
+    _ = sync_stride!(bin, home, base, ["config", "set", "hr_z1_max", "123"])
+    _ = sync_stride!(bin, home, base, ["config", "set", "hr_z2_max", "153"])
+    _ = sync_stride!(bin, home, base, ["config", "set", "hr_z3_max", "168"])
+    _ = sync_stride!(bin, home, base, ["config", "set", "hr_z4_max", "183"])
+
+    _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','stale-access'),('strava_refresh_token','stale-refresh'),('strava_expires_at','1');")
+
+    _ = sync_stride!(bin, home, base, ["sync"])
+    tok = Str.trim(sql!(db, "SELECT value FROM config WHERE key='strava_access_token';"))
+    check!("expired token refreshed via /oauth/token (stale-access -> mock-access)", tok == "mock-access")?
+
+    _ = sync_stride!(bin, home, base, ["analyze"])
+    check!("2 mock activities synced", sync_strjq!(bin, home, base, ["activities"], ".data | length") == "2")?
+    # 501's mock streams are a constant 200W; NP 200 @ ftp_ride 200 => TSS ~100 for the
+    # hour. Pin the exact value (not just >0) so the whole stream->NP->TSS path is checked.
+    check_near!("501 power streams score ~100 TSS (NP200 @ FTP200)", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 100.0, 1.0)?
+
+    _ = sh!("rm -rf '${home}'")
+    Stdout.line!("SYNC E2E CHECKS PASS")
+}
+
+# stride against the sandbox HOME + mock API base; local commands ignore the base
+sync_stride! : Str, Str, Str, List(Str) => Str
+sync_stride! = |bin, home, base, args|
+    stride_env!(bin, home, args, [("STRIDE_FORMAT", "json"), ("STRIDE_API_BASE", base)])
+
+sync_strjq! : Str, Str, Str, List(Str), Str => Str
+sync_strjq! = |bin, home, base, args, filter| {
+    argstr = List.fold(args, "", |acc, a| "${acc} '${a}'")
+    Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' ${argstr} | jq -r '${filter}' 2>/dev/null"))
+}
+
+# poll the mock until it answers (pure Roc: curl via Cmd + Sleep, no shell loop)
+wait_ready! : Str, U64 => {}
+wait_ready! = |base, tries|
+    if tries == 0 {
+        {}
+    } else if mock_up!(base) {
+        {}
+    } else {
+        Sleep.millis!(200)
+        wait_ready!(base, tries - 1)
+    }
+
+mock_up! : Str => Bool
+mock_up! = |base|
+    match Cmd.new(OsStr.from_str("curl")).args(List.map(["-sf", "-m", "1", "-X", "POST", "${base}/oauth/token"], OsStr.from_str)).exec_output!() {
+        Ok(_) => True
+        Err(_) => False
+    }
 
 # ── init + config ────────────────────────────────────────────────────
 b_init_config! : Ctx => Try({}, _)
@@ -173,6 +354,7 @@ b_plan! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["skip", "4", "cleanup"])
     check!("pending_sessions 0", strjq!(ctx, ["summary"], ".data.pending_sessions") == "0")?
     check!("week open_sessions empty", strjq!(ctx, ["week"], ".data.open_sessions | length") == "0")?
+    check!("bare plan is week-scoped (no far-future 2099 sessions)", strjq!(ctx, ["plan"], "[.data[].target_date] | map(select(. >= \"2099\")) | length") == "0")?
     Ok({})
 }
 
@@ -343,6 +525,9 @@ b_compare! = |ctx| {
     check!("compare period week", Str.contains(cmp_raw, "\"period\":\"week\""))?
     check!("compare window 7d", Str.contains(cmp_raw, "\"window_label\":\"7d\""))?
     check!("compare current has >=1 session", sfloat(strjq!(ctx, ["compare", "week"], ".data.current.sessions")) >= 1.0)?
+    check!("compare exposes a prior window", is_nonempty(strjq!(ctx, ["compare", "week"], ".data.prior.sessions")))?
+    check!("compare current carries all metric fields", strjq!(ctx, ["compare", "week"], ".data.current | [has(\"tss\"),has(\"sessions\"),has(\"hard_min\"),has(\"easy_pct\"),has(\"ctl\")] | all") == "true")?
+    check!("compare prior carries all metric fields", strjq!(ctx, ["compare", "week"], ".data.prior | [has(\"tss\"),has(\"sessions\"),has(\"hard_min\"),has(\"easy_pct\"),has(\"ctl\")] | all") == "true")?
     check!("compare rejects unknown period", Str.contains(stride!(ctx.bin, ctx.home, ["compare", "year"]), "bad_period"))?
     Ok({})
 }

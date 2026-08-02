@@ -63,13 +63,15 @@ decoder they feed. Only decoder-free DDL lives in `Schema.roc`.
 
 Effectful `expect`s segfault `roc test` on alpha4 (verified: `Cmd.exec_output!`
 inside an `expect` exits 139 before running anything). So Roc keeps the pure
-`expect`s (~220 of them), and end-to-end coverage is a bash+python suite
-(`tests/e2e.sh`) that drives the real binary against a sandboxed `HOME` with seeded
-activities of known math. Bash orchestrates; python asserts on JSON only. The
-network path (sync + token refresh) has its own step, `just e2e-sync`, which boots
-`tests/mock_strava.roc` (a basic-webserver app) on a local port and points stride at
-it via `STRIDE_API_BASE` — kept out of `just test` because it binds a port, but run
-in CI. (Still a gap: 429 rate-limit backoff, which needs a stateful mock.)
+`expect`s (~220 of them), and end-to-end coverage is a native-Roc suite
+(`tests/e2e.roc`) that drives the real binary against a sandboxed `HOME` with seeded
+activities of known math. It's a basic-webserver app that runs every check in `init!`
+then exits (basic-cli's exec host drops child exit codes under the suite's ~350
+subprocess spawns; basic-webserver's reaps them cleanly). The network path (sync +
+token refresh) is the same file's `E2E_MODE=sync` role driven against its
+`E2E_MODE=mock` role (a mock Strava on a local port), pointed at via `STRIDE_API_BASE`
+and run by `just e2e-sync` — kept out of `just test` because it binds a port. (Still a
+gap: 429 rate-limit backoff, which needs a stateful mock.)
 
 ## 3. Three data tiers, three recovery stories
 

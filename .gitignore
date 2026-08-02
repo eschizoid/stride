@@ -4,5 +4,5 @@
 .claude/PLAN.md
 .claude/CLAUDE.md
 
-# mock server binary (built on demand for e2e-sync)
-/mock_strava
+# test binary (built on demand from tests/e2e.roc)
+/e2e
