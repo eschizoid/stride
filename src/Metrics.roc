@@ -789,6 +789,53 @@ Metrics :: [].{
             })
         res.gad
     }
+
+    # ── pace-based load: rTSS/sTSS reuse the power machinery, in SPEED units ─────
+    # Working in m/s (not s/km) keeps IF = ngp_speed / threshold_speed the RIGHT way
+    # round (faster = harder), and NGP is normalized_power over a grade-adjusted SPEED
+    # stream — not a scalar. rTSS/sTSS are then tss_from_power with speed for watts.
+
+    # s/km -> m/s (0 for a non-positive pace)
+    pace_to_speed : F64 -> F64
+    pace_to_speed = |pace_s_per_km|
+        if pace_s_per_km > 0.0 { 1000.0 / pace_s_per_km } else { 0.0 }
+
+    # per-sample flat-equivalent (grade-adjusted) speed, from aligned 1 Hz time/dist/alt
+    # streams: speed = Δd/Δt, grade = Δalt/Δd, ga_speed = speed × minetti_ratio(grade).
+    # Skips stopped/jitter samples (Δt<=0 or Δd<=0), mirroring grade_adjusted_distance.
+    # Swim: pass flat altitude and it degrades to raw speed (minetti(0)=1).
+    grade_adjusted_speeds : List(F64), List(F64), List(F64) -> List(F64)
+    grade_adjusted_speeds = |time, dist, alt| {
+        td = List.map2(time, dist, |t, d| { t, d })
+        samples = List.map2(td, alt, |x, a| { t: x.t, d: x.d, a })
+        res = List.fold(samples, { prev: Err(NoPrev), out: [] }, |acc, s|
+            match acc.prev {
+                Err(_) => { prev: Ok(s), out: acc.out }
+                Ok(p) => {
+                    dt = s.t - p.t
+                    dd = s.d - p.d
+                    if dt > 0.0 and dd > 0.0 {
+                        grade = (s.a - p.a) / dd
+                        { prev: Ok(s), out: List.append(acc.out, (dd / dt) * minetti_ratio(grade)) }
+                    } else {
+                        acc
+                    }
+                }
+            })
+        res.out
+    }
+
+    # Normalized Graded Pace as a SPEED (m/s): the grade-adjusted speed stream through
+    # the same 30 s-rolling / 4th-power machinery as NP. (Swim NSS: flat altitude.)
+    normalized_graded_pace : List(F64), List(F64), List(F64) -> Try(F64, [TooShort])
+    normalized_graded_pace = |time, dist, alt|
+        normalized_power(grade_adjusted_speeds(time, dist, alt))
+
+    # rTSS / sTSS: tss_from_power with speed swapped for watts — IF = ngp_speed /
+    # threshold_speed (faster = harder), IF² × hours × 100. 1 h at threshold = 100.
+    pace_tss : { ngp_speed : F64, threshold_speed : F64, dur_s : F64 } -> F64
+    pace_tss = |{ ngp_speed, threshold_speed, dur_s }|
+        tss_from_power({ np: ngp_speed, ftp: threshold_speed, dur_s })
 }
 
 # ── tests ───────────────────────────────────────────────────────────
@@ -1167,3 +1214,41 @@ expect (Metrics.grade_adjusted_distance([0.0, 100.0, 100.0, 200.0], [0.0, 0.0, 0
 expect (Metrics.grade_adjusted_distance([42.0], [1.0]) - 0.0).abs() < 0.001
 # a backwards GPS blip in cumulative distance doesn't inflate the total (jitter ignored)
 expect (Metrics.grade_adjusted_distance([0.0, 100.0, 50.0, 200.0], [0.0, 0.0, 0.0, 0.0]) - 200.0).abs() < 0.01
+
+# ── pace engine: rTSS/sTSS in speed units (reuses NP + tss_from_power) ──
+# 5:00/km -> 3.333 m/s; non-positive pace -> 0
+expect (Metrics.pace_to_speed(300.0) - 3.3333).abs() < 0.001
+expect Metrics.pace_to_speed(0.0) == 0.0
+
+# flat run at 3 m/s (1 Hz): grade-adjusted speed == raw speed (minetti(0)=1)
+expect {
+    s = Metrics.grade_adjusted_speeds([0.0, 1.0, 2.0], [0.0, 3.0, 6.0], [10.0, 10.0, 10.0])
+    List.len(s) == 2 and (List.first(s).ok_or(0.0) - 3.0).abs() < 0.001
+}
+
+# +10% grade inflates the equivalent speed by minetti(0.1) ~= 1.658
+expect {
+    s = Metrics.grade_adjusted_speeds([0.0, 1.0], [0.0, 10.0], [0.0, 1.0])
+    (List.first(s).ok_or(0.0) - (10.0 * 1.658)).abs() < 0.05
+}
+
+# stopped/jitter samples (no time or distance advance) are skipped
+expect List.len(Metrics.grade_adjusted_speeds([0.0, 1.0, 1.0, 2.0], [0.0, 3.0, 3.0, 6.0], [0.0, 0.0, 0.0, 0.0])) == 2
+
+# NGP of a constant-speed flat run equals that speed (>=30 steps fills the NP window)
+expect
+    match Metrics.normalized_graded_pace(
+        List.fold(List.repeat(1.0, 40), [0.0], |acc, v| List.append(acc, List.last(acc).ok_or(0.0) + v)),
+        List.fold(List.repeat(4.0, 40), [0.0], |acc, v| List.append(acc, List.last(acc).ok_or(0.0) + v)),
+        List.repeat(0.0, 41),
+    ) {
+        Ok(ngp) => (ngp - 4.0).abs() < 0.001
+        Err(_) => False
+    }
+
+# rTSS commensurability: NGP == threshold => IF 1 => 1 h => 100 TSS
+expect (Metrics.pace_tss({ ngp_speed: 3.5, threshold_speed: 3.5, dur_s: 3600.0 }) - 100.0).abs() < 0.001
+# faster than threshold scores MORE, not less (the IF-direction bug the fleet caught)
+expect Metrics.pace_tss({ ngp_speed: 4.0, threshold_speed: 3.5, dur_s: 3600.0 }) > 100.0
+# swim sTSS uses the same function (normalized swim speed vs CSS, no grade term)
+expect Metrics.pace_tss({ ngp_speed: 1.4, threshold_speed: 1.25, dur_s: 3600.0 }) > 100.0
