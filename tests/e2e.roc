@@ -169,8 +169,9 @@ run_all! = || {
 
 # ── sync mode: drive the real sync path against a running mock (a sibling instance
 # started with E2E_MODE=mock). Seeds an EXPIRED token so sync must refresh first,
-# then asserts token refresh + activity/stream pull. Mirrors old tests/e2e_sync.sh;
-# ftp_ride/ftp_rowing (not a generic ftp) is what a Ride's TSS actually reads. ──────
+# then asserts token refresh + activity/stream pull. Mirrors old tests/e2e_sync.sh.
+# FTP is per-sport: a Ride reads ftp_ride, the mock's Rowing activity reads ftp_rowing
+# (there is no generic ftp), so seed both. ──────────────────────────────────────────
 run_sync! : () => Try({}, _)
 run_sync! = || {
     bin = env_or!("STRIDE_BIN", "./stride")

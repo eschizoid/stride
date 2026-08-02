@@ -3,8 +3,10 @@
 # overridable for CI: ROC=roc STRIDE_LINKER="--linker=legacy" just test
 roc := env("ROC", env("HOME") / ".local/bin/roc")
 linker := env("STRIDE_LINKER", "")
-# new (Zig) compiler — builds the native-Roc test programs (tests/*.roc) and the mock
+# new (Zig) compiler — builds the native-Roc test harness (tests/e2e.roc)
 roc_new := env("ROC_NEW", env("HOME") / ".local/roc-new/roc")
+# port the e2e-sync mock/driver bind to; overridable when 8799 is occupied
+mock_port := env("MOCK_PORT", "8799")
 
 default: test
 
@@ -33,7 +35,7 @@ test:
 # Binds a port, so it's separate from `just test`. Runs against the ./stride binary.
 e2e-sync:
     {{roc_new}} build tests/e2e.roc --output=e2e
-    E2E_MODE=mock MOCK_PORT=8799 ./e2e & MOCK=$!; E2E_MODE=sync STRIDE_API_BASE=http://127.0.0.1:8799 ./e2e; R=$?; kill $MOCK 2>/dev/null; exit $R
+    E2E_MODE=mock MOCK_PORT={{mock_port}} ./e2e & MOCK=$!; E2E_MODE=sync STRIDE_API_BASE=http://127.0.0.1:{{mock_port}} ./e2e; R=$?; kill $MOCK 2>/dev/null; exit $R
 
 # build + refresh the ~/.local/bin symlink
 install: build
