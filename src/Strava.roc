@@ -261,11 +261,12 @@ Strava :: [].{
             }
         }
     }
-    # fetch time/HR/watts/altitude streams for activities that don't have them yet,
-    # newest first, capped per run to respect Strava's rate limits (~100 reads/15min).
-    # altitude (+ distance, which Strava returns as a base stream) feeds grade-adjusted
-    # pace / NGP (ADR 0003). To re-pull altitude for pre-existing streams, DELETE FROM
-    # streams (mirror tier — re-pullable) and let this backfill refetch them.
+    # fetch time/HR/watts/altitude/distance streams for activities that don't have them
+    # yet, newest first, capped per run to respect Strava's rate limits (~100 reads/15min).
+    # altitude + distance are requested EXPLICITLY (not relying on Strava's implicit base
+    # streams) — together they feed grade-adjusted pace / NGP (ADR 0003). To re-pull for
+    # pre-existing streams, DELETE FROM streams (mirror tier — re-pullable) and let this
+    # backfill refetch them.
     streams_per_run = 60
 
     backfill_streams! : Str, Str => Try(U64, _)
@@ -305,7 +306,7 @@ Strava :: [].{
             [] => Ok(acc)
             [id, .. as rest] => {
                 id_str = (id).to_str()
-                uri = "${api_base!({})}/api/v3/activities/${id_str}/streams?keys=time,heartrate,watts,altitude&key_by_type=true"
+                uri = "${api_base!({})}/api/v3/activities/${id_str}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
                 resp = send_bearer!(uri, token)?
                 if Response.status(resp) == 429 {
                     # rate limited — stop gracefully, next sync continues the backfill
@@ -445,7 +446,7 @@ Strava :: [].{
         match ids {
             [] => Stdout.line!("backfill complete — ${I64.to_str(st.done)} streams fetched this run; ${I64.to_str(pending_streams!(path)?)} still missing")
             [id, .. as rest] => {
-                uri = "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=time,heartrate,watts,altitude&key_by_type=true"
+                uri = "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
                 resp = send_bearer!(uri, token)?
                 match Backfill.decide({ status: Response.status(resp), done: st.done, window: st.window, retries: st.retries }, read_limits) {
                     Refresh => {
