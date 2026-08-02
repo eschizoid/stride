@@ -182,6 +182,11 @@ deliberately small way. Do **not** write a data-transform migration for the metr
 
 ## Sequencing (tracer bullets — ship in this order)
 
+> Everything below is gated on the build unblocking (roc#10469). The concrete, ordered
+> checklist — including restoring CI/releases and merging the parked PRs — lives in
+> [docs/post-10469-runbook.md](../post-10469-runbook.md).
+
+
 1. **Per-sport HR zones + remove `ftp_ride` hardcoding.** Highest leverage: it makes the
    whole HR-native majority (the long tail of Strava sports) score correctly *immediately*,
    and is smaller than the pace rung.
