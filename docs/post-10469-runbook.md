@@ -12,7 +12,7 @@ this in order. Boxes are the checklist.
   - If it STILL stalls, the upstream fix didn't hit our case. Try the lead: rewrite the
     recursive `fetch_pages!` / `upsert_all!` in `src/Strava.roc` as `List.walk` / `for_each`
     loops and re-measure — recursion-wrapping-generics was the worst specializer amplifier.
-    Full characterization is in memory `stride-new-compiler-migration`.
+    Full characterization: the upstream issue `roc-lang/roc#10469` and `MIGRATION.md`.
 
 ## 1. Restore the pipeline
 - [ ] `just build` + `just test` green locally (the e2e suite now runs against a fresh build,
@@ -74,8 +74,7 @@ Highest leverage: makes the HR-native tail (soccer / basketball / tennis) score 
 
 ## 6. Ship
 - [ ] `just test` (full) + the schema-migration test + a real altitude backfill against Strava.
-- [ ] Cut a release (binaries + Windows). Update memory `stride-new-compiler-migration` to
-      "build DONE".
+- [ ] Cut a release (binaries + Windows). Record the unblock in `MIGRATION.md`.
 
 ---
 Each slice (3, 4, 5) is independently shippable, so friends get value incrementally:
