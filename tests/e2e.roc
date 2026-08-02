@@ -4,7 +4,7 @@ app [Context, program] {
 }
 
 # The whole native-Roc test harness in ONE basic-webserver app. `E2E_MODE` picks a role:
-#   • (default / "e2e") run the 155-check offline suite in init!, then exit
+#   • (default / "e2e") run the ~140-check offline suite in init!, then exit
 #   • "sync"            drive the real sync path (token refresh + activity/stream pull)
 #                       against a running mock, then exit
 #   • "mock"            serve the four Strava endpoints the sync test hits, and listen
@@ -170,8 +170,9 @@ run_all! = || {
 # ── sync mode: drive the real sync path against a running mock (a sibling instance
 # started with E2E_MODE=mock). Seeds an EXPIRED token so sync must refresh first,
 # then asserts token refresh + activity/stream pull. Mirrors old tests/e2e_sync.sh.
-# FTP is per-sport: a Ride reads ftp_ride, the mock's Rowing activity reads ftp_rowing
-# (there is no generic ftp), so seed both. ──────────────────────────────────────────
+# TSS reads the per-sport ftp_<sport> key, not the legacy bare `ftp` — the power Ride
+# (501) scores via ftp_ride. ftp_rowing is seeded too for completeness; the HR-only
+# Rowing row (502) scores from HR, not power. ────────────────────────────────────────
 run_sync! : () => Try({}, _)
 run_sync! = || {
     bin = env_or!("STRIDE_BIN", "./stride")
@@ -198,7 +199,9 @@ run_sync! = || {
 
     _ = sync_stride!(bin, home, base, ["analyze"])
     check!("2 mock activities synced", sync_strjq!(bin, home, base, ["activities"], ".data | length") == "2")?
-    check!("501 scores a positive load from its power streams (tss > 0)", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")) > 0.0)?
+    # 501's mock streams are a constant 200W; NP 200 @ ftp_ride 200 => TSS ~100 for the
+    # hour. Pin the exact value (not just >0) so the whole stream->NP->TSS path is checked.
+    check_near!("501 power streams score ~100 TSS (NP200 @ FTP200)", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 100.0, 1.0)?
 
     _ = sh!("rm -rf '${home}'")
     Stdout.line!("SYNC E2E CHECKS PASS")
@@ -351,6 +354,7 @@ b_plan! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["skip", "4", "cleanup"])
     check!("pending_sessions 0", strjq!(ctx, ["summary"], ".data.pending_sessions") == "0")?
     check!("week open_sessions empty", strjq!(ctx, ["week"], ".data.open_sessions | length") == "0")?
+    check!("bare plan is week-scoped (no far-future 2099 sessions)", strjq!(ctx, ["plan"], "[.data[].target_date] | map(select(. >= \"2099\")) | length") == "0")?
     Ok({})
 }
 
@@ -521,6 +525,9 @@ b_compare! = |ctx| {
     check!("compare period week", Str.contains(cmp_raw, "\"period\":\"week\""))?
     check!("compare window 7d", Str.contains(cmp_raw, "\"window_label\":\"7d\""))?
     check!("compare current has >=1 session", sfloat(strjq!(ctx, ["compare", "week"], ".data.current.sessions")) >= 1.0)?
+    check!("compare exposes a prior window", is_nonempty(strjq!(ctx, ["compare", "week"], ".data.prior.sessions")))?
+    check!("compare current carries all metric fields", strjq!(ctx, ["compare", "week"], ".data.current | [has(\"tss\"),has(\"sessions\"),has(\"hard_min\"),has(\"easy_pct\"),has(\"ctl\")] | all") == "true")?
+    check!("compare prior carries all metric fields", strjq!(ctx, ["compare", "week"], ".data.prior | [has(\"tss\"),has(\"sessions\"),has(\"hard_min\"),has(\"easy_pct\"),has(\"ctl\")] | all") == "true")?
     check!("compare rejects unknown period", Str.contains(stride!(ctx.bin, ctx.home, ["compare", "year"]), "bad_period"))?
     Ok({})
 }
