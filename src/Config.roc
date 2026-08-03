@@ -29,13 +29,57 @@ Config :: [].{
 		or host_ok(b, "http://localhost")
 		or host_ok(b, "http://127.0.0.1")
 
-	# b is exactly `hp` (scheme+host), or `hp` followed by a ':' port or '/' path —
-	# never `hp` as a prefix of a longer hostname, so localhost.evil.tld is rejected.
+	# b is exactly `hp` (scheme+host), or `hp` + a '/path', or `hp:` + a strictly numeric
+	# port (then optional '/path'). The numeric-port rule blocks the userinfo bypass
+	# `http://localhost:8799@attacker.tld` — it starts with `http://localhost:`, but a URL
+	# parser reads `localhost:8799` as credentials and `attacker.tld` as the real host.
 	host_ok : Str, Str -> Bool
 	host_ok = |b, hp|
-		b == hp
-		or Str.starts_with(b, "${hp}:")
-		or Str.starts_with(b, "${hp}/")
+		if b == hp
+			True
+		else if Str.starts_with(b, "${hp}/")
+			True
+		else if Str.starts_with(b, "${hp}:")
+			numeric_port(drop_n(Str.to_utf8(b), List.len(Str.to_utf8(hp)) + 1))
+		else
+			False
+
+	# drop the first n bytes (recursive — no List.drop_first dependency)
+	drop_n : List(U8), U64 -> List(U8)
+	drop_n = |xs, n|
+		if n == 0
+			xs
+		else
+			match xs {
+				[] => []
+				[_, .. as rest] => drop_n(rest, n - 1)
+			}
+
+	# the bytes after `host:` must be a non-empty run of ASCII digits (48-57) ending at
+	# end-of-string or a '/' path. Anything else — '@', a letter, '\' — is rejected, so an
+	# authority a URL parser would resolve to a different host can't slip through.
+	numeric_port : List(U8) -> Bool
+	numeric_port = |bytes|
+		match bytes {
+			[] => False
+			[c, .. as rest] =>
+				if c >= 48 and c <= 57
+					port_tail(rest)
+				else
+					False
+		}
+	port_tail : List(U8) -> Bool
+	port_tail = |bytes|
+		match bytes {
+			[] => True
+			[c, .. as rest] =>
+				if c == 47
+					True
+				else if c >= 48 and c <= 57
+					port_tail(rest)
+				else
+					False
+		}
 
 }
 
@@ -69,3 +113,12 @@ expect Config.api_base_allowed("http://127.0.0.1.attacker.tld") == False
 expect Config.api_base_allowed("https://www.strava.com.attacker.tld") == False
 # TLS to an arbitrary host no longer passes — secrets would still reach the endpoint
 expect Config.api_base_allowed("https://evil.example") == False
+# the userinfo bypass: `host:port@realhost` — a URL parser resolves the host to realhost
+expect Config.api_base_allowed("http://localhost:8799@attacker.tld") == False
+expect Config.api_base_allowed("http://127.0.0.1:8799@attacker.tld") == False
+# a non-numeric or empty "port" is rejected (only a real numeric port is a port)
+expect Config.api_base_allowed("http://localhost:@attacker.tld") == False
+expect Config.api_base_allowed("http://localhost:8x") == False
+# a numeric port, optionally with a path, is still allowed
+expect Config.api_base_allowed("http://localhost:8799/mock/v3") == True
+expect Config.api_base_allowed("https://www.strava.com:443") == True
