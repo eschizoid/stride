@@ -4,12 +4,11 @@
 
 # stride
 
-A local-first, deterministic training analytics engine, written in [Roc](https://www.roc-lang.org).
+A local-first training analytics engine, written in [Roc](https://www.roc-lang.org).
 Strava is one ingestion layer; the analysis is yours.
 
-stride syncs your Strava history into a SQLite file you own, computes training
-metrics deterministically, and provides an optional LLM coaching layer built on
-structured evidence.
+stride syncs your Strava history into a SQLite file you own and computes training
+metrics deterministically, with an optional LLM coaching layer on top.
 
 > **The engine does the math. The LLM does the judgment.**
 
@@ -35,11 +34,10 @@ $ stride summary
   open planned sessions: 3
 ```
 
-Every number above was computed locally, from raw activity streams, by pure
-functions with unit tests. No number came from a model. "Training load" is a
-*mixed model* — power/HR sessions score in TSS, rated strength/HIIT sessions in
-session-RPE — so stride stops calling the blended total "TSS" and points you to
-`doctor` for the per-session confidence breakdown.
+Every number above was computed locally from your raw activity streams — none came
+from a model. "Training load" is a *mixed model*: power/HR sessions score in TSS,
+rated strength/HIIT sessions in session-RPE, so stride stops calling the blended
+total "TSS" and `doctor` breaks it down by per-session confidence.
 
 ## Why stride, if I already have Strava?
 
@@ -52,9 +50,10 @@ was my last *real* hard session? Is my FTP stale? It solves different problems:
 - **Deterministic metrics** — TSS, normalized power, intensity factor, CTL/ATL/TSB,
   time-in-zone, FTP calibration. Same inputs, same numbers, every time.
 - **A database you own** — everything lives in `~/.stride/db.sqlite`. Query it with
-  `sqlite3`, back it up with `cp`, inspect any computed value's inputs. It also holds
-  your Strava tokens and client secret, so stride locks `~/.stride` to `0700` and the
-  db to `0600` (owner-only) on every run, and `config get` never prints secret keys.
+  `sqlite3`, back it up with `cp`, inspect any computed value's inputs, and read it
+  offline after a sync. It also holds your Strava tokens and client secret, so stride
+  locks `~/.stride` to `0700` and the db to `0600` (owner-only) on every run, and
+  `config get` never prints secret keys.
 - **Reproducible recomputation** — change your FTP and the engine recomputes exactly
   the affected history. Edit a ride on Strava and the metrics self-heal.
 - **Scriptable** — every command emits JSON for tools and agents, tables for humans.
@@ -74,7 +73,7 @@ was my last *real* hard session? Is my FTP stale? It solves different problems:
 
 Everyone needs `sqlite3`. Then pick a data path:
 
-- **API sync (best experience — live daily sync + full streams):** a
+- **API sync (fullest data — live daily sync + full streams):** a
   [Strava API application](https://www.strava.com/settings/api) (client id +
   secret — takes two minutes to create). Note: since June 2026, Strava requires
   an active Strava subscription to hold API credentials
@@ -204,8 +203,8 @@ error is `{"schema_version":1,"error":{"code":"…","message":"…"}}` (exit sta
 read the JSON, not `$?`). Malformed invocations print a targeted `usage:` line;
 `stride --help` is the full one-screen manual.
 
-An example of the honesty the tables are built for — `intensity 0.98` rides with
-`0m` hard time is the all-moderate trap this tool exists to make undeniable:
+The tables are built to surface the all-moderate trap — a `0.98`-intensity ride with
+`0m` of actual hard time:
 
 ```
 $ stride activities 4
@@ -257,7 +256,7 @@ Strava REST v3 ──▶ auth/sync ──▶ SQLite (~/.stride/db.sqlite) ──
                                               marks sessions done/skipped
 ```
 
-**What the engine computes** (all deterministic, all unit-tested):
+**What the engine computes** (all deterministic):
 
 - **TSS ladder** — best available data wins: stream normalized power → Strava weighted
   watts → average watts → zone-weighted hrTSS → `relative_effort` → honest zero.
@@ -279,19 +278,6 @@ The decisions behind all of this — why Roc and why pinned, the effects-only mo
 layout, the three data tiers, the mixed-model load, the versioned JSON envelope, and
 the Windows/compiler-migration situation — are recorded in
 [`docs/adr/0000-architecture.md`](docs/adr/0000-architecture.md).
-
-## Local-first, by design
-
-The database is the product. Everything stride knows lives in one SQLite file on
-your machine:
-
-- **Ownership** — your training history doesn't live in someone else's cloud state.
-- **Inspectability** — `sqlite3 ~/.stride/db.sqlite` and look at any number's inputs.
-- **Reproducibility** — delete `activity_metrics`, run `analyze`, get identical
-  numbers back. The raw streams are stored, so recomputation is always possible.
-- **Offline analysis** — after a sync, every query works with no network.
-- **No hidden state** — the only remote calls are Strava's public API, and the
-  rate-limit budget is reported, not hidden.
 
 ## Development
 
