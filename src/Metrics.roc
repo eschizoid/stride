@@ -375,6 +375,24 @@ Metrics :: [].{
     ftp_from_best_20min : F64 -> F64
     ftp_from_best_20min = |best_20min| best_20min * 0.95
 
+    # the standard power-duration ladder (seconds): 5s sprint .. 60min endurance
+    power_curve_durations : List(U64)
+    power_curve_durations = [5, 15, 30, 60, 300, 600, 1200, 3600]
+
+    # best rolling-mean power at each ladder duration, from a 1 Hz watts stream. A duration
+    # longer than the ride yields 0 (best_rolling_mean -> TooShort). Feeds the stored
+    # best_<dur>_w columns and, aggregated across activities, the power-duration curve.
+    mean_max_curve : List(F64), List(U64) -> List({ dur_s : U64, watts : F64 })
+    mean_max_curve = |watts_1s, durations|
+        List.map(durations, |d| {
+            w =
+                match best_rolling_mean(watts_1s, d) {
+                    Ok(v) => v
+                    Err(_) => 0.0
+                }
+            { dur_s: d, watts: w }
+        })
+
     # Critical Power model: P(t) = W'/t + CP. Fit by least-squares regression of power (y)
     # against 1/duration (x) — slope = W' (the finite anaerobic work capacity, joules),
     # intercept = CP (the sustainable aerobic ceiling, watts). Pass the mid-range bests
@@ -1192,6 +1210,14 @@ expect {
     match Metrics.critical_power([{ dur_s: 300.0, watts: 300.0 }]) {
         Err(TooFew) => 1 == 1
         Ok(_) => 1 == 0
+    }
+}
+
+# mean-max curve: best 1s = 300; best 3s window = (200+300+200)/3 = 233.3; 10s > 5 samples -> 0
+expect {
+    match Metrics.mean_max_curve([100.0, 200.0, 300.0, 200.0, 100.0], [1, 3, 10]) {
+        [a, b, c] => (a.watts - 300.0).abs() < 0.001 and (b.watts - 233.333).abs() < 0.01 and c.watts.abs() < 0.001
+        _ => 1 == 0
     }
 }
 expect Metrics.power_ftp_key("Ride") == "ftp_ride"
