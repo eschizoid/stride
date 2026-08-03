@@ -330,11 +330,12 @@ b_invalidation! = |ctx| {
     Ok({})
 }
 
-# ── plan lifecycle: dedup, skip, re-plan, done ───────────────────────
+# ── plan lifecycle: revise-in-place, skip, re-plan, done ─────────────
 b_plan! : Ctx => Try({}, _)
 b_plan! = |ctx| {
     check!("plan add id 1", strjq!(ctx, ["plan", "add", "2099-01-01", "vo2max", "d", "r"], ".data.id") == "1")?
-    check!("plan dedup guard", Str.contains(stride!(ctx.bin, ctx.home, ["plan", "add", "2099-01-01", "threshold", "d", "r"]), "date_already_planned"))?
+    # re-planning an open date REVISES it in place (same id 1), not a refuse + tombstone
+    check!("re-plan revises open in place", strjq!(ctx, ["plan", "add", "2099-01-01", "threshold", "d", "r"], ".data.id") == "1")?
     check!("skip session", Str.contains(stride!(ctx.bin, ctx.home, ["skip", "1", "sick"]), "\"skipped_session\""))?
     check!("re-plan after skip id 2", strjq!(ctx, ["plan", "add", "2099-01-01", "threshold", "d2", "r2"], ".data.id") == "2")?
     check!("complete session", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "2", "101"]), "\"completed_session\""))?

@@ -72,10 +72,15 @@ Plan :: [].{
         # Monday offset is rem(days+3,7) — the same convention as Metrics.day_of_week.
         today = Db.local_today_days!(path)
         mon = today - (today + 3) % (7)
+        # default `plan` is the LIVE current-week plan. Re-planning a date leaves skipped
+        # tombstones (skip-then-add), so hide a skipped row WHEN the same date still has a
+        # live open/done session — but KEEP it when the whole day was genuinely skipped (a
+        # real adherence miss you want to see). `plan all` shows the full log unfiltered.
         week_filter =
             match scope {
                 AllTime => ""
-                ThisWeek => "WHERE COALESCE(target_date,'') >= '${Metrics.days_to_date_str(mon)}' AND COALESCE(target_date,'') <= '${Metrics.days_to_date_str(mon + 6)}'"
+                ThisWeek =>
+                    "WHERE COALESCE(target_date,'') >= '${Metrics.days_to_date_str(mon)}' AND COALESCE(target_date,'') <= '${Metrics.days_to_date_str(mon + 6)}' AND (COALESCE(status,'open') <> 'skipped' OR NOT EXISTS (SELECT 1 FROM planned_sessions p2 WHERE p2.target_date = planned_sessions.target_date AND COALESCE(p2.status,'open') <> 'skipped'))"
             }
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
@@ -138,9 +143,28 @@ Plan :: [].{
             row: Sqlite.i64("id"),
         })?
         if existing > 0
-            Output.err_out!("date_already_planned", "${target_date} already has open planned session #${(existing).to_str()} — `stride skip ${(existing).to_str()} \"reason\"` first")
+            # re-planning a date REVISES its open session in place. Editing a future plan
+            # is not a "skip" (skip = a session that was going to happen and didn't), so
+            # revising keeps one row per date instead of stacking a skipped tombstone every
+            # time the week is re-planned — the root cause of the plan graveyard.
+            revise_planned_session!(path, existing, target_date, session_type, detail, rationale)
         else
             insert_planned_session!(path, target_date, session_type, detail, rationale)
+    }
+    revise_planned_session! : Str, I64, Str, Str, Str, Str => Try({}, _)
+    revise_planned_session! = |path, id, target_date, session_type, detail, rationale| {
+        Sqlite.execute!({
+            path: Path.utf8(path),
+            query: "UPDATE planned_sessions SET session_type = :type, detail = :detail, rationale = :rationale, created_at = :at WHERE id = :id",
+            bindings: [
+                { name: ":type", value: String(session_type) },
+                { name: ":detail", value: String(detail) },
+                { name: ":rationale", value: String(rationale) },
+                { name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
+                { name: ":id", value: Integer(id) },
+            ],
+        })?
+        Output.out!({ id, target_date, session_type }, |p| "revised #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}")
     }
     insert_planned_session! : Str, Str, Str, Str, Str => Try({}, _)
     insert_planned_session! = |path, target_date, session_type, detail, rationale| {

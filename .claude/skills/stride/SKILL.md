@@ -34,9 +34,10 @@ Never do training math yourself: read stride's numbers, add judgment.
      recovery | strength | rest (free-form ok). The sport/modality goes in `detail`
      ("easy row...", "outdoor ride..."): type answers *why/how hard*, detail answers
      *what exactly*.
-   - the binary REFUSES a date that already has an open planned session
-     (`{"error":"date_already_planned"}`) — `stride skip <id> "<reason>"` the old
-     one first if the plan changed, then re-plan.
+   - re-planning a date REVISES its open session in place (the response echoes the same
+     id) — a plan edit is not a skip, so you can just `plan add` again to change a day and
+     it never leaves skipped tombstones. Reserve `skip` for a session that was going to
+     happen and didn't (a real adherence miss).
    - `complete`/`skip` also REFUSE unknown ids (`{"error":"session_not_found"}`
      / `activity_not_found` / `bad_id`) — a typo can't silently desync the log, so
      check for an error field instead of assuming success.
