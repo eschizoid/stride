@@ -41,11 +41,12 @@ from a model. "Training load" is a *mixed model*: power/HR sessions score in TSS
 rated strength/HIIT sessions in session-RPE, so stride stops calling the blended
 total "TSS" and `doctor` breaks it down by per-session confidence.
 
-**What you'll need:** a terminal, `sqlite3`, and your own free [Strava API
-app](https://www.strava.com/settings/api) (client id + secret, ~2 minutes to create —
-note Strava now requires an active subscription to hold API credentials). stride is a
-command-line tool and a personal daily-driver — not a hosted service or a phone app.
-First-time setup is about ten minutes; after that the daily loop is one command.
+**What you'll need:** a terminal and `sqlite3`. For your data, two paths — the free
+**account export** (`stride import`, no API app and no Strava subscription) for
+summary-level history, or your own **Strava API app** for live daily sync and full
+stream history (that path needs an active Strava subscription to hold API
+credentials). Either way stride is a command-line tool and a personal daily-driver,
+not a hosted service or a phone app; first-time setup is about ten minutes.
 
 ## Why stride, if I already have Strava?
 
