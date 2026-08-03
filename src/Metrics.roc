@@ -375,6 +375,39 @@ Metrics :: [].{
     ftp_from_best_20min : F64 -> F64
     ftp_from_best_20min = |best_20min| best_20min * 0.95
 
+    # Critical Power model: P(t) = W'/t + CP. Fit by least-squares regression of power (y)
+    # against 1/duration (x) — slope = W' (the finite anaerobic work capacity, joules),
+    # intercept = CP (the sustainable aerobic ceiling, watts). Pass the mid-range bests
+    # (~2-20 min) where the 2-parameter model holds; needs >= 2 points at distinct durations.
+    critical_power : List({ dur_s : F64, watts : F64 }) -> Try({ cp : F64, w_prime : F64 }, [TooFew])
+    critical_power = |points| {
+        pts = List.keep_if(points, |p| p.dur_s > 0.0 and p.watts > 0.0)
+        n = List.len(pts)
+        if n < 2
+            Err(TooFew)
+        else {
+            nf = n.to_f64()
+            mx = List.fold(pts, 0.0, |a, p| a + 1.0 / p.dur_s) / nf
+            my = List.fold(pts, 0.0, |a, p| a + p.watts) / nf
+            sxx = List.fold(pts, 0.0, |a, p| {
+                dx = 1.0 / p.dur_s - mx
+                a + dx * dx
+            })
+            sxy = List.fold(pts, 0.0, |a, p| {
+                dx = 1.0 / p.dur_s - mx
+                dy = p.watts - my
+                a + dx * dy
+            })
+            # sxx == 0 means every point is at the same duration — can't fit a line
+            if sxx < 0.0000001
+                Err(TooFew)
+            else {
+                w_prime = sxy / sxx
+                Ok({ cp: my - w_prime * mx, w_prime })
+            }
+        }
+    }
+
     ftp_calibration : { best_20min : F64, ftp : F64 } -> { est : F64, stale : Bool, detraining : Bool }
     ftp_calibration = |{ best_20min, ftp }| {
         est = ftp_from_best_20min(best_20min)
@@ -1145,6 +1178,22 @@ expect Metrics.time_in_power_intensity([{ t: 0, v: 243.0 }], 0.0) == { easy_s: 0
 # back to HR — so swimming, soccer, paddleboard all "just work" once configured.
 expect (Metrics.ftp_from_best_20min(200.0) - 190.0).abs() < 0.001
 expect (Metrics.ftp_from_best_20min(256.0) - 243.2).abs() < 0.001
+
+# Critical Power: two points on P(t) = W'/t + CP (CP 250, W' 20000) recover CP and W'.
+# P(300) = 20000/300 + 250 = 316.667; P(1200) = 20000/1200 + 250 = 266.667
+expect {
+    match Metrics.critical_power([{ dur_s: 300.0, watts: 316.6667 }, { dur_s: 1200.0, watts: 266.6667 }]) {
+        Ok(r) => (r.cp - 250.0).abs() < 0.1 and (r.w_prime - 20000.0).abs() < 1.0
+        Err(_) => 1 == 0
+    }
+}
+# fewer than two usable points -> TooFew (can't fit a line)
+expect {
+    match Metrics.critical_power([{ dur_s: 300.0, watts: 300.0 }]) {
+        Err(TooFew) => 1 == 1
+        Ok(_) => 1 == 0
+    }
+}
 expect Metrics.power_ftp_key("Ride") == "ftp_ride"
 expect Metrics.power_ftp_key("Rowing") == "ftp_rowing"
 expect Metrics.power_ftp_key("Swim") == "ftp_swim"
