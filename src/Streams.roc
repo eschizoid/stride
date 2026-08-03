@@ -70,7 +70,9 @@ Streams :: [].{
 		match (time_opt, dist_opt, alt_opt) {
 			(Ok(ts), Ok(ds), Ok(al)) => {
 				triples = List.map2(ts.data, List.map2(ds.data, al.data, |d, a| { d, a }), |t, da| { t, d: da.d, a: da.a })
-				kept = List.keep_if(triples, |p| p.d > -99998.0 and p.a > -99998.0)
+				# drop any index whose time, dist, OR alt is the -99999 null sentinel — a null
+				# in ANY of the three streams makes that sample unusable for the aligned triple
+				kept = List.keep_if(triples, |p| p.t > -99998.0 and p.d > -99998.0 and p.a > -99998.0)
 				{ time: List.map(kept, |p| p.t), dist: List.map(kept, |p| p.d), alt: List.map(kept, |p| p.a) }
 			}
 			_ => { time: [], dist: [], alt: [] }
@@ -123,6 +125,15 @@ expect {
 # a null distance drops that index from ALL three lists — they stay aligned
 expect {
 	d = Streams.decode_streams(NotNull("{\"time\":{\"data\":[0,1,2]},\"distance\":{\"data\":[0,null,200]},\"altitude\":{\"data\":[0,10,20]}}"))
+	t = Streams.dist_alt_time(d.streams.time, d.streams.distance, d.streams.altitude)
+	near = |xs, ys| List.len(xs) == List.len(ys) and List.all(List.map2(xs, ys, |a, b| (a - b).abs() < 0.001), |ok| ok)
+	near(t.time, [0.0, 2.0]) and near(t.dist, [0.0, 200.0]) and near(t.alt, [0.0, 20.0])
+}
+
+# a null in the TIME stream drops that index too (it becomes the -99999 sentinel like
+# any other stream) — keeps the triple aligned instead of leaking a garbage timestamp
+expect {
+	d = Streams.decode_streams(NotNull("{\"time\":{\"data\":[0,null,2]},\"distance\":{\"data\":[0,100,200]},\"altitude\":{\"data\":[0,10,20]}}"))
 	t = Streams.dist_alt_time(d.streams.time, d.streams.distance, d.streams.altitude)
 	near = |xs, ys| List.len(xs) == List.len(ys) and List.all(List.map2(xs, ys, |a, b| (a - b).abs() < 0.001), |ok| ok)
 	near(t.time, [0.0, 2.0]) and near(t.dist, [0.0, 200.0]) and near(t.alt, [0.0, 20.0])
