@@ -64,10 +64,8 @@ differ:
   `config get` never prints secret keys.
 - **Reproducible recomputation** — change your FTP and the engine recomputes exactly
   the affected history. Edit a ride on Strava and the metrics self-heal.
-- **Scriptable** — every command emits JSON for tools and agents, tables for humans.
-  The JSON is a versioned envelope (`{"schema_version":1,"data":…}`, or
-  `{"schema_version":1,"error":{"code","message"}}`), so a caller can detect a
-  contract change and always discriminate success from failure.
+- **Scriptable** — every command emits JSON for tools and agents, tables for humans,
+  in a versioned envelope a caller can depend on (shape under [Commands](#commands)).
 - **An honest data model** — a session with no usable data shows `-`, not an
   invented number. Junk HR samples are filtered, and it says so. Strength, HIIT,
   and yoga score through your own effort rating (`stride rate`) instead of
@@ -186,9 +184,9 @@ stride week                                       # everything needed to plan a 
 | `summary` | *Where do I stand today?* Form (with verdict), 7-day and 28-day zone mix + polarization, FTP calibration (flags when your 20-min best says your FTP is stale), date of your last hard session, per-sport breakdown. |
 | `activities [n] [sport]` | *What did each session actually contain?* Last *n* sessions (default 30), optionally filtered by sport (`activities 10 rowing`). Per session: load, intensity vs FTP, and minutes actually spent hard (Z4+Z5). |
 | `top <metric> [n] [sport]` | *What were my best sessions?* Ranks activities (default top 10) by a metric — `hr`, `tss`, `power`, `intensity`, `distance`, `time`, or `output` (kJ) — optionally filtered by sport (`top tss 5 ride`). The leaderboard to `activities`' timeline. |
-| `doctor` | *Can I trust my data?* Coverage counts (HR/power/streams/ratings), which ladder rung scored every activity (load provenance), the **confidence distribution** (how much load is measured vs estimated), config completeness (FTP, HR zones), pending stream backfill, and which **time anchor** is active (IANA timezone / fixed offset / UTC). Every gap says what, why, and the fix. |
+| `doctor` | *Can I trust my data?* Coverage (HR/power/streams/ratings), how each activity was scored and the **measured-vs-estimated confidence split**, config gaps (FTP, HR zones), pending backfill, and the active time anchor. Every gap says what, why, and the fix. |
 | `zones` (alias `pz`) | *What watts is each power zone for me?* The 7 Coggan/Peloton power zones as watt ranges derived from your FTP (they shift when FTP changes). The targets you'd set on a Power Zone ride. |
-| `progress [date]` | *Am I improving on this workout?* Resolves that day's workout(s) — bare `progress` uses your latest — and shows every comparable instance chronologically with a **sport-aware lens**: power rides compare Efficiency Factor (NP ÷ HR), distance sports without power compare aerobic efficiency (speed ÷ HR), and rated strength/HIIT compare RPE (for a fixed workout, dropping = adapting). Trend verdict + last-vs-best. Named classes match exactly; auto-named rides compare only within ±10% of the anchor's distance. |
+| `progress [date]` | *Am I improving on this workout?* Every past instance of a workout, compared with a **sport-aware lens** — Efficiency Factor (NP ÷ HR) for power rides, speed ÷ HR for distance sports, RPE for rated strength/HIIT — with a trend verdict and last-vs-best. Bare `progress` uses your latest session; `stride --help` has the exact matching rules. |
 | `load [days]` | *Is my training working over time?* Daily fitness/fatigue/form rows for windows ≤14 days; Monday-aligned **weekly rollups** (sessions, load, fitness trend) for longer windows (default 90). Ends with today's form verdict. |
 | `compare [week\|month]` | *Is this period better than the last?* The last rolling window (7 or 28 days) beside the one before it — load, sessions, hard minutes, easy %, and end-of-window fitness — with signed deltas and a ramp/fitness verdict. |
 | `week` | *What should this week look like?* One call bundling `summary` + the open plan + the last 14 days of activities — the complete planning context. |
