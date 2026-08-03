@@ -135,11 +135,12 @@ expect {
 	List.len(t.time) == 2 and List.len(t.dist) == 2 and List.len(t.alt) == 2
 }
 
-# a missing stream -> three empty lists (no partial/desynced data)
+# a missing stream -> three empty lists, and it's genuine no-data (NOT a decode failure —
+# both would give empty lists, so assert !failed to catch a decode-semantics regression)
 expect {
 	d = Streams.decode_streams(NotNull("{\"time\":{\"data\":[0,1]},\"distance\":{\"data\":[0,100]}}"))
 	t = Streams.dist_alt_time(d.streams.time, d.streams.distance, d.streams.altitude)
-	List.is_empty(t.time) and List.is_empty(t.dist) and List.is_empty(t.alt)
+	!(d.failed) and List.is_empty(t.time) and List.is_empty(t.dist) and List.is_empty(t.alt)
 }
 
 # absent distance/altitude -> empty pairing, no failure
