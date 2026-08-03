@@ -835,7 +835,7 @@ Report :: [].{
             query:
                 \\SELECT COALESCE(SUM(CASE WHEN substr(key,1,4)='ftp_' THEN 1 ELSE 0 END),0) AS ftp_count,
                 \\       COALESCE(SUM(CASE WHEN key IN ('hr_z1_max','hr_z2_max','hr_z3_max','hr_z4_max') THEN 1 ELSE 0 END),0) AS zones_set,
-                \\       COALESCE(SUM(CASE WHEN substr(key,1,4)='hr_z' AND length(key) > 9 THEN 1 ELSE 0 END),0) AS sport_zone_overrides
+                \\       COALESCE(SUM(CASE WHEN key GLOB 'hr_z[1-4]_max_?*' THEN 1 ELSE 0 END),0) AS sport_zone_overrides
                 \\FROM config
             ,
             bindings: [],
