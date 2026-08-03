@@ -27,9 +27,9 @@ app [Context, program] {
 # 300/300). So the suite runs every check in init! and exits WITHOUT ever listening;
 # only "mock" mode actually serves (via respond!).
 #
-# Binary under test: $STRIDE_BIN (default ./stride). Mirrors the old tests/e2e.sh +
-# tests/e2e_sync.sh assertion-for-assertion: grep-style checks -> Str.contains on raw
-# output; python numeric/structural asserts -> jq field extraction + Roc comparison.
+# Binary under test: $STRIDE_BIN (default ./stride). grep-style checks -> Str.contains on
+# raw output; numeric/structural asserts -> jq field extraction + Roc comparison. Pure Roc
+# (plus sqlite3/jq/curl CLIs); no other runtime.
 
 import pf.Stdout
 import pf.Cmd
@@ -144,10 +144,10 @@ run_all! = || {
     ctx = { bin, home, db: "${home}/.stride/db.sqlite", today, d1, d2 }
     b_init_config!(ctx)?
     b_auth!(ctx)?
-    b_pz!(ctx)?
     b_config_ftp!(ctx)?
     b_cred_safety!(ctx)?
     b_seed_analyze!(ctx)?
+    b_pz!(ctx)?
     b_invalidation!(ctx)?
     b_plan!(ctx)?
     b_activities!(ctx)?
@@ -260,24 +260,25 @@ b_auth! = |ctx| {
     Ok({})
 }
 
-# ── power zones: watt ranges derived from FTP (200) ──────────────────
+# ── power zones: watt ranges from the DERIVED ride FTP (190, from b_seed_analyze!'s
+# 200W stream). Runs after seed+analyze so a derived FTP exists. ──────────────────────
 b_pz! : Ctx => Try({}, _)
 b_pz! = |ctx| {
     check!("pz has 7 power zones", strjq!(ctx, ["pz"], ".data.zones | length") == "7")?
-    check_near!("pz z4 lo ~182", sfloat(strjq!(ctx, ["pz"], ".data.zones[3].lo_w")), 182.0, 1.0)?
-    check_near!("pz z4 hi ~210", sfloat(strjq!(ctx, ["pz"], ".data.zones[3].hi_w")), 210.0, 1.0)?
+    check_near!("pz z4 lo ~173 (FTP 190)", sfloat(strjq!(ctx, ["pz"], ".data.zones[3].lo_w")), 172.9, 1.0)?
+    check_near!("pz z4 hi ~200 (FTP 190)", sfloat(strjq!(ctx, ["pz"], ".data.zones[3].hi_w")), 199.5, 1.0)?
     check!("pz z1 opens at 0", strjq!(ctx, ["pz"], ".data.zones[0].lo_w") == "0")?
     check!("pz z7 open above (hi 0)", strjq!(ctx, ["pz"], ".data.zones[6].hi_w") == "0")?
     Ok({})
 }
 
-# ── config set ftp_ride: local store + graceful unauthed Strava sync ──
+# ── config set/get: local key-value store (#26 removed the Strava-FTP push, so a set
+# just stores locally). ftp_ride is now an ordinary key — derived FTP ignores it. ──────
 b_config_ftp! : Ctx => Try({}, _)
 b_config_ftp! = |ctx| {
     set_out = stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", "195"])
     check!("config set reports local value", Str.contains(set_out, "ftp_ride = 195"))?
-    check!("unauthed ftp set warns about Strava", Str.contains(set_out, "not synced to Strava"))?
-    check!("ftp stored even without Strava sync", Str.trim(stride_human!(ctx.bin, ctx.home, ["config", "get", "ftp_ride"])) == "195")?
+    check!("value stored + read back (human)", Str.trim(stride_human!(ctx.bin, ctx.home, ["config", "get", "ftp_ride"])) == "195")?
     check!("config get json value", strjq!(ctx, ["config", "get", "ftp_ride"], ".data.value") == "195")?
     check!("config get not_set error", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "nope"]), "not_set"))?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", "200"])
@@ -302,23 +303,29 @@ b_seed_analyze! : Ctx => Try({}, _)
 b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,weighted_avg_watts,avg_watts) VALUES (101,'power ride','Ride','${ctx.d1}T10:00:00Z',3600,30000,100,200,200);")
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (102,'hr row','Rowing','${ctx.d2}T10:00:00Z',3600,9000,0,150);")
-    check!("analyze computes 2", strjq!(ctx, ["analyze"], ".data.computed") == "2")?
+    # a real 200W stream so the ride derives an FTP (best-20min 200 x 0.95 = 190). Post-#26
+    # FTP is derived from stream power, not config, so a summary-watts-only ride scores 0.
+    _ = seed_power_stream!(ctx.db, 101, 3600, 200)
+    # first analyze converges the derived FTP: pass 1 scores both rows (best_20min_w still 0
+    # -> FTP 0), pass 2 recomputes the ride once its best_20min_w resolves FTP to 190: 2+1=3
+    check!("analyze computes 3 (derived-FTP convergence)", strjq!(ctx, ["analyze"], ".data.computed") == "3")?
     check!("summary as_of is today", strjq!(ctx, ["summary"], ".data.as_of") == ctx.today)?
-    check_near!("28d tss ~155 (100 power + 55 hr)", sfloat(strjq!(ctx, ["summary"], ".data.last_28d.tss")), 155.0, 1.0)?
+    # power ride NP 200 @ derived FTP 190 => TSS ~110.8; HR row ~55 => ~166
+    check_near!("28d tss ~166 (111 power + 55 hr)", sfloat(strjq!(ctx, ["summary"], ".data.last_28d.tss")), 165.8, 1.0)?
     mp = sfloat(strjq!(ctx, ["summary"], ".data.last_28d.measured_pct"))
-    check!("measured_pct ~65 (60..70)", mp >= 60.0 and mp <= 70.0)?
-    check!("ftp not stale", strjq!(ctx, ["summary"], ".data.ftp.stale") == "false")?
+    check!("measured_pct ~67 (60..70)", mp >= 60.0 and mp <= 70.0)?
+    # FTP is derived now (the config-FTP `stale` flag was removed in #26)
+    check_near!("derived FTP ~190 (best-20min 200 x 0.95)", sfloat(strjq!(ctx, ["summary"], ".data.ftp.estimated_ftp_w")), 190.0, 1.0)?
     check!("fitness_ctl > 0", sfloat(strjq!(ctx, ["summary"], ".data.fitness_ctl")) > 0.0)?
     check!("fatigue_atl > 0", sfloat(strjq!(ctx, ["summary"], ".data.fatigue_atl")) > 0.0)?
     Ok({})
 }
 
-# ── per-sport FTP / zone / metrics_rev auto-invalidation ─────────────
+# ── zone + metrics_rev auto-invalidation. Config-FTP invalidation was removed in #26
+# (FTP is derived, not set); the derived-FTP recompute path is covered by
+# b_seed_analyze!'s "computes 3" convergence. ─────────────────────────────────────────
 b_invalidation! : Ctx => Try({}, _)
 b_invalidation! = |ctx| {
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", "100"])
-    check!("ftp_ride change recomputes only cycling", strjq!(ctx, ["analyze"], ".data.computed") == "1")?
-    check_near!("28d tss ~455 (NP200@FTP100 => 400 +55 hr)", sfloat(strjq!(ctx, ["summary"], ".data.last_28d.tss")), 455.0, 1.0)?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max", "140"])
     check!("zone change recomputes all", strjq!(ctx, ["analyze"], ".data.computed") == "2")?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max", "153"])
@@ -363,8 +370,9 @@ b_plan! = |ctx| {
 b_activities! : Ctx => Try({}, _)
 b_activities! = |ctx| {
     check!("2 activities", strjq!(ctx, ["activities"], ".data | length") == "2")?
-    check_near!("101 tss ~400 (NP200@FTP100)", sfloat(strjq!(ctx, ["activities"], ".data[] | select(.id==101) | .tss")), 400.0, 1.0)?
-    check_near!("101 intensity ~2.0", sfloat(strjq!(ctx, ["activities"], ".data[] | select(.id==101) | .intensity")), 2.0, 0.01)?
+    # NP 200 @ derived FTP 190 (config-FTP removed in #26): TSS ~110.8, IF ~1.05
+    check_near!("101 tss ~111 (NP200 @ derived FTP 190)", sfloat(strjq!(ctx, ["activities"], ".data[] | select(.id==101) | .tss")), 110.8, 1.0)?
+    check_near!("101 intensity ~1.05 (200/190)", sfloat(strjq!(ctx, ["activities"], ".data[] | select(.id==101) | .intensity")), 1.053, 0.02)?
     check_near!("102 hrTSS ~55", sfloat(strjq!(ctx, ["activities"], ".data[] | select(.id==102) | .tss")), 55.0, 1.0)?
     check!("sport filter returns 1", strjq!(ctx, ["activities", "10", "rowing"], ".data | length") == "1")?
     check!("sport filter is 102", strjq!(ctx, ["activities", "10", "rowing"], ".data[0].id") == "102")?
@@ -403,9 +411,10 @@ b_load_stats! = |ctx| {
 b_activity_detail! : Ctx => Try({}, _)
 b_activity_detail! = |ctx| {
     check!("activity 101 id", strjq!(ctx, ["activity", "101"], ".data.id") == "101")?
-    check_near!("activity 101 tss ~400", sfloat(strjq!(ctx, ["activity", "101"], ".data.tss")), 400.0, 1.0)?
-    check_near!("activity 101 intensity ~2.0", sfloat(strjq!(ctx, ["activity", "101"], ".data.intensity")), 2.0, 0.01)?
-    check!("no streams -> w60 honest 0", strjq!(ctx, ["activity", "101"], ".data.power_bests.w60") == "0")?
+    check_near!("activity 101 tss ~111 (NP200 @ derived FTP 190)", sfloat(strjq!(ctx, ["activity", "101"], ".data.tss")), 110.8, 1.0)?
+    check_near!("activity 101 intensity ~1.05 (200/190)", sfloat(strjq!(ctx, ["activity", "101"], ".data.intensity")), 1.053, 0.02)?
+    check!("101 w60 computed from stream = 200", strjq!(ctx, ["activity", "101"], ".data.power_bests.w60") == "200")?
+    check!("no power streams -> w60 honest 0", strjq!(ctx, ["activity", "102"], ".data.power_bests.w60") == "0")?
     check!("activity not-found", Str.contains(stride!(ctx.bin, ctx.home, ["activity", "999"]), "activity_not_found"))?
     Ok({})
 }
@@ -423,13 +432,22 @@ b_junk_filter! = |ctx| {
     check!("power ride has power-intensity time", pisum > 0.0)?
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (101, 'not json at all');")
     check!("corrupt streams flagged unreadable", strjq!(ctx, ["activity", "101"], ".data.streams_unreadable") == "true")?
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", "111"])
+    # force 101 to recompute so analyze re-decodes the now-corrupt stream: the SQL stream
+    # swap above bypassed store_streams! (which is what deletes metrics on stream change),
+    # and config-FTP no longer invalidates anything post-#26.
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 101;")
     check!("analyze reports stream decode errors", sfloat(strjq!(ctx, ["analyze"], ".data.stream_errors")) >= 1.0)?
     check!("activities non-numeric count", Str.contains(stride!(ctx.bin, ctx.home, ["activities", "banana"]), "bad_count"))?
     check!("load non-numeric count", Str.contains(stride!(ctx.bin, ctx.home, ["load", "abc"]), "bad_count"))?
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_hr) VALUES (103,'bad date','Ride','0000-0z-01T10:00:00Z',3600,150);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("malformed date does not explode daily_load", str_to_i64(Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM daily_load"))) < 400)?
+    # restore 101's good stream so downstream tests (import, doctor) still see a clean
+    # measured-power ride — the corruption above was only to exercise the unreadable flag,
+    # and power now needs a derivable FTP to score as measured.
+    _ = seed_power_stream!(ctx.db, 101, 3600, 200)
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 101;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     Ok({})
 }
 
@@ -623,6 +641,25 @@ sql! : Str, Str => Str
 sql! = |db, query|
     sh!("sqlite3 '${db}' <<'SQLHEREDOC'\n${query}\nSQLHEREDOC")
 
+# seed a constant-power stream (n 1 Hz samples at w watts) as Strava-style raw_json so an
+# analyzed ride computes best_20min_w -> a derived per-sport FTP. Post-#26 FTP is derived
+# from stream power (not config), so a power ride needs real streams to score. Inserted
+# straight into the streams table via the heredoc sql! — the JSON's double-quotes sit fine
+# inside the single-quoted SQL literal (no single quotes in the JSON to escape).
+seed_power_stream! : Str, I64, U64, U64 => {}
+seed_power_stream! = |db, id, n, w| {
+    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
+    watts = Str.join_with(List.map(int_seq(n), |_| U64.to_str(w)), ",")
+    raw = "{\"time\":{\"data\":[${times}]},\"watts\":{\"data\":[${watts}]}}"
+    _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
+    {}
+}
+# [0, 1, .., n-1]
+int_seq : U64 -> List(U64)
+int_seq = |n| int_seq_go(n, [])
+int_seq_go : U64, List(U64) -> List(U64)
+int_seq_go = |n, acc| if n == 0 acc else int_seq_go(n - 1, List.prepend(acc, n - 1))
+
 stride! : Str, Str, List(Str) => Str
 stride! = |bin, home, sargs|
     stride_env!(bin, home, sargs, [("STRIDE_FORMAT", "json")])
@@ -661,7 +698,10 @@ seed_ride! = |db, id, name, date, secs, meters, watts, hr|
 # awk in the shell — NOT by a recursive Roc closure (that would trip roc#10469).
 spike_json! : {} => Str
 spike_json! = |{}|
-    Str.trim(sh!("awk 'BEGIN{t=\"\";w=\"\";for(i=0;i<120;i++){if(i>0){t=t\",\";w=w\",\"} t=t i; w=w (i==60?\"9999.0\":\"200.0\")} printf \"{\\\"time\\\":{\\\"data\\\":[%s]},\\\"watts\\\":{\\\"data\\\":[%s]}}\", t, w}'"))
+    # 1300 samples (>= the 1200-sample best_20min_w window) so the ride derives an FTP
+    # post-#26 (FTP now comes from stream power, not config); one 9999W spike at i=60 to
+    # verify junk-power filtering. Baseline 200W -> best_20min_w 200 -> derived FTP 190.
+    Str.trim(sh!("awk 'BEGIN{t=\"\";w=\"\";for(i=0;i<1300;i++){if(i>0){t=t\",\";w=w\",\"} t=t i; w=w (i==60?\"9999.0\":\"200.0\")} printf \"{\\\"time\\\":{\\\"data\\\":[%s]},\\\"watts\\\":{\\\"data\\\":[%s]}}\", t, w}'"))
 
 # write the realistic Strava-export CSV (duplicate headers, quoted comma, junk row)
 write_csv! : Str => Str

@@ -52,20 +52,26 @@ jobs:
           echo "--- roc check src/Schema.roc (DDL-only, no expects) ---"
           roc check src/Schema.roc
 
-  # COVERAGE GAP (intentional, tracked): the e2e needs a compiled `stride` binary.
-  # `roc build` now works on this nightly (~6 min), and the native e2e harness
-  # (tests/e2e.roc) builds in seconds — but the optimized binary has a rare
-  # intermittent SIGABRT (issue #32) that lands at random spots across the ~140-check
-  # suite, making it flaky, so build + e2e are held out of CI. `check` + pure-module
-  # `test` above are the gate meanwhile. RESTORE this job (build app.roc, then run
-  # the native `just e2e` offline suite + `just e2e-sync`) once #32 is resolved.
-  #
-  # e2e:
-  #   needs: check-and-test
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v7
-  #     - uses: roc-lang/setup-roc@v0.3.0
-  #       with: { version: nightly-new-compiler, nightly-tag: nightly-2026-August-03-94cbed3 }
-  #     - run: roc build src/app.roc --output=stride   # ~6 min; new compiler uses --output=
-  #     - run: ROC_NEW=roc just e2e
+  # End-to-end: build the real binary and run the native offline e2e suite (157 checks,
+  # sandboxed HOME, no network). Built with --opt=dev: the optimized (--opt=speed) backend
+  # has an intermittent SIGABRT on the stream-decode path (issue #32), so RELEASE binaries
+  # stay gated on it — but --opt=dev is stable and the suite passes deterministically.
+  # (--linker=legacy is the linux fallback linker; e2e-sync — the network path — is still
+  # run separately/locally and not yet wired here.)
+  e2e:
+    needs: check-and-test
+    runs-on: ubuntu-latest
+    env:
+      STRIDE_LINKER: --linker=legacy
+    steps:
+      - uses: actions/checkout@v7
+      - uses: roc-lang/setup-roc@v0.3.0
+        with:
+          version: nightly-new-compiler
+          nightly-tag: nightly-2026-August-03-94cbed3
+      - name: Install just + sqlite3
+        run: sudo apt-get update && sudo apt-get install -y just sqlite3
+      - name: Build stride (dev backend — #32 blocks the optimized one)
+        run: roc build src/app.roc --output=stride --opt=dev --linker=legacy   # ~6 min; new compiler uses --output=
+      - name: Run offline e2e suite (157 checks)
+        run: ROC_NEW=roc just e2e

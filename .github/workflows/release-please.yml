@@ -4,13 +4,13 @@ name: release-please
 # (feat:/fix:/…), maintains CHANGELOG.md and the version in app.roc, and opens a
 # "release PR". Merging that PR tags vX.Y.Z + creates the GitHub release.
 #
-# NOTE: the binary build/upload jobs are DISABLED (if: false) until a native `roc
-# build` of app.roc works again — see roc-lang/roc#10469. After the new-compiler
-# migration, main's source is new-compiler syntax that the old alpha4 toolchain
-# these jobs use CANNOT parse, and the new compiler stalls the Specialization phase
-# for minutes on app.roc, so no target can produce a binary. Merging a release PR
-# still cuts a source-only GitHub release (tag + changelog); prebuilt binaries just
-# aren't attached until the build is unblocked.
+# NOTE: the binary build/upload jobs are DISABLED (if: false). The old blocker
+# (roc-lang/roc#10469, the Specialization stall) is FIXED — `roc build` works now — but
+# RELEASE binaries ship the OPTIMIZED (--opt=speed) build, which has an intermittent SIGABRT
+# on the stream-decode path (issue #32). We won't ship a binary that can abort, so uploads
+# stay gated on #32. Merging a release PR still cuts a source-only GitHub release (tag +
+# changelog); prebuilt binaries aren't attached until #32 is resolved. (The offline e2e
+# already runs in build.yml on the stable --opt=dev binary.)
 on:
   push:
     branches: [main]
@@ -34,12 +34,11 @@ jobs:
   build:
     name: build ${{ matrix.target }}
     needs: release-please
-    # DISABLED until a native roc build of app.roc works again (roc-lang/roc#10469).
-    # alpha4 (installed below) can't parse the migrated source, and the new compiler
-    # stalls Specialization for minutes — no target builds. To restore: flip this to
-    #   if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    # DISABLED until #32 (the optimized-backend SIGABRT) is resolved — releases ship the
+    # --opt=speed build, which can abort. roc#10469 (the old Specialization stall) is fixed.
+    # To restore: flip this to `if: ${{ needs.release-please.outputs.release_created == 'true' }}`
     # and switch the alpha4 install + `roc build` steps to roc-lang/setup-roc
-    # (version: nightly-new-compiler), matching .github/workflows/build.yml.
+    # (version: nightly-new-compiler) with --opt=speed, matching .github/workflows/build.yml.
     if: false
     runs-on: ${{ matrix.runs-on }}
     strategy:
