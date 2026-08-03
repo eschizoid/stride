@@ -110,12 +110,17 @@ Report :: [].{
                     pri = window_stats!(path, pri_from, cur_from)?
                     cur_ctl = ctl_at!(path, Metrics.days_to_date_str(anchor))?
                     pri_ctl = ctl_at!(path, Metrics.days_to_date_str(anchor - days))?
+                    # has_data distinguishes a genuinely-empty window (no activities AND no
+                    # accrued fitness) from a real all-easy/zero week. Without it the prior
+                    # block reads as "0 TSS, 0% easy, 0 ctl" — indistinguishable from a rest
+                    # week — and the current-vs-prior delta looks like a phantom spike.
                     block = |w, ctl| {
                         tss: w.tss,
                         sessions: w.sessions,
                         hard_min: (w.z4 + w.z5) // 60,
                         easy_pct: pct_num(w.z1 + w.z2, w.z1 + w.z2 + w.z3 + w.z4 + w.z5),
                         ctl,
+                        has_data: w.sessions > 0 or ctl > 0.0,
                     }
                     Output.out!({ period, window_label: label, current: block(cur, cur_ctl), prior: block(pri, pri_ctl) }, Render.compare_screen)
                 }
@@ -340,10 +345,12 @@ Report :: [].{
         match Analyze.load_zone_config!(path) {
             Err(MissingConfig) => Output.missing_config!({})
             Err(other) => Err(other)
-            Ok({ ftp, zb }) => {
-                payload = summary_payload!(path, ftp, zb)?
-                Output.out!(payload, Render.summary_screen)
-            }
+            Ok({ ftp, zb }) =>
+                match summary_payload!(path, ftp, zb) {
+                    Err(NoDataYet) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
+                    Err(e) => Err(e)
+                    Ok(payload) => Output.out!(payload, Render.summary_screen)
+                }
         }
     }
     # weekly-planning bundle: everything the coach needs to plan a week, in one call
@@ -353,8 +360,11 @@ Report :: [].{
         match Analyze.load_zone_config!(path) {
             Err(MissingConfig) => Output.missing_config!({})
             Err(other) => Err(other)
-            Ok({ ftp, zb }) => {
-                s = summary_payload!(path, ftp, zb)?
+            Ok({ ftp, zb }) =>
+                match summary_payload!(path, ftp, zb) {
+                    Err(NoDataYet) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
+                    Err(e) => Err(e)
+                    Ok(s) => {
                 anchor = (Metrics.date_str_to_days(s.as_of)).ok_or(0)
                 cutoff14 = Metrics.days_to_date_str(anchor - 14)
                 recent = Sqlite.query_many!({
@@ -427,22 +437,31 @@ Report :: [].{
                         List.map(recent, |a| [a.date, a.sport, a.name, Render.mins(a.moving_time), Render.fmt0(a.tss), Render.mins(a.hard_s)]),
                     ))
                 }
-            }
+                    }
+                }
         }
     }
     summary_payload! = |path, ftp, zb| {
-        latest = Sqlite.query!({
-            path: Path.utf8(path),
-            query: "SELECT day AS day, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
-            bindings: [],
-            row: |cols| |stmt| {
-                day = Sqlite.str("day")(cols)(stmt)?
-                ctl = Sqlite.f64("ctl")(cols)(stmt)?
-                atl = Sqlite.f64("atl")(cols)(stmt)?
-                tsb = Sqlite.f64("tsb")(cols)(stmt)?
-                Ok({ day, ctl, atl, tsb })
-            },
-        })?
+        # empty daily_load (nothing analyzed yet) is a clean "no data" state, not an
+        # error to blow up on — map NoRowsReturned to a tag the callers turn into a
+        # friendly message instead of leaking a raw SQLite error to the user.
+        latest =
+            match Sqlite.query!({
+                path: Path.utf8(path),
+                query: "SELECT day AS day, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
+                bindings: [],
+                row: |cols| |stmt| {
+                    day = Sqlite.str("day")(cols)(stmt)?
+                    ctl = Sqlite.f64("ctl")(cols)(stmt)?
+                    atl = Sqlite.f64("atl")(cols)(stmt)?
+                    tsb = Sqlite.f64("tsb")(cols)(stmt)?
+                    Ok({ day, ctl, atl, tsb })
+                },
+            }) {
+                Ok(v) => Ok(v)
+                Err(NoRowsReturned) => Err(NoDataYet)
+                Err(e) => Err(e)
+            }?
         anchor = (Metrics.date_str_to_days(latest.day)).ok_or(0)
         cutoff28 = Metrics.days_to_date_str(anchor - 28)
         cutoff60 = Metrics.days_to_date_str(anchor - 60)
