@@ -251,18 +251,20 @@ Strava :: [].{
                         Some(a) => "&after=${I64.to_str(a)}"
                         None => ""
                     }
-                # the prune only touches rows inside the window Strava re-listed this run:
-                # the same epoch we sent as `after`, rendered by epoch_to_iso to a full
-                # `YYYY-MM-DDTHH:MM:SSZ` (UTC) string and compared lexically against
-                # activities.start_local (Strava's local `start_date_local` timestamp).
-                # The UTC-vs-local skew is only hours, and the 30-day overlap keeps the
-                # boundary comfortably inside what Strava returned, so a row this side of
-                # the cutoff was definitely in the response. "" (full pull) prunes all
-                # unseen. (NULL synced_at rows — imports, pre-migration — are exempt in
-                # prune_deleted! regardless of the window.)
+                # window_start bounds the prune to rows solidly inside the window Strava
+                # re-listed this run. It is the `after` epoch PLUS a one-day margin, rendered
+                # by epoch_to_iso to `YYYY-MM-DDTHH:MM:SSZ` (UTC) and compared lexically to
+                # activities.start_local (Strava's LOCAL start_date_local). The margin is the
+                # fix for that UTC-vs-local mismatch: without it, timezone skew (up to ~14h) at
+                # the boundary could mark an activity that is merely just OUTSIDE Strava's
+                # `after` window — still present upstream, only older — as a deletion and prune
+                # it. A full day exceeds any offset, so only rows definitely in the response are
+                # eligible. A deletion in that one-day sliver at the far edge is caught by the
+                # next `backfill` (full pull), which prunes all unseen ("" window_start). NULL
+                # synced_at rows (imports, pre-migration) are exempt regardless of the window.
                 window_start =
                     match after_epoch {
-                        Some(a) => Metrics.epoch_to_iso(a)
+                        Some(a) => Metrics.epoch_to_iso(a + 86400)
                         None => ""
                     }
                 count = fetch_pages!(path, token, after_param, started, 1, 0)?
