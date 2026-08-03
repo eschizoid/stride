@@ -327,6 +327,17 @@ Analyze :: [].{
         np_stream = Metrics.normalized_power(watts_1s)
         best20 = Metrics.best_rolling_mean(watts_1s, 1200)
 
+        # power-duration curve: best mean-max power at each ladder duration (5s..60min minus
+        # the 20-min point, which best_20min_w already carries). Stored per activity; the
+        # `power-curve` command takes MAX per duration across a window to draw the CP curve.
+        # 0 = not available (ride shorter than the window) per the numeric-0 invariant.
+        curve = Metrics.mean_max_curve(watts_1s, [5, 15, 30, 60, 300, 600, 3600])
+        cw = |i|
+            match List.get(curve, i) {
+                Ok(c) => Real(c.watts)
+                Err(_) => Real(0.0)
+            }
+
         # intensity from power, judged against the sport's own FTP (0 for no-power sports
         # → all-zero, and the display falls back to HR). Stored so the weekly polarization
         # and the activities "hard" column read power where it exists, HR where it doesn't.
@@ -380,8 +391,8 @@ Analyze :: [].{
             path: Path.utf8(path),
             query:
                 \\INSERT OR REPLACE INTO activity_metrics
-                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s)
-                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih)
+                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w)
+                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600)
             ,
             bindings: [
                 { name: ":pie", value: Integer(pintensity.easy_s) },
@@ -402,6 +413,13 @@ Analyze :: [].{
                 { name: ":z5", value: Integer(zones.z5) },
                 { name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
                 { name: ":b20", value: best20_binding },
+                { name: ":bc5", value: cw(0) },
+                { name: ":bc15", value: cw(1) },
+                { name: ":bc30", value: cw(2) },
+                { name: ":bc60", value: cw(3) },
+                { name: ":bc300", value: cw(4) },
+                { name: ":bc600", value: cw(5) },
+                { name: ":bc3600", value: cw(6) },
             ],
         })?
         Ok(decoded.failed)
@@ -494,5 +512,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 7
+    metrics_rev = 8
 }
