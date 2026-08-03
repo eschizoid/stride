@@ -110,9 +110,8 @@ stride --version
 ```
 
 Verify the download against [`SHA256SUMS.txt`](https://github.com/eschizoid/stride/releases/latest)
-if you like: `sha256sum -c SHA256SUMS.txt`. (No Windows build yet — not a Roc limitation: the new compiler and
-basic-cli 0.21's Windows host can target it; the release binaries are gated on the full `roc build` landing once
-the upstream perf fix ships. Use WSL + the Linux binary for now.)
+if you like: `sha256sum -c SHA256SUMS.txt`. (No Windows build yet — use WSL + the Linux binary; the why is
+in [ADR 0000 §9](docs/adr/0000-architecture.md).)
 
 ### Build from source
 
@@ -128,7 +127,7 @@ just install        # builds the binary, symlinks it into ~/.local/bin
 ```bash
 stride init                                   # create + migrate the db
 STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth   # one-time browser paste flow
-stride config set ftp 250                     # your FTP (watts)
+stride config set ftp_ride 250                # your cycling FTP in watts (ftp_<sport> for others)
 stride config set hr_z1_max 120               # your HR zone upper bounds...
 stride config set hr_z2_max 150
 stride config set hr_z3_max 165
@@ -144,8 +143,18 @@ stride backfill                               # pull all activities + all stream
 stride analyze                                # compute everything
 ```
 
-`backfill` is the whole first-time pull: it fetches your complete activity list,
-then drains every activity's raw streams, pacing itself against Strava's rate
+**On the free path (no API app)?** Replace `auth` + `backfill` with a one-shot import
+of your Strava account export — `config` and `analyze` are identical:
+
+```bash
+stride init
+stride import ~/Downloads/strava_export.zip   # summary-level history, no API app
+stride config set ftp_ride 250                # + HR zones + timezone, exactly as above
+stride analyze
+```
+
+`backfill` (API path) is the whole first-time pull: it fetches your complete activity
+list, then drains every activity's raw streams, pacing itself against Strava's rate
 limits (fills each 15-min window, sleeps to the next, stops cleanly at the daily
 cap). It's resumable — a multi-thousand-activity history spans a few days of
 `stride backfill` re-runs, hands-off.
@@ -165,7 +174,7 @@ stride week                                       # everything needed to plan a 
 | --- | --- |
 | `init` | Creates `~/.stride/db.sqlite` and runs migrations. Idempotent — safe to re-run anytime. |
 | `auth` | One-time Strava OAuth: prints an authorize URL, you paste back the `code=` param. Stores tokens *and* client credentials in the db — no env vars needed afterward. |
-| `config set <key> <val>` / `config get <key>` | Your numbers: `ftp` (watts), HR zone bounds `hr_z1_max`…`hr_z4_max`, and either `timezone` (IANA, DST-aware) or `utc_offset_minutes` (fixed) to anchor "today". Changing `ftp` auto-recomputes all history on the next `analyze`. |
+| `config set <key> <val>` / `config get <key>` | Your numbers: `ftp_ride` (cycling FTP in watts; `ftp_<sport>` for any other power sport), HR zone bounds `hr_z1_max`…`hr_z4_max`, and either `timezone` (IANA, DST-aware) or `utc_offset_minutes` (fixed) to anchor "today". Changing an FTP auto-recomputes that sport's history on the next `analyze`. |
 
 **Data (daily)**
 
