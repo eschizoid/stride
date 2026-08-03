@@ -148,11 +148,22 @@ Strava :: [].{
         decoded.map_err(|_| TokenDecodeFailed)
     }
     save_tokens! : Str, TokenResp => Try({}, _)
-    save_tokens! = |path, tokens| {
-        Db.config_set!(path, "strava_access_token", tokens.access_token)?
-        Db.config_set!(path, "strava_refresh_token", tokens.refresh_token)?
-        Db.config_set!(path, "strava_expires_at", I64.to_str(tokens.expires_at))
-    }
+    save_tokens! = |path, tokens|
+        # ONE atomic multi-row upsert. Strava rotates the refresh token on every refresh, so
+        # three separate writes risked a crash between them leaving new-access + a DEAD refresh
+        # token → auth bricked until a manual re-`auth`. A single SQL statement is atomic.
+        Sqlite.execute!({
+            path: Path.utf8(path),
+            query:
+                \\INSERT OR REPLACE INTO config (key, value) VALUES
+                \\  ('strava_access_token', :at), ('strava_refresh_token', :rt), ('strava_expires_at', :exp)
+            ,
+            bindings: [
+                { name: ":at", value: String(tokens.access_token) },
+                { name: ":rt", value: String(tokens.refresh_token) },
+                { name: ":exp", value: String(I64.to_str(tokens.expires_at)) },
+            ],
+        })
     # returns a valid access token, refreshing if expired; NotAuthed if never
     # authorized (a genuinely absent token — NOT a db read failure, which propagates)
     get_valid_token! : Str => Try(Str, _)
