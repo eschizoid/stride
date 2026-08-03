@@ -329,10 +329,14 @@ Analyze :: [].{
                 _ = Sqlite.execute!({ path: Path.utf8(path), query: "BEGIN", bindings: [] })?
                 match rebuild_txn!(path, by_day, bounds.lo, last_day) {
                     Ok(_) => Sqlite.execute!({ path: Path.utf8(path), query: "COMMIT", bindings: [] })
-                    Err(e) => {
-                        _ = Sqlite.execute!({ path: Path.utf8(path), query: "ROLLBACK", bindings: [] })
-                        Err(e)
-                    }
+                    Err(e) =>
+                        # roll back the partial rebuild. If the ROLLBACK itself fails (lock,
+                        # corruption) that's the more actionable signal — surface it; otherwise
+                        # return the original error that aborted the rebuild.
+                        match Sqlite.execute!({ path: Path.utf8(path), query: "ROLLBACK", bindings: [] }) {
+                            Ok(_) => Err(e)
+                            Err(re) => Err(re)
+                        }
                 }
             }
         }
