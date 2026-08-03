@@ -182,9 +182,10 @@ deliberately small way. Do **not** write a data-transform migration for the metr
 
 ## Sequencing (tracer bullets — ship in this order)
 
-> Everything below is gated on the build unblocking (roc-lang/roc#10469). The concrete, ordered
-> checklist — including restoring CI/releases and merging the parked PRs — lives in
-> [docs/post-10469-runbook.md](../post-10469-runbook.md).
+> The build is unblocked (roc-lang/roc#10469, fixed upstream by roc-lang/roc#10531). This ADR is the
+> durable sequencing; the live, disposable working checklist (in-flight PRs, watch-items)
+> lives in the gitignored `.claude/PLAN.md` scratch, not here. Slice 1 (per-sport HR zones)
+> resolves the zone half of Decision 4 + the `ftp_ride` removal of Decision 5.
 
 
 1. **Per-sport HR zones + remove `ftp_ride` hardcoding.** Highest leverage: it makes the

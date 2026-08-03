@@ -6,3 +6,6 @@
 
 # test binary (built on demand from tests/e2e.roc)
 /e2e
+
+# scratch build binaries from build/debug cycles (only /stride is kept)
+/stride-*
