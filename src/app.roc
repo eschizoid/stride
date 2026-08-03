@@ -108,7 +108,18 @@ help_text =
 # dispatch. All arity/count validation lives in the parser and is unit-tested there.
 main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
 main! = |raw_args| {
-    args = List.map(raw_args, |a| match a { Utf8(s) => s, _ => "" })
+    # basic-cli 0.21 hands args over as an OS-native tag union — macOS/Linux deliver them
+    # as UnixBytes, NOT Utf8 (alpha4 gave Utf8), so we must decode UnixBytes or every
+    # command word becomes "" and falls through to help. Non-UTF8 bytes and Windows UTF-16
+    # aren't decoded — they map to "", which is harmless for our ASCII commands (an
+    # undecodable command word just yields help). Windows arg decoding is a TODO tied to
+    # there being no Windows build yet.
+    args = List.map(raw_args, |a|
+        match a {
+            Utf8(s) => s
+            UnixBytes(b) => match Str.from_utf8(b) { Ok(s) => s, Err(_) => "" }
+            WindowsU16s(_) => ""
+        })
     match Command.parse(args) {
         Err(ShowHelp) => Stdout.line!(help_text)
         Err(Usage(u)) => Output.usage!(u)
@@ -156,7 +167,10 @@ config_show! = |key| {
     if Config.is_secret(key)
         # confirm set-ness without leaking the value
         match Db.config_opt!(path, key)? {
-            Found(_) => Output.out!({ key, value: "<redacted>", redacted: True }, |_| "${key} = <redacted> (secret — stored in the db, not shown)")
+            # redacted must be Bool-TYPED, not a bare `True` tag: the new builtin JSON
+            # serializes a bare tag as the string "True". Config.is_secret(key) is Bool
+            # and is True here (we're inside the is_secret branch).
+            Found(_) => Output.out!({ key, value: "<redacted>", redacted: Config.is_secret(key) }, |_| "${key} = <redacted> (secret — stored in the db, not shown)")
             NotFound => Output.err_out!("not_set", "(not set)")
         }
     else
