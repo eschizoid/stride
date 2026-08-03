@@ -80,7 +80,7 @@ differ:
 Everyone needs `sqlite3`. Then pick a data path:
 
 - **API sync (fullest data — live daily sync + full streams):** a
-  [Strava API application](https://www.strava.com/settings/api) (client id +
+  [Strava API application](https://www.strava.com/settings/api) (client ID +
   secret — takes two minutes to create). Note: since June 2026, Strava requires
   an active Strava subscription to hold API credentials
   ([their announcement](https://communityhub.strava.com/insider-journal-9/an-update-to-our-developer-program-13428)).
@@ -221,7 +221,7 @@ read the JSON, not `$?`). Malformed invocations print a targeted `usage:` line;
 The tables are built to surface the all-moderate trap — a `0.98`-intensity ride with
 `0m` of actual hard time:
 
-```
+```bash
 $ stride activities 4
 ╭────────────┬─────────┬─────────────────────────────┬──────┬──────┬────────────────┬──────╮
 │ date       │ sport   │ name                        │ time │ load │ intensity (if) │ hard │
