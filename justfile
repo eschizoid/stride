@@ -67,6 +67,6 @@ up: sync analyze summary
 
 # ── e2e test suite (native Roc: tests/e2e.roc — sandboxed HOME, no network) ──
 e2e:
-    {{roc_new}} build tests/e2e.roc --output=e2e {{linker}}
+    {{roc_new}} build tests/e2e.roc --output=e2e
     test -x ./stride || {  echo "e2e needs a ./stride binary — build it first (roc build src/app.roc --output=stride --opt=dev)"; exit 1; }
     ./e2e

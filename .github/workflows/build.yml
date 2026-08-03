@@ -56,22 +56,21 @@ jobs:
   # sandboxed HOME, no network). Built with --opt=dev: the optimized (--opt=speed) backend
   # has an intermittent SIGABRT on the stream-decode path (issue #32), so RELEASE binaries
   # stay gated on it — but --opt=dev is stable and the suite passes deterministically.
-  # (--linker=legacy is the linux fallback linker; e2e-sync — the network path — is still
-  # run separately/locally and not yet wired here.)
+  # (The new compiler picks its own linker — no --linker flag. e2e-sync, the network path,
+  # is still run locally and not wired here yet.)
   e2e:
     needs: check-and-test
     runs-on: ubuntu-latest
-    env:
-      STRIDE_LINKER: --linker=legacy
     steps:
       - uses: actions/checkout@v7
       - uses: roc-lang/setup-roc@v0.3.0
         with:
           version: nightly-new-compiler
           nightly-tag: nightly-2026-August-03-94cbed3
-      - name: Install just + sqlite3
-        run: sudo apt-get update && sudo apt-get install -y just sqlite3
+      # the harness uses sqlite3/jq/awk/curl; install the two not guaranteed on the runner
+      - name: Install just + sqlite3 + jq
+        run: sudo apt-get update && sudo apt-get install -y just sqlite3 jq
       - name: Build stride (dev backend — #32 blocks the optimized one)
-        run: roc build src/app.roc --output=stride --opt=dev --linker=legacy   # ~6 min; new compiler uses --output=
+        run: roc build src/app.roc --output=stride --opt=dev   # ~6 min; new compiler uses --output=
       - name: Run offline e2e suite (157 checks)
         run: ROC_NEW=roc just e2e
