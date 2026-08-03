@@ -313,15 +313,25 @@ Metrics :: [].{
                 Endurance => [hr_scored, rpe_scored, re_scored]
                 StrengthLike => [rpe_scored, hr_scored, re_scored]
             }
+        # the HR/RPE/RE fallback ladder, used when there is no power OR no usable FTP
+        fallback =
+            List.fold_until(ordered, { t: 0.0, m: "none" }, |acc, candidate|
+                match candidate {
+                    Ok(pair) => Break(pair)
+                    Err(_) => Continue(acc)
+                })
         scored =
             match np_like {
-                Ok(p) => { t: tss_from_power({ np: p.w, ftp: input.ftp, dur_s: input.dur_s }), m: p.m }
-                Err(_) =>
-                    List.fold_until(ordered, { t: 0.0, m: "none" }, |acc, candidate|
-                        match candidate {
-                            Ok(pair) => Break(pair)
-                            Err(_) => Continue(acc)
-                        })
+                # power scores ONLY with a usable FTP. Without one (no stream to derive it —
+                # CSV imports, pre-backfill syncs), power would compute TSS 0 and, by winning
+                # the ladder, BLOCK the HR/RPE fallback — silently scoring a real ride 0. So
+                # fall through to HR/RPE/RE when ftp <= 0.
+                Ok(p) =>
+                    if input.ftp > 0.0
+                        { t: tss_from_power({ np: p.w, ftp: input.ftp, dur_s: input.dur_s }), m: p.m }
+                    else
+                        fallback
+                Err(_) => fallback
             }
         { tss: scored.t, np: Try.map_ok(np_like, |p| p.w), model: scored.m }
     }
@@ -983,6 +993,19 @@ expect {
 expect {
     r = Metrics.tss_ladder({ ..Metrics.ladder_base, avg_watts: Ok(200.0) })
     (r.tss - 100.0).abs() < 0.001
+}
+
+# power present but NO usable FTP (streamless import / pre-backfill sync): power must NOT
+# win with TSS 0 — it falls through to HR (here avg_hr 150 -> 55 hrTSS, model hr_avg)
+expect {
+    r = Metrics.tss_ladder({ ..Metrics.ladder_base, weighted_watts: Ok(190.0), avg_hr: Ok(150.0), ftp: 0.0 })
+    (r.tss - 55.0).abs() < 0.001 and r.model == "hr_avg"
+}
+
+# power present, no FTP, no HR: honest zero (not a fabricated power-0), model "none"
+expect {
+    r = Metrics.tss_ladder({ ..Metrics.ladder_base, weighted_watts: Ok(190.0), ftp: 0.0 })
+    r.tss.abs() < 0.001 and r.model == "none"
 }
 
 # no power: an hour of Z2 HR time -> 55 hrTSS, np reports NoPower

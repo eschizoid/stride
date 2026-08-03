@@ -571,16 +571,11 @@ Report :: [].{
     activities! : U64, Str => Try({}, _)
     activities! = |limit, sport_filter| {
         path = Db.open_db!({})?
-        where_clause =
-            if Str.is_empty(sport_filter)
-                ""
-            else
-                "WHERE a.sport_type = :sport COLLATE NOCASE"
-        filter_bindings =
-            if Str.is_empty(sport_filter)
-                []
-            else
-                [{ name: ":sport", value: String(sport_filter) }]
+        # optional sport filter via a BOUND param, never string interpolation: an empty
+        # sport_filter (the default — all sports) matches the `:sport = ''` branch below.
+        # Interpolating the filter would splice a compile-time-constant "" into the query
+        # (bare `activities` -> Activities(30, "")), which crashes this backend in
+        # str_concat — a heap-corruption SIGABRT. Binding sidesteps it. Same class as #32.
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
@@ -596,10 +591,10 @@ Report :: [].{
                 \\       CAST(COALESCE(a.relative_effort,0) AS REAL) AS relative_effort,
                 \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
-                \\${where_clause}
+                \\WHERE (:sport = '' OR a.sport_type = :sport COLLATE NOCASE)
                 \\ORDER BY a.start_local DESC, a.id DESC LIMIT ${(limit).to_str()}
             ,
-            bindings: filter_bindings,
+            bindings: [{ name: ":sport", value: String(sport_filter) }],
             rows: |cols| |stmt| {
                 id = Sqlite.i64("id")(cols)(stmt)?
                 date = Sqlite.str("date")(cols)(stmt)?
@@ -868,10 +863,13 @@ Report :: [].{
                 BadZone(name, off) => "timezone '${name}' UNKNOWN to system tz db — using ${Db.fmt_offset(off)}; fix the name or set utc_offset_minutes"
                 Utc => "UTC (set `timezone` or `utc_offset_minutes` if you're not on UTC)"
             }
+        # Bool-TYPED, not bare True/False tags: the builtin JSON serializes a bare tag as the
+        # string "True"/"False", which breaks the boolean contract (a consumer sees "True",
+        # not true). Same fix as the config `redacted` field. `1 == 1` / `1 == 0` are Bool.
         time_ok =
             match mode {
-                BadZone(_, _) => False
-                _ => True
+                BadZone(_, _) => 1 == 0
+                _ => 1 == 1
             }
         payload = {
             activities: cov.total,
