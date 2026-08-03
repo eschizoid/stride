@@ -367,6 +367,10 @@ Analyze :: [].{
             zones,
             zb: row_zb,
             ftp: pi_ftp, # the SPORT's FTP, not cycling's — so rowing/running load is scaled right
+            # pace rung not wired yet: no NGP computed and no threshold speed, so the pace
+            # candidate never fires (the next slice adds GAP->NGP + threshold_pace derivation).
+            ngp: Err(Missing),
+            threshold_speed: 0.0,
             dur_s: (row.mt).to_f64(),
             moving_time: row.mt,
         })

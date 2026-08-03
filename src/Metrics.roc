@@ -264,6 +264,11 @@ Metrics :: [].{
             zones : ZoneSeconds,
             zb : ZoneBounds,
             ftp : F64,
+            # pace rung (m/s SPEEDS, not s/km): the normalized graded pace speed (Missing
+            # for a non-pace sport or one without distance+altitude streams) and the sport's
+            # threshold speed (0 when none). See pace_tss / normalized_graded_pace.
+            ngp : Try(F64, [Missing]),
+            threshold_speed : F64,
             dur_s : F64,
             moving_time : I64,
         }
@@ -320,18 +325,31 @@ Metrics :: [].{
                     Ok(pair) => Break(pair)
                     Err(_) => Continue(acc)
                 })
+        # pace rung, slotting in as power -> PACE -> HR -> RPE -> RE. Scores when a normalized
+        # graded pace SPEED was computed (a pace-routed sport with distance+altitude streams)
+        # AND a threshold speed exists; otherwise falls through to HR/RPE/RE. rTSS/sTSS is
+        # IF^2 * hours * 100 with IF = ngp_speed / threshold_speed (pace_tss).
+        pace_or_fallback =
+            match input.ngp {
+                Ok(ngp_speed) =>
+                    if input.threshold_speed > 0.0
+                        { t: pace_tss({ ngp_speed, threshold_speed: input.threshold_speed, dur_s: input.dur_s }), m: "rtss" }
+                    else
+                        fallback
+                Err(_) => fallback
+            }
         scored =
             match np_like {
                 # power scores ONLY with a usable FTP. Without one (no stream to derive it —
                 # CSV imports, pre-backfill syncs), power would compute TSS 0 and, by winning
-                # the ladder, BLOCK the HR/RPE fallback — silently scoring a real ride 0. So
-                # fall through to HR/RPE/RE when ftp <= 0.
+                # the ladder, BLOCK the rest — silently scoring a real ride 0. So fall through
+                # to the pace rung / HR / RPE / RE when ftp <= 0.
                 Ok(p) =>
                     if input.ftp > 0.0
                         { t: tss_from_power({ np: p.w, ftp: input.ftp, dur_s: input.dur_s }), m: p.m }
                     else
-                        fallback
-                Err(_) => fallback
+                        pace_or_fallback
+                Err(_) => pace_or_fallback
             }
         { tss: scored.t, np: Try.map_ok(np_like, |p| p.w), model: scored.m }
     }
@@ -827,6 +845,8 @@ Metrics :: [].{
         zones: test_zeroz,
         zb: test_zb,
         ftp: 200.0,
+        ngp: Err(Missing),
+        threshold_speed: 0.0,
         dur_s: 3600.0,
         moving_time: 3600,
     }
@@ -1057,6 +1077,30 @@ expect {
 expect {
     r = Metrics.tss_ladder({ ..Metrics.ladder_base, weighted_watts: Ok(190.0), ftp: 0.0 })
     r.tss.abs() < 0.001 and r.model == "none"
+}
+
+# pace rung: an NGP speed + a threshold speed, no power -> rTSS (IF^2 * hours * 100)
+expect {
+    r = Metrics.tss_ladder({ ..Metrics.ladder_base, ngp: Ok(3.0), threshold_speed: 3.0 })
+    (r.tss - 100.0).abs() < 0.001 and r.model == "rtss"
+}
+
+# power still beats pace (the ladder is power -> pace -> HR -> ...)
+expect {
+    r = Metrics.tss_ladder({ ..Metrics.ladder_base, weighted_watts: Ok(200.0), ngp: Ok(3.5), threshold_speed: 3.0 })
+    r.model == "weighted_watts"
+}
+
+# pace beats HR when there is no usable power
+expect {
+    r = Metrics.tss_ladder({ ..Metrics.ladder_base, ngp: Ok(3.0), threshold_speed: 3.0, zones: { ..Metrics.test_zeroz, z2: 3600 } })
+    r.model == "rtss"
+}
+
+# an NGP with no threshold speed does NOT fire pace — falls through to HR
+expect {
+    r = Metrics.tss_ladder({ ..Metrics.ladder_base, ngp: Ok(3.0), threshold_speed: 0.0, zones: { ..Metrics.test_zeroz, z2: 3600 } })
+    (r.tss - 55.0).abs() < 0.001 and r.model == "hr_zones"
 }
 
 # no power: an hour of Z2 HR time -> 55 hrTSS, np reports NoPower
