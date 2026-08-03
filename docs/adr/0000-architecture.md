@@ -168,13 +168,14 @@ is in the new type-module dialect (`Name :: [].{}`, `List(X)`, `Result`→`Try`,
 compiler by exact nightly tag. CI runs `roc check` + `roc test` (pure expects) green
 on every push.
 
-**Remaining gate — the full release `roc build`.** `roc build src/app.roc` currently
-pegs the Specialization phase for minutes on the pinned nightly — an upstream
-compiler-perf bug (roc-lang/roc#10469, SpecConstr blowup). It was fixed upstream by
-roc-lang/roc#10531 (merged 2026-08-02); stride re-pins to the first nightly that carries the fix,
-at which point the four platform release binaries build again. `roc build` on the
-old alpha4 toolchain is gone with the migration. The execution runbook for that
-re-pin lives in `docs/post-10469-runbook.md`.
+**Build unblocked; release binaries gated on the optimized backend.** `roc build
+src/app.roc` *used to* peg the Specialization phase for minutes — an upstream compiler-perf
+bug (roc-lang/roc#10469, SpecConstr blowup), fixed upstream by roc-lang/roc#10531 (merged
+2026-08-02). stride is re-pinned to the first nightly carrying the fix, and `roc build` now
+completes. What remains is a *separate* backend bug: an intermittent heap-corruption SIGABRT
+in the optimized (`--opt=speed`) codegen (issue #32), so the four platform release binaries
+stay gated on it while the `--opt=dev` build is stable meanwhile. `roc build` on the old
+alpha4 toolchain is gone with the migration.
 
 **Windows** unblocks with the working full build: the new compiler + basic-cli 0.21's
 x64win host can target it (no build yet only because the full `roc build` is gated
