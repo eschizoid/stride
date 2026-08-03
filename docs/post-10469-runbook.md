@@ -1,44 +1,44 @@
-# Post-#10469 runbook — what to do when the native build unblocks
+# Post-#10469 runbook — build UNBLOCKED 2026-08-03; features still ahead
 
-The multi-sport engine ([ADR 0003](adr/0003-multi-sport-scoring.md)) and native binaries
-are all gated on ONE upstream compiler bug: **roc-lang/roc#10469** — `roc build
-src/app.roc` stalls the Specialization phase for minutes. `roc check` / `roc test` still
-work (they stop before that phase), so pure code + tests ship now; everything that needs a
-built binary waits here. When #10469 is fixed — or the loop-rewrite lead unblocks it — run
-this in order. Boxes are the checklist.
+**Status (2026-08-03):** roc#10469 is FIXED (roc#10531, in `nightly-2026-August-03-94cbed3`).
+`roc build src/app.roc` now completes (~6m44s). The build-gated plumbing is done; what
+remains is the ADR-0003 multi-sport *feature* work (sections 3–6) plus two infra items now
+gated on a NEW bug — **the intermittent SIGABRT, issue #32** (heap corruption in the
+optimized stream-decode path; `analyze` reliably aborts on a real-sized db). Until #32 is
+resolved we can't run e2e in CI or ship binaries. Boxes are the checklist.
 
-## 0. Confirm the build actually completes
-- [ ] `roc build src/app.roc --output stride` finishes (no minutes-long stall).
-  - If it STILL stalls, the upstream fix didn't hit our case. Try the lead: rewrite the
-    recursive `fetch_pages!` / `upsert_all!` in `src/Strava.roc` as `List.walk` / `for_each`
-    loops and re-measure — recursion-wrapping-generics was the worst specializer amplifier.
-    Full characterization: the upstream issue `roc-lang/roc#10469` and `MIGRATION.md`.
+## 0. Confirm the build actually completes  ✅ DONE
+- [x] `roc build src/app.roc --output=stride` finishes — 6m44s, 0 errors (note `--output=`,
+      the new compiler's syntax). The Specialization stall is gone. Two runtime breaks the
+      build surfaced were fixed (#30): `UnixBytes` argv decoding, and bare `True` JSON fields
+      serializing as the string `"True"`.
 
-## 1. Restore the pipeline
-- [ ] `just build` + `just test` green locally (the e2e suite now runs against a fresh build,
-      not the frozen binary).
-- [ ] Wire `tests/e2e.roc` into CI (`.github/workflows/build.yml`) — run the full suite
-      (offline + `E2E_MODE=sync`/`mock`) against a freshly-built binary. Closes the standing
-      "e2e not in CI" gap.
-- [ ] Re-enable the `release-please.yml` build/upload jobs (currently `if: false`) → binaries
-      reattach (linux x86_64/arm64, macOS arm64/intel) **+ Windows** (new compiler unlocks it).
+## 1. Restore the pipeline  — build works; CI-e2e + release BLOCKED on #32
+- [ ] `just test` green locally — **blocked by #32**: `analyze` on a real db aborts, so the
+      full e2e can't run clean. (`roc check` + pure `roc test` are green.)
+- [ ] Wire `tests/e2e.roc` into CI — **held on #32** (the crash lands at random spots across
+      the ~140-check suite → flaky). build.yml is re-pinned to the Aug-03 nightly (#33) and
+      the e2e job is staged, commented, ready to un-comment.
+- [ ] Re-enable the `release-please.yml` build/upload jobs — **held on #32** (don't ship a
+      binary that can abort). Windows unblocks with the working build.
 
-## 2. Merge the parked PRs
-- [ ] **#14** — request `altitude,distance` streams (GAP's input). New syncs carry altitude.
-- [ ] **#15** — the pace engine (`normalized_graded_pace`, `pace_tss`, `grade_adjusted_speeds`;
-      pure, tested rTSS/sTSS math).
-- [ ] Build + install a fresh binary.
+## 2. Merge the parked PRs  ✅ DONE
+- [x] **#14** — altitude/distance streams (GAP's input). Merged.
+- [x] **#15** — the pace engine (rTSS/sTSS math). Merged earlier.
+- [x] Build a fresh binary. (`--opt=dev` is the fallback while #32 blocks the optimized build.)
 
-## 3. ADR 0003 slice 1 — per-sport HR zones + kill `ftp_ride` hardcoding
+## 3. ADR 0003 slice 1 — per-sport HR zones + kill `ftp_ride` hardcoding  — FTP half ✅
 Highest leverage: makes the HR-native tail (soccer / basketball / tennis) score correctly.
 - [ ] `zones_sig` scalar → a per-sport SQL CASE in the invalidation WHERE (mirror the
       existing `sport_ftp_case!`), plus per-row zone resolution in `compute_missing_metrics!`.
 - [ ] per-sport `hr_z*_max_<sport>` config keys, with the global `hr_z*_max` as fallback.
-- [ ] remove the `ftp_ride` hardcodes (`Analyze.load_zone_config!`, the `app.roc` Strava FTP
-      sync, the `Report.roc` command gate). The "must set FTP before analyze" gate becomes
-      "has any usable threshold/zone for the sports present" (a runner needs no bike FTP).
-- [ ] teach `doctor` config-completeness the new key shapes.
-- [ ] schema migration + `metrics_rev` bump.
+- [x] **the `ftp_ride` hardcodes are gone (#26)** — we went further than "change the gate":
+      FTP is now *fully derived* per sport (recent best 20-min × 0.95), no config at all.
+      `load_zone_config!` requires only HR zones, the `app.roc` Strava-FTP sync is removed,
+      and the `zones` gate derives from ride power. A runner never sets a bike FTP.
+- [ ] teach `doctor` config-completeness the new key shapes (per-sport HR zones part).
+- [ ] schema migration + `metrics_rev` bump (for the per-sport HR zones; the FTP change
+      invalidates via `ftp_used` and needed no bump).
 
 ## 4. ADR 0003 slice 2 — wire the pace engine into scoring (runs)
 - [ ] Add the pace rung to `Metrics.tss_ladder` / `Analyze.compute_one!`, using #15's
