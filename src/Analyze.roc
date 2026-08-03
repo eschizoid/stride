@@ -100,7 +100,10 @@ Analyze :: [].{
             Ok(acc)
         } else {
             r = compute_missing_metrics!(path, zb)?
-            total = { computed: acc.computed + r.computed, stream_errors: r.stream_errors }
+            # accumulate BOTH counters across passes: the final converged pass computes 0
+            # rows, so taking only its stream_errors would erase unreadable-stream warnings
+            # raised in earlier passes and hide them from the report / JSON.
+            total = { computed: acc.computed + r.computed, stream_errors: acc.stream_errors + r.stream_errors }
             if r.computed == 0 { Ok(total) } else converge_metrics!(path, zb, fuel - 1, total)
         }
 
