@@ -170,10 +170,7 @@ config_store! : Str, Str => Try({}, _)
 config_store! = |key, val| {
     path = Db.open_db!({})?
     Db.config_set!(path, key, val)?
-    Stdout.line!("${key} = ${val}")?
-    # FTP is the one config that also lives on Strava — keep them in sync so
-    # Strava's own power features use the same number
-    if key == "ftp_ride" Strava.sync_ftp_to_strava!(path, val) else Ok({})
+    Stdout.line!("${key} = ${val}")
 }
 init! : {} => Try({}, _)
 init! = |{}| {

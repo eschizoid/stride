@@ -346,9 +346,14 @@ Metrics :: [].{
     # whether the configured FTP is stale (est materially higher) or the athlete is
     # detraining / not testing (est materially lower). One place, one truth.
 
+    # FTP estimate from a 20-min best: the standard 95% factor. One constant, one place —
+    # used by the per-sport derive (Db.derive_sport_ftp!) and the summary display.
+    ftp_from_best_20min : F64 -> F64
+    ftp_from_best_20min = |best_20min| best_20min * 0.95
+
     ftp_calibration : { best_20min : F64, ftp : F64 } -> { est : F64, stale : Bool, detraining : Bool }
     ftp_calibration = |{ best_20min, ftp }| {
-        est = best_20min * 0.95
+        est = ftp_from_best_20min(best_20min)
         {
             est,
             stale: est > ftp * 1.05,
@@ -1101,6 +1106,8 @@ expect Metrics.time_in_power_intensity([{ t: 0, v: 243.0 }], 0.0) == { easy_s: 0
 # generic: every sport maps to its own config key, no hardcoded allowlist. A sport
 # without that key set (or with no power meter) resolves to 0 in sport_ftp! and falls
 # back to HR — so swimming, soccer, paddleboard all "just work" once configured.
+expect (Metrics.ftp_from_best_20min(200.0) - 190.0).abs() < 0.001
+expect (Metrics.ftp_from_best_20min(256.0) - 243.2).abs() < 0.001
 expect Metrics.power_ftp_key("Ride") == "ftp_ride"
 expect Metrics.power_ftp_key("Rowing") == "ftp_rowing"
 expect Metrics.power_ftp_key("Swim") == "ftp_swim"

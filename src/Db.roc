@@ -149,36 +149,29 @@ Db :: [].{
         (now_secs!({}) + time_mode_offset(mode) * 60) // 86400
     }
 
-    # the power threshold (FTP) a sport's power is judged against, read from config key
-    # `ftp_<sport>` (Metrics.power_ftp_key) — uniform for EVERY sport, cycling included
-    # (`ftp_ride`). 0 when unset AND nothing to derive, in which case intensity/TSS fall
-    # back to HR. Fully generic: a new sport needs no code, just its `ftp_<sport>` key —
-    # or nothing, since we derive from the sport's own history.
+    # the power threshold (FTP) a sport's power is judged against. DERIVED, never
+    # configured: it's that sport's own best 20-min power × 0.95 — the standard FTP
+    # estimate. The engine is sport-agnostic and figures FTP out per sport from the data,
+    # so there's nothing to set. 0 when the sport has no power history, in which case
+    # intensity/TSS fall back to HR.
     sport_ftp! : Str, Str => Try(F64, _)
     sport_ftp! = |path, sport| {
-        key = Metrics.power_ftp_key(sport)
-        configured =
-            match config_get!(path, key) {
-                Ok(s) => (F64.from_str(s)).ok_or(0.0)
-                Err(_) => 0.0
-            }
-        raw =
-            if configured > 0.0 configured
-            # no configured FTP → derive from this sport's OWN best 20-min power (× 0.95),
-            # so power-intensity works for any power sport with stream history, zero config
-            else derive_sport_ftp!(path, sport)?
+        raw = derive_sport_ftp!(path, sport)?
         # whole watts — keeps the stored ftp_used and the invalidation CASE exactly equal
         Ok(((raw).round_to_i64_try().ok_or(0)).to_f64())
     }
     derive_sport_ftp! : Str, Str => Try(F64, _)
     derive_sport_ftp! = |path, sport| {
+        # RECENT form: best 20-min power over the last 60 days, not all-time. An old peak
+        # shouldn't keep judging today's rides as easy — FTP tracks current fitness.
+        cutoff = Metrics.days_to_date_str(local_today_days!(path) - 60)
         best = Sqlite.query!({
             path: Path.utf8(path),
-            query: "SELECT CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_type = :sport",
-            bindings: [{ name: ":sport", value: String(sport) }],
+            query: "SELECT CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_type = :sport AND a.start_local >= :cutoff",
+            bindings: [{ name: ":sport", value: String(sport) }, { name: ":cutoff", value: String(cutoff) }],
             row: Sqlite.f64("b"),
         })?
-        Ok(best * 0.95)
+        Ok(Metrics.ftp_from_best_20min(best))
     }
     # ── migrations ───────────────────────────────────────────────────────
 
