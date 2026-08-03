@@ -193,6 +193,20 @@ Metrics :: [].{
     power_ftp_key = |sport|
         "ftp_${Str.with_ascii_lowercased(sport)}"
 
+    # The config key holding a sport's HR zone ceiling, per zone n (1..4). Per-sport
+    # `hr_z<n>_max_<sport>` (hr_z2_max_soccer, …), resolved with the global
+    # `hr_z<n>_max` as fallback: HR zones CAN differ by sport (a rowing Z2 ceiling
+    # need not equal a running one), but most athletes share one set, so the global
+    # covers the common case and a sport-specific key overrides only where it exists.
+    # Same data-driven shape as power_ftp_key — no hardcoded sport list.
+    hr_zone_key : U64, Str -> Str
+    hr_zone_key = |n, sport|
+        "hr_z${U64.to_str(n)}_max_${Str.with_ascii_lowercased(sport)}"
+
+    hr_zone_key_global : U64 -> Str
+    hr_zone_key_global = |n|
+        "hr_z${U64.to_str(n)}_max"
+
     # ── training stress ─────────────────────────────────────────────────
 
     tss_from_power : { np : F64, ftp : F64, dur_s : F64 } -> F64
@@ -1113,6 +1127,12 @@ expect Metrics.power_ftp_key("Rowing") == "ftp_rowing"
 expect Metrics.power_ftp_key("Swim") == "ftp_swim"
 expect Metrics.power_ftp_key("Soccer") == "ftp_soccer"
 expect Metrics.power_ftp_key("StandUpPaddling") == "ftp_standuppaddling"
+
+# per-sport HR zone keys mirror the FTP idiom; the global key is the fallback
+expect Metrics.hr_zone_key(2, "Soccer") == "hr_z2_max_soccer"
+expect Metrics.hr_zone_key(4, "Ride") == "hr_z4_max_ride"
+expect Metrics.hr_zone_key(1, "StandUpPaddling") == "hr_z1_max_standuppaddling"
+expect Metrics.hr_zone_key_global(3) == "hr_z3_max"
 
 expect Metrics.export_date_to_iso("Feb 17, 2022, 12:18:26 PM") == Ok("2022-02-17T12:18:26Z")
 expect Metrics.export_date_to_iso("Jul 4, 2026, 6:05:09 AM") == Ok("2026-07-04T06:05:09Z")
