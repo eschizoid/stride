@@ -105,9 +105,9 @@ stride --version
 ```
 
 Verify the download against [`SHA256SUMS.txt`](https://github.com/eschizoid/stride/releases/latest)
-if you like: `sha256sum -c SHA256SUMS.txt`. (No Windows build yet — not a Roc limitation: newer basic-cli ships a
-Windows host, but stride is pinned to basic-cli 0.20.0 which predates it,
-because 0.21+ needs Roc's new compiler. Use WSL + the Linux binary for now.)
+if you like: `sha256sum -c SHA256SUMS.txt`. (No Windows build yet — not a Roc limitation: the new compiler and
+basic-cli 0.21's Windows host can target it; the release binaries are gated on the full `roc build` landing once
+the upstream perf fix ships. Use WSL + the Linux binary for now.)
 
 ### Build from source
 
@@ -301,15 +301,17 @@ just build     # release binary
 just install   # build + symlink into ~/.local/bin
 ```
 
-- **Toolchain (pinned):** roc `alpha4-rolling` (nightly 2025-09-09) ·
-  [basic-cli 0.20.0](https://github.com/roc-lang/basic-cli) · roc-json 0.13.0.
-  Do **not** bump basic-cli to 0.21.0-rc\* — those bundles target Roc's new compiler.
-- **Layout:** `app.roc` (all effects — in Roc only the app module can use platform
-  effects), `Metrics.roc` (pure math, tested), `Render.roc` (pure tables/formatting,
-  tested), `Command.roc` (pure argv → typed command parser, tested), `Config.roc`
-  (secret-key policy, tested), `Schema.roc` (pure DDL). Query strings live next to
-  their row decoders on purpose — the compiler can't check SQL aliases against
-  decoders, so cohesion is the safeguard.
+- **Toolchain:** Roc's new (Zig) compiler (nightly, pinned by exact tag in
+  `.github/workflows/build.yml`) · [basic-cli 0.21](https://github.com/roc-lang/basic-cli) ·
+  builtin JSON (roc-json dropped). `roc check` + `roc test` run today; the full
+  `roc build` of `app.roc` is gated on one upstream perf fix — see ADR 0000 §9.
+- **Layout:** effects live in modules by concern — `Db.roc` (SQLite + migrations),
+  `Strava.roc` (OAuth + sync), and the `Analyze.roc` / `Report.roc` / `Plan.roc` /
+  `Import.roc` command modules; `app.roc` is a thin argv → dispatch shell. Pure, tested
+  modules: `Metrics.roc` (math), `Render.roc` (tables/formatting), `Command.roc` (argv →
+  typed command parser), `Config.roc` (secret-key policy), `Schema.roc` (DDL). Query
+  strings live next to their row decoders on purpose — the compiler can't check SQL
+  aliases against decoders, so cohesion is the safeguard.
 - **Tests:** 220 pure `expect`s + an end-to-end suite (`just e2e`) that runs the real
   binary against a sandboxed `HOME` with seeded activities of known math (power TSS
   exactly 100, hrTSS exactly 55, FTP rescale 100→400, full plan lifecycle, the
