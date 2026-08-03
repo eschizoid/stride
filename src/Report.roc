@@ -326,7 +326,7 @@ Report :: [].{
                 \\       CAST(SUM(moving_time) / 3600.0 AS REAL) AS hours,
                 \\       CAST(COALESCE(SUM(distance), 0) / 1000.0 AS REAL) AS km
                 \\FROM activities WHERE start_local >= :cutoff
-                \\GROUP BY sport_type ORDER BY sessions DESC
+                \\GROUP BY sport_type ORDER BY sessions DESC, sport_type
             ,
             bindings: [{ name: ":cutoff", value: String(cutoff) }],
             rows: |cols| |stmt| {
@@ -378,7 +378,7 @@ Report :: [].{
                         \\       COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) AS hard_s
                         \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                         \\WHERE a.start_local >= :cutoff
-                        \\ORDER BY a.start_local DESC
+                        \\ORDER BY a.start_local DESC, a.id DESC
                     ,
                     bindings: [{ name: ":cutoff", value: String(cutoff14) }],
                     rows: |cols| |stmt| {
@@ -404,7 +404,7 @@ Report :: [].{
                         \\SELECT id AS id, COALESCE(target_date,'') AS target_date, COALESCE(session_type,'') AS session_type,
                         \\       COALESCE(detail,'') AS detail, COALESCE(rationale,'') AS rationale
                         \\FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'
-                        \\ORDER BY target_date
+                        \\ORDER BY target_date, id
                     ,
                     bindings: [],
                     rows: |cols| |stmt| {
@@ -485,7 +485,7 @@ Report :: [].{
                 \\SELECT a.sport_type AS sport, COUNT(*) AS sessions, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE a.start_local >= :cutoff
-                \\GROUP BY a.sport_type ORDER BY tss DESC
+                \\GROUP BY a.sport_type ORDER BY tss DESC, a.sport_type
             ,
             bindings: [{ name: ":cutoff", value: String(cutoff28) }],
             rows: |cols| |stmt| {
@@ -601,7 +601,7 @@ Report :: [].{
                 \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\${where_clause}
-                \\ORDER BY a.start_local DESC LIMIT ${(limit).to_str()}
+                \\ORDER BY a.start_local DESC, a.id DESC LIMIT ${(limit).to_str()}
             ,
             bindings: filter_bindings,
             rows: |cols| |stmt| {
@@ -687,7 +687,7 @@ Report :: [].{
                         \\       CAST(COALESCE(a.avg_watts * a.moving_time / 1000.0, 0) AS REAL) AS output_kj
                         \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                         \\WHERE ${col} > 0${sport_where}
-                        \\ORDER BY ${col} DESC LIMIT ${(limit).to_str()}
+                        \\ORDER BY ${col} DESC, a.id DESC LIMIT ${(limit).to_str()}
                     ,
                     bindings: sport_binding,
                     rows: |cols| |stmt| {
@@ -803,7 +803,7 @@ Report :: [].{
         })?
         models = Sqlite.query_many!({
             path: Path.utf8(path),
-            query: "SELECT COALESCE(load_model, 'unknown (pre-provenance)') AS model, COUNT(*) AS n FROM activity_metrics GROUP BY load_model ORDER BY n DESC",
+            query: "SELECT COALESCE(load_model, 'unknown (pre-provenance)') AS model, COUNT(*) AS n FROM activity_metrics GROUP BY load_model ORDER BY n DESC, load_model",
             bindings: [],
             rows: |cols| |stmt| {
                 model = Sqlite.str("model")(cols)(stmt)?
@@ -993,7 +993,7 @@ Report :: [].{
                     query:
                         \\SELECT substr(a.start_local, 1, 10) AS d, a.name AS name
                         \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
-                        \\ORDER BY a.start_local DESC LIMIT 1
+                        \\ORDER BY a.start_local DESC, a.id DESC LIMIT 1
                     ,
                     bindings: [],
                     rows: |cols| |stmt| {
@@ -1021,7 +1021,7 @@ Report :: [].{
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\LEFT JOIN ratings rt ON rt.activity_id = a.id
                 \\WHERE a.name IN (SELECT name FROM activities WHERE substr(start_local, 1, 10) = :date)
-                \\ORDER BY a.name, a.start_local
+                \\ORDER BY a.name, a.start_local, a.id
             ,
             bindings: [{ name: ":date", value: String(date) }],
             rows: |cols| |stmt| {
