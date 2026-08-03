@@ -248,7 +248,9 @@ Plan :: [].{
                             query: "UPDATE planned_sessions SET status = 'done' WHERE id = :pid",
                             bindings: [{ name: ":pid", value: Integer(session_id) }],
                         })?
-                        Output.out!({ completed_session: session_id, rest: True }, |p| "planned session #${(p.completed_session).to_str()} (rest) marked done")
+                        # rest must be Bool-TYPED (1 == 1), not a bare `True` tag — the new
+                        # builtin JSON renders a bare tag as the string "True", not true.
+                        Output.out!({ completed_session: session_id, rest: 1 == 1 }, |p| "planned session #${(p.completed_session).to_str()} (rest) marked done")
                     }
                 }
         }

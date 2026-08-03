@@ -164,7 +164,10 @@ config_show! = |key| {
     if Config.is_secret(key)
         # confirm set-ness without leaking the value
         match Db.config_opt!(path, key)? {
-            Found(_) => Output.out!({ key, value: "<redacted>", redacted: True }, |_| "${key} = <redacted> (secret — stored in the db, not shown)")
+            # redacted must be Bool-TYPED, not a bare `True` tag: the new builtin JSON
+            # serializes a bare tag as the string "True". Config.is_secret(key) is Bool
+            # and is True here (we're inside the is_secret branch).
+            Found(_) => Output.out!({ key, value: "<redacted>", redacted: Config.is_secret(key) }, |_| "${key} = <redacted> (secret — stored in the db, not shown)")
             NotFound => Output.err_out!("not_set", "(not set)")
         }
     else
