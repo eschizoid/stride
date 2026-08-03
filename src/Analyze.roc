@@ -225,11 +225,14 @@ Analyze :: [].{
     # HR zones default to one global set (hr_z*_max) but can be overridden per sport
     # (hr_z*_max_<sport>) — a rowing Z2 ceiling need not equal a running one. The whole
     # config table is read ONCE (query_many cleanly handles 0+ rows) and resolution is
-    # then PURE. This deliberately avoids a per-key Sqlite.query! on ABSENT keys: that
-    # single-row-with-zero-rows path corrupts the heap in this basic-cli/compiler combo
-    # (deterministic SIGABRT in hosted_sqlite_prepare — see PLAN.md). Each sport's zone
-    # SIGNATURE is frozen for the invalidation CASE; per-row scoring re-resolves bounds
-    # from the same in-memory config. No circular dependency like FTP has.
+    # then PURE. This deliberately avoids a per-key Sqlite.query! on the many OPTIONAL,
+    # usually-ABSENT per-sport keys: that single-row-with-zero-rows path corrupts the heap
+    # in this basic-cli/compiler combo when hit repeatedly (deterministic SIGABRT in
+    # hosted_sqlite_prepare — see PLAN.md). (The four REQUIRED global hr_z*_max keys are
+    # still read via Db.config_opt! in load_zone_config!, but they're normally present, so
+    # that zero-row path isn't exercised there.) Each sport's zone SIGNATURE is frozen for
+    # the invalidation CASE; per-row scoring re-resolves bounds from the same in-memory
+    # config. No circular dependency like FTP has.
     load_config! : Str => Try(List((Str, Str)), _)
     load_config! = |path|
         Sqlite.query_many!({

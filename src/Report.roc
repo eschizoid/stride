@@ -927,7 +927,7 @@ Report :: [].{
                         "  zero load (no usable data): ${(p.zero_load).to_str()}",
                         "  not yet analyzed: ${(p.unanalyzed).to_str()}",
                         "  pending stream backfill: ${(p.pending_streams).to_str()}",
-                        "  config: ${(p.ftp_configured).to_str()} sport FTP(s) set explicitly (others auto-derived from data), hr zones ${if p.zones_set "set" else "incomplete"}, ${(p.sport_zone_overrides).to_str()} per-sport zone override(s)",
+                        "  config: ${(p.ftp_configured).to_str()} sport FTP(s) set explicitly (others auto-derived from data), hr zones ${if p.zones_set "set" else "incomplete"}, ${(p.sport_zone_overrides).to_str()} per-sport zone key(s) set",
                         "  time: ${p.time}",
                     ],
                     hint,
