@@ -562,7 +562,7 @@ Report :: [].{
             },
             ftp: {
                 best_20min_w_60d: best20_row,
-                estimated_ftp_w: best20_row * 0.95,
+                estimated_ftp_w: Metrics.ftp_from_best_20min(best20_row),
             },
             hr_zones: { z1_max: zb.z1_max, z2_max: zb.z2_max, z3_max: zb.z3_max, z4_max: zb.z4_max },
             sports_28d: sports,
@@ -934,14 +934,14 @@ Report :: [].{
         })
     }
     # power-zone reference chart: the 7 Coggan/Peloton zones as watt ranges from your
-    # configured FTP (the targets you'd set on a Power Zone ride).
+    # cycling FTP — derived from recent ride power, not configured (targets for a PZ ride).
     pz! : {} => Try({}, _)
     pz! = |{}| {
         path = Db.open_db!({})?
         # power zones derive from the cycling FTP (recent best 20-min ride power); no config
         ftp = Db.sport_ftp!(path, "Ride")?
         if ftp <= 0.0
-            Output.err_out!("no_power_data", "no cycling power in the last 60 days — power zones derive from your recent best 20-min ride power, so ride with a power meter and `analyze`")
+            Output.err_out!("no_power_data", "no cycling FTP yet — power zones derive from your best 20-min ride power in the last 60 days. Either those rides have no power, or they haven't been analyzed: run `stride analyze` (and sync rides with a power meter).")
         else {
             zones = Metrics.power_zones(ftp)
             if Output.json_mode!({})

@@ -171,7 +171,7 @@ Db :: [].{
             bindings: [{ name: ":sport", value: String(sport) }, { name: ":cutoff", value: String(cutoff) }],
             row: Sqlite.f64("b"),
         })?
-        Ok(best * 0.95)
+        Ok(Metrics.ftp_from_best_20min(best))
     }
     # ── migrations ───────────────────────────────────────────────────────
 
