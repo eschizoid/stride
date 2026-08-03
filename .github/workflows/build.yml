@@ -7,10 +7,10 @@ on:
 
 jobs:
   # Type-check the whole app + run every pure module's expect suite, on all three
-  # OSes INCLUDING Windows. This is the new (Zig) compiler — `roc check` and
+  # OSes INCLUDING Windows. This is the new (Zig) compiler — both `roc check` and
   # `roc test` stop before native codegen, so they are fast and deterministic and
   # remain the CI gate. (A full `roc build` of app.roc now WORKS on this nightly —
-  # the SpecConstr perf bug roc#10469 was fixed by #10531 — but takes ~6 min and the
+  # the SpecConstr perf bug roc#10469 was fixed by roc#10531 — but takes ~6 min and the
   # optimized binary has a rare intermittent SIGABRT (issue #32), so build + e2e are
   # not yet run in CI. Restore them once #32 is resolved.)
   check-and-test:
