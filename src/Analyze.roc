@@ -114,6 +114,10 @@ Analyze :: [].{
         # FTP (per-sport, via the CASE), or the HR zones / metrics_rev changed.
         ftp_map = sport_ftp_map!(path)?
         ftp_case = ftp_case_from_map(ftp_map)
+        # read config ONCE, then resolve per-sport zones purely (see load_config! note)
+        cfg = load_config!(path)?
+        zone_sigs = sport_zone_sigs!(path, cfg, zb)?
+        zones_case = zones_case_from_sigs(zone_sigs, zb)
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
@@ -127,11 +131,10 @@ Analyze :: [].{
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE m.activity_id IS NULL
                 \\      OR CAST(COALESCE(m.ftp_used, 0) AS INTEGER) <> CAST((${ftp_case}) AS INTEGER)
-                \\      OR COALESCE(m.zones_used, '') <> :zones
+                \\      OR COALESCE(m.zones_used, '') <> (${zones_case})
                 \\      OR COALESCE(m.metrics_rev, 0) <> :rev
             ,
             bindings: [
-                { name: ":zones", value: String(zones_sig(zb)) },
                 { name: ":rev", value: Integer(metrics_rev) },
             ],
             rows: |cols| |stmt| {
@@ -148,19 +151,19 @@ Analyze :: [].{
                 Ok({ id, start, mt, sport, re, aw, ahr, waw, rpe, raw })
             },
         })?
-        process_rows!(path, zb, ftp_map, rows, { computed: 0, stream_errors: 0 })
+        process_rows!(path, zb, ftp_map, cfg, rows, { computed: 0, stream_errors: 0 })
     }
-    process_rows! : Str, Metrics.ZoneBounds, List((Str, F64)), List(ActivityRow), { computed : U64, stream_errors : U64 } => Try({ computed : U64, stream_errors : U64 }, _)
-    process_rows! = |path, zb, ftp_map, rows, acc|
+    process_rows! : Str, Metrics.ZoneBounds, List((Str, F64)), List((Str, Str)), List(ActivityRow), { computed : U64, stream_errors : U64 } => Try({ computed : U64, stream_errors : U64 }, _)
+    process_rows! = |path, zb, ftp_map, cfg, rows, acc|
         match rows {
             [] => Ok(acc)
             [row, .. as rest] => {
-                failed = compute_one!(path, zb, ftp_map, row)?
+                failed = compute_one!(path, zb, ftp_map, cfg, row)?
                 next = {
                     computed: acc.computed + 1,
                     stream_errors: acc.stream_errors + (if failed 1 else 0),
                 }
-                process_rows!(path, zb, ftp_map, rest, next)
+                process_rows!(path, zb, ftp_map, cfg, rest, next)
             }
         }
     zero_zones : Metrics.ZoneSeconds
@@ -218,11 +221,92 @@ Analyze :: [].{
         })
         "CASE a.sport_type${whens} ELSE 0 END"
     }
+    # ── per-sport HR zones ───────────────────────────────────────────────
+    # HR zones default to one global set (hr_z*_max) but can be overridden per sport
+    # (hr_z*_max_<sport>) — a rowing Z2 ceiling need not equal a running one. The whole
+    # config table is read ONCE (query_many cleanly handles 0+ rows) and resolution is
+    # then PURE. This deliberately avoids a per-key Sqlite.query! on the many OPTIONAL,
+    # usually-ABSENT per-sport keys: that single-row-with-zero-rows path corrupts the heap
+    # in this basic-cli/compiler combo when hit repeatedly (deterministic SIGABRT in
+    # hosted_sqlite_prepare — see PLAN.md). (The four REQUIRED global hr_z*_max keys are
+    # still read via Db.config_opt! in load_zone_config!, but they're normally present, so
+    # that zero-row path isn't exercised there.) Each sport's zone SIGNATURE is frozen for
+    # the invalidation CASE; per-row scoring re-resolves bounds from the same in-memory
+    # config. No circular dependency like FTP has.
+    load_config! : Str => Try(List((Str, Str)), _)
+    load_config! = |path|
+        Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "SELECT key AS k, COALESCE(value, '') AS v FROM config",
+            bindings: [],
+            rows: |cols| |stmt| {
+                k = Sqlite.str("k")(cols)(stmt)?
+                v = Sqlite.str("v")(cols)(stmt)?
+                Ok((k, v))
+            },
+        })
+    # pure: a config value parsed as F64, or the fallback when absent/unparseable.
+    # Recursive so it stops at the first match (config also holds tokens/sync markers).
+    cfg_f64 : List((Str, Str)), Str, F64 -> F64
+    cfg_f64 = |cfg, key, fallback|
+        match cfg {
+            [] => fallback
+            [pair, .. as rest] =>
+                if pair.0 == key
+                    match F64.from_str(pair.1) {
+                        Ok(v) => v
+                        Err(_) => fallback
+                    }
+                else
+                    cfg_f64(rest, key, fallback)
+        }
+    # pure: one sport's zone ceilings (per-sport keys, global fallback). An empty sport
+    # (NULL/'' sport_type, selected as COALESCE(...,'')) resolves to the GLOBAL set only:
+    # sport_zone_sigs! excludes empty sports from the invalidation CASE (WHERE sport_type
+    # <> ''), so an empty-suffix hr_z*_max_ key must NOT change these rows' signature, or
+    # they'd differ from the CASE's ELSE (global) and recompute every run.
+    resolve_zones_pure : List((Str, Str)), Str, Metrics.ZoneBounds -> Metrics.ZoneBounds
+    resolve_zones_pure = |cfg, sport, g|
+        if Str.is_empty(sport)
+            g
+        else
+            {
+                z1_max: cfg_f64(cfg, Metrics.hr_zone_key(1, sport), g.z1_max),
+                z2_max: cfg_f64(cfg, Metrics.hr_zone_key(2, sport), g.z2_max),
+                z3_max: cfg_f64(cfg, Metrics.hr_zone_key(3, sport), g.z3_max),
+                z4_max: cfg_f64(cfg, Metrics.hr_zone_key(4, sport), g.z4_max),
+            }
+    # each distinct sport's frozen (sport, zone-signature) pair for the invalidation CASE
+    sport_zone_sigs! : Str, List((Str, Str)), Metrics.ZoneBounds => Try(List((Str, Str)), _)
+    sport_zone_sigs! = |path, cfg, g| {
+        sports = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "SELECT DISTINCT sport_type AS s FROM activities WHERE sport_type IS NOT NULL AND sport_type <> ''",
+            bindings: [],
+            rows: Sqlite.str("s"),
+        })?
+        Ok(List.map(sports, |s| (s, zones_sig(resolve_zones_pure(cfg, s, g)))))
+    }
+    # pure: `CASE a.sport_type WHEN '<sport>' THEN '<sig>' … ELSE '<global_sig>' END`, the
+    # zones analog of ftp_case_from_map, built from the frozen (sport, sig) list. Each row's
+    # stored zones_used is compared to ITS sport's signature, so a per-sport zone edit
+    # invalidates only that sport's rows.
+    zones_case_from_sigs : List((Str, Str)), Metrics.ZoneBounds -> Str
+    zones_case_from_sigs = |sigs, g| {
+        whens = List.fold(sigs, "", |acc, pair| {
+            esc = Str.replace_each(pair.0, "'", "''")
+            "${acc} WHEN '${esc}' THEN '${pair.1}'"
+        })
+        "CASE a.sport_type${whens} ELSE '${zones_sig(g)}' END"
+    }
     # returns Bool: did the stored stream JSON fail to decode? (surfaced by analyze)
-    compute_one! : Str, Metrics.ZoneBounds, List((Str, F64)), ActivityRow => Try(Bool, _)
-    compute_one! = |path, zb, ftp_map, row| {
+    compute_one! : Str, Metrics.ZoneBounds, List((Str, F64)), List((Str, Str)), ActivityRow => Try(Bool, _)
+    compute_one! = |path, zb, ftp_map, cfg, row| {
         decoded = Streams.decode_streams(row.raw)
         streams = decoded.streams
+        # this sport's zone bounds: per-sport override or global, resolved purely from
+        # the in-memory config (no per-key DB hit — that path corrupts the heap here)
+        row_zb = resolve_zones_pure(cfg, row.sport, zb)
 
         # sanity-filter HR: some sources (Peloton strength workouts) emit junk
         # near-zero samples — Metrics.valid_hr is the one place the bounds live
@@ -238,7 +322,7 @@ Analyze :: [].{
         )
         watts_1s = Metrics.resample_1s(List.map(watts_pairs, |p| { t: p.t, v: p.v }))
 
-        zones = if List.is_empty(hr_pairs) zero_zones else Metrics.time_in_zones(hr_pairs, zb)
+        zones = if List.is_empty(hr_pairs) zero_zones else Metrics.time_in_zones(hr_pairs, row_zb)
 
         np_stream = Metrics.normalized_power(watts_1s)
         best20 = Metrics.best_rolling_mean(watts_1s, 1200)
@@ -267,7 +351,7 @@ Analyze :: [].{
             rpe: nn(row.rpe),
             sport_type: row.sport,
             zones,
-            zb,
+            zb: row_zb,
             ftp: pi_ftp, # the SPORT's FTP, not cycling's — so rowing/running load is scaled right
             dur_s: (row.mt).to_f64(),
             moving_time: row.mt,
@@ -304,7 +388,7 @@ Analyze :: [].{
                 { name: ":pim", value: Integer(pintensity.moderate_s) },
                 { name: ":pih", value: Integer(pintensity.hard_s) },
                 { name: ":ftpu", value: Real(pi_ftp) },
-                { name: ":zused", value: String(zones_sig(zb)) },
+                { name: ":zused", value: String(zones_sig(row_zb)) },
                 { name: ":rev", value: Integer(metrics_rev) },
                 { name: ":model", value: String(ladder.model) },
                 { name: ":id", value: Integer(row.id) },
