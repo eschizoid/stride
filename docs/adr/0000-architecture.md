@@ -29,29 +29,27 @@ or any JSON. The secret-key policy is one tested source of truth (`Config.is_sec
 
 ## 2. Written in Roc — and pinned, deliberately
 
-Toolchain (pinned): roc `alpha4-rolling` nightly (2025-09-09) · basic-cli `0.20.0`
-· roc-json `0.13.0`.
+Toolchain: Roc's **new (Zig) compiler** (nightly, pinned by exact tag in
+`.github/workflows/build.yml`) · basic-cli `0.21` · builtin JSON (no roc-json). The
+earlier alpha4 / basic-cli 0.20 / roc-json 0.13 pin is retired; §9 records the
+migration and why the original "blocked on roc-json" conclusion was wrong. CI
+type-checks (`roc check`) and runs the pure tests (`roc test`) on this compiler today;
+the full release `roc build` of `app.roc` is gated on one upstream perf fix (§9).
 
-**Do not bump the platform.** basic-cli 0.21+ and roc-json's would-be successor
-target Roc's *new* (Zig) compiler, which is a different syntax dialect on a pre-0.1,
-weekly-churning target. The migration is not an effort question — it is **blocked on
-a dependency**: stride decodes all JSON via roc-json, and roc-json has no
-new-compiler release (its repo has been dormant since 2025-04). See §9.
+### Effects live in modules, organized by concern
 
-### Effects only in `app.roc`
+The new compiler lets any module use platform effects, so I/O is split by concern
+instead of piled into `app.roc`: `Db.roc` owns SQLite plus the schema/migrations,
+`Strava.roc` owns the OAuth + sync HTTP, `Analyze/Report/Plan/Import` own their
+commands, and `app.roc` is a thin argv → dispatch shell. Pure logic still lives in
+its own tested modules: `Metrics.roc` (training math), `Render.roc`
+(tables/formatting), `Command.roc` (argv → typed command), `Config.roc` (key policy),
+`Csv/Streams/Backfill/Schema`.
 
-In Roc, only the application module may use platform effects. So all I/O (SQLite,
-HTTP, Cmd, File, stdout) lives in `src/app.roc`; pure logic lives in tested modules:
-`Metrics.roc` (training math), `Render.roc` (tables/formatting), `Command.roc`
-(argv → typed command), `Config.roc` (key policy), `Csv/Streams/Backfill/Schema`.
-
-**The commands cannot be split into per-file modules.** This was tested, not
-assumed: module params are *monomorphic*, and the record-builder `{ rec <- … }`
-desugars into nested decode calls at different intermediate types, so any row
-decoder wider than two columns fails to type-check once effects are injected into a
-module. A repository/query split is therefore off the table until polymorphic module
-params exist. Commands stay in `app.roc`; the pure, effect-free parts (parsing,
-math, rendering) are what gets extracted. Re-test this after any compiler change.
+Historical note: under alpha4 this split was impossible — module params were
+*monomorphic*, so injecting effects broke any row decoder wider than two columns and
+every command had to sit in `app.roc`. The new compiler removed that wall, and the
+repository/query split it used to block is simply how the code is laid out now.
 
 ### SQL lives next to its decoder
 
@@ -61,9 +59,9 @@ decoder they feed. Only decoder-free DDL lives in `Schema.roc`.
 
 ### Tests: pure `expect`s + a bash/python e2e
 
-Effectful `expect`s segfault `roc test` on alpha4 (verified: `Cmd.exec_output!`
-inside an `expect` exits 139 before running anything). So Roc keeps the pure
-`expect`s (~220 of them), and end-to-end coverage is a native-Roc suite
+Effectful `expect`s can't run under `roc test` — they need a platform (on alpha4 they
+segfaulted outright, exit 139). So Roc keeps the pure `expect`s (~220 of them), and
+end-to-end coverage is a native-Roc suite
 (`tests/e2e.roc`) that drives the real binary against a sandboxed `HOME` with seeded
 activities of known math. It's a basic-webserver app that runs every check in `init!`
 then exits (basic-cli's exec host drops child exit codes under the suite's ~350
@@ -162,28 +160,32 @@ An unknown timezone name never silently becomes UTC — it falls back to the fix
 offset and `doctor` flags it. Historical per-activity dates already use Strava's
 civil date, so only the today boundary needs this.
 
-## 9. Compiler migration and Windows — IN PROGRESS (roc-json was never the blocker)
+## 9. Compiler migration — DONE on the new compiler (full build gated on one upstream fix)
 
-stride ships Linux (x64/arm64) and macOS (arm64/Intel) binaries. There is **no
-Windows build** yet, and that is *not* a Roc limitation: the Roc compiler targets
-Windows and newer basic-cli ships an x64win host. stride can't build for Windows
-only because it is pinned to basic-cli 0.20.0 (which predates that host), and it is
-pinned there because 0.21+ needs the new compiler.
+The migration to Roc's new (Zig) compiler is **merged to `main`**: the whole codebase
+is in the new type-module dialect (`Name :: [].{}`, `List(X)`, `Result`→`Try`,
+`True`/`False`), on basic-cli 0.21 with builtin JSON, and `build.yml` pins the new
+compiler by exact nightly tag. CI runs `roc check` + `roc test` (pure expects) green
+on every push.
 
-**CORRECTION (2026-08-01): the earlier "hard-blocked on roc-json" conclusion was
-wrong.** It assumed all JSON had to go through a roc-json port. But roc-json's
-maintainer confirmed (lukewilliamboswell/roc-json#52) that **JSON parsing is now a
-builtin in the new compiler** — so roc-json is simply dropped, not ported. The
-migration is unblocked and underway on branch `new-compiler-migration`:
-- New compiler installed side-by-side (`~/.local/roc-new`); alpha4 stays the shipping
-  compiler on `main` until the migration is green.
-- Target: basic-cli 0.21 + builtin JSON, new type-module syntax (`Name :: [].{}`,
-  `List(X)`, `Result`→`Try`, `True`/`False`). Ruleset + progress in `MIGRATION.md`.
-- Scope is real: ~4500 lines, a new language dialect, new JSON + platform APIs — a
-  multi-session grind, done pure-modules-first, app.roc last.
-This migration also unlocks Windows and native effectful-expect e2e. Lesson worth
+**Remaining gate — the full release `roc build`.** `roc build src/app.roc` currently
+pegs the Specialization phase for minutes on the pinned nightly — an upstream
+compiler-perf bug (roc-lang/roc#10469, SpecConstr blowup). It was fixed upstream by
+#10531 (merged 2026-08-02); stride re-pins to the first nightly that carries the fix,
+at which point the four platform release binaries build again. `roc build` on the
+old alpha4 toolchain is gone with the migration. The execution runbook for that
+re-pin lives in `docs/post-10469-runbook.md`.
+
+**Windows** unblocks with the working full build: the new compiler + basic-cli 0.21's
+x64win host can target it (no build yet only because the full `roc build` is gated
+above), so Windows is a follow-up, not a Roc limitation.
+
+**CORRECTION kept for the record (2026-08-01):** the earlier "hard-blocked on
+roc-json" conclusion was wrong — it assumed all JSON had to go through a roc-json
+port, but JSON parsing is a builtin in the new compiler
+(lukewilliamboswell/roc-json#52), so roc-json was dropped, not ported. Lesson worth
 keeping: "blocked" was an untested assumption stated as fact — verify with the source
-(here, just asking the maintainer) before writing a constraint into the record.
+before writing a constraint into the record.
 
 ## 10. Deliberately out of scope
 
