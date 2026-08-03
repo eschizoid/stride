@@ -62,9 +62,10 @@ Streams :: [].{
 	# would desync the lists: Metrics.grade_adjusted_speeds combines the three with a nested
 	# map2 that truncates to the SHORTEST, so its inputs must already be equal-length and
 	# index-aligned. Here we zip all three FIRST (one unit), then drop any sample whose
-	# distance OR altitude is the -99999 null sentinel — removing that index from ALL three
-	# lists together. A genuinely negative altitude (below sea level) is KEPT. Time is always
-	# valid, so it never triggers a drop. Any missing stream -> three empty lists.
+	# time, distance, OR altitude is the -99999 null sentinel — removing that index from ALL
+	# three lists together (decode_streams turns a null in ANY stream into that sentinel). A
+	# genuinely negative altitude (below sea level) is KEPT — the sentinel sits far below any
+	# real reading. Any missing stream -> three empty lists.
 	dist_alt_time : Try(StreamSeq, [Missing]), Try(StreamSeq, [Missing]), Try(StreamSeq, [Missing]) -> { time : List(F64), dist : List(F64), alt : List(F64) }
 	dist_alt_time = |time_opt, dist_opt, alt_opt|
 		match (time_opt, dist_opt, alt_opt) {
