@@ -8,10 +8,11 @@ on:
 jobs:
   # Type-check the whole app + run every pure module's expect suite, on all three
   # OSes INCLUDING Windows. This is the new (Zig) compiler — `roc check` and
-  # `roc test` both stop before the native Specialization/codegen pass, so they
-  # are fast and deterministic. (A full `roc build` of app.roc currently pegs the
-  # Specialization phase for minutes on this nightly — a known compiler-perf issue,
-  # tracked separately; it is NOT a correctness problem, `check` is 0 errors.)
+  # `roc test` stop before native codegen, so they are fast and deterministic and
+  # remain the CI gate. (A full `roc build` of app.roc now WORKS on this nightly —
+  # the SpecConstr perf bug roc#10469 was fixed by #10531 — but takes ~6 min and the
+  # optimized binary has a rare intermittent SIGABRT (issue #32), so build + e2e are
+  # not yet run in CI. Restore them once #32 is resolved.)
   check-and-test:
     strategy:
       fail-fast: false
@@ -22,13 +23,14 @@ jobs:
       - uses: actions/checkout@v7
 
       # Official cross-platform installer. `nightly-new-compiler` is the only
-      # channel that ships a Windows roc binary; pinned to the exact nightly the
-      # migration was developed and verified against (release-fast f5556d8).
+      # channel that ships a Windows roc binary; pinned to the first nightly that
+      # carries the SpecConstr build fix (roc#10531 / commit 94cbed3), so `roc build`
+      # works again — and `roc check`/`roc test` stay deterministic on it.
       - name: Install Roc (new compiler)
         uses: roc-lang/setup-roc@v0.3.0
         with:
           version: nightly-new-compiler
-          nightly-tag: nightly-2026-July-31-f5556d8
+          nightly-tag: nightly-2026-August-03-94cbed3
 
       # One check covers the whole codebase: `roc check` follows every import, so
       # this type-checks app.roc plus all 8 modules against basic-cli 0.21 + http.
@@ -50,22 +52,20 @@ jobs:
           echo "--- roc check src/Schema.roc (DDL-only, no expects) ---"
           roc check src/Schema.roc
 
-  # COVERAGE GAP (intentional, tracked): the alpha4 pipeline ran `just e2e-sync`
-  # (tests/e2e_sync.sh) — a python mock-Strava server exercising the real
-  # token-refresh + HTTP + DB wiring end to end. It is NOT run here because it needs
-  # a compiled `stride` binary, and `roc build` currently stalls the new compiler's
-  # Specialization phase for minutes on this nightly (a known upstream perf bug — see
-  # PR description / the migration notes). `check` + pure-module `test` above are the
-  # gate meanwhile. RESTORE this integration job (ideally ported to a native Roc
-  # program so it runs without python) as soon as `roc build` of app.roc is viable
-  # again — either after the specializer is fixed upstream or on a later nightly.
+  # COVERAGE GAP (intentional, tracked): the e2e needs a compiled `stride` binary.
+  # `roc build` now works on this nightly (~6 min), and the native e2e harness
+  # (tests/e2e.roc) builds in seconds — but the optimized binary has a rare
+  # intermittent SIGABRT (issue #32) that lands at random spots across the ~140-check
+  # suite, making it flaky, so build + e2e are held out of CI. `check` + pure-module
+  # `test` above are the gate meanwhile. RESTORE this job (build app.roc, then run
+  # the native `just e2e` offline suite + `just e2e-sync`) once #32 is resolved.
   #
-  # e2e-sync:
+  # e2e:
   #   needs: check-and-test
   #   runs-on: ubuntu-latest
   #   steps:
   #     - uses: actions/checkout@v7
   #     - uses: roc-lang/setup-roc@v0.3.0
-  #       with: { version: nightly-new-compiler, nightly-tag: nightly-2026-July-31-f5556d8 }
-  #     - run: roc build src/app.roc --output stride   # blocked: Specialization perf bug
-  #     - run: ./tests/e2e_sync.sh
+  #       with: { version: nightly-new-compiler, nightly-tag: nightly-2026-August-03-94cbed3 }
+  #     - run: roc build src/app.roc --output=stride   # ~6 min; new compiler uses --output=
+  #     - run: ROC_NEW=roc just e2e
