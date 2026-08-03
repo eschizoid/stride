@@ -173,12 +173,34 @@ Db :: [].{
         })?
         Ok(Metrics.ftp_from_best_20min(best))
     }
+    # the threshold PACE (as a speed in m/s) a sport's grade-adjusted pace is judged against.
+    # DERIVED like FTP — the sport's own best 20-min sustained grade-adjusted speed × 0.95,
+    # over the last 60 days. 0 when the sport has no pace history (needs dist+alt streams), in
+    # which case pace scoring falls through to HR. Zero-config, mirroring sport_ftp!.
+    sport_threshold_speed! : Str, Str => Try(F64, _)
+    sport_threshold_speed! = |path, sport| {
+        raw = derive_sport_threshold!(path, sport)?
+        # round to mm/s — keeps the stored threshold_pace_used and the invalidation CASE equal
+        Ok(((raw * 1000.0).round_to_i64_try().ok_or(0)).to_f64() / 1000.0)
+    }
+    derive_sport_threshold! : Str, Str => Try(F64, _)
+    derive_sport_threshold! = |path, sport| {
+        cutoff = Metrics.days_to_date_str(local_today_days!(path) - 60)
+        best = Sqlite.query!({
+            path: Path.utf8(path),
+            query: "SELECT CAST(COALESCE(MAX(m.best_20min_speed), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_type = :sport AND a.start_local >= :cutoff",
+            bindings: [{ name: ":sport", value: String(sport) }, { name: ":cutoff", value: String(cutoff) }],
+            row: Sqlite.f64("b"),
+        })?
+        # threshold ≈ best 20-min effort × 0.95 (mirrors the FTP estimate)
+        Ok(best * 0.95)
+    }
     # ── migrations ───────────────────────────────────────────────────────
 
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 12
+    schema_version = 13
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -232,6 +254,12 @@ Db :: [].{
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_300s_w REAL")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_600s_w REAL")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_3600s_w REAL")?
+        # v13: pace engine — best_20min_speed is the per-activity best sustained grade-adjusted
+        # speed (m/s), the pace analogue of best_20min_w; the derived threshold pace MAXes it
+        # over 60d. threshold_pace_used is the threshold (m/s) a row was scored against — the
+        # pace twin of ftp_used, compared in the recompute WHERE so a threshold change reanalyzes.
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_20min_speed REAL")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN threshold_pace_used REAL")?
         # v2: index the column every date-range filter and the activities sort use
         # (queries now compare a.start_local directly — sargable — instead of substr)
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })

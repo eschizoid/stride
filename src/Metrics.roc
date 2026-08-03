@@ -962,6 +962,20 @@ Metrics :: [].{
     normalized_graded_pace = |time, dist, alt|
         normalized_power(grade_adjusted_speeds(time, dist, alt))
 
+    # 1 Hz grade-adjusted speed stream from an aligned time/dist/alt triple
+    # (Streams.dist_alt_time): resample dist & alt onto a 1 Hz base, THEN grade-adjust —
+    # NGP's 30-sample window is 30 s only at 1 Hz. Feed the result to normalized_power
+    # (= the NGP speed) AND to best_rolling_mean (best sustained speed → derived threshold
+    # pace). Computing the stream once and reusing it avoids grade-adjusting twice.
+    graded_speed_1s : List(F64), List(F64), List(F64) -> List(F64)
+    graded_speed_1s = |time, dist, alt| {
+        to_samples = |vals| List.map2(time, vals, |t, v| { t: (t).round_to_i64_try().ok_or(0), v })
+        dist_1s = resample_1s(to_samples(dist))
+        alt_1s = resample_1s(to_samples(alt))
+        time_1s = List.map_with_index(dist_1s, |_, i| (i).to_f64())
+        grade_adjusted_speeds(time_1s, dist_1s, alt_1s)
+    }
+
     # rTSS / sTSS: tss_from_power with speed swapped for watts — IF = ngp_speed /
     # threshold_speed (faster = harder), IF² × hours × 100. 1 h at threshold = 100.
     # Running: legit (running power ≈ linear in speed, so speed-IF ≈ power-IF ≈ TP rTSS).
@@ -1485,3 +1499,15 @@ expect
 # short / empty streams surface TooShort / [] cleanly, no crash
 expect Metrics.normalized_graded_pace([0.0, 1.0], [0.0, 3.0], [0.0, 0.0]).is_err()
 expect List.len(Metrics.grade_adjusted_speeds([], [], [])) == 0
+
+# graded_speed_1s: a flat course at a constant 4 m/s -> NGP speed ~ 4 (no grade adjustment),
+# and the best sustained 30 s speed is ~ 4. Exercises resample -> grade-adjust -> rolling.
+expect {
+    time = List.map_with_index(List.repeat(0.0, 121), |_, i| (i).to_f64())
+    dist = List.map_with_index(List.repeat(0.0, 121), |_, i| (i).to_f64() * 4.0)
+    alt = List.repeat(0.0, 121)
+    gas = Metrics.graded_speed_1s(time, dist, alt)
+    ngp_ok = match Metrics.normalized_power(gas) { Ok(v) => (v - 4.0).abs() < 0.5, Err(_) => 1 == 0 }
+    best_ok = match Metrics.best_rolling_mean(gas, 30) { Ok(v) => (v - 4.0).abs() < 0.5, Err(_) => 1 == 0 }
+    ngp_ok and best_ok
+}
