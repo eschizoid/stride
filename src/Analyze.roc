@@ -322,10 +322,25 @@ Analyze :: [].{
                 # extend through today so rest days decay ATL/CTL and TSB is true as-of-now
                 today = Db.local_today_days!(path)
                 last_day = (bounds.hi).max(today)
-                Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM daily_load", bindings: [] })?
-                walk_days!(path, by_day, bounds.lo, last_day, 0.0, 0.0)
+                # atomic rebuild: DELETE + the whole day-walk run in ONE transaction. A crash
+                # mid-walk would otherwise leave daily_load truncated (missing the tail day) and
+                # the next `summary` would read it as valid → silently stale CTL/ATL/TSB. On any
+                # error we ROLLBACK and surface it rather than commit a partial series.
+                _ = Sqlite.execute!({ path: Path.utf8(path), query: "BEGIN", bindings: [] })?
+                match rebuild_txn!(path, by_day, bounds.lo, last_day) {
+                    Ok(_) => Sqlite.execute!({ path: Path.utf8(path), query: "COMMIT", bindings: [] })
+                    Err(e) => {
+                        _ = Sqlite.execute!({ path: Path.utf8(path), query: "ROLLBACK", bindings: [] })
+                        Err(e)
+                    }
+                }
             }
         }
+    }
+    rebuild_txn! : Str, Dict(I64, F64), I64, I64 => Try({}, _)
+    rebuild_txn! = |path, by_day, lo, last_day| {
+        Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM daily_load", bindings: [] })?
+        walk_days!(path, by_day, lo, last_day, 0.0, 0.0)
     }
     walk_days! : Str, Dict(I64, F64), I64, I64, F64, F64 => Try({}, _)
     walk_days! = |path, by_day, day, last_day, ctl_prev, atl_prev|
