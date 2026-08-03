@@ -17,7 +17,7 @@ Analyze :: [].{
             Err(MissingConfig) => Output.missing_config!({})
             Err(other) => Err(other)
             Ok(cfg) => {
-                res = compute_missing_metrics!(path, cfg.zb)?
+                res = converge_metrics!(path, cfg.zb, 5, { computed: 0, stream_errors: 0 })?
                 rebuild_daily_load!(path)?
                 form =
                     match Sqlite.query!({
@@ -89,11 +89,30 @@ Analyze :: [].{
         raw : [NotNull(Str), Null],
     }
 
+    # analyze runs compute_missing_metrics! to a FIXED POINT (bounded), not once. A pass can
+    # change a sport's DERIVED FTP (its best_20min_w gets populated), which invalidates rows
+    # the next pass must rescore; iterate until a pass computes 0 (converged) or fuel runs
+    # out. Configured-FTP dbs converge in one real pass (pass 2 finds nothing), so the count
+    # still matches "activities analyzed"; a fresh derived-FTP db converges in ~2.
+    converge_metrics! : Str, Metrics.ZoneBounds, U64, { computed : U64, stream_errors : U64 } => Try({ computed : U64, stream_errors : U64 }, _)
+    converge_metrics! = |path, zb, fuel, acc|
+        if fuel == 0 {
+            Ok(acc)
+        } else {
+            r = compute_missing_metrics!(path, zb)?
+            # accumulate BOTH counters across passes: the final converged pass computes 0
+            # rows, so taking only its stream_errors would erase unreadable-stream warnings
+            # raised in earlier passes and hide them from the report / JSON.
+            total = { computed: acc.computed + r.computed, stream_errors: acc.stream_errors + r.stream_errors }
+            if r.computed == 0 { Ok(total) } else converge_metrics!(path, zb, fuel - 1, total)
+        }
+
     compute_missing_metrics! : Str, Metrics.ZoneBounds => Try({ computed : U64, stream_errors : U64 }, _)
     compute_missing_metrics! = |path, zb| {
         # recompute a row when its stored ftp_used no longer matches ITS sport's current
         # FTP (per-sport, via the CASE), or the HR zones / metrics_rev changed.
-        ftp_case = sport_ftp_case!(path)?
+        ftp_map = sport_ftp_map!(path)?
+        ftp_case = ftp_case_from_map(ftp_map)
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
@@ -128,19 +147,19 @@ Analyze :: [].{
                 Ok({ id, start, mt, sport, re, aw, ahr, waw, rpe, raw })
             },
         })?
-        process_rows!(path, zb, rows, { computed: 0, stream_errors: 0 })
+        process_rows!(path, zb, ftp_map, rows, { computed: 0, stream_errors: 0 })
     }
-    process_rows! : Str, Metrics.ZoneBounds, List(ActivityRow), { computed : U64, stream_errors : U64 } => Try({ computed : U64, stream_errors : U64 }, _)
-    process_rows! = |path, zb, rows, acc|
+    process_rows! : Str, Metrics.ZoneBounds, List((Str, F64)), List(ActivityRow), { computed : U64, stream_errors : U64 } => Try({ computed : U64, stream_errors : U64 }, _)
+    process_rows! = |path, zb, ftp_map, rows, acc|
         match rows {
             [] => Ok(acc)
             [row, .. as rest] => {
-                failed = compute_one!(path, zb, row)?
+                failed = compute_one!(path, zb, ftp_map, row)?
                 next = {
                     computed: acc.computed + 1,
                     stream_errors: acc.stream_errors + (if failed 1 else 0),
                 }
-                process_rows!(path, zb, rest, next)
+                process_rows!(path, zb, ftp_map, rest, next)
             }
         }
     zero_zones : Metrics.ZoneSeconds
@@ -158,32 +177,49 @@ Analyze :: [].{
     # ITS sport's current FTP (not one global number). Without this, per-sport ftp_used
     # would never equal the single cycling ftp and rowing/running rows would recompute
     # every run. Sport names come from Strava (no quotes in practice; local single-user).
-    sport_ftp_case! : Str => Try(Str, _)
-    sport_ftp_case! = |path| {
+    # each sport's resolved FTP, materialized ONCE per compute pass. Freezing it fixes the
+    # derived-FTP circular dependency: Db.sport_ftp! derives from MAX(best_20min_w), which
+    # compute_one! itself WRITES — so re-reading it per row made scoring order-dependent and
+    # made a fresh db score all power as zero. Now the recompute WHERE and the per-row
+    # scoring both read this ONE frozen map; the analyze! fixed-point loop re-derives it each
+    # pass so a fresh db's first-pass zeros converge once best_20min_w is populated.
+    sport_ftp_map! : Str => Try(List((Str, F64)), _)
+    sport_ftp_map! = |path| {
         sports = Sqlite.query_many!({
             path: Path.utf8(path),
             query: "SELECT DISTINCT sport_type AS s FROM activities WHERE sport_type IS NOT NULL AND sport_type <> ''",
             bindings: [],
             rows: Sqlite.str("s"),
         })?
-        whens = build_ftp_whens!(path, sports, "")?
-        Ok("CASE a.sport_type${whens} ELSE 0 END")
+        build_ftp_map!(path, sports, [])
     }
-    build_ftp_whens! : Str, List(Str), Str => Try(Str, _)
-    build_ftp_whens! = |path, sports, acc|
+    build_ftp_map! : Str, List(Str), List((Str, F64)) => Try(List((Str, F64)), _)
+    build_ftp_map! = |path, sports, acc|
         match sports {
             [] => Ok(acc)
             [s, .. as rest] => {
                 f = Db.sport_ftp!(path, s)?
-                # SQL-escape single quotes in the sport name so a name like "d'Or"
-                # can't break the CASE expression or inject SQL.
-                s_esc = Str.replace_each(s, "'", "''")
-                build_ftp_whens!(path, rest, "${acc} WHEN '${s_esc}' THEN ${(f).to_str()}")
+                build_ftp_map!(path, rest, List.append(acc, (s, f)))
             }
         }
+    # pure: this sport's frozen FTP (0 if absent — a no-power sport, which falls back to HR)
+    lookup_ftp : List((Str, F64)), Str -> F64
+    lookup_ftp = |m, sport|
+        List.fold(m, 0.0, |acc, pair| if pair.0 == sport pair.1 else acc)
+    # pure: the `CASE a.sport_type WHEN '<sport>' THEN <ftp> … ELSE 0 END` for the recompute
+    # WHERE, built from the SAME frozen map. Single quotes in a sport name are SQL-escaped so
+    # a name like "d'Or" can't break the CASE or inject SQL.
+    ftp_case_from_map : List((Str, F64)) -> Str
+    ftp_case_from_map = |m| {
+        whens = List.fold(m, "", |acc, pair| {
+            esc = Str.replace_each(pair.0, "'", "''")
+            "${acc} WHEN '${esc}' THEN ${(pair.1).to_str()}"
+        })
+        "CASE a.sport_type${whens} ELSE 0 END"
+    }
     # returns Bool: did the stored stream JSON fail to decode? (surfaced by analyze)
-    compute_one! : Str, Metrics.ZoneBounds, ActivityRow => Try(Bool, _)
-    compute_one! = |path, zb, row| {
+    compute_one! : Str, Metrics.ZoneBounds, List((Str, F64)), ActivityRow => Try(Bool, _)
+    compute_one! = |path, zb, ftp_map, row| {
         decoded = Streams.decode_streams(row.raw)
         streams = decoded.streams
 
@@ -209,7 +245,9 @@ Analyze :: [].{
         # intensity from power, judged against the sport's own FTP (0 for no-power sports
         # → all-zero, and the display falls back to HR). Stored so the weekly polarization
         # and the activities "hard" column read power where it exists, HR where it doesn't.
-        pi_ftp = Db.sport_ftp!(path, row.sport)?
+        # the sport's FROZEN FTP (from the up-front map) — never re-derived per row, so
+        # scoring is order-independent and consistent with the recompute WHERE (see sport_ftp_map!)
+        pi_ftp = lookup_ftp(ftp_map, row.sport)
         pintensity = Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
 
         # the fallback chain lives in Metrics.tss_ladder (pure, expect-tested)
