@@ -76,11 +76,16 @@ Plan :: [].{
         # tombstones (skip-then-add), so hide a skipped row WHEN the same date still has a
         # live open/done session — but KEEP it when the whole day was genuinely skipped (a
         # real adherence miss you want to see). `plan all` shows the full log unfiltered.
-        week_filter =
+        # scope filter via a BOUND :all flag, never string interpolation: AllTime binds
+        # :all=1 (all rows); ThisWeek binds :all=0 so the date/skip conditions apply. The
+        # earlier approach interpolated an optional filter string whose EMPTY branch spliced
+        # a compile-time-constant "" into the query, crashing the backend in str_concat
+        # (heap-corruption SIGABRT, same class as #32). The date literals below are always
+        # non-empty, so they interpolate safely.
+        scope_all =
             match scope {
-                AllTime => ""
-                ThisWeek =>
-                    "WHERE COALESCE(target_date,'') >= '${Metrics.days_to_date_str(mon)}' AND COALESCE(target_date,'') <= '${Metrics.days_to_date_str(mon + 6)}' AND (COALESCE(status,'open') <> 'skipped' OR NOT EXISTS (SELECT 1 FROM planned_sessions p2 WHERE p2.target_date = planned_sessions.target_date AND COALESCE(p2.status,'open') <> 'skipped'))"
+                AllTime => 1
+                ThisWeek => 0
             }
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
@@ -89,9 +94,11 @@ Plan :: [].{
                 \\       COALESCE(session_type,'') AS session_type, COALESCE(detail,'') AS detail,
                 \\       COALESCE(rationale,'') AS rationale, COALESCE(completed_activity_id,0) AS completed_activity_id,
                 \\       COALESCE(status,'open') AS status, COALESCE(skipped_reason,'') AS skipped_reason
-                \\FROM planned_sessions ${week_filter} ORDER BY target_date DESC, id DESC LIMIT 100
+                \\FROM planned_sessions
+                \\WHERE (:all = 1 OR (COALESCE(target_date,'') >= '${Metrics.days_to_date_str(mon)}' AND COALESCE(target_date,'') <= '${Metrics.days_to_date_str(mon + 6)}' AND (COALESCE(status,'open') <> 'skipped' OR NOT EXISTS (SELECT 1 FROM planned_sessions p2 WHERE p2.target_date = planned_sessions.target_date AND COALESCE(p2.status,'open') <> 'skipped'))))
+                \\ORDER BY target_date DESC, id DESC LIMIT 100
             ,
-            bindings: [],
+            bindings: [{ name: ":all", value: Integer(scope_all) }],
             rows: |cols| |stmt| {
                 id = Sqlite.i64("id")(cols)(stmt)?
                 created_at = Sqlite.str("created_at")(cols)(stmt)?

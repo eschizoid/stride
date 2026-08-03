@@ -494,5 +494,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 6
+    metrics_rev = 7
 }
