@@ -207,6 +207,21 @@ Metrics :: [].{
     hr_zone_key_global = |n|
         "hr_z${U64.to_str(n)}_max"
 
+    # The config key holding a sport's threshold PACE, as a SPEED in m/s (the pace engine
+    # works in speeds). Per-sport `threshold_pace_<sport>` (threshold_pace_run, ...), same
+    # data-driven shape as power_ftp_key / hr_zone_key. Zero-config derivation from a stored
+    # best-sustained-pace column is a later slice.
+    threshold_pace_key : Str -> Str
+    threshold_pace_key = |sport|
+        "threshold_pace_${Str.with_ascii_lowercased(sport)}"
+
+    # The config key selecting a sport's intensity MODEL (power | pace | css | hr | rpe),
+    # `model_<sport>`. Orthogonal to sport_class (which sets fallback priority) — this picks
+    # which ladder rung a sport routes to. Absent -> the safe default (power if watts, else HR).
+    model_key : Str -> Str
+    model_key = |sport|
+        "model_${Str.with_ascii_lowercased(sport)}"
+
     # ── training stress ─────────────────────────────────────────────────
 
     tss_from_power : { np : F64, ftp : F64, dur_s : F64 } -> F64
@@ -1275,6 +1290,12 @@ expect Metrics.hr_zone_key(2, "Soccer") == "hr_z2_max_soccer"
 expect Metrics.hr_zone_key(4, "Ride") == "hr_z4_max_ride"
 expect Metrics.hr_zone_key(1, "StandUpPaddling") == "hr_z1_max_standuppaddling"
 expect Metrics.hr_zone_key_global(3) == "hr_z3_max"
+
+# per-sport pace-engine config keys (same data-driven shape as the FTP/zone keys)
+expect Metrics.threshold_pace_key("Run") == "threshold_pace_run"
+expect Metrics.threshold_pace_key("Swim") == "threshold_pace_swim"
+expect Metrics.model_key("Run") == "model_run"
+expect Metrics.model_key("TrailRun") == "model_trailrun"
 
 expect Metrics.export_date_to_iso("Feb 17, 2022, 12:18:26 PM") == Ok("2022-02-17T12:18:26Z")
 expect Metrics.export_date_to_iso("Jul 4, 2026, 6:05:09 AM") == Ok("2026-07-04T06:05:09Z")
