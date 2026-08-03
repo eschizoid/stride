@@ -3,30 +3,118 @@ import Metrics
 Render :: [].{
     # ── pure text-rendering helpers for human CLI output ────────────────
 
-    # aligned table: headers + rows -> multiline string
+    # aligned table: headers + rows -> multiline string.
+    # Keeps the WHOLE table within max_total display-columns so a row never wraps
+    # in an ~80-column terminal — but WITHOUT losing text. Columns take their
+    # natural width; if the table would overflow, the single widest column (in
+    # practice a free-text `detail` or a long activity name) is squeezed and its
+    # text is WORD-WRAPPED across continuation lines within the same row. The full
+    # text is always shown; it just spans several physical lines.
+    max_total = 80
+    min_col = 12
+
+    # widest display-width among a set of already-wrapped lines
+    max_line_width : List(Str) -> U64
+    max_line_width = |ls| List.fold(ls, 0, |m, l| m.max(display_width(l)))
+
+    # [0, 1, .., n-1]
+    indices : U64 -> List(U64)
+    indices = |n| indices_go(n, [])
+    indices_go : U64, List(U64) -> List(U64)
+    indices_go = |n, acc| if n == 0 acc else indices_go(n - 1, List.prepend(acc, n - 1))
+
+    # greedy word-wrap: pack space-separated words into lines of at most `cap`
+    # display-columns. A lone word wider than cap gets its own line (details are
+    # prose — no giant tokens — so this practically never widens the column).
+    wrap_cell : Str, U64 -> List(Str)
+    wrap_cell = |s, cap|
+        if display_width(s) <= cap
+            [s]
+        else {
+            packed = List.fold(
+                Str.split_on(s, " "),
+                { cur: "", out: [] },
+                |st, word| {
+                    cand = if Str.is_empty(st.cur) word else "${st.cur} ${word}"
+                    if display_width(cand) <= cap
+                        { cur: cand, out: st.out }
+                    else if Str.is_empty(st.cur)
+                        { cur: "", out: List.append(st.out, word) }
+                    else
+                        { cur: word, out: List.append(st.out, st.cur) }
+                },
+            )
+            final = if Str.is_empty(packed.cur) packed.out else List.append(packed.out, packed.cur)
+            if List.is_empty(final) [""] else final
+        }
+
+    idx_of_max : List(U64) -> U64
+    idx_of_max = |xs| {
+        best = List.fold(
+            List.map_with_index(xs, |w, i| { i, w }),
+            { i: 0, w: 0 },
+            |acc, cur| if cur.w > acc.w cur else acc,
+        )
+        best.i
+    }
+
+    # per-column caps that fit sum(widths) + borders into max_total, squeezing only
+    # the widest column (the real case is one dominant text column). natural widths
+    # in, caps out; unchanged when the table already fits.
+    fit_caps : List(U64), U64 -> List(U64)
+    fit_caps = |nat, overhead| {
+        total = List.fold(nat, 0, |a, w| a + w)
+        budget = if max_total > overhead max_total - overhead else 0
+        if total <= budget
+            nat
+        else {
+            wi = idx_of_max(nat)
+            ww = List.get(nat, wi).ok_or(0)
+            excess = total - budget
+            shrunk = if ww > excess + min_col ww - excess else min_col
+            List.map_with_index(nat, |w, i| if i == wi shrunk else w)
+        }
+    }
+
     render_table : List(Str), List(List(Str)) -> Str
     render_table = |headers, rows| {
-        widths = List.fold(
+        ncols = List.len(headers)
+        overhead = 3 * ncols + 1
+        nat = List.fold(
             List.prepend(rows, headers),
             List.map(headers, |_| 0),
             |acc, row|
-                List.map_with_index(acc, |w, i| {
-                    cell = List.get(row, i).ok_or("")
-                    w.max(display_width(cell))
-                }),
+                List.map_with_index(acc, |w, i| w.max(display_width(List.get(row, i).ok_or("")))),
         )
-        line = |row| {
-            cells = List.map_with_index(row, |cell, i| {
-                w = List.get(widths, i).ok_or(0)
-                pad_right(cell, w)
+        caps = fit_caps(nat, overhead)
+        # each row/header becomes a list of columns, each column a list of wrapped lines
+        wrap_row = |row| List.map_with_index(row, |cell, i| wrap_cell(cell, List.get(caps, i).ok_or(display_width(cell))))
+        wh = wrap_row(headers)
+        wrs = List.map(rows, wrap_row)
+        widths = List.fold(
+            List.prepend(wrs, wh),
+            List.map(headers, |_| 0),
+            |acc, wrow|
+                List.map_with_index(acc, |w, i| w.max(max_line_width(List.get(wrow, i).ok_or([])))),
+        )
+        # render one logical row (columns-of-wrapped-lines) as N physical lines,
+        # continuation lines leaving the other columns blank
+        render_wrow = |wrow| {
+            height = List.fold(wrow, 1, |h, col_lines| h.max(List.len(col_lines)))
+            phys = List.map(indices(height), |k| {
+                cells = List.map_with_index(wrow, |col_lines, i| {
+                    w = List.get(widths, i).ok_or(0)
+                    pad_right(List.get(col_lines, k).ok_or(""), w)
+                })
+                "│ ${Str.join_with(cells, " │ ")} │"
             })
-            "│ ${Str.join_with(cells, " │ ")} │"
+            Str.join_with(phys, "\n")
         }
         border = |left, mid, right|
             "${left}${Str.join_with(List.map(widths, |w| Str.repeat("─", w + 2)), mid)}${right}"
         all_lines = List.join([
-            [border("╭", "┬", "╮"), line(headers), border("├", "┼", "┤")],
-            List.map(rows, line),
+            [border("╭", "┬", "╮"), render_wrow(wh), border("├", "┼", "┤")],
+            List.map(wrs, render_wrow),
             [border("╰", "┴", "╯")],
         ])
         Str.join_with(all_lines, "\n")
@@ -401,6 +489,32 @@ expect {
 expect {
     t = Render.render_table(["a", "bb"], [["x", "y"], ["long", "z"]])
     t == "╭──────┬────╮\n│ a    │ bb │\n├──────┼────┤\n│ x    │ y  │\n│ long │ z  │\n╰──────┴────╯"
+}
+
+# a long detail is WORD-WRAPPED across continuation lines — full text kept (first
+# and last words both present, no ellipsis), and the row spans more physical lines
+# than an unwrapped single-row table would (3 borders + header + 1 data = 5)
+expect {
+    long = "Long EASY ride 90min-2h outdoor Z2 ONLY conversational the whole way no chasing wheels"
+    t = Render.render_table(
+        ["day", "date", "type", "status", "detail", "id"],
+        [["Sat", "2026-08-08", "endurance", "open", long, "18"]],
+    )
+    Str.contains(t, "Long EASY ride") and Str.contains(t, "chasing wheels") and List.len(Str.split_on(t, "\n")) > 5
+}
+# the whole table stays within 80 display-columns (the top border spans full width)
+expect {
+    long = "Long EASY ride 90min-2h outdoor Z2 ONLY conversational the whole way no chasing wheels keep it truly easy today"
+    t = Render.render_table(
+        ["day", "date", "type", "status", "detail", "id"],
+        [["Sat", "2026-08-08", "endurance", "open", long, "18"]],
+    )
+    Render.display_width(List.get(Str.split_on(t, "\n"), 0).ok_or("")) <= 80
+}
+# a short cell is rendered whole on one line — exact match proves no wrapping
+expect {
+    t = Render.render_table(["a"], [["short"]])
+    t == "╭───────╮\n│ a     │\n├───────┤\n│ short │\n╰───────╯"
 }
 
 expect Render.progress_group_label("Morning Ride", SimilarDistance(31400.0)) == "Morning Ride (~31.4 km rides)"
