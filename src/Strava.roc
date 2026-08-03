@@ -15,6 +15,7 @@ import http.Response
 import Streams
 import Backfill
 import Metrics
+import Config
 
 Strava :: [].{
     # push a new FTP to Strava (PUT /athlete?ftp=). Best-effort: any failure just
@@ -59,7 +60,9 @@ Strava :: [].{
     api_base! : {} => Str
     api_base! = |{}|
         match Env.var_str!(OsStr.from_str("STRIDE_API_BASE")) {
-            Ok(b) if !(Str.is_empty(b)) => b
+            # only honor an allowed override (https, or http to loopback) — a disallowed
+            # base can't exfiltrate the client_secret/refresh token; fall back to real Strava
+            Ok(b) if !(Str.is_empty(b)) and Config.api_base_allowed(b) => b
             _ => "https://www.strava.com"
 
         }
