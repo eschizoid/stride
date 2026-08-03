@@ -56,20 +56,25 @@ jobs:
   # sandboxed HOME, no network). Built with --opt=dev: the optimized (--opt=speed) backend
   # has an intermittent SIGABRT on the stream-decode path (issue #32), so RELEASE binaries
   # stay gated on it — but --opt=dev is stable and the suite passes deterministically.
-  # (The new compiler picks its own linker — no --linker flag. e2e-sync, the network path,
-  # is still run locally and not wired here yet.)
+  #
+  # Runs on macOS, NOT linux: the compiler has a memory-layout-dependent codegen bug (a
+  # constant "" used in a str op corrupts the heap — reported upstream) that manifests on
+  # the linux build even where the macOS build is clean, so the linux e2e crashes at spots
+  # the macOS one doesn't. macOS is the dev platform and the suite is green there; the
+  # cross-platform gate is `check` + pure `test` above (all three OSes). Move e2e back to
+  # linux once the upstream codegen bug is fixed. e2e-sync (network) is still local-only.
   e2e:
     needs: check-and-test
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
       - uses: roc-lang/setup-roc@v0.3.0
         with:
           version: nightly-new-compiler
           nightly-tag: nightly-2026-August-03-94cbed3
-      # the harness uses sqlite3/jq/awk/curl; install the two not guaranteed on the runner
-      - name: Install just + sqlite3 + jq
-        run: sudo apt-get update && sudo apt-get install -y just sqlite3 jq
+      # sqlite3/jq/awk/curl ship on the macOS runner; just does not
+      - name: Install just
+        run: brew install just
       - name: Build stride (dev backend — #32 blocks the optimized one)
         run: roc build src/app.roc --output=stride --opt=dev   # ~6 min; new compiler uses --output=
       - name: Run offline e2e suite (157 checks)
