@@ -4,15 +4,17 @@
 
 # stride
 
-A local-first training analytics engine, written in [Roc](https://www.roc-lang.org).
-Strava is one ingestion layer; the analysis is yours.
+stride answers the training questions Strava doesn't — is my training actually
+polarized, is my fitness climbing, when was my last *real* hard session, is my FTP
+stale — from your own Strava history, computed locally into a SQLite file you own.
+Optional LLM coaching layer on top.
 
-stride syncs your Strava history into a SQLite file you own and computes training
-metrics deterministically, with an optional LLM coaching layer on top.
+Local-first and deterministic, written in [Roc](https://www.roc-lang.org): Strava is
+one ingestion layer, the analysis is yours.
 
 > **The engine does the math. The LLM does the judgment.**
 
-```
+```bash
 $ stride summary
 
 ── stride report (as of 2026-07-31) ──────────────────
@@ -39,13 +41,18 @@ from a model. "Training load" is a *mixed model*: power/HR sessions score in TSS
 rated strength/HIIT sessions in session-RPE, so stride stops calling the blended
 total "TSS" and `doctor` breaks it down by per-session confidence.
 
+**What you'll need:** a terminal, `sqlite3`, and your own free [Strava API
+app](https://www.strava.com/settings/api) (client id + secret, ~2 minutes to create —
+note Strava now requires an active subscription to hold API credentials). stride is a
+command-line tool and a personal daily-driver — not a hosted service or a phone app.
+First-time setup is about ten minutes; after that the daily loop is one command.
+
 ## Why stride, if I already have Strava?
 
 **Strava records activities. stride explains training.**
 
-Strava is the system of record. stride answers the questions the record doesn't:
-is my training polarized or all-moderate? Is my fitness actually climbing? When
-was my last *real* hard session? Is my FTP stale? It solves different problems:
+Strava is the system of record; stride is the analysis layer on top of it. Where they
+differ:
 
 - **Deterministic metrics** — TSS, normalized power, intensity factor, CTL/ATL/TSB,
   time-in-zone, FTP calibration. Same inputs, same numbers, every time.
@@ -208,16 +215,18 @@ The tables are built to surface the all-moderate trap — a `0.98`-intensity rid
 
 ```
 $ stride activities 4
-date        sport    name                          time  load  intensity (if)  hard
-----------  -------  ----------------------------  ----  ----  --------------  ----
-2026-07-30  Workout  45 min Full Body Strength...  45m   45    -               0m
-2026-07-28  Ride     45 min Metallica Ride wit...  45m   66    0.94            12m
-2026-07-27  Rowing   45 min Spring Cross-Train...  45m   25    0.57            0m
-2026-07-25  Workout  45 min Full Body Strength...  46m   -     -               0m
+╭────────────┬─────────┬─────────────────────────────┬──────┬──────┬────────────────┬──────╮
+│ date       │ sport   │ name                        │ time │ load │ intensity (if) │ hard │
+├────────────┼─────────┼─────────────────────────────┼──────┼──────┼────────────────┼──────┤
+│ 2026-07-30 │ Workout │ 45 min Full Body Strength   │ 45m  │ 45   │ -              │ 0m   │
+│ 2026-07-28 │ Ride    │ 45 min Metallica Power Zone │ 45m  │ 66   │ 0.94           │ 12m  │
+│ 2026-07-27 │ Ride    │ 58 min Endurance Spin       │ 58m  │ 71   │ 0.98           │ 0m   │
+│ 2026-07-25 │ Workout │ 45 min Full Body Strength   │ 46m  │ -    │ -              │ 0m   │
+╰────────────┴─────────┴─────────────────────────────┴──────┴──────┴────────────────┴──────╯
 
 load:           session stress — TSS for power/HR, session-RPE for rated sessions; '-' = no usable data (e.g. dead HR strap)
 intensity (if): vs your FTP — ~0.7 easy · 0.85-0.95 tempo · ~1.0 threshold · 1.05+ vo2max
-hard:           minutes in HR Z4+Z5 — the column that shows if hard days were actually hard
+hard:           minutes at/above threshold — by power (vs the sport's FTP) where there's power, else HR Z4+Z5
 ```
 
 (The strength session on 2026-07-30 shows `load 45` from a session-RPE rating and
