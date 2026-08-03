@@ -1172,7 +1172,9 @@ Report :: [].{
         )
         cpfit =
             match Metrics.critical_power(fit_points) {
-                Ok(c) => { cp: c.cp, w_prime: c.w_prime }
+                # a fit is only meaningful when BOTH are positive; inconsistent bests (no true
+                # 5-10 min efforts) can yield a non-positive CP or W' — treat that as no fit
+                Ok(c) => (if c.cp > 0.0 and c.w_prime > 0.0 { cp: c.cp, w_prime: c.w_prime } else { cp: 0.0, w_prime: 0.0 })
                 Err(_) => { cp: 0.0, w_prime: 0.0 }
             }
         Output.out!(

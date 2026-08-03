@@ -330,8 +330,11 @@ Analyze :: [].{
         # power-duration curve: best mean-max power at each ladder duration (5s..60min minus
         # the 20-min point, which best_20min_w already carries). Stored per activity; the
         # `power-curve` command takes MAX per duration across a window to draw the CP curve.
-        # 0 = not available (ride shorter than the window) per the numeric-0 invariant.
-        curve = Metrics.mean_max_curve(watts_1s, [5, 15, 30, 60, 300, 600, 3600])
+        # 0 = not available (ride shorter than the window) per the numeric-0 invariant. Derive
+        # the stored ladder from the shared constant (drop 1200 — it lives in best_20min_w) so
+        # the columns and the curve command never drift.
+        curve_durations = List.keep_if(Metrics.power_curve_durations, |d| d != 1200)
+        curve = Metrics.mean_max_curve(watts_1s, curve_durations)
         cw = |i|
             match List.get(curve, i) {
                 Ok(c) => Real(c.watts)

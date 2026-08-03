@@ -390,7 +390,9 @@ Render :: [].{
                 List.map(pc.points, |p| [dur_label(p.dur_s), fmt0(p.watts)]),
             )
             cp_line =
-                if pc.cp > 0.0
+                # both must be positive: power_curve! already zeroes a non-positive fit, but
+                # gate here too so a stray negative W′ can never print as a real fit
+                if pc.cp > 0.0 and pc.w_prime > 0.0
                     "→ Critical Power ${fmt0(pc.cp)} W · W′ ${fmt0(pc.w_prime)} J"
                 else
                     "→ Critical Power: not enough long-duration (≥5 min) data to fit"
