@@ -260,15 +260,22 @@ Analyze :: [].{
                 else
                     acc,
         )
-    # pure: one sport's zone ceilings (per-sport keys, global fallback)
+    # pure: one sport's zone ceilings (per-sport keys, global fallback). An empty sport
+    # (NULL/'' sport_type, selected as COALESCE(...,'')) resolves to the GLOBAL set only:
+    # sport_zone_sigs! excludes empty sports from the invalidation CASE (WHERE sport_type
+    # <> ''), so an empty-suffix hr_z*_max_ key must NOT change these rows' signature, or
+    # they'd differ from the CASE's ELSE (global) and recompute every run.
     resolve_zones_pure : List((Str, Str)), Str, Metrics.ZoneBounds -> Metrics.ZoneBounds
     resolve_zones_pure = |cfg, sport, g|
-        {
-            z1_max: cfg_f64(cfg, Metrics.hr_zone_key(1, sport), g.z1_max),
-            z2_max: cfg_f64(cfg, Metrics.hr_zone_key(2, sport), g.z2_max),
-            z3_max: cfg_f64(cfg, Metrics.hr_zone_key(3, sport), g.z3_max),
-            z4_max: cfg_f64(cfg, Metrics.hr_zone_key(4, sport), g.z4_max),
-        }
+        if Str.is_empty(sport)
+            g
+        else
+            {
+                z1_max: cfg_f64(cfg, Metrics.hr_zone_key(1, sport), g.z1_max),
+                z2_max: cfg_f64(cfg, Metrics.hr_zone_key(2, sport), g.z2_max),
+                z3_max: cfg_f64(cfg, Metrics.hr_zone_key(3, sport), g.z3_max),
+                z4_max: cfg_f64(cfg, Metrics.hr_zone_key(4, sport), g.z4_max),
+            }
     # each distinct sport's frozen (sport, zone-signature) pair for the invalidation CASE
     sport_zone_sigs! : Str, List((Str, Str)), Metrics.ZoneBounds => Try(List((Str, Str)), _)
     sport_zone_sigs! = |path, cfg, g| {
