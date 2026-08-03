@@ -249,28 +249,51 @@ Strava :: [].{
                 started = Db.now_secs!({})
                 # incremental with a rolling 30-day overlap so recent edits on
                 # Strava self-heal (`backfill` is the full re-pull when needed)
-                after_param =
-                    # NotFound (never synced) = full pull is correct; a real db read
-                    # error propagates instead of silently burning the rate budget
+                # NotFound (never synced) = full pull; a real db read error propagates
+                # instead of silently burning the rate budget
+                after_epoch =
                     match Db.config_opt!(path, "last_sync_epoch")? {
-                        NotFound => ""
+                        NotFound => None
                         Found(epoch_str) =>
                             match I64.from_str(epoch_str) {
-                                Ok(e) => "&after=${I64.to_str((e - 2592000).max(0))}"
-                                Err(_) => ""
+                                Ok(e) => Some((e - 2592000).max(0))
+                                Err(_) => None
                             }
                     }
-                count = fetch_pages!(path, token, after_param, 1, 0)?
+                after_param =
+                    match after_epoch {
+                        Some(a) => "&after=${I64.to_str(a)}"
+                        None => ""
+                    }
+                # window_start bounds the prune to rows solidly inside the window Strava
+                # re-listed this run. It is the `after` epoch PLUS a one-day margin, rendered
+                # by epoch_to_iso to `YYYY-MM-DDTHH:MM:SSZ` (UTC) and compared lexically to
+                # activities.start_local (Strava's LOCAL start_date_local). The margin is the
+                # fix for that UTC-vs-local mismatch: without it, timezone skew (up to ~14h) at
+                # the boundary could mark an activity that is merely just OUTSIDE Strava's
+                # `after` window — still present upstream, only older — as a deletion and prune
+                # it. A full day exceeds any offset, so only rows definitely in the response are
+                # eligible. A deletion in that one-day sliver at the far edge is caught by the
+                # next `backfill` (full pull), which prunes all unseen ("" window_start). NULL
+                # synced_at rows (imports, pre-migration) are exempt regardless of the window.
+                window_start =
+                    match after_epoch {
+                        Some(a) => Metrics.epoch_to_iso(a + 86400)
+                        None => ""
+                    }
+                count = fetch_pages!(path, token, after_param, started, 1, 0)?
+                pruned = prune_deleted!(path, started, window_start)?
                 Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
                 streams_n = backfill_streams!(path, token)?
                 remaining = pending_streams!(path)?
-                Output.out!({ synced: count, streams_fetched: streams_n, pending_streams: remaining }, |p| {
+                Output.out!({ synced: count, pruned, streams_fetched: streams_n, pending_streams: remaining }, |p| {
+                    prune_note = if p.pruned > 0 " (pruned ${U64.to_str(p.pruned)} removed on Strava)" else ""
                     tail =
                         if p.pending_streams > 0
                             " (${I64.to_str(p.pending_streams)} still need streams — run `stride backfill` to pull them all)"
                         else
                             ""
-                    "synced ${U64.to_str(p.synced)} activities, fetched streams for ${U64.to_str(p.streams_fetched)}${tail}"
+                    "synced ${U64.to_str(p.synced)} activities${prune_note}, fetched streams for ${U64.to_str(p.streams_fetched)}${tail}"
                 })
             }
         }
@@ -423,8 +446,12 @@ Strava :: [].{
                 # pull the full activity list first so backfill is self-sufficient —
                 # no need to run `sync` beforehand (that's what made it two commands)
                 Stdout.line!("backfill: refreshing the activity list...")?
-                count = fetch_pages!(path, token, "", 1, 0)?
-                Db.config_set!(path, "last_sync_epoch", I64.to_str(Db.now_secs!({})))?
+                started = Db.now_secs!({})
+                count = fetch_pages!(path, token, "", started, 1, 0)?
+                # full re-pull: window_start "" prunes every activity Strava no longer lists
+                pruned = prune_deleted!(path, started, "")?
+                (if pruned > 0 Stdout.line!("backfill: pruned ${U64.to_str(pruned)} activities removed on Strava") else Ok({}))?
+                Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
                 missing_ids = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
@@ -510,8 +537,8 @@ Strava :: [].{
         }
     per_page = 100
 
-    fetch_pages! : Str, Str, Str, U64, U64 => Try(U64, _)
-    fetch_pages! = |path, token, after_param, page, acc| {
+    fetch_pages! : Str, Str, Str, I64, U64, U64 => Try(U64, _)
+    fetch_pages! = |path, token, after_param, stamp, page, acc| {
         page_str = (page).to_str()
         per_str = (per_page).to_str()
         uri = "${api_base!({})}/api/v3/athlete/activities?per_page=${per_str}&page=${page_str}${after_param}"
@@ -520,31 +547,35 @@ Strava :: [].{
         decoded : Try(List(ActivitySummary), _)
         decoded = Json.parse(text)
         acts = decoded.map_err(|_| ActivityDecodeFailed(page))?
-        upsert_all!(path, acts)?
+        upsert_all!(path, stamp, acts)?
         got = List.len(acts)
         total = acc + got
         if got < per_page
             Ok(total)
         else
-            fetch_pages!(path, token, after_param, page + 1, total)
+            fetch_pages!(path, token, after_param, stamp, page + 1, total)
     }
-    upsert_all! : Str, List(ActivitySummary) => Try({}, _)
-    upsert_all! = |path, acts|
+    upsert_all! : Str, I64, List(ActivitySummary) => Try({}, _)
+    upsert_all! = |path, stamp, acts|
         match acts {
             [] => Ok({})
             [a, .. as rest] => {
-                upsert_activity!(path, a)?
-                upsert_all!(path, rest)
+                upsert_activity!(path, stamp, a)?
+                upsert_all!(path, stamp, rest)
             }
 
         }
-    upsert_activity! : Str, ActivitySummary => Try({}, _)
-    upsert_activity! = |path, a| {
+    upsert_activity! : Str, I64, ActivitySummary => Try({}, _)
+    upsert_activity! = |path, stamp, a| {
+        # stamp 0 = a non-sync writer (CSV import): leave synced_at NULL so the prune
+        # never mistakes an imported activity (never on Strava) for a deleted one. Real
+        # sync stamps are now_secs epochs, never 0.
+        synced_val = if stamp == 0 Null else Integer(stamp)
         Sqlite.execute!({
             path: Path.utf8(path),
             query:
-                \\INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance, elevation, relative_effort, avg_watts, avg_hr, weighted_avg_watts)
-                \\VALUES (:id, :name, :sport, :start, :mt, :dist, :elev, :re, :aw, :ahr, :waw)
+                \\INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance, elevation, relative_effort, avg_watts, avg_hr, weighted_avg_watts, synced_at)
+                \\VALUES (:id, :name, :sport, :start, :mt, :dist, :elev, :re, :aw, :ahr, :waw, :synced)
             ,
             bindings: [
                 { name: ":id", value: Integer(a.id) },
@@ -558,10 +589,73 @@ Strava :: [].{
                 { name: ":aw", value: opt_real(a.average_watts) },
                 { name: ":ahr", value: opt_real(a.average_heartrate) },
                 { name: ":waw", value: opt_real(a.weighted_average_watts) },
+                # stamp this row with the current sync run so prune_deleted! can tell which
+                # activities Strava still has (re-stamped) from ones it deleted (stale stamp)
+                { name: ":synced", value: synced_val },
             ],
         })?
         # the row's raw fields may have changed (Strava edit within the rolling
         # window) — invalidate its metrics so "edits self-heal" is actually true
         invalidate_metrics!(path, a.id)
     }
+
+    # remove activities that vanished from Strava. A row is a victim when this sync run
+    # did NOT re-stamp it (synced_at stale or null) AND it sits inside the pulled window
+    # (start_local >= window_start; "" = full pull = all rows). Two judgment-tier guards:
+    # never prune an activity that carries a rating or that completed a planned session —
+    # those rows can't be re-derived, so we leave the (now-orphaned) activity as a
+    # tombstone rather than destroy the human input. Everything else in the mirror tier is
+    # re-pullable, so pruning is safe. Cascades to the computed tables and runs in one
+    # transaction so a crash can't half-prune. Returns the number of activities removed.
+    prune_deleted! : Str, I64, Str => Try(U64, _)
+    prune_deleted! = |path, stamp, window_start| {
+        victims = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT id AS id FROM activities
+                \\-- only rows a PRIOR sync stamped then this run didn't re-stamp are
+                \\-- confirmed Strava deletions. NULL (CSV imports, pre-migration rows)
+                \\-- is never a victim — conservative, avoids nuking non-sync data.
+                \\WHERE synced_at IS NOT NULL AND synced_at <> :stamp
+                \\  AND start_local >= :ws
+                \\  AND id NOT IN (SELECT activity_id FROM ratings)
+                \\  AND id NOT IN (SELECT completed_activity_id FROM planned_sessions WHERE completed_activity_id IS NOT NULL)
+            ,
+            bindings: [
+                { name: ":stamp", value: Integer(stamp) },
+                { name: ":ws", value: String(window_start) },
+            ],
+            rows: Sqlite.i64("id"),
+        })?
+        if List.len(victims) == 0
+            Ok(0)
+        else {
+            _ = Sqlite.execute!({ path: Path.utf8(path), query: "BEGIN", bindings: [] })?
+            match prune_txn!(path, victims) {
+                Ok(_) => {
+                    _ = Sqlite.execute!({ path: Path.utf8(path), query: "COMMIT", bindings: [] })?
+                    Ok(List.len(victims))
+                }
+                Err(e) =>
+                    # a failed ROLLBACK (lock, corruption) is the more actionable signal —
+                    # surface it; otherwise return the error that aborted the prune
+                    match Sqlite.execute!({ path: Path.utf8(path), query: "ROLLBACK", bindings: [] }) {
+                        Ok(_) => Err(e)
+                        Err(re) => Err(re)
+                    }
+            }
+        }
+    }
+    prune_txn! : Str, List(I64) => Try({}, _)
+    prune_txn! = |path, ids|
+        match ids {
+            [] => Ok({})
+            [id, .. as rest] => {
+                b = [{ name: ":id", value: Integer(id) }]
+                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activity_metrics WHERE activity_id = :id", bindings: b })?
+                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM streams WHERE activity_id = :id", bindings: b })?
+                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activities WHERE id = :id", bindings: b })?
+                prune_txn!(path, rest)
+            }
+        }
 }
