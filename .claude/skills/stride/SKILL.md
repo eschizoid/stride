@@ -87,14 +87,16 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
   `ftp_used`), **stream arrival** (backfilled streams invalidate the old metrics row),
   and **Strava edits** (a re-synced activity invalidates its metrics). So after a sync,
   always `analyze` to pick up recomputes. `ftp.stale: true` means estimated FTP (20-min
-  best × 0.95) exceeds config by >5% — fix is `stride config set ftp <estimate> &&
-  stride analyze`; `detraining: true` means it's well below config. (config set ftp also
-  pushes the new FTP to Strava automatically, so their profile stays in sync.)
+  best × 0.95) exceeds config by >5% — fix is `stride config set ftp_ride <estimate> &&
+  stride analyze` (the key is per-sport: `ftp_<sport>`, e.g. `ftp_ride`, `ftp_rowing`);
+  `detraining: true` means it's well below config. (`config set ftp_ride` also pushes the
+  new FTP to Strava automatically, so their profile stays in sync — only `ftp_ride` does.)
 - CTL/ATL/TSB are **as of today** (daily_load extends through today with 0-TSS rest
   days), so `form_tsb` is current — no mental decay adjustments needed. "Today" is the
-  LOCAL day via config `utc_offset_minutes` (default 0 = UTC); without it, users west of
-  UTC get a phantom "tomorrow" row each evening — set it (e.g. -300) if `as_of` looks a
-  day ahead. It's a fixed offset, so flip it seasonally for DST.
+  LOCAL day, anchored by config **`timezone`** (IANA, e.g. `America/Chicago` — DST-correct
+  automatically; preferred) or a fixed **`utc_offset_minutes`** fallback (e.g. -300);
+  precedence is timezone > offset > UTC. Without either, users west of UTC get a phantom
+  "tomorrow" row each evening — `doctor` shows which anchor is active.
 - **Session-RPE**: after a strength/HIIT/yoga session, ask the user how hard it felt
   (1-10) and run `stride rate <activity_id> <n>` — load = hours × RPE × 10
   (TSS-commensurate). For strength-class sports the rating outranks HR in the load
@@ -118,7 +120,7 @@ overrides if set. A locked/corrupt db surfaces as a real error, not a false
 
 First-time on a new machine: create a Strava API app (strava.com/settings/api), then
 `stride init` → `STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth` (browser
-paste flow) → `stride config set ftp/hr_z1_max..hr_z4_max` → `stride sync` →
+paste flow) → `stride config set ftp_ride/hr_z1_max..hr_z4_max` → `stride sync` →
 `stride analyze`. The db self-migrates on any command, so upgrading the binary against
 an existing db is safe.
 
@@ -129,7 +131,9 @@ sandbox-HOME suite embedded in the justfile — same pipeline CI runs). The orde
 matters: a failed build leaves a stale binary that the e2e suite would happily "pass"
 against, which is why `just test` builds in between.
 
-Toolchain pins: roc alpha4-rolling nightly + basic-cli 0.20.0 + roc-json 0.13.0 — do
-not bump basic-cli to 0.21.0-rc\* (those target Roc's new compiler). Linux builds need
-`--linker=legacy`. Roc gotcha that keeps recurring: floats have no Eq — never
-`x == 0.0` in an expect; use `Num.abs(x) < 0.001`.
+Toolchain: Roc's new (Zig) compiler (nightly, pinned by exact tag in
+`.github/workflows/build.yml`) + basic-cli 0.21 + builtin JSON (roc-json dropped). Linux
+builds need `--linker=legacy`. NOTE: a full `roc build` of app.roc is currently gated on
+an upstream perf fix (roc#10469) — `roc check`/`roc test` work, but `just test` can't
+finish its build step until a nightly carries the fix. Roc gotcha that keeps recurring:
+floats have no Eq — never `x == 0.0` in an expect; use `Num.abs(x) < 0.001`.
