@@ -251,10 +251,15 @@ Strava :: [].{
                         Some(a) => "&after=${I64.to_str(a)}"
                         None => ""
                     }
-                # the prune only touches rows Strava actually re-listed this run: the same
-                # epoch we sent as `after`, as a date string. "" (full pull) prunes all
-                # unseen. epoch_to_iso and start_local agree at day granularity, and the
-                # 30-day overlap keeps the boundary comfortably inside what Strava returned.
+                # the prune only touches rows inside the window Strava re-listed this run:
+                # the same epoch we sent as `after`, rendered by epoch_to_iso to a full
+                # `YYYY-MM-DDTHH:MM:SSZ` (UTC) string and compared lexically against
+                # activities.start_local (Strava's local `start_date_local` timestamp).
+                # The UTC-vs-local skew is only hours, and the 30-day overlap keeps the
+                # boundary comfortably inside what Strava returned, so a row this side of
+                # the cutoff was definitely in the response. "" (full pull) prunes all
+                # unseen. (NULL synced_at rows — imports, pre-migration — are exempt in
+                # prune_deleted! regardless of the window.)
                 window_start =
                     match after_epoch {
                         Some(a) => Metrics.epoch_to_iso(a)
@@ -611,10 +616,13 @@ Strava :: [].{
                     _ = Sqlite.execute!({ path: Path.utf8(path), query: "COMMIT", bindings: [] })?
                     Ok(List.len(victims))
                 }
-                Err(e) => {
-                    _ = Sqlite.execute!({ path: Path.utf8(path), query: "ROLLBACK", bindings: [] })
-                    Err(e)
-                }
+                Err(e) =>
+                    # a failed ROLLBACK (lock, corruption) is the more actionable signal —
+                    # surface it; otherwise return the error that aborted the prune
+                    match Sqlite.execute!({ path: Path.utf8(path), query: "ROLLBACK", bindings: [] }) {
+                        Ok(_) => Err(e)
+                        Err(re) => Err(re)
+                    }
             }
         }
     }
