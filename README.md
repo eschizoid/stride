@@ -190,7 +190,7 @@ stride week                                       # everything needed to plan a 
 | `load [days]` | *Is my training working over time?* Daily fitness/fatigue/form rows for windows ≤14 days; Monday-aligned **weekly rollups** (sessions, load, fitness trend) for longer windows (default 90). Ends with today's form verdict. |
 | `compare [week\|month]` | *Is this period better than the last?* The last rolling window (7 or 28 days) beside the one before it — load, sessions, hard minutes, easy %, and end-of-window fitness — with signed deltas and a ramp/fitness verdict. |
 | `week` | *What should this week look like?* One call bundling `summary` + the open plan + the last 14 days of activities — the complete planning context. |
-| `plan` | *What was planned, and did it happen?* The log (most recent 100) in calendar order with status: open / done / skipped. |
+| `plan` (or `plan all`) | *What was planned, and did it happen?* The plan log in calendar order with status open / done / skipped — `plan` shows the most recent 100, `plan all` the full history. |
 | `activity <id>` | *How did one session actually go?* Deep view of a single activity: load, intensity, zone minutes, hard time, and power bests (1/3/5/20 min) computed from its streams. The session-review tool. |
 | `stats` | *What have I done, ever and this year?* Career and year-to-date totals per sport: sessions, hours, distance. |
 
