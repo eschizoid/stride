@@ -185,7 +185,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 10
+    schema_version = 11
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -225,6 +225,10 @@ Db :: [].{
         # v10: FTP is now per-sport under `ftp_<sport>` (uniform, no special cycling key).
         # Move the old cycling `ftp` value to `ftp_ride` if it hasn't been set already.
         Sqlite.execute!({ path: Path.utf8(path), query: "UPDATE config SET key = 'ftp_ride' WHERE key = 'ftp' AND (SELECT COUNT(*) FROM config WHERE key = 'ftp_ride') = 0", bindings: [] })?
+        # v11: synced_at stamps each activity with the sync run that last saw it, so a
+        # sync can prune activities deleted on Strava — any row in the pulled window not
+        # re-stamped this run is gone upstream. Mirror tier (activities) is re-pullable.
+        alter_add_column!(path, "ALTER TABLE activities ADD COLUMN synced_at INTEGER")?
         # v2: index the column every date-range filter and the activities sort use
         # (queries now compare a.start_local directly — sargable — instead of substr)
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })

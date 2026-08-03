@@ -59,7 +59,9 @@ Import :: [].{
             [row, .. as rest] =>
                 match Report.export_row_to_summary(headers, row) {
                     Ok(summary) => {
-                        Strava.upsert_activity!(db, summary)?
+                        # stamp 0 → synced_at stays NULL: CSV imports were never on Strava,
+                        # so a later sync's prune must never treat them as deletions
+                        Strava.upsert_activity!(db, 0, summary)?
                         import_rows!(db, headers, rest, { ..acc, imported: acc.imported + 1 })
                     }
                     Err(_) =>
