@@ -373,6 +373,34 @@ Render :: [].{
         }
     }
 
+    # ── power-duration curve screen ─────────────────────────────────────
+    power_curve_screen : { window_days : U64, sport : Str, points : List({ dur_s : U64, watts : F64 }), cp : F64, w_prime : F64 } -> Str
+    power_curve_screen = |pc| {
+        dur_label = |s|
+            if s < 60 "${U64.to_str(s)}s"
+            else if s % 60 == 0 "${U64.to_str(s // 60)}m"
+            else "${U64.to_str(s // 60)}m${U64.to_str(s % 60)}s"
+        sport_lbl = if pc.sport == "" "all power sports" else pc.sport
+        header = "power-duration curve — ${sport_lbl}, last ${U64.to_str(pc.window_days)} days"
+        if List.is_empty(pc.points) {
+            "${header}\n\nno power data in this window."
+        } else {
+            table = render_table(
+                ["duration", "best power (W)"],
+                List.map(pc.points, |p| [dur_label(p.dur_s), fmt0(p.watts)]),
+            )
+            cp_line =
+                if pc.cp > 0.0
+                    "→ Critical Power ${fmt0(pc.cp)} W · W′ ${fmt0(pc.w_prime)} J"
+                else
+                    "→ Critical Power: not enough long-duration (≥5 min) data to fit"
+            legend =
+                \\best mean-max power held for each duration (the peak across the window).
+                \\CP ≈ sustainable aerobic ceiling; W′ = the finite above-CP battery (Joules).
+            "${header}\n\n${table}\n\n${cp_line}\n\n${legend}"
+        }
+    }
+
     # ── summary command screen ──────────────────────────────────────────
     # renders the human report straight from the summary payload — ONE source of
     # numbers for the whole screen. (No type annotation: the payload is the summary
@@ -544,6 +572,22 @@ expect {
     d = |day, tss| { day, tss, ctl: 10.0, atl: 5.0, tsb: 5.0 }
     many = Iter.fold(0.I64..<21, [], |acc, i| List.append(acc, d(Metrics.days_to_date_str(20000 + i), 30.0)))
     Str.contains(Render.load_screen(many), "week of")
+}
+
+# power-curve: durations labelled, watts tabled, CP line present when cp fit; empty is graceful
+expect {
+    s = Render.power_curve_screen({
+        window_days: 90,
+        sport: "Ride",
+        points: [{ dur_s: 5, watts: 800.0 }, { dur_s: 60, watts: 400.0 }, { dur_s: 1200, watts: 260.0 }],
+        cp: 250.0,
+        w_prime: 20000.0,
+    })
+    Str.contains(s, "5s") and Str.contains(s, "20m") and Str.contains(s, "Critical Power 250") and Str.contains(s, "Ride")
+}
+expect {
+    s = Render.power_curve_screen({ window_days: 30, sport: "", points: [], cp: 0.0, w_prime: 0.0 })
+    Str.contains(s, "no power data") and Str.contains(s, "all power sports")
 }
 
 # zone-gap warning fires on 0 Z5; empty last-hard reads as none on record
