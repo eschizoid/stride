@@ -149,24 +149,14 @@ Db :: [].{
         (now_secs!({}) + time_mode_offset(mode) * 60) // 86400
     }
 
-    # the power threshold (FTP) a sport's power is judged against, read from config key
-    # `ftp_<sport>` (Metrics.power_ftp_key) — uniform for EVERY sport, cycling included
-    # (`ftp_ride`). 0 when unset AND nothing to derive, in which case intensity/TSS fall
-    # back to HR. Fully generic: a new sport needs no code, just its `ftp_<sport>` key —
-    # or nothing, since we derive from the sport's own history.
+    # the power threshold (FTP) a sport's power is judged against. DERIVED, never
+    # configured: it's that sport's own best 20-min power × 0.95 — the standard FTP
+    # estimate. The engine is sport-agnostic and figures FTP out per sport from the data,
+    # so there's nothing to set. 0 when the sport has no power history, in which case
+    # intensity/TSS fall back to HR.
     sport_ftp! : Str, Str => Try(F64, _)
     sport_ftp! = |path, sport| {
-        key = Metrics.power_ftp_key(sport)
-        configured =
-            match config_get!(path, key) {
-                Ok(s) => (F64.from_str(s)).ok_or(0.0)
-                Err(_) => 0.0
-            }
-        raw =
-            if configured > 0.0 configured
-            # no configured FTP → derive from this sport's OWN best 20-min power (× 0.95),
-            # so power-intensity works for any power sport with stream history, zero config
-            else derive_sport_ftp!(path, sport)?
+        raw = derive_sport_ftp!(path, sport)?
         # whole watts — keeps the stored ftp_used and the invalidation CASE exactly equal
         Ok(((raw).round_to_i64_try().ok_or(0)).to_f64())
     }
