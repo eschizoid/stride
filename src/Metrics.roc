@@ -207,6 +207,21 @@ Metrics :: [].{
     hr_zone_key_global = |n|
         "hr_z${U64.to_str(n)}_max"
 
+    # The config key holding a sport's threshold PACE, as a SPEED in m/s (the pace engine
+    # works in speeds). Per-sport `threshold_pace_<sport>` (threshold_pace_run, ...), same
+    # data-driven shape as power_ftp_key / hr_zone_key. Zero-config derivation from a stored
+    # best-sustained-pace column is a later slice.
+    threshold_pace_key : Str -> Str
+    threshold_pace_key = |sport|
+        "threshold_pace_${Str.with_ascii_lowercased(sport)}"
+
+    # The config key selecting a sport's intensity MODEL (power | pace | css | hr | rpe),
+    # `model_<sport>`. Orthogonal to sport_class (which sets fallback priority) — this picks
+    # which ladder rung a sport routes to. Absent -> the safe default (power if watts, else HR).
+    model_key : Str -> Str
+    model_key = |sport|
+        "model_${Str.with_ascii_lowercased(sport)}"
+
     # ── training stress ─────────────────────────────────────────────────
 
     tss_from_power : { np : F64, ftp : F64, dur_s : F64 } -> F64
@@ -264,6 +279,11 @@ Metrics :: [].{
             zones : ZoneSeconds,
             zb : ZoneBounds,
             ftp : F64,
+            # pace rung (m/s SPEEDS, not s/km): the normalized graded pace speed (Missing
+            # for a non-pace sport or one without distance+altitude streams) and the sport's
+            # threshold speed (0 when none). See pace_tss / normalized_graded_pace.
+            ngp : Try(F64, [Missing]),
+            threshold_speed : F64,
             dur_s : F64,
             moving_time : I64,
         }
@@ -320,18 +340,31 @@ Metrics :: [].{
                     Ok(pair) => Break(pair)
                     Err(_) => Continue(acc)
                 })
+        # pace rung, slotting in as power -> PACE -> HR -> RPE -> RE. Scores when a normalized
+        # graded pace SPEED was computed (a pace-routed sport with distance+altitude streams)
+        # AND a threshold speed exists; otherwise falls through to HR/RPE/RE. rTSS/sTSS is
+        # IF^2 * hours * 100 with IF = ngp_speed / threshold_speed (pace_tss).
+        pace_or_fallback =
+            match input.ngp {
+                Ok(ngp_speed) =>
+                    if input.threshold_speed > 0.0
+                        { t: pace_tss({ ngp_speed, threshold_speed: input.threshold_speed, dur_s: input.dur_s }), m: "rtss" }
+                    else
+                        fallback
+                Err(_) => fallback
+            }
         scored =
             match np_like {
                 # power scores ONLY with a usable FTP. Without one (no stream to derive it —
                 # CSV imports, pre-backfill syncs), power would compute TSS 0 and, by winning
-                # the ladder, BLOCK the HR/RPE fallback — silently scoring a real ride 0. So
-                # fall through to HR/RPE/RE when ftp <= 0.
+                # the ladder, BLOCK the rest — silently scoring a real ride 0. So fall through
+                # to the pace rung / HR / RPE / RE when ftp <= 0.
                 Ok(p) =>
                     if input.ftp > 0.0
                         { t: tss_from_power({ np: p.w, ftp: input.ftp, dur_s: input.dur_s }), m: p.m }
                     else
-                        fallback
-                Err(_) => fallback
+                        pace_or_fallback
+                Err(_) => pace_or_fallback
             }
         { tss: scored.t, np: Try.map_ok(np_like, |p| p.w), model: scored.m }
     }
@@ -827,6 +860,8 @@ Metrics :: [].{
         zones: test_zeroz,
         zb: test_zb,
         ftp: 200.0,
+        ngp: Err(Missing),
+        threshold_speed: 0.0,
         dur_s: 3600.0,
         moving_time: 3600,
     }
@@ -926,6 +961,20 @@ Metrics :: [].{
     normalized_graded_pace : List(F64), List(F64), List(F64) -> Try(F64, [TooShort])
     normalized_graded_pace = |time, dist, alt|
         normalized_power(grade_adjusted_speeds(time, dist, alt))
+
+    # 1 Hz grade-adjusted speed stream from an aligned time/dist/alt triple
+    # (Streams.dist_alt_time): resample dist & alt onto a 1 Hz base, THEN grade-adjust —
+    # NGP's 30-sample window is 30 s only at 1 Hz. Feed the result to normalized_power
+    # (= the NGP speed) AND to best_rolling_mean (best sustained speed → derived threshold
+    # pace). Computing the stream once and reusing it avoids grade-adjusting twice.
+    graded_speed_1s : List(F64), List(F64), List(F64) -> List(F64)
+    graded_speed_1s = |time, dist, alt| {
+        to_samples = |vals| List.map2(time, vals, |t, v| { t: (t).round_to_i64_try().ok_or(0), v })
+        dist_1s = resample_1s(to_samples(dist))
+        alt_1s = resample_1s(to_samples(alt))
+        time_1s = List.map_with_index(dist_1s, |_, i| (i).to_f64())
+        grade_adjusted_speeds(time_1s, dist_1s, alt_1s)
+    }
 
     # rTSS / sTSS: tss_from_power with speed swapped for watts — IF = ngp_speed /
     # threshold_speed (faster = harder), IF² × hours × 100. 1 h at threshold = 100.
@@ -1057,6 +1106,30 @@ expect {
 expect {
     r = Metrics.tss_ladder({ ..Metrics.ladder_base, weighted_watts: Ok(190.0), ftp: 0.0 })
     r.tss.abs() < 0.001 and r.model == "none"
+}
+
+# pace rung: an NGP speed + a threshold speed, no power -> rTSS (IF^2 * hours * 100)
+expect {
+    r = Metrics.tss_ladder({ ..Metrics.ladder_base, ngp: Ok(3.0), threshold_speed: 3.0 })
+    (r.tss - 100.0).abs() < 0.001 and r.model == "rtss"
+}
+
+# power still beats pace (the ladder is power -> pace -> HR -> ...)
+expect {
+    r = Metrics.tss_ladder({ ..Metrics.ladder_base, weighted_watts: Ok(200.0), ngp: Ok(3.5), threshold_speed: 3.0 })
+    r.model == "weighted_watts"
+}
+
+# pace beats HR when there is no usable power
+expect {
+    r = Metrics.tss_ladder({ ..Metrics.ladder_base, ngp: Ok(3.0), threshold_speed: 3.0, zones: { ..Metrics.test_zeroz, z2: 3600 } })
+    r.model == "rtss"
+}
+
+# an NGP with no threshold speed does NOT fire pace — falls through to HR
+expect {
+    r = Metrics.tss_ladder({ ..Metrics.ladder_base, ngp: Ok(3.0), threshold_speed: 0.0, zones: { ..Metrics.test_zeroz, z2: 3600 } })
+    (r.tss - 55.0).abs() < 0.001 and r.model == "hr_zones"
 }
 
 # no power: an hour of Z2 HR time -> 55 hrTSS, np reports NoPower
@@ -1231,6 +1304,12 @@ expect Metrics.hr_zone_key(2, "Soccer") == "hr_z2_max_soccer"
 expect Metrics.hr_zone_key(4, "Ride") == "hr_z4_max_ride"
 expect Metrics.hr_zone_key(1, "StandUpPaddling") == "hr_z1_max_standuppaddling"
 expect Metrics.hr_zone_key_global(3) == "hr_z3_max"
+
+# per-sport pace-engine config keys (same data-driven shape as the FTP/zone keys)
+expect Metrics.threshold_pace_key("Run") == "threshold_pace_run"
+expect Metrics.threshold_pace_key("Swim") == "threshold_pace_swim"
+expect Metrics.model_key("Run") == "model_run"
+expect Metrics.model_key("TrailRun") == "model_trailrun"
 
 expect Metrics.export_date_to_iso("Feb 17, 2022, 12:18:26 PM") == Ok("2022-02-17T12:18:26Z")
 expect Metrics.export_date_to_iso("Jul 4, 2026, 6:05:09 AM") == Ok("2026-07-04T06:05:09Z")
@@ -1420,3 +1499,15 @@ expect
 # short / empty streams surface TooShort / [] cleanly, no crash
 expect Metrics.normalized_graded_pace([0.0, 1.0], [0.0, 3.0], [0.0, 0.0]).is_err()
 expect List.len(Metrics.grade_adjusted_speeds([], [], [])) == 0
+
+# graded_speed_1s: a flat course at a constant 4 m/s -> NGP speed ~ 4 (no grade adjustment),
+# and the best sustained 30 s speed is ~ 4. Exercises resample -> grade-adjust -> rolling.
+expect {
+    time = List.map_with_index(List.repeat(0.0, 121), |_, i| (i).to_f64())
+    dist = List.map_with_index(List.repeat(0.0, 121), |_, i| (i).to_f64() * 4.0)
+    alt = List.repeat(0.0, 121)
+    gas = Metrics.graded_speed_1s(time, dist, alt)
+    ngp_ok = match Metrics.normalized_power(gas) { Ok(v) => (v - 4.0).abs() < 0.5, Err(_) => 1 == 0 }
+    best_ok = match Metrics.best_rolling_mean(gas, 30) { Ok(v) => (v - 4.0).abs() < 0.5, Err(_) => 1 == 0 }
+    ngp_ok and best_ok
+}

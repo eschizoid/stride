@@ -21,9 +21,9 @@ Report :: [].{
             query:
                 \\SELECT COALESCE(SUM(m.z1_s),0) AS z1, COALESCE(SUM(m.z2_s),0) AS z2, COALESCE(SUM(m.z3_s),0) AS z3,
                 \\       COALESCE(SUM(m.z4_s),0) AS z4, COALESCE(SUM(m.z5_s),0) AS z5, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
-                \\       -- load that came from a measured power meter (high-confidence rungs),
-                \\       -- vs estimated from HR/RPE/relative-effort — see the doctor confidence tiers
-                \\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN ('power_stream','weighted_watts','avg_watts') THEN m.tss ELSE 0 END),0) AS REAL) AS measured,
+                \\       -- load from a MEASURED source — a power meter or GPS-measured pace
+                \\       -- (high-confidence rungs) — vs estimated from HR/RPE/relative-effort
+                \\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN ('power_stream','weighted_watts','avg_watts','rtss') THEN m.tss ELSE 0 END),0) AS REAL) AS measured,
                 \\       -- polarization intensity per activity: POWER split when the activity has
                 \\       -- power-intensity time, else the HR zones. So a power ride's threshold
                 \\       -- work counts as hard even when HR sat on a zone boundary.
@@ -809,10 +809,10 @@ Report :: [].{
                 \\-- measured power, medium = HR/RPE, low = relative_effort, none = unscored. The
                 \\-- e2e cross-checks the 'high' count against the power-rung provenance counts so
                 \\-- this mapping can't silently drift.
-                \\SELECT COALESCE(SUM(CASE WHEN load_model IN ('power_stream','weighted_watts','avg_watts') THEN 1 ELSE 0 END),0) AS hi,
+                \\SELECT COALESCE(SUM(CASE WHEN load_model IN ('power_stream','weighted_watts','avg_watts','rtss') THEN 1 ELSE 0 END),0) AS hi,
                 \\       COALESCE(SUM(CASE WHEN load_model IN ('hr_zones','hr_avg','session_rpe') THEN 1 ELSE 0 END),0) AS med,
                 \\       COALESCE(SUM(CASE WHEN load_model='relative_effort' THEN 1 ELSE 0 END),0) AS lo,
-                \\       COALESCE(SUM(CASE WHEN load_model IS NULL OR load_model NOT IN ('power_stream','weighted_watts','avg_watts','hr_zones','hr_avg','session_rpe','relative_effort') THEN 1 ELSE 0 END),0) AS non
+                \\       COALESCE(SUM(CASE WHEN load_model IS NULL OR load_model NOT IN ('power_stream','weighted_watts','avg_watts','rtss','hr_zones','hr_avg','session_rpe','relative_effort') THEN 1 ELSE 0 END),0) AS non
                 \\FROM activity_metrics
             ,
             bindings: [],

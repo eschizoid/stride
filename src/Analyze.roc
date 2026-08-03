@@ -114,6 +114,10 @@ Analyze :: [].{
         # FTP (per-sport, via the CASE), or the HR zones / metrics_rev changed.
         ftp_map = sport_ftp_map!(path)?
         ftp_case = ftp_case_from_map(ftp_map)
+        # same story for the DERIVED per-sport threshold pace (speed): recompute a row when
+        # its stored threshold_pace_used no longer matches its sport's current threshold
+        threshold_map = sport_threshold_map!(path)?
+        threshold_case = threshold_case_from_map(threshold_map)
         # read config ONCE, then resolve per-sport zones purely (see load_config! note)
         cfg = load_config!(path)?
         zone_sigs = sport_zone_sigs!(path, cfg, zb)?
@@ -131,6 +135,7 @@ Analyze :: [].{
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE m.activity_id IS NULL
                 \\      OR CAST(COALESCE(m.ftp_used, 0) AS INTEGER) <> CAST((${ftp_case}) AS INTEGER)
+                \\      OR CAST(ROUND(COALESCE(m.threshold_pace_used, 0) * 1000) AS INTEGER) <> CAST(ROUND((${threshold_case}) * 1000) AS INTEGER)
                 \\      OR COALESCE(m.zones_used, '') <> (${zones_case})
                 \\      OR COALESCE(m.metrics_rev, 0) <> :rev
             ,
@@ -151,19 +156,19 @@ Analyze :: [].{
                 Ok({ id, start, mt, sport, re, aw, ahr, waw, rpe, raw })
             },
         })?
-        process_rows!(path, zb, ftp_map, cfg, rows, { computed: 0, stream_errors: 0 })
+        process_rows!(path, zb, ftp_map, threshold_map, cfg, rows, { computed: 0, stream_errors: 0 })
     }
-    process_rows! : Str, Metrics.ZoneBounds, List((Str, F64)), List((Str, Str)), List(ActivityRow), { computed : U64, stream_errors : U64 } => Try({ computed : U64, stream_errors : U64 }, _)
-    process_rows! = |path, zb, ftp_map, cfg, rows, acc|
+    process_rows! : Str, Metrics.ZoneBounds, List((Str, F64)), List((Str, F64)), List((Str, Str)), List(ActivityRow), { computed : U64, stream_errors : U64 } => Try({ computed : U64, stream_errors : U64 }, _)
+    process_rows! = |path, zb, ftp_map, threshold_map, cfg, rows, acc|
         match rows {
             [] => Ok(acc)
             [row, .. as rest] => {
-                failed = compute_one!(path, zb, ftp_map, cfg, row)?
+                failed = compute_one!(path, zb, ftp_map, threshold_map, cfg, row)?
                 next = {
                     computed: acc.computed + 1,
                     stream_errors: acc.stream_errors + (if failed 1 else 0),
                 }
-                process_rows!(path, zb, ftp_map, cfg, rest, next)
+                process_rows!(path, zb, ftp_map, threshold_map, cfg, rest, next)
             }
         }
     zero_zones : Metrics.ZoneSeconds
@@ -215,6 +220,42 @@ Analyze :: [].{
     # a name like "d'Or" can't break the CASE or inject SQL.
     ftp_case_from_map : List((Str, F64)) -> Str
     ftp_case_from_map = |m| {
+        whens = List.fold(m, "", |acc, pair| {
+            esc = Str.replace_each(pair.0, "'", "''")
+            "${acc} WHEN '${esc}' THEN ${(pair.1).to_str()}"
+        })
+        "CASE a.sport_type${whens} ELSE 0 END"
+    }
+    # per-sport DERIVED threshold pace (speed, m/s), frozen up front exactly like the FTP map
+    # so scoring is order-independent and consistent with the recompute WHERE.
+    sport_threshold_map! : Str => Try(List((Str, F64)), _)
+    sport_threshold_map! = |path| {
+        sports = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "SELECT DISTINCT sport_type AS s FROM activities WHERE sport_type IS NOT NULL AND sport_type <> ''",
+            bindings: [],
+            rows: Sqlite.str("s"),
+        })?
+        build_threshold_map!(path, sports, [])
+    }
+    build_threshold_map! : Str, List(Str), List((Str, F64)) => Try(List((Str, F64)), _)
+    build_threshold_map! = |path, sports, acc|
+        match sports {
+            [] => Ok(acc)
+            [s, .. as rest] => {
+                t = Db.sport_threshold_speed!(path, s)?
+                build_threshold_map!(path, rest, List.append(acc, (s, t)))
+            }
+        }
+    # pure: this sport's frozen threshold speed (0 if absent — no pace history → HR fallback)
+    lookup_threshold : List((Str, F64)), Str -> F64
+    lookup_threshold = |m, sport|
+        List.fold(m, 0.0, |acc, pair| if pair.0 == sport pair.1 else acc)
+    # pure: the CASE for the recompute WHERE, built from the SAME frozen threshold map. The
+    # WHERE compares both sides scaled ×1000 (mm/s) as integers, so the stored value and the
+    # CASE agree despite float representation — the pace twin of ftp_case_from_map.
+    threshold_case_from_map : List((Str, F64)) -> Str
+    threshold_case_from_map = |m| {
         whens = List.fold(m, "", |acc, pair| {
             esc = Str.replace_each(pair.0, "'", "''")
             "${acc} WHEN '${esc}' THEN ${(pair.1).to_str()}"
@@ -300,8 +341,8 @@ Analyze :: [].{
         "CASE a.sport_type${whens} ELSE '${zones_sig(g)}' END"
     }
     # returns Bool: did the stored stream JSON fail to decode? (surfaced by analyze)
-    compute_one! : Str, Metrics.ZoneBounds, List((Str, F64)), List((Str, Str)), ActivityRow => Try(Bool, _)
-    compute_one! = |path, zb, ftp_map, cfg, row| {
+    compute_one! : Str, Metrics.ZoneBounds, List((Str, F64)), List((Str, F64)), List((Str, Str)), ActivityRow => Try(Bool, _)
+    compute_one! = |path, zb, ftp_map, threshold_map, cfg, row| {
         decoded = Streams.decode_streams(row.raw)
         streams = decoded.streams
         # this sport's zone bounds: per-sport override or global, resolved purely from
@@ -341,6 +382,22 @@ Analyze :: [].{
                 Err(_) => Real(0.0)
             }
 
+        # grade-adjusted pace: align time+dist+alt into a triple, resample to 1 Hz, grade-adjust
+        # ONCE. The NGP speed scores the pace rung (when the sport has a threshold); the best
+        # 20-min speed feeds the DERIVED per-sport threshold. Empty (→ Err/0) when the sport
+        # carries no dist+alt streams (indoor rides, most of this user's data) — pace then
+        # falls through to HR, exactly like a no-power sport falls through on FTP.
+        pace_triple = Streams.dist_alt_time(streams.time, streams.distance, streams.altitude)
+        gas_1s = Metrics.graded_speed_1s(pace_triple.time, pace_triple.dist, pace_triple.alt)
+        ngp_speed = Metrics.normalized_power(gas_1s)
+        best20_speed = Metrics.best_rolling_mean(gas_1s, 1200)
+        threshold_speed = lookup_threshold(threshold_map, row.sport)
+        ngp_for_ladder =
+            match ngp_speed {
+                Ok(v) => Ok(v)
+                Err(_) => Err(Missing)
+            }
+
         # intensity from power, judged against the sport's own FTP (0 for no-power sports
         # → all-zero, and the display falls back to HR). Stored so the weekly polarization
         # and the activities "hard" column read power where it exists, HR where it doesn't.
@@ -367,6 +424,11 @@ Analyze :: [].{
             zones,
             zb: row_zb,
             ftp: pi_ftp, # the SPORT's FTP, not cycling's — so rowing/running load is scaled right
+            # pace rung: NGP speed vs the sport's DERIVED threshold speed. Both 0/absent for a
+            # sport with no dist+alt streams, so the pace candidate simply doesn't fire and the
+            # ladder falls through to HR — same shape as a no-power sport on the power rung.
+            ngp: ngp_for_ladder,
+            threshold_speed,
             dur_s: (row.mt).to_f64(),
             moving_time: row.mt,
         })
@@ -390,12 +452,18 @@ Analyze :: [].{
                 Err(_) => Null
 
             }
+        best20_speed_binding =
+            match best20_speed {
+                Ok(b) => Real(b)
+                Err(_) => Null
+
+            }
         Sqlite.execute!({
             path: Path.utf8(path),
             query:
                 \\INSERT OR REPLACE INTO activity_metrics
-                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w)
-                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600)
+                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, threshold_pace_used)
+                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :thru)
             ,
             bindings: [
                 { name: ":pie", value: Integer(pintensity.easy_s) },
@@ -423,6 +491,10 @@ Analyze :: [].{
                 { name: ":bc300", value: cw(4) },
                 { name: ":bc600", value: cw(5) },
                 { name: ":bc3600", value: cw(6) },
+                { name: ":b20s", value: best20_speed_binding },
+                # store the threshold the row was scored against — the pace twin of ftp_used,
+                # so a later threshold change invalidates via the recompute WHERE
+                { name: ":thru", value: Real(threshold_speed) },
             ],
         })?
         Ok(decoded.failed)
@@ -515,5 +587,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 8
+    metrics_rev = 9
 }
