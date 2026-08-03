@@ -245,21 +245,21 @@ Analyze :: [].{
                 Ok((k, v))
             },
         })
-    # pure: a config value parsed as F64, or the fallback when absent/unparseable
+    # pure: a config value parsed as F64, or the fallback when absent/unparseable.
+    # Recursive so it stops at the first match (config also holds tokens/sync markers).
     cfg_f64 : List((Str, Str)), Str, F64 -> F64
     cfg_f64 = |cfg, key, fallback|
-        List.fold(
-            cfg,
-            fallback,
-            |acc, pair|
+        match cfg {
+            [] => fallback
+            [pair, .. as rest] =>
                 if pair.0 == key
                     match F64.from_str(pair.1) {
                         Ok(v) => v
                         Err(_) => fallback
                     }
                 else
-                    acc,
-        )
+                    cfg_f64(rest, key, fallback)
+        }
     # pure: one sport's zone ceilings (per-sport keys, global fallback). An empty sport
     # (NULL/'' sport_type, selected as COALESCE(...,'')) resolves to the GLOBAL set only:
     # sport_zone_sigs! excludes empty sports from the invalidation CASE (WHERE sport_type
