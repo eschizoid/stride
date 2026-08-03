@@ -22,6 +22,7 @@ Command := [
 	Progress(Str),
 	Activity(Str),
 	Load(U64),
+	PowerCurve(U64, Str),
 	PlanView,
 	PlanViewAll,
 	PlanAdd(Str, Str, Str, Str),
@@ -69,6 +70,12 @@ Command := [
 			[_, "activity", id_str] => Ok(Activity(id_str))
 			[_, "load"] => Ok(Load(90))
 			[_, "load", n] => count(n, |c| Load(c))
+			[_, "power-curve"] => Ok(PowerCurve(90, ""))
+			[_, "pc"] => Ok(PowerCurve(90, ""))
+			[_, "power-curve", n] => count(n, |c| PowerCurve(c, ""))
+			[_, "pc", n] => count(n, |c| PowerCurve(c, ""))
+			[_, "power-curve", n, sport] => count(n, |c| PowerCurve(c, sport))
+			[_, "pc", n, sport] => count(n, |c| PowerCurve(c, sport))
 			[_, "plan"] => Ok(PlanView)
 			[_, "plan", "all"] => Ok(PlanViewAll)
 			[_, "plan", "add", date, session_type, detail, rationale] => Ok(PlanAdd(date, session_type, detail, rationale))
@@ -158,6 +165,26 @@ expect
 expect
 	match Command.parse(["stride", "load", "7"]) {
 		Ok(Load(7)) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "power-curve"]) {
+		Ok(PowerCurve(90, "")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "pc", "60"]) {
+		Ok(PowerCurve(60, "")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "pc", "60", "Ride"]) {
+		Ok(PowerCurve(60, "Ride")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "power-curve", "nope"]) {
+		Err(BadCount("nope")) => True
 		_ => False
 	}
 expect

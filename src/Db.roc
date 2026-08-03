@@ -178,7 +178,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 11
+    schema_version = 12
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -222,6 +222,16 @@ Db :: [].{
         # sync can prune activities deleted on Strava — any row in the pulled window not
         # re-stamped this run is gone upstream. Mirror tier (activities) is re-pullable.
         alter_add_column!(path, "ALTER TABLE activities ADD COLUMN synced_at INTEGER")?
+        # v12: power-duration curve — best mean-max power at each ladder duration (the 20-min
+        # point stays in best_20min_w). Feeds `power-curve` (MAX per duration over a window →
+        # CP/W' fit). REAL; 0/NULL = no data (ride shorter than the window).
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_5s_w REAL")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_15s_w REAL")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_30s_w REAL")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_60s_w REAL")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_300s_w REAL")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_600s_w REAL")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_3600s_w REAL")?
         # v2: index the column every date-range filter and the activities sort use
         # (queries now compare a.start_local directly — sargable — instead of substr)
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })

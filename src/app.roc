@@ -83,6 +83,7 @@ help_text =
         \\    activities [limit] [sport]   recent sessions with metrics (default 30)
         \\    activity <id>                one session in depth: zones, power bests, hard min
         \\    load [days]                  fitness/fatigue/form series (default 90)
+        \\    power-curve [days] [sport]   power-duration curve + Critical Power (alias: pc)
         \\
         \\WHAT SHOULD I DO?
         \\    week                    planning bundle: summary + open plan + last 14 days
@@ -150,6 +151,7 @@ dispatch! = |cmd|
         Command.Progress(name) => Report.progress!(name)
         Command.Activity(id_str) => Report.activity!(id_str)
         Command.Load(days) => Report.load_series!(days)
+        Command.PowerCurve(days, sport) => Report.power_curve!(days, sport)
         Command.PlanView => Plan.plan_view!(ThisWeek)
         Command.PlanViewAll => Plan.plan_view!(AllTime)
         Command.PlanAdd(date, session_type, detail, rationale) => Plan.plan_add!(date, session_type, detail, rationale)

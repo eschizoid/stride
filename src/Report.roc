@@ -1112,4 +1112,74 @@ Report :: [].{
         ordered = List.fold(rows, [], |acc, x| List.concat([x], acc))
         Output.out!(ordered, Render.load_screen)
     }
+
+    # power-duration curve: the best mean-max power sustained for each ladder duration,
+    # taken as the MAX across a window (per sport), plus a Critical Power / W' fit over the
+    # aerobic points. Reads the stored best_<dur>_w columns — no stream re-read. 0-power
+    # durations (no ride long enough) are dropped, so the curve only shows real data.
+    power_curve! : U64, Str => Try({}, _)
+    power_curve! = |days, sport| {
+        path = Db.open_db!({})?
+        cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
+        r = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT
+                \\  CAST(COALESCE(MAX(m.best_5s_w), 0) AS REAL) AS d5,
+                \\  CAST(COALESCE(MAX(m.best_15s_w), 0) AS REAL) AS d15,
+                \\  CAST(COALESCE(MAX(m.best_30s_w), 0) AS REAL) AS d30,
+                \\  CAST(COALESCE(MAX(m.best_60s_w), 0) AS REAL) AS d60,
+                \\  CAST(COALESCE(MAX(m.best_300s_w), 0) AS REAL) AS d300,
+                \\  CAST(COALESCE(MAX(m.best_600s_w), 0) AS REAL) AS d600,
+                \\  CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS d1200,
+                \\  CAST(COALESCE(MAX(m.best_3600s_w), 0) AS REAL) AS d3600
+                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                \\WHERE a.start_local >= :cutoff AND (:sport = '' OR a.sport_type = :sport)
+            ,
+            bindings: [
+                { name: ":cutoff", value: String(cutoff) },
+                { name: ":sport", value: String(sport) },
+            ],
+            row: |cols| |stmt| {
+                d5 = Sqlite.f64("d5")(cols)(stmt)?
+                d15 = Sqlite.f64("d15")(cols)(stmt)?
+                d30 = Sqlite.f64("d30")(cols)(stmt)?
+                d60 = Sqlite.f64("d60")(cols)(stmt)?
+                d300 = Sqlite.f64("d300")(cols)(stmt)?
+                d600 = Sqlite.f64("d600")(cols)(stmt)?
+                d1200 = Sqlite.f64("d1200")(cols)(stmt)?
+                d3600 = Sqlite.f64("d3600")(cols)(stmt)?
+                Ok({ d5, d15, d30, d60, d300, d600, d1200, d3600 })
+            },
+        })?
+        raw : List({ dur_s : U64, watts : F64 })
+        raw = [
+            { dur_s: 5, watts: r.d5 },
+            { dur_s: 15, watts: r.d15 },
+            { dur_s: 30, watts: r.d30 },
+            { dur_s: 60, watts: r.d60 },
+            { dur_s: 300, watts: r.d300 },
+            { dur_s: 600, watts: r.d600 },
+            { dur_s: 1200, watts: r.d1200 },
+            { dur_s: 3600, watts: r.d3600 },
+        ]
+        points = List.keep_if(raw, |p| p.watts > 0.0)
+        # fit CP/W' over the AEROBIC points (>= 5 min); short sprints are anaerobic and
+        # would skew the linear P = W'/t + CP fit
+        fit_points = List.map(
+            List.keep_if(points, |p| p.dur_s >= 300),
+            |p| { dur_s: (p.dur_s).to_f64(), watts: p.watts },
+        )
+        cpfit =
+            match Metrics.critical_power(fit_points) {
+                # a fit is only meaningful when BOTH are positive; inconsistent bests (no true
+                # 5-10 min efforts) can yield a non-positive CP or W' — treat that as no fit
+                Ok(c) => (if c.cp > 0.0 and c.w_prime > 0.0 { cp: c.cp, w_prime: c.w_prime } else { cp: 0.0, w_prime: 0.0 })
+                Err(_) => { cp: 0.0, w_prime: 0.0 }
+            }
+        Output.out!(
+            { window_days: days, sport, points, cp: cpfit.cp, w_prime: cpfit.w_prime },
+            Render.power_curve_screen,
+        )
+    }
 }
