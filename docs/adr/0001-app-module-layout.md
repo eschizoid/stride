@@ -1,7 +1,8 @@
 # ADR 0001 — app.roc module layout (post new-compiler migration)
 
 Status: accepted · executed 2026-08-02 (the split shipped — `app.roc` is now a thin
-argv → dispatch shell; effectful code lives in `Db/Strava/Analyze/Report/Plan/Import`,
+argv → dispatch shell; effectful code lives in the `Db.roc`, `Strava.roc`, `Analyze.roc`,
+`Report.roc`, `Plan.roc`, and `Import.roc` modules,
 all `roc check` green on the new compiler) · 2026-08-01
 
 Supersedes the monolith constraint in [ADR 0000 §2](0000-architecture.md). ADR 0000

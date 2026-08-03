@@ -171,7 +171,7 @@ on every push.
 **Remaining gate — the full release `roc build`.** `roc build src/app.roc` currently
 pegs the Specialization phase for minutes on the pinned nightly — an upstream
 compiler-perf bug (roc-lang/roc#10469, SpecConstr blowup). It was fixed upstream by
-#10531 (merged 2026-08-02); stride re-pins to the first nightly that carries the fix,
+roc-lang/roc#10531 (merged 2026-08-02); stride re-pins to the first nightly that carries the fix,
 at which point the four platform release binaries build again. `roc build` on the
 old alpha4 toolchain is gone with the migration. The execution runbook for that
 re-pin lives in `docs/post-10469-runbook.md`.
