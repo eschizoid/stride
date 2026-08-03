@@ -335,7 +335,7 @@ Render :: [].{
     ftp_calibration_lines = |ftp|
         [
             "",
-            "  cycling FTP (60d): ~${fmt0(ftp.estimated_ftp_w)}W — derived from your best 20-min ride power ${fmt0(ftp.best_20min_w_60d)}W",
+            "  FTP (60d): ~${fmt0(ftp.estimated_ftp_w)}W — derived from your best 20-min power ${fmt0(ftp.best_20min_w_60d)}W",
         ]
 
     # ── compare command screen ──────────────────────────────────────────
