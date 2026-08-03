@@ -16,8 +16,8 @@ Analyze :: [].{
         match load_zone_config!(path) {
             Err(MissingConfig) => Output.missing_config!({})
             Err(other) => Err(other)
-            Ok(cfg) => {
-                res = converge_metrics!(path, cfg.zb, 5, { computed: 0, stream_errors: 0 })?
+            Ok(zb) => {
+                res = converge_metrics!(path, zb, 5, { computed: 0, stream_errors: 0 })?
                 rebuild_daily_load!(path)?
                 form =
                     match Sqlite.query!({
@@ -56,14 +56,15 @@ Analyze :: [].{
             }
         }
     }
-    load_zone_config! : Str => Try({ ftp : F64, zb : Metrics.ZoneBounds }, _)
+    # only the HR zones are required config — those are universal across sports. FTP is
+    # never configured; it's derived per sport from recent power history (Db.sport_ftp!).
+    load_zone_config! : Str => Try(Metrics.ZoneBounds, _)
     load_zone_config! = |path| {
-        ftp = config_f64!(path, "ftp_ride")?
         z1 = config_f64!(path, "hr_z1_max")?
         z2 = config_f64!(path, "hr_z2_max")?
         z3 = config_f64!(path, "hr_z3_max")?
         z4 = config_f64!(path, "hr_z4_max")?
-        Ok({ ftp, zb: { z1_max: z1, z2_max: z2, z3_max: z3, z4_max: z4 } })
+        Ok({ z1_max: z1, z2_max: z2, z3_max: z3, z4_max: z4 })
     }
     config_f64! : Str, Str => Try(F64, _)
     config_f64! = |path, key|

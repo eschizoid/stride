@@ -332,19 +332,11 @@ Render :: [].{
         )
     }
 
-    ftp_calibration_lines = |ftp| {
-        base = [
+    ftp_calibration_lines = |ftp|
+        [
             "",
-            "  FTP calibration (60d): best 20-min power ${fmt0(ftp.best_20min_w_60d)}W -> estimated FTP ${fmt0(ftp.estimated_ftp_w)}W (config: ${fmt0(ftp.config_w)}W)",
+            "  cycling FTP (60d): ~${fmt0(ftp.estimated_ftp_w)}W — derived from your best 20-min ride power ${fmt0(ftp.best_20min_w_60d)}W",
         ]
-        if ftp.stale {
-            List.append(base, "    ⚠ config FTP looks stale — consider: stride config set ftp ${fmt0(ftp.estimated_ftp_w)}")
-        } else if ftp.detraining {
-            List.append(base, "    note: recent best power is well below config FTP (detraining or no hard efforts recorded)")
-        } else {
-            base
-        }
-    }
 
     # ── compare command screen ──────────────────────────────────────────
     # this rolling window vs the prior one, metric by metric, with a signed delta
@@ -449,7 +441,7 @@ expect {
         form_tsb: 10.0,
         last_28d: { tss: 100.0, z1_s: 600.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 100.I64 },
         last_7d: { tss: 50.0, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64 },
-        ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0, config_w: 200.0, stale: False, detraining: False },
+        ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
         last_hard_session_date: "",
         pending_sessions: 2.I64,
     }

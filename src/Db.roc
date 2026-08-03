@@ -162,10 +162,13 @@ Db :: [].{
     }
     derive_sport_ftp! : Str, Str => Try(F64, _)
     derive_sport_ftp! = |path, sport| {
+        # RECENT form: best 20-min power over the last 60 days, not all-time. An old peak
+        # shouldn't keep judging today's rides as easy — FTP tracks current fitness.
+        cutoff = Metrics.days_to_date_str(local_today_days!(path) - 60)
         best = Sqlite.query!({
             path: Path.utf8(path),
-            query: "SELECT CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_type = :sport",
-            bindings: [{ name: ":sport", value: String(sport) }],
+            query: "SELECT CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_type = :sport AND a.start_local >= :cutoff",
+            bindings: [{ name: ":sport", value: String(sport) }, { name: ":cutoff", value: String(cutoff) }],
             row: Sqlite.f64("b"),
         })?
         Ok(best * 0.95)

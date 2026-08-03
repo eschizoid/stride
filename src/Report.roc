@@ -345,8 +345,8 @@ Report :: [].{
         match Analyze.load_zone_config!(path) {
             Err(MissingConfig) => Output.missing_config!({})
             Err(other) => Err(other)
-            Ok({ ftp, zb }) =>
-                match summary_payload!(path, ftp, zb) {
+            Ok(zb) =>
+                match summary_payload!(path, zb) {
                     Err(NoDataYet) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
                     Err(e) => Err(e)
                     Ok(payload) => Output.out!(payload, Render.summary_screen)
@@ -360,8 +360,8 @@ Report :: [].{
         match Analyze.load_zone_config!(path) {
             Err(MissingConfig) => Output.missing_config!({})
             Err(other) => Err(other)
-            Ok({ ftp, zb }) =>
-                match summary_payload!(path, ftp, zb) {
+            Ok(zb) =>
+                match summary_payload!(path, zb) {
                     Err(NoDataYet) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
                     Err(e) => Err(e)
                     Ok(s) => {
@@ -441,7 +441,7 @@ Report :: [].{
                 }
         }
     }
-    summary_payload! = |path, ftp, zb| {
+    summary_payload! = |path, zb| {
         # empty daily_load (nothing analyzed yet) is a clean "no data" state, not an
         # error to blow up on — map NoRowsReturned to a tag the callers turn into a
         # friendly message instead of leaking a raw SQLite error to the user.
@@ -529,7 +529,6 @@ Report :: [].{
         total7 = zsum7.easy + zsum7.moderate + zsum7.hard
         easy7 = zsum7.easy
         hard7 = zsum7.hard
-        cal = Metrics.ftp_calibration({ best_20min: best20_row, ftp })
 
         Ok({
             as_of: latest.day,
@@ -562,11 +561,8 @@ Report :: [].{
                 measured_pct: measured_pct,
             },
             ftp: {
-                config_w: ftp,
                 best_20min_w_60d: best20_row,
-                estimated_ftp_w: cal.est,
-                stale: cal.stale,
-                detraining: cal.detraining,
+                estimated_ftp_w: best20_row * 0.95,
             },
             hr_zones: { z1_max: zb.z1_max, z2_max: zb.z2_max, z3_max: zb.z3_max, z4_max: zb.z4_max },
             sports_28d: sports,
@@ -942,26 +938,26 @@ Report :: [].{
     pz! : {} => Try({}, _)
     pz! = |{}| {
         path = Db.open_db!({})?
-        match Analyze.config_f64!(path, "ftp_ride") {
-            Err(MissingConfig) => Output.err_out!("missing_config", "set your FTP first: stride config set ftp_ride <watts>")
-            Err(other) => Err(other)
-            Ok(ftp) => {
-                zones = Metrics.power_zones(ftp)
-                if Output.json_mode!({})
-                    Output.emit_ok!({ ftp, zones })
-                else {
-                    range = |z|
-                        if z.lo_w <= 0.0
-                            "< ${Render.fmt0(z.hi_w)}"
-                        else if z.hi_w <= 0.0
-                            "${Render.fmt0(z.lo_w)}+"
-                        else
-                            "${Render.fmt0(z.lo_w)}-${Render.fmt0(z.hi_w)}"
-                    Stdout.line!(Render.render_table(
-                        ["zone", "name", "watts (ftp ${Render.fmt0(ftp)})"],
-                        List.map(zones, |z| [z.z, z.name, range(z)]),
-                    ))
-                }
+        # power zones derive from the cycling FTP (recent best 20-min ride power); no config
+        ftp = Db.sport_ftp!(path, "Ride")?
+        if ftp <= 0.0
+            Output.err_out!("no_power_data", "no cycling power in the last 60 days — power zones derive from your recent best 20-min ride power, so ride with a power meter and `analyze`")
+        else {
+            zones = Metrics.power_zones(ftp)
+            if Output.json_mode!({})
+                Output.emit_ok!({ ftp, zones })
+            else {
+                range = |z|
+                    if z.lo_w <= 0.0
+                        "< ${Render.fmt0(z.hi_w)}"
+                    else if z.hi_w <= 0.0
+                        "${Render.fmt0(z.lo_w)}+"
+                    else
+                        "${Render.fmt0(z.lo_w)}-${Render.fmt0(z.hi_w)}"
+                Stdout.line!(Render.render_table(
+                    ["zone", "name", "watts (ftp ${Render.fmt0(ftp)})"],
+                    List.map(zones, |z| [z.z, z.name, range(z)]),
+                ))
             }
         }
     }
