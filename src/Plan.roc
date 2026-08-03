@@ -72,10 +72,13 @@ Plan :: [].{
         # Monday offset is rem(days+3,7) — the same convention as Metrics.day_of_week.
         today = Db.local_today_days!(path)
         mon = today - (today + 3) % (7)
+        # default `plan` is the LIVE current-week plan: hide skipped sessions, which are
+        # just the tombstones left by re-planning a date and would otherwise stack two or
+        # three dead rows under every day. `plan all` keeps them for the adherence log.
         week_filter =
             match scope {
                 AllTime => ""
-                ThisWeek => "WHERE COALESCE(target_date,'') >= '${Metrics.days_to_date_str(mon)}' AND COALESCE(target_date,'') <= '${Metrics.days_to_date_str(mon + 6)}'"
+                ThisWeek => "WHERE COALESCE(status,'open') <> 'skipped' AND COALESCE(target_date,'') >= '${Metrics.days_to_date_str(mon)}' AND COALESCE(target_date,'') <= '${Metrics.days_to_date_str(mon + 6)}'"
             }
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
