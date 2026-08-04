@@ -201,6 +201,7 @@ stride week                                       # everything needed to plan a 
 | `week` | *What should this week look like?* One call bundling `summary` + the open plan + the last 14 days of activities — the complete planning context. |
 | `plan` (or `plan all`) | *What was planned, and did it happen?* The plan log in calendar order with status open / done / skipped — `plan` shows the most recent 100, `plan all` the full history. |
 | `activity <id>` | *How did one session actually go?* Deep view of a single activity: load, intensity, zone minutes, hard time, and power bests (1/3/5/20 min) computed from its streams. The session-review tool. |
+| `power-curve [days] [sport]` (alias `pc`) | *What's my power at every duration?* The power-duration curve — best watts held for 5 s through 60 min across a window (default 90 days), per sport — with a **Critical Power / W′** fit: your sustainable aerobic ceiling and the finite battery above it. Reads the stored per-activity bests; the shape behind FTP. |
 | `stats` | *What have I done, ever and this year?* Career and year-to-date totals per sport: sessions, hours, distance. |
 
 **Coaching log** (the adaptation loop)
@@ -275,9 +276,15 @@ Strava REST v3 ──▶ auth/sync ──▶ SQLite (~/.stride/db.sqlite) ──
 
 **What the engine computes** (all deterministic):
 
-- **TSS ladder** — best available data wins: stream normalized power → Strava weighted
-  watts → average watts → zone-weighted hrTSS → `relative_effort` → honest zero.
+- **TSS ladder** — best available data wins: stream normalized power → grade-adjusted
+  pace (rTSS) → Strava weighted watts → average watts → zone-weighted hrTSS →
+  `relative_effort` → honest zero. Each row records which rung scored it.
 - **Normalized power** — 30-second rolling average over 1 Hz-resampled streams.
+- **Grade-adjusted pace (rTSS)** — for runs and pace sports with GPS: normalized graded
+  pace vs a **derived** per-sport threshold pace (best 20-min graded speed × 0.95), used
+  when power isn't available. Sports without dist+alt streams fall through to HR.
+- **Power-duration curve + Critical Power** — best power held at every duration (5 s–60 min)
+  across a window, plus a CP/W′ fit. Surfaced by `power-curve`.
 - **CTL/ATL/TSB** — 42-day and 7-day exponential moving averages of daily load,
   extended through **today** so rest days decay fatigue and `form` is true as-of-now.
 - **Zones are HR-based** (universal across sports); power feeds TSS/NP only.
