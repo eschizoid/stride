@@ -101,10 +101,9 @@ respond! = |req, _ctx| {
         }
     } else if Str.contains(uri, "/streams") {
         if Str.contains(uri, "/activities/501/") {
-            # 60 samples, 30s apart: constant 200W, HR ramp — enough for NP + zones
-            body =
-                \\{"time":{"data":[0,30,60,90,120,150,180,210,240,270,300,330,360,390,420,450,480,510,540,570,600,630,660,690,720,750,780,810,840,870,900,930,960,990,1020,1050,1080,1110,1140,1170,1200,1230,1260,1290,1320,1350,1380,1410,1440,1470,1500,1530,1560,1590,1620,1650,1680,1710,1740,1770]},"watts":{"data":[200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200,200]},"heartrate":{"data":[120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179]}}
-            Ok(mock_json(body))
+            # a realistic 1 Hz stream (1300 samples, constant 200W, HR ramp): long enough that
+            # best_20min_w -> derived FTP 190 -> TSS ~110.8. See mock_power_stream_json.
+            Ok(mock_json(mock_power_stream_json(1300, 200)))
         } else {
             # 404 = "no streams recorded" — exercises the {} marker path
             Ok(mock_not_found("{}"))
@@ -199,9 +198,10 @@ run_sync! = || {
 
     _ = sync_stride!(bin, home, base, ["analyze"])
     check!("2 mock activities synced", sync_strjq!(bin, home, base, ["activities"], ".data | length") == "2")?
-    # 501's mock streams are a constant 200W; NP 200 @ ftp_ride 200 => TSS ~100 for the
-    # hour. Pin the exact value (not just >0) so the whole stream->NP->TSS path is checked.
-    check_near!("501 power streams score ~100 TSS (NP200 @ FTP200)", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 100.0, 1.0)?
+    # 501's mock streams are a constant 200W. FTP is DERIVED, not configured (#26): best 20-min
+    # power 200 x 0.95 = 190, so NP 200 @ derived FTP 190 => IF 1.053, TSS ~110.8 for the hour.
+    # Pin the exact value (not just >0) so the whole stream->best20->deriveFTP->NP->TSS path is checked.
+    check_near!("501 power streams score ~110.8 TSS (NP200 @ derived FTP190)", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 110.8, 1.0)?
 
     _ = sh!("rm -rf '${home}'")
     Stdout.line!("SYNC E2E CHECKS PASS")
@@ -659,6 +659,18 @@ int_seq : U64 -> List(U64)
 int_seq = |n| int_seq_go(n, [])
 int_seq_go : U64, List(U64) -> List(U64)
 int_seq_go = |n, acc| if n == 0 acc else int_seq_go(n - 1, List.prepend(acc, n - 1))
+
+# a 1 Hz power stream as JSON for the mock endpoint: time 0..n-1, constant w watts, an HR ramp.
+# n must be >= 1200 so best_20min_w (and thus the derived FTP) is computed — the http twin of
+# seed_power_stream!. The old hardcoded 60-sample/30s stream was too sparse: resample_1s treats
+# 30s gaps as pauses, leaving < 1200 samples, so the 20-min best never populated and TSS was 0.
+mock_power_stream_json : U64, U64 -> Str
+mock_power_stream_json = |n, w| {
+    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
+    watts = Str.join_with(List.map(int_seq(n), |_| U64.to_str(w)), ",")
+    hrs = Str.join_with(List.map(int_seq(n), |i| U64.to_str(120 + (i % 60))), ",")
+    "{\"time\":{\"data\":[${times}]},\"watts\":{\"data\":[${watts}]},\"heartrate\":{\"data\":[${hrs}]}}"
+}
 
 stride! : Str, Str, List(Str) => Str
 stride! = |bin, home, sargs|
