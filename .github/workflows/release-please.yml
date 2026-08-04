@@ -4,13 +4,12 @@ name: release-please
 # (feat:/fix:/…), maintains CHANGELOG.md and the version in app.roc, and opens a
 # "release PR". Merging that PR tags vX.Y.Z + creates the GitHub release.
 #
-# NOTE: the binary build/upload jobs are DISABLED (if: false). The old blocker
-# (roc-lang/roc#10469, the Specialization stall) is FIXED — `roc build` works now — but
-# RELEASE binaries ship the OPTIMIZED (--opt=speed) build, which has an intermittent SIGABRT
-# on the stream-decode path (issue #32). We won't ship a binary that can abort, so uploads
-# stay gated on #32. Merging a release PR still cuts a source-only GitHub release (tag +
-# changelog); prebuilt binaries aren't attached until #32 is resolved. (The offline e2e
-# already runs in build.yml on the stable --opt=dev binary.)
+# NOTE (2026-08-04): binary build/upload jobs are ENABLED on the new (Zig) compiler, Aug-04
+# nightly, --opt=dev (--opt=speed still hits #32's SIGABRT). All 4 targets build with fail-fast
+# off + upload runs with always(), so a partial binary set attaches even if a target fails.
+# Caveat: bug C (sync heap corruption) is ~flaky on every platform and bug B (linux Json.to_str)
+# is live — the shipped binaries build + report --version, but sync may need a retry. This is a
+# deliberate "see what CI does" pass; revisit gating once B/C are fixed upstream.
 on:
   push:
     branches: [main]
@@ -34,12 +33,13 @@ jobs:
   build:
     name: build ${{ matrix.target }}
     needs: release-please
-    # DISABLED until #32 (the optimized-backend SIGABRT) is resolved — releases ship the
-    # --opt=speed build, which can abort. roc#10469 (the old Specialization stall) is fixed.
-    # To restore: flip this to `if: ${{ needs.release-please.outputs.release_created == 'true' }}`
-    # and switch the alpha4 install + `roc build` steps to roc-lang/setup-roc
-    # (version: nightly-new-compiler) with --opt=speed, matching .github/workflows/build.yml.
-    if: false
+    # EXPERIMENT (2026-08-04): ENABLED on the new (Zig) compiler, Aug-04 nightly (bug A fixed),
+    # --opt=dev (--opt=speed still hits #32). All 4 targets, fail-fast off — we want to SEE which
+    # platforms build + pass version-check in CI. Known-live bugs that may bite: bug C (sync heap
+    # corruption, ~flaky on all platforms) and bug B (linux Json.to_str). The version check only
+    # runs `--version` (no sync/plan), so it should pass even with B/C live; a target failing here
+    # means the BUILD itself broke (e.g. linux codegen/linker).
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ${{ matrix.runs-on }}
     strategy:
       fail-fast: false # one target failing shouldn't sink the others
@@ -47,38 +47,26 @@ jobs:
         include:
           - target: linux-x86_64
             runs-on: ubuntu-latest
-            roc-asset: roc-linux_x86_64-alpha4-rolling.tar.gz
-            linker: "--linker=legacy" # surgical linker hits roc #3609 on linux
           - target: linux-arm64
             runs-on: ubuntu-24.04-arm
-            roc-asset: roc-linux_arm64-alpha4-rolling.tar.gz
-            linker: "--linker=legacy"
           - target: macos-arm64
             runs-on: macos-latest # Apple Silicon
-            roc-asset: roc-macos_apple_silicon-alpha4-rolling.tar.gz
-            linker: ""
           - target: macos-x86_64
             runs-on: macos-15-intel # current Intel runner, standard tier (free for public)
-            roc-asset: roc-macos_x86_64-alpha4-rolling.tar.gz
-            linker: ""
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.release-please.outputs.tag_name }} # the tagged commit
 
-      - name: Install roc (alpha4-rolling)
-        run: |
-          set -euo pipefail
-          curl -sL -o roc.tar.gz "https://github.com/roc-lang/roc/releases/download/alpha4-rolling/${{ matrix.roc-asset }}"
-          tar xzf roc.tar.gz
-          roc_dir=$(ls -d roc_nightly* 2>/dev/null | head -1)
-          [ -n "$roc_dir" ] || { echo "roc extraction produced no roc_nightly dir" >&2; exit 1; }
-          echo "$PWD/$roc_dir" >> "$GITHUB_PATH"
+      - uses: roc-lang/setup-roc@v0.3.0
+        with:
+          version: nightly-new-compiler
+          nightly-tag: nightly-2026-August-04-1cb06bc
 
       - name: Build
         run: |
           set -euo pipefail
-          roc build src/app.roc --output "stride-${{ matrix.target }}" ${{ matrix.linker }}
+          roc build src/app.roc --output "stride-${{ matrix.target }}" --opt=dev
           test -f "stride-${{ matrix.target }}"
 
       - name: Verify binary version
@@ -98,10 +86,9 @@ jobs:
   upload:
     name: attach binaries to the release
     needs: [release-please, build]
-    # DISABLED with `build` above (roc-lang/roc#10469) — nothing to attach until
-    # binaries build again. Restore alongside `build`:
-    #   if: ${{ always() && needs.release-please.outputs.release_created == 'true' }}
-    if: false
+    # ENABLED with `build` above. `always()` so it still attaches whatever DID build even if some
+    # target failed (fail-fast is off) — a partial binary set beats none while we shake out B/C.
+    if: ${{ always() && needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
