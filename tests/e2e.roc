@@ -101,7 +101,7 @@ respond! = |req, _ctx| {
         }
     } else if Str.contains(uri, "/streams") {
         if Str.contains(uri, "/activities/501/") {
-            # a realistic 1 Hz stream (1300 samples, constant 200W, HR ramp): long enough that
+            # a realistic 1 Hz stream (1300 samples, constant 200W, HR sawtooth 120–179): long enough that
             # best_20min_w -> derived FTP 190 -> TSS ~110.8. See mock_power_stream_json.
             Ok(mock_json(mock_power_stream_json(1300, 200)))
         } else {
@@ -660,7 +660,8 @@ int_seq = |n| int_seq_go(n, [])
 int_seq_go : U64, List(U64) -> List(U64)
 int_seq_go = |n, acc| if n == 0 acc else int_seq_go(n - 1, List.prepend(acc, n - 1))
 
-# a 1 Hz power stream as JSON for the mock endpoint: time 0..n-1, constant w watts, an HR ramp.
+# a 1 Hz power stream as JSON for the mock endpoint: time 0..n-1, constant w watts, and a
+# repeating HR sawtooth (120 + i%60, so 120–179 cycling every 60 s — enough for HR zones).
 # n must be >= 1200 so best_20min_w (and thus the derived FTP) is computed — the http twin of
 # seed_power_stream!. The old hardcoded 60-sample/30s stream was too sparse: resample_1s treats
 # 30s gaps as pauses, leaving < 1200 samples, so the 20-min best never populated and TSS was 0.
