@@ -78,6 +78,22 @@ Streams :: [].{
 			}
 			_ => { time: [], dist: [], alt: [] }
 		}
+
+	# time+distance aligned WITH a synthetic FLAT altitude, for pace sports that have distance
+	# but NO altitude stream — pool/open-water swim, and indoor rows/rides on a trainer. Flat
+	# altitude means grade_adjusted_speeds returns raw speed (grade 0), which is exactly right
+	# for a pool. Same sentinel-drop + alignment as dist_alt_time; the alt list is all zeros so
+	# the whole downstream graded-speed / NGP / threshold machinery is reused unchanged.
+	dist_time : Try(StreamSeq, [Missing]), Try(StreamSeq, [Missing]) -> { time : List(F64), dist : List(F64), alt : List(F64) }
+	dist_time = |time_opt, dist_opt|
+		match (time_opt, dist_opt) {
+			(Ok(ts), Ok(ds)) => {
+				pairs = List.map2(ts.data, ds.data, |t, d| { t, d })
+				kept = List.keep_if(pairs, |p| p.t > -99998.0 and p.d > -99998.0)
+				{ time: List.map(kept, |p| p.t), dist: List.map(kept, |p| p.d), alt: List.map(kept, |_| 0.0) }
+			}
+			_ => { time: [], dist: [], alt: [] }
+		}
 }
 
 # the {} 404-marker decodes cleanly to "no streams", NOT a failure
@@ -168,4 +184,31 @@ expect {
 	p = Streams.dist_alt_pairs(d.streams.distance, d.streams.altitude)
 	near = |xs, ys| List.len(xs) == List.len(ys) and List.all(List.map2(xs, ys, |a, b| (a - b).abs() < 0.001), |ok| ok)
 	List.len(p.dist) == 2 and near(p.alt, [-30.0, -25.0])
+}
+
+# dist_time (swim/indoor: distance but NO altitude) aligns time+dist and synthesizes flat alt
+expect {
+	d = Streams.decode_streams(NotNull("{\"time\":{\"data\":[0,1,2]},\"distance\":{\"data\":[0,1.5,3.0]}}"))
+	t = Streams.dist_time(d.streams.time, d.streams.distance)
+	near = |xs, ys| List.len(xs) == List.len(ys) and List.all(List.map2(xs, ys, |a, b| (a - b).abs() < 0.001), |ok| ok)
+	near(t.time, [0.0, 1.0, 2.0]) and near(t.dist, [0.0, 1.5, 3.0]) and near(t.alt, [0.0, 0.0, 0.0])
+}
+
+# the finding-2 edge case: an altitude stream that is ALL null → dist_alt_time drops every
+# sample (empty triple), so compute_one! falls back to the flat dist_time path — which still
+# yields a usable time+dist triple. This is exactly the routing fallback that keeps such a
+# swim/indoor activity pace-scored instead of losing it.
+expect {
+	d = Streams.decode_streams(NotNull("{\"time\":{\"data\":[0,1,2]},\"distance\":{\"data\":[0,1.5,3.0]},\"altitude\":{\"data\":[null,null,null]}}"))
+	graded = Streams.dist_alt_time(d.streams.time, d.streams.distance, d.streams.altitude)
+	flat = Streams.dist_time(d.streams.time, d.streams.distance)
+	List.is_empty(graded.time) and List.len(flat.time) == 3
+}
+
+# a null distance drops that index from both time and dist (and the flat alt stays aligned)
+expect {
+	d = Streams.decode_streams(NotNull("{\"time\":{\"data\":[0,1,2]},\"distance\":{\"data\":[0,null,3.0]}}"))
+	t = Streams.dist_time(d.streams.time, d.streams.distance)
+	near = |xs, ys| List.len(xs) == List.len(ys) and List.all(List.map2(xs, ys, |a, b| (a - b).abs() < 0.001), |ok| ok)
+	near(t.time, [0.0, 2.0]) and near(t.dist, [0.0, 3.0]) and near(t.alt, [0.0, 0.0])
 }
