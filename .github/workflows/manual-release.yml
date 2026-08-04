@@ -29,21 +29,18 @@ jobs:
         run: |
           set -euo pipefail
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "::error::tag $TAG already exists — delete it first or bump the version"
-            exit 1
+            echo "tag $TAG already exists — reusing it (rebuilding + attaching binaries)"
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
           fi
-          git tag "$TAG"
-          git push origin "$TAG"
 
   build:
     name: build ${{ matrix.target }}
     needs: prepare
-    # DISABLED until a native roc build of app.roc works again (roc-lang/roc#10469).
-    # alpha4 (installed below) can't parse the migrated new-compiler source, and the
-    # new compiler stalls Specialization for minutes — no target builds. Restore by
-    # removing this `if: false` and switching the alpha4 install + `roc build` steps
-    # to roc-lang/setup-roc (version: nightly-new-compiler), per build.yml.
-    if: false
+    # ENABLED (2026-08-04) on the new (Zig) compiler, Aug-04 nightly, --opt=dev — mirrors
+    # release-please.yml's build job. Use this to (re)build the 4 binaries for the current
+    # app.roc version on demand (e.g. attach binaries to an already-cut release).
     runs-on: ${{ matrix.runs-on }}
     strategy:
       fail-fast: false
@@ -51,36 +48,24 @@ jobs:
         include:
           - target: linux-x86_64
             runs-on: ubuntu-latest
-            roc-asset: roc-linux_x86_64-alpha4-rolling.tar.gz
-            linker: "--linker=legacy"
           - target: linux-arm64
             runs-on: ubuntu-24.04-arm
-            roc-asset: roc-linux_arm64-alpha4-rolling.tar.gz
-            linker: "--linker=legacy"
           - target: macos-arm64
             runs-on: macos-latest
-            roc-asset: roc-macos_apple_silicon-alpha4-rolling.tar.gz
-            linker: ""
           - target: macos-x86_64
             runs-on: macos-15-intel
-            roc-asset: roc-macos_x86_64-alpha4-rolling.tar.gz
-            linker: ""
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
-      - name: Install roc (alpha4-rolling)
-        run: |
-          set -euo pipefail
-          curl -sL -o roc.tar.gz "https://github.com/roc-lang/roc/releases/download/alpha4-rolling/${{ matrix.roc-asset }}"
-          tar xzf roc.tar.gz
-          roc_dir=$(ls -d roc_nightly* 2>/dev/null | head -1)
-          [ -n "$roc_dir" ] || { echo "no roc_nightly dir" >&2; exit 1; }
-          echo "$PWD/$roc_dir" >> "$GITHUB_PATH"
+      - uses: roc-lang/setup-roc@v0.3.0
+        with:
+          version: nightly-new-compiler
+          nightly-tag: nightly-2026-August-04-1cb06bc
       - name: Build
         run: |
           set -euo pipefail
-          roc build src/app.roc --output "stride-${{ matrix.target }}" ${{ matrix.linker }}
+          roc build src/app.roc --output="stride-${{ matrix.target }}" --opt=dev
           test -f "stride-${{ matrix.target }}"
       - name: Verify binary version
         env:
@@ -97,9 +82,8 @@ jobs:
 
   publish:
     needs: [prepare, build]
-    # DISABLED with `build` above (roc-lang/roc#10469) — no artifacts to publish
-    # until binaries build again. Restore alongside `build`:  if: ${{ always() }}
-    if: false
+    # ENABLED (2026-08-04): always() so it attaches whatever DID build even if a target failed.
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -125,14 +109,15 @@ jobs:
           set -euo pipefail
           parse-changelog CHANGELOG.md "${TAG#v}" > notes.md
           test -s notes.md
-      - name: Create release
+      - name: Attach binaries (upload to existing release, else create)
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
-          gh release create "$TAG" \
-            --repo "${{ github.repository }}" \
-            --title "$TAG" \
-            --notes-file notes.md \
-            dist/stride-* dist/SHA256SUMS.txt
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "release $TAG exists — uploading binaries (clobber)"
+            gh release upload "$TAG" dist/stride-* dist/SHA256SUMS.txt --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$TAG" --repo "${{ github.repository }}" --title "$TAG" --notes-file notes.md dist/stride-* dist/SHA256SUMS.txt
+          fi
