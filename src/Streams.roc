@@ -194,10 +194,21 @@ expect {
 	near(t.time, [0.0, 1.0, 2.0]) and near(t.dist, [0.0, 1.5, 3.0]) and near(t.alt, [0.0, 0.0, 0.0])
 }
 
+# the finding-2 edge case: an altitude stream that is ALL null → dist_alt_time drops every
+# sample (empty triple), so compute_one! falls back to the flat dist_time path — which still
+# yields a usable time+dist triple. This is exactly the routing fallback that keeps such a
+# swim/indoor activity pace-scored instead of losing it.
+expect {
+	d = Streams.decode_streams(NotNull("{\"time\":{\"data\":[0,1,2]},\"distance\":{\"data\":[0,1.5,3.0]},\"altitude\":{\"data\":[null,null,null]}}"))
+	graded = Streams.dist_alt_time(d.streams.time, d.streams.distance, d.streams.altitude)
+	flat = Streams.dist_time(d.streams.time, d.streams.distance)
+	List.is_empty(graded.time) and List.len(flat.time) == 3
+}
+
 # a null distance drops that index from both time and dist (and the flat alt stays aligned)
 expect {
 	d = Streams.decode_streams(NotNull("{\"time\":{\"data\":[0,1,2]},\"distance\":{\"data\":[0,null,3.0]}}"))
 	t = Streams.dist_time(d.streams.time, d.streams.distance)
 	near = |xs, ys| List.len(xs) == List.len(ys) and List.all(List.map2(xs, ys, |a, b| (a - b).abs() < 0.001), |ok| ok)
-	near(t.time, [0.0, 2.0]) and near(t.dist, [0.0, 3.0]) and List.len(t.alt) == 2
+	near(t.time, [0.0, 2.0]) and near(t.dist, [0.0, 3.0]) and near(t.alt, [0.0, 0.0])
 }

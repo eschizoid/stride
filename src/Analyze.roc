@@ -388,11 +388,16 @@ Analyze :: [].{
         # stream (outdoor run/trail) we grade-adjust; WITHOUT one (swim, indoor row/ride) we use a
         # flat triple so raw speed still scores — pace works for any dist sport, not just graded
         # ones. No dist stream at all → empty → pace falls through to HR, like a no-power sport on FTP.
+        # try the graded triple first; fall back to the flat time+dist path when it's empty —
+        # which covers BOTH no altitude stream AND an altitude stream that's all null sentinels
+        # (every graded sample dropped) but whose time+distance are still usable. A partially
+        # usable altitude yields a non-empty graded triple and wins.
+        graded_triple = Streams.dist_alt_time(streams.time, streams.distance, streams.altitude)
         pace_triple =
-            match streams.altitude {
-                Ok(_) => Streams.dist_alt_time(streams.time, streams.distance, streams.altitude)
-                Err(_) => Streams.dist_time(streams.time, streams.distance)
-            }
+            if List.is_empty(graded_triple.time)
+                Streams.dist_time(streams.time, streams.distance)
+            else
+                graded_triple
         gas_1s = Metrics.graded_speed_1s(pace_triple.time, pace_triple.dist, pace_triple.alt)
         ngp_speed = Metrics.normalized_power(gas_1s)
         best20_speed = Metrics.best_rolling_mean(gas_1s, 1200)
