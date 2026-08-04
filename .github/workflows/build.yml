@@ -30,7 +30,7 @@ jobs:
         uses: roc-lang/setup-roc@v0.3.0
         with:
           version: nightly-new-compiler
-          nightly-tag: nightly-2026-August-03-94cbed3
+          nightly-tag: nightly-2026-August-04-1cb06bc
 
       # One check covers the whole codebase: `roc check` follows every import, so
       # this type-checks app.roc plus all 8 modules against basic-cli 0.21 + http.
@@ -71,7 +71,7 @@ jobs:
       - uses: roc-lang/setup-roc@v0.3.0
         with:
           version: nightly-new-compiler
-          nightly-tag: nightly-2026-August-03-94cbed3
+          nightly-tag: nightly-2026-August-04-1cb06bc
       # sqlite3/jq/awk/curl ship on the macOS runner; just does not
       - name: Install just
         run: brew install just
