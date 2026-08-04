@@ -382,12 +382,17 @@ Analyze :: [].{
                 Err(_) => Real(0.0)
             }
 
-        # grade-adjusted pace: align time+dist+alt into a triple, resample to 1 Hz, grade-adjust
+        # grade-adjusted pace: align time+dist(+alt) into a triple, resample to 1 Hz, grade-adjust
         # ONCE. The NGP speed scores the pace rung (when the sport has a threshold); the best
-        # 20-min speed feeds the DERIVED per-sport threshold. Empty (→ Err/0) when the sport
-        # carries no dist+alt streams (indoor rides, most of this user's data) — pace then
-        # falls through to HR, exactly like a no-power sport falls through on FTP.
-        pace_triple = Streams.dist_alt_time(streams.time, streams.distance, streams.altitude)
+        # 20-min speed feeds the DERIVED per-sport threshold (CSS for swim). With an altitude
+        # stream (outdoor run/trail) we grade-adjust; WITHOUT one (swim, indoor row/ride) we use a
+        # flat triple so raw speed still scores — pace works for any dist sport, not just graded
+        # ones. No dist stream at all → empty → pace falls through to HR, like a no-power sport on FTP.
+        pace_triple =
+            match streams.altitude {
+                Ok(_) => Streams.dist_alt_time(streams.time, streams.distance, streams.altitude)
+                Err(_) => Streams.dist_time(streams.time, streams.distance)
+            }
         gas_1s = Metrics.graded_speed_1s(pace_triple.time, pace_triple.dist, pace_triple.alt)
         ngp_speed = Metrics.normalized_power(gas_1s)
         best20_speed = Metrics.best_rolling_mean(gas_1s, 1200)
@@ -587,5 +592,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 9
+    metrics_rev = 10
 }
