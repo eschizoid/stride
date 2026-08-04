@@ -408,13 +408,17 @@ Analyze :: [].{
                 Err(_) => Err(Missing)
             }
 
-        # intensity from power, judged against the sport's own FTP (0 for no-power sports
-        # → all-zero, and the display falls back to HR). Stored so the weekly polarization
-        # and the activities "hard" column read power where it exists, HR where it doesn't.
-        # the sport's FROZEN FTP (from the up-front map) — never re-derived per row, so
-        # scoring is order-independent and consistent with the recompute WHERE (see sport_ftp_map!)
+        # intensity split, judged against the sport's own threshold. Stored into pi_* so the
+        # weekly polarization and the activities "hard" column read a real split for every scored
+        # sport. Power sports use FTP; pace sports (no power, but a threshold speed) use the pace
+        # split on the same 1 Hz graded-speed stream — so runs/swims get a hard/easy breakdown too,
+        # not just an HR fallback. The FROZEN per-sport FTP/threshold keep it order-independent.
         pi_ftp = lookup_ftp(ftp_map, row.sport)
-        pintensity = Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
+        pintensity =
+            if pi_ftp > 0.0
+                Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
+            else
+                Metrics.time_in_pace_intensity(gas_1s, threshold_speed)
 
         # the fallback chain lives in Metrics.tss_ladder (pure, expect-tested)
         nn = |x|
@@ -597,5 +601,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 10
+    metrics_rev = 11
 }

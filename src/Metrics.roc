@@ -182,6 +182,32 @@ Metrics :: [].{
             state.i
         }
 
+    # pace analog of time_in_power_intensity, on the 1 Hz grade-adjusted speed stream (each
+    # sample is 1 s, so no dt bookkeeping). Bands mirror the power split, faster = harder:
+    # easy < 0.76×threshold, moderate 0.76–0.91, hard ≥ 0.91×threshold. Feeds the SAME pi_*
+    # columns for pace-scored sports (runs/swims), so weekly polarization and the "hard" column
+    # read a real intensity split there too. Zeros when the sport has no threshold speed.
+    time_in_pace_intensity : List(F64), F64 -> PowerIntensity
+    time_in_pace_intensity = |speeds_1s, threshold|
+        if threshold <= 0.0 {
+            { easy_s: 0, moderate_s: 0, hard_s: 0 }
+        } else {
+            mod_lo = threshold * 0.76
+            hard_lo = threshold * 0.91
+            List.fold(
+                speeds_1s,
+                { easy_s: 0.I64, moderate_s: 0.I64, hard_s: 0.I64 },
+                |i, v|
+                    if v < mod_lo {
+                        { ..i, easy_s: i.easy_s + 1 }
+                    } else if v < hard_lo {
+                        { ..i, moderate_s: i.moderate_s + 1 }
+                    } else {
+                        { ..i, hard_s: i.hard_s + 1 }
+                    },
+            )
+        }
+
     # The config key holding a sport's power threshold. Fully generic and data-driven:
     # `ftp_<sport>` for EVERY sport (ftp_ride, ftp_rowing, ftp_swim, ftp_soccer, …), so a
     # sport gets power-based intensity the instant its key is set and falls back to HR
@@ -1263,6 +1289,12 @@ expect {
     r.hard_s == 2 and r.easy_s == 0 and r.moderate_s == 0
 }
 expect Metrics.time_in_power_intensity([{ t: 0, v: 243.0 }], 0.0) == { easy_s: 0, moderate_s: 0, hard_s: 0 }
+
+# pace intensity split (threshold 4.0 m/s): each 1 Hz sample = 1 s; easy <3.04, moderate 3.04–3.64, hard ≥3.64
+expect Metrics.time_in_pace_intensity([2.0, 2.0, 2.0], 4.0) == { easy_s: 3, moderate_s: 0, hard_s: 0 }
+expect Metrics.time_in_pace_intensity([3.3, 3.3, 3.3], 4.0) == { easy_s: 0, moderate_s: 3, hard_s: 0 }
+expect Metrics.time_in_pace_intensity([4.0, 4.0, 4.0], 4.0) == { easy_s: 0, moderate_s: 0, hard_s: 3 }
+expect Metrics.time_in_pace_intensity([4.0, 4.0], 0.0) == { easy_s: 0, moderate_s: 0, hard_s: 0 }
 
 # generic: every sport maps to its own config key, no hardcoded allowlist. A sport
 # without that key set (or with no power meter) resolves to 0 in sport_ftp! and falls
