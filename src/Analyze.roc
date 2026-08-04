@@ -414,8 +414,12 @@ Analyze :: [].{
         # split on the same 1 Hz graded-speed stream — so runs/swims get a hard/easy breakdown too,
         # not just an HR fallback. The FROZEN per-sport FTP/threshold keep it order-independent.
         pi_ftp = lookup_ftp(ftp_map, row.sport)
+        # power sports use the power split — even mid-derivation, when pi_ftp is still 0 (the split
+        # is then all-zero, and corrects once FTP derives on the next pass). ONLY power-LESS
+        # activities fall to the pace split. Gate on actual power samples, not pi_ftp, so a power
+        # ride on the first analyze pass isn't mislabeled by pace.
         pintensity =
-            if pi_ftp > 0.0
+            if !(List.is_empty(watts_pairs))
                 Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
             else
                 Metrics.time_in_pace_intensity(gas_1s, threshold_speed)
