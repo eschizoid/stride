@@ -41,6 +41,9 @@ jobs:
     # means the BUILD itself broke (e.g. linux codegen/linker).
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ${{ matrix.runs-on }}
+    defaults:
+      run:
+        shell: bash # git-bash on Windows so the `set -euo pipefail` steps run on every runner
     strategy:
       fail-fast: false # one target failing shouldn't sink the others
       matrix:
@@ -53,6 +56,8 @@ jobs:
             runs-on: macos-latest # Apple Silicon
           - target: macos-x86_64
             runs-on: macos-15-intel # current Intel runner, standard tier (free for public)
+          - target: windows-x86_64
+            runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
         with:
@@ -67,20 +72,22 @@ jobs:
         run: |
           set -euo pipefail
           roc build src/app.roc --output="stride-${{ matrix.target }}" --opt=dev
-          test -f "stride-${{ matrix.target }}"
+          ls -la stride-${{ matrix.target }}* || true
+          test -f "stride-${{ matrix.target }}" || test -f "stride-${{ matrix.target }}.exe"
 
       - name: Verify binary version
         env:
           TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
           set -euo pipefail
-          out=$(./stride-${{ matrix.target }} --version)
+          bin="stride-${{ matrix.target }}"; [ -f "$bin" ] || bin="${bin}.exe"
+          out=$(./"$bin" --version)
           [ "$out" = "stride ${TAG#v}" ] || { echo "::error::binary says '$out', tag is $TAG"; exit 1; }
 
       - uses: actions/upload-artifact@v7
         with:
           name: stride-${{ matrix.target }}
-          path: stride-${{ matrix.target }}
+          path: stride-${{ matrix.target }}*
           if-no-files-found: error
 
   upload:
