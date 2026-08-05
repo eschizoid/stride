@@ -1,6 +1,6 @@
 # ADR 0005 — FTP is period-accurate, not retroactive
 
-Status: proposed · 2026-08-05
+Status: accepted · 2026-08-05 — recompute cost explicitly accepted by the athlete
 
 Supersedes the scoring half of the derived-FTP decision recorded in
 [ADR 0002](0002-power-based-intensity.md). Derivation itself is unchanged — FTP is still
