@@ -361,12 +361,14 @@ Analyze :: [].{
             Streams.stream_pairs(streams.time, streams.watts),
             |p| Metrics.valid_watts(p.v),
         )
-        watts_1s = Metrics.resample_1s(List.map(watts_pairs, |p| { t: p.t, v: p.v }))
+        # held pairs: NP wants values, the bests need real seconds to reject pause-spanning windows
+        watts_1s_pairs = Metrics.resample_1s_pairs(List.map(watts_pairs, |p| { t: p.t, v: p.v }), Hold)
+        watts_1s = List.map(watts_1s_pairs, |p| p.v)
 
         zones = if List.is_empty(hr_pairs) zero_zones else Metrics.time_in_zones(hr_pairs, row_zb)
 
         np_stream = Metrics.normalized_power(watts_1s)
-        best20 = Metrics.best_rolling_mean(watts_1s, 1200)
+        best20 = Metrics.best_rolling_mean_1s(watts_1s_pairs, 1200)
 
         # power-duration curve: best mean-max power at each ladder duration (5s..60min minus
         # the 20-min point, which best_20min_w already carries). Stored per activity; the
@@ -375,7 +377,7 @@ Analyze :: [].{
         # the stored ladder from the shared constant (drop 1200 — it lives in best_20min_w) so
         # the columns and the curve command never drift.
         curve_durations = List.keep_if(Metrics.power_curve_durations, |d| d != 1200)
-        curve = Metrics.mean_max_curve(watts_1s, curve_durations)
+        curve = Metrics.mean_max_curve(watts_1s_pairs, curve_durations)
         cw = |i|
             match List.get(curve, i) {
                 Ok(c) => Real(c.watts)
@@ -399,8 +401,9 @@ Analyze :: [].{
             else
                 graded_triple
         gas_1s = Metrics.graded_speed_1s(pace_triple.time, pace_triple.dist, pace_triple.alt)
-        ngp_speed = Metrics.normalized_power(gas_1s)
-        best20_speed = Metrics.best_rolling_mean(gas_1s, 1200)
+        gas_vals = List.map(gas_1s, |p| p.v)
+        ngp_speed = Metrics.normalized_power(gas_vals)
+        best20_speed = Metrics.best_rolling_mean_1s(gas_1s, 1200)
         threshold_speed = lookup_threshold(threshold_map, row.sport)
         ngp_for_ladder =
             match ngp_speed {
@@ -422,7 +425,7 @@ Analyze :: [].{
             if !(List.is_empty(watts_pairs))
                 Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
             else
-                Metrics.time_in_pace_intensity(gas_1s, threshold_speed)
+                Metrics.time_in_pace_intensity(gas_vals, threshold_speed)
 
         # the fallback chain lives in Metrics.tss_ladder (pure, expect-tested)
         nn = |x|

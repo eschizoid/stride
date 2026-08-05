@@ -12,29 +12,59 @@ Metrics :: [].{
     max_fill_gap : I64
     max_fill_gap = 10
 
-    resample_1s : List({ t : I64, v : F64 }) -> List(F64)
-    resample_1s = |samples| {
-        state = List.fold(
-            samples,
-            { out: [], prev_t: 0.I64, prev_v: 0.0.F64, started: False },
-            |acc, s|
-                if !(acc.started) {
-                    { out: List.append(acc.out, s.v), prev_t: s.t, prev_v: s.v, started: True }
-                } else {
-                    gap = s.t - acc.prev_t
-                    if gap <= 0 {
-                        acc
-                    } else if gap <= max_fill_gap {
-                        filled = List.concat(acc.out, List.repeat(acc.prev_v, (gap - 1).to_u64_wrap()))
-                        { ..acc, out: List.append(filled, s.v), prev_t: s.t, prev_v: s.v }
-                    } else {
-                        # pause — resume without filling
-                        { ..acc, out: List.append(acc.out, s.v), prev_t: s.t, prev_v: s.v }
-                    }
-                },
-        )
-        state.out
+    # Resample to 1 Hz, returning (elapsed_second, value) pairs. ONE implementation for both
+    # kinds of stream; the mode picks how a fillable gap is bridged:
+    #
+    #   Hold        — repeat the previous value. Correct for an INSTANTANEOUS signal
+    #                 (watts, HR): you measured 200 W, you know nothing newer.
+    #   Interpolate — walk linearly to the next value. Required for a CUMULATIVE signal
+    #                 (distance): holding it flat and then differencing turns a 5-second
+    #                 recording interval into four 0 m/s samples and one 20 m/s spike.
+    #
+    # Gaps longer than max_fill_gap are pauses and are never filled. Every pair carries its
+    # REAL elapsed second, so a consumer can tell a genuine 1 Hz run from one that jumped —
+    # which is what keeps a rolling window from stitching across a pause.
+    resample_1s_pairs : List({ t : I64, v : F64 }), [Hold, Interpolate] -> List({ t : I64, v : F64 })
+    resample_1s_pairs = |samples, mode|
+        List.fold(samples, { out: [], prev_t: 0.I64, prev_v: 0.0.F64, started: False }, |acc, s|
+            resample_step(acc, s, mode)
+        ).out
+
+    # What to do with the next sample. Pure classification, kept flat and separate so the
+    # step below reads as a four-case table instead of a staircase of nested else-ifs.
+    resample_case : Bool, I64 -> [First, OutOfOrder, Fill, Pause]
+    resample_case = |started, gap|
+        if !started { First } else if gap <= 0 { OutOfOrder } else if gap <= max_fill_gap { Fill } else { Pause }
+
+    resample_step = |acc, s, mode| {
+        emit = |out| { out: List.append(out, { t: s.t, v: s.v }), prev_t: s.t, prev_v: s.v, started: True }
+        gap = s.t - acc.prev_t
+        match resample_case(acc.started, gap) {
+            # a duplicate or backwards timestamp: ignore it, keep the anchor
+            OutOfOrder => acc
+            First => emit(acc.out)
+            # pause — resume without filling; the real timestamp is preserved either way
+            Pause => emit(acc.out)
+            Fill => emit(fill_gap(acc.out, acc.prev_t, acc.prev_v, s.v, gap, mode))
+        }
     }
+
+    # the (gap - 1) intermediate seconds between two samples
+    fill_gap = |out, prev_t, prev_v, next_v, gap, mode| {
+        step = match mode {
+            Hold => 0.0.F64
+            Interpolate => (next_v - prev_v) / (gap).to_f64()
+        }
+        Iter.fold(
+            1.U64..<(gap).to_u64_wrap(),
+            out,
+            |o, k| List.append(o, { t: prev_t + (k).to_i64_wrap(), v: prev_v + step * (k).to_f64() }),
+        )
+    }
+
+    # values only, forward-held — the long-standing shape the NP path consumes
+    resample_1s : List({ t : I64, v : F64 }) -> List(F64)
+    resample_1s = |samples| List.map(resample_1s_pairs(samples, Hold), |p| p.v)
 
     # Resample a CONTINUOUS stream (distance, altitude) to 1 Hz by LINEAR INTERPOLATION,
     # returning (elapsed_second, value) pairs.
@@ -48,37 +78,7 @@ Metrics :: [].{
     # elapsed second, so a consumer that divides by dt sees the true interval instead of
     # collapsing a 60-second dropout into a single 1-second step.
     resample_1s_linear : List({ t : I64, v : F64 }) -> List({ t : I64, v : F64 })
-    resample_1s_linear = |samples|
-        List.fold(samples, { out: [], prev_t: 0.I64, prev_v: 0.0.F64, started: False }, linear_step).out
-
-    # What to do with the next sample. Pure classification, kept flat and separate so the
-    # step below reads as a four-case table instead of a staircase of nested else-ifs.
-    resample_case : Bool, I64 -> [First, OutOfOrder, Fill, Pause]
-    resample_case = |started, gap|
-        if !started { First } else if gap <= 0 { OutOfOrder } else if gap <= max_fill_gap { Fill } else { Pause }
-
-    linear_step = |acc, s| {
-        emit = |out| { out: List.append(out, { t: s.t, v: s.v }), prev_t: s.t, prev_v: s.v, started: True }
-        gap = s.t - acc.prev_t
-        match resample_case(acc.started, gap) {
-            # a duplicate or backwards timestamp: ignore it, keep the anchor
-            OutOfOrder => acc
-            First => emit(acc.out)
-            # pause — resume without filling; the real timestamp is preserved either way
-            Pause => emit(acc.out)
-            Fill => emit(interpolate_gap(acc.out, acc.prev_t, acc.prev_v, s.v, gap))
-        }
-    }
-
-    # the (gap - 1) intermediate seconds between two samples, linearly interpolated
-    interpolate_gap = |out, prev_t, prev_v, next_v, gap| {
-        step = (next_v - prev_v) / (gap).to_f64()
-        Iter.fold(
-            1.U64..<(gap).to_u64_wrap(),
-            out,
-            |o, k| List.append(o, { t: prev_t + (k).to_i64_wrap(), v: prev_v + step * (k).to_f64() }),
-        )
-    }
+    resample_1s_linear = |samples| resample_1s_pairs(samples, Interpolate)
 
     # ── normalized power ────────────────────────────────────────────────
     # 30s rolling average of 1 Hz power, each mean ^4, averaged, ^0.25.
@@ -135,6 +135,50 @@ Metrics :: [].{
             )
             Ok(best)
         }
+    }
+
+    # Best rolling mean over a CONTIGUOUS window of real seconds.
+    #
+    # `best_rolling_mean` counts SAMPLES, and resampling deletes paused time — so on a
+    # ride with a 4-minute stop, ten hard minutes either side land 1200 samples apart and
+    # register as a "20-minute best" that was never sustained for 20 continuous minutes.
+    # That number becomes MAX(best_20min_w) over 60 days, x0.95, the derived FTP that
+    # scores EVERY activity. An inflated 20-minute best rescales the whole load history.
+    #
+    # Here a window only counts when its real elapsed time matches its sample count, i.e.
+    # t[i + w - 1] - t[i] == w - 1. Windows spanning a pause are skipped, not averaged.
+    best_rolling_mean_1s : List({ t : I64, v : F64 }), U64 -> Try(F64, [TooShort])
+    best_rolling_mean_1s = |pairs, window| {
+        n = List.len(pairs)
+        if n < window or window == 0 {
+            Err(TooShort)
+        } else {
+            vals = List.map(pairs, |p| p.v)
+            prefix = List.fold(vals, [0.0.F64], |acc, w| List.append(acc, last_or_zero(acc) + w))
+            best = Iter.fold(0.U64..<(n - window + 1), Err(NoWindow), |acc, i|
+                if contiguous(pairs, i, window) {
+                    mean = (get_or_zero(prefix, i + window) - get_or_zero(prefix, i)) / window.to_f64()
+                    match acc {
+                        Err(_) => Ok(mean)
+                        Ok(b) => Ok(b.max(mean))
+                    }
+                } else {
+                    acc
+                }
+            )
+            match best {
+                Ok(b) => Ok(b)
+                # every window spanned a pause — no honest sustained effort of this length
+                Err(_) => Err(TooShort)
+            }
+        }
+    }
+
+    # does the window starting at i cover `window` consecutive real seconds?
+    contiguous = |pairs, i, window| {
+        lo = List.get(pairs, i).map_ok(|p| p.t).ok_or(0.I64)
+        hi = List.get(pairs, i + window - 1).map_ok(|p| p.t).ok_or(0.I64)
+        hi - lo == (window - 1).to_i64_wrap()
     }
 
     # ── time in zones (HR-based, universal across sports) ───────────────
@@ -485,11 +529,11 @@ Metrics :: [].{
     # best rolling-mean power at each ladder duration, from a 1 Hz watts stream. A duration
     # longer than the ride yields 0 (best_rolling_mean -> TooShort). Feeds the stored
     # best_<dur>_w columns and, aggregated across activities, the power-duration curve.
-    mean_max_curve : List(F64), List(U64) -> List({ dur_s : U64, watts : F64 })
+    mean_max_curve : List({ t : I64, v : F64 }), List(U64) -> List({ dur_s : U64, watts : F64 })
     mean_max_curve = |watts_1s, durations|
         List.map(durations, |d| {
             w =
-                match best_rolling_mean(watts_1s, d) {
+                match best_rolling_mean_1s(watts_1s, d) {
                     Ok(v) => v
                     Err(_) => 0.0
                 }
@@ -992,36 +1036,48 @@ Metrics :: [].{
     # (stop or jitter) re-anchors prev so its time drops out of the next speed (see the
     # branch below) — unlike grade_adjusted_distance. Swim: pass a MATCHING-LENGTH flat
     # altitude list (not []) and it degrades to raw speed (minetti(0)=1).
-    grade_adjusted_speeds : List(F64), List(F64), List(F64) -> List(F64)
-    grade_adjusted_speeds = |time, dist, alt| {
+    # What one (prev -> sample) interval represents. Flat classification, so the step below
+    # is a three-case table rather than a nested if/else-if staircase.
+    pace_step_case : F64, F64 -> [Moving, Stopped, NoTime]
+    pace_step_case = |dt, dd|
+        if dt > 0.0 and dd > 0.0 { Moving } else if dt > 0.0 { Stopped } else { NoTime }
+
+    # grade-adjusted speed per interval, each carrying the REAL second it ends on, so a
+    # rolling window over the result can tell contiguous seconds from stitched ones.
+    grade_adjusted_speed_pairs : List(F64), List(F64), List(F64) -> List({ t : I64, v : F64 })
+    grade_adjusted_speed_pairs = |time, dist, alt| {
         td = List.map2(time, dist, |t, d| { t, d })
         samples = List.map2(td, alt, |x, a| { t: x.t, d: x.d, a })
-        res = List.fold(samples, { prev: Err(NoPrev), out: [] }, |acc, s|
+        List.fold(samples, { prev: Err(NoPrev), out: [] }, |acc, s|
             match acc.prev {
                 Err(_) => { prev: Ok(s), out: acc.out }
-                Ok(p) => {
-                    dt = s.t - p.t
-                    dd = s.d - p.d
-                    if dt > 0.0 and dd > 0.0 {
-                        grade = (s.a - p.a) / dd
-                        { prev: Ok(s), out: List.append(acc.out, (dd / dt) * minetti_ratio(grade)) }
-                    } else if dt > 0.0 {
-                        # not moving forward (a stop, or backwards GPS jitter) while time
-                        # elapsed: re-anchor prev to THIS sample so the non-productive
-                        # interval is dropped from the next segment's speed denominator.
-                        # grade_adjusted_distance can keep the old anchor (it only sums Δd),
-                        # but speed divides by Δt, so stopped time must not deflate it.
-                        # (A sub-threshold "creep" — tiny dd>0 — still emits a slow sample;
-                        # a min-speed gate is a refinement for the analyze-wiring PR.)
-                        { prev: Ok(s), out: acc.out }
-                    } else {
-                        # no time elapsed (duplicate/backwards timestamp): keep the anchor
-                        acc
-                    }
-                }
-            })
-        res.out
+                Ok(p) => grade_step(acc.out, p, s)
+            }
+        ).out
     }
+
+    grade_step = |out, p, s| {
+        dt = s.t - p.t
+        dd = s.d - p.d
+        match pace_step_case(dt, dd) {
+            # Not moving forward (a stop, or backwards GPS jitter) while time elapsed:
+            # re-anchor to THIS sample so the non-productive interval is dropped from the
+            # next segment's speed denominator — speed divides by Δt, so stopped time must
+            # not deflate it. (A sub-threshold "creep" still emits a slow sample.)
+            Stopped => { prev: Ok(s), out }
+            # no time elapsed (duplicate/backwards timestamp): keep the existing anchor
+            NoTime => { prev: Ok(p), out }
+            Moving => {
+                grade = (s.a - p.a) / dd
+                speed = (dd / dt) * minetti_ratio(grade)
+                { prev: Ok(s), out: List.append(out, { t: (s.t).round_to_i64_try().ok_or(0), v: speed }) }
+            }
+        }
+    }
+
+    grade_adjusted_speeds : List(F64), List(F64), List(F64) -> List(F64)
+    grade_adjusted_speeds = |time, dist, alt|
+        List.map(grade_adjusted_speed_pairs(time, dist, alt), |p| p.v)
 
     # Normalized Graded Pace as a SPEED (m/s): the grade-adjusted speed stream through
     # the same 30-SAMPLE-rolling / 4th-power machinery as NP. That window is 30 s only if
@@ -1037,7 +1093,7 @@ Metrics :: [].{
     # NGP's 30-sample window is 30 s only at 1 Hz. Feed the result to normalized_power
     # (= the NGP speed) AND to best_rolling_mean (best sustained speed → derived threshold
     # pace). Computing the stream once and reusing it avoids grade-adjusting twice.
-    graded_speed_1s : List(F64), List(F64), List(F64) -> List(F64)
+    graded_speed_1s : List(F64), List(F64), List(F64) -> List({ t : I64, v : F64 })
     graded_speed_1s = |time, dist, alt| {
         to_samples = |vals| List.map2(time, vals, |t, v| { t: (t).round_to_i64_try().ok_or(0), v })
         # LINEAR, not held: distance is cumulative, so holding it flat and differencing
@@ -1047,7 +1103,7 @@ Metrics :: [].{
         # REAL elapsed seconds, not list indices: across an unfilled pause the index is off
         # by the whole pause, which would divide the distance covered by dt = 1.
         time_1s = List.map(dist_1s, |p| (p.t).to_f64())
-        grade_adjusted_speeds(time_1s, List.map(dist_1s, |p| p.v), List.map(alt_1s, |p| p.v))
+        grade_adjusted_speed_pairs(time_1s, List.map(dist_1s, |p| p.v), List.map(alt_1s, |p| p.v))
     }
 
     # rTSS / sTSS: tss_from_power with speed swapped for watts — IF = ngp_speed /
@@ -1368,10 +1424,35 @@ expect {
 
 # mean-max curve: best 1s = 300; best 3s window = (200+300+200)/3 = 233.3; 10s > 5 samples -> 0
 expect {
-    match Metrics.mean_max_curve([100.0, 200.0, 300.0, 200.0, 100.0], [1, 3, 10]) {
+    secs = |vals| List.map_with_index(vals, |v, i| { t: (i).to_i64_wrap(), v })
+    match Metrics.mean_max_curve(secs([100.0, 200.0, 300.0, 200.0, 100.0]), [1, 3, 10]) {
         [a, b, c] => (a.watts - 300.0).abs() < 0.001 and (b.watts - 233.333).abs() < 0.01 and c.watts.abs() < 0.001
         _ => 1 == 0
     }
+}
+
+# A window must cover CONTIGUOUS seconds. Two 3-second efforts either side of a pause sit
+# 6 samples apart but 100 seconds apart in reality, so there is no honest 6-second best —
+# the old sample-counting version happily stitched them into one. This is the guard on the
+# derived FTP: a stitched 20-min best would rescale every activity in the database.
+expect {
+    pairs = [
+        { t: 0.I64, v: 300.0.F64 },
+        { t: 1.I64, v: 300.0.F64 },
+        { t: 2.I64, v: 300.0.F64 },
+        { t: 100.I64, v: 300.0.F64 },
+        { t: 101.I64, v: 300.0.F64 },
+        { t: 102.I64, v: 300.0.F64 },
+    ]
+    three_ok = match Metrics.best_rolling_mean_1s(pairs, 3) { Ok(v) => (v - 300.0).abs() < 0.001, Err(_) => 1 == 0 }
+    six_rejected = match Metrics.best_rolling_mean_1s(pairs, 6) { Ok(_) => 1 == 0, Err(TooShort) => 1 == 1 }
+    three_ok and six_rejected
+}
+
+# a genuinely contiguous run is unaffected — 6 consecutive seconds averages normally
+expect {
+    pairs = List.map_with_index(List.repeat(250.0, 6), |v, i| { t: (i).to_i64_wrap(), v })
+    match Metrics.best_rolling_mean_1s(pairs, 6) { Ok(v) => (v - 250.0).abs() < 0.001, Err(_) => 1 == 0 }
 }
 expect Metrics.power_ftp_key("Ride") == "ftp_ride"
 expect Metrics.power_ftp_key("Rowing") == "ftp_rowing"
@@ -1587,8 +1668,8 @@ expect {
     dist = List.map_with_index(List.repeat(0.0, 121), |_, i| (i).to_f64() * 4.0)
     alt = List.repeat(0.0, 121)
     gas = Metrics.graded_speed_1s(time, dist, alt)
-    ngp_ok = match Metrics.normalized_power(gas) { Ok(v) => (v - 4.0).abs() < 0.5, Err(_) => 1 == 0 }
-    best_ok = match Metrics.best_rolling_mean(gas, 30) { Ok(v) => (v - 4.0).abs() < 0.5, Err(_) => 1 == 0 }
+    ngp_ok = match Metrics.normalized_power(List.map(gas, |p| p.v)) { Ok(v) => (v - 4.0).abs() < 0.5, Err(_) => 1 == 0 }
+    best_ok = match Metrics.best_rolling_mean_1s(gas, 30) { Ok(v) => (v - 4.0).abs() < 0.5, Err(_) => 1 == 0 }
     ngp_ok and best_ok
 }
 
@@ -1599,8 +1680,8 @@ expect {
 expect {
     ramp = |n, step| List.map_with_index(List.repeat(0.0, n), |_, i| (i).to_f64() * step)
     gas = Metrics.graded_speed_1s(ramp(25, 5.0), ramp(25, 20.0), List.repeat(0.0, 25))
-    all_sane = List.all(gas, |v| v > 3.5 and v < 4.5)
-    ngp_ok = match Metrics.normalized_power(gas) { Ok(v) => (v - 4.0).abs() < 0.5, Err(_) => 1 == 0 }
+    all_sane = List.all(gas, |p| p.v > 3.5 and p.v < 4.5)
+    ngp_ok = match Metrics.normalized_power(List.map(gas, |p| p.v)) { Ok(v) => (v - 4.0).abs() < 0.5, Err(_) => 1 == 0 }
     all_sane and ngp_ok
 }
 
@@ -1613,7 +1694,7 @@ expect {
     time = List.concat(ramp(60, 1.0, 0.0), ramp(60, 1.0, 120.0))
     dist = List.concat(ramp(60, 4.0, 0.0), ramp(60, 4.0, 480.0))
     gas = Metrics.graded_speed_1s(time, dist, List.repeat(0.0, 120))
-    List.all(gas, |v| v > 3.5 and v < 4.5)
+    List.all(gas, |p| p.v > 3.5 and p.v < 4.5)
 }
 
 # resample_1s_linear interpolates a cumulative stream instead of holding it: two samples
