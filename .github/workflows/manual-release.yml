@@ -42,6 +42,9 @@ jobs:
     # release-please.yml's build job. Use this to (re)build the 4 binaries for the current
     # app.roc version on demand (e.g. attach binaries to an already-cut release).
     runs-on: ${{ matrix.runs-on }}
+    defaults:
+      run:
+        shell: bash # git-bash on Windows so the `set -euo pipefail` steps run on every runner
     strategy:
       fail-fast: false
       matrix:
@@ -54,6 +57,8 @@ jobs:
             runs-on: macos-latest
           - target: macos-x86_64
             runs-on: macos-15-intel
+          - target: windows-x86_64
+            runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
         with:
@@ -66,18 +71,20 @@ jobs:
         run: |
           set -euo pipefail
           roc build src/app.roc --output="stride-${{ matrix.target }}" --opt=dev
-          test -f "stride-${{ matrix.target }}"
+          ls -la stride-${{ matrix.target }}* || true
+          test -f "stride-${{ matrix.target }}" || test -f "stride-${{ matrix.target }}.exe"
       - name: Verify binary version
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
-          out=$(./stride-${{ matrix.target }} --version)
+          bin="stride-${{ matrix.target }}"; [ -f "$bin" ] || bin="${bin}.exe"
+          out=$(./"$bin" --version)
           [ "$out" = "stride ${TAG#v}" ] || { echo "::error::binary says '$out', tag is $TAG"; exit 1; }
       - uses: actions/upload-artifact@v7
         with:
           name: stride-${{ matrix.target }}
-          path: stride-${{ matrix.target }}
+          path: stride-${{ matrix.target }}*
           if-no-files-found: error
 
   publish:
