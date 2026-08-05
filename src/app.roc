@@ -109,18 +109,11 @@ help_text =
 # dispatch. All arity/count validation lives in the parser and is unit-tested there.
 main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
 main! = |raw_args| {
-    # basic-cli 0.21 hands args over as an OS-native tag union — macOS/Linux deliver them
-    # as UnixBytes, NOT Utf8 (alpha4 gave Utf8), so we must decode UnixBytes or every
-    # command word becomes "" and falls through to help. Non-UTF8 bytes and Windows UTF-16
-    # aren't decoded — they map to "", which is harmless for our ASCII commands (an
-    # undecodable command word just yields help). Windows arg decoding is a TODO tied to
-    # there being no Windows build yet.
-    args = List.map(raw_args, |a|
-        match a {
-            Utf8(s) => s
-            UnixBytes(b) => match Str.from_utf8(b) { Ok(s) => s, Err(_) => "" }
-            WindowsU16s(_) => ""
-        })
+    # basic-cli 0.21 hands args over as an OS-native tag union — that union IS `OsStr`
+    # (Utf8 | UnixBytes raw argv | WindowsU16s UTF-16 code units). OsStr.display decodes ALL
+    # three, including Windows UTF-16, best-effort (invalid text -> U+FFFD). This is why macOS +
+    # Linux + Windows all Just Work here: the platform owns the decoding, not us.
+    args = List.map(raw_args, |a| OsStr.display(a))
     match Command.parse(args) {
         Err(ShowHelp) => Stdout.line!(help_text)
         Err(Usage(u)) => Output.usage!(u)
