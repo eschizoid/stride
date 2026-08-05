@@ -33,8 +33,11 @@ Toolchain: Roc's **new (Zig) compiler** (nightly, pinned by exact tag in
 `.github/workflows/build.yml`) · basic-cli `0.21` · builtin JSON (no roc-json). The
 earlier alpha4 / basic-cli 0.20 / roc-json 0.13 pin is retired; §9 records the
 migration and why the original "blocked on roc-json" conclusion was wrong. CI
-type-checks (`roc check`) and runs the pure tests (`roc test`) on this compiler today;
-the full release `roc build` of `app.roc` is gated on one upstream perf fix (§9).
+type-checks (`roc check`) and runs the pure tests (`roc test`) on this compiler across
+linux/macOS/Windows, then builds the real binary and runs the e2e suite on macOS. The
+`roc build` perf gate is gone (roc#10469, fixed by #10531); builds pin `--opt=dev`
+because the optimized backend still miscompiles (issue #32). Day-to-day compiler
+syntax/stdlib/platform notes live in `docs/roc-new-compiler-notes.md`.
 
 ### Effects live in modules, organized by concern
 

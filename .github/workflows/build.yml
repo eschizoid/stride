@@ -9,10 +9,9 @@ jobs:
   # Type-check the whole app + run every pure module's expect suite, on all three
   # OSes INCLUDING Windows. This is the new (Zig) compiler — both `roc check` and
   # `roc test` stop before native codegen, so they are fast and deterministic and
-  # remain the CI gate. (A full `roc build` of app.roc now WORKS on this nightly —
-  # the SpecConstr perf bug roc#10469 was fixed by roc#10531 — but takes ~6 min and the
-  # optimized binary has a rare intermittent SIGABRT (issue #32), so build + e2e are
-  # not yet run in CI. Restore them once #32 is resolved.)
+  # make a good first gate. (The `e2e` job below does build the real binary, with
+  # --opt=dev; only the OPTIMIZED --opt=speed backend stays gated on the intermittent
+  # SIGABRT in issue #32.)
   check-and-test:
     strategy:
       fail-fast: false
@@ -78,4 +77,4 @@ jobs:
       - name: Build stride (dev backend — #32 blocks the optimized one)
         run: roc build src/app.roc --output=stride --opt=dev   # ~6 min; new compiler uses --output=
       - name: Run offline e2e suite (157 checks)
-        run: ROC_NEW=roc just e2e
+        run: ROC=roc just e2e

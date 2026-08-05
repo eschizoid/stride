@@ -1,10 +1,11 @@
 # stride — common actions. `just` alone runs the full test suite.
 
 # overridable for CI: ROC=roc STRIDE_LINKER="--linker=legacy" just test
-roc := env("ROC", env("HOME") / ".local/bin/roc")
+# ONE compiler: the new (Zig) one. The alpha4 path (~/.local/bin/roc) is retired — it
+# can't even parse the current source (.tar.zst packages), so defaulting to it silently
+# broke `just test` locally while CI stayed green via the ROC override.
+roc := env("ROC", env("HOME") / ".local/roc-new/roc")
 linker := env("STRIDE_LINKER", "")
-# new (Zig) compiler — builds the native-Roc test harness (tests/e2e.roc)
-roc_new := env("ROC_NEW", env("HOME") / ".local/roc-new/roc")
 # port the e2e-sync mock binds and the driver targets; overridable when 8799 is occupied
 mock_port := env("MOCK_PORT", "8799")
 
@@ -14,9 +15,12 @@ default: test
 check:
     {{roc}} check src/app.roc
 
-# build the release binary
+# build the binary. --opt=dev on purpose: the optimized (--opt=speed) LLVM backend is
+# the default, but it miscompiles (issue #32's intermittent SIGABRT, and it drops the
+# progress pace column) — so CI and the release workflow both pin dev. Match them here,
+# or `just test` tests a binary nobody ships.
 build:
-    {{roc}} build src/app.roc --output stride {{linker}}
+    {{roc}} build src/app.roc --output=stride --opt=dev {{linker}}
 
 # full suite: pure expects -> fresh build (must succeed!) -> effectful e2e
 test:
@@ -26,7 +30,7 @@ test:
     {{roc}} test src/Csv.roc
     {{roc}} test src/Command.roc
     {{roc}} test src/Config.roc
-    {{roc}} test --main src/app.roc src/Streams.roc
+    {{roc}} test --main=src/app.roc src/Streams.roc
     just build
     just e2e
 
@@ -37,8 +41,8 @@ test:
 # the current nightly (bug C — Json.parse heap corruption, roc-lang/roc, layout-bound). The
 # driver is retried up to 5x since bug C retry-succeeds (idempotent); a real fix un-gates CI.
 e2e-sync:
-    {{roc_new}} build tests/e2e.roc --output=e2e
-    test -x ./stride || {  echo "e2e-sync needs a ./stride binary — native app.roc build is blocked by roc#10469; provide a prebuilt stride"; exit 1; }
+    {{roc}} build tests/e2e.roc --output=e2e --opt=dev
+    test -x ./stride || {  echo "e2e-sync needs a ./stride binary — run \`just build\` first"; exit 1; }
     E2E_MODE=mock MOCK_PORT={{mock_port}} ./e2e & MOCK=$!; R=1; for i in 1 2 3 4 5; do E2E_MODE=sync STRIDE_API_BASE=http://127.0.0.1:{{mock_port}} ./e2e && { R=0; break; } || echo "  (sync attempt $i hit bug C, retrying)"; done; kill $MOCK 2>/dev/null; exit $R
 
 # build + refresh the ~/.local/bin symlink
@@ -70,6 +74,6 @@ up: sync analyze summary
 
 # ── e2e test suite (native Roc: tests/e2e.roc — sandboxed HOME, no network) ──
 e2e:
-    {{roc_new}} build tests/e2e.roc --output=e2e
-    test -x ./stride || {  echo "e2e needs a ./stride binary — build it first (roc build src/app.roc --output=stride --opt=dev)"; exit 1; }
+    {{roc}} build tests/e2e.roc --output=e2e --opt=dev
+    test -x ./stride || {  echo "e2e needs a ./stride binary — run \`just build\` first"; exit 1; }
     ./e2e

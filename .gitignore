@@ -9,3 +9,6 @@
 
 # scratch build binaries from build/debug cycles (only /stride is kept)
 /stride-*
+
+# token-savior index cache (local tool artifact)
+.token-savior-cache.json

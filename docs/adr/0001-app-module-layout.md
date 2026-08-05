@@ -38,8 +38,26 @@ SQL queries next to their row decoders** (the adjacency guard the compiler still
 | `Import.roc` | `import_archive!` (CSV) | File, Cmd |
 | `app.roc` | just `main!` + `dispatch!` + help text — thin | — |
 
-`Report.roc` is the fattest; if unwieldy it splits again, one module per read-command. The
-pure modules (Metrics/Render/Command/Config/Csv/Streams) already exist and don't change.
+`Report.roc` is the fattest and will keep growing. The pure modules
+(Metrics/Render/Command/Config/Csv/Streams) already exist and don't change.
+
+**When to split `Report.roc` (measurable, not a vibe).** "If it feels unwieldy" is
+unfalsifiable, so the trigger is: split when **either** a single command function exceeds
+**~250 lines**, **or** the file passes **~1500 lines**. As of 2026-08-05 it is 1185 lines
+across 18 definitions (~66 each); the largest are `week!` ≈214 and `doctor!` ≈171, so the
+trigger has NOT fired. Splitting early buys nothing measurable: specialization is
+whole-program, so a split does not speed the build (proven during the migration), and each
+new pure module must be wired into the `just test` recipe or its expects silently stop
+running.
+
+When it does fire, split by **read-command family**, not one module per command (11 tiny
+modules is worse than one cohesive file) — the seams follow the help text:
+
+| Module | Commands |
+|---|---|
+| `Report.roc` | where do I stand: `summary`, `week`, `load`, `compare` |
+| `ReportSessions.roc` | what happened: `activities`, `activity`, `top`, `progress` |
+| `ReportHealth.roc` | reference/diagnostics: `doctor`, `stats`, `zones`, `power-curve` |
 
 ## Consequences & sequencing
 
@@ -55,4 +73,5 @@ pure modules (Metrics/Render/Command/Config/Csv/Streams) already exist and don't
 ## Not doing
 
 Splitting further than domains (e.g. one file per command) up front — start at domain
-granularity and only subdivide `Report.roc` if it proves unwieldy. No premature structure.
+granularity and only subdivide `Report.roc` when the measured trigger above fires. No
+premature structure.
