@@ -133,8 +133,9 @@ matters: a failed build leaves a stale binary that the e2e suite would happily "
 against, which is why `just test` builds in between.
 
 Toolchain: Roc's new (Zig) compiler (nightly, pinned by exact tag in
-`.github/workflows/build.yml`) + basic-cli 0.21 + builtin JSON (roc-json dropped). Linux
-builds need `--linker=legacy`. NOTE: a full `roc build` of app.roc is currently gated on
-an upstream perf fix (roc#10469) — `roc check`/`roc test` work, but `just test` can't
-finish its build step until a nightly carries the fix. Roc gotcha that keeps recurring:
-floats have no Eq — never `x == 0.0` in an expect; use `Num.abs(x) < 0.001`.
+`.github/workflows/build.yml`) + basic-cli 0.21 + builtin JSON (roc-json dropped). The
+full `just test` — expects, build, and e2e — runs green; the roc#10469 perf gate is
+fixed. Build flags take `=` (`--output=`, `--main=`) and always `--opt=dev`, since the
+optimized backend miscompiles (issue #32). Roc gotcha that keeps recurring: floats have
+no Eq — never `x == 0.0` in an expect; use `Num.abs(x) < 0.001`. Compiler syntax/stdlib
+reference: `docs/roc-new-compiler-notes.md`.
