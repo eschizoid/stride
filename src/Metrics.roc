@@ -36,6 +36,50 @@ Metrics :: [].{
         state.out
     }
 
+    # Resample a CONTINUOUS stream (distance, altitude) to 1 Hz by LINEAR INTERPOLATION,
+    # returning (elapsed_second, value) pairs.
+    #
+    # `resample_1s` forward-HOLDS, which is correct for an instantaneous signal (watts, HR)
+    # and WRONG for a cumulative one. Holding distance flat and then differencing it turns a
+    # 5-second recording interval into four 0 m/s samples and one 20 m/s spike — five times
+    # the true speed — which normalized_power then raises to the 4th power.
+    #
+    # Pauses (gap > max_fill_gap) are still not filled, but every pair carries its REAL
+    # elapsed second, so a consumer that divides by dt sees the true interval instead of
+    # collapsing a 60-second dropout into a single 1-second step.
+    resample_1s_linear : List({ t : I64, v : F64 }) -> List({ t : I64, v : F64 })
+    resample_1s_linear = |samples|
+        List.fold(samples, { out: [], prev_t: 0.I64, prev_v: 0.0.F64, started: False }, linear_step).out
+
+    # What to do with the next sample. Pure classification, kept flat and separate so the
+    # step below reads as a four-case table instead of a staircase of nested else-ifs.
+    resample_case : Bool, I64 -> [First, OutOfOrder, Fill, Pause]
+    resample_case = |started, gap|
+        if !started { First } else if gap <= 0 { OutOfOrder } else if gap <= max_fill_gap { Fill } else { Pause }
+
+    linear_step = |acc, s| {
+        emit = |out| { out: List.append(out, { t: s.t, v: s.v }), prev_t: s.t, prev_v: s.v, started: True }
+        gap = s.t - acc.prev_t
+        match resample_case(acc.started, gap) {
+            # a duplicate or backwards timestamp: ignore it, keep the anchor
+            OutOfOrder => acc
+            First => emit(acc.out)
+            # pause — resume without filling; the real timestamp is preserved either way
+            Pause => emit(acc.out)
+            Fill => emit(interpolate_gap(acc.out, acc.prev_t, acc.prev_v, s.v, gap))
+        }
+    }
+
+    # the (gap - 1) intermediate seconds between two samples, linearly interpolated
+    interpolate_gap = |out, prev_t, prev_v, next_v, gap| {
+        step = (next_v - prev_v) / (gap).to_f64()
+        Iter.fold(
+            1.U64..<(gap).to_u64_wrap(),
+            out,
+            |o, k| List.append(o, { t: prev_t + (k).to_i64_wrap(), v: prev_v + step * (k).to_f64() }),
+        )
+    }
+
     # ── normalized power ────────────────────────────────────────────────
     # 30s rolling average of 1 Hz power, each mean ^4, averaged, ^0.25.
 
@@ -996,10 +1040,14 @@ Metrics :: [].{
     graded_speed_1s : List(F64), List(F64), List(F64) -> List(F64)
     graded_speed_1s = |time, dist, alt| {
         to_samples = |vals| List.map2(time, vals, |t, v| { t: (t).round_to_i64_try().ok_or(0), v })
-        dist_1s = resample_1s(to_samples(dist))
-        alt_1s = resample_1s(to_samples(alt))
-        time_1s = List.map_with_index(dist_1s, |_, i| (i).to_f64())
-        grade_adjusted_speeds(time_1s, dist_1s, alt_1s)
+        # LINEAR, not held: distance is cumulative, so holding it flat and differencing
+        # would emit one spike per recording interval instead of a steady speed.
+        dist_1s = resample_1s_linear(to_samples(dist))
+        alt_1s = resample_1s_linear(to_samples(alt))
+        # REAL elapsed seconds, not list indices: across an unfilled pause the index is off
+        # by the whole pause, which would divide the distance covered by dt = 1.
+        time_1s = List.map(dist_1s, |p| (p.t).to_f64())
+        grade_adjusted_speeds(time_1s, List.map(dist_1s, |p| p.v), List.map(alt_1s, |p| p.v))
     }
 
     # rTSS / sTSS: tss_from_power with speed swapped for watts — IF = ngp_speed /
@@ -1542,4 +1590,35 @@ expect {
     ngp_ok = match Metrics.normalized_power(gas) { Ok(v) => (v - 4.0).abs() < 0.5, Err(_) => 1 == 0 }
     best_ok = match Metrics.best_rolling_mean(gas, 30) { Ok(v) => (v - 4.0).abs() < 0.5, Err(_) => 1 == 0 }
     ngp_ok and best_ok
+}
+
+# graded_speed_1s on a COARSE recording (5 s interval, still 4 m/s). Distance is
+# cumulative, so forward-HOLDING it and then differencing gave four 0 m/s samples and one
+# 20 m/s spike per interval — 5x the truth, raised to the 4th power by NGP. Linear
+# interpolation keeps every sample at ~4. The old gapless-1Hz test could not see this.
+expect {
+    ramp = |n, step| List.map_with_index(List.repeat(0.0, n), |_, i| (i).to_f64() * step)
+    gas = Metrics.graded_speed_1s(ramp(25, 5.0), ramp(25, 20.0), List.repeat(0.0, 25))
+    all_sane = List.all(gas, |v| v > 3.5 and v < 4.5)
+    ngp_ok = match Metrics.normalized_power(gas) { Ok(v) => (v - 4.0).abs() < 0.5, Err(_) => 1 == 0 }
+    all_sane and ngp_ok
+}
+
+# graded_speed_1s across a dropout LONGER than max_fill_gap: 60 s at 4 m/s, a 61 s GPS
+# dropout while still running, then more. The gap is deliberately not filled, but each
+# pair keeps its REAL elapsed second, so dt is 61 and the speed stays ~4. Using the list
+# INDEX as time (the old behaviour) divided 244 m by dt = 1 and emitted a 244 m/s sample.
+expect {
+    ramp = |n, step, base| List.map_with_index(List.repeat(0.0, n), |_, i| base + (i).to_f64() * step)
+    time = List.concat(ramp(60, 1.0, 0.0), ramp(60, 1.0, 120.0))
+    dist = List.concat(ramp(60, 4.0, 0.0), ramp(60, 4.0, 480.0))
+    gas = Metrics.graded_speed_1s(time, dist, List.repeat(0.0, 120))
+    List.all(gas, |v| v > 3.5 and v < 4.5)
+}
+
+# resample_1s_linear interpolates a cumulative stream instead of holding it: two samples
+# 5 s apart, 20 m covered, must produce 4 m per second — not four zeros and a 20 m jump.
+expect {
+    pts = Metrics.resample_1s_linear([{ t: 0.I64, v: 0.0.F64 }, { t: 5.I64, v: 20.0.F64 }])
+    List.len(pts) == 6 and List.all(pts, |p| ((p.v) - (p.t).to_f64() * 4.0).abs() < 0.001)
 }
