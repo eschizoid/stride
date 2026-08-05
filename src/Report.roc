@@ -215,9 +215,9 @@ Report :: [].{
                     |p| Metrics.valid_hr(p.v),
                 )
                 watts_pairs = List.keep_if(Streams.stream_pairs(streams.time, streams.watts), |p| Metrics.valid_watts(p.v))
-                watts_1s = Metrics.resample_1s(watts_pairs)
+                watts_1s = Metrics.resample_1s_pairs(watts_pairs, Hold)
                 best = |w|
-                    match Metrics.best_rolling_mean(watts_1s, w) {
+                    match Metrics.best_rolling_mean_1s(watts_1s, w) {
                         Ok(v) => v
                         Err(_) => 0.0
                     }
