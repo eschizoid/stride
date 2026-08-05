@@ -499,9 +499,12 @@ Metrics :: [].{
     # One day's step of the fitness/fatigue/form model:
     #   CTL (fitness)  = 42-day exponential moving average of daily TSS
     #   ATL (fatigue)  =  7-day exponential moving average of daily TSS
-    #   TSB (form)     = yesterday's fitness minus yesterday's fatigue, so a hard
-    #                    day shows up in the NEXT morning's form (the off-by-one is
-    #                    the convention, not a bug).
+    #   TSB (form)     = TODAY's fitness minus TODAY's fatigue, so the number always
+    #                    reconciles (tsb == ctl - atl) and reflects state AFTER today's
+    #                    training. This is a deliberate departure from TrainingPeaks,
+    #                    which reports yesterday's CTL - ATL so a hard day only shows up
+    #                    in the next morning's form. Ours means the verdict printed right
+    #                    after `analyze` already carries the session you just uploaded.
 
     load_step : { ctl_prev : F64, atl_prev : F64, tss : F64 } -> { ctl : F64, atl : F64, tsb : F64 }
     load_step = |{ ctl_prev, atl_prev, tss }| {
@@ -1196,6 +1199,31 @@ expect {
 expect {
     swim = Metrics.pace_tss({ ngp_speed: 1.0, threshold_speed: 1.0, dur_s: 3600.0, exponent: 3.0 })
     (swim - 100.0).abs() < 0.001
+}
+
+# CTL/ATL convergence over MANY days — every other load test walks a single step, which
+# cannot catch a wrong time constant. 42 consecutive days at TSS 100 from zero:
+#   CTL = 100 * (1 - (1 - 1/42)^42) = 63.66   (one full time constant, ~63% of the way)
+#   ATL = 100 * (1 - (1 - 1/7)^42)  = 99.85   (six of its own, essentially converged)
+# TSB is deeply negative because fatigue has caught up and fitness has not.
+expect {
+    final = Iter.fold(0.U64..<42, { ctl: 0.0.F64, atl: 0.0.F64, tsb: 0.0.F64 }, |acc, _|
+        Metrics.load_step({ ctl_prev: acc.ctl, atl_prev: acc.atl, tss: 100.0 })
+    )
+    (final.ctl - 63.66).abs() < 0.1
+    and (final.atl - 99.85).abs() < 0.1
+    and (final.tsb - (final.ctl - final.atl)).abs() < 0.001
+    and final.tsb < -30.0
+}
+
+# a rest day decays both: no TSS means CTL and ATL both fall, and ATL falls faster (7 vs 42),
+# so form RISES on rest — the whole point of the model
+expect {
+    trained = Iter.fold(0.U64..<42, { ctl: 0.0.F64, atl: 0.0.F64, tsb: 0.0.F64 }, |acc, _|
+        Metrics.load_step({ ctl_prev: acc.ctl, atl_prev: acc.atl, tss: 100.0 })
+    )
+    rested = Metrics.load_step({ ctl_prev: trained.ctl, atl_prev: trained.atl, tss: 0.0 })
+    rested.ctl < trained.ctl and rested.atl < trained.atl and rested.tsb > trained.tsb
 }
 
 # hrTSS per-hour weights follow Friel: 30 / 55 / 70 / 80 / 100. Only Z2 was pinned before,

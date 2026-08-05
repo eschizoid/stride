@@ -530,11 +530,25 @@ Report :: [].{
         easy7 = zsum7.easy
         hard7 = zsum7.hard
 
+        # CTL/ATL seed at zero on the first day with any activity, so a short history reads
+        # LOW rather than unknown: 42 days in, CTL has only reached ~63% of its true value,
+        # and the form bands (which are absolute numbers) are meaningless against it. Say so
+        # instead of presenting a warming-up series as settled. COUNT(*) always returns a
+        # row, so this query cannot hit the absent-key crash.
+        load_days = Sqlite.query!({
+            path: Path.utf8(path),
+            query: "SELECT COUNT(*) AS n FROM daily_load",
+            bindings: [],
+            row: Sqlite.i64("n"),
+        })?
+
         Ok({
             as_of: latest.day,
             fitness_ctl: latest.ctl,
             fatigue_atl: latest.atl,
             form_tsb: latest.tsb,
+            load_days: load_days,
+            ctl_warming_up: load_days < 42,
             last_hard_session_date: last_hard,
             pending_sessions: pending,
             last_7d: {
