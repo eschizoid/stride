@@ -1052,6 +1052,43 @@ expect {
     (tss - 50.0).abs() < 0.001
 }
 
+# TSS is quadratic in IF — pin it AWAY from IF == 1, where the `intensity` factor is a
+# no-op and a formula missing it entirely would still pass the two tests above.
+# 1 h at IF 0.8 -> 0.8^2 * 100 = 64.
+expect {
+    tss = Metrics.tss_from_power({ np: 152.0, ftp: 190.0, dur_s: 3600.0 })
+    (tss - 64.0).abs() < 0.001
+}
+
+# 1 h at IF 1.1 -> 1.1^2 * 100 = 121. Above threshold, so it also pins that nothing clamps.
+expect {
+    tss = Metrics.tss_from_power({ np: 209.0, ftp: 190.0, dur_s: 3600.0 })
+    (tss - 121.0).abs() < 0.001
+}
+
+# NP must 4th-power the 30-sample ROLLING MEANS, not the raw samples. Constant power
+# can't tell those apart (both return the input), so use a step: 30 s @ 100 W then
+# 30 s @ 300 W. The 31 rolling means ramp 100 -> 300 linearly, giving NP ~= 222;
+# 4th-powering the raw samples instead — the classic NP bug — gives ~253. Only the
+# correct implementation lands in this band.
+expect {
+    step = List.concat(List.repeat(100.0, 30), List.repeat(300.0, 30))
+    match Metrics.normalized_power(step) {
+        Ok(np) => np > 210.0 and np < 235.0
+        Err(_) => False
+    }
+}
+
+# ...and NP must exceed the plain average (200 W here) for any varying input — the
+# whole point of the metric.
+expect {
+    step = List.concat(List.repeat(100.0, 30), List.repeat(300.0, 30))
+    match Metrics.normalized_power(step) {
+        Ok(np) => np > 200.0
+        Err(_) => False
+    }
+}
+
 # an hour fully in Z2 == 55 hrTSS
 expect {
     tss = Metrics.hr_tss({ z1: 0, z2: 3600, z3: 0, z4: 0, z5: 0 })
