@@ -41,7 +41,7 @@ test:
 # the current nightly (bug C — Json.parse heap corruption, roc-lang/roc, layout-bound). The
 # driver is retried up to 5x since bug C retry-succeeds (idempotent); a real fix un-gates CI.
 e2e-sync:
-    {{roc}} build tests/e2e.roc --output=e2e
+    {{roc}} build tests/e2e.roc --output=e2e --opt=dev
     test -x ./stride || {  echo "e2e-sync needs a ./stride binary — run \`just build\` first"; exit 1; }
     E2E_MODE=mock MOCK_PORT={{mock_port}} ./e2e & MOCK=$!; R=1; for i in 1 2 3 4 5; do E2E_MODE=sync STRIDE_API_BASE=http://127.0.0.1:{{mock_port}} ./e2e && { R=0; break; } || echo "  (sync attempt $i hit bug C, retrying)"; done; kill $MOCK 2>/dev/null; exit $R
 
@@ -74,6 +74,6 @@ up: sync analyze summary
 
 # ── e2e test suite (native Roc: tests/e2e.roc — sandboxed HOME, no network) ──
 e2e:
-    {{roc}} build tests/e2e.roc --output=e2e
+    {{roc}} build tests/e2e.roc --output=e2e --opt=dev
     test -x ./stride || {  echo "e2e needs a ./stride binary — run \`just build\` first"; exit 1; }
     ./e2e
