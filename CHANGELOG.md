@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/eschizoid/stride/compare/v0.2.0...v0.3.0) (2026-08-05)
+
+
+### Features
+
+* decode all argv forms via OsStr.display (Windows UTF-16 support) ([3e3ce70](https://github.com/eschizoid/stride/commit/3e3ce70ccd9b6e80b90662281f8462ac2881669c))
+* Windows arg support via OsStr.display (no hand-rolled decoder) ([5eaad1c](https://github.com/eschizoid/stride/commit/5eaad1c8b18bc9ef14497defa849ee5ee9a4ce83))
+
 ## [0.2.0](https://github.com/eschizoid/stride/compare/v0.1.0...v0.2.0) (2026-08-04)
 
 
