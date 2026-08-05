@@ -1013,7 +1013,8 @@ Report :: [].{
                 \\       CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w, CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
                 \\       CAST(COALESCE(rt.rpe,0) AS REAL) AS rpe,
                 \\       CAST(COALESCE(a.avg_watts * a.moving_time / 1000.0, 0) AS REAL) AS output_kj,
-                \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss
+                \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss,
+                \\       COALESCE(m.load_model, '') AS load_model
                 \\FROM activities a
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\LEFT JOIN ratings rt ON rt.activity_id = a.id
@@ -1032,7 +1033,8 @@ Report :: [].{
                 rpe = Sqlite.f64("rpe")(cols)(stmt)?
                 output_kj = Sqlite.f64("output_kj")(cols)(stmt)?
                 tss = Sqlite.f64("tss")(cols)(stmt)?
-                Ok({ name, date: row_date, sport, distance_m, moving_time, np_w, avg_hr, rpe, output_kj, tss })
+                load_model = Sqlite.str("load_model")(cols)(stmt)?
+                Ok({ name, date: row_date, sport, distance_m, moving_time, np_w, avg_hr, rpe, output_kj, tss, load_model })
             },
         })?
         labeled =
@@ -1167,7 +1169,9 @@ Report :: [].{
         # fit CP/W' over the AEROBIC points (>= 5 min); short sprints are anaerobic and
         # would skew the linear P = W'/t + CP fit
         fit_points = List.map(
-            List.keep_if(points, |p| p.dur_s >= 300),
+            # the 2-parameter hyperbolic model holds ~2-20 min; the 60-min point drags CP
+            # down and W-prime up, so it is excluded from the fit (it still shows on the curve)
+            List.keep_if(points, |p| p.dur_s >= 300 and p.dur_s <= 1200),
             |p| { dur_s: (p.dur_s).to_f64(), watts: p.watts },
         )
         cpfit =
