@@ -1037,10 +1037,18 @@ Metrics :: [].{
     # branch below) — unlike grade_adjusted_distance. Swim: pass a MATCHING-LENGTH flat
     # altitude list (not []) and it degrades to raw speed (minetti(0)=1).
     # What one (prev -> sample) interval represents. Flat classification, so the step below
-    # is a three-case table rather than a nested if/else-if staircase.
-    pace_step_case : F64, F64 -> [Moving, Stopped, NoTime]
+    # is a four-case table rather than a nested if/else-if staircase.
+    #
+    # `Gap` (dt > max_fill_gap) is deliberately NOT a speed sample. The resampler already
+    # refuses to fill a gap that long — it is a pause or a dropout, and we do not know what
+    # happened inside it. Emitting the interval average would contradict that policy twice
+    # over: it invents data for unrecorded time, and it lands as ONE sample carrying a
+    # minute of movement, which the 30-SAMPLE NP window then weights as a single second.
+    # (This is the pace path — runs and swims — so nothing here is riding.)
+    # Skipping it means the stream says "no data here", which is true.
+    pace_step_case : F64, F64 -> [Moving, Stopped, NoTime, Gap]
     pace_step_case = |dt, dd|
-        if dt > 0.0 and dd > 0.0 { Moving } else if dt > 0.0 { Stopped } else { NoTime }
+        if dt <= 0.0 { NoTime } else if dt > (max_fill_gap).to_f64() { Gap } else if dd > 0.0 { Moving } else { Stopped }
 
     # grade-adjusted speed per interval, each carrying the REAL second it ends on, so a
     # rolling window over the result can tell contiguous seconds from stitched ones.
@@ -1067,6 +1075,8 @@ Metrics :: [].{
             Stopped => { prev: Ok(s), out }
             # no time elapsed (duplicate/backwards timestamp): keep the existing anchor
             NoTime => { prev: Ok(p), out }
+            # unrecorded stretch longer than max_fill_gap: re-anchor and emit nothing
+            Gap => { prev: Ok(s), out }
             Moving => {
                 grade = (s.a - p.a) / dd
                 speed = (dd / dt) * minetti_ratio(grade)
@@ -1694,7 +1704,10 @@ expect {
     time = List.concat(ramp(60, 1.0, 0.0), ramp(60, 1.0, 120.0))
     dist = List.concat(ramp(60, 4.0, 0.0), ramp(60, 4.0, 480.0))
     gas = Metrics.graded_speed_1s(time, dist, List.repeat(0.0, 120))
-    List.all(gas, |p| p.v > 3.5 and p.v < 4.5)
+    # 59 intervals either side of the dropout, and NOTHING for the dropout itself: the
+    # 61 s hole is unrecorded time, so the stream reports no data rather than inventing
+    # an average that NP would then weight as a single second.
+    List.all(gas, |p| p.v > 3.5 and p.v < 4.5) and List.len(gas) == 118
 }
 
 # resample_1s_linear interpolates a cumulative stream instead of holding it: two samples
