@@ -1043,7 +1043,8 @@ Metrics :: [].{
     # refuses to fill a gap that long — it is a pause or a dropout, and we do not know what
     # happened inside it. Emitting the interval average would contradict that policy twice
     # over: it invents data for unrecorded time, and it lands as ONE sample carrying a
-    # minute of riding, which the 30-SAMPLE NP window then weights as a single second.
+    # minute of movement, which the 30-SAMPLE NP window then weights as a single second.
+    # (This is the pace path — runs and swims — so nothing here is riding.)
     # Skipping it means the stream says "no data here", which is true.
     pace_step_case : F64, F64 -> [Moving, Stopped, NoTime, Gap]
     pace_step_case = |dt, dd|
