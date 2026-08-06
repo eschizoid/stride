@@ -587,14 +587,14 @@ expect Render.progress_group_label("Morning Ride", SimilarDistance(31400.0)) == 
 
 # EF lens: gap row for >90-day breaks, asked marker, last-vs-best all present
 expect {
-    pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0 }
+    pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream" }
     s = Render.progress_section("X", [pr("2025-01-01", 1.5), pr("2025-08-01", 1.2)], "2025-08-01", Ef)
     Str.contains(s, "···") and Str.contains(s, "◀ asked") and Str.contains(s, "below your best") and Str.contains(s, "declining")
 }
 
 # RPE lens is lower-is-better: RPE dropping 8 -> 6 reads as improving, "above your easiest"
 expect {
-    pr = |date, rpe| { name: "Lift", date, sport: "WeightTraining", distance_m: 0.0, moving_time: 2700, np_w: 0.0, avg_hr: 0.0, rpe, output_kj: 0.0, tss: 0.0 }
+    pr = |date, rpe| { name: "Lift", date, sport: "WeightTraining", distance_m: 0.0, moving_time: 2700, np_w: 0.0, avg_hr: 0.0, rpe, output_kj: 0.0, tss: 0.0, load_model: "session_rpe" }
     s = Render.progress_section("Lift", [pr("2025-01-01", 8.0), pr("2025-02-01", 6.0), pr("2025-03-01", 7.0)], "2025-03-01", Rpe)
     Str.contains(s, "effort (rpe)") and Str.contains(s, "improving") and Str.contains(s, "above your easiest")
 }

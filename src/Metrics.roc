@@ -339,7 +339,7 @@ Metrics :: [].{
     # hrTSS heuristic: TSS per hour spent in each HR zone.
     # Standard coaching approximations (documented, deliberately simple).
     hr_tss_per_hour : { z1 : F64, z2 : F64, z3 : F64, z4 : F64, z5 : F64 }
-    hr_tss_per_hour = { z1: 30.0, z2: 55.0, z3: 70.0, z4: 85.0, z5: 100.0 }
+    hr_tss_per_hour = { z1: 30.0, z2: 55.0, z3: 70.0, z4: 80.0, z5: 100.0 }
 
     hr_tss : ZoneSeconds -> F64
     hr_tss = |zs| {
@@ -446,12 +446,13 @@ Metrics :: [].{
         # pace rung, slotting in as power -> PACE -> HR -> RPE -> RE. Scores when a normalized
         # graded pace SPEED was computed (a pace-routed sport with distance+altitude streams)
         # AND a threshold speed exists; otherwise falls through to HR/RPE/RE. rTSS/sTSS is
-        # IF^2 * hours * 100 with IF = ngp_speed / threshold_speed (pace_tss).
+        # IF^exp * hours * 100 with IF = ngp_speed / threshold_speed; the exponent is
+        # per-sport (running 2, swimming 3 — see pace_tss_exponent).
         pace_or_fallback =
             match input.ngp {
                 Ok(ngp_speed) =>
                     if input.threshold_speed > 0.0
-                        { t: pace_tss({ ngp_speed, threshold_speed: input.threshold_speed, dur_s: input.dur_s }), m: "rtss" }
+                        { t: pace_tss({ ngp_speed, threshold_speed: input.threshold_speed, dur_s: input.dur_s, exponent: pace_tss_exponent(input.sport_type) }), m: "rtss" }
                     else
                         fallback
                 Err(_) => fallback
@@ -557,7 +558,11 @@ Metrics :: [].{
                 Err(TooFew)
             else {
                 w_prime = sxy / sxx
-                Ok({ cp: my - w_prime * mx, w_prime })
+                cp = my - w_prime * mx
+                # A fit can land on a negative CP or W' (noisy or near-collinear points).
+                # Neither is physically meaningful, so refuse rather than hand back a
+                # nonsense number the caller has to remember to check.
+                if cp <= 0.0 or w_prime <= 0.0 { Err(TooFew) } else { Ok({ cp, w_prime }) }
             }
         }
     }
@@ -612,7 +617,7 @@ Metrics :: [].{
         }
 
     # ── repeated-workout progress (the `progress` command's business rules) ─
-    ProgressRow : { name : Str, date : Str, sport : Str, distance_m : F64, moving_time : I64, np_w : F64, avg_hr : F64, rpe : F64, output_kj : F64, tss : F64 }
+    ProgressRow : { name : Str, date : Str, sport : Str, distance_m : F64, moving_time : I64, np_w : F64, avg_hr : F64, rpe : F64, output_kj : F64, tss : F64, load_model : Str }
 
     # split rows (already sorted by name) into per-workout runs
     group_progress : List(ProgressRow) -> List({ name : Str, rows : List(ProgressRow) })
@@ -679,10 +684,26 @@ Metrics :: [].{
     # that lens is lower-is-better. Chosen by what data the group actually carries.
     Lens : [Ef, SpeedHr, Rpe]
 
+    # Which load models put a NORMALIZED power number in the np_w column. Our own
+    # power_stream NP and Strava's weighted_avg_watts are the same quantity computed the
+    # same way, so they are comparable. Plain avg_watts is NOT — it is a different metric
+    # wearing the same column, and trending it against NP invents an improvement.
+    np_like : Str -> Bool
+    np_like = |load_model| load_model == "power_stream" or load_model == "weighted_watts"
+
     lens_score : Lens, ProgressRow -> Try(F64, [Unscorable])
     lens_score = |lens, r|
         match lens {
-            Ef => if r.np_w > 0.0 and r.avg_hr > 0.0 Ok(r.np_w / r.avg_hr) else Err(Unscorable)
+            # EF is NP-per-heartbeat, so it is only comparable when np_w really IS normalized
+            # power. The ladder stores whichever power rung won, so a row scored from plain
+            # avg_watts would put avg-watts-per-beat on the same trend line as NP-per-beat and
+            # invent a fake improvement for anyone whose newer rides have streams.
+            Ef =>
+                if r.np_w > 0.0 and r.avg_hr > 0.0 and np_like(r.load_model) {
+                    Ok(r.np_w / r.avg_hr)
+                } else {
+                    Err(Unscorable)
+                }
             SpeedHr =>
                 if r.distance_m > 0.0 and r.avg_hr > 0.0 and r.moving_time > 0 {
                     Ok((r.distance_m / r.moving_time.to_f64() * 60.0) / r.avg_hr)
@@ -1098,31 +1119,92 @@ Metrics :: [].{
         grade_adjusted_speed_pairs(time_1s, List.map(dist_1s, |p| p.v), List.map(alt_1s, |p| p.v))
     }
 
-    # rTSS / sTSS: tss_from_power with speed swapped for watts — IF = ngp_speed /
-    # threshold_speed (faster = harder), IF² × hours × 100. 1 h at threshold = 100.
-    # Running: legit (running power ≈ linear in speed, so speed-IF ≈ power-IF ≈ TP rTSS).
-    # Swim CAVEAT: drag power ≈ v³, so a speed-based IF² compresses swim intensity's range
-    # (hard intervals under-scored) — a v1 approximation; verify the exponent vs TP sSS in
-    # the swim slice.
-    pace_tss : { ngp_speed : F64, threshold_speed : F64, dur_s : F64 } -> F64
-    pace_tss = |{ ngp_speed, threshold_speed, dur_s }|
-        tss_from_power({ np: ngp_speed, ftp: threshold_speed, dur_s })
+    # rTSS / sTSS: the power formula with speed swapped for watts — IF = ngp_speed /
+    # threshold_speed (faster = harder), IF^exp × hours × 100. 1 h at threshold = 100 for
+    # any exponent. The exponent is per-sport (see pace_tss_exponent immediately below):
+    # running is near enough linear in speed so it keeps 2, matching TrainingPeaks rTSS;
+    # swimming fights drag, which rises with v³, so it uses 3 like TrainingPeaks sSS. The
+    # earlier version squared BOTH and under-scored hard swim sets by ~20%.
+    # How metabolic cost scales with the speed ratio, per sport.
+    #
+    # Running resistance is near enough linear in speed, so rTSS keeps the familiar IF^2
+    # (identical to tss_from_power). Swimming fights hydrodynamic DRAG, which rises with the
+    # CUBE of speed — TrainingPeaks' sSS cubes the speed ratio for exactly this reason.
+    # Squaring it under-scores hard swim sets badly: at IF 1.2, 144 vs 173 per hour.
+    pace_tss_exponent : Str -> F64
+    pace_tss_exponent = |sport|
+        if Str.contains(Str.with_ascii_lowercased(sport), "swim") { 3.0 } else { 2.0 }
+
+    pace_tss : { ngp_speed : F64, threshold_speed : F64, dur_s : F64, exponent : F64 } -> F64
+    pace_tss = |{ ngp_speed, threshold_speed, dur_s, exponent }|
+        if threshold_speed <= 0.0 {
+            0.0
+        } else {
+            intensity = ngp_speed / threshold_speed
+            (dur_s / 3600.0) * intensity.pow(exponent) * 100.0
+        }
 }
 
 # ── tests ───────────────────────────────────────────────────────────
 
 # lens selection: power ride -> Ef, run with pace+HR -> SpeedHr, rated strength -> Rpe
 expect {
-    row = |sport, np, dist, mt, rpe| { name: "X", date: "2025-01-01", sport, distance_m: dist, moving_time: mt, np_w: np, avg_hr: 150.0, rpe, output_kj: 0.0, tss: 0.0 }
+    row = |sport, np, dist, mt, rpe| { name: "X", date: "2025-01-01", sport, distance_m: dist, moving_time: mt, np_w: np, avg_hr: 150.0, rpe, output_kj: 0.0, tss: 0.0, load_model: "power_stream" }
     Metrics.progress_lens([row("Ride", 200.0, 0.0, 3600, 0.0)]) == Ef
     and Metrics.progress_lens([row("Run", 0.0, 10000.0, 3000, 0.0)]) == SpeedHr
     and Metrics.progress_lens([row("WeightTraining", 0.0, 0.0, 2700, 7.0)]) == Rpe
     and Metrics.progress_lens([row("Workout", 0.0, 0.0, 2700, 0.0)]) == Unscorable
 }
 
+# EF is only comparable between rows whose np_w really is NORMALIZED power. Our stream NP and
+# Strava weighted watts qualify; plain avg_watts does not — it is a different metric wearing
+# the same column, and trending it against NP invents an improvement. Same watts, same HR:
+# provenance alone decides.
+expect {
+    row = |lm| { name: "X", date: "2025-01-01", sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: 200.0, avg_hr: 150.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: lm }
+    Metrics.lens_score(Ef, row("power_stream")).is_ok()
+    and Metrics.lens_score(Ef, row("avg_watts")).is_err()
+    and Metrics.lens_score(Ef, row("weighted_watts")).is_ok()
+}
+
+# swim TSS cubes the speed ratio (drag), running squares it. At IF 1.2 for one hour that is
+# 173 vs 144 — the square under-scores hard swim sets by ~20%.
+expect {
+    swim = Metrics.pace_tss({ ngp_speed: 1.2, threshold_speed: 1.0, dur_s: 3600.0, exponent: Metrics.pace_tss_exponent("Swim") })
+    run = Metrics.pace_tss({ ngp_speed: 1.2, threshold_speed: 1.0, dur_s: 3600.0, exponent: Metrics.pace_tss_exponent("Run") })
+    (swim - 172.8).abs() < 0.01 and (run - 144.0).abs() < 0.01
+}
+
+# at threshold both are 100 regardless of exponent — the curves only diverge off threshold
+expect {
+    swim = Metrics.pace_tss({ ngp_speed: 1.0, threshold_speed: 1.0, dur_s: 3600.0, exponent: 3.0 })
+    (swim - 100.0).abs() < 0.001
+}
+
+# hrTSS per-hour weights follow Friel: 30 / 55 / 70 / 80 / 100. Only Z2 was pinned before,
+# so Z4 sat at 85 unnoticed. One hour in each zone, one zone at a time.
+expect {
+    hour = |z| Metrics.hr_tss(z)
+    zero = { z1: 0, z2: 0, z3: 0, z4: 0, z5: 0 }
+    (hour({ ..zero, z1: 3600 }) - 30.0).abs() < 0.001
+    and (hour({ ..zero, z2: 3600 }) - 55.0).abs() < 0.001
+    and (hour({ ..zero, z3: 3600 }) - 70.0).abs() < 0.001
+    and (hour({ ..zero, z4: 3600 }) - 80.0).abs() < 0.001
+    and (hour({ ..zero, z5: 3600 }) - 100.0).abs() < 0.001
+}
+
+# critical_power refuses a physically meaningless fit instead of returning a negative CP
+expect {
+    # power RISING with duration -> negative W', which no athlete has
+    match Metrics.critical_power([{ dur_s: 300.0, watts: 200.0 }, { dur_s: 1200.0, watts: 300.0 }]) {
+        Err(TooFew) => 1 == 1
+        Ok(_) => 1 == 0
+    }
+}
+
 # EF = NP/HR; RPE is lower-is-better
 expect {
-    r = { name: "X", date: "d", sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: 300.0, avg_hr: 150.0, rpe: 0.0, output_kj: 0.0, tss: 0.0 }
+    r = { name: "X", date: "d", sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: 300.0, avg_hr: 150.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream" }
     (Metrics.lens_score(Ef, r).ok_or(0.0) - 2.0).abs() < 0.001 and Metrics.lens_higher_better(Ef) and !(Metrics.lens_higher_better(Rpe))
 }
 
@@ -1267,7 +1349,7 @@ expect {
     r.tss.abs() < 0.001 and r.model == "none"
 }
 
-# pace rung: an NGP speed + a threshold speed, no power -> rTSS (IF^2 * hours * 100)
+# pace rung: an NGP speed + a threshold speed, no power -> rTSS (IF^exp * hours * 100)
 expect {
     r = Metrics.tss_ladder({ ..Metrics.ladder_base, ngp: Ok(3.0), threshold_speed: 3.0 })
     (r.tss - 100.0).abs() < 0.001 and r.model == "rtss"
@@ -1497,7 +1579,7 @@ expect Metrics.is_auto_name("Morning Ride") and Metrics.is_auto_name("Lunch Grav
 
 # group_progress: adjacent same-name rows fold into one group per workout
 expect {
-    pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0 }
+    pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream" }
     gs = Metrics.group_progress([pr("A", "2025-01-01", 0.0), pr("A", "2025-02-01", 0.0), pr("B", "2025-03-01", 0.0)])
     List.len(gs) == 2 and List.first(gs).map_ok(|g| List.len(g.rows) == 2).ok_or(False)
 }
@@ -1505,7 +1587,7 @@ expect {
 # anchor_filter: exact names pass through; auto-names gate to ±10% of anchor distance;
 # distance-less auto-name anchors show alone; off-date anchors drop the group
 expect {
-    pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0 }
+    pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream" }
     exact = Metrics.anchor_filter({ name: "Class X", rows: [pr("Class X", "2025-01-01", 0.0)] }, "2025-01-01")
     gated = Metrics.anchor_filter({ name: "Morning Ride", rows: [pr("Morning Ride", "2025-01-01", 20000.0), pr("Morning Ride", "2025-02-01", 21000.0), pr("Morning Ride", "2025-03-01", 40000.0)] }, "2025-01-01")
     lone = Metrics.anchor_filter({ name: "Morning Ride", rows: [pr("Morning Ride", "2025-01-01", 0.0), pr("Morning Ride", "2025-02-01", 21000.0)] }, "2025-01-01")
@@ -1658,11 +1740,11 @@ expect
     }
 
 # rTSS commensurability: NGP == threshold => IF 1 => 1 h => 100 TSS
-expect (Metrics.pace_tss({ ngp_speed: 3.5, threshold_speed: 3.5, dur_s: 3600.0 }) - 100.0).abs() < 0.001
+expect (Metrics.pace_tss({ ngp_speed: 3.5, threshold_speed: 3.5, dur_s: 3600.0, exponent: 2.0 }) - 100.0).abs() < 0.001
 # faster than threshold scores MORE, not less (the IF-direction bug the fleet caught)
-expect Metrics.pace_tss({ ngp_speed: 4.0, threshold_speed: 3.5, dur_s: 3600.0 }) > 100.0
+expect Metrics.pace_tss({ ngp_speed: 4.0, threshold_speed: 3.5, dur_s: 3600.0, exponent: 2.0 }) > 100.0
 # swim sTSS uses the same function (normalized swim speed vs CSS, no grade term)
-expect Metrics.pace_tss({ ngp_speed: 1.4, threshold_speed: 1.25, dur_s: 3600.0 }) > 100.0
+expect Metrics.pace_tss({ ngp_speed: 1.4, threshold_speed: 1.25, dur_s: 3600.0, exponent: 3.0 }) > 100.0
 
 # a STOP (distance flat while time advances) must NOT deflate the next speed:
 # stationary for 0-2 s then 5 m in the 3rd second => one 5.0 m/s sample, not 1.67

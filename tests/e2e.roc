@@ -486,6 +486,13 @@ b_progress_a! : Ctx => Try({}, _)
 b_progress_a! = |ctx| {
     _ = seed_ride!(ctx.db, "201", "Test Class", "2025-01-01T10:00:00Z", "3600", "20000", "180", "150")
     _ = seed_ride!(ctx.db, "202", "Test Class", "2025-06-01T10:00:00Z", "3600", "20000", "210", "150")
+    # Each ride carries its OWN power stream. Under period-accurate FTP (ADR 0005) a ride is
+    # scored by the fitness in force in ITS era, so a 2025 ride with no 20-min best anywhere
+    # near it derives FTP 0, the ladder skips the power rungs, and np_w is never stored — the
+    # EF lens (NP per heartbeat) then has nothing to read. Today's-FTP used to hide that by
+    # lending these rides a 2026 number. Give them real power so the lens has real input.
+    _ = seed_power_stream!(ctx.db, 201, 1300, 180)
+    _ = seed_power_stream!(ctx.db, 202, 1300, 210)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("progress anchor echoes date", strjq!(ctx, ["progress", "2025-06-01"], ".data.anchor_date") == "2025-06-01")?
     check!("progress 2 sessions", strjq!(ctx, ["progress", "2025-06-01"], ".data.groups[0].sessions | length") == "2")?
@@ -504,6 +511,11 @@ b_progress_b! = |ctx| {
     _ = seed_ride!(ctx.db, "211", "Morning Ride", "2025-03-01T08:00:00Z", "3600", "20000", "150", "140")
     _ = seed_ride!(ctx.db, "212", "Morning Ride", "2025-03-08T08:00:00Z", "3600", "21000", "160", "140")
     _ = seed_ride!(ctx.db, "213", "Morning Ride", "2025-03-15T08:00:00Z", "7200", "40000", "170", "140")
+    # own streams, same reason as the block above: under ADR 0005 a ride is scored by the
+    # fitness in force in its own era, so each fixture ride needs its own power basis.
+    _ = seed_power_stream!(ctx.db, 211, 1300, 150)
+    _ = seed_power_stream!(ctx.db, 212, 1300, 160)
+    _ = seed_power_stream!(ctx.db, 213, 1300, 170)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("auto-name distance-gated to 2 sessions", strjq!(ctx, ["progress", "2025-03-01"], ".data.groups[0].sessions | length") == "2")?
     check!("40km ride excluded", sfloat(strjq!(ctx, ["progress", "2025-03-01"], ".data.groups[0].sessions | map(.distance_m) | max")) < 30000.0)?
