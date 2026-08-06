@@ -29,7 +29,7 @@ $ stride summary
     ⚠ zone gap: no Z5 heart-rate time in 28 days (could be no hard sessions, or
       power-based / short intervals that didn't drive HR to Z5)
 
-  FTP calibration (60d): best 20-min power 256W -> estimated FTP 243W (config: 243W)
+  FTP (60d): ~243W — derived from your best 20-min power 256W
 
   last 7 days: 208 load — 40% easy / 46% moderate / 14% hard
   last hard session (5+ min Z4/Z5): 2026-07-28
@@ -56,14 +56,15 @@ Strava is the system of record; stride is the analysis layer on top of it. Where
 differ:
 
 - **Deterministic metrics** — TSS, normalized power, intensity factor, CTL/ATL/TSB,
-  time-in-zone, FTP calibration. Same inputs, same numbers, every time.
+  time-in-zone, derived per-sport FTP. Same inputs, same numbers, every time.
 - **A database you own** — everything lives in `~/.stride/db.sqlite`. Query it with
   `sqlite3`, back it up with `cp`, inspect any computed value's inputs, and read it
   offline after a sync. It also holds your Strava tokens and client secret, so stride
   locks `~/.stride` to `0700` and the db to `0600` (owner-only) on every run, and
   `config get` never prints secret keys.
-- **Reproducible recomputation** — change your FTP and the engine recomputes exactly
-  the affected history. Edit a ride on Strava and the metrics self-heal.
+- **Reproducible recomputation** — every metric records the inputs it was computed from,
+  so a changed input recomputes exactly the affected history. Edit a ride on Strava and
+  the metrics self-heal.
 - **Scriptable** — every command emits JSON for tools and agents, tables for humans,
   in a versioned envelope a caller can depend on (shape under [Commands](#commands)).
 - **An honest data model** — a session with no usable data shows `-`, not an
@@ -97,9 +98,9 @@ and put it on your `PATH`. Pick one:
 | Platform | Asset |
 | --- | --- |
 | Linux · x86_64 | `stride-linux-x86_64` |
-| Linux · arm64 | `stride-linux-arm64` |
 | macOS · Apple Silicon | `stride-macos-arm64` |
 | macOS · Intel | `stride-macos-x86_64` |
+| Windows · x86_64 | `stride-windows-x86_64.exe` |
 
 ```bash
 # example: macOS Apple Silicon — adjust the asset for your platform
@@ -110,8 +111,8 @@ stride --version
 ```
 
 Verify the download against [`SHA256SUMS.txt`](https://github.com/eschizoid/stride/releases/latest)
-if you like: `sha256sum -c SHA256SUMS.txt`. (No Windows build yet — use WSL + the Linux binary; the why is
-in [ADR 0000 §9](docs/adr/0000-architecture.md).)
+if you like: `sha256sum -c SHA256SUMS.txt`. (Linux arm64 is not published yet — see
+[#60](https://github.com/eschizoid/stride/issues/60); use the x86_64 build under emulation.)
 
 ### Build from source
 
@@ -127,7 +128,6 @@ just install        # builds the binary, symlinks it into ~/.local/bin
 ```bash
 stride init                                   # create + migrate the db
 STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth   # one-time browser paste flow
-stride config set ftp_ride 250                # your cycling FTP in watts (ftp_<sport> for others)
 stride config set hr_z1_max 120               # your HR zone upper bounds...
 stride config set hr_z2_max 150
 stride config set hr_z3_max 165
@@ -149,7 +149,7 @@ of your Strava account export — `config` and `analyze` are identical:
 ```bash
 stride init
 stride import ~/Downloads/strava_export.zip   # summary-level history, no API app
-stride config set ftp_ride 250                # + HR zones + timezone, exactly as above
+stride config set hr_z1_max 120                # + the rest of the HR zones + timezone, as above
 stride analyze
 ```
 
@@ -174,7 +174,7 @@ stride week                                       # everything needed to plan a 
 | --- | --- |
 | `init` | Creates `~/.stride/db.sqlite` and runs migrations. Idempotent — safe to re-run anytime. |
 | `auth` | One-time Strava OAuth: prints an authorize URL, you paste back the `code=` param. Stores tokens *and* client credentials in the db — no env vars needed afterward. |
-| `config set <key> <val>` / `config get <key>` | Your numbers: `ftp_ride` (cycling FTP in watts; `ftp_<sport>` for any other power sport), HR zone bounds `hr_z1_max`…`hr_z4_max`, and either `timezone` (IANA, DST-aware) or `utc_offset_minutes` (fixed) to anchor "today". Changing an FTP auto-recomputes that sport's history on the next `analyze`. |
+| `config set <key> <val>` / `config get <key>` | Your numbers: HR zone bounds `hr_z1_max`…`hr_z4_max`, and either `timezone` (IANA, DST-aware) or `utc_offset_minutes` (fixed) to anchor "today". FTP is **not** configured — each sport derives its own from your power history. |
 
 **Data (daily)**
 
@@ -190,10 +190,10 @@ stride week                                       # everything needed to plan a 
 
 | Command | The question it answers |
 | --- | --- |
-| `summary` | *Where do I stand today?* Form (with verdict), 7-day and 28-day zone mix + polarization, FTP calibration (flags when your 20-min best says your FTP is stale), date of your last hard session, per-sport breakdown. |
+| `summary` | *Where do I stand today?* Form (with verdict), 7-day and 28-day zone mix + polarization, your derived FTP and the 20-min best behind it, date of your last hard session, per-sport breakdown. |
 | `activities [n] [sport]` | *What did each session actually contain?* Last *n* sessions (default 30), optionally filtered by sport (`activities 10 rowing`). Per session: load, intensity vs FTP, and minutes actually spent hard (Z4+Z5). |
 | `top <metric> [n] [sport]` | *What were my best sessions?* Ranks activities (default top 10) by a metric — `hr`, `tss`, `power`, `intensity`, `distance`, `time`, or `output` (kJ) — optionally filtered by sport (`top tss 5 ride`). The leaderboard to `activities`' timeline. |
-| `doctor` | *Can I trust my data?* Coverage (HR/power/streams/ratings), how each activity was scored and the **measured-vs-estimated confidence split**, config gaps (FTP, HR zones), pending backfill, and the active time anchor. Every gap says what, why, and the fix. |
+| `doctor` | *Can I trust my data?* Coverage (HR/power/streams/ratings), how each activity was scored and the **measured-vs-estimated confidence split**, config gaps (HR zones), pending backfill, and the active time anchor. Every gap says what, why, and the fix. |
 | `zones` (alias `pz`) | *What watts is each power zone for me?* The 7 Coggan/Peloton power zones as watt ranges derived from your FTP (they shift when FTP changes). The targets you'd set on a Power Zone ride. |
 | `progress [date]` | *Am I improving on this workout?* Every past instance of a workout, compared with a **sport-aware lens** — Efficiency Factor (NP ÷ HR) for power rides, speed ÷ HR for distance sports, RPE for rated strength/HIIT — with a trend verdict and last-vs-best. Bare `progress` uses your latest session; `stride --help` has the exact matching rules. |
 | `load [days]` | *Is my training working over time?* Daily fitness/fatigue/form rows for windows ≤14 days; Monday-aligned **weekly rollups** (sessions, load, fitness trend) for longer windows (default 90). Ends with today's form verdict. |
@@ -263,16 +263,43 @@ still works — the human tables carry the same numbers, legends, and verdicts.
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    strava["Strava REST v3"]
+    export["Account export<br/>(.zip — no API creds)"]
+
+    subgraph ingest ["ingestion"]
+        auth["auth<br/><small>OAuth paste flow<br/>tokens + creds in db</small>"]
+        sync["sync / backfill<br/><small>activities + streams</small>"]
+    end
+
+    subgraph db ["SQLite — ~/.stride/db.sqlite"]
+        mirror["<b>mirror</b><br/>activities · streams<br/><small>re-pullable</small>"]
+        computed["<b>computed</b><br/>activity_metrics · daily_load<br/><small>rebuilt by analyze</small>"]
+        judgment["<b>judgment</b><br/>planned_sessions · ratings · config<br/><small>exists only here</small>"]
+    end
+
+    analyze["analyze<br/><small>pure Roc math</small>"]
+    queries["queries<br/><small>JSON | human tables</small>"]
+    coach(["LLM coach"])
+
+    strava --> auth --> sync --> mirror
+    export --> mirror
+    mirror --> analyze --> computed
+    computed --> queries
+    judgment --> queries
+    queries -- "summary · week · progress" --> coach
+    coach -- "plan add · complete · skip · rate" --> judgment
+
+    classDef tier fill:#f6f8fa,stroke:#57606a,color:#24292f
+    classDef actor fill:#ddf4ff,stroke:#0969da,color:#0a3069
+    class mirror,computed,judgment tier
+    class coach actor
 ```
-Strava REST v3 ──▶ auth/sync ──▶ SQLite (~/.stride/db.sqlite) ──▶ analyze ──▶ queries
-                   OAuth paste     activities · streams ·          pure math    JSON | tables
-                   flow, tokens    metrics · daily_load ·          in Roc
-                   + creds in db   plan · config          modules
-                                                                        ▲
-                                              the LLM coach ────────────┘
-                                              reads summary/week, plans,
-                                              marks sessions done/skipped
-```
+
+The three database tiers matter more than they look: **mirror** is replace-on-sync and
+re-pullable, **computed** rebuilds from `analyze`, and **judgment** exists nowhere else.
+Human input never lives on a mirror table, because a re-sync would silently wipe it.
 
 **What the engine computes** (all deterministic):
 
@@ -288,12 +315,40 @@ Strava REST v3 ──▶ auth/sync ──▶ SQLite (~/.stride/db.sqlite) ──
 - **CTL/ATL/TSB** — 42-day and 7-day exponential moving averages of daily load,
   extended through **today** so rest days decay fatigue and `form` is true as-of-now.
 - **Zones are HR-based** (universal across sports); power feeds TSS/NP only.
-- **FTP calibration** — 60-day best 20-min power × 0.95, flagged against config.
+- **FTP is derived, never configured** — that sport's own best 20-min power × 0.95 over a
+  60-day window, and the window is anchored to **the activity's own date**, not today. A
+  2021 ride is scored against 2021 fitness, and a new personal best does not rewrite your
+  history ([ADR 0005](docs/adr/0005-period-accurate-ftp.md)).
+
+### What gets computed per sport
+
+Nothing here is a hardcoded sport list. **The data you have decides the rung** — the ladder
+takes the best available source and records which one won in `load_model`, so `doctor` can
+show you the distribution. Sport type only changes two things: whether a rating outranks
+heart rate, and the swim exponent.
+
+| Sport | Load scored by | Also computed |
+|---|---|---|
+| **Ride / VirtualRide / GravelRide** | power stream → NP·IF (`power_stream`), else Strava weighted watts, else avg watts | power-duration curve + CP/W′, 20-min best → derived FTP, power-intensity split |
+| **Rowing** | same power ladder — a rowing watt is not a cycling watt, so it gets its **own** derived FTP | as above, on its own threshold |
+| **Run** | grade-adjusted pace (`rtss`): normalized graded pace vs derived threshold pace, **IF²** | Minetti grade adjustment, pace-intensity split |
+| **Swim** | grade-adjusted pace (`rtss`) with **IF³** — drag rises with v³, so squaring under-scores hard sets by ~20% | flat-altitude speed, CSS-equivalent threshold |
+| **WeightTraining · Workout · Crossfit · HighIntensityIntervalTraining · Yoga · Pilates** | your **session-RPE** first (`hours × RPE × 10`), then HR | — |
+| Anything with only HR | zone-weighted hrTSS (Friel 30/55/70/80/100 per hour) | HR zone seconds |
+| Anything with none of the above | Strava `relative_effort`, else an honest **zero** | — |
+
+Two consequences worth knowing:
+
+- **Strength sessions need a rating to score honestly.** A junk HR strap gives them a
+  near-zero load, which is truthful "no data" rather than "no effort" — `stride rate <id> <1-10>`
+  is what turns that into real load. `doctor` lists the unrated ones.
+- **Every threshold is per-sport and self-derived.** Add a new sport and it starts scoring
+  as soon as it has the data; there is nothing to configure.
 
 **Self-healing by construction:**
 
-- Every metrics row stores the FTP it was computed with — change FTP and the next
-  `analyze` recomputes exactly the stale rows.
+- Every metrics row stores the FTP it was scored with — the one in force on that
+  activity's date — so only genuinely affected rows recompute.
 - Stream arrival and Strava edits invalidate the affected metrics automatically.
 - The schema versions itself — upgrading the binary against an existing db
   migrates on the next command.
