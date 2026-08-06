@@ -457,7 +457,8 @@ Metrics :: [].{
         # pace rung, slotting in as power -> PACE -> HR -> RPE -> RE. Scores when a normalized
         # graded pace SPEED was computed (a pace-routed sport with distance+altitude streams)
         # AND a threshold speed exists; otherwise falls through to HR/RPE/RE. rTSS/sTSS is
-        # IF^2 * hours * 100 with IF = ngp_speed / threshold_speed (pace_tss).
+        # IF^exp * hours * 100 with IF = ngp_speed / threshold_speed; the exponent is
+        # per-sport (running 2, swimming 3 — see pace_tss_exponent).
         pace_or_fallback =
             match input.ngp {
                 Ok(ngp_speed) =>
@@ -1136,12 +1137,12 @@ Metrics :: [].{
         grade_adjusted_speed_pairs(time_1s, List.map(dist_1s, |p| p.v), List.map(alt_1s, |p| p.v))
     }
 
-    # rTSS / sTSS: tss_from_power with speed swapped for watts — IF = ngp_speed /
-    # threshold_speed (faster = harder), IF² × hours × 100. 1 h at threshold = 100.
-    # Running: legit (running power ≈ linear in speed, so speed-IF ≈ power-IF ≈ TP rTSS).
-    # Swim CAVEAT: drag power ≈ v³, so a speed-based IF² compresses swim intensity's range
-    # (hard intervals under-scored) — a v1 approximation; verify the exponent vs TP sSS in
-    # the swim slice.
+    # rTSS / sTSS: the power formula with speed swapped for watts — IF = ngp_speed /
+    # threshold_speed (faster = harder), IF^exp × hours × 100. 1 h at threshold = 100 for
+    # any exponent. The exponent is per-sport (see pace_tss_exponent immediately below):
+    # running is near enough linear in speed so it keeps 2, matching TrainingPeaks rTSS;
+    # swimming fights drag, which rises with v³, so it uses 3 like TrainingPeaks sSS. The
+    # earlier version squared BOTH and under-scored hard swim sets by ~20%.
     # How metabolic cost scales with the speed ratio, per sport.
     #
     # Running resistance is near enough linear in speed, so rTSS keeps the familiar IF^2
@@ -1366,7 +1367,7 @@ expect {
     r.tss.abs() < 0.001 and r.model == "none"
 }
 
-# pace rung: an NGP speed + a threshold speed, no power -> rTSS (IF^2 * hours * 100)
+# pace rung: an NGP speed + a threshold speed, no power -> rTSS (IF^exp * hours * 100)
 expect {
     r = Metrics.tss_ladder({ ..Metrics.ladder_base, ngp: Ok(3.0), threshold_speed: 3.0 })
     (r.tss - 100.0).abs() < 0.001 and r.model == "rtss"
