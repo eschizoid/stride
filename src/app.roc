@@ -69,7 +69,7 @@ help_text =
         \\    analyze     compute training metrics (TSS, zones, CTL/ATL/TSB)
         \\
         \\WHERE DO I STAND?
-        \\    summary     form, 7d/28d zones + polarization, FTP calibration, per-sport
+        \\    summary     form, 7d/28d zones + polarization, derived FTP, per-sport
         \\    stats       career + year-to-date totals per sport
         \\    doctor      dataset health: coverage + how each activity was scored
         \\
