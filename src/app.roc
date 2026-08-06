@@ -60,7 +60,7 @@ help_text =
         \\SETUP (once)
         \\    init        create ~/.stride and migrate the SQLite db
         \\    auth        authorize with Strava (one-time paste flow; stores creds)
-        \\    config      get/set config (e.g. ftp_ride, ftp_rowing, hr zone bounds)
+        \\    config      get/set config (hr zone bounds, timezone) — FTP is derived, not set
         \\
         \\GET DATA
         \\    sync        pull new activities + streams (rolling 30d self-heal)

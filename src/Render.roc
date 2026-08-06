@@ -268,9 +268,17 @@ Render :: [].{
         }
         table = render_table(headers, body_rows)
         t = Metrics.trend_ends(scores)
-        pct = Metrics.pct_change(t.early, t.late)
-        improved = if higher (pct > 5.0) else (pct < -5.0)
-        declined = if higher (pct < -5.0) else (pct > 5.0)
+        # no baseline (an unscorable first session) claims neither direction — it falls
+        # through to "holding steady" rather than inventing a 0% trend
+        trend = Metrics.pct_change(t.early, t.late)
+        improved = match trend {
+            Ok(p) => if higher (p > 5.0) else (p < -5.0)
+            Err(NoBaseline) => False
+        }
+        declined = match trend {
+            Ok(p) => if higher (p < -5.0) else (p > 5.0)
+            Err(NoBaseline) => False
+        }
         label = if improved "improving" else if declined "declining" else "holding steady"
         avg = Metrics.mean(scores)
         short = match lens {
@@ -283,7 +291,13 @@ Render :: [].{
             SpeedHr => "aero-eff = speed per heartbeat — climbing = fitter · pace is min/km"
             Rpe => "rpe = how hard it felt (1-10) — for a fixed workout, dropping = adapting"
         }
-        verdict = "→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${U64.to_str(List.len(rows))} sessions — ${label} (${fmt0(pct)}%)"
+        # no baseline -> no percentage. Printing "(0%)" there claimed a measurement we
+        # never made, which is the whole reason pct_change stopped returning a bare float.
+        pct_str = match trend {
+            Ok(p) => " (${fmt0(p)}%)"
+            Err(_) => ""
+        }
+        verdict = "→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${U64.to_str(List.len(rows))} sessions — ${label}${pct_str}"
         footer = "${legend}\nbar = scaled worst→best · ◀ asked marks the asked date · ··· = a break over 90 days"
         "── ${name} ──\n${table}\n\n${verdict}${last_vs_best(rows, lens)}\n\n${footer}"
     }
@@ -309,9 +323,15 @@ Render :: [].{
                 if last.date == best.date or List.len(rows) < 2 {
                     ""
                 } else {
-                    gap = Metrics.pct_change(sc(best), sc(last)).abs()
-                    word = if higher "below your best" else "above your easiest"
-                    "\n→ last: ${pfmt(sc(last))} (${last.date}) vs best: ${pfmt(sc(best))} (${best.date}) — ${fmt0(gap)}% ${word}"
+                    # with no baseline there is no gap to state — say nothing rather than
+                    # "0% below your best", which reads as "you matched it"
+                    match Metrics.pct_change(sc(best), sc(last)) {
+                        Err(_) => ""
+                        Ok(g) => {
+                            word = if higher "below your best" else "above your easiest"
+                            "\n→ last: ${pfmt(sc(last))} (${last.date}) vs best: ${pfmt(sc(best))} (${best.date}) — ${fmt0(g.abs())}% ${word}"
+                        }
+                    }
                 }
 
             _ => ""
@@ -475,12 +495,28 @@ Render :: [].{
                 ["fitness (ctl)", fmt0(pr.ctl), fmt0(c.ctl), df(c.ctl, pr.ctl)],
             ],
         )
-        load_pct = Metrics.pct_change(pr.tss, c.tss)
+        # Match on the baseline rather than defaulting it: with no prior load there is no
+        # percentage to state, and the two no-baseline cases read differently — training
+        # after nothing is "resumed", nothing after nothing is not a change at all. An
+        # earlier version defaulted to 0.0 here and reported the second case as
+        # "load steady (0%)", which claims a measurement that was never taken.
         load_word =
-            if pr.tss <= 0.0 and c.tss > 0.0 "load resumed (${fmt0(c.tss)} TSS vs none the prior ${lab})"
-            else if load_pct > 10.0 "load ramping (${fmt0(load_pct)}%)"
-            else if load_pct < -10.0 "load backed off (${fmt0(load_pct)}%)"
-            else "load steady (${fmt0(load_pct)}%)"
+            match Metrics.pct_change(pr.tss, c.tss) {
+                Err(NoBaseline) =>
+                    if c.tss > 0.0 {
+                        "load resumed (${fmt0(c.tss)} TSS vs none the prior ${lab})"
+                    } else {
+                        "no load recorded either ${lab}"
+                    }
+                Ok(pct) =>
+                    if pct > 10.0 {
+                        "load ramping (${fmt0(pct)}%)"
+                    } else if pct < -10.0 {
+                        "load backed off (${fmt0(pct)}%)"
+                    } else {
+                        "load steady (${fmt0(pct)}%)"
+                    }
+            }
         ctl_d = c.ctl - pr.ctl
         fit_word =
             if ctl_d > 0.5 "fitness building"
