@@ -548,10 +548,27 @@ Metrics :: [].{
     #                    in the next morning's form. Ours means the verdict printed right
     #                    after `analyze` already carries the session you just uploaded.
 
+    # Smoothing factors for the 42- and 7-day exponential moving averages.
+    #
+    # The discrete factor for a continuous time constant τ is α = 1 − e^(−1/τ), NOT 1/τ.
+    # Using 1/τ — as this did — gives effective constants of 41.5 and 6.9 days, so the code
+    # did not deliver the 42 and 7 it claimed, and transients ran 1–7% fast against
+    # TrainingPeaks. Steady state is identical either way, which is why it went unnoticed.
+    #
+    # Written as literals because `.exp()` returns NaN on the pinned compiler (probed: every
+    # bracket around e^1 fails, including mutually exclusive ones). The formula is here so
+    # the numbers are checkable by hand:
+    #   ctl_alpha = 1 − e^(−1/42) = 0.0235283133
+    #   atl_alpha = 1 − e^(−1/7)  = 0.1331221000
+    ctl_alpha : F64
+    ctl_alpha = 0.0235283133
+    atl_alpha : F64
+    atl_alpha = 0.1331221
+
     load_step : { ctl_prev : F64, atl_prev : F64, tss : F64 } -> { ctl : F64, atl : F64, tsb : F64 }
     load_step = |{ ctl_prev, atl_prev, tss }| {
-        ctl = ctl_prev + (tss - ctl_prev) / 42.0
-        atl = atl_prev + (tss - atl_prev) / 7.0
+        ctl = ctl_prev + (tss - ctl_prev) * ctl_alpha
+        atl = atl_prev + (tss - atl_prev) * atl_alpha
         # same-day form: today's fitness minus today's fatigue, so the number
         # reconciles (tsb = ctl - atl) and reflects state AFTER today's training
         { ctl, atl, tsb: ctl - atl }
@@ -1305,15 +1322,17 @@ expect {
 
 # CTL/ATL convergence over MANY days — every other load test walks a single step, which
 # cannot catch a wrong time constant. 42 consecutive days at TSS 100 from zero:
-#   CTL = 100 * (1 - (1 - 1/42)^42) = 63.66   (one full time constant, ~63% of the way)
-#   ATL = 100 * (1 - (1 - 1/7)^42)  = 99.85   (six of its own, essentially converged)
+#   CTL = 100 * (1 - e^-1) = 63.21   (one full time constant — the textbook 63.2%)
+#   ATL = 100 * (1 - e^-6) = 99.75   (six of its own, essentially converged)
+# With the correct alpha these ARE the closed-form values; the old 1/tau factor gave 63.66
+# and 99.85, which is how the wrong constant hid — close enough to look right.
 # TSB is deeply negative because fatigue has caught up and fitness has not.
 expect {
     final = Iter.fold(0.U64..<42, { ctl: 0.0.F64, atl: 0.0.F64, tsb: 0.0.F64 }, |acc, _|
         Metrics.load_step({ ctl_prev: acc.ctl, atl_prev: acc.atl, tss: 100.0 })
     )
-    (final.ctl - 63.66).abs() < 0.1
-    and (final.atl - 99.85).abs() < 0.1
+    (final.ctl - 63.21).abs() < 0.05
+    and (final.atl - 99.75).abs() < 0.05
     and (final.tsb - (final.ctl - final.atl)).abs() < 0.001
     and final.tsb < -30.0
 }
@@ -1602,8 +1621,9 @@ expect {
 # decays both, fatigue (7d) faster than fitness (42d)
 expect {
     s = Metrics.load_step({ ctl_prev: 50.0, atl_prev: 60.0, tss: 0.0 })
-    (s.ctl - (50.0 - 50.0 / 42.0)).abs() < 0.001
-    and (s.atl - (60.0 - 60.0 / 7.0)).abs() < 0.001
+    # decay by the true EWMA factor, not 1/tau: 50*(1-alpha_ctl), 60*(1-alpha_atl)
+    (s.ctl - 50.0 * (1.0 - 0.0235283133)).abs() < 0.001
+    and (s.atl - 60.0 * (1.0 - 0.1331221)).abs() < 0.001
     and (s.tsb - (s.ctl - s.atl)).abs() < 0.001 # tsb reconciles same-day
     and (60.0 - s.atl) > (50.0 - s.ctl) # fatigue shed more than fitness on a rest day
 }
