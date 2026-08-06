@@ -197,8 +197,9 @@ Metrics :: [].{
     max_sample_gap_s = 30.I64
 
     # ── time in zones (HR-based, universal across sports) ───────────────
-    # dt between consecutive samples, capped at max_sample_gap_s (pauses don't count),
-    # attributed to the zone of the current sample.
+    # dt between consecutive samples, capped at max_sample_gap_s — a pause contributes AT
+    # MOST that, never its full length (a 100 s stop credits 30 s, not 100). Attributed to
+    # the zone of the current sample.
 
     zone_of : F64, ZoneBounds -> U8
     zone_of = |hr, zb|
@@ -248,7 +249,8 @@ Metrics :: [].{
     # 76-90% (Z3), hard >= 91% FTP (Z4+). For a power-equipped ride this is the truer
     # "how hard was it" — an athlete's threshold HR can sit right on a zone boundary, so
     # a genuine threshold effort reads as moderate by HR while the power says threshold.
-    # Same max_sample_gap_s cap as the HR walk so a paused/dropped stream can't invent time.
+    # Same max_sample_gap_s cap as the HR walk: a paused or dropped stream contributes at
+    # most that per gap, so it cannot bank the whole stop.
     PowerIntensity : { easy_s : I64, moderate_s : I64, hard_s : I64 }
 
     # Which intensity band a power sample belongs to.
