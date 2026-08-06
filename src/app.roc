@@ -157,8 +157,7 @@ dispatch! = |cmd|
     }
 
 config_show! : Str => Try({}, _)
-config_show! = |key| {
-    path = Db.open_db!({})?
+config_show! = |key|
     # A derived key must not be READ back either. Databases created before FTP became
     # derived still hold ftp_ride / ftp_rowing rows, so echoing the stored value would keep
     # the "looks like it worked" trap alive for exactly the people who fell into it — they
@@ -169,22 +168,24 @@ config_show! = |key| {
             "derived_key",
             "${key} is derived from your power history, not configured. Any value stored under this key is ignored (older databases may still hold one). `stride summary` shows the value actually in use.",
         )
-    else if Config.is_secret(key)
-        # confirm set-ness without leaking the value
-        match Db.config_opt!(path, key)? {
-            # redacted must be Bool-TYPED, not a bare `True` tag: the new builtin JSON
-            # serializes a bare tag as the string "True". Config.is_secret(key) is Bool
-            # and is True here (we're inside the is_secret branch).
-            Found(_) => Output.out!({ key, value: "<redacted>", redacted: Config.is_secret(key) }, |_| "${key} = <redacted> (secret — stored in the db, not shown)")
-            NotFound => Output.err_out!("not_set", "(not set)")
-        }
-    else
-        match Db.config_opt!(path, key)? {
-            Found(v) => Output.out!({ key, value: v }, |p| p.value)
-            NotFound => Output.err_out!("not_set", "(not set)")
-
-        }
-}
+    else {
+        # only the paths that actually read a value open the db
+        path = Db.open_db!({})?
+        if Config.is_secret(key)
+            # confirm set-ness without leaking the value
+            match Db.config_opt!(path, key)? {
+                # redacted must be Bool-TYPED, not a bare `True` tag: the new builtin JSON
+                # serializes a bare tag as the string "True". Config.is_secret(key) is Bool
+                # and is True here (we're inside the is_secret branch).
+                Found(_) => Output.out!({ key, value: "<redacted>", redacted: Config.is_secret(key) }, |_| "${key} = <redacted> (secret — stored in the db, not shown)")
+                NotFound => Output.err_out!("not_set", "(not set)")
+            }
+        else
+            match Db.config_opt!(path, key)? {
+                Found(v) => Output.out!({ key, value: v }, |p| p.value)
+                NotFound => Output.err_out!("not_set", "(not set)")
+            }
+    }
 config_store! : Str, Str => Try({}, _)
 config_store! = |key, val|
     # refuse the keys the engine derives — storing one would confirm a change that never

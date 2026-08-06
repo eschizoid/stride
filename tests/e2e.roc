@@ -298,7 +298,9 @@ b_config_ftp! = |ctx| {
     check!("value stored + read back (human)", Str.trim(stride_human!(ctx.bin, ctx.home, ["config", "get", "timezone"])) == "America/Chicago")?
     check!("config get json value", strjq!(ctx, ["config", "get", "timezone"], ".data.value") == "America/Chicago")?
     check!("config get not_set error", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "nope"]), "not_set"))?
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ""])
+    # delete the row rather than storing "" — an empty value is a stored-but-invalid
+    # timezone, not an absent one, and doctor treats those differently
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key='timezone';")
     Ok({})
 }
 
@@ -654,7 +656,10 @@ b_migration! = |ctx| {
     migdb = "${mighome}/.stride/db.sqlite"
     _ = sh!("mkdir -p '${mighome}/.stride' && sqlite3 '${migdb}' < tests/fixtures/db/v1-legacy.sql")
     check!("fixture starts at user_version 1", Str.trim(sql!(migdb, "PRAGMA user_version;")) == "1")?
-    _ = stride!(ctx.bin, mighome, ["config", "get", "ftp_ride"])
+    # any command that OPENS the db runs migrations. It used to be `config get ftp_ride`,
+    # which no longer touches the db at all — a derived key is refused before open_db!, so
+    # that would have silently stopped exercising the migration path.
+    _ = stride!(ctx.bin, mighome, ["config", "get", "timezone"])
     migv = str_to_i64(Str.trim(sql!(migdb, "PRAGMA user_version;")))
     check!("migration advances schema version", migv > 1)?
     check!("rename preserves planned session row", Str.trim(sql!(migdb, "SELECT session_type FROM planned_sessions WHERE id=1;")) == "vo2max")?
