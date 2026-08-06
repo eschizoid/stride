@@ -272,9 +272,9 @@ flowchart TD
 
     subgraph db["SQLite — ~/.stride/db.sqlite"]
         direction LR
-        mirror["mirror tier<br>activities · streams<br>re-pullable"]
-        computed["computed tier<br>activity_metrics · daily_load<br>rebuilt by analyze"]
-        judgment["judgment tier<br>planned_sessions · ratings · config<br>exists only here"]
+        mirror["mirror tier<br>activities, streams<br>re-pullable"]
+        computed["computed tier<br>activity_metrics, daily_load<br>rebuilt by analyze"]
+        judgment["judgment tier<br>planned_sessions, ratings, config<br>exists only here"]
     end
 
     analyze["analyze — pure Roc math"]
@@ -286,8 +286,8 @@ flowchart TD
     mirror --> analyze --> computed
     computed --> queries
     judgment --> queries
-    queries -->|"summary · week · progress"| coach
-    coach -->|"plan add · complete · skip · rate"| judgment
+    queries -->|"summary, week, progress"| coach
+    coach -->|"plan add, complete, skip, rate"| judgment
 
     classDef tier fill:#f6f8fa,stroke:#57606a,color:#24292f
     classDef actor fill:#ddf4ff,stroke:#0969da,color:#0a3069
