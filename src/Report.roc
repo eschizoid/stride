@@ -531,10 +531,11 @@ Report :: [].{
         hard7 = zsum7.hard
 
         # CTL/ATL seed at zero on the first day with any activity, so a short history reads
-        # LOW rather than unknown: 42 days in, CTL has only reached ~63% of its true value,
-        # and the form bands (which are absolute numbers) are meaningless against it. Say so
-        # instead of presenting a warming-up series as settled. COUNT(*) always returns a
-        # row, so this query cannot hit the absent-key crash.
+        # LOW rather than unknown. One 42-day time constant only gets CTL to ~63% of its true
+        # value, so 42 days is where it is still MOST wrong, not where it becomes right; the
+        # threshold is two constants (~90 d, ~88% converged), past which the form bands —
+        # absolute numbers — start meaning something. COUNT(*) always returns a row, so this
+        # query cannot hit the absent-key crash.
         load_days = Sqlite.query!({
             path: Path.utf8(path),
             query: "SELECT COUNT(*) AS n FROM daily_load",
@@ -548,7 +549,7 @@ Report :: [].{
             fatigue_atl: latest.atl,
             form_tsb: latest.tsb,
             load_days: load_days,
-            ctl_warming_up: load_days < 42,
+            ctl_warming_up: load_days < 90,
             last_hard_session_date: last_hard,
             pending_sessions: pending,
             last_7d: {
