@@ -362,7 +362,7 @@ Analyze :: [].{
             |p| Metrics.valid_watts(p.v),
         )
         # held pairs: NP wants values, the bests need real seconds to reject pause-spanning windows
-        watts_1s_pairs = Metrics.resample_1s_pairs(List.map(watts_pairs, |p| { t: p.t, v: p.v }), Hold)
+        watts_1s_pairs = Metrics.resample_1s_pairs(watts_pairs, Hold)
         watts_1s = List.map(watts_1s_pairs, |p| p.v)
 
         zones = if List.is_empty(hr_pairs) zero_zones else Metrics.time_in_zones(hr_pairs, row_zb)
@@ -400,10 +400,10 @@ Analyze :: [].{
                 Streams.dist_time(streams.time, streams.distance)
             else
                 graded_triple
-        gas_1s = Metrics.graded_speed_1s(pace_triple.time, pace_triple.dist, pace_triple.alt)
-        gas_vals = List.map(gas_1s, |p| p.v)
-        ngp_speed = Metrics.normalized_power(gas_vals)
-        best20_speed = Metrics.best_rolling_mean_1s(gas_1s, 1200)
+        gas_1s_pairs = Metrics.graded_speed_1s(pace_triple.time, pace_triple.dist, pace_triple.alt)
+        gas_speeds = List.map(gas_1s_pairs, |p| p.v)
+        ngp_speed = Metrics.normalized_power(gas_speeds)
+        best20_speed = Metrics.best_rolling_mean_1s(gas_1s_pairs, 1200)
         threshold_speed = lookup_threshold(threshold_map, row.sport)
         ngp_for_ladder =
             match ngp_speed {
@@ -425,7 +425,7 @@ Analyze :: [].{
             if !(List.is_empty(watts_pairs))
                 Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
             else
-                Metrics.time_in_pace_intensity(gas_vals, threshold_speed)
+                Metrics.time_in_pace_intensity(gas_speeds, threshold_speed)
 
         # the fallback chain lives in Metrics.tss_ladder (pure, expect-tested)
         nn = |x|
