@@ -28,7 +28,7 @@ Output :: [].{
     # db schema_version / metrics_rev). Every machine response is versioned so tool
     # callers can detect a contract change.
     json_schema_version : I64
-    json_schema_version = 1
+    json_schema_version = 2
 
     out! = |payload, render|
         if json_mode!({}) emit_ok!(payload) else Stdout.line!(render(payload))

@@ -159,7 +159,17 @@ dispatch! = |cmd|
 config_show! : Str => Try({}, _)
 config_show! = |key| {
     path = Db.open_db!({})?
-    if Config.is_secret(key)
+    # A derived key must not be READ back either. Databases created before FTP became
+    # derived still hold ftp_ride / ftp_rowing rows, so echoing the stored value would keep
+    # the "looks like it worked" trap alive for exactly the people who fell into it — they
+    # would see a number the engine never consults. Refusing to set it while still printing
+    # it is half a fix.
+    if Config.is_derived(key)
+        Output.err_out!(
+            "derived_key",
+            "${key} is derived from your power history, not configured. Any value stored under this key is ignored (older databases may still hold one). `stride summary` shows the value actually in use.",
+        )
+    else if Config.is_secret(key)
         # confirm set-ness without leaking the value
         match Db.config_opt!(path, key)? {
             # redacted must be Bool-TYPED, not a bare `True` tag: the new builtin JSON

@@ -170,9 +170,9 @@ run_all! = || {
 # ── sync mode: drive the real sync path against a running mock (a sibling instance
 # started with E2E_MODE=mock). Seeds an EXPIRED token so sync must refresh first,
 # then asserts token refresh + activity/stream pull. Mirrors old tests/e2e_sync.sh.
-# TSS reads the per-sport ftp_<sport> key, not the legacy bare `ftp` — the power Ride
-# (501) scores via ftp_ride. ftp_rowing is seeded too for completeness; the HR-only
-# Rowing row (502) scores from HR, not power. ────────────────────────────────────────
+# TSS uses each sport's DERIVED FTP — no ftp_<sport> key is set, because setting one is
+# refused. The power Ride (501) scores from its own stream; the HR-only Rowing row (502)
+# has no power, so it falls to HR. ───────────────────────────────────────────────────
 run_sync! : () => Try({}, _)
 run_sync! = || {
     bin = env_or!("STRIDE_BIN", "./stride")
@@ -240,7 +240,9 @@ mock_up! = |base|
 b_init_config! : Ctx => Try({}, _)
 b_init_config! = |ctx| {
     check!("init reports initialized", Str.contains(stride!(ctx.bin, ctx.home, ["init"]), "initialized"))?
-    check!("summary envelope is versioned", strjq!(ctx, ["summary"], ".schema_version") == "1")?
+    # bumped to 2 when doctor renamed ftp_configured -> ftp_derived_sports: a renamed field
+    # IS a shape change, and the envelope version is how a caller detects one
+    check!("summary envelope is versioned", strjq!(ctx, ["summary"], ".schema_version") == "2")?
     check!("missing-config error code", Str.contains(stride!(ctx.bin, ctx.home, ["summary"]), "missing_config"))?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", "123"])
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max", "153"])
@@ -280,7 +282,15 @@ b_config_ftp! = |ctx| {
     set_out = stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", "195"])
     check!("setting a derived key is refused", Str.contains(set_out, "derived_key"))?
     check!("refusal explains where FTP comes from", Str.contains(set_out, "power history"))?
-    check!("refused value is NOT stored", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "ftp_ride"]), "not_set"))?
+    check!("reading a derived key is refused too", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "ftp_ride"]), "derived_key"))?
+
+    # the trap this closes: a db from before FTP was derived still holds an ftp_ride row.
+    # Setting is refused, so only a LEGACY row can exist — and it must not be echoed back.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key,value) VALUES ('ftp_ride','999');")
+    legacy = stride!(ctx.bin, ctx.home, ["config", "get", "ftp_ride"])
+    check!("a LEGACY stored value is not echoed", !(Str.contains(legacy, "999")))?
+    check!("legacy read explains why", Str.contains(legacy, "derived_key"))?
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key='ftp_ride';")
 
     # a configurable key still round-trips normally
     tz_out = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", "America/Chicago"])
