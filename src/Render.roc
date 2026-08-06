@@ -273,11 +273,11 @@ Render :: [].{
         trend = Metrics.pct_change(t.early, t.late)
         improved = match trend {
             Ok(p) => if higher (p > 5.0) else (p < -5.0)
-            Err(_) => 1 == 0
+            Err(NoBaseline) => False
         }
         declined = match trend {
             Ok(p) => if higher (p < -5.0) else (p > 5.0)
-            Err(_) => 1 == 0
+            Err(NoBaseline) => False
         }
         label = if improved "improving" else if declined "declining" else "holding steady"
         avg = Metrics.mean(scores)
@@ -495,14 +495,28 @@ Render :: [].{
                 ["fitness (ctl)", fmt0(pr.ctl), fmt0(c.ctl), df(c.ctl, pr.ctl)],
             ],
         )
-        # the no-baseline case is handled explicitly by the first branch below (pr.tss <= 0),
-        # so by the time load_pct is read there IS a baseline; 0.0 is unreachable filler
-        load_pct = Metrics.pct_change(pr.tss, c.tss).ok_or(0.0)
+        # Match on the baseline rather than defaulting it: with no prior load there is no
+        # percentage to state, and the two no-baseline cases read differently — training
+        # after nothing is "resumed", nothing after nothing is not a change at all. An
+        # earlier version defaulted to 0.0 here and reported the second case as
+        # "load steady (0%)", which claims a measurement that was never taken.
         load_word =
-            if pr.tss <= 0.0 and c.tss > 0.0 "load resumed (${fmt0(c.tss)} TSS vs none the prior ${lab})"
-            else if load_pct > 10.0 "load ramping (${fmt0(load_pct)}%)"
-            else if load_pct < -10.0 "load backed off (${fmt0(load_pct)}%)"
-            else "load steady (${fmt0(load_pct)}%)"
+            match Metrics.pct_change(pr.tss, c.tss) {
+                Err(NoBaseline) =>
+                    if c.tss > 0.0 {
+                        "load resumed (${fmt0(c.tss)} TSS vs none the prior ${lab})"
+                    } else {
+                        "no load recorded either ${lab}"
+                    }
+                Ok(pct) =>
+                    if pct > 10.0 {
+                        "load ramping (${fmt0(pct)}%)"
+                    } else if pct < -10.0 {
+                        "load backed off (${fmt0(pct)}%)"
+                    } else {
+                        "load steady (${fmt0(pct)}%)"
+                    }
+            }
         ctl_d = c.ctl - pr.ctl
         fit_word =
             if ctl_d > 0.5 "fitness building"

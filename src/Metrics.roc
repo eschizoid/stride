@@ -301,7 +301,7 @@ Metrics :: [].{
     # `hr_z<n>_max` as fallback: HR zones CAN differ by sport (a rowing Z2 ceiling
     # need not equal a running one), but most athletes share one set, so the global
     # covers the common case and a sport-specific key overrides only where it exists.
-    # Same data-driven shape as hr_zone_key — no hardcoded sport list.
+    # Built from the sport name, so no hardcoded list of sports can fall out of date.
     hr_zone_key : U64, Str -> Str
     hr_zone_key = |n, sport|
         "hr_z${U64.to_str(n)}_max_${Str.with_ascii_lowercased(sport)}"
@@ -312,7 +312,7 @@ Metrics :: [].{
 
     # The config key holding a sport's threshold PACE, as a SPEED in m/s (the pace engine
     # works in speeds). Per-sport `threshold_pace_<sport>` (threshold_pace_run, ...), same
-    # data-driven shape as hr_zone_key. Zero-config derivation from a stored
+    # built from the sport name, no hardcoded list. Zero-config derivation from a stored
     # best-sustained-pace column is a later slice.
     threshold_pace_key : Str -> Str
     threshold_pace_key = |sport|
