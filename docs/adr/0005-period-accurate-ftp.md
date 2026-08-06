@@ -2,10 +2,17 @@
 
 Status: accepted · 2026-08-05 — recompute cost explicitly accepted by the athlete
 
-Supersedes the scoring half of the derived-FTP decision recorded in
-[ADR 0002](0002-power-based-intensity.md). Derivation itself is unchanged — FTP is still
-computed from the athlete's own power history, never configured. What changes is *which*
-derived value scores a given activity.
+Refines, but does not supersede, [ADR 0002](0002-power-based-intensity.md). That ADR
+settled that intensity is power-based and per-sport, and noted in passing that an unset
+threshold is "auto-derived from that sport's own best-20-min power × 0.95". It never
+addressed **which** derived value scores a given activity — the question of the window's
+anchor simply did not come up. This ADR answers only that question. The derivation formula
+and the per-sport model are untouched.
+
+One inconsistency worth recording rather than hiding: ADR 0002 describes `ftp_<sport>` as
+something you "set (or auto-derive)", but `Db.sport_ftp!` ignores configuration entirely
+and always derives. Whether a configured value should win is a separate open question
+(tracked as P3.2) and is deliberately **not** settled here.
 
 ## Context
 
