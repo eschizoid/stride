@@ -272,9 +272,9 @@ flowchart TD
 
     subgraph db["SQLite — ~/.stride/db.sqlite"]
         direction LR
-        mirror["<b>mirror</b><br>activities · streams<br>re-pullable"]
-        computed["<b>computed</b><br>activity_metrics · daily_load<br>rebuilt by analyze"]
-        judgment["<b>judgment</b><br>planned_sessions · ratings · config<br>exists only here"]
+        mirror["mirror tier<br>activities · streams<br>re-pullable"]
+        computed["computed tier<br>activity_metrics · daily_load<br>rebuilt by analyze"]
+        judgment["judgment tier<br>planned_sessions · ratings · config<br>exists only here"]
     end
 
     analyze["analyze — pure Roc math"]
