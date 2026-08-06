@@ -253,6 +253,44 @@ Metrics :: [].{
     power_band = |watts, mod_lo, hard_lo|
         if watts <= 0.0 { Coasting } else if watts < mod_lo { Easy } else if watts < hard_lo { Moderate } else { Hard }
 
+    # Sum REAL elapsed seconds into three intensity bands, given a per-sample classifier.
+    #
+    # ONE implementation for power and pace. They used to disagree about what a "second"
+    # meant: the power path summed actual `dt` between samples, while the pace path counted
+    # one second per surviving sample — and `grade_adjusted_speeds` drops every stopped or
+    # gap interval, so its totals ran below moving time by an unknown amount. Weekly
+    # polarization sums pi_* across sports, so a ride and a run were being added on
+    # different units.
+    #
+    # dt is capped at 30 s: a longer gap is a pause or a dropout, and crediting it to
+    # whichever band the next sample happens to land in would invent intensity that was
+    # never ridden. The cost is that a stream genuinely sampled slower than 30 s loses the
+    # excess — acceptable, because the alternative silently manufactures time.
+    time_in_bands : List({ t : I64, v : F64 }), (F64 -> [Skip, Easy, Moderate, Hard]) -> PowerIntensity
+    time_in_bands = |samples, classify| {
+        state = List.fold(
+            samples,
+            { i: { easy_s: 0.I64, moderate_s: 0.I64, hard_s: 0.I64 }, prev_t: 0.I64, started: False },
+            |acc, s| {
+                dt = (s.t - acc.prev_t).min(30)
+                if !(acc.started) or dt <= 0 {
+                    { ..acc, prev_t: s.t, started: True }
+                } else {
+                    i = acc.i
+                    updated =
+                        match classify(s.v) {
+                            Skip => i
+                            Easy => { ..i, easy_s: i.easy_s + dt }
+                            Moderate => { ..i, moderate_s: i.moderate_s + dt }
+                            Hard => { ..i, hard_s: i.hard_s + dt }
+                        }
+                    { ..acc, i: updated, prev_t: s.t }
+                }
+            },
+        )
+        state.i
+    }
+
     time_in_power_intensity : List({ t : I64, v : F64 }), F64 -> PowerIntensity
     time_in_power_intensity = |samples, ftp|
         if ftp <= 0.0 {
@@ -260,30 +298,14 @@ Metrics :: [].{
         } else {
             mod_lo = ftp * 0.76
             hard_lo = ftp * 0.91
-            state = List.fold(
-                samples,
-                { i: { easy_s: 0.I64, moderate_s: 0.I64, hard_s: 0.I64 }, prev_t: 0.I64, started: False },
-                |acc, s|
-                    if !(acc.started) {
-                        { ..acc, prev_t: s.t, started: True }
-                    } else {
-                        dt = (s.t - acc.prev_t).min(30)
-                        if dt <= 0 {
-                            { ..acc, prev_t: s.t }
-                        } else {
-                            i = acc.i
-                            updated =
-                                match power_band(s.v, mod_lo, hard_lo) {
-                                    Coasting => i
-                                    Easy => { ..i, easy_s: i.easy_s + dt }
-                                    Moderate => { ..i, moderate_s: i.moderate_s + dt }
-                                    Hard => { ..i, hard_s: i.hard_s + dt }
-                                }
-                            { ..acc, i: updated, prev_t: s.t }
-                        }
-                    },
+            time_in_bands(samples, |w|
+                match power_band(w, mod_lo, hard_lo) {
+                    Coasting => Skip
+                    Easy => Easy
+                    Moderate => Moderate
+                    Hard => Hard
+                }
             )
-            state.i
         }
 
     # pace analog of time_in_power_intensity, on the 1 Hz grade-adjusted speed stream (each
@@ -291,24 +313,20 @@ Metrics :: [].{
     # easy < 0.76×threshold, moderate 0.76–0.91, hard ≥ 0.91×threshold. Feeds the SAME pi_*
     # columns for pace-scored sports (runs/swims), so weekly polarization and the "hard" column
     # read a real intensity split there too. Zeros when the sport has no threshold speed.
-    time_in_pace_intensity : List(F64), F64 -> PowerIntensity
-    time_in_pace_intensity = |speeds_1s, threshold|
+    # Pace twin of time_in_power_intensity, on the grade-adjusted speed stream. Takes the
+    # (second, speed) PAIRS — not bare speeds — so it sums the same real elapsed time the
+    # power path does. There is no Skip band here: a speed sample only exists where the
+    # athlete was actually moving, since grade_adjusted_speeds already drops stopped and
+    # gap intervals.
+    time_in_pace_intensity : List({ t : I64, v : F64 }), F64 -> PowerIntensity
+    time_in_pace_intensity = |speed_pairs, threshold|
         if threshold <= 0.0 {
             { easy_s: 0, moderate_s: 0, hard_s: 0 }
         } else {
             mod_lo = threshold * 0.76
             hard_lo = threshold * 0.91
-            List.fold(
-                speeds_1s,
-                { easy_s: 0.I64, moderate_s: 0.I64, hard_s: 0.I64 },
-                |i, v|
-                    if v < mod_lo {
-                        { ..i, easy_s: i.easy_s + 1 }
-                    } else if v < hard_lo {
-                        { ..i, moderate_s: i.moderate_s + 1 }
-                    } else {
-                        { ..i, hard_s: i.hard_s + 1 }
-                    },
+            time_in_bands(speed_pairs, |v|
+                if v < mod_lo { Easy } else if v < hard_lo { Moderate } else { Hard }
             )
         }
 
@@ -1576,11 +1594,24 @@ expect {
 }
 expect Metrics.time_in_power_intensity([{ t: 0, v: 243.0 }], 0.0) == { easy_s: 0, moderate_s: 0, hard_s: 0 }
 
-# pace intensity split (threshold 4.0 m/s): each 1 Hz sample = 1 s; easy <3.04, moderate 3.04–3.64, hard ≥3.64
-expect Metrics.time_in_pace_intensity([2.0, 2.0, 2.0], 4.0) == { easy_s: 3, moderate_s: 0, hard_s: 0 }
-expect Metrics.time_in_pace_intensity([3.3, 3.3, 3.3], 4.0) == { easy_s: 0, moderate_s: 3, hard_s: 0 }
-expect Metrics.time_in_pace_intensity([4.0, 4.0, 4.0], 4.0) == { easy_s: 0, moderate_s: 0, hard_s: 3 }
-expect Metrics.time_in_pace_intensity([4.0, 4.0], 0.0) == { easy_s: 0, moderate_s: 0, hard_s: 0 }
+# pace intensity split (threshold 4.0 m/s): easy <3.04, moderate 3.04–3.64, hard >=3.64.
+# Takes (second, speed) PAIRS and sums real elapsed dt, exactly like the power path — 4
+# samples one second apart are 3 intervals, not 4 "samples".
+expect {
+    at_1hz = |vals| List.map_with_index(vals, |v, i| { t: (i).to_i64_wrap(), v })
+    easy = Metrics.time_in_pace_intensity(at_1hz([2.0, 2.0, 2.0, 2.0]), 4.0) == { easy_s: 3, moderate_s: 0, hard_s: 0 }
+    mod = Metrics.time_in_pace_intensity(at_1hz([3.3, 3.3, 3.3, 3.3]), 4.0) == { easy_s: 0, moderate_s: 3, hard_s: 0 }
+    hard = Metrics.time_in_pace_intensity(at_1hz([4.0, 4.0, 4.0, 4.0]), 4.0) == { easy_s: 0, moderate_s: 0, hard_s: 3 }
+    no_threshold = Metrics.time_in_pace_intensity(at_1hz([4.0, 4.0]), 0.0) == { easy_s: 0, moderate_s: 0, hard_s: 0 }
+    easy and mod and hard and no_threshold
+}
+
+# a 5-second recording interval is 5 seconds of work, not 1 "sample" — this is the whole
+# point of taking pairs: the pace path now agrees with the power path on what a second is
+expect {
+    coarse = [{ t: 0.I64, v: 4.0.F64 }, { t: 5.I64, v: 4.0.F64 }, { t: 10.I64, v: 4.0.F64 }]
+    Metrics.time_in_pace_intensity(coarse, 4.0) == { easy_s: 0, moderate_s: 0, hard_s: 10 }
+}
 
 # generic: every sport maps to its own config key, no hardcoded allowlist. A sport
 # without that key set (or with no power meter) resolves to 0 in sport_ftp! and falls
