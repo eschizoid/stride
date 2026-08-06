@@ -192,7 +192,7 @@ Db :: [].{
             bindings: [{ name: ":sport", value: String(sport) }, { name: ":cutoff", value: String(cutoff) }],
             row: Sqlite.f64("b"),
         })?
-        # threshold ≈ best 20-min effort × 0.95 (mirrors the FTP estimate)
+        # threshold ≈ best 20-min effort × 0.95 (mirrors the derived FTP)
         Ok(best * 0.95)
     }
     # ── migrations ───────────────────────────────────────────────────────

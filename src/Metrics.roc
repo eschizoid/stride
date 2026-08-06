@@ -521,13 +521,14 @@ Metrics :: [].{
         { ctl, atl, tsb: ctl - atl }
     }
 
-    # ── FTP estimate ────────────────────────────────────────────────────
-    # This section once held `ftp_calibration`, which compared an estimate against a
-    # CONFIGURED FTP and raised stale/detraining flags. It was deleted: FTP is derived
-    # (`Db.sport_ftp!` reads power history, never config), so estimate and FTP are the same
-    # number by construction and neither flag could ever fire. Only the estimate remains.
+    # ── derived FTP ─────────────────────────────────────────────────────
+    # Invariant: FTP is derived from power history, never configured. This section once held
+    # `ftp_calibration`, which compared an estimate against a configured FTP and raised
+    # stale/detraining flags; under the invariant those are the same number by construction,
+    # so neither flag could ever fire and the function was deleted. Only the derivation
+    # remains.
 
-    # FTP estimate from a 20-min best: the standard 95% factor. One constant, one place —
+    # the derived FTP from a 20-min best: the standard 95% factor. One constant, one place —
     # used by the per-sport derive (Db.derive_sport_ftp!) and the summary display.
     ftp_from_best_20min : F64 -> F64
     ftp_from_best_20min = |best_20min| best_20min * 0.95
