@@ -147,6 +147,19 @@ Render :: [].{
                 },
         )
 
+    # One line warning that the fitness series has not converged, or "" when it has. CTL
+    # seeds at zero and needs ~two 42-day time constants before the absolute form bands mean
+    # anything, so until then the number above is real arithmetic on an incomplete series —
+    # low, not wrong, but not comparable to the bands either. Empty string renders as a
+    # blank line the caller already allows for.
+    warming_up_note : Bool, I64 -> Str
+    warming_up_note = |warming, days|
+        if warming {
+            "  ⚠ only ${I64.to_str(days)} days of history — fitness is still converging, so form reads low"
+        } else {
+            ""
+        }
+
     # integer-rounded float, e.g. 71.9 -> "72"
     fmt0 : F64 -> Str
     fmt0 = |x| {
@@ -431,6 +444,11 @@ Render :: [].{
                     "",
                     "  fitness (CTL): ${fmt0(s.fitness_ctl)}   fatigue (ATL): ${fmt0(s.fatigue_atl)}   form (TSB): ${fmt0(s.form_tsb)}",
                     "  → ${Metrics.form_label(s.form_tsb)}",
+                    # CTL starts at zero, so a short history reads LOW rather than unknown and the
+                    # form verdict above is drawn from absolute bands that do not apply yet. Say so
+                    # here, not only in the JSON — a human reading a confident-looking number has no
+                    # other way to know it is still converging.
+                    warming_up_note(s.ctl_warming_up, s.load_days),
                     "",
                     "  last 28 days:",
                     "    training load: ${fmt0(z.tss)} (${I64.to_str(z.measured_pct)}% measured — rest estimated from HR/RPE; see doctor)",
@@ -599,6 +617,8 @@ expect {
         fitness_ctl: 20.0,
         fatigue_atl: 10.0,
         form_tsb: 10.0,
+        load_days: 400,
+        ctl_warming_up: False,
         last_28d: { tss: 100.0, z1_s: 600.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 100.I64 },
         last_7d: { tss: 50.0, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64 },
         ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
