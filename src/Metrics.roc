@@ -187,6 +187,15 @@ Metrics :: [].{
         hi - lo == (window - 1).to_i64_wrap()
     }
 
+    # The longest gap between two samples that still counts as elapsed training time.
+    # Anything longer is a pause or a dropout: crediting it to whichever band or zone the
+    # NEXT sample lands in would invent intensity that was never ridden. The cost is that a
+    # stream genuinely sampled slower than this loses the excess — accepted deliberately,
+    # because the alternative manufactures time. Shared by time_in_zones and time_in_bands
+    # so the two can never drift apart.
+    max_sample_gap_s : I64
+    max_sample_gap_s = 30.I64
+
     # ── time in zones (HR-based, universal across sports) ───────────────
     # dt between consecutive samples, capped at 30s (pauses don't count),
     # attributed to the zone of the current sample.
@@ -214,7 +223,7 @@ Metrics :: [].{
                 if !(acc.started) {
                     { ..acc, prev_t: s.t, started: True }
                 } else {
-                    dt = (s.t - acc.prev_t).min(30)
+                    dt = (s.t - acc.prev_t).min(max_sample_gap_s)
                     if dt <= 0 {
                         { ..acc, prev_t: s.t }
                     } else {
@@ -272,7 +281,7 @@ Metrics :: [].{
             samples,
             { i: { easy_s: 0.I64, moderate_s: 0.I64, hard_s: 0.I64 }, prev_t: 0.I64, started: False },
             |acc, s| {
-                dt = (s.t - acc.prev_t).min(30)
+                dt = (s.t - acc.prev_t).min(max_sample_gap_s)
                 if !(acc.started) or dt <= 0 {
                     { ..acc, prev_t: s.t, started: True }
                 } else {

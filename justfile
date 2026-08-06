@@ -1,9 +1,9 @@
 # stride — common actions. `just` alone runs the full test suite.
 
 # overridable: ROC=/path/to/roc STRIDE_LINKER="--linker=legacy" just test
-# Just `roc` from PATH. There is exactly one Roc compiler on the machine now — the alpha4
-# install was deleted 2026-08-06 — so an absolute path bought nothing but a hardcoded
-# home directory that broke on any other machine, CI included.
+# The exact compiler version is pinned in .github/workflows/build.yml (nightly-tag), which
+# is what CI installs and what a contributor should match. This resolves whatever `roc` is
+# on PATH rather than pinning a path, so set ROC= if you keep several versions around.
 roc := env("ROC", "roc")
 linker := env("STRIDE_LINKER", "")
 # port the e2e-sync mock binds and the driver targets; overridable when 8799 is occupied
