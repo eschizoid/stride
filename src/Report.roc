@@ -843,7 +843,8 @@ Report :: [].{
         cfg = Sqlite.query!({
             path: Path.utf8(path),
             query:
-                \\SELECT COALESCE(SUM(CASE WHEN substr(key,1,4)='ftp_' THEN 1 ELSE 0 END),0) AS ftp_count,
+                \\SELECT (SELECT COUNT(DISTINCT a.sport_type) FROM activity_metrics m
+                \\        JOIN activities a ON a.id = m.activity_id WHERE m.ftp_used > 0) AS ftp_count,
                 \\       COALESCE(SUM(CASE WHEN key IN ('hr_z1_max','hr_z2_max','hr_z3_max','hr_z4_max') THEN 1 ELSE 0 END),0) AS zones_set,
                 \\       COALESCE(SUM(CASE WHEN key GLOB 'hr_z[1-4]_max_?*' THEN 1 ELSE 0 END),0) AS sport_zone_overrides
                 \\FROM config
@@ -901,7 +902,7 @@ Report :: [].{
             conf_low: conf.lo,
             conf_none: conf.non,
             pending_streams: pending,
-            ftp_configured: cfg.ftp_count,
+            ftp_derived_sports: cfg.ftp_count,
             zones_set: cfg.zones_set >= 4,
             sport_zone_overrides: cfg.sport_zone_overrides,
             time: time_desc,
@@ -940,7 +941,7 @@ Report :: [].{
                         "  zero load (no usable data): ${(p.zero_load).to_str()}",
                         "  not yet analyzed: ${(p.unanalyzed).to_str()}",
                         "  pending stream backfill: ${(p.pending_streams).to_str()}",
-                        "  config: ${(p.ftp_configured).to_str()} sport FTP(s) set explicitly (others auto-derived from data), hr zones ${if p.zones_set "set" else "incomplete"}, ${(p.sport_zone_overrides).to_str()} per-sport zone key(s) set",
+                        "  config: hr zones ${if p.zones_set "set" else "incomplete"}, ${(p.sport_zone_overrides).to_str()} per-sport zone key(s) set · ${(p.ftp_derived_sports).to_str()} sport(s) have a derived FTP (FTP is never configured — see summary)",
                         "  time: ${p.time}",
                     ],
                     hint,

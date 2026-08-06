@@ -184,8 +184,6 @@ run_sync! = || {
     check!("mock strava came up on ${base}", mock_up!(base))?
 
     _ = sync_stride!(bin, home, base, ["init"])
-    _ = sync_stride!(bin, home, base, ["config", "set", "ftp_ride", "200"])
-    _ = sync_stride!(bin, home, base, ["config", "set", "ftp_rowing", "200"])
     _ = sync_stride!(bin, home, base, ["config", "set", "hr_z1_max", "123"])
     _ = sync_stride!(bin, home, base, ["config", "set", "hr_z2_max", "153"])
     _ = sync_stride!(bin, home, base, ["config", "set", "hr_z3_max", "168"])
@@ -244,7 +242,6 @@ b_init_config! = |ctx| {
     check!("init reports initialized", Str.contains(stride!(ctx.bin, ctx.home, ["init"]), "initialized"))?
     check!("summary envelope is versioned", strjq!(ctx, ["summary"], ".schema_version") == "1")?
     check!("missing-config error code", Str.contains(stride!(ctx.bin, ctx.home, ["summary"]), "missing_config"))?
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", "200"])
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", "123"])
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max", "153"])
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z3_max", "168"])
@@ -273,16 +270,25 @@ b_pz! = |ctx| {
     Ok({})
 }
 
-# ── config set/get: local key-value store (#26 removed the Strava-FTP push, so a set
-# just stores locally). ftp_ride is now an ordinary key — derived FTP ignores it. ──────
+# ── config set/get: local key-value store. FTP keys are REFUSED (ADR 0005 — derived from
+# power history, never configured); everything else round-trips. ──────────────────────
 b_config_ftp! : Ctx => Try({}, _)
 b_config_ftp! = |ctx| {
+    # FTP is DERIVED (ADR 0005): setting it must be refused, not silently stored. This block
+    # used to assert the opposite — that `config set ftp_ride 195` reported "ftp_ride = 195"
+    # — which is exactly the trap: a confirmation for a value the engine never reads.
     set_out = stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", "195"])
-    check!("config set reports local value", Str.contains(set_out, "ftp_ride = 195"))?
-    check!("value stored + read back (human)", Str.trim(stride_human!(ctx.bin, ctx.home, ["config", "get", "ftp_ride"])) == "195")?
-    check!("config get json value", strjq!(ctx, ["config", "get", "ftp_ride"], ".data.value") == "195")?
+    check!("setting a derived key is refused", Str.contains(set_out, "derived_key"))?
+    check!("refusal explains where FTP comes from", Str.contains(set_out, "power history"))?
+    check!("refused value is NOT stored", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "ftp_ride"]), "not_set"))?
+
+    # a configurable key still round-trips normally
+    tz_out = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", "America/Chicago"])
+    check!("config set reports local value", Str.contains(tz_out, "timezone = America/Chicago"))?
+    check!("value stored + read back (human)", Str.trim(stride_human!(ctx.bin, ctx.home, ["config", "get", "timezone"])) == "America/Chicago")?
+    check!("config get json value", strjq!(ctx, ["config", "get", "timezone"], ".data.value") == "America/Chicago")?
     check!("config get not_set error", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "nope"]), "not_set"))?
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", "200"])
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ""])
     Ok({})
 }
 
@@ -295,7 +301,6 @@ b_cred_safety! = |ctx| {
     check!("secret VALUE never appears", !(Str.contains(sec_out, "SECRETVAL123")))?
     perms = Str.trim(sh!("stat -c '%a' '${ctx.db}' 2>/dev/null || stat -f '%Lp' '${ctx.db}' 2>/dev/null"))
     check!("db is chmod 600", perms == "600")?
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", "200"])
     Ok({})
 }
 
@@ -605,7 +610,7 @@ b_doctor! = |ctx| {
     ch = strjq!(ctx, ["doctor"], ".data.conf_high")
     powr = strjq!(ctx, ["doctor"], "[.data.scored_by[] | select(.model==\"power_stream\" or .model==\"weighted_watts\" or .model==\"avg_watts\") | .n] | add // 0")
     check!("conf_high == power-rung provenance", ch == powr)?
-    check!("doctor ftp_configured >= 1", sfloat(strjq!(ctx, ["doctor"], ".data.ftp_configured")) >= 1.0)?
+    check!("doctor reports sports with a DERIVED ftp", sfloat(strjq!(ctx, ["doctor"], ".data.ftp_derived_sports")) >= 1.0)?
     check!("doctor zones_set true", strjq!(ctx, ["doctor"], ".data.zones_set") == "true")?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", "America/Chicago"])
     check!("valid tz time_ok", strjq!(ctx, ["doctor"], ".data.time_ok") == "true")?
