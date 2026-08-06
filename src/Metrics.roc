@@ -242,6 +242,17 @@ Metrics :: [].{
     # Same 30s gap cap as the HR walk so a paused/dropped stream can't invent time.
     PowerIntensity : { easy_s : I64, moderate_s : I64, hard_s : I64 }
 
+    # Which intensity band a power sample belongs to.
+    #
+    # Coasting is NOT easy riding. Freewheeling down a descent reads as zero watts, and
+    # folding that into "easy" inflates the easy share — a descent-heavy ride came out
+    # looking far more polarized than it was, which is exactly the number a coach reads to
+    # decide the next week. Zero power is time not pedalling, so it is excluded from the
+    # split: the three buckets sum to PEDALLING time, not moving time.
+    power_band : F64, F64, F64 -> [Coasting, Easy, Moderate, Hard]
+    power_band = |watts, mod_lo, hard_lo|
+        if watts <= 0.0 { Coasting } else if watts < mod_lo { Easy } else if watts < hard_lo { Moderate } else { Hard }
+
     time_in_power_intensity : List({ t : I64, v : F64 }), F64 -> PowerIntensity
     time_in_power_intensity = |samples, ftp|
         if ftp <= 0.0 {
@@ -262,12 +273,11 @@ Metrics :: [].{
                         } else {
                             i = acc.i
                             updated =
-                                if s.v < mod_lo {
-                                    { ..i, easy_s: i.easy_s + dt }
-                                } else if s.v < hard_lo {
-                                    { ..i, moderate_s: i.moderate_s + dt }
-                                } else {
-                                    { ..i, hard_s: i.hard_s + dt }
+                                match power_band(s.v, mod_lo, hard_lo) {
+                                    Coasting => i
+                                    Easy => { ..i, easy_s: i.easy_s + dt }
+                                    Moderate => { ..i, moderate_s: i.moderate_s + dt }
+                                    Hard => { ..i, hard_s: i.hard_s + dt }
                                 }
                             { ..acc, i: updated, prev_t: s.t }
                         }
@@ -1193,6 +1203,26 @@ expect {
 expect {
     swim = Metrics.pace_tss({ ngp_speed: 1.0, threshold_speed: 1.0, dur_s: 3600.0, exponent: 3.0 })
     (swim - 100.0).abs() < 0.001
+}
+
+# coasting is excluded from the intensity split, not counted as easy. 60 s pedalling at
+# 100 W (easy vs FTP 250) then 60 s freewheeling at 0 W: easy is 60 s, not 120 s, and the
+# buckets sum to pedalling time. Counting the descent as "easy" was what made a
+# descent-heavy ride read as far more polarized than it really was.
+expect {
+    ride = List.map_with_index(List.repeat(0.0, 121), |_, i| {
+        t: (i).to_i64_wrap(),
+        v: (if i < 60 { 100.0 } else { 0.0 }),
+    })
+    pi = Metrics.time_in_power_intensity(ride, 250.0)
+    pi.easy_s == 59 and pi.moderate_s == 0 and pi.hard_s == 0
+}
+
+# a hard effort still lands in hard, and real pedalling either side is not lost
+expect {
+    ride = List.map_with_index(List.repeat(0.0, 61), |_, i| { t: (i).to_i64_wrap(), v: 240.0.F64 })
+    pi = Metrics.time_in_power_intensity(ride, 250.0)
+    pi.hard_s == 60 and pi.easy_s == 0
 }
 
 # resample_1s_pairs sorts first. One out-of-order sample used to be dropped WITHOUT
