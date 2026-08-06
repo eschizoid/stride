@@ -1,9 +1,10 @@
 # stride — common actions. `just` alone runs the full test suite.
 
 # overridable for CI: ROC=roc STRIDE_LINKER="--linker=legacy" just test
-# ONE compiler: the new (Zig) one. The alpha4 path (~/.local/bin/roc) is retired — it
-# can't even parse the current source (.tar.zst packages), so defaulting to it silently
-# broke `just test` locally while CI stayed green via the ROC override.
+# ONE compiler: the new (Zig) one. The alpha4 install is GONE (deleted 2026-08-06) and
+# ~/.local/bin/roc now symlinks here, so `roc` on PATH and this default are the same
+# binary. Kept explicit rather than bare `roc` so a stray PATH entry can't silently
+# swap the compiler out from under a build.
 roc := env("ROC", env("HOME") / ".local/roc-new/roc")
 linker := env("STRIDE_LINKER", "")
 # port the e2e-sync mock binds and the driver targets; overridable when 8799 is occupied

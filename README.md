@@ -264,23 +264,21 @@ still works — the human tables carry the same numbers, legends, and verdicts.
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
     strava["Strava REST v3"]
-    export["Account export<br/>(.zip — no API creds)"]
+    export["Account export .zip"]
+    auth["auth — OAuth paste flow"]
+    sync["sync / backfill"]
 
-    subgraph ingest ["ingestion"]
-        auth["auth<br/><small>OAuth paste flow<br/>tokens + creds in db</small>"]
-        sync["sync / backfill<br/><small>activities + streams</small>"]
+    subgraph db["SQLite — ~/.stride/db.sqlite"]
+        direction LR
+        mirror["<b>mirror</b><br>activities · streams<br>re-pullable"]
+        computed["<b>computed</b><br>activity_metrics · daily_load<br>rebuilt by analyze"]
+        judgment["<b>judgment</b><br>planned_sessions · ratings · config<br>exists only here"]
     end
 
-    subgraph db ["SQLite — ~/.stride/db.sqlite"]
-        mirror["<b>mirror</b><br/>activities · streams<br/><small>re-pullable</small>"]
-        computed["<b>computed</b><br/>activity_metrics · daily_load<br/><small>rebuilt by analyze</small>"]
-        judgment["<b>judgment</b><br/>planned_sessions · ratings · config<br/><small>exists only here</small>"]
-    end
-
-    analyze["analyze<br/><small>pure Roc math</small>"]
-    queries["queries<br/><small>JSON | human tables</small>"]
+    analyze["analyze — pure Roc math"]
+    queries["queries — JSON or tables"]
     coach(["LLM coach"])
 
     strava --> auth --> sync --> mirror
@@ -288,8 +286,8 @@ flowchart LR
     mirror --> analyze --> computed
     computed --> queries
     judgment --> queries
-    queries -- "summary · week · progress" --> coach
-    coach -- "plan add · complete · skip · rate" --> judgment
+    queries -->|"summary · week · progress"| coach
+    coach -->|"plan add · complete · skip · rate"| judgment
 
     classDef tier fill:#f6f8fa,stroke:#57606a,color:#24292f
     classDef actor fill:#ddf4ff,stroke:#0969da,color:#0a3069
