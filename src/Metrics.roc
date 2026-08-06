@@ -197,7 +197,7 @@ Metrics :: [].{
     max_sample_gap_s = 30.I64
 
     # ── time in zones (HR-based, universal across sports) ───────────────
-    # dt between consecutive samples, capped at 30s (pauses don't count),
+    # dt between consecutive samples, capped at max_sample_gap_s (pauses don't count),
     # attributed to the zone of the current sample.
 
     zone_of : F64, ZoneBounds -> U8
@@ -248,7 +248,7 @@ Metrics :: [].{
     # 76-90% (Z3), hard >= 91% FTP (Z4+). For a power-equipped ride this is the truer
     # "how hard was it" — an athlete's threshold HR can sit right on a zone boundary, so
     # a genuine threshold effort reads as moderate by HR while the power says threshold.
-    # Same 30s gap cap as the HR walk so a paused/dropped stream can't invent time.
+    # Same max_sample_gap_s cap as the HR walk so a paused/dropped stream can't invent time.
     PowerIntensity : { easy_s : I64, moderate_s : I64, hard_s : I64 }
 
     # Which intensity band a power sample belongs to.
@@ -271,9 +271,9 @@ Metrics :: [].{
     # polarization sums pi_* across sports, so a ride and a run were being added on
     # different units.
     #
-    # dt is capped at 30 s: a longer gap is a pause or a dropout, and crediting it to
+    # dt is capped at max_sample_gap_s: a longer gap is a pause or a dropout, and crediting it to
     # whichever band the next sample happens to land in would invent intensity that was
-    # never ridden. The cost is that a stream genuinely sampled slower than 30 s loses the
+    # never ridden. The cost is that a stream genuinely sampled slower than that loses the
     # excess — acceptable, because the alternative silently manufactures time.
     time_in_bands : List({ t : I64, v : F64 }), (F64 -> [Skip, Easy, Moderate, Hard]) -> PowerIntensity
     time_in_bands = |samples, classify| {
@@ -1230,6 +1230,29 @@ expect {
 expect {
     swim = Metrics.pace_tss({ ngp_speed: 1.0, threshold_speed: 1.0, dur_s: 3600.0, exponent: 3.0 })
     (swim - 100.0).abs() < 0.001
+}
+
+# THE gap-cap guarantee, which nothing tested until now: a gap longer than
+# max_sample_gap_s must contribute AT MOST max_sample_gap_s, never its full length. Two
+# samples 100 s apart, both hard, credit 30 s of hard work — not 100. Without this cap a
+# paused ride would bank the whole stop as whatever intensity resumed after it.
+expect {
+    far_apart = [{ t: 0.I64, v: 300.0.F64 }, { t: 100.I64, v: 300.0.F64 }]
+    r = Metrics.time_in_power_intensity(far_apart, 250.0)
+    r.hard_s == 30 and r.easy_s == 0 and r.moderate_s == 0
+}
+
+# the same cap on the pace path — one implementation, so one guarantee
+expect {
+    far_apart = [{ t: 0.I64, v: 5.0.F64 }, { t: 100.I64, v: 5.0.F64 }]
+    r = Metrics.time_in_pace_intensity(far_apart, 4.0)
+    r.hard_s == 30
+}
+
+# a gap exactly AT the cap is fully credited — the boundary is inclusive
+expect {
+    at_cap = [{ t: 0.I64, v: 300.0.F64 }, { t: 30.I64, v: 300.0.F64 }]
+    Metrics.time_in_power_intensity(at_cap, 250.0).hard_s == 30
 }
 
 # coasting is excluded from the intensity split, not counted as easy. 60 s pedalling at
