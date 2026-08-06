@@ -26,8 +26,14 @@ Metrics :: [].{
     # which is what keeps a rolling window from stitching across a pause.
     resample_1s_pairs : List({ t : I64, v : F64 }), [Hold, Interpolate] -> List({ t : I64, v : F64 })
     resample_1s_pairs = |samples, mode|
-        List.fold(samples, { out: [], prev_t: 0.I64, prev_v: 0.0.F64, started: False }, |acc, s|
-            resample_step(acc, s, mode)
+        # Sort first: the fold assumes ascending timestamps, and a single out-of-order
+        # sample used to be dropped WITHOUT advancing the anchor — so one spuriously large
+        # timestamp swallowed every sample after it until the stream caught up. Strava
+        # streams arrive ordered, but nothing enforced it and nothing tested it.
+        List.fold(
+            List.sort_with(samples, |a, b| I64.compare(a.t, b.t)),
+            { out: [], prev_t: 0.I64, prev_v: 0.0.F64, started: False },
+            |acc, s| resample_step(acc, s, mode),
         ).out
 
     # What to do with the next sample. Pure classification, kept flat and separate so the
@@ -854,7 +860,12 @@ Metrics :: [].{
         List.fold(day_rows, [], |acc, d| {
             ws = ((d.days + 3) // 7) * 7 - 3
             sess : I64
-            sess = if d.tss >= 1.0 1 else 0
+            # any scored day counts. The old >= 1.0 floor silently dropped genuinely short
+            # or lightly-scored sessions from the count. (A day that scores EXACTLY 0 — a
+            # strength session whose HR strap produced junk — still cannot be counted here:
+            # daily_load carries load, not a session count. That needs a stored count, not
+            # a smaller threshold, so it is left honest rather than guessed at.)
+            sess = if d.tss > 0.0 1 else 0
             match List.last(acc) {
                 Ok(w) =>
                     if w.week_start == ws {
@@ -1182,6 +1193,23 @@ expect {
 expect {
     swim = Metrics.pace_tss({ ngp_speed: 1.0, threshold_speed: 1.0, dur_s: 3600.0, exponent: 3.0 })
     (swim - 100.0).abs() < 0.001
+}
+
+# resample_1s_pairs sorts first. One out-of-order sample used to be dropped WITHOUT
+# advancing the anchor, so a single large stray timestamp swallowed every sample after it.
+# Same samples, shuffled: the result must be identical to the ordered case.
+expect {
+    ordered = [{ t: 0.I64, v: 0.0.F64 }, { t: 1.I64, v: 4.0.F64 }, { t: 2.I64, v: 8.0.F64 }]
+    shuffled = [{ t: 2.I64, v: 8.0.F64 }, { t: 0.I64, v: 0.0.F64 }, { t: 1.I64, v: 4.0.F64 }]
+    Metrics.resample_1s_pairs(ordered, Interpolate) == Metrics.resample_1s_pairs(shuffled, Interpolate)
+}
+
+# a stray far-future sample no longer eats the rest of the stream
+expect {
+    stray = [{ t: 0.I64, v: 0.0.F64 }, { t: 999.I64, v: 99.0.F64 }, { t: 1.I64, v: 4.0.F64 }, { t: 2.I64, v: 8.0.F64 }]
+    pts = Metrics.resample_1s_pairs(stray, Interpolate)
+    # 0,1,2 all survive (the 999 sample is a pause, kept but not filled)
+    List.len(pts) == 4
 }
 
 # CTL/ATL convergence over MANY days — every other load test walks a single step, which
