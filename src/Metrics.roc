@@ -122,7 +122,7 @@ Metrics :: [].{
     get_or_zero = |xs, i|
         List.get(xs, i).ok_or(0.0)
 
-    # ── best rolling mean (e.g. the 20-min best power the derived FTP comes from) ──
+    # ── best rolling mean (e.g. the 20-min best power used to derive FTP) ──
 
     best_rolling_mean : List(F64), U64 -> Try(F64, [TooShort])
     best_rolling_mean = |xs_1s, window| {
@@ -522,13 +522,10 @@ Metrics :: [].{
     }
 
     # ── FTP estimate ────────────────────────────────────────────────────
-    # There is nothing to "calibrate" against: `Db.sport_ftp!` derives FTP from power
-    # history and never reads config, so the estimate and the FTP are the same number by
-    # construction and the stale/detraining comparison this section used to describe could
-    # never fire. That function was deleted; the header outlived it.
-    # (ADR 0002 as amended records the derivation; ADR 0005 anchors its 60-day window to
-    # each activity's own date — it deliberately did NOT settle whether a configured value
-    # should override, which is tracked separately.)
+    # This section once held `ftp_calibration`, which compared an estimate against a
+    # CONFIGURED FTP and raised stale/detraining flags. It was deleted: FTP is derived
+    # (`Db.sport_ftp!` reads power history, never config), so estimate and FTP are the same
+    # number by construction and neither flag could ever fire. Only the estimate remains.
 
     # FTP estimate from a 20-min best: the standard 95% factor. One constant, one place —
     # used by the per-sport derive (Db.derive_sport_ftp!) and the summary display.
