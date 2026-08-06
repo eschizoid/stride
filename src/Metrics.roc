@@ -522,10 +522,13 @@ Metrics :: [].{
     }
 
     # ── FTP estimate ────────────────────────────────────────────────────
-    # There is nothing to "calibrate" against any more: FTP is derived, never configured
-    # (ADR 0005), so the stale/detraining comparison this section used to describe was
-    # removed along with the function that computed it — under derivation the estimate and
-    # the FTP are the same number by construction.
+    # There is nothing to "calibrate" against: `Db.sport_ftp!` derives FTP from power
+    # history and never reads config, so the estimate and the FTP are the same number by
+    # construction and the stale/detraining comparison this section used to describe could
+    # never fire. That function was deleted; the header outlived it.
+    # (ADR 0002 as amended records the derivation; ADR 0005 anchors its 60-day window to
+    # each activity's own date — it deliberately did NOT settle whether a configured value
+    # should override, which is tracked separately.)
 
     # FTP estimate from a 20-min best: the standard 95% factor. One constant, one place —
     # used by the per-sport derive (Db.derive_sport_ftp!) and the summary display.
