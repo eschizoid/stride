@@ -201,6 +201,13 @@ Analyze :: [].{
     #
     # Used verbatim in BOTH the SELECT (as `pftp`) and the recompute WHERE, so the value a
     # row is scored with is exactly the value the invalidation check compares against.
+    #
+    # `date(a3.start_local)` on the cold-start branch is load-bearing: start_local is a full
+    # ISO timestamp, `date(..., '+60 days')` returns a date-only string, and TEXT comparison
+    # is lexical — so "2024-03-10T09:00:00Z" sorts AFTER "2024-03-10" and every activity on
+    # the cutoff day would drop out of the window. The trailing branch above is safe without
+    # it because its comparison runs the other way (>=), where the longer string still
+    # matches. Indexed by idx_activities_sport_start (schema v14).
     period_ftp_sql : Str
     period_ftp_sql =
         \\COALESCE(
@@ -212,8 +219,8 @@ Analyze :: [].{
         \\  NULLIF((SELECT MAX(m3.best_20min_w) * 0.95
         \\          FROM activity_metrics m3 JOIN activities a3 ON a3.id = m3.activity_id
         \\          WHERE a3.sport_type = a.sport_type
-        \\            AND a3.start_local <= date((SELECT MIN(a4.start_local) FROM activities a4
-        \\                                        WHERE a4.sport_type = a.sport_type), '+60 days')), 0),
+        \\            AND date(a3.start_local) <= date((SELECT MIN(a4.start_local) FROM activities a4
+        \\                                              WHERE a4.sport_type = a.sport_type), '+60 days')), 0),
         \\  0)
 
     # per-sport DERIVED threshold pace (speed, m/s), frozen up front exactly like the FTP map

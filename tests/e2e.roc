@@ -461,15 +461,15 @@ b_period_ftp! = |ctx| {
     _ = seed_ride!(ctx.db, "801", "Old Ride", "2024-01-10T09:00:00Z", "3600", "30000", "200", "150")
     _ = seed_power_stream!(ctx.db, 801, 1300, 200)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    old_ftp = strjq!(ctx, ["activities", "50"], "[.data[] | select(.name==\"Old Ride\")][0].tss")
-    check!("old ride scored", sfloat(old_ftp) > 0.0)?
+    old_tss = strjq!(ctx, ["activities", "50"], "[.data[] | select(.name==\"Old Ride\")][0].tss")
+    check!("old ride scored", sfloat(old_tss) > 0.0)?
 
     # a much stronger ride, two years later — a genuine PR well outside the old ride's window
     _ = seed_ride!(ctx.db, "802", "New PR", "2026-01-10T09:00:00Z", "3600", "35000", "320", "150")
     _ = seed_power_stream!(ctx.db, 802, 1300, 320)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    after = strjq!(ctx, ["activities", "50"], "[.data[] | select(.name==\"Old Ride\")][0].tss")
-    check!("later PR does NOT rescore the old ride", (sfloat(old_ftp) - sfloat(after)).abs() < 0.01)?
+    after_tss = strjq!(ctx, ["activities", "50"], "[.data[] | select(.name==\"Old Ride\")][0].tss")
+    check!("later PR does NOT rescore the old ride", (sfloat(old_tss) - sfloat(after_tss)).abs() < 0.01)?
 
     # ...and the new ride is scored on its own fitness, not the old ride's
     pr_tss = strjq!(ctx, ["activities", "50"], "[.data[] | select(.name==\"New PR\")][0].tss")
