@@ -30,7 +30,7 @@ Strava :: [].{
                     # HttpStatus here can only come from the token-refresh POST: a 4xx
                     # means the stored token is dead, and retrying won't fix it
                     Err(HttpStatus(status, _)) if status >= 400 and status < 500 =>
-                        Stdout.line!("  (Strava rejected the stored token — re-run `stride auth`, then set ftp_ride again)")
+                        Stdout.line!("  (Strava rejected the stored token — re-run `stride auth`)")
 
                     Err(_) => Stdout.line!("  (couldn't sync FTP to Strava this time)")
                     Ok(token) => {

@@ -10,9 +10,9 @@ Output :: [].{
     # ── analyze ──────────────────────────────────────────────────────────
 
     zone_config_help =
-            \\analyze needs your FTP and HR zone upper bounds in config first:
+            \\analyze needs your HR zone upper bounds in config first (FTP is derived from
+            \\your own power history, not configured):
             \\
-            \\    stride config set ftp_ride 190
             \\    stride config set hr_z1_max 123
             \\    stride config set hr_z2_max 153
             \\    stride config set hr_z3_max 168

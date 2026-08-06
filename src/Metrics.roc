@@ -296,23 +296,12 @@ Metrics :: [].{
             )
         }
 
-    # The config key holding a sport's power threshold. Fully generic and data-driven:
-    # `ftp_<sport>` for EVERY sport (ftp_ride, ftp_rowing, ftp_swim, ftp_soccer, …), so a
-    # sport gets power-based intensity the instant its key is set and falls back to HR
-    # otherwise. No hardcoded list of sports to fall out of date — power lives on a
-    # different scale per sport (a 150 W row ≠ a 150 W ride), and WHICH sports the athlete
-    # has a threshold for is their config, not our code. Cycling's primary key is the
-    # entrenched `ftp` (see sport_ftp! for that one back-compat tie).
-    power_ftp_key : Str -> Str
-    power_ftp_key = |sport|
-        "ftp_${Str.with_ascii_lowercased(sport)}"
-
     # The config key holding a sport's HR zone ceiling, per zone n (1..4). Per-sport
     # `hr_z<n>_max_<sport>` (hr_z2_max_soccer, …), resolved with the global
     # `hr_z<n>_max` as fallback: HR zones CAN differ by sport (a rowing Z2 ceiling
     # need not equal a running one), but most athletes share one set, so the global
     # covers the common case and a sport-specific key overrides only where it exists.
-    # Same data-driven shape as power_ftp_key — no hardcoded sport list.
+    # Same data-driven shape as hr_zone_key — no hardcoded sport list.
     hr_zone_key : U64, Str -> Str
     hr_zone_key = |n, sport|
         "hr_z${U64.to_str(n)}_max_${Str.with_ascii_lowercased(sport)}"
@@ -323,7 +312,7 @@ Metrics :: [].{
 
     # The config key holding a sport's threshold PACE, as a SPEED in m/s (the pace engine
     # works in speeds). Per-sport `threshold_pace_<sport>` (threshold_pace_run, ...), same
-    # data-driven shape as power_ftp_key / hr_zone_key. Zero-config derivation from a stored
+    # data-driven shape as hr_zone_key. Zero-config derivation from a stored
     # best-sustained-pace column is a later slice.
     threshold_pace_key : Str -> Str
     threshold_pace_key = |sport|
@@ -573,16 +562,6 @@ Metrics :: [].{
         }
     }
 
-    ftp_calibration : { best_20min : F64, ftp : F64 } -> { est : F64, stale : Bool, detraining : Bool }
-    ftp_calibration = |{ best_20min, ftp }| {
-        est = ftp_from_best_20min(best_20min)
-        {
-            est,
-            stale: est > ftp * 1.05,
-            detraining: est < ftp * 0.9,
-        }
-    }
-
     # ── power zones (Coggan / Peloton 7-zone model, watt ranges from FTP) ─
     # lo_w = 0 means the zone starts at 0 (Z1); hi_w = 0 means it is open above (Z7).
     power_zones : F64 -> List({ z : Str, name : Str, lo_w : F64, hi_w : F64 })
@@ -615,9 +594,12 @@ Metrics :: [].{
     mean : List(F64) -> F64
     mean = |ys| if List.is_empty(ys) 0.0 else List.sum(ys) / List.len(ys).to_f64()
 
-    # percent change from -> to; 0.0 when `from` isn't positive (no meaningful baseline)
-    pct_change : F64, F64 -> F64
-    pct_change = |from, to| if from > 0.0 (to - from) / from * 100.0 else 0.0
+    # Percent change from -> to. A non-positive `from` means there is NOTHING to measure
+    # against, which is a different fact from "measured, and it did not change" — both used
+    # to come back as 0.0, so a first-ever week read as "load steady (0%)". The Try makes the
+    # caller say which one it means.
+    pct_change : F64, F64 -> Try(F64, [NoBaseline])
+    pct_change = |from, to| if from > 0.0 { Ok((to - from) / from * 100.0) } else { Err(NoBaseline) }
 
     # scale a value in [lo, hi] to 1..blocks bar segments (lo -> 1, hi -> blocks);
     # degenerate range -> full bar
@@ -1405,23 +1387,8 @@ expect {
     and (s.tsb - (s.ctl - s.atl)).abs() < 0.001 and s.tsb < 0.0
 }
 
-# ftp_calibration: 20-min best 256 -> est 243.2; against config 190 that's stale
-expect {
-    c = Metrics.ftp_calibration({ best_20min: 256.0, ftp: 190.0 })
-    (c.est - 243.2).abs() < 0.001 and c.stale and !(c.detraining)
-}
 
-# ftp_calibration: est well under config flags detraining, not stale
-expect {
-    c = Metrics.ftp_calibration({ best_20min: 180.0, ftp: 243.0 })
-    c.detraining and !(c.stale)
-}
 
-# ftp_calibration: est near config is neither stale nor detraining
-expect {
-    c = Metrics.ftp_calibration({ best_20min: 250.0, ftp: 243.0 })
-    !(c.stale) and !(c.detraining)
-}
 
 expect Metrics.valid_hr(150.0) and !(Metrics.valid_hr(20.0)) and !(Metrics.valid_hr(230.0)) and Metrics.valid_hr(35.0) and Metrics.valid_hr(220.0)
 expect Metrics.valid_watts(200.0) and Metrics.valid_watts(0.0) and Metrics.valid_watts(2500.0) and !(Metrics.valid_watts(-5.0)) and !(Metrics.valid_watts(9999.0))
@@ -1501,11 +1468,6 @@ expect {
     pairs = List.map_with_index(List.repeat(250.0, 6), |v, i| { t: (i).to_i64_wrap(), v })
     match Metrics.best_rolling_mean_1s(pairs, 6) { Ok(v) => (v - 250.0).abs() < 0.001, Err(_) => 1 == 0 }
 }
-expect Metrics.power_ftp_key("Ride") == "ftp_ride"
-expect Metrics.power_ftp_key("Rowing") == "ftp_rowing"
-expect Metrics.power_ftp_key("Swim") == "ftp_swim"
-expect Metrics.power_ftp_key("Soccer") == "ftp_soccer"
-expect Metrics.power_ftp_key("StandUpPaddling") == "ftp_standuppaddling"
 
 # per-sport HR zone keys mirror the FTP idiom; the global key is the fallback
 expect Metrics.hr_zone_key(2, "Soccer") == "hr_z2_max_soccer"
@@ -1569,7 +1531,24 @@ expect {
 
 expect (Metrics.mean([1.0, 2.0, 3.0]) - 2.0).abs() < 0.001 and (Metrics.mean([])).abs() < 0.001
 
-expect (Metrics.pct_change(2.0, 3.0) - 50.0).abs() < 0.001 and (Metrics.pct_change(0.0, 3.0)).abs() < 0.001
+# pct_change: a real baseline measures; a zero baseline is NoBaseline, not 0% — those were
+# the same answer before, so "first week ever" reported as "load steady (0%)"
+expect {
+    measured = match Metrics.pct_change(2.0, 3.0) {
+        Ok(p) => (p - 50.0).abs() < 0.001
+        Err(_) => 1 == 0
+    }
+    no_baseline = match Metrics.pct_change(0.0, 3.0) {
+        Err(NoBaseline) => 1 == 1
+        Ok(_) => 1 == 0
+    }
+    # a negative baseline is equally meaningless, not a huge negative percentage
+    negative = match Metrics.pct_change(-5.0, 3.0) {
+        Err(NoBaseline) => 1 == 1
+        Ok(_) => 1 == 0
+    }
+    measured and no_baseline and negative
+}
 
 # bar scaling: lo -> 1 block, hi -> all blocks, degenerate range -> all blocks
 expect Metrics.scale_to_blocks(1.2, 1.2, 1.8, 12) == 1 and Metrics.scale_to_blocks(1.8, 1.2, 1.8, 12) == 12 and Metrics.scale_to_blocks(1.5, 1.5, 1.5, 12) == 12
