@@ -282,24 +282,29 @@ Metrics :: [].{
         state = List.fold(
             samples,
             { i: { easy_s: 0.I64, moderate_s: 0.I64, hard_s: 0.I64 }, prev_t: 0.I64, started: False },
-            |acc, s| {
-                dt = (s.t - acc.prev_t).min(max_sample_gap_s)
-                if !(acc.started) or dt <= 0 {
-                    { ..acc, prev_t: s.t, started: True }
-                } else {
-                    i = acc.i
-                    updated =
-                        match classify(s.v) {
-                            Skip => i
-                            Easy => { ..i, easy_s: i.easy_s + dt }
-                            Moderate => { ..i, moderate_s: i.moderate_s + dt }
-                            Hard => { ..i, hard_s: i.hard_s + dt }
-                        }
-                    { ..acc, i: updated, prev_t: s.t }
-                }
-            },
+            # the first sample only anchors prev_t — there is no interval before it, and
+            # computing dt against the 0 sentinel would be arithmetic on a non-time
+            |acc, s| if !(acc.started) { { ..acc, prev_t: s.t, started: True } } else band_step(acc, s, classify),
         )
         state.i
+    }
+
+    # one interval: credit its capped duration to whichever band the sample lands in
+    band_step = |acc, s, classify| {
+        dt = (s.t - acc.prev_t).min(max_sample_gap_s)
+        i = acc.i
+        updated =
+            if dt <= 0 {
+                i # duplicate or backwards timestamp — no interval to credit
+            } else {
+                match classify(s.v) {
+                    Skip => i
+                    Easy => { ..i, easy_s: i.easy_s + dt }
+                    Moderate => { ..i, moderate_s: i.moderate_s + dt }
+                    Hard => { ..i, hard_s: i.hard_s + dt }
+                }
+            }
+        { ..acc, i: updated, prev_t: s.t }
     }
 
     time_in_power_intensity : List({ t : I64, v : F64 }), F64 -> PowerIntensity
@@ -326,9 +331,10 @@ Metrics :: [].{
     # read a real intensity split there too. Zeros when the sport has no threshold speed.
     # Pace twin of time_in_power_intensity, on the grade-adjusted speed stream. Takes the
     # (second, speed) PAIRS — not bare speeds — so it sums the same real elapsed time the
-    # power path does. There is no Skip band here: a speed sample only exists where the
-    # athlete was actually moving, since grade_adjusted_speeds already drops stopped and
-    # gap intervals.
+    # power path does. There is no Skip band here: grade_adjusted_speeds emits a sample only
+    # for an interval where the athlete moved forward, so there is no coasting equivalent.
+    # Gaps are still bounded rather than excluded — an interval spanning one contributes up
+    # to max_sample_gap_s, exactly as on the power path.
     time_in_pace_intensity : List({ t : I64, v : F64 }), F64 -> PowerIntensity
     time_in_pace_intensity = |speed_pairs, threshold|
         if threshold <= 0.0 {
