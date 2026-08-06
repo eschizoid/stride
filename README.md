@@ -56,7 +56,7 @@ Strava is the system of record; stride is the analysis layer on top of it. Where
 differ:
 
 - **Deterministic metrics** — TSS, normalized power, intensity factor, CTL/ATL/TSB,
-  time-in-zone, FTP calibration. Same inputs, same numbers, every time.
+  time-in-zone, derived per-sport FTP. Same inputs, same numbers, every time.
 - **A database you own** — everything lives in `~/.stride/db.sqlite`. Query it with
   `sqlite3`, back it up with `cp`, inspect any computed value's inputs, and read it
   offline after a sync. It also holds your Strava tokens and client secret, so stride
@@ -190,10 +190,10 @@ stride week                                       # everything needed to plan a 
 
 | Command | The question it answers |
 | --- | --- |
-| `summary` | *Where do I stand today?* Form (with verdict), 7-day and 28-day zone mix + polarization, FTP calibration (flags when your 20-min best says your FTP is stale), date of your last hard session, per-sport breakdown. |
+| `summary` | *Where do I stand today?* Form (with verdict), 7-day and 28-day zone mix + polarization, your derived FTP and the 20-min best behind it, date of your last hard session, per-sport breakdown. |
 | `activities [n] [sport]` | *What did each session actually contain?* Last *n* sessions (default 30), optionally filtered by sport (`activities 10 rowing`). Per session: load, intensity vs FTP, and minutes actually spent hard (Z4+Z5). |
 | `top <metric> [n] [sport]` | *What were my best sessions?* Ranks activities (default top 10) by a metric — `hr`, `tss`, `power`, `intensity`, `distance`, `time`, or `output` (kJ) — optionally filtered by sport (`top tss 5 ride`). The leaderboard to `activities`' timeline. |
-| `doctor` | *Can I trust my data?* Coverage (HR/power/streams/ratings), how each activity was scored and the **measured-vs-estimated confidence split**, config gaps (FTP, HR zones), pending backfill, and the active time anchor. Every gap says what, why, and the fix. |
+| `doctor` | *Can I trust my data?* Coverage (HR/power/streams/ratings), how each activity was scored and the **measured-vs-estimated confidence split**, config gaps (HR zones), pending backfill, and the active time anchor. Every gap says what, why, and the fix. |
 | `zones` (alias `pz`) | *What watts is each power zone for me?* The 7 Coggan/Peloton power zones as watt ranges derived from your FTP (they shift when FTP changes). The targets you'd set on a Power Zone ride. |
 | `progress [date]` | *Am I improving on this workout?* Every past instance of a workout, compared with a **sport-aware lens** — Efficiency Factor (NP ÷ HR) for power rides, speed ÷ HR for distance sports, RPE for rated strength/HIIT — with a trend verdict and last-vs-best. Bare `progress` uses your latest session; `stride --help` has the exact matching rules. |
 | `load [days]` | *Is my training working over time?* Daily fitness/fatigue/form rows for windows ≤14 days; Monday-aligned **weekly rollups** (sessions, load, fitness trend) for longer windows (default 90). Ends with today's form verdict. |
@@ -333,7 +333,7 @@ heart rate, and the swim exponent.
 | **Rowing** | same power ladder — a rowing watt is not a cycling watt, so it gets its **own** derived FTP | as above, on its own threshold |
 | **Run** | grade-adjusted pace (`rtss`): normalized graded pace vs derived threshold pace, **IF²** | Minetti grade adjustment, pace-intensity split |
 | **Swim** | grade-adjusted pace (`rtss`) with **IF³** — drag rises with v³, so squaring under-scores hard sets by ~20% | flat-altitude speed, CSS-equivalent threshold |
-| **WeightTraining / Workout / Crossfit / HIIT / Yoga / Pilates** | your **session-RPE** first (`hours × RPE × 10`), then HR | — |
+| **WeightTraining · Workout · Crossfit · HighIntensityIntervalTraining · Yoga · Pilates** | your **session-RPE** first (`hours × RPE × 10`), then HR | — |
 | Anything with only HR | zone-weighted hrTSS (Friel 30/55/70/80/100 per hour) | HR zone seconds |
 | Anything with none of the above | Strava `relative_effort`, else an honest **zero** | — |
 
