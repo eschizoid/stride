@@ -154,6 +154,7 @@ run_all! = || {
     b_load_stats!(ctx)?
     b_activity_detail!(ctx)?
     b_junk_filter!(ctx)?
+    b_period_ftp!(ctx)?
     b_progress_a!(ctx)?
     b_progress_b!(ctx)?
     b_import!(ctx)?
@@ -447,6 +448,35 @@ b_junk_filter! = |ctx| {
     # and power now needs a derivable FTP to score as measured.
     _ = seed_power_stream!(ctx.db, 101, 3600, 200)
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 101;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    Ok({})
+}
+
+# ── ADR 0005: FTP is period-accurate, so history stops moving ────────
+# The whole point of the decision: an activity is scored by the fitness in force WHEN it
+# happened, so a later personal best cannot retroactively rewrite it. Under the old
+# today's-FTP model the 2024 ride was rescored every time the 60-day window slid.
+b_period_ftp! : Ctx => Try({}, _)
+b_period_ftp! = |ctx| {
+    _ = seed_ride!(ctx.db, "801", "Old Ride", "2024-01-10T09:00:00Z", "3600", "30000", "200", "150")
+    _ = seed_power_stream!(ctx.db, 801, 1300, 200)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    old_tss = strjq!(ctx, ["activities", "50"], "[.data[] | select(.name==\"Old Ride\")][0].tss")
+    check!("old ride scored", sfloat(old_tss) > 0.0)?
+
+    # a much stronger ride, two years later — a genuine PR well outside the old ride's window
+    _ = seed_ride!(ctx.db, "802", "New PR", "2026-01-10T09:00:00Z", "3600", "35000", "320", "150")
+    _ = seed_power_stream!(ctx.db, 802, 1300, 320)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    after_tss = strjq!(ctx, ["activities", "50"], "[.data[] | select(.name==\"Old Ride\")][0].tss")
+    check!("later PR does NOT rescore the old ride", (sfloat(old_tss) - sfloat(after_tss)).abs() < 0.01)?
+
+    # ...and the new ride is scored on its own fitness, not the old ride's
+    pr_tss = strjq!(ctx, ["activities", "50"], "[.data[] | select(.name==\"New PR\")][0].tss")
+    check!("new ride scored on its own window", sfloat(pr_tss) > 0.0)?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (801,802);")
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (801,802);")
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id IN (801,802);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     Ok({})
 }

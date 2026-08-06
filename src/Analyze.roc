@@ -57,7 +57,9 @@ Analyze :: [].{
         }
     }
     # only the HR zones are required config — those are universal across sports. FTP is
-    # never configured; it's derived per sport from recent power history (Db.sport_ftp!).
+    # never configured; it is derived per sport, and for SCORING it is the value in force when
+    # the activity happened (ADR 0005). Db.sport_ftp! keeps today's-window semantics for the
+    # DISPLAY paths (summary, zones) — the two are deliberately different questions.
     load_zone_config! : Str => Try(Metrics.ZoneBounds, _)
     load_zone_config! = |path| {
         z1 = config_f64!(path, "hr_z1_max")?
@@ -88,6 +90,8 @@ Analyze :: [].{
         waw : [NotNull(F64), Null],
         rpe : [NotNull(F64), Null],
         raw : [NotNull(Str), Null],
+        # the FTP in force WHEN this activity happened (ADR 0005), not today's
+        pftp : F64,
     }
 
     # analyze runs compute_missing_metrics! to a FIXED POINT (bounded), not once. A pass can
@@ -110,10 +114,10 @@ Analyze :: [].{
 
     compute_missing_metrics! : Str, Metrics.ZoneBounds => Try({ computed : U64, stream_errors : U64 }, _)
     compute_missing_metrics! = |path, zb| {
-        # recompute a row when its stored ftp_used no longer matches ITS sport's current
-        # FTP (per-sport, via the CASE), or the HR zones / metrics_rev changed.
-        ftp_map = sport_ftp_map!(path)?
-        ftp_case = ftp_case_from_map(ftp_map)
+        # recompute a row when its stored ftp_used no longer matches the FTP that was in force
+        # WHEN IT HAPPENED (ADR 0005 — period_ftp_sql below), or the HR zones / metrics_rev
+        # changed. Because the period FTP is anchored to the row's own date, a new personal
+        # best no longer invalidates history: only rows whose own 60-day window moved.
         # same story for the DERIVED per-sport threshold pace (speed): recompute a row when
         # its stored threshold_pace_used no longer matches its sport's current threshold
         threshold_map = sport_threshold_map!(path)?
@@ -128,13 +132,14 @@ Analyze :: [].{
                 \\SELECT a.id AS id, a.start_local AS start, a.moving_time AS mt,
                 \\       COALESCE(a.sport_type, '') AS sport,
                 \\       CAST(a.relative_effort AS REAL) AS re, CAST(a.avg_watts AS REAL) AS aw, CAST(a.avg_hr AS REAL) AS ahr,
-                \\       CAST(a.weighted_avg_watts AS REAL) AS waw, CAST(r.rpe AS REAL) AS rpe, s.raw_json AS raw
+                \\       CAST(a.weighted_avg_watts AS REAL) AS waw, CAST(r.rpe AS REAL) AS rpe, s.raw_json AS raw,
+                \\       CAST(ROUND(${period_ftp_sql}) AS REAL) AS pftp
                 \\FROM activities a
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\LEFT JOIN ratings r ON r.activity_id = a.id
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE m.activity_id IS NULL
-                \\      OR CAST(COALESCE(m.ftp_used, 0) AS INTEGER) <> CAST((${ftp_case}) AS INTEGER)
+                \\      OR CAST(COALESCE(m.ftp_used, 0) AS INTEGER) <> CAST(ROUND(${period_ftp_sql}) AS INTEGER)
                 \\      OR CAST(ROUND(COALESCE(m.threshold_pace_used, 0) * 1000) AS INTEGER) <> CAST(ROUND((${threshold_case}) * 1000) AS INTEGER)
                 \\      OR COALESCE(m.zones_used, '') <> (${zones_case})
                 \\      OR COALESCE(m.metrics_rev, 0) <> :rev
@@ -153,22 +158,23 @@ Analyze :: [].{
                 waw = Sqlite.nullable_f64("waw")(cols)(stmt)?
                 rpe = Sqlite.nullable_f64("rpe")(cols)(stmt)?
                 raw = Sqlite.nullable_str("raw")(cols)(stmt)?
-                Ok({ id, start, mt, sport, re, aw, ahr, waw, rpe, raw })
+                pftp = Sqlite.f64("pftp")(cols)(stmt)?
+                Ok({ id, start, mt, sport, re, aw, ahr, waw, rpe, raw, pftp })
             },
         })?
-        process_rows!(path, zb, ftp_map, threshold_map, cfg, rows, { computed: 0, stream_errors: 0 })
+        process_rows!(path, zb, threshold_map, cfg, rows, { computed: 0, stream_errors: 0 })
     }
-    process_rows! : Str, Metrics.ZoneBounds, List((Str, F64)), List((Str, F64)), List((Str, Str)), List(ActivityRow), { computed : U64, stream_errors : U64 } => Try({ computed : U64, stream_errors : U64 }, _)
-    process_rows! = |path, zb, ftp_map, threshold_map, cfg, rows, acc|
+    process_rows! : Str, Metrics.ZoneBounds, List((Str, F64)), List((Str, Str)), List(ActivityRow), { computed : U64, stream_errors : U64 } => Try({ computed : U64, stream_errors : U64 }, _)
+    process_rows! = |path, zb, threshold_map, cfg, rows, acc|
         match rows {
             [] => Ok(acc)
             [row, .. as rest] => {
-                failed = compute_one!(path, zb, ftp_map, threshold_map, cfg, row)?
+                failed = compute_one!(path, zb, threshold_map, cfg, row)?
                 next = {
                     computed: acc.computed + 1,
                     stream_errors: acc.stream_errors + (if failed 1 else 0),
                 }
-                process_rows!(path, zb, ftp_map, threshold_map, cfg, rest, next)
+                process_rows!(path, zb, threshold_map, cfg, rest, next)
             }
         }
     zero_zones : Metrics.ZoneSeconds
@@ -181,51 +187,42 @@ Analyze :: [].{
     zones_sig : Metrics.ZoneBounds -> Str
     zones_sig = |zb|
         "${Render.fmt0(zb.z1_max)},${Render.fmt0(zb.z2_max)},${Render.fmt0(zb.z3_max)},${Render.fmt0(zb.z4_max)}"
-    # a SQL `CASE a.sport_type WHEN … THEN <ftp> … ELSE 0 END` mapping each sport to its
-    # resolved FTP, so the analyze recompute-check compares each row's stored ftp_used to
-    # ITS sport's current FTP (not one global number). Without this, per-sport ftp_used
-    # would never equal the single cycling ftp and rowing/running rows would recompute
-    # every run. Sport names come from Strava (no quotes in practice; local single-user).
-    # each sport's resolved FTP, materialized ONCE per compute pass. Freezing it fixes the
-    # derived-FTP circular dependency: Db.sport_ftp! derives from MAX(best_20min_w), which
-    # compute_one! itself WRITES — so re-reading it per row made scoring order-dependent and
-    # made a fresh db score all power as zero. Now the recompute WHERE and the per-row
-    # scoring both read this ONE frozen map; the analyze! fixed-point loop re-derives it each
-    # pass so a fresh db's first-pass zeros converge once best_20min_w is populated.
-    sport_ftp_map! : Str => Try(List((Str, F64)), _)
-    sport_ftp_map! = |path| {
-        sports = Sqlite.query_many!({
-            path: Path.utf8(path),
-            query: "SELECT DISTINCT sport_type AS s FROM activities WHERE sport_type IS NOT NULL AND sport_type <> ''",
-            bindings: [],
-            rows: Sqlite.str("s"),
-        })?
-        build_ftp_map!(path, sports, [])
-    }
-    build_ftp_map! : Str, List(Str), List((Str, F64)) => Try(List((Str, F64)), _)
-    build_ftp_map! = |path, sports, acc|
-        match sports {
-            [] => Ok(acc)
-            [s, .. as rest] => {
-                f = Db.sport_ftp!(path, s)?
-                build_ftp_map!(path, rest, List.append(acc, (s, f)))
-            }
-        }
-    # pure: this sport's frozen FTP (0 if absent — a no-power sport, which falls back to HR)
-    lookup_ftp : List((Str, F64)), Str -> F64
-    lookup_ftp = |m, sport|
-        List.fold(m, 0.0, |acc, pair| if pair.0 == sport pair.1 else acc)
-    # pure: the `CASE a.sport_type WHEN '<sport>' THEN <ftp> … ELSE 0 END` for the recompute
-    # WHERE, built from the SAME frozen map. Single quotes in a sport name are SQL-escaped so
-    # a name like "d'Or" can't break the CASE or inject SQL.
-    ftp_case_from_map : List((Str, F64)) -> Str
-    ftp_case_from_map = |m| {
-        whens = List.fold(m, "", |acc, pair| {
-            esc = Str.replace_each(pair.0, "'", "''")
-            "${acc} WHEN '${esc}' THEN ${(pair.1).to_str()}"
-        })
-        "CASE a.sport_type${whens} ELSE 0 END"
-    }
+    # The FTP in force WHEN an activity happened (ADR 0005), as a SQL expression correlated
+    # to the outer `a`. Same derivation as Db.sport_ftp! — that sport's best 20-min power ×
+    # 0.95 — but the 60-day window is anchored to the ACTIVITY's date, not to today.
+    #
+    # `a2.start_local <= a.start_local` is the load-bearing half: an activity is never scored
+    # by fitness the athlete had not yet demonstrated.
+    #
+    # Cold start: the first 60 days of a sport's history have no trailing window, and scoring
+    # them at 0 would silently drop them to the HR rung. The second branch carries the
+    # EARLIEST derivable value backwards — approximating unknown early fitness with the
+    # earliest fitness actually measured, which is the least-wrong answer available.
+    #
+    # Used verbatim in BOTH the SELECT (as `pftp`) and the recompute WHERE, so the value a
+    # row is scored with is exactly the value the invalidation check compares against.
+    #
+    # `date(a3.start_local)` on the cold-start branch is load-bearing: start_local is a full
+    # ISO timestamp, `date(..., '+60 days')` returns a date-only string, and TEXT comparison
+    # is lexical — so "2024-03-10T09:00:00Z" sorts AFTER "2024-03-10" and every activity on
+    # the cutoff day would drop out of the window. The trailing branch above is safe without
+    # it because its comparison runs the other way (>=), where the longer string still
+    # matches. Indexed by idx_activities_sport_start (schema v14).
+    period_ftp_sql : Str
+    period_ftp_sql =
+        \\COALESCE(
+        \\  NULLIF((SELECT MAX(m2.best_20min_w) * 0.95
+        \\          FROM activity_metrics m2 JOIN activities a2 ON a2.id = m2.activity_id
+        \\          WHERE a2.sport_type = a.sport_type
+        \\            AND a2.start_local <= a.start_local
+        \\            AND a2.start_local >= date(a.start_local, '-60 days')), 0),
+        \\  NULLIF((SELECT MAX(m3.best_20min_w) * 0.95
+        \\          FROM activity_metrics m3 JOIN activities a3 ON a3.id = m3.activity_id
+        \\          WHERE a3.sport_type = a.sport_type
+        \\            AND date(a3.start_local) <= date((SELECT MIN(a4.start_local) FROM activities a4
+        \\                                              WHERE a4.sport_type = a.sport_type), '+60 days')), 0),
+        \\  0)
+
     # per-sport DERIVED threshold pace (speed, m/s), frozen up front exactly like the FTP map
     # so scoring is order-independent and consistent with the recompute WHERE.
     sport_threshold_map! : Str => Try(List((Str, F64)), _)
@@ -341,8 +338,8 @@ Analyze :: [].{
         "CASE a.sport_type${whens} ELSE '${zones_sig(g)}' END"
     }
     # returns Bool: did the stored stream JSON fail to decode? (surfaced by analyze)
-    compute_one! : Str, Metrics.ZoneBounds, List((Str, F64)), List((Str, F64)), List((Str, Str)), ActivityRow => Try(Bool, _)
-    compute_one! = |path, zb, ftp_map, threshold_map, cfg, row| {
+    compute_one! : Str, Metrics.ZoneBounds, List((Str, F64)), List((Str, Str)), ActivityRow => Try(Bool, _)
+    compute_one! = |path, zb, threshold_map, cfg, row| {
         decoded = Streams.decode_streams(row.raw)
         streams = decoded.streams
         # this sport's zone bounds: per-sport override or global, resolved purely from
@@ -416,7 +413,9 @@ Analyze :: [].{
         # sport. Power sports use FTP; pace sports (no power, but a threshold speed) use the pace
         # split on the same 1 Hz graded-speed stream — so runs/swims get a hard/easy breakdown too,
         # not just an HR fallback. The FROZEN per-sport FTP/threshold keep it order-independent.
-        pi_ftp = lookup_ftp(ftp_map, row.sport)
+        # ADR 0005: the FTP in force when this activity happened, carried on the row by the
+        # SELECT, not looked up from a single current-FTP map.
+        pi_ftp = row.pftp
         # power sports use the power split — even mid-derivation, when pi_ftp is still 0 (the split
         # is then all-zero, and corrects once FTP derives on the next pass). ONLY power-LESS
         # activities fall to the pace split. Gate on actual power samples, not pi_ftp, so a power
@@ -608,5 +607,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 15
+    metrics_rev = 16
 }
