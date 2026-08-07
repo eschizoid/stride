@@ -100,6 +100,7 @@ and put it on your `PATH`. Pick one:
 | Linux · x86_64 | `stride-linux-x86_64` |
 | macOS · Apple Silicon | `stride-macos-arm64` |
 | macOS · Intel | `stride-macos-x86_64` |
+| Linux · arm64 | `stride-linux-arm64` |
 | Windows · x86_64 | `stride-windows-x86_64.exe` |
 
 ```bash
@@ -110,9 +111,13 @@ sudo mv stride /usr/local/bin/          # or anywhere on your PATH (e.g. ~/.loca
 stride --version
 ```
 
-Verify the download against [`SHA256SUMS.txt`](https://github.com/eschizoid/stride/releases/latest)
-if you like: `sha256sum -c SHA256SUMS.txt`. (Linux arm64 is not published yet — see
-[#60](https://github.com/eschizoid/stride/issues/60); use the x86_64 build under emulation.)
+Verify the download against [`SHA256SUMS.txt`](https://github.com/eschizoid/stride/releases/latest/download/SHA256SUMS.txt)
+if you like:
+
+```bash
+curl -fsSLO https://github.com/eschizoid/stride/releases/latest/download/SHA256SUMS.txt
+sha256sum -c SHA256SUMS.txt --ignore-missing   # checks the asset(s) you downloaded
+```
 
 ### Build from source
 
