@@ -5,6 +5,26 @@
 
 Csv :: [].{
 
+    # What one byte means given the quoting state. Flat classification so the fold below is
+    # a seven-case table instead of a five-deep if/else staircase. RFC 4180: a doubled quote
+    # inside a quoted field is one literal quote, which is why leaving quotes remembers
+    # prev_quote — the next byte decides whether that quote CLOSED the field or escaped one.
+    parse_case : Bool, Bool, U8 -> [QuotedByte, LeaveQuotes, EscapedQuote, EnterQuotes, EndField, EndRow, SkipCr, PlainByte]
+    parse_case = |in_quotes, prev_quote, b|
+        if in_quotes {
+            if b == '"' LeaveQuotes else QuotedByte
+        } else if b == '"' {
+            if prev_quote EscapedQuote else EnterQuotes
+        } else if b == ',' {
+            EndField
+        } else if b == '\n' {
+            EndRow
+        } else if b == '\r' {
+            SkipCr # CRLF: the \n right after does the work
+        } else {
+            PlainByte
+        }
+
     # parse CSV text into rows of fields. The final field/row is flushed even
     # without a trailing newline. A trailing newline does NOT produce an empty row.
     parse : Str -> List(List(Str))
@@ -13,43 +33,39 @@ Csv :: [].{
             Str.to_utf8(text),
             { rows: [], row: [], field: [], in_quotes: False, prev_quote: False },
             |acc, b|
-                if acc.in_quotes {
-                    if b == '"' {
-                        { ..acc, in_quotes: False, prev_quote: True }
-                    } else {
-                        { ..acc, field: List.append(acc.field, b) }
-                    }
-                } else if b == '"' {
-                    if acc.prev_quote {
-                        # "" inside a quoted field = one literal quote, still quoted
-                        { ..acc, field: List.append(acc.field, b), in_quotes: True, prev_quote: False }
-                    } else {
-                        { ..acc, in_quotes: True }
-                    }
-                } else if b == ',' {
-                    { ..acc, row: List.append(acc.row, field_str(acc.field)), field: [], prev_quote: False }
-                } else if b == '\n' {
-                    done_row = List.append(acc.row, field_str(acc.field))
-                    { ..acc, rows: List.append(acc.rows, done_row), row: [], field: [], prev_quote: False }
-                } else if b == '\r' {
-                    acc # CRLF: the \n right after does the work
-                } else {
-                    { ..acc, field: List.append(acc.field, b), prev_quote: False }
+                match parse_case(acc.in_quotes, acc.prev_quote, b) {
+                    QuotedByte => { ..acc, field: List.prepend(acc.field, b) }
+                    LeaveQuotes => { ..acc, in_quotes: False, prev_quote: True }
+                    EscapedQuote => { ..acc, field: List.prepend(acc.field, b), in_quotes: True, prev_quote: False }
+                    EnterQuotes => { ..acc, in_quotes: True }
+                    EndField => { ..acc, row: List.prepend(acc.row, field_str(acc.field)), field: [], prev_quote: False }
+                    EndRow => { ..acc, rows: List.prepend(acc.rows, close_row(acc)), row: [], field: [], prev_quote: False }
+                    SkipCr => acc
+                    PlainByte => { ..acc, field: List.prepend(acc.field, b), prev_quote: False }
                 },
         )
         if List.is_empty(state.field) and List.is_empty(state.row) {
-            state.rows
+            reverse(state.rows)
         } else {
-            List.append(state.rows, List.append(state.row, field_str(state.field)))
+            reverse(List.prepend(state.rows, close_row(state)))
         }
     }
 
+    # finish the in-progress row: flush the current field, restore left-to-right order
+    close_row = |acc| reverse(List.prepend(acc.row, field_str(acc.field)))
+
     field_str : List(U8) -> Str
     field_str = |bytes|
-        match Str.from_utf8(bytes) {
+        match Str.from_utf8(reverse(bytes)) {
             Ok(s) => s
             Err(_) => ""
         }
+
+    # Accumulating at the front is O(1); reversing once at a field/row boundary keeps
+    # parsing linear. The previous append-per-byte implementation became quadratic on
+    # real Strava exports and could trigger the current compiler's heap-corruption bug.
+    reverse : List(a) -> List(a)
+    reverse = |xs| List.fold(xs, [], |acc, x| List.prepend(acc, x))
 
     # index of the nth occurrence (0-based) of a header name — Strava's export has
     # DUPLICATE headers ("Distance" twice: km then meters) so occurrence matters.
@@ -75,6 +91,7 @@ Csv :: [].{
 
 # plain fields, trailing newline ignored
 expect Csv.parse("a,b\n1,2\n") == [["a", "b"], ["1", "2"]]
+
 
 # quoted comma, escaped quote, quoted newline, CRLF endings
 expect Csv.parse("name,note\r\n\"Ride, hard\",\"said \"\"go\"\"\"\r\n\"multi\nline\",x") == [["name", "note"], ["Ride, hard", "said \"go\""], ["multi\nline", "x"]]
