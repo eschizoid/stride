@@ -200,7 +200,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 14
+    schema_version = 15
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -266,7 +266,10 @@ Db :: [].{
         # v14: the period-FTP subquery (ADR 0005) filters on sport_type AND start_local
         # together, once per row being scored. start_local alone leaves a scan over every
         # activity of every OTHER sport on each lookup; the composite makes it a range seek.
-        Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_sport_start ON activities(sport_type, start_local)", bindings: [] })
+        Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_sport_start ON activities(sport_type, start_local)", bindings: [] })?
+        # v15: NULL = Strava never said (pre-flag rows, CSV imports); 1 = real meter; 0 =
+        # estimated. Estimated watts must not outrank honest fallbacks (#73).
+        alter_add_column!(path, "ALTER TABLE activities ADD COLUMN device_watts INTEGER")
     }
 
     # rename old => new when old exists and new doesn't (idempotent, data-preserving)

@@ -99,6 +99,9 @@ Analyze :: [].{
         raw : [NotNull(Str), Null],
         # the FTP in force WHEN this activity happened (ADR 0005), not today's
         pftp : F64,
+        # False = Strava flagged the watts as ESTIMATED (no meter). NULL rows (pre-flag
+        # syncs, CSV imports) coalesce to True — unknown is not evidence of estimation.
+        dw : Bool,
     }
 
     # analyze runs compute_missing_metrics! to a FIXED POINT (bounded), not once. A batch can
@@ -144,6 +147,7 @@ Analyze :: [].{
                 \\       COALESCE(a.sport_type, '') AS sport,
                 \\       CAST(a.relative_effort AS REAL) AS re, CAST(a.avg_watts AS REAL) AS aw, CAST(a.avg_hr AS REAL) AS ahr,
                 \\       CAST(a.weighted_avg_watts AS REAL) AS waw, CAST(r.rpe AS REAL) AS rpe, s.raw_json AS raw,
+                \\       COALESCE(a.device_watts, 1) AS dw,
                 \\       CAST(ROUND(${period_ftp_sql}) AS REAL) AS pftp
                 \\FROM activities a
                 \\LEFT JOIN streams s ON s.activity_id = a.id
@@ -171,7 +175,8 @@ Analyze :: [].{
                 rpe = Sqlite.nullable_f64("rpe")(cols)(stmt)?
                 raw = Sqlite.nullable_str("raw")(cols)(stmt)?
                 pftp = Sqlite.f64("pftp")(cols)(stmt)?
-                Ok({ id, start, mt, sport, re, aw, ahr, waw, rpe, raw, pftp })
+                dw = Sqlite.i64("dw")(cols)(stmt)?
+                Ok({ id, start, mt, sport, re, aw, ahr, waw, rpe, raw, pftp, dw: dw != 0 })
             },
         })?
         process_rows!(path, zb, threshold_map, cfg, rows, { computed: 0, stream_errors: 0 })
@@ -368,10 +373,17 @@ Analyze :: [].{
         )
         # drop non-physiological power samples (sensor glitches) the same way HR is
         # filtered — one 1s spike would inflate NP and the 20-min best behind FTP.
-        watts_pairs = List.keep_if(
-            Streams.stream_pairs(streams.time, streams.watts),
-            |p| Metrics.valid_watts(p.v),
-        )
+        # Estimated watts (#73): device_watts=False means the whole stream is Strava's
+        # model output, not a measurement — it must not feed NP, the 20-min best behind
+        # DERIVED FTP, the power curve, or the intensity split. Drop it wholesale.
+        watts_pairs =
+            if row.dw
+                List.keep_if(
+                    Streams.stream_pairs(streams.time, streams.watts),
+                    |p| Metrics.valid_watts(p.v),
+                )
+            else
+                []
         # held pairs: NP wants values, the bests need real seconds to reject pause-spanning windows
         watts_1s_pairs = Metrics.resample_1s_pairs(watts_pairs, Hold)
         watts_1s = List.map(watts_1s_pairs, |p| p.v)
@@ -463,6 +475,7 @@ Analyze :: [].{
             # ladder falls through to HR — same shape as a no-power sport on the power rung.
             ngp: ngp_for_ladder,
             threshold_speed,
+            device_watts: row.dw,
             dur_s: (row.mt).to_f64(),
             moving_time: row.mt,
         })
@@ -621,5 +634,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 21
+    metrics_rev = 22
 }

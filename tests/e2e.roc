@@ -161,6 +161,7 @@ run_all! = || {
     b_rpe!(ctx)?
     b_compare!(ctx)?
     b_doctor!(ctx)?
+    b_device_watts!(ctx)?
     b_human!(ctx)?
     b_migration!(ctx)?
     _ = sh!("rm -rf '${home}'")
@@ -652,6 +653,20 @@ b_doctor! = |ctx| {
     check!("bad tz not ok", strjq!(ctx, ["doctor"], ".data.time_ok") == "false")?
     check!("bad tz shows UNKNOWN", Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UNKNOWN"))?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ""])
+    Ok({})
+}
+
+# ── #73: estimated watts must not outrank honest fallbacks ──────────
+# Twin rides on ctx.d1 (ride 101's derived FTP 190 is in force): identical watts/HR,
+# only the device_watts flag differs. NULL (legacy rows, CSV imports) = measured;
+# 0 = Strava's estimate, which must fall through to the HR rung.
+b_device_watts! : Ctx => Try({}, _)
+b_device_watts! = |ctx| {
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_watts,avg_hr,device_watts) VALUES (401,'estimated ride','Ride','${ctx.d1}T12:00:00Z',3600,200,150,0);")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_watts,avg_hr) VALUES (402,'meterless-flag ride','Ride','${ctx.d1}T14:00:00Z',3600,200,150);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("estimated watts fall through to HR", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=401;")) == "hr_avg")?
+    check!("NULL device_watts still scores as measured", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=402;")) == "avg_watts")?
     Ok({})
 }
 
