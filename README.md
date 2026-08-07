@@ -111,8 +111,13 @@ sudo mv stride /usr/local/bin/          # or anywhere on your PATH (e.g. ~/.loca
 stride --version
 ```
 
-Verify the download against [`SHA256SUMS.txt`](https://github.com/eschizoid/stride/releases/latest)
-if you like: `sha256sum -c SHA256SUMS.txt`.
+Verify the download against [`SHA256SUMS.txt`](https://github.com/eschizoid/stride/releases/latest/download/SHA256SUMS.txt)
+if you like:
+
+```bash
+curl -fsSLO https://github.com/eschizoid/stride/releases/latest/download/SHA256SUMS.txt
+sha256sum -c SHA256SUMS.txt --ignore-missing   # checks the asset(s) you downloaded
+```
 
 ### Build from source
 
