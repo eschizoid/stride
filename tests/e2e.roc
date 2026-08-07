@@ -564,7 +564,7 @@ b_import! = |ctx| {
     check!("imported power ride gets TSS", tss9001 != "" and tss9001 != "0.0")?
     _ = stride!(ctx.bin, ctx.home, ["import", expdir])
     check!("re-import idempotent (2 rows)", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id IN (9001, 9002);")) == "2")?
-    _ = sh!("cd '${expdir}' && python3 -m zipfile -c export.zip activities.csv")
+    _ = sh!("cd '${expdir}' && zip -q export.zip activities.csv 2>/dev/null")
     check!("import from zip", Str.contains(stride!(ctx.bin, ctx.home, ["import", "${expdir}/export.zip"]), "\"imported\":2"))?
     check!("missing export explains itself", Str.contains(stride_human!(ctx.bin, ctx.home, ["import", "/nonexistent-dir-xyz"]), "no activities.csv"))?
     _ = sh!("rm -rf '${expdir}'")

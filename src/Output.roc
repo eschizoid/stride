@@ -75,11 +75,11 @@ Output :: [].{
         else
             Stdout.line!(msg)
 
-    # unconfigured HR zones: JSON error for tools, the setup help for humans
+    # unconfigured zones/FTP: JSON error for tools, the setup help for humans
     missing_config! : {} => Try({}, _)
     missing_config! = |{}|
         if json_mode!({})
-            emit_err!("missing_config", "set your HR zone bounds first — see `stride config` (FTP is derived automatically)")
+            emit_err!("missing_config", "set your FTP and HR zone bounds first — see `stride config`")
         else
             Stdout.line!(zone_config_help)
 }

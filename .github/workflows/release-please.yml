@@ -87,19 +87,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: stride-${{ matrix.target }}
-          path: |
-            stride-${{ matrix.target }}*
-          if-no-files-found: error
-
-      - name: Stage account-export helper
-        if: matrix.target == 'linux-x86_64'
-        run: cp tools/stride_activity_file.py stride_activity_file.py
-
-      - uses: actions/upload-artifact@v7
-        if: matrix.target == 'linux-x86_64'
-        with:
-          name: stride-activity-helper
-          path: stride_activity_file.py
+          path: stride-${{ matrix.target }}*
           if-no-files-found: error
 
   upload:
@@ -123,6 +111,6 @@ jobs:
           set -euo pipefail
           cd dist
           ls stride-* >/dev/null 2>&1 || { echo "::error::no binaries built — nothing to attach"; exit 1; }
-          sha256sum stride-* stride_activity_file.py > SHA256SUMS.txt
-          gh release upload "$TAG" stride-* stride_activity_file.py SHA256SUMS.txt \
+          sha256sum stride-* > SHA256SUMS.txt
+          gh release upload "$TAG" stride-* SHA256SUMS.txt \
             --repo "${{ github.repository }}" --clobber

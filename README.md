@@ -43,7 +43,7 @@ total "TSS" and `doctor` breaks it down by per-session confidence.
 
 **What you'll need:** a terminal and `sqlite3`. For your data, two paths — the free
 **account export** (`stride import`, no API app and no Strava subscription) for
-summary and original activity-file history, or your own **Strava API app** for live daily sync and full
+summary-level history, or your own **Strava API app** for live daily sync and full
 stream history (that path needs an active Strava subscription to hold API
 credentials). Either way stride is a command-line tool and a personal daily-driver,
 not a hosted service or a phone app; first-time setup is about ten minutes.
@@ -105,16 +105,10 @@ and put it on your `PATH`. Pick one:
 ```bash
 # example: macOS Apple Silicon — adjust the asset for your platform
 curl -fsSL -o stride https://github.com/eschizoid/stride/releases/latest/download/stride-macos-arm64
-sudo mkdir -p /usr/local/libexec
-sudo curl -fsSL -o /usr/local/libexec/stride_activity_file.py \
-  https://github.com/eschizoid/stride/releases/latest/download/stride_activity_file.py
 chmod +x stride
 sudo mv stride /usr/local/bin/          # or anywhere on your PATH (e.g. ~/.local/bin)
 stride --version
 ```
-
-Account-export import and analysis also need Python 3 on `PATH`; the helper uses only
-Python's standard library. API-only workflows continue to use the Roc binary directly.
 
 Verify the download against [`SHA256SUMS.txt`](https://github.com/eschizoid/stride/releases/latest)
 if you like: `sha256sum -c SHA256SUMS.txt`. (Linux arm64 is not published yet — see
@@ -122,103 +116,12 @@ if you like: `sha256sum -c SHA256SUMS.txt`. (Linux arm64 is not published yet �
 
 ### Build from source
 
-Needs the pinned Roc toolchain (see [Development](#development)), Python 3 (standard
-library only, for FIT/GPX export decoding), and `just`:
+Needs the pinned Roc toolchain (see [Development](#development)) and `just`:
 
 ```bash
 git clone https://github.com/eschizoid/stride.git && cd stride
 just install        # builds the binary, symlinks it into ~/.local/bin
 ```
-
-### Build and run in Docker
-
-The included `Dockerfile` builds stride from this checkout with the same pinned
-Roc nightly as CI. It verifies the compiler archive's SHA-256, then copies only the
-resulting binary into an unprivileged runtime image; credentials are never part of
-the image or a build layer. The current image target is Linux x86-64.
-
-```bash
-docker build --tag stride-sandbox:local .
-docker volume create stride-data
-```
-
-#### Account export (fully offline)
-
-For a Strava account export, skip `auth`, `sync`, and `backfill` entirely. Initialize
-the database, then mount the downloaded ZIP read-only and import it with networking
-disabled. Use an absolute host path for the ZIP:
-
-```bash
-docker run --rm --network none \
-  --read-only --cap-drop ALL --security-opt no-new-privileges \
-  --mount source=stride-data,target=/data \
-  stride-sandbox:local init
-
-docker run --rm --network none \
-  --read-only --cap-drop ALL --security-opt no-new-privileges \
-  --mount source=stride-data,target=/data \
-  --mount type=bind,source=/absolute/path/to/strava-export.zip,target=/imports/strava-export.zip,readonly \
-  stride-sandbox:local import /imports/strava-export.zip
-```
-
-The importer reads `activities.csv`, then decodes only each row's referenced
-FIT/FIT.GZ/GPX member into time, HR, power, altitude, and distance streams. It never
-extracts the archive or reads photos; member paths are validated and decoded one at a
-time with a 64 MiB decompressed-size limit. Configure HR zones and the local-day anchor as in
-[Quick start](#quick-start), then analyze and read the results using the same locked-
-down, offline container:
-
-```bash
-docker run --rm --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges --mount source=stride-data,target=/data \
-  stride-sandbox:local analyze
-
-docker run --rm --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges --mount source=stride-data,target=/data \
-  stride-sandbox:local summary
-```
-
-Stream-derived zones, power, pace, and intensity work offline wherever the original
-activity file contains those sensor channels. A file cannot restore a sensor that was
-never recorded, and Strava's custom HR-zone boundaries still need to be configured.
-
-#### Strava API sync
-
-Make `STRAVA_CLIENT_ID` and `STRAVA_CLIENT_SECRET` available in the host shell, then
-run the one-time authorization. The image has no browser, so open the printed Strava
-URL on the host and paste the returned `code=` value into the container:
-
-```bash
-docker run --rm -it \
-  --read-only \
-  --cap-drop ALL \
-  --security-opt no-new-privileges \
-  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-  --mount source=stride-data,target=/data \
-  --env STRAVA_CLIENT_ID \
-  --env STRAVA_CLIENT_SECRET \
-  stride-sandbox:local auth
-```
-
-The named volume keeps `~/.stride/db.sqlite` (including the OAuth tokens) between
-disposable containers. Day-to-day sync uses the same volume and no credential
-environment variables:
-
-```bash
-docker run --rm -it \
-  --read-only \
-  --cap-drop ALL \
-  --security-opt no-new-privileges \
-  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-  --mount source=stride-data,target=/data \
-  stride-sandbox:local sync
-```
-
-Replace `sync` with `analyze`, `summary`, `doctor`, or another stride command as
-needed. Docker isolates the host filesystem, but its default network still permits
-general outbound traffic; enforcing Strava-only egress requires a firewall or
-forward proxy outside the container. To permanently discard the local database and
-tokens, revoke the Strava authorization first, then remove the `stride-data` volume.
 
 ## Quick start
 
@@ -245,7 +148,7 @@ of your Strava account export — `config` and `analyze` are identical:
 
 ```bash
 stride init
-stride import ~/Downloads/strava_export.zip   # summaries + FIT/GPX streams, no API app
+stride import ~/Downloads/strava_export.zip   # summary-level history, no API app
 stride config set hr_z1_max 120                # + the rest of the HR zones + timezone, as above
 stride analyze
 ```
