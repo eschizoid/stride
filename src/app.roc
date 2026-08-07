@@ -193,7 +193,7 @@ config_store! = |key, val|
     if Config.is_derived(key)
         Output.err_out!(
             "derived_key",
-            "${key} is derived from your power history, not configured — stride uses that sport's best 20-min power x 0.95 over the 60 days around each activity. Nothing to set; `stride summary` shows the current value.",
+            "${key} is derived from your power history, not configured — stride uses that sport's best 20-min power x 0.95 over the 60 days up to each activity. Nothing to set; `stride summary` shows the current value.",
         )
     else {
         path = Db.open_db!({})?
