@@ -313,6 +313,11 @@ b_cred_safety! = |ctx| {
     sec_out = stride!(ctx.bin, ctx.home, ["config", "get", "strava_access_token"])
     check!("secret key reports redacted", Str.contains(sec_out, "\"redacted\":true"))?
     check!("secret VALUE never appears", !(Str.contains(sec_out, "SECRETVAL123")))?
+    # the SET path must not leak either — it used to echo the raw value back
+    set_sec = stride!(ctx.bin, ctx.home, ["config", "set", "strava_client_secret", "SETSECRET456"])
+    check!("set never echoes a secret", !(Str.contains(set_sec, "SETSECRET456")))?
+    check!("set reports redacted", Str.contains(set_sec, "redacted"))?
+    check!("secret was still stored", Str.trim(sql!(ctx.db, "SELECT value FROM config WHERE key='strava_client_secret';")) == "SETSECRET456")?
     perms = Str.trim(sh!("stat -c '%a' '${ctx.db}' 2>/dev/null || stat -f '%Lp' '${ctx.db}' 2>/dev/null"))
     check!("db is chmod 600", perms == "600")?
     Ok({})

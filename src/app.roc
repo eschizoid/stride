@@ -199,9 +199,13 @@ config_store! = |key, val|
         path = Db.open_db!({})?
         Db.config_set!(path, key, val)?
         # same contract as every query command: JSON envelope for tools, plain line for
-        # humans. The refusal above already emits the envelope, so success must too — a
-        # machine caller should never have to guess which shape is coming.
-        Output.out!({ key, value: val }, |p| "${p.key} = ${p.value}")
+        # humans. The refusal above already emits the envelope, so success must too. And a
+        # SECRET is never echoed back — not to the terminal (shell history, CI logs) and
+        # not into the JSON envelope — matching the redaction config get enforces.
+        (if Config.is_secret(key)
+            Output.out!({ key, value: "<redacted>", redacted: Config.is_secret(key) }, |p| "${p.key} = <redacted> (stored)")
+        else
+            Output.out!({ key, value: val }, |p| "${p.key} = ${p.value}"))
     }
 init! : {} => Try({}, _)
 init! = |{}| {
