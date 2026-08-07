@@ -12,3 +12,6 @@
 
 # token-savior index cache (local tool artifact)
 .token-savior-cache.json
+
+# local Strava account exports contain private activity data
+/export_*.zip
