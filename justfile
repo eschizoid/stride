@@ -25,6 +25,7 @@ build:
 
 # full suite: pure expects -> fresh build (must succeed!) -> effectful e2e
 test:
+    python3 -m unittest tests/test_activity_file.py
     {{roc}} test src/Metrics.roc
     {{roc}} test src/Render.roc
     {{roc}} test src/Backfill.roc
@@ -48,6 +49,7 @@ e2e-sync:
 
 # build + refresh the ~/.local/bin symlink
 install: build
+    install -Dm755 tools/stride_activity_file.py "${HOME}/.local/lib/stride/stride_activity_file.py"
     ln -sf "$PWD/stride" "$HOME/.local/bin/stride"
 
 # ── daily driving ────────────────────────────────────────────────────

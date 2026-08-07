@@ -7,6 +7,7 @@ import pf.Path
 import Metrics
 import Render
 import Streams
+import ActivityHelper
 
 Analyze :: [].{
 
@@ -17,7 +18,7 @@ Analyze :: [].{
             Err(MissingConfig) => Output.missing_config!({})
             Err(other) => Err(other)
             Ok(zb) => {
-                res = converge_metrics!(path, zb, 5, { computed: 0, stream_errors: 0 })?
+                res = converge_metrics!(path, zb, 1000, { computed: 0, stream_errors: 0 })?
                 rebuild_daily_load!(path)?
                 form =
                     match Sqlite.query!({
@@ -56,6 +57,7 @@ Analyze :: [].{
             }
         }
     }
+
     # only the HR zones are required config — those are universal across sports. FTP is
     # never configured; it is derived per sport, and for SCORING it is the value in force when
     # the activity happened (ADR 0005). Db.sport_ftp! keeps today's-window semantics for the
@@ -94,11 +96,13 @@ Analyze :: [].{
         pftp : F64,
     }
 
-    # analyze runs compute_missing_metrics! to a FIXED POINT (bounded), not once. A pass can
+    # analyze runs compute_missing_metrics! to a FIXED POINT (bounded), not once. A batch can
     # change a sport's DERIVED FTP (its best_20min_w gets populated), which invalidates rows
     # the next pass must rescore; iterate until a pass computes 0 (converged) or fuel runs
-    # out. Configured-FTP dbs converge in one real pass (pass 2 finds nothing), so the count
-    # still matches "activities analyzed"; a fresh derived-FTP db converges in ~2.
+    # out. compute_missing_metrics! deliberately selects only 64 rows: account exports can
+    # hold millions of samples, so bounded batches avoid retaining the whole history's raw
+    # streams in memory. Re-querying also naturally revisits rows whose newly-derived FTP or
+    # pace threshold invalidated them.
     converge_metrics! : Str, Metrics.ZoneBounds, U64, { computed : U64, stream_errors : U64 } => Try({ computed : U64, stream_errors : U64 }, _)
     converge_metrics! = |path, zb, fuel, acc|
         if fuel == 0 {
@@ -143,6 +147,7 @@ Analyze :: [].{
                 \\      OR CAST(ROUND(COALESCE(m.threshold_pace_used, 0) * 1000) AS INTEGER) <> CAST(ROUND((${threshold_case}) * 1000) AS INTEGER)
                 \\      OR COALESCE(m.zones_used, '') <> (${zones_case})
                 \\      OR COALESCE(m.metrics_rev, 0) <> :rev
+                \\ORDER BY a.start_local, a.id LIMIT 64
             ,
             bindings: [
                 { name: ":rev", value: Integer(metrics_rev) },
@@ -340,6 +345,19 @@ Analyze :: [].{
     # returns Bool: did the stored stream JSON fail to decode? (surfaced by analyze)
     compute_one! : Str, Metrics.ZoneBounds, List((Str, F64)), List((Str, Str)), ActivityRow => Try(Bool, _)
     compute_one! = |path, zb, threshold_map, cfg, row| {
+        row_zb = resolve_zones_pure(cfg, row.sport, zb)
+        threshold = lookup_threshold(threshold_map, row.sport)
+        match row.raw {
+            NotNull(raw) =>
+                if Str.starts_with(raw, "stride-stream-v1:")
+                    ActivityHelper.analyze_export!(path, row.id, row.pftp, threshold, row_zb.z1_max, row_zb.z2_max, row_zb.z3_max, row_zb.z4_max, zones_sig(row_zb), metrics_rev)
+                else
+                    compute_stream_one!(path, zb, threshold_map, cfg, row)
+            Null => compute_stream_one!(path, zb, threshold_map, cfg, row)
+        }
+    }
+
+    compute_stream_one! = |path, zb, threshold_map, cfg, row| {
         decoded = Streams.decode_streams(row.raw)
         streams = decoded.streams
         # this sport's zone bounds: per-sport override or global, resolved purely from
