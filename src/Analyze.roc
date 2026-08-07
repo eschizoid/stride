@@ -424,7 +424,7 @@ Analyze :: [].{
             if !(List.is_empty(watts_pairs))
                 Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
             else
-                Metrics.time_in_pace_intensity(gas_speeds, threshold_speed)
+                Metrics.time_in_pace_intensity(gas_1s_pairs, threshold_speed)
 
         # the fallback chain lives in Metrics.tss_ladder (pure, expect-tested)
         nn = |x|
@@ -607,5 +607,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 18
+    metrics_rev = 19
 }
