@@ -844,7 +844,7 @@ Report :: [].{
             path: Path.utf8(path),
             query:
                 \\SELECT (SELECT COUNT(DISTINCT a.sport_type) FROM activity_metrics m
-                \\        JOIN activities a ON a.id = m.activity_id WHERE m.ftp_used > 0 AND a.sport_type IS NOT NULL) AS derived_ftp_sports,
+                \\        JOIN activities a ON a.id = m.activity_id WHERE m.ftp_used > 0 AND a.sport_type IS NOT NULL AND a.sport_type <> '') AS derived_ftp_sports,
                 \\       COALESCE(SUM(CASE WHEN key IN ('hr_z1_max','hr_z2_max','hr_z3_max','hr_z4_max') THEN 1 ELSE 0 END),0) AS zones_set,
                 \\       COALESCE(SUM(CASE WHEN key GLOB 'hr_z[1-4]_max_?*' THEN 1 ELSE 0 END),0) AS sport_zone_overrides
                 \\FROM config

@@ -293,8 +293,10 @@ b_config_ftp! = |ctx| {
     _ = sql!(ctx.db, "DELETE FROM config WHERE key='ftp_ride';")
 
     # a configurable key still round-trips normally
-    tz_out = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", "America/Chicago"])
-    check!("config set reports local value", Str.contains(tz_out, "timezone = America/Chicago"))?
+    # config set success is now a JSON envelope for tools (matching the refusal path) —
+    # assert the envelope, and the human line separately
+    check!("config set emits the JSON envelope", strjq!(ctx, ["config", "set", "timezone", "America/Chicago"], ".data.value") == "America/Chicago")?
+    check!("config set human line", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "set", "timezone", "America/Chicago"]), "timezone = America/Chicago"))?
     check!("value stored + read back (human)", Str.trim(stride_human!(ctx.bin, ctx.home, ["config", "get", "timezone"])) == "America/Chicago")?
     check!("config get json value", strjq!(ctx, ["config", "get", "timezone"], ".data.value") == "America/Chicago")?
     check!("config get not_set error", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "nope"]), "not_set"))?
