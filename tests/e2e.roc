@@ -669,8 +669,10 @@ b_migration! = |ctx| {
     check!("metric provenance columns added", Str.contains(sql!(migdb, "SELECT load_model, metrics_rev, zones_used FROM activity_metrics LIMIT 0; SELECT 'ok';"), "ok"))?
     check!("weighted_avg_watts column added", Str.contains(sql!(migdb, "SELECT weighted_avg_watts FROM activities LIMIT 0; SELECT 'ok';"), "ok"))?
     check!("activities survive migration", Str.trim(sql!(migdb, "SELECT COUNT(*) FROM activities;")) == "2")?
+    # the idempotency re-run must OPEN the db; ftp_ride no longer does (refused before
+    # open_db!), so it would test nothing here — timezone still goes through the db
     _ = stride!(ctx.bin, mighome, ["analyze"])
-    _ = stride!(ctx.bin, mighome, ["config", "get", "ftp_ride"])
+    _ = stride!(ctx.bin, mighome, ["config", "get", "timezone"])
     check!("re-run idempotent (version stable)", str_to_i64(Str.trim(sql!(migdb, "PRAGMA user_version;"))) == migv)?
     check!("re-run keeps data", Str.trim(sql!(migdb, "SELECT COUNT(*) FROM activities;")) == "2")?
     _ = sh!("rm -rf '${mighome}'")
