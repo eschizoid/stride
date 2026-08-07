@@ -1621,9 +1621,9 @@ expect {
 # decays both, fatigue (7d) faster than fitness (42d)
 expect {
     s = Metrics.load_step({ ctl_prev: 50.0, atl_prev: 60.0, tss: 0.0 })
-    # decay by the true EWMA factor, not 1/tau: 50*(1-alpha_ctl), 60*(1-alpha_atl)
-    (s.ctl - 50.0 * (1.0 - 0.0235283133)).abs() < 0.001
-    and (s.atl - 60.0 * (1.0 - 0.1331221)).abs() < 0.001
+    # decay by the true EWMA factor via the module constants — one source of truth
+    (s.ctl - 50.0 * (1.0 - Metrics.ctl_alpha)).abs() < 0.001
+    and (s.atl - 60.0 * (1.0 - Metrics.atl_alpha)).abs() < 0.001
     and (s.tsb - (s.ctl - s.atl)).abs() < 0.001 # tsb reconciles same-day
     and (60.0 - s.atl) > (50.0 - s.ctl) # fatigue shed more than fitness on a rest day
 }
