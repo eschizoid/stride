@@ -53,6 +53,12 @@ jobs:
             runs-on: ubuntu-latest
           - target: linux-arm64
             runs-on: ubuntu-24.04-arm
+            # UNVERIFIED: this target has never produced an asset. On ubuntu-24.04-arm the
+            # compiler auto-detects arm64v1musl, which does not resolve to a usable host, so
+            # the job fails and the release ships without it (fail-fast is off, upload runs
+            # with always()). Naming the target explicitly is the documented fix; it can only
+            # be confirmed by a real release, and it cannot regress the other four.
+            roc_target: arm64musl
           - target: macos-arm64
             runs-on: macos-latest
           - target: macos-x86_64
@@ -70,7 +76,10 @@ jobs:
       - name: Build
         run: |
           set -euo pipefail
-          roc build src/app.roc --output="stride-${{ matrix.target }}" --opt=dev
+          # only linux-arm64 sets roc_target; everywhere else the native default is right
+          target_flag=""
+          if [ -n "${{ matrix.roc_target }}" ]; then target_flag="--target=${{ matrix.roc_target }}"; fi
+          roc build src/app.roc --output="stride-${{ matrix.target }}" --opt=dev $target_flag
           ls -la stride-${{ matrix.target }}* || true
           test -f "stride-${{ matrix.target }}" || test -f "stride-${{ matrix.target }}.exe"
       - name: Verify binary version

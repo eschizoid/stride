@@ -4,6 +4,18 @@ name: build
 on:
   push:
   pull_request:
+  # lets a run be retriggered without an empty commit — during the 2026-08-06 Actions
+  # outage the only way to get a fresh run was to resurrect a dead one, which is
+  # unreliable for runs that ended `cancelled`
+  workflow_dispatch:
+
+# One run per ref. A second push supersedes the first instead of queueing behind it:
+# without this, four runs stacked up on two branches during an Actions outage and every
+# one of them still had to be scheduled before the newest could start. `main` is exempt —
+# cancelling a merge-commit build would leave the default branch with no result.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # Type-check the whole app + run every pure module's expect suite, on all three
