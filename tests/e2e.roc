@@ -170,9 +170,9 @@ run_all! = || {
 # ── sync mode: drive the real sync path against a running mock (a sibling instance
 # started with E2E_MODE=mock). Seeds an EXPIRED token so sync must refresh first,
 # then asserts token refresh + activity/stream pull. Mirrors old tests/e2e_sync.sh.
-# TSS reads the per-sport ftp_<sport> key, not the legacy bare `ftp` — the power Ride
-# (501) scores via ftp_ride. ftp_rowing is seeded too for completeness; the HR-only
-# Rowing row (502) scores from HR, not power. ────────────────────────────────────────
+# TSS uses each sport's DERIVED FTP — no ftp_<sport> key is set, because setting one is
+# refused. The power Ride (501) scores from its own stream; the HR-only Rowing row (502)
+# has no power, so it falls to HR. ───────────────────────────────────────────────────
 run_sync! : () => Try({}, _)
 run_sync! = || {
     bin = env_or!("STRIDE_BIN", "./stride")
@@ -184,8 +184,6 @@ run_sync! = || {
     check!("mock strava came up on ${base}", mock_up!(base))?
 
     _ = sync_stride!(bin, home, base, ["init"])
-    _ = sync_stride!(bin, home, base, ["config", "set", "ftp_ride", "200"])
-    _ = sync_stride!(bin, home, base, ["config", "set", "ftp_rowing", "200"])
     _ = sync_stride!(bin, home, base, ["config", "set", "hr_z1_max", "123"])
     _ = sync_stride!(bin, home, base, ["config", "set", "hr_z2_max", "153"])
     _ = sync_stride!(bin, home, base, ["config", "set", "hr_z3_max", "168"])
@@ -242,9 +240,10 @@ mock_up! = |base|
 b_init_config! : Ctx => Try({}, _)
 b_init_config! = |ctx| {
     check!("init reports initialized", Str.contains(stride!(ctx.bin, ctx.home, ["init"]), "initialized"))?
-    check!("summary envelope is versioned", strjq!(ctx, ["summary"], ".schema_version") == "1")?
+    # bumped to 2 when doctor renamed ftp_configured -> ftp_derived_sports: a renamed field
+    # IS a shape change, and the envelope version is how a caller detects one
+    check!("summary envelope is versioned", strjq!(ctx, ["summary"], ".schema_version") == "2")?
     check!("missing-config error code", Str.contains(stride!(ctx.bin, ctx.home, ["summary"]), "missing_config"))?
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", "200"])
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", "123"])
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max", "153"])
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z3_max", "168"])
@@ -273,16 +272,37 @@ b_pz! = |ctx| {
     Ok({})
 }
 
-# ── config set/get: local key-value store (#26 removed the Strava-FTP push, so a set
-# just stores locally). ftp_ride is now an ordinary key — derived FTP ignores it. ──────
+# ── config set/get: local key-value store. FTP keys are REFUSED (ADR 0005 — derived from
+# power history, never configured); everything else round-trips. ──────────────────────
 b_config_ftp! : Ctx => Try({}, _)
 b_config_ftp! = |ctx| {
+    # FTP is DERIVED (ADR 0005): setting it must be refused, not silently stored. This block
+    # used to assert the opposite — that `config set ftp_ride 195` reported "ftp_ride = 195"
+    # — which is exactly the trap: a confirmation for a value the engine never reads.
     set_out = stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", "195"])
-    check!("config set reports local value", Str.contains(set_out, "ftp_ride = 195"))?
-    check!("value stored + read back (human)", Str.trim(stride_human!(ctx.bin, ctx.home, ["config", "get", "ftp_ride"])) == "195")?
-    check!("config get json value", strjq!(ctx, ["config", "get", "ftp_ride"], ".data.value") == "195")?
+    check!("setting a derived key is refused", Str.contains(set_out, "derived_key"))?
+    check!("refusal explains where FTP comes from", Str.contains(set_out, "power history"))?
+    check!("reading a derived key is refused too", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "ftp_ride"]), "derived_key"))?
+
+    # the trap this closes: a db from before FTP was derived still holds an ftp_ride row.
+    # Setting is refused, so only a LEGACY row can exist — and it must not be echoed back.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key,value) VALUES ('ftp_ride','999');")
+    legacy = stride!(ctx.bin, ctx.home, ["config", "get", "ftp_ride"])
+    check!("a LEGACY stored value is not echoed", !(Str.contains(legacy, "999")))?
+    check!("legacy read explains why", Str.contains(legacy, "derived_key"))?
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key='ftp_ride';")
+
+    # a configurable key still round-trips normally
+    # config set success is now a JSON envelope for tools (matching the refusal path) —
+    # assert the envelope, and the human line separately
+    check!("config set emits the JSON envelope", strjq!(ctx, ["config", "set", "timezone", "America/Chicago"], ".data.value") == "America/Chicago")?
+    check!("config set human line", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "set", "timezone", "America/Chicago"]), "timezone = America/Chicago"))?
+    check!("value stored + read back (human)", Str.trim(stride_human!(ctx.bin, ctx.home, ["config", "get", "timezone"])) == "America/Chicago")?
+    check!("config get json value", strjq!(ctx, ["config", "get", "timezone"], ".data.value") == "America/Chicago")?
     check!("config get not_set error", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "nope"]), "not_set"))?
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", "200"])
+    # delete the row rather than storing "" — an empty value is a stored-but-invalid
+    # timezone, not an absent one, and doctor treats those differently
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key='timezone';")
     Ok({})
 }
 
@@ -293,9 +313,13 @@ b_cred_safety! = |ctx| {
     sec_out = stride!(ctx.bin, ctx.home, ["config", "get", "strava_access_token"])
     check!("secret key reports redacted", Str.contains(sec_out, "\"redacted\":true"))?
     check!("secret VALUE never appears", !(Str.contains(sec_out, "SECRETVAL123")))?
+    # the SET path must not leak either — it used to echo the raw value back
+    set_sec = stride!(ctx.bin, ctx.home, ["config", "set", "strava_client_secret", "SETSECRET456"])
+    check!("set never echoes a secret", !(Str.contains(set_sec, "SETSECRET456")))?
+    check!("set reports redacted", Str.contains(set_sec, "redacted"))?
+    check!("secret was still stored", Str.trim(sql!(ctx.db, "SELECT value FROM config WHERE key='strava_client_secret';")) == "SETSECRET456")?
     perms = Str.trim(sh!("stat -c '%a' '${ctx.db}' 2>/dev/null || stat -f '%Lp' '${ctx.db}' 2>/dev/null"))
     check!("db is chmod 600", perms == "600")?
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", "200"])
     Ok({})
 }
 
@@ -618,7 +642,7 @@ b_doctor! = |ctx| {
     ch = strjq!(ctx, ["doctor"], ".data.conf_high")
     powr = strjq!(ctx, ["doctor"], "[.data.scored_by[] | select(.model==\"power_stream\" or .model==\"weighted_watts\" or .model==\"avg_watts\") | .n] | add // 0")
     check!("conf_high == power-rung provenance", ch == powr)?
-    check!("doctor ftp_configured >= 1", sfloat(strjq!(ctx, ["doctor"], ".data.ftp_configured")) >= 1.0)?
+    check!("doctor reports sports with a DERIVED ftp", sfloat(strjq!(ctx, ["doctor"], ".data.ftp_derived_sports")) >= 1.0)?
     check!("doctor zones_set true", strjq!(ctx, ["doctor"], ".data.zones_set") == "true")?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", "America/Chicago"])
     check!("valid tz time_ok", strjq!(ctx, ["doctor"], ".data.time_ok") == "true")?
@@ -652,7 +676,10 @@ b_migration! = |ctx| {
     migdb = "${mighome}/.stride/db.sqlite"
     _ = sh!("mkdir -p '${mighome}/.stride' && sqlite3 '${migdb}' < tests/fixtures/db/v1-legacy.sql")
     check!("fixture starts at user_version 1", Str.trim(sql!(migdb, "PRAGMA user_version;")) == "1")?
-    _ = stride!(ctx.bin, mighome, ["config", "get", "ftp_ride"])
+    # any command that OPENS the db runs migrations. It used to be `config get ftp_ride`,
+    # which no longer touches the db at all — a derived key is refused before open_db!, so
+    # that would have silently stopped exercising the migration path.
+    _ = stride!(ctx.bin, mighome, ["config", "get", "timezone"])
     migv = str_to_i64(Str.trim(sql!(migdb, "PRAGMA user_version;")))
     check!("migration advances schema version", migv > 1)?
     check!("rename preserves planned session row", Str.trim(sql!(migdb, "SELECT session_type FROM planned_sessions WHERE id=1;")) == "vo2max")?
@@ -660,8 +687,10 @@ b_migration! = |ctx| {
     check!("metric provenance columns added", Str.contains(sql!(migdb, "SELECT load_model, metrics_rev, zones_used FROM activity_metrics LIMIT 0; SELECT 'ok';"), "ok"))?
     check!("weighted_avg_watts column added", Str.contains(sql!(migdb, "SELECT weighted_avg_watts FROM activities LIMIT 0; SELECT 'ok';"), "ok"))?
     check!("activities survive migration", Str.trim(sql!(migdb, "SELECT COUNT(*) FROM activities;")) == "2")?
+    # the idempotency re-run must OPEN the db; ftp_ride no longer does (refused before
+    # open_db!), so it would test nothing here — timezone still goes through the db
     _ = stride!(ctx.bin, mighome, ["analyze"])
-    _ = stride!(ctx.bin, mighome, ["config", "get", "ftp_ride"])
+    _ = stride!(ctx.bin, mighome, ["config", "get", "timezone"])
     check!("re-run idempotent (version stable)", str_to_i64(Str.trim(sql!(migdb, "PRAGMA user_version;"))) == migv)?
     check!("re-run keeps data", Str.trim(sql!(migdb, "SELECT COUNT(*) FROM activities;")) == "2")?
     _ = sh!("rm -rf '${mighome}'")

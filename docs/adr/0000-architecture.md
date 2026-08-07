@@ -144,8 +144,8 @@ Don't spend effort making migrations bulletproof against versions no real db is 
 Every JSON response is wrapped and versioned so tool callers can detect a contract
 change and always discriminate success from failure:
 
-- success → `{"schema_version":1,"data":{…}}`
-- error → `{"schema_version":1,"error":{"code":"…","message":"…"}}`
+- success → `{"schema_version":2,"data":{…}}` (was 1 until the doctor field rename, 2026-08-06)
+- error → `{"schema_version":2,"error":{"code":"…","message":"…"}}`
 
 Errors are in-band (exit code stays 0 — read the JSON, not `$?`). The envelope is
 deterministic (no timestamps) so golden comparisons stay stable. Human table output

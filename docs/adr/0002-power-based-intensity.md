@@ -37,10 +37,14 @@ Three compounding reasons HR-only fails here:
   sport's own FTP (so a rowing effort isn't scored against a cycling number).
 - **Per-sport FTP is generic and data-driven — NO hardcoded sport list** (explicitly
   rejected during design; it silently drops swimming/soccer/paddleboard). The threshold key
-  is `ftp_<sport>` for every sport (cycling = `ftp_ride`, migrated from the old `ftp`).
-  Unset? It's **auto-derived from that sport's own best-20-min power × 0.95**, so any power
-  sport with stream history works with zero config; a no-power sport derives 0 and uses
-  HR/RPE. Verified empirically across all the athlete's sports.
+  is per sport, never global (a rowing watt is not a cycling watt).
+
+  > **Amended 2026-08-06.** This originally described `ftp_<sport>` as a config key that is
+  > "auto-derived when unset", which left the door open to configuring it. That door is now
+  > closed: FTP is **always** derived from that sport's own best-20-min power × 0.95 and
+  > never read from config — `stride config set ftp_ride` is refused outright rather than
+  > stored and ignored. ADR 0005 additionally anchors the derivation window to each
+  > activity's own date. A no-power sport derives 0 and falls back to HR/RPE, unchanged.
 
 ## The honesty caveat (load-bearing — do not drop it)
 
@@ -60,8 +64,9 @@ derived numbers as fact. The engine may compute; the coach must caveat.
 
 - **Never regress to HR-only intensity** — it re-introduces the mislabeling. HR zones stay
   only as the fallback for no-power sports (strength, no-strap) and as a cross-sport lens.
-- Adding a sport needs **no code** — set (or auto-derive) its `ftp_<sport>`.
+- Adding a sport needs **no code and no config** — its FTP derives from its own power
+  history the moment that history exists.
 - Confidence tiers (ADR 0000 §4) annotate how much of the load is measured (power) vs
   estimated (HR/RPE), surfaced by `doctor` and as `measured_pct` on the fitness number.
-- Recompute invalidation is per-sport: changing one sport's FTP recomputes only that
+- Recompute invalidation is per-sport: a change in one sport's derived FTP recomputes only that
   sport's rows (a generated `CASE` maps each sport to its FTP in the analyze filter).

@@ -13,7 +13,7 @@
 
 ### ⚠ BREAKING CHANGES
 
-* every machine JSON response is now wrapped. Success is {schema_version:1, data:<payload>}; errors are {schema_version:1, error:{code, message}} — discriminate on which key is present. Deterministic (no timestamps), so golden comparisons stay stable. Tool callers read fields under .data and branch on .error.code. Human table output is unchanged. Made default (not gated) since the user base is still small. stride skill + e2e updated to the enveloped shape.
+* every machine JSON response is now wrapped. Success is {schema_version, data:<payload>}; errors are {schema_version, error:{code, message}} (the version number itself has moved since — the envelope key, not this entry, is the contract) — discriminate on which key is present. Deterministic (no timestamps), so golden comparisons stay stable. Tool callers read fields under .data and branch on .error.code. Human table output is unchanged. Made default (not gated) since the user base is still small. stride skill + e2e updated to the enveloped shape.
 * rename prescriptions to plan across the CLI and data model
 
 ### Features

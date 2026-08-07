@@ -28,7 +28,7 @@ Output :: [].{
     # db schema_version / metrics_rev). Every machine response is versioned so tool
     # callers can detect a contract change.
     json_schema_version : I64
-    json_schema_version = 1
+    json_schema_version = 2
 
     out! = |payload, render|
         if json_mode!({}) emit_ok!(payload) else Stdout.line!(render(payload))
@@ -79,7 +79,7 @@ Output :: [].{
     missing_config! : {} => Try({}, _)
     missing_config! = |{}|
         if json_mode!({})
-            emit_err!("missing_config", "set your FTP and HR zone bounds first — see `stride config`")
+            emit_err!("missing_config", "set your HR zone bounds first — see `stride config` (FTP is derived automatically)")
         else
             Stdout.line!(zone_config_help)
 }

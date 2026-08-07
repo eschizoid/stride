@@ -214,8 +214,8 @@ stride week                                       # everything needed to plan a 
 
 Every query command prints **human tables** in a terminal and **JSON** when
 `STRIDE_FORMAT=json` (agent environments are detected automatically). The JSON is
-a versioned envelope: success is `{"schema_version":1,"data":{…}}`, an in-band
-error is `{"schema_version":1,"error":{"code":"…","message":"…"}}` (exit stays 0 —
+a versioned envelope: success is `{"schema_version":2,"data":{…}}`, an in-band
+error is `{"schema_version":2,"error":{"code":"…","message":"…"}}` (exit stays 0 —
 read the JSON, not `$?`). Malformed invocations print a targeted `usage:` line;
 `stride --help` is the full one-screen manual.
 

@@ -17,6 +17,14 @@ Config :: [].{
 		or Str.ends_with(k, "_token")
 		or Str.ends_with(k, "_secret")
 
+	# Keys the engine DERIVES and never reads from config. Accepting one would be worse
+	# than refusing it: `config set ftp_ride 250` used to succeed, print a confirmation,
+	# and change nothing, because Db.sport_ftp! computes FTP from the athlete's own power
+	# history (ADR 0002, ADR 0005) and never consults config. A stored value that is
+	# silently ignored is a trap, so setting one is rejected with the reason.
+	is_derived : Str -> Bool
+	is_derived = |k| k == "ftp" or Str.starts_with(k, "ftp_")
+
 	# STRIDE_API_BASE is a test seam that points sync at a local mock. The token
 	# exchange/refresh POST carries the client_secret + rotating refresh token, so an
 	# unvalidated base would exfiltrate them to an attacker-controlled host. TLS does
@@ -92,6 +100,20 @@ expect Config.is_secret("") == False
 
 # fail-closed suffix rule: a future secret key is caught even if not in the list
 expect Config.is_secret("strava_webhook_secret") == True
+
+# derived keys: every ftp_<sport> is refused, including sports that do not exist yet —
+# the engine derives per sport from data, so there is no list to keep current
+expect Config.is_derived("ftp_ride") == True
+expect Config.is_derived("ftp_rowing") == True
+expect Config.is_derived("ftp_kitesurfing") == True
+expect Config.is_derived("ftp") == True
+
+# ...and nothing else is. HR zones, the time anchor and the credentials stay configurable
+expect Config.is_derived("hr_z1_max") == False
+expect Config.is_derived("timezone") == False
+expect Config.is_derived("utc_offset_minutes") == False
+expect Config.is_derived("strava_client_id") == False
+expect Config.is_derived("") == False
 expect Config.is_secret("some_api_token") == True
 # ...but public / neutral keys are NOT swept in
 expect Config.is_secret("strava_client_id") == False

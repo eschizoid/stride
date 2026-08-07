@@ -157,30 +157,56 @@ dispatch! = |cmd|
     }
 
 config_show! : Str => Try({}, _)
-config_show! = |key| {
-    path = Db.open_db!({})?
-    if Config.is_secret(key)
-        # confirm set-ness without leaking the value
-        match Db.config_opt!(path, key)? {
-            # redacted must be Bool-TYPED, not a bare `True` tag: the new builtin JSON
-            # serializes a bare tag as the string "True". Config.is_secret(key) is Bool
-            # and is True here (we're inside the is_secret branch).
-            Found(_) => Output.out!({ key, value: "<redacted>", redacted: Config.is_secret(key) }, |_| "${key} = <redacted> (secret — stored in the db, not shown)")
-            NotFound => Output.err_out!("not_set", "(not set)")
-        }
-    else
-        match Db.config_opt!(path, key)? {
-            Found(v) => Output.out!({ key, value: v }, |p| p.value)
-            NotFound => Output.err_out!("not_set", "(not set)")
-
-        }
-}
+config_show! = |key|
+    # A derived key must not be READ back either. Databases created before FTP became
+    # derived still hold ftp_ride / ftp_rowing rows, so echoing the stored value would keep
+    # the "looks like it worked" trap alive for exactly the people who fell into it — they
+    # would see a number the engine never consults. Refusing to set it while still printing
+    # it is half a fix.
+    if Config.is_derived(key)
+        Output.err_out!(
+            "derived_key",
+            "${key} is derived from your power history, not configured. Any value stored under this key is ignored (older databases may still hold one). `stride summary` shows the value actually in use.",
+        )
+    else {
+        # only the paths that actually read a value open the db
+        path = Db.open_db!({})?
+        if Config.is_secret(key)
+            # confirm set-ness without leaking the value
+            match Db.config_opt!(path, key)? {
+                # redacted must be Bool-TYPED, not a bare `True` tag: the new builtin JSON
+                # serializes a bare tag as the string "True". Config.is_secret(key) is Bool
+                # and is True here (we're inside the is_secret branch).
+                Found(_) => Output.out!({ key, value: "<redacted>", redacted: Config.is_secret(key) }, |_| "${key} = <redacted> (secret — stored in the db, not shown)")
+                NotFound => Output.err_out!("not_set", "(not set)")
+            }
+        else
+            match Db.config_opt!(path, key)? {
+                Found(v) => Output.out!({ key, value: v }, |p| p.value)
+                NotFound => Output.err_out!("not_set", "(not set)")
+            }
+    }
 config_store! : Str, Str => Try({}, _)
-config_store! = |key, val| {
-    path = Db.open_db!({})?
-    Db.config_set!(path, key, val)?
-    Stdout.line!("${key} = ${val}")
-}
+config_store! = |key, val|
+    # refuse the keys the engine derives — storing one would confirm a change that never
+    # happens, since sport_ftp! reads power history and not config (ADR 0005)
+    if Config.is_derived(key)
+        Output.err_out!(
+            "derived_key",
+            "${key} is derived from your power history, not configured — stride uses that sport's best 20-min power x 0.95 over the 60 days up to each activity. Nothing to set; `stride summary` shows the current value.",
+        )
+    else {
+        path = Db.open_db!({})?
+        Db.config_set!(path, key, val)?
+        # same contract as every query command: JSON envelope for tools, plain line for
+        # humans. The refusal above already emits the envelope, so success must too. And a
+        # SECRET is never echoed back — not to the terminal (shell history, CI logs) and
+        # not into the JSON envelope — matching the redaction config get enforces.
+        (if Config.is_secret(key)
+            Output.out!({ key, value: "<redacted>", redacted: Config.is_secret(key) }, |p| "${p.key} = <redacted> (stored)")
+        else
+            Output.out!({ key, value: val }, |p| "${p.key} = ${p.value}"))
+    }
 init! : {} => Try({}, _)
 init! = |{}| {
     home = Env.var_str!(OsStr.from_str("HOME"))?
