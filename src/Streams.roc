@@ -20,50 +20,15 @@ Streams :: [].{
 	decode_streams = |raw|
 		match raw {
 			NotNull(text) => {
-				if Str.starts_with(text, "stride-stream-v1:") {
-					decode_wire(text)
-				} else {
-					cleaned = Str.replace_each(text, "null", "-99999")
-					decoded : Try(StreamsResp, [InvalidJson(Str), MissingRequiredField(Str)])
-					decoded = Json.parse(cleaned)
-					match decoded {
-						Ok(s) => { streams: s, failed: False }
-						Err(_) => { streams: empty_streams, failed: True }
-					}
+				cleaned = Str.replace_each(text, "null", "-99999")
+				decoded : Try(StreamsResp, [InvalidJson(Str), MissingRequiredField(Str)])
+				decoded = Json.parse(cleaned)
+				match decoded {
+					Ok(s) => { streams: s, failed: False }
+					Err(_) => { streams: empty_streams, failed: True }
 				}
 			}
 			Null => { streams: empty_streams, failed: False }
-		}
-
-	decode_wire : Str -> { streams : StreamsResp, failed : Bool }
-	decode_wire = |text|
-		match Str.split_on(text, "\n") {
-			[_, time, hr, watts, altitude, distance] => {
-				t = wire_seq(time)
-				h = wire_seq(hr)
-				w = wire_seq(watts)
-				a = wire_seq(altitude)
-				d = wire_seq(distance)
-				{
-					streams: { time: t.seq, heartrate: h.seq, watts: w.seq, altitude: a.seq, distance: d.seq },
-					failed: t.failed or h.failed or w.failed or a.failed or d.failed,
-				}
-			}
-			_ => { streams: empty_streams, failed: True }
-		}
-
-	wire_seq = |line|
-		if Str.is_empty(line) {
-			{ seq: Err(Missing), failed: False }
-		} else {
-			parsed = List.map(Str.split_on(line, ","), |raw|
-				if raw == "n" Ok(-99999.0) else F64.from_str(raw)
-			)
-			values = List.keep_oks(parsed, |x| x)
-			if List.len(values) == List.len(parsed)
-				{ seq: Ok({ data: values }), failed: False }
-			else
-				{ seq: Err(Missing), failed: True }
 		}
 
 	# pair up stream time+value samples by index, dropping null (-99999 sentinel) samples
@@ -142,14 +107,6 @@ expect Streams.decode_streams(NotNull("not json at all")).failed == True
 
 # absent row (Null) is genuine no-data, not a failure
 expect Streams.decode_streams(Null).failed == False
-
-# offline export wire format avoids the compiler's large-array Json.parse path
-expect {
-	d = Streams.decode_streams(NotNull("stride-stream-v1:h=1;w=0;a=1;d=1\n0,1,2\n100,n,120\n\n10,11,12\n0,3,6"))
-	pairs = Streams.stream_pairs(d.streams.time, d.streams.heartrate)
-
-	!(d.failed) and List.len(pairs) == 2 and d.streams.watts == Err(Missing)
-}
 
 # real payload: pairs join on index, null samples dropped
 expect {

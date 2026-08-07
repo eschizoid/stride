@@ -31,10 +31,6 @@ jobs:
           version: nightly-new-compiler
           nightly-tag: nightly-2026-August-04-1cb06bc
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
       # One check covers the whole codebase: `roc check` follows every import, so
       # this type-checks app.roc plus all 8 modules against basic-cli 0.21 + http.
       - name: Type-check (app + all modules)
@@ -48,7 +44,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m unittest tests/test_activity_file.py
           for m in Config Command Csv Backfill Metrics Render Streams; do
             echo "--- roc test src/$m.roc ---"
             roc test "src/$m.roc"

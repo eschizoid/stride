@@ -84,17 +84,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: stride-${{ matrix.target }}
-          path: |
-            stride-${{ matrix.target }}*
-          if-no-files-found: error
-      - name: Stage account-export helper
-        if: matrix.target == 'linux-x86_64'
-        run: cp tools/stride_activity_file.py stride_activity_file.py
-      - uses: actions/upload-artifact@v7
-        if: matrix.target == 'linux-x86_64'
-        with:
-          name: stride-activity-helper
-          path: stride_activity_file.py
+          path: stride-${{ matrix.target }}*
           if-no-files-found: error
 
   publish:
@@ -115,7 +105,7 @@ jobs:
         run: |
           set -euo pipefail
           ls stride-* >/dev/null 2>&1 || { echo "::error::no binaries built"; exit 1; }
-          sha256sum stride-* stride_activity_file.py > SHA256SUMS.txt
+          sha256sum stride-* > SHA256SUMS.txt
       - uses: taiki-e/install-action@v2
         with:
           tool: parse-changelog
@@ -134,7 +124,7 @@ jobs:
           set -euo pipefail
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             echo "release $TAG exists — uploading binaries (clobber)"
-            gh release upload "$TAG" dist/stride-* dist/stride_activity_file.py dist/SHA256SUMS.txt --repo "${{ github.repository }}" --clobber
+            gh release upload "$TAG" dist/stride-* dist/SHA256SUMS.txt --repo "${{ github.repository }}" --clobber
           else
-            gh release create "$TAG" --repo "${{ github.repository }}" --title "$TAG" --notes-file notes.md dist/stride-* dist/stride_activity_file.py dist/SHA256SUMS.txt
+            gh release create "$TAG" --repo "${{ github.repository }}" --title "$TAG" --notes-file notes.md dist/stride-* dist/SHA256SUMS.txt
           fi
