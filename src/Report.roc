@@ -14,7 +14,7 @@ Report :: [].{
     # ── shared queries ──────────────────────────────────────────────────
 
     # zone + TSS totals for activities on/after a cutoff date
-    zone_sum! : Str, Str => Try({ z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, measured : F64, easy : I64, moderate : I64, hard : I64 }, _)
+    zone_sum! : Str, Str => Try({ z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, measured : F64, easy : I64, moderate : I64, hard : I64, sessions : I64, moving_time : I64, distance_m : F64, hr_streams : I64, intensity_streams : I64 }, _)
     zone_sum! = |path, cutoff|
         Sqlite.query!({
             path: Path.utf8(path),
@@ -29,8 +29,13 @@ Report :: [].{
                 \\       -- work counts as hard even when HR sat on a zone boundary.
                 \\       COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_easy_s ELSE m.z1_s + m.z2_s END),0) AS easy,
                 \\       COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_moderate_s ELSE m.z3_s END),0) AS moderate,
-                \\       COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END),0) AS hard
+                \\       COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END),0) AS hard,
+                \\       COUNT(*) AS sessions, COALESCE(SUM(a.moving_time),0) AS moving_time,
+                \\       CAST(COALESCE(SUM(a.distance),0) AS REAL) AS distance_m,
+                \\       COALESCE(SUM(CASE WHEN s.raw_json LIKE '%"heartrate"%' THEN 1 ELSE 0 END),0) AS hr_streams,
+                \\       COALESCE(SUM(CASE WHEN s.raw_json LIKE '%"heartrate"%' OR s.raw_json LIKE '%"watts"%' OR s.raw_json LIKE '%"distance"%' THEN 1 ELSE 0 END),0) AS intensity_streams
                 \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\WHERE a.start_local >= :cutoff
             ,
             bindings: [{ name: ":cutoff", value: String(cutoff) }],
@@ -45,7 +50,12 @@ Report :: [].{
                 easy = Sqlite.i64("easy")(cols)(stmt)?
                 moderate = Sqlite.i64("moderate")(cols)(stmt)?
                 hard = Sqlite.i64("hard")(cols)(stmt)?
-                Ok({ z1, z2, z3, z4, z5, tss, measured, easy, moderate, hard })
+                sessions = Sqlite.i64("sessions")(cols)(stmt)?
+                moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
+                distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
+                hr_streams = Sqlite.i64("hr_streams")(cols)(stmt)?
+                intensity_streams = Sqlite.i64("intensity_streams")(cols)(stmt)?
+                Ok({ z1, z2, z3, z4, z5, tss, measured, easy, moderate, hard, sessions, moving_time, distance_m, hr_streams, intensity_streams })
             },
         })
 
@@ -207,28 +217,31 @@ Report :: [].{
                         Ok(text) => NotNull(text)
                         Err(_) => Null
                     }
-                decoded = Streams.decode_streams(raw_opt)
-                streams = decoded.streams
-
-                hr_pairs = List.keep_if(
-                    Streams.stream_pairs(streams.time, streams.heartrate),
-                    |p| Metrics.valid_hr(p.v),
-                )
-                watts_pairs = List.keep_if(Streams.stream_pairs(streams.time, streams.watts), |p| Metrics.valid_watts(p.v))
-                watts_1s_pairs = Metrics.resample_1s_pairs(watts_pairs, Hold)
-                best = |w|
-                    match Metrics.best_rolling_mean_1s(watts_1s_pairs, w) {
-                        Ok(v) => v
-                        Err(_) => 0.0
-                    }
-                max_hr = List.fold(hr_pairs, 0.0.F64, |acc, p| (acc).max(p.v))
                 hard_s = a.z4_s + a.z5_s
                 # intensity from POWER (truer than HR for power sports — HR threshold can
                 # sit on a zone boundary). Cycling uses the FTP the ride was scored with;
                 # non-cycling power sports need their own threshold (not yet configured),
                 # so they get 0 here and fall back to the HR "hard" signal.
                 pi_ftp = Db.sport_ftp!(path, a.sport)?
-                pintensity = Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
+                detail =
+                    match raw_opt {
+                        NotNull(_) => {
+                                decoded = Streams.decode_streams(raw_opt)
+                                streams = decoded.streams
+                                hr_pairs = List.keep_if(Streams.stream_pairs(streams.time, streams.heartrate), |p| Metrics.valid_hr(p.v))
+                                watts_pairs = List.keep_if(Streams.stream_pairs(streams.time, streams.watts), |p| Metrics.valid_watts(p.v))
+                                watts_1s_pairs = Metrics.resample_1s_pairs(watts_pairs, Hold)
+                                best = |w|
+                                    match Metrics.best_rolling_mean_1s(watts_1s_pairs, w) {
+                                        Ok(v) => v
+                                        Err(_) => 0.0
+                                    }
+                                pi = Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
+                                { max_hr: List.fold(hr_pairs, 0.0.F64, |acc, p| (acc).max(p.v)), best_60: best(60), best_180: best(180), best_300: best(300), best_1200: best(1200), easy_s: pi.easy_s, moderate_s: pi.moderate_s, hard_s: pi.hard_s, failed: decoded.failed }
+                            }
+                        Null => { max_hr: 0.0, best_60: 0.0, best_180: 0.0, best_300: 0.0, best_1200: 0.0, easy_s: 0, moderate_s: 0, hard_s: 0, failed: False }
+                    }
+                pintensity = { easy_s: detail.easy_s, moderate_s: detail.moderate_s, hard_s: detail.hard_s }
                 has_power_intensity = (pintensity.easy_s + pintensity.moderate_s + pintensity.hard_s) > 0
 
                 if Output.json_mode!({})
@@ -253,12 +266,12 @@ Report :: [].{
                         # hard_by_power_s is the honest "how hard" for a power ride.
                         power_intensity: { easy_s: pintensity.easy_s, moderate_s: pintensity.moderate_s, hard_s: pintensity.hard_s },
                         hard_by_power_s: if has_power_intensity pintensity.hard_s else 0,
-                        power_bests: { w60: best(60), w180: best(180), w300: best(300), w1200: best(1200) },
-                        max_hr,
+                        power_bests: { w60: detail.best_60, w180: detail.best_180, w300: detail.best_300, w1200: detail.best_1200 },
+                        max_hr: detail.max_hr,
                         avg_hr: a.avg_hr,
                         # true = stored streams exist but wouldn't decode, so the 0s
                         # above are "unreadable", NOT "no power meter / no strap"
-                        streams_unreadable: decoded.failed,
+                        streams_unreadable: detail.failed,
                     })
                 else {
                     dist_str = if a.distance_m >= 1000.0 " · ${Render.fmt1(a.distance_m / 1000.0)} km" else ""
@@ -273,15 +286,15 @@ Report :: [].{
                         Stdout.line!("hard   ${Render.mins(pintensity.hard_s)} at/above threshold (by power) · ${Render.mins(hard_s)} in HR Z4+Z5")
                     else
                         Stdout.line!("hard   ${Render.mins(hard_s)} in Z4+Z5"))?
-                    if best(60) > 0
-                        Stdout.line!("power  1min ${Render.fmt0(best(60))}W · 3min ${Render.fmt0(best(180))}W · 5min ${Render.fmt0(best(300))}W · 20min ${Render.fmt0(best(1200))}W")?
+                    if detail.best_60 > 0
+                        Stdout.line!("power  1min ${Render.fmt0(detail.best_60)}W · 3min ${Render.fmt0(detail.best_180)}W · 5min ${Render.fmt0(detail.best_300)}W · 20min ${Render.fmt0(detail.best_1200)}W")?
                     else
                         Ok({})?
-                    (if max_hr > 0
-                        Stdout.line!("hr     max ${Render.fmt0(max_hr)} · avg ${Render.fmt0(a.avg_hr)}")
+                    (if detail.max_hr > 0
+                        Stdout.line!("hr     max ${Render.fmt0(detail.max_hr)} · avg ${Render.fmt0(a.avg_hr)}")
                     else
                         Ok({}))?
-                    if decoded.failed
+                    if detail.failed
                         Stdout.line!("⚠ stored stream data for this activity is unreadable — zeros above are missing data, not real zeros")
                     else
                         Ok({})
@@ -463,8 +476,9 @@ Report :: [].{
                 Err(e) => Err(e)
             }?
         anchor = (Metrics.date_str_to_days(latest.day)).ok_or(0)
-        cutoff28 = Metrics.days_to_date_str(anchor - 28)
-        cutoff60 = Metrics.days_to_date_str(anchor - 60)
+        # Inclusive >= cutoffs: today plus 27/59 prior days are true 28/60-day windows.
+        cutoff28 = Metrics.days_to_date_str(anchor - 27)
+        cutoff60 = Metrics.days_to_date_str(anchor - 59)
 
         zsum = zone_sum!(path, cutoff28)?
 
@@ -482,7 +496,8 @@ Report :: [].{
         sports = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.sport_type AS sport, COUNT(*) AS sessions, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss
+                \\SELECT a.sport_type AS sport, COUNT(*) AS sessions, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
+                \\       COALESCE(SUM(a.moving_time),0) AS moving_time, CAST(COALESCE(SUM(a.distance),0) AS REAL) AS distance_m
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE a.start_local >= :cutoff
                 \\GROUP BY a.sport_type ORDER BY tss DESC, a.sport_type
@@ -492,11 +507,13 @@ Report :: [].{
                 sport = Sqlite.str("sport")(cols)(stmt)?
                 sessions = Sqlite.i64("sessions")(cols)(stmt)?
                 tss = Sqlite.f64("tss")(cols)(stmt)?
-                Ok({ sport, sessions, tss })
+                moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
+                distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
+                Ok({ sport, sessions, tss, moving_time, distance_m })
             },
         })?
 
-        cutoff7 = Metrics.days_to_date_str(anchor - 7)
+        cutoff7 = Metrics.days_to_date_str(anchor - 6)
         zsum7 = zone_sum!(path, cutoff7)?
 
         pending = Sqlite.query!({
@@ -562,6 +579,11 @@ Report :: [].{
                 easy_pct: pct_num(easy7, total7),
                 moderate_pct: pct_num(zsum7.moderate, total7),
                 hard_pct: pct_num(hard7, total7),
+                sessions: zsum7.sessions,
+                moving_time: zsum7.moving_time,
+                distance_m: zsum7.distance_m,
+                hr_streams: zsum7.hr_streams,
+                intensity_streams: zsum7.intensity_streams,
             },
             last_28d: {
                 tss: zsum.tss,
@@ -574,6 +596,11 @@ Report :: [].{
                 moderate_pct: pct_num(zsum.moderate, total),
                 hard_pct: pct_num(hard, total),
                 measured_pct: measured_pct,
+                sessions: zsum.sessions,
+                moving_time: zsum.moving_time,
+                distance_m: zsum.distance_m,
+                hr_streams: zsum.hr_streams,
+                intensity_streams: zsum.intensity_streams,
             },
             ftp: {
                 best_20min_w_60d: best20_row,

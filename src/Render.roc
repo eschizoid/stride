@@ -444,7 +444,7 @@ Render :: [].{
     summary_screen = |s| {
         z = s.last_28d
         zone_gap =
-            if z.z5_s == 0 {
+            if z.hr_streams > 0 and z.z5_s == 0 {
                 ["    ⚠ zone gap: no Z5 heart-rate time in 28 days (could be no hard sessions, or power-based / short intervals that didn't drive HR to Z5)"]
             } else {
                 []
@@ -455,7 +455,31 @@ Render :: [].{
             } else {
                 []
             }
-        last_hard_str = if s.last_hard_session_date == "" "none on record" else s.last_hard_session_date
+        zone_lines =
+            if z.hr_streams > 0
+                ["    time in HR zones: Z1 ${I64.to_str(z.z1_s // 60)}m  Z2 ${I64.to_str(z.z2_s // 60)}m  Z3 ${I64.to_str(z.z3_s // 60)}m  Z4 ${I64.to_str(z.z4_s // 60)}m  Z5 ${I64.to_str(z.z5_s // 60)}m"]
+            else
+                ["    time in HR zones: unavailable (no detailed HR stream in this window)"]
+        polarization_lines =
+            if z.intensity_streams > 0
+                ["    polarization: ${I64.to_str(z.easy_pct)}% easy (Z1-2) / ${I64.to_str(z.moderate_pct)}% moderate (Z3) / ${I64.to_str(z.hard_pct)}% hard (Z4-5)"]
+            else
+                ["    polarization: unavailable (requires HR, power, or distance streams)"]
+        last7_line =
+            if s.last_7d.intensity_streams > 0
+                "  last 7 days: ${I64.to_str(s.last_7d.sessions)} sessions · ${fmt1(s.last_7d.moving_time.to_f64() / 3600.0)}h · ${fmt1(s.last_7d.distance_m / 1000.0)} km · ${fmt0(s.last_7d.tss)} load — ${I64.to_str(s.last_7d.easy_pct)}% easy / ${I64.to_str(s.last_7d.moderate_pct)}% moderate / ${I64.to_str(s.last_7d.hard_pct)}% hard"
+            else
+                "  last 7 days: ${I64.to_str(s.last_7d.sessions)} sessions · ${fmt1(s.last_7d.moving_time.to_f64() / 3600.0)}h · ${fmt1(s.last_7d.distance_m / 1000.0)} km · ${fmt0(s.last_7d.tss)} load — intensity unavailable"
+        last_hard_str =
+            if s.last_hard_session_date != "" s.last_hard_session_date
+            else if z.intensity_streams == 0 "unavailable (no detailed streams)"
+            else "none on record"
+        sport_lines =
+            if List.is_empty(s.sports_28d) []
+            else List.concat(
+                ["", "  sport mix (28d):"],
+                List.map(s.sports_28d, |sport| "    ${sport.sport}: ${I64.to_str(sport.sessions)} sessions · ${fmt1(sport.moving_time.to_f64() / 3600.0)}h · ${fmt1(sport.distance_m / 1000.0)} km · ${fmt0(sport.tss)} load"),
+            )
         Str.join_with(
             List.join([
                 [
@@ -471,15 +495,17 @@ Render :: [].{
                     warming_up_note(s.ctl_warming_up, s.load_days),
                     "",
                     "  last 28 days:",
+                    "    ${I64.to_str(z.sessions)} sessions · ${fmt1(z.moving_time.to_f64() / 3600.0)}h · ${fmt1(z.distance_m / 1000.0)} km",
                     "    training load: ${fmt0(z.tss)} (${I64.to_str(z.measured_pct)}% measured — rest estimated from HR/RPE; see doctor)",
-                    "    time in HR zones: Z1 ${I64.to_str(z.z1_s // 60)}m  Z2 ${I64.to_str(z.z2_s // 60)}m  Z3 ${I64.to_str(z.z3_s // 60)}m  Z4 ${I64.to_str(z.z4_s // 60)}m  Z5 ${I64.to_str(z.z5_s // 60)}m",
-                    "    polarization: ${I64.to_str(z.easy_pct)}% easy (Z1-2) / ${I64.to_str(z.moderate_pct)}% moderate (Z3) / ${I64.to_str(z.hard_pct)}% hard (Z4-5)",
                 ],
+                zone_lines,
+                polarization_lines,
                 zone_gap,
                 ftp_lines,
+                sport_lines,
                 [
                     "",
-                    "  last 7 days: ${fmt0(s.last_7d.tss)} load — ${I64.to_str(s.last_7d.easy_pct)}% easy / ${I64.to_str(s.last_7d.moderate_pct)}% moderate / ${I64.to_str(s.last_7d.hard_pct)}% hard",
+                    last7_line,
                     "  last hard session (5+ min Z4/Z5): ${last_hard_str}",
                     "  open planned sessions: ${I64.to_str(s.pending_sessions)}",
                 ],
@@ -655,14 +681,30 @@ expect {
         form_tsb: 10.0,
         load_days: 400,
         ctl_warming_up: False,
-        last_28d: { tss: 100.0, z1_s: 600.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 100.I64 },
-        last_7d: { tss: 50.0, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64 },
+        last_28d: { tss: 100.0, z1_s: 600.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 100.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 4.I64, intensity_streams: 4.I64 },
+        last_7d: { tss: 50.0, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 2.I64, intensity_streams: 2.I64 },
         ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
         last_hard_session_date: "",
         pending_sessions: 2.I64,
+        sports_28d: [{ sport: "Run", sessions: 4.I64, tss: 100.0, moving_time: 7200.I64, distance_m: 30000.0 }],
     }
     out = Render.summary_screen(s)
     Str.contains(out, "stride report") and Str.contains(out, "zone gap") and Str.contains(out, "none on record")
+}
+
+# Missing detailed data is unavailable, never a false zero or a bogus Z5 warning.
+expect {
+    s = {
+        as_of: "2025-01-01", fitness_ctl: 20.0, fatigue_atl: 10.0, form_tsb: 10.0,
+        load_days: 400, ctl_warming_up: False,
+        last_28d: { tss: 100.0, z1_s: 0.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 0.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 0.I64, intensity_streams: 0.I64 },
+        last_7d: { tss: 50.0, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 0.I64, intensity_streams: 0.I64 },
+        ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
+        last_hard_session_date: "", pending_sessions: 0.I64,
+        sports_28d: [{ sport: "Run", sessions: 4.I64, tss: 100.0, moving_time: 7200.I64, distance_m: 30000.0 }],
+    }
+    out = Render.summary_screen(s)
+    Str.contains(out, "time in HR zones: unavailable") and Str.contains(out, "intensity unavailable") and !(Str.contains(out, "zone gap"))
 }
 
 # pace: 10km in 3000s = 5:00/km; padded seconds; no distance -> "-"
