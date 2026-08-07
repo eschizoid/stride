@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.4.0](https://github.com/eschizoid/stride/compare/v0.3.0...v0.4.0) (2026-08-07)
+
+
+### Features
+
+* refuse to set a derived key instead of storing it and ignoring it ([#64](https://github.com/eschizoid/stride/issues/64)) ([cea2d89](https://github.com/eschizoid/stride/commit/cea2d89deba96ca9d9863edad6c9343981422aac))
+* salvage the pure-Roc improvements from the reverted [#69](https://github.com/eschizoid/stride/issues/69) ([c4444d5](https://github.com/eschizoid/stride/commit/c4444d575bb4b0d7ad0e072e27e4c671dd6b1c4b))
+* salvage the pure-Roc improvements from the reverted [#69](https://github.com/eschizoid/stride/issues/69) ([4df8fe9](https://github.com/eschizoid/stride/commit/4df8fe9b0724244f2d1ac2edd4af2e2ae2355f3d))
+* score each activity at the FTP in force when it happened ([eaf443c](https://github.com/eschizoid/stride/commit/eaf443c36e8eaa41bbcd744a102be342cce78680))
+* score each activity at the FTP in force when it happened ([a668cb5](https://github.com/eschizoid/stride/commit/a668cb52e6e55a61f6b47e4588cf8c6b884035a2))
+* stream activities.csv out of the export zip instead of extracting it ([6320854](https://github.com/eschizoid/stride/commit/6320854fdcdd7ea2e0041610845f37d5d890970a))
+
+
+### Bug Fixes
+
+* build the e2e harness with --opt=dev too ([cbf0ef9](https://github.com/eschizoid/stride/commit/cbf0ef9aa875bc951304885f48a66bb203aa63c6))
+* correct the cold-start date comparison and index the period-FTP lookup ([0efe594](https://github.com/eschizoid/stride/commit/0efe594ecabee5e45e954c43376084512757d19f))
+* count unanalyzed activities in summary totals, and say when analyze stopped early ([bee27ef](https://github.com/eschizoid/stride/commit/bee27efd5b39d0fef1fd7df7d6712af4bebc32a9))
+* emit no speed sample across an unrecorded gap ([8f39a55](https://github.com/eschizoid/stride/commit/8f39a55df460d6aac135d51d57c4d85816f694c2))
+* emit no speed sample across an unrecorded gap ([f01c199](https://github.com/eschizoid/stride/commit/f01c19946291fb872df67c6ba693260bbe80b011))
+* four scoring-accuracy corrections from the training-science audit ([78b10af](https://github.com/eschizoid/stride/commit/78b10afdc81ec37e6dce06c4c8145a1cc41566f8))
+* four scoring-accuracy corrections from the training-science audit ([7b81c6d](https://github.com/eschizoid/stride/commit/7b81c6dbddbbf3f03a15dc0447cf2092d3bd0714))
+* handle both no-baseline cases in the compare screen, and use False for False ([c177e6e](https://github.com/eschizoid/stride/commit/c177e6e34ee9a6e8140bd94485a53c497bca9d52))
+* import streams from Strava account exports ([233b56b](https://github.com/eschizoid/stride/commit/233b56b481fee7f455653e22cfa75db84bc6e7a1))
+* import streams from Strava account exports ([41c07a4](https://github.com/eschizoid/stride/commit/41c07a4251e5b3c524034b6d1bc2a5879de3169f))
+* interpolate cumulative streams so coarse recordings don't spike NGP ([f9aa68f](https://github.com/eschizoid/stride/commit/f9aa68f5ee8ad5810abedba3ecbb18692557c3d9))
+* interpolate cumulative streams so coarse recordings don't spike NGP ([df91559](https://github.com/eschizoid/stride/commit/df915598da14353fa75a2663654d465412a13e58))
+* point the justfile at the new compiler so `just test` works locally ([f795e2d](https://github.com/eschizoid/stride/commit/f795e2d6ef6fcedcd1e38dd2bcf3c62d10477e5c))
+* point the justfile at the new compiler so `just test` works locally ([7402ca3](https://github.com/eschizoid/stride/commit/7402ca374cdf397a1fdcd32913c00d312779eaca))
+* reject pause-spanning windows when deriving bests ([fc08e4b](https://github.com/eschizoid/stride/commit/fc08e4b0819fd4b69cffae67da0f800c459501ba))
+* say when CTL is still warming up, and pin the load model over many days ([e1da64a](https://github.com/eschizoid/stride/commit/e1da64a562eda9f19972ba0ed9f9aec568dd45f9))
+* say when CTL is still warming up, and pin the load model over many days ([f39bf58](https://github.com/eschizoid/stride/commit/f39bf58acf51487f2da58e96d0f0f8f2de23ea7e))
+* show the warming-up warning to humans, not only to JSON callers ([0ad2304](https://github.com/eschizoid/stride/commit/0ad23047d9542d1a018a49c6d3f4a5a5fc7b3f6d))
+* sort stream samples before resampling, and stop dropping light sessions ([f780dcd](https://github.com/eschizoid/stride/commit/f780dcdee654e1ce59de31a53cf55abd8008b370))
+* sort stream samples before resampling, and stop dropping light sessions ([cda9c8f](https://github.com/eschizoid/stride/commit/cda9c8f48305a10623313bb30bc457dccf7aefd9))
+* stop `plan` showing duplicate rows for a re-planned day you then missed ([71ab029](https://github.com/eschizoid/stride/commit/71ab029ed940dc2834d1a4d456dadc5d9a1c363b))
+* stop `plan` showing duplicate rows for a re-planned day you then missed ([a87b752](https://github.com/eschizoid/stride/commit/a87b752cbc063e136f1a418ed5a7a57cc857fb30))
+* stop counting coasting as easy riding ([8343eec](https://github.com/eschizoid/stride/commit/8343eec0f3fc851f936e63448e112d80fd1fbc70))
+* stop counting coasting as easy riding ([97f369f](https://github.com/eschizoid/stride/commit/97f369f0c68226adf1513d751fae95a2c7aa3e80))
+* sum real seconds in the pace intensity split, and call roc by name ([490b9ad](https://github.com/eschizoid/stride/commit/490b9ada35a9b0aadc07a26ad1fa9f5037584ed9))
+* sum real seconds in the pace intensity split, and call roc by name ([3271606](https://github.com/eschizoid/stride/commit/327160608b969d043fe4ffe53c020b7e2bf5e1f2))
+* use the real EWMA factor so 42 and 7 days mean 42 and 7 days ([5260582](https://github.com/eschizoid/stride/commit/52605826122fdb2d694d2ba69a4ce7c643987970))
+* use the real EWMA factor so 42 and 7 days mean 42 and 7 days ([8d18965](https://github.com/eschizoid/stride/commit/8d189658b8f78fe78279ca4c865a8c10df091969))
+* warn about an unconverged CTL until 90 days, not 42 ([35681d5](https://github.com/eschizoid/stride/commit/35681d5580c0f25d0d0293c9b6e09f1e08fbd43a))
+
 ## [0.3.0](https://github.com/eschizoid/stride/compare/v0.2.0...v0.3.0) (2026-08-05)
 
 
