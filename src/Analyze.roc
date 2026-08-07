@@ -39,9 +39,15 @@ Analyze :: [].{
                             Some(tsb) => tsb
                             None => 0.0
                         }
-                    Output.emit_ok!({ computed: res.computed, stream_errors: res.stream_errors, form_tsb })
+                    # `converged` is an ADDITIVE field — existing consumers keep working, so the
+                    # envelope version stays. False = fuel ran out; run analyze again to continue.
+                    Output.emit_ok!({ computed: res.computed, stream_errors: res.stream_errors, form_tsb, converged: res.converged })
                 } else {
                     Stdout.line!("computed metrics for ${U64.to_str(res.computed)} activities")?
+                    (if !(res.converged)
+                        Stdout.line!("⚠ more activities still pending — run `stride analyze` again to continue")
+                    else
+                        Ok({}))?
                     (if res.stream_errors > 0
                         Stdout.line!("⚠ ${U64.to_str(res.stream_errors)} had unreadable stream data — computed from summary fields, will retry next sync")
                     else
@@ -102,17 +108,19 @@ Analyze :: [].{
     # hold millions of samples, so bounded batches avoid retaining the whole history's raw
     # streams in memory. Re-querying also naturally revisits rows whose newly-derived FTP or
     # pace threshold invalidated them.
-    converge_metrics! : Str, Metrics.ZoneBounds, U64, { computed : U64, stream_errors : U64 } => Try({ computed : U64, stream_errors : U64 }, _)
+    # `converged: False` means fuel ran out with work remaining — the caller says so
+    # instead of presenting a partial recompute as a finished one.
+    converge_metrics! : Str, Metrics.ZoneBounds, U64, { computed : U64, stream_errors : U64 } => Try({ computed : U64, stream_errors : U64, converged : Bool }, _)
     converge_metrics! = |path, zb, fuel, acc|
         if fuel == 0 {
-            Ok(acc)
+            Ok({ computed: acc.computed, stream_errors: acc.stream_errors, converged: False })
         } else {
             r = compute_missing_metrics!(path, zb)?
             # accumulate BOTH counters across passes: the final converged pass computes 0
             # rows, so taking only its stream_errors would erase unreadable-stream warnings
             # raised in earlier passes and hide them from the report / JSON.
             total = { computed: acc.computed + r.computed, stream_errors: acc.stream_errors + r.stream_errors }
-            if r.computed == 0 { Ok(total) } else converge_metrics!(path, zb, fuel - 1, total)
+            if r.computed == 0 { Ok({ computed: total.computed, stream_errors: total.stream_errors, converged: True }) } else converge_metrics!(path, zb, fuel - 1, total)
         }
 
     compute_missing_metrics! : Str, Metrics.ZoneBounds => Try({ computed : U64, stream_errors : U64 }, _)

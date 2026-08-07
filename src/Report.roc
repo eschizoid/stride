@@ -34,7 +34,8 @@ Report :: [].{
                 \\       CAST(COALESCE(SUM(a.distance),0) AS REAL) AS distance_m,
                 \\       COALESCE(SUM(CASE WHEN s.raw_json LIKE '%"heartrate"%' THEN 1 ELSE 0 END),0) AS hr_streams,
                 \\       COALESCE(SUM(CASE WHEN s.raw_json LIKE '%"heartrate"%' OR s.raw_json LIKE '%"watts"%' OR s.raw_json LIKE '%"distance"%' THEN 1 ELSE 0 END),0) AS intensity_streams
-                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                \\FROM activities a
+                \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\WHERE a.start_local >= :cutoff
             ,
