@@ -1,12 +1,42 @@
 # Changelog
 
+## [0.4.0](https://github.com/eschizoid/stride/compare/v0.3.0...v0.4.0) (2026-08-07)
+
+
+### Features
+
+* refuse to set a derived key instead of storing it and ignoring it ([#64](https://github.com/eschizoid/stride/issues/64)) ([cea2d89](https://github.com/eschizoid/stride/commit/cea2d89deba96ca9d9863edad6c9343981422aac))
+* salvage the pure-Roc improvements from the reverted [#69](https://github.com/eschizoid/stride/issues/69) ([4df8fe9](https://github.com/eschizoid/stride/commit/4df8fe9b0724244f2d1ac2edd4af2e2ae2355f3d))
+* score each activity at the FTP in force when it happened ([a668cb5](https://github.com/eschizoid/stride/commit/a668cb52e6e55a61f6b47e4588cf8c6b884035a2))
+* stream activities.csv out of the export zip instead of extracting it ([6320854](https://github.com/eschizoid/stride/commit/6320854fdcdd7ea2e0041610845f37d5d890970a))
+
+
+### Bug Fixes
+
+* build the e2e harness with --opt=dev too ([cbf0ef9](https://github.com/eschizoid/stride/commit/cbf0ef9aa875bc951304885f48a66bb203aa63c6))
+* correct the cold-start date comparison and index the period-FTP lookup ([0efe594](https://github.com/eschizoid/stride/commit/0efe594ecabee5e45e954c43376084512757d19f))
+* count unanalyzed activities in summary totals, and say when analyze stopped early ([bee27ef](https://github.com/eschizoid/stride/commit/bee27efd5b39d0fef1fd7df7d6712af4bebc32a9))
+* emit no speed sample across an unrecorded gap ([f01c199](https://github.com/eschizoid/stride/commit/f01c19946291fb872df67c6ba693260bbe80b011))
+* four scoring-accuracy corrections from the training-science audit ([7b81c6d](https://github.com/eschizoid/stride/commit/7b81c6dbddbbf3f03a15dc0447cf2092d3bd0714))
+* handle both no-baseline cases in the compare screen, and use False for False ([c177e6e](https://github.com/eschizoid/stride/commit/c177e6e34ee9a6e8140bd94485a53c497bca9d52))
+* interpolate cumulative streams so coarse recordings don't spike NGP ([df91559](https://github.com/eschizoid/stride/commit/df915598da14353fa75a2663654d465412a13e58))
+* point the justfile at the new compiler so `just test` works locally ([7402ca3](https://github.com/eschizoid/stride/commit/7402ca374cdf397a1fdcd32913c00d312779eaca))
+* reject pause-spanning windows when deriving bests ([fc08e4b](https://github.com/eschizoid/stride/commit/fc08e4b0819fd4b69cffae67da0f800c459501ba))
+* say when CTL is still warming up, and pin the load model over many days ([f39bf58](https://github.com/eschizoid/stride/commit/f39bf58acf51487f2da58e96d0f0f8f2de23ea7e))
+* show the warming-up warning to humans, not only to JSON callers ([0ad2304](https://github.com/eschizoid/stride/commit/0ad23047d9542d1a018a49c6d3f4a5a5fc7b3f6d))
+* sort stream samples before resampling, and stop dropping light sessions ([cda9c8f](https://github.com/eschizoid/stride/commit/cda9c8f48305a10623313bb30bc457dccf7aefd9))
+* stop `plan` showing duplicate rows for a re-planned day you then missed ([a87b752](https://github.com/eschizoid/stride/commit/a87b752cbc063e136f1a418ed5a7a57cc857fb30))
+* stop counting coasting as easy riding ([97f369f](https://github.com/eschizoid/stride/commit/97f369f0c68226adf1513d751fae95a2c7aa3e80))
+* sum real seconds in the pace intensity split, and call roc by name ([3271606](https://github.com/eschizoid/stride/commit/327160608b969d043fe4ffe53c020b7e2bf5e1f2))
+* use the real EWMA factor so 42 and 7 days mean 42 and 7 days ([8d18965](https://github.com/eschizoid/stride/commit/8d189658b8f78fe78279ca4c865a8c10df091969))
+* warn about an unconverged CTL until 90 days, not 42 ([35681d5](https://github.com/eschizoid/stride/commit/35681d5580c0f25d0d0293c9b6e09f1e08fbd43a))
+
 ## [0.3.0](https://github.com/eschizoid/stride/compare/v0.2.0...v0.3.0) (2026-08-05)
 
 
 ### Features
 
 * decode all argv forms via OsStr.display (Windows UTF-16 support) ([3e3ce70](https://github.com/eschizoid/stride/commit/3e3ce70ccd9b6e80b90662281f8462ac2881669c))
-* Windows arg support via OsStr.display (no hand-rolled decoder) ([5eaad1c](https://github.com/eschizoid/stride/commit/5eaad1c8b18bc9ef14497defa849ee5ee9a4ce83))
 
 ## [0.2.0](https://github.com/eschizoid/stride/compare/v0.1.0...v0.2.0) (2026-08-04)
 
@@ -20,7 +50,6 @@
 
 * add the pace-based load engine (rTSS/sTSS) as pure, tested math ([2af63fa](https://github.com/eschizoid/stride/commit/2af63fad7ae45bc6e08ccd69427877018c92cee9))
 * aligned time+dist+alt stream triple for the pace engine ([938675d](https://github.com/eschizoid/stride/commit/938675d345a8e7aa40f724d8848b9e0e6662e3b5))
-* aligned time+dist+alt stream triple for the pace engine (slice 2 foundation) ([b54c777](https://github.com/eschizoid/stride/commit/b54c777110a32e7feb9143de963f9912dbe2562f))
 * auto-derive per-sport FTP so power-intensity applies to ANY sport ([5780fcc](https://github.com/eschizoid/stride/commit/5780fcc2df1de49f2a912068db6c3a0bd014a7b3))
 * compare command — this period vs the one before it ([82ad357](https://github.com/eschizoid/stride/commit/82ad357932446b392d9c63de3dfa6f434bacd55e))
 * complete a rest-day prescription without an activity id ([e195a92](https://github.com/eschizoid/stride/commit/e195a9267273bcdfeddacbf47b029a198699a0d2))
@@ -29,25 +58,19 @@
 * expand doctor with confidence distribution + config completeness (P8) ([d9154a9](https://github.com/eschizoid/stride/commit/d9154a94e7efd5a570529f834a2aebaab5b768fc))
 * fix pace-engine stop deflation and close review gaps ([fa10961](https://github.com/eschizoid/stride/commit/fa10961ab7040640d4e3971a7cab7ea6dc805e24))
 * FTP is fully derived per sport — remove the config concept ([4bdfe88](https://github.com/eschizoid/stride/commit/4bdfe88f6085be42c437b6be0823850a9937d9ef))
-* grade-adjusted pace algorithm (Minetti 2002) for runs ([67cb797](https://github.com/eschizoid/stride/commit/67cb797fe2da1c3561aa567b6516ae278185e88e))
 * grade-adjusted pace algorithm (Minetti 2002) for runs ([0add058](https://github.com/eschizoid/stride/commit/0add0587a2d08b92a2d8ff9af6b7176023140e59))
 * import Strava account exports, no API credentials needed ([95fc3e9](https://github.com/eschizoid/stride/commit/95fc3e9c6ee2bc4a2bbd66a34ff480b6d0ec4f5a))
 * intensity from power for power rides (fixes hard-effort mislabel) ([6ca5bf4](https://github.com/eschizoid/stride/commit/6ca5bf4fab2e7fc27bf75b330674458333969577))
 * mean-max power curve helper (best power at the duration ladder) ([7bd7fa4](https://github.com/eschizoid/stride/commit/7bd7fa459ccb62e540cb614277a911fba865020c))
 * **new-compiler:** app.roc compiles clean on the new compiler — 0 errors ([179a56d](https://github.com/eschizoid/stride/commit/179a56d94526b05ea709c2d934feaf5cb016b082))
-* pace engine — NGP + derived threshold pace (ADR-0003 slice 2) ([c30b720](https://github.com/eschizoid/stride/commit/c30b72094a8f3012deec1d30a2f6ca45682b19af))
 * pace rung in tss_ladder (power -&gt; pace -&gt; HR -&gt; RPE -&gt; RE) ([661259c](https://github.com/eschizoid/stride/commit/661259ce96e476b0719148872146c5f7a0e41c2f))
-* pace scoring for swim + indoor — flat-speed path (ADR-0003 slice 3) ([bad2e78](https://github.com/eschizoid/stride/commit/bad2e781fcff45d7aea2fedf100ac2531abd4225))
 * pace scoring for swim + indoor — flat-speed path (ADR-0003 slice 3) ([0035fe9](https://github.com/eschizoid/stride/commit/0035fe9ef2d5780a9dd6df895f05b48250bbf32d))
-* pace-intensity split (pi_* from pace for runs/swims) ([c9ea8b1](https://github.com/eschizoid/stride/commit/c9ea8b125d113709edc61823ab31bcd866e4fe28))
 * pace-intensity split for pace sports (pi_* from pace) ([830cd0e](https://github.com/eschizoid/stride/commit/830cd0e736a39560ed5d7c6ea85b664bcca0e873))
-* per-sport HR zones (hr_z*_max_&lt;sport&gt;) with global fallback ([582a1d7](https://github.com/eschizoid/stride/commit/582a1d7c0b9c58fe3ce1c2d2cf50704a50502028))
 * per-sport HR zones (hr_z*_max_&lt;sport&gt;) with global fallback ([b639902](https://github.com/eschizoid/stride/commit/b639902cd6eda2ed535e31d17b36c7163bc34b35))
 * per-sport pace-engine config keys (threshold_pace_&lt;sport&gt;, model_&lt;sport&gt;) ([ab7cf7e](https://github.com/eschizoid/stride/commit/ab7cf7e29d0085a97505fa50b890b18733824390))
 * persist load confidence + stop labelling mixed load as TSS (P5) ([365336d](https://github.com/eschizoid/stride/commit/365336d5d6907e755c8fa8b3739d4ba9e8d3b9b8))
 * power-based intensity across all surfaces, generic per-sport FTP ([92705cb](https://github.com/eschizoid/stride/commit/92705cb81cef1bea2dbe44563568f6685bfd8e23))
 * power-curve command — power-duration curve + Critical Power ([f0ab7e3](https://github.com/eschizoid/stride/commit/f0ab7e3b752cd372083ccf271113d72000f9ba6f))
-* power-duration curve + Critical Power (ADR-0004) ([dd312f3](https://github.com/eschizoid/stride/commit/dd312f333b4f46a9566baca0dca91a6d8d41ecf6))
 * rename prescriptions to plan across the CLI and data model ([9d8ca62](https://github.com/eschizoid/stride/commit/9d8ca62f270f1abf2ea7df7c0f5d7f99534a7ecc))
 * request altitude streams so grade-adjusted pace has its input ([d112eeb](https://github.com/eschizoid/stride/commit/d112eeb803c99953f94044fafa4568eb2c9de232))
 * request distance stream explicitly alongside altitude ([fa18498](https://github.com/eschizoid/stride/commit/fa184983774519e1d27f3c56b590b95a4562e8d8))
@@ -91,7 +114,6 @@
 * stop leaking Strava credentials (config get + file permissions) ([8251626](https://github.com/eschizoid/stride/commit/8251626118ffc8e92968c1573d036fdb211a7622))
 * validate STRIDE_API_BASE and fail-closed on secret config keys ([5f4423d](https://github.com/eschizoid/stride/commit/5f4423d89c4c55d404daf38e74155f85caf45dd5))
 * **windows:** fall back to USERPROFILE when HOME is unset (home_dir! helper) ([ddf8e3c](https://github.com/eschizoid/stride/commit/ddf8e3cd5f8c70ef28852d152217c760e6b8bd90))
-* wrap long table cells across rows (keep table ≤80 cols) ([4b2fb19](https://github.com/eschizoid/stride/commit/4b2fb19a213c2a6e19bafddf21ce927d978910a3))
 * wrap long table cells across rows instead of overflowing the terminal ([58b1710](https://github.com/eschizoid/stride/commit/58b171016be28aded949452240a329b761151599))
 
 
