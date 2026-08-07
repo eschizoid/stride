@@ -122,7 +122,7 @@ Metrics :: [].{
     get_or_zero = |xs, i|
         List.get(xs, i).ok_or(0.0)
 
-    # ── best rolling mean (e.g. 20-min best power for FTP calibration) ──
+    # ── best rolling mean (e.g. the 20-min best power used to derive FTP) ──
 
     best_rolling_mean : List(F64), U64 -> Try(F64, [TooShort])
     best_rolling_mean = |xs_1s, window| {
@@ -521,12 +521,14 @@ Metrics :: [].{
         { ctl, atl, tsb: ctl - atl }
     }
 
-    # ── FTP calibration ─────────────────────────────────────────────────
-    # Estimate FTP from a recent 20-min best (× 0.95, the standard factor) and flag
-    # whether the configured FTP is stale (est materially higher) or the athlete is
-    # detraining / not testing (est materially lower). One place, one truth.
+    # ── derived FTP ─────────────────────────────────────────────────────
+    # Invariant: FTP is derived from power history, never configured. This section once held
+    # `ftp_calibration`, which compared an estimate against a configured FTP and raised
+    # stale/detraining flags; under the invariant those are the same number by construction,
+    # so neither flag could ever fire and the function was deleted. Only the derivation
+    # remains.
 
-    # FTP estimate from a 20-min best: the standard 95% factor. One constant, one place —
+    # the derived FTP from a 20-min best: the standard 95% factor. One constant, one place —
     # used by the per-sport derive (Db.derive_sport_ftp!) and the summary display.
     ftp_from_best_20min : F64 -> F64
     ftp_from_best_20min = |best_20min| best_20min * 0.95
