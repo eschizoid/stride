@@ -226,6 +226,9 @@ Strava :: [].{
         # optional in Strava JSON — missing on activities without power/HR
         suffer_score : Try(F64, [Missing]),
         average_watts : Try(F64, [Missing]),
+        # Strava sets this FALSE when watts are estimated (no meter). Estimated watts are
+        # not measurements and must not outrank honest fallbacks (#73).
+        device_watts : Try(Bool, [Missing]),
         average_heartrate : Try(F64, [Missing]),
         weighted_average_watts : Try(F64, [Missing]),
     }
@@ -574,8 +577,8 @@ Strava :: [].{
         Sqlite.execute!({
             path: Path.utf8(path),
             query:
-                \\INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance, elevation, relative_effort, avg_watts, avg_hr, weighted_avg_watts, synced_at)
-                \\VALUES (:id, :name, :sport, :start, :mt, :dist, :elev, :re, :aw, :ahr, :waw, :synced)
+                \\INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance, elevation, relative_effort, avg_watts, avg_hr, weighted_avg_watts, device_watts, synced_at)
+                \\VALUES (:id, :name, :sport, :start, :mt, :dist, :elev, :re, :aw, :ahr, :waw, :dw, :synced)
             ,
             bindings: [
                 { name: ":id", value: Integer(a.id) },
@@ -589,6 +592,8 @@ Strava :: [].{
                 { name: ":aw", value: opt_real(a.average_watts) },
                 { name: ":ahr", value: opt_real(a.average_heartrate) },
                 { name: ":waw", value: opt_real(a.weighted_average_watts) },
+                # NULL = Strava did not say (old data); 1 = real meter; 0 = estimated
+                { name: ":dw", value: match a.device_watts { Ok(True) => Integer(1)  Ok(False) => Integer(0)  Err(_) => Null } },
                 # stamp this row with the current sync run so prune_deleted! can tell which
                 # activities Strava still has (re-stamped) from ones it deleted (stale stamp)
                 { name: ":synced", value: synced_val },

@@ -441,22 +441,29 @@ Metrics :: [].{
             threshold_speed : F64,
             dur_s : F64,
             moving_time : I64,
+            # False = Strava marked these watts ESTIMATED (no power meter). An estimate is
+            # a guess dressed as a measurement — it must not outrank the honest fallback
+            # rungs (pace/HR/RPE/RE), so all three power candidates are skipped (#73).
+            device_watts : Bool,
         }
         -> { tss : F64, np : Try(F64, [NoPower]), model : Str }
     tss_ladder = |input| {
         np_like =
-            match input.np_stream {
-                Ok(np) => Ok({ w: np, m: "power_stream" })
-                Err(_) =>
-                    match input.weighted_watts {
-                        Ok(w) => Ok({ w, m: "weighted_watts" })
-                        Err(_) =>
-                            match input.avg_watts {
-                                Ok(w) => Ok({ w, m: "avg_watts" })
-                                Err(_) => Err(NoPower)
-                            }
-                    }
-            }
+            if !input.device_watts
+                Err(NoPower)
+            else
+                match input.np_stream {
+                    Ok(np) => Ok({ w: np, m: "power_stream" })
+                    Err(_) =>
+                        match input.weighted_watts {
+                            Ok(w) => Ok({ w, m: "weighted_watts" })
+                            Err(_) =>
+                                match input.avg_watts {
+                                    Ok(w) => Ok({ w, m: "avg_watts" })
+                                    Err(_) => Err(NoPower)
+                                }
+                        }
+                }
 
         zone_total = input.zones.z1 + input.zones.z2 + input.zones.z3 + input.zones.z4 + input.zones.z5
         # measured HR load, when there is any usable HR at all
@@ -1060,6 +1067,7 @@ Metrics :: [].{
         threshold_speed: 0.0,
         dur_s: 3600.0,
         moving_time: 3600,
+        device_watts: True,
     }
 
     # ── grade-adjusted running: Minetti et al. (2002) ────────────────
@@ -1512,6 +1520,20 @@ expect {
 # power present, no FTP, no HR: honest zero (not a fabricated power-0), model "none"
 expect {
     r = Metrics.tss_ladder({ ..Metrics.ladder_base, weighted_watts: Ok(190.0), ftp: 0.0 })
+    r.tss.abs() < 0.001 and r.model == "none"
+}
+
+# estimated watts (#73): device_watts=False skips ALL power rungs — a 120-min meterless
+# ride with estimated avg 85 W must not score IF 0.35 / TSS 24 when honest rungs exist.
+# Here avg_hr 150 scores instead (55 hrTSS), exactly as if no watts were reported.
+expect {
+    r = Metrics.tss_ladder({ ..Metrics.ladder_base, device_watts: False, np_stream: Ok(85.0), weighted_watts: Ok(85.0), avg_watts: Ok(85.0), avg_hr: Ok(150.0) })
+    (r.tss - 55.0).abs() < 0.001 and r.model == "hr_avg"
+}
+
+# estimated watts with NO fallback data at all: honest zero, never a fabricated power score
+expect {
+    r = Metrics.tss_ladder({ ..Metrics.ladder_base, device_watts: False, avg_watts: Ok(85.0) })
     r.tss.abs() < 0.001 and r.model == "none"
 }
 
