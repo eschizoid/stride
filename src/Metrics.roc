@@ -324,8 +324,9 @@ Metrics :: [].{
             )
         }
 
-    # pace analog of time_in_power_intensity, on the 1 Hz grade-adjusted speed stream (each
-    # sample is 1 s, so no dt bookkeeping). Bands mirror the power split, faster = harder:
+    # pace analog of time_in_power_intensity, on the grade-adjusted speed stream. Sums real
+    # dt between timestamped samples via time_in_bands — the old "each sample is 1 s"
+    # assumption is exactly the bug this PR removes. Bands mirror the power split, faster = harder:
     # easy < 0.76×threshold, moderate 0.76–0.91, hard ≥ 0.91×threshold. Feeds the SAME pi_*
     # columns for pace-scored sports (runs/swims), so weekly polarization and the "hard" column
     # read a real intensity split there too. Zeros when the sport has no threshold speed.
