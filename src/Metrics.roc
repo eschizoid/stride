@@ -122,7 +122,7 @@ Metrics :: [].{
     get_or_zero = |xs, i|
         List.get(xs, i).ok_or(0.0)
 
-    # ── best rolling mean (e.g. 20-min best power for FTP calibration) ──
+    # ── best rolling mean (e.g. the 20-min best power used to derive FTP) ──
 
     best_rolling_mean : List(F64), U64 -> Try(F64, [TooShort])
     best_rolling_mean = |xs_1s, window| {
@@ -187,9 +187,19 @@ Metrics :: [].{
         hi - lo == (window - 1).to_i64_wrap()
     }
 
+    # The longest gap between two samples that still counts as elapsed training time.
+    # Anything longer is a pause or a dropout: crediting it to whichever band or zone the
+    # NEXT sample lands in would invent intensity that was never ridden. The cost is that a
+    # stream genuinely sampled slower than this loses the excess — accepted deliberately,
+    # because the alternative manufactures time. Shared by time_in_zones and time_in_bands
+    # so the two can never drift apart.
+    max_sample_gap_s : I64
+    max_sample_gap_s = 30.I64
+
     # ── time in zones (HR-based, universal across sports) ───────────────
-    # dt between consecutive samples, capped at 30s (pauses don't count),
-    # attributed to the zone of the current sample.
+    # dt between consecutive samples, capped at max_sample_gap_s — a pause contributes AT
+    # MOST that, never its full length (a 100 s stop credits 30 s, not 100). Attributed to
+    # the zone of the current sample.
 
     zone_of : F64, ZoneBounds -> U8
     zone_of = |hr, zb|
@@ -214,7 +224,7 @@ Metrics :: [].{
                 if !(acc.started) {
                     { ..acc, prev_t: s.t, started: True }
                 } else {
-                    dt = (s.t - acc.prev_t).min(30)
+                    dt = (s.t - acc.prev_t).min(max_sample_gap_s)
                     if dt <= 0 {
                         { ..acc, prev_t: s.t }
                     } else {
@@ -239,7 +249,8 @@ Metrics :: [].{
     # 76-90% (Z3), hard >= 91% FTP (Z4+). For a power-equipped ride this is the truer
     # "how hard was it" — an athlete's threshold HR can sit right on a zone boundary, so
     # a genuine threshold effort reads as moderate by HR while the power says threshold.
-    # Same 30s gap cap as the HR walk so a paused/dropped stream can't invent time.
+    # Same max_sample_gap_s cap as the HR walk: a paused or dropped stream contributes at
+    # most that per gap, so it cannot bank the whole stop.
     PowerIntensity : { easy_s : I64, moderate_s : I64, hard_s : I64 }
 
     # Which intensity band a power sample belongs to.
@@ -253,6 +264,49 @@ Metrics :: [].{
     power_band = |watts, mod_lo, hard_lo|
         if watts <= 0.0 { Coasting } else if watts < mod_lo { Easy } else if watts < hard_lo { Moderate } else { Hard }
 
+    # Sum REAL elapsed seconds into three intensity bands, given a per-sample classifier.
+    #
+    # ONE implementation for power and pace. They used to disagree about what a "second"
+    # meant: the power path summed actual `dt` between samples, while the pace path counted
+    # one second per surviving sample — and `grade_adjusted_speeds` drops every stopped or
+    # gap interval, so its totals ran below moving time by an unknown amount. Weekly
+    # polarization sums pi_* across sports, so a ride and a run were being added on
+    # different units.
+    #
+    # dt is capped at max_sample_gap_s: a longer gap is a pause or a dropout, and crediting it to
+    # whichever band the next sample happens to land in would invent intensity that was
+    # never ridden. The cost is that a stream genuinely sampled slower than that loses the
+    # excess — acceptable, because the alternative silently manufactures time.
+    time_in_bands : List({ t : I64, v : F64 }), (F64 -> [Skip, Easy, Moderate, Hard]) -> PowerIntensity
+    time_in_bands = |samples, classify| {
+        state = List.fold(
+            samples,
+            { i: { easy_s: 0.I64, moderate_s: 0.I64, hard_s: 0.I64 }, prev_t: 0.I64, started: False },
+            # the first sample only anchors prev_t — there is no interval before it, and
+            # computing dt against the 0 sentinel would be arithmetic on a non-time
+            |acc, s| if !(acc.started) { { ..acc, prev_t: s.t, started: True } } else band_step(acc, s, classify),
+        )
+        state.i
+    }
+
+    # one interval: credit its capped duration to whichever band the sample lands in
+    band_step = |acc, s, classify| {
+        dt = (s.t - acc.prev_t).min(max_sample_gap_s)
+        i = acc.i
+        updated =
+            if dt <= 0 {
+                i # duplicate or backwards timestamp — no interval to credit
+            } else {
+                match classify(s.v) {
+                    Skip => i
+                    Easy => { ..i, easy_s: i.easy_s + dt }
+                    Moderate => { ..i, moderate_s: i.moderate_s + dt }
+                    Hard => { ..i, hard_s: i.hard_s + dt }
+                }
+            }
+        { ..acc, i: updated, prev_t: s.t }
+    }
+
     time_in_power_intensity : List({ t : I64, v : F64 }), F64 -> PowerIntensity
     time_in_power_intensity = |samples, ftp|
         if ftp <= 0.0 {
@@ -260,55 +314,37 @@ Metrics :: [].{
         } else {
             mod_lo = ftp * 0.76
             hard_lo = ftp * 0.91
-            state = List.fold(
-                samples,
-                { i: { easy_s: 0.I64, moderate_s: 0.I64, hard_s: 0.I64 }, prev_t: 0.I64, started: False },
-                |acc, s|
-                    if !(acc.started) {
-                        { ..acc, prev_t: s.t, started: True }
-                    } else {
-                        dt = (s.t - acc.prev_t).min(30)
-                        if dt <= 0 {
-                            { ..acc, prev_t: s.t }
-                        } else {
-                            i = acc.i
-                            updated =
-                                match power_band(s.v, mod_lo, hard_lo) {
-                                    Coasting => i
-                                    Easy => { ..i, easy_s: i.easy_s + dt }
-                                    Moderate => { ..i, moderate_s: i.moderate_s + dt }
-                                    Hard => { ..i, hard_s: i.hard_s + dt }
-                                }
-                            { ..acc, i: updated, prev_t: s.t }
-                        }
-                    },
+            time_in_bands(samples, |w|
+                match power_band(w, mod_lo, hard_lo) {
+                    Coasting => Skip
+                    Easy => Easy
+                    Moderate => Moderate
+                    Hard => Hard
+                }
             )
-            state.i
         }
 
-    # pace analog of time_in_power_intensity, on the 1 Hz grade-adjusted speed stream (each
-    # sample is 1 s, so no dt bookkeeping). Bands mirror the power split, faster = harder:
+    # pace analog of time_in_power_intensity, on the grade-adjusted speed stream. Sums real
+    # dt between timestamped samples via time_in_bands — the old "each sample is 1 s"
+    # assumption is exactly the bug this PR removes. Bands mirror the power split, faster = harder:
     # easy < 0.76×threshold, moderate 0.76–0.91, hard ≥ 0.91×threshold. Feeds the SAME pi_*
     # columns for pace-scored sports (runs/swims), so weekly polarization and the "hard" column
     # read a real intensity split there too. Zeros when the sport has no threshold speed.
-    time_in_pace_intensity : List(F64), F64 -> PowerIntensity
-    time_in_pace_intensity = |speeds_1s, threshold|
+    # Pace twin of time_in_power_intensity, on the grade-adjusted speed stream. Takes the
+    # (second, speed) PAIRS — not bare speeds — so it sums the same real elapsed time the
+    # power path does. There is no Skip band here: grade_adjusted_speeds emits a sample only
+    # for an interval where the athlete moved forward, so there is no coasting equivalent.
+    # Gaps are still bounded rather than excluded — an interval spanning one contributes up
+    # to max_sample_gap_s, exactly as on the power path.
+    time_in_pace_intensity : List({ t : I64, v : F64 }), F64 -> PowerIntensity
+    time_in_pace_intensity = |speed_pairs, threshold|
         if threshold <= 0.0 {
             { easy_s: 0, moderate_s: 0, hard_s: 0 }
         } else {
             mod_lo = threshold * 0.76
             hard_lo = threshold * 0.91
-            List.fold(
-                speeds_1s,
-                { easy_s: 0.I64, moderate_s: 0.I64, hard_s: 0.I64 },
-                |i, v|
-                    if v < mod_lo {
-                        { ..i, easy_s: i.easy_s + 1 }
-                    } else if v < hard_lo {
-                        { ..i, moderate_s: i.moderate_s + 1 }
-                    } else {
-                        { ..i, hard_s: i.hard_s + 1 }
-                    },
+            time_in_bands(speed_pairs, |v|
+                if v < mod_lo { Easy } else if v < hard_lo { Moderate } else { Hard }
             )
         }
 
@@ -512,21 +548,40 @@ Metrics :: [].{
     #                    in the next morning's form. Ours means the verdict printed right
     #                    after `analyze` already carries the session you just uploaded.
 
+    # Smoothing factors for the 42- and 7-day exponential moving averages.
+    #
+    # The discrete factor for a continuous time constant τ is α = 1 − e^(−1/τ), NOT 1/τ.
+    # Using 1/τ — as this did — gives effective constants of 41.5 and 6.9 days, so the code
+    # did not deliver the 42 and 7 it claimed, and transients ran 1–7% fast against
+    # TrainingPeaks. Steady state is identical either way, which is why it went unnoticed.
+    #
+    # Written as literals because `.exp()` returns NaN on the pinned compiler (probed: every
+    # bracket around e^1 fails, including mutually exclusive ones). The formula is here so
+    # the numbers are checkable by hand:
+    #   ctl_alpha = 1 − e^(−1/42) = 0.0235283133
+    #   atl_alpha = 1 − e^(−1/7)  = 0.1331221000
+    ctl_alpha : F64
+    ctl_alpha = 0.0235283133
+    atl_alpha : F64
+    atl_alpha = 0.1331221
+
     load_step : { ctl_prev : F64, atl_prev : F64, tss : F64 } -> { ctl : F64, atl : F64, tsb : F64 }
     load_step = |{ ctl_prev, atl_prev, tss }| {
-        ctl = ctl_prev + (tss - ctl_prev) / 42.0
-        atl = atl_prev + (tss - atl_prev) / 7.0
+        ctl = ctl_prev + (tss - ctl_prev) * ctl_alpha
+        atl = atl_prev + (tss - atl_prev) * atl_alpha
         # same-day form: today's fitness minus today's fatigue, so the number
         # reconciles (tsb = ctl - atl) and reflects state AFTER today's training
         { ctl, atl, tsb: ctl - atl }
     }
 
-    # ── FTP calibration ─────────────────────────────────────────────────
-    # Estimate FTP from a recent 20-min best (× 0.95, the standard factor) and flag
-    # whether the configured FTP is stale (est materially higher) or the athlete is
-    # detraining / not testing (est materially lower). One place, one truth.
+    # ── derived FTP ─────────────────────────────────────────────────────
+    # Invariant: FTP is derived from power history, never configured. This section once held
+    # `ftp_calibration`, which compared an estimate against a configured FTP and raised
+    # stale/detraining flags; under the invariant those are the same number by construction,
+    # so neither flag could ever fire and the function was deleted. Only the derivation
+    # remains.
 
-    # FTP estimate from a 20-min best: the standard 95% factor. One constant, one place —
+    # the derived FTP from a 20-min best: the standard 95% factor. One constant, one place —
     # used by the per-sport derive (Db.derive_sport_ftp!) and the summary display.
     ftp_from_best_20min : F64 -> F64
     ftp_from_best_20min = |best_20min| best_20min * 0.95
@@ -1205,6 +1260,29 @@ expect {
     (swim - 100.0).abs() < 0.001
 }
 
+# THE gap-cap guarantee, which nothing tested until now: a gap longer than
+# max_sample_gap_s must contribute AT MOST max_sample_gap_s, never its full length. Two
+# samples 100 s apart, both hard, credit 30 s of hard work — not 100. Without this cap a
+# paused ride would bank the whole stop as whatever intensity resumed after it.
+expect {
+    far_apart = [{ t: 0.I64, v: 300.0.F64 }, { t: 100.I64, v: 300.0.F64 }]
+    r = Metrics.time_in_power_intensity(far_apart, 250.0)
+    r.hard_s == 30 and r.easy_s == 0 and r.moderate_s == 0
+}
+
+# the same cap on the pace path — one implementation, so one guarantee
+expect {
+    far_apart = [{ t: 0.I64, v: 5.0.F64 }, { t: 100.I64, v: 5.0.F64 }]
+    r = Metrics.time_in_pace_intensity(far_apart, 4.0)
+    r.hard_s == 30
+}
+
+# a gap exactly AT the cap is fully credited — the boundary is inclusive
+expect {
+    at_cap = [{ t: 0.I64, v: 300.0.F64 }, { t: 30.I64, v: 300.0.F64 }]
+    Metrics.time_in_power_intensity(at_cap, 250.0).hard_s == 30
+}
+
 # coasting is excluded from the intensity split, not counted as easy. 60 s pedalling at
 # 100 W (easy vs FTP 250) then 60 s freewheeling at 0 W: easy is 60 s, not 120 s, and the
 # buckets sum to pedalling time. Counting the descent as "easy" was what made a
@@ -1244,15 +1322,17 @@ expect {
 
 # CTL/ATL convergence over MANY days — every other load test walks a single step, which
 # cannot catch a wrong time constant. 42 consecutive days at TSS 100 from zero:
-#   CTL = 100 * (1 - (1 - 1/42)^42) = 63.66   (one full time constant, ~63% of the way)
-#   ATL = 100 * (1 - (1 - 1/7)^42)  = 99.85   (six of its own, essentially converged)
+#   CTL = 100 * (1 - e^-1) = 63.21   (one full time constant — the textbook 63.2%)
+#   ATL = 100 * (1 - e^-6) = 99.75   (six of its own, essentially converged)
+# With the correct alpha these ARE the closed-form values; the old 1/tau factor gave 63.66
+# and 99.85, which is how the wrong constant hid — close enough to look right.
 # TSB is deeply negative because fatigue has caught up and fitness has not.
 expect {
     final = Iter.fold(0.U64..<42, { ctl: 0.0.F64, atl: 0.0.F64, tsb: 0.0.F64 }, |acc, _|
         Metrics.load_step({ ctl_prev: acc.ctl, atl_prev: acc.atl, tss: 100.0 })
     )
-    (final.ctl - 63.66).abs() < 0.1
-    and (final.atl - 99.85).abs() < 0.1
+    (final.ctl - 63.21).abs() < 0.05
+    and (final.atl - 99.75).abs() < 0.05
     and (final.tsb - (final.ctl - final.atl)).abs() < 0.001
     and final.tsb < -30.0
 }
@@ -1541,8 +1621,9 @@ expect {
 # decays both, fatigue (7d) faster than fitness (42d)
 expect {
     s = Metrics.load_step({ ctl_prev: 50.0, atl_prev: 60.0, tss: 0.0 })
-    (s.ctl - (50.0 - 50.0 / 42.0)).abs() < 0.001
-    and (s.atl - (60.0 - 60.0 / 7.0)).abs() < 0.001
+    # decay by the true EWMA factor via the module constants — one source of truth
+    (s.ctl - 50.0 * (1.0 - Metrics.ctl_alpha)).abs() < 0.001
+    and (s.atl - 60.0 * (1.0 - Metrics.atl_alpha)).abs() < 0.001
     and (s.tsb - (s.ctl - s.atl)).abs() < 0.001 # tsb reconciles same-day
     and (60.0 - s.atl) > (50.0 - s.ctl) # fatigue shed more than fitness on a rest day
 }
@@ -1576,11 +1657,24 @@ expect {
 }
 expect Metrics.time_in_power_intensity([{ t: 0, v: 243.0 }], 0.0) == { easy_s: 0, moderate_s: 0, hard_s: 0 }
 
-# pace intensity split (threshold 4.0 m/s): each 1 Hz sample = 1 s; easy <3.04, moderate 3.04–3.64, hard ≥3.64
-expect Metrics.time_in_pace_intensity([2.0, 2.0, 2.0], 4.0) == { easy_s: 3, moderate_s: 0, hard_s: 0 }
-expect Metrics.time_in_pace_intensity([3.3, 3.3, 3.3], 4.0) == { easy_s: 0, moderate_s: 3, hard_s: 0 }
-expect Metrics.time_in_pace_intensity([4.0, 4.0, 4.0], 4.0) == { easy_s: 0, moderate_s: 0, hard_s: 3 }
-expect Metrics.time_in_pace_intensity([4.0, 4.0], 0.0) == { easy_s: 0, moderate_s: 0, hard_s: 0 }
+# pace intensity split (threshold 4.0 m/s): easy <3.04, moderate 3.04–3.64, hard >=3.64.
+# Takes (second, speed) PAIRS and sums real elapsed dt, exactly like the power path — 4
+# samples one second apart are 3 intervals, not 4 "samples".
+expect {
+    at_1hz = |vals| List.map_with_index(vals, |v, i| { t: (i).to_i64_wrap(), v })
+    easy = Metrics.time_in_pace_intensity(at_1hz([2.0, 2.0, 2.0, 2.0]), 4.0) == { easy_s: 3, moderate_s: 0, hard_s: 0 }
+    mod = Metrics.time_in_pace_intensity(at_1hz([3.3, 3.3, 3.3, 3.3]), 4.0) == { easy_s: 0, moderate_s: 3, hard_s: 0 }
+    hard = Metrics.time_in_pace_intensity(at_1hz([4.0, 4.0, 4.0, 4.0]), 4.0) == { easy_s: 0, moderate_s: 0, hard_s: 3 }
+    no_threshold = Metrics.time_in_pace_intensity(at_1hz([4.0, 4.0]), 0.0) == { easy_s: 0, moderate_s: 0, hard_s: 0 }
+    easy and mod and hard and no_threshold
+}
+
+# a 5-second recording interval is 5 seconds of work, not 1 "sample" — this is the whole
+# point of taking pairs: the pace path now agrees with the power path on what a second is
+expect {
+    coarse = [{ t: 0.I64, v: 4.0.F64 }, { t: 5.I64, v: 4.0.F64 }, { t: 10.I64, v: 4.0.F64 }]
+    Metrics.time_in_pace_intensity(coarse, 4.0) == { easy_s: 0, moderate_s: 0, hard_s: 10 }
+}
 
 # generic: every sport maps to its own config key, no hardcoded allowlist. A sport
 # without that key set (or with no power meter) resolves to 0 in sport_ftp! and falls

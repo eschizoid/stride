@@ -73,9 +73,13 @@ Plan :: [].{
         today = Db.local_today_days!(path)
         mon = today - (today + 3) % (7)
         # default `plan` is the LIVE current-week plan. Re-planning a date leaves skipped
-        # tombstones (skip-then-add), so hide a skipped row WHEN the same date still has a
-        # live open/done session — but KEEP it when the whole day was genuinely skipped (a
-        # real adherence miss you want to see). `plan all` shows the full log unfiltered.
+        # tombstones (skip-then-add), so hide a skipped row that something SUPERSEDES — either
+        # a live open/done session on that date, or a LATER row on that date. That second arm
+        # matters when the whole day ends up skipped: with no live session to supersede them,
+        # every earlier draft used to surface, so a re-planned-then-missed day rendered as
+        # near-identical duplicate rows. A day that was genuinely missed still shows its one
+        # final tombstone (nothing supersedes it) — the adherence miss you want to see.
+        # `plan all` shows the full log unfiltered.
         # scope filter via a BOUND :all flag, never string interpolation: AllTime binds
         # :all=1 (all rows); ThisWeek binds :all=0 so the date/skip conditions apply. The
         # earlier approach interpolated an optional filter string whose EMPTY branch spliced
@@ -95,7 +99,7 @@ Plan :: [].{
                 \\       COALESCE(rationale,'') AS rationale, COALESCE(completed_activity_id,0) AS completed_activity_id,
                 \\       COALESCE(status,'open') AS status, COALESCE(skipped_reason,'') AS skipped_reason
                 \\FROM planned_sessions
-                \\WHERE (:all = 1 OR (COALESCE(target_date,'') >= '${Metrics.days_to_date_str(mon)}' AND COALESCE(target_date,'') <= '${Metrics.days_to_date_str(mon + 6)}' AND (COALESCE(status,'open') <> 'skipped' OR NOT EXISTS (SELECT 1 FROM planned_sessions p2 WHERE p2.target_date = planned_sessions.target_date AND COALESCE(p2.status,'open') <> 'skipped'))))
+                \\WHERE (:all = 1 OR (COALESCE(target_date,'') >= '${Metrics.days_to_date_str(mon)}' AND COALESCE(target_date,'') <= '${Metrics.days_to_date_str(mon + 6)}' AND (COALESCE(status,'open') <> 'skipped' OR NOT EXISTS (SELECT 1 FROM planned_sessions p2 WHERE p2.target_date = planned_sessions.target_date AND (COALESCE(p2.status,'open') <> 'skipped' OR p2.id > planned_sessions.id)))))
                 \\ORDER BY target_date DESC, id DESC LIMIT 100
             ,
             bindings: [{ name: ":all", value: Integer(scope_all) }],
