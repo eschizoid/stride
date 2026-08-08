@@ -837,7 +837,7 @@ env_or! = |name, dflt|
 # a required setup value: empty (a failed mktemp/date shellout) aborts the run instead
 # of silently building bad paths like "/.stride/db.sqlite" or seeding empty dates
 need : Str, Str -> Try(Str, [SetupFailed(Str), ..])
-need = |what, v| if Str.is_empty(v) { Err(SetupFailed(what)) } else { Ok(v) }
+need = |what, v| if Str.is_empty(v) Err(SetupFailed(what)) else Ok(v)
 
 sh! : Str => Str
 sh! = |script|
