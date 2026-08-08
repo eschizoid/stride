@@ -344,13 +344,24 @@ Db :: [].{
             bindings: [],
             rows: Sqlite.i64("timeout"),
         })?
-        _ = Sqlite.query_many!({
-            path: Path.utf8(path),
-            query: "PRAGMA journal_mode = WAL",
-            bindings: [],
-            rows: Sqlite.str("journal_mode"),
-        })?
-        Ok({})
+        # Read before assigning. Setting journal_mode wants a write lock, and EVERY command
+        # opens through here — so issuing the assignment unconditionally would have each
+        # short read command reach for a write lock before it reads anything, which is the
+        # opposite of what this function is for. WAL is a persistent property of the file,
+        # so after the first open the answer is already "wal" and there is nothing to set.
+        # (Measured: 1257 reads during a full rescore, zero busy failures, even before this
+        # guard — so this removes a real risk rather than a reproduced failure.)
+        if journal_mode!(path)? == "wal" {
+            Ok({})
+        } else {
+            _ = Sqlite.query_many!({
+                path: Path.utf8(path),
+                query: "PRAGMA journal_mode = WAL",
+                bindings: [],
+                rows: Sqlite.str("journal_mode"),
+            })?
+            Ok({})
+        }
     }
     ensure_schema! : Str => Try({}, _)
     ensure_schema! = |path| {
