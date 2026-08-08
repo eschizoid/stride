@@ -30,10 +30,16 @@ Two traps if you re-test this:
 - The macOS asset you want is `roc_nightly-macos_x86_64-*`; `uname -m` on this machine
   reports `x86_64`, and the apple_silicon build dies with "bad CPU type in executable".
 
-**Root cause: closures stored in tuples inside a list.** A seven-line module using
-`[("a", |r| ...), ("b", |r| ...)]` and calling `c.1` fails with "hit a runtime error"; put
-that list behind a `match` on a tag union and it escalates to `Segmentation fault (SIGSEGV)
-in the Roc compiler`. The runnable repros live in the upstream issue, not in this repo.
+**Root cause: closures stored in tuples inside a list.** A seven-line module doing this:
+
+```roc
+cols = [("a", |r| F64.to_str(r.a)), ("b", |r| F64.to_str(r.a))]
+Str.join_with(List.map(cols, |c| (c.1)(row)), ",")
+```
+
+fails with "hit a runtime error". Put that same list behind a `match` on a tag union and it
+escalates to `Segmentation fault (SIGSEGV) in the Roc compiler`. The runnable repros live in
+the upstream issue, not in this repo.
 
 That second shape is exactly `Render.progress_section`, which picks its column list
 (header string + cell closure per column) by lens — which is why that one expect takes
