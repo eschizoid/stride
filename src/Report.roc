@@ -1104,6 +1104,12 @@ Report :: [].{
                 Rpe => keep_scored(Rpe, g)
                 Unscorable => Err(Skip)
             })
+        # Did the session we anchored on survive its own lens? keep_scored drops rows the
+        # lens can't score, and the anchor is not exempt — a ride with no HR vanishes from a
+        # speed/HR group while its older siblings remain. The group is then non-empty, so the
+        # unscorable branch below never fires and the table renders as if nothing were wrong,
+        # with a trend computed entirely from sessions the athlete did not ask about.
+        anchor_kept = List.any(scored, |g| List.any(g.rows, |r| r.date == date))
         if List.is_empty(scored) {
             if Str.is_empty(date) {
                 Output.err_out!("no_scorable_workouts", "nothing to compare yet — analyze activities first (and `stride rate` your strength sessions)")
@@ -1126,6 +1132,9 @@ Report :: [].{
         } else if Output.json_mode!({}) {
             Output.emit_ok!({
                 anchor_date: date,
+                # False = the anchor session itself could not be scored, so it is absent from
+                # `groups` and the trend does not include it. Bool-TYPED, not a bare tag.
+                anchor_scored: anchor_kept,
                 groups: List.map(scored, |g| {
                     name: g.name,
                     lens: lens_name(g.lens),
@@ -1146,7 +1155,15 @@ Report :: [].{
                 }),
             })
         } else {
-            Stdout.line!(Str.join_with(List.map(scored, |g| Render.progress_section(g.name, g.rows, date, g.lens, sort)), "\n\n"))
+            # Say it BEFORE the table. Read after, it looks like a footnote to numbers the
+            # athlete has already taken as including their session.
+            note =
+                if anchor_kept {
+                    ""
+                } else {
+                    "⚠ the session on ${date} isn't in this table — it can't be scored by this lens (needs power+HR, distance+HR, or a rating), so the trend below excludes it\n\n"
+                }
+            Stdout.line!("${note}${Str.join_with(List.map(scored, |g| Render.progress_section(g.name, g.rows, date, g.lens, sort)), "\n\n")}")
         }
     }
     load_series! : U64 => Try({}, _)

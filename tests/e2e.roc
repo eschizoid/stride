@@ -639,6 +639,24 @@ b_progress_b! = |ctx| {
     asc_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-01", "asc"])
     check!("progress desc keeps the chronological verdict", Str.contains(desc_h, "declining") and Str.contains(asc_h, "declining"))?
     check!("progress rejects a bad sort word", Str.contains(stride!(ctx.bin, ctx.home, ["progress", "2025-07-01", "sideways"]), "asc|desc"))?
+
+    # #84: the anchor session is not exempt from its own lens. Two rides sharing a name and
+    # distance so they group together, neither with power so the lens is speed/HR: the anchor
+    # has NO hr and drops out, the sibling stays. That kept the group non-empty, so the
+    # unscorable branch never fired and the table rendered as though the trend included the
+    # session that was asked about.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (215,'Anchor Probe Ride','Ride','2025-04-01T08:00:00Z',3600,20000);")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (216,'Anchor Probe Ride','Ride','2025-04-20T08:00:00Z',3600,20000,140);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    anchor_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-04-01"])
+    check!("an unscorable anchor says so", Str.contains(anchor_h, "isn't in this table"))?
+    check!("and the table still shows the scorable sibling", Str.contains(anchor_h, "2025-04-20"))?
+    check!("anchor_scored false when the anchor drops out", strjq!(ctx, ["progress", "2025-04-01"], ".data.anchor_scored") == "false")?
+    check!("anchor_scored true when the anchor survives", strjq!(ctx, ["progress", "2025-04-20"], ".data.anchor_scored") == "true")?
+    check!("a scorable anchor stays silent", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-04-20"]), "isn't in this table")))?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (215,216);")
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (215,216);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     Ok({})
 }
 
