@@ -901,6 +901,7 @@ Report :: [].{
         })?
         strength_unrated = List.len(List.keep_if(sports, |r| Metrics.sport_class(r.sport) == StrengthLike and r.rated == 0))
         rated_total = List.len(List.keep_if(sports, |r| r.rated == 1))
+        jmode = Db.journal_mode!(path)?
         mode = Db.resolve_time_mode!(path)
         time_desc =
             match mode {
@@ -937,6 +938,11 @@ Report :: [].{
             sport_zone_overrides: cfg.sport_zone_overrides,
             time: time_desc,
             time_ok: time_ok,
+            # WAL is what lets a query command run alongside a long analyze without either
+            # aborting. It can silently fail to engage on filesystems lacking the shared
+            # memory it needs, so report what is actually in force instead of assuming.
+            journal_mode: jmode,
+            concurrent_reads_ok: jmode == "wal",
         }
         Output.out!(payload, |p| {
             model_lines = List.map(p.scored_by, |mrow| "    ${mrow.model}: ${(mrow.n).to_str()}")

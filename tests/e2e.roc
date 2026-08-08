@@ -747,24 +747,27 @@ b_human! = |ctx| {
 # `stride week` in another terminal killed a running analyze and discarded its work.
 b_concurrency! : Ctx => Try({}, _)
 b_concurrency! = |ctx| {
-    check!("journal mode is WAL", Str.trim(sql!(ctx.db, "PRAGMA journal_mode;")) == "wal")?
     # Racing a real analyze proved nothing here — the sandbox db computes in well under a
     # second, so the reader never overlapped the transaction and the check still passed with
     # the fix reverted. Hold a lock DETERMINISTICALLY instead: a background sqlite3 keeps a
     # transaction open, since its connection lives as long as its stdin does.
-    # STRIDE_FORMAT is pinned because this bypasses the stride! helper, which sets it.
-    # Output mode otherwise depends on CLAUDECODE being set in the developer's shell, so
-    # this passed locally and failed on CI, where the human table has no schema_version.
-    # Direction matters: the real failure was a READER aborting the WRITER. Under the
-    # rollback journal a reader holds SHARED, analyze's commit needs EXCLUSIVE, and with
-    # busy_timeout 0 analyze died instantly. So hold an open READ transaction (deferred
-    # BEGIN + SELECT keeps SHARED until the connection closes) and require analyze to
-    # finish anyway — which is exactly what WAL buys: readers never block a writer.
-    _ = sql!(ctx.db, "DELETE FROM activity_metrics;")
-    held = Str.trim(sh!("( printf 'BEGIN;\\nSELECT COUNT(*) FROM activities;\\n'; sleep 8 ) | sqlite3 '${ctx.db}' > /dev/null 2>&1 & holder=$!; sleep 1; HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' analyze > '${ctx.home}/held.out' 2>&1; kill $holder > /dev/null 2>&1; cat '${ctx.home}/held.out'"))
+    check!("journal mode is WAL", Str.trim(sql!(ctx.db, "PRAGMA journal_mode;")) == "wal")?
+    # A FIFO, not a backgrounded pipeline: `$!` on a pipeline is the last command in some
+    # shells and the subshell in others, so `kill $!` could leave sqlite3 alive holding the
+    # transaction and block every test after this one. Feeding sqlite3 from a fifo makes it
+    # a single background command, so $! is unambiguously sqlite3; holding the write end
+    # open (fd 3) keeps its transaction open with no timer, and closing fd 3 ends it
+    # immediately — no fixed delay and no stray sleep left behind.
+    # STRIDE_FORMAT is pinned because this bypasses the stride! helper, which sets it. The
+    # mode otherwise depends on CLAUDECODE being set in the developer's shell, so this
+    # passed locally and failed on CI, where the human table has no schema_version.
+    held = Str.trim(sh!("set -e; f='${ctx.home}/hold.fifo'; rm -f \"$f\"; mkfifo \"$f\"; sqlite3 '${ctx.db}' < \"$f\" > /dev/null 2>&1 & holder=$!; exec 3> \"$f\"; printf 'BEGIN;\\nSELECT COUNT(*) FROM activities;\\n' >&3; sleep 1; HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' analyze > '${ctx.home}/held.out' 2>&1; exec 3>&-; wait $holder 2>/dev/null; rm -f \"$f\"; cat '${ctx.home}/held.out'"))
     check!("analyze finishes while a reader holds the db", Str.contains(held, "\"schema_version\""))?
     check!("no busy error under a held read lock", !(Str.contains(held, "Busy")) and !(Str.contains(held, "locked")))?
     check!("and it actually wrote metrics", str_to_i64(Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics;"))) > 0)?
+    # doctor must report the mode actually in force, not assume it engaged
+    check!("doctor reports concurrent reads ok", strjq!(ctx, ["doctor"], ".data.concurrent_reads_ok") == "true")?
+    check!("doctor reports the journal mode", strjq!(ctx, ["doctor"], ".data.journal_mode") == "wal")?
     Ok({})
 }
 

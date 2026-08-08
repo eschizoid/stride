@@ -303,6 +303,23 @@ Db :: [].{
     # property of the database file, so it survives across the per-call connections. The
     # busy_timeout additionally makes writer-vs-writer contention wait rather than fail.
     # Both are read via query_many! because a PRAGMA assignment returns a row.
+    # Reads back the journal mode actually in force. `PRAGMA journal_mode = WAL` does NOT
+    # error when it cannot switch — on a filesystem that lacks the shared-memory primitives
+    # WAL needs (some network mounts), it silently returns the mode it kept. Discarding that
+    # answer would leave the engine believing it had concurrency it does not have, which is
+    # the same silent-fallback trap `time_ok` exists to prevent for timezones. Reported by
+    # `doctor` rather than made fatal: without WAL stride still works, and the busy_timeout
+    # below still turns most contention into a wait instead of a failure.
+    journal_mode! : Str => Try(Str, _)
+    journal_mode! = |path| {
+        modes = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "PRAGMA journal_mode",
+            bindings: [],
+            rows: Sqlite.str("journal_mode"),
+        })?
+        Ok(Str.with_ascii_lowercased(List.first(modes).ok_or("")))
+    }
     configure_concurrency! : Str => Try({}, _)
     configure_concurrency! = |path| {
         _ = Sqlite.query_many!({
