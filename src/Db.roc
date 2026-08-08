@@ -289,8 +289,83 @@ Db :: [].{
     # run migrations exactly when the db is behind, then stamp the version. Called
     # on every command entry (via open_db!) so upgrading the binary against an
     # existing db self-migrates instead of failing with an opaque missing-column error.
+    # Concurrency posture, applied on EVERY open (both pragmas are idempotent and cheap).
+    #
+    # analyze rebuilds daily_load inside one transaction on purpose — a partial day-walk
+    # would leave a truncated series that summary reads as valid. Under the rollback
+    # journal that transaction locks the whole database, and SQLite's default busy_timeout
+    # of 0 means any other connection fails IMMEDIATELY rather than waiting. A single
+    # `stride week` in a second terminal was enough to abort a running analyze with
+    # SqliteErr(Busy) and throw away all of its work.
+    #
+    # WAL lets readers proceed against a writer instead of blocking, which is exactly this
+    # workload: one long writer, several short read-only query commands. It is a PERSISTENT
+    # property of the database file, so it survives across the per-call connections. The
+    # busy_timeout additionally makes writer-vs-writer contention wait rather than fail.
+    # Both are read via query_many! because a PRAGMA assignment returns a row.
+    # Reads back the journal mode actually in force. `PRAGMA journal_mode = WAL` does NOT
+    # error when it cannot switch — on a filesystem that lacks the shared-memory primitives
+    # WAL needs (some network mounts), it silently returns the mode it kept. Discarding that
+    # answer would leave the engine believing it had concurrency it does not have, which is
+    # the same silent-fallback trap `time_ok` exists to prevent for timezones. Reported by
+    # `doctor` rather than made fatal: without WAL stride still works, and the busy_timeout
+    # below still turns most contention into a wait instead of a failure.
+    journal_mode! : Str => Try(Str, _)
+    journal_mode! = |path| {
+        # Best-effort for real: a `?` here would abort doctor on a Busy or unopenable db,
+        # which is precisely when someone runs doctor. The sentinel below is only honest if
+        # the failing paths reach it, so the query error becomes "unknown" too.
+        modes =
+            match Sqlite.query_many!({
+                path: Path.utf8(path),
+                query: "PRAGMA journal_mode",
+                bindings: [],
+                rows: Sqlite.str("journal_mode"),
+            }) {
+                Ok(rows) => rows
+                Err(_) => []
+            }
+        # "unknown", never "": PRAGMA journal_mode always returns a row on a working
+        # connection, so no rows means the read itself failed. An empty string would render
+        # as a blank cell and read like a mode, hiding that. This stays a sentinel rather
+        # than an error because doctor is the command you run WHEN something is wrong — it
+        # should report the gap, not refuse to run because of it.
+        Ok(Str.with_ascii_lowercased(List.first(modes).ok_or("unknown")))
+    }
+    configure_concurrency! : Str => Try({}, _)
+    configure_concurrency! = |path| {
+        # busy_timeout FIRST, and not as a style preference: switching journal mode takes a
+        # write lock, so with the default timeout of 0 the very statement meant to enable
+        # WAL is itself the one that fails instantly against a busy database — leaving the
+        # engine in the exact rollback-journal mode it was trying to escape.
+        _ = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "PRAGMA busy_timeout = 5000",
+            bindings: [],
+            rows: Sqlite.i64("timeout"),
+        })?
+        # Read before assigning. Setting journal_mode wants a write lock, and EVERY command
+        # opens through here — so issuing the assignment unconditionally would have each
+        # short read command reach for a write lock before it reads anything, which is the
+        # opposite of what this function is for. WAL is a persistent property of the file,
+        # so after the first open the answer is already "wal" and there is nothing to set.
+        # (Measured: 1257 reads during a full rescore, zero busy failures, even before this
+        # guard — so this removes a real risk rather than a reproduced failure.)
+        if journal_mode!(path)? == "wal" {
+            Ok({})
+        } else {
+            _ = Sqlite.query_many!({
+                path: Path.utf8(path),
+                query: "PRAGMA journal_mode = WAL",
+                bindings: [],
+                rows: Sqlite.str("journal_mode"),
+            })?
+            Ok({})
+        }
+    }
     ensure_schema! : Str => Try({}, _)
     ensure_schema! = |path| {
+        configure_concurrency!(path)?
         v = (Sqlite.query!({
                 path: Path.utf8(path),
                 query: "SELECT user_version AS v FROM pragma_user_version()",
@@ -308,9 +383,18 @@ Db :: [].{
     open_db! : {} => Try(Str, _)
     open_db! = |{}| {
         p = db_path!({})?
-        ensure_schema!(p)?
-        # harden on every open so existing world-readable installs get fixed too
         home = home_dir!({})?
+        # Harden BEFORE opening, not only after. Enabling WAL creates db.sqlite-wal and
+        # -shm, and the WAL file holds recently written pages — including config rows, which
+        # is where the Strava client secret and tokens live. Created under the default umask
+        # they can be world-readable for the window before the chmod below. Tightening the
+        # DIRECTORY to 0700 first closes that window regardless of umask: nobody else can
+        # traverse into it, so a sidecar cannot be read even in the instant before it is
+        # chmodded. Best-effort by design (see secure_perms!), so a platform without chmod
+        # is no worse off than before.
+        secure_perms!("${home}/.stride")?
+        ensure_schema!(p)?
+        # and again after, to set the modes on files this open just created
         secure_perms!("${home}/.stride")?
         Ok(p)
     }

@@ -216,6 +216,12 @@ init! = |{}| {
     # ignore AlreadyExists — idempotent init
     _ = Path.create_dir!(Path.utf8(dir))
     path = "${dir}/db.sqlite"
+    # Harden the directory BEFORE the schema runs, for the same reason open_db! does:
+    # ensure_schema! enables WAL, which creates the -wal/-shm sidecars, and those hold
+    # recently written pages. This is the very first run, so it is the one call where the
+    # files do not exist yet — hardening only afterwards would leave the whole of init
+    # as the exposure window it is meant to close.
+    Db.secure_perms!(dir)?
     Db.ensure_schema!(path)?
     Db.secure_perms!(dir)?
     Stdout.line!("initialized ${path}")

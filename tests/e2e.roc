@@ -164,6 +164,7 @@ run_all! = || {
     b_doctor!(ctx)?
     b_device_watts!(ctx)?
     b_human!(ctx)?
+    b_concurrency!(ctx)?
     b_migration!(ctx)?
     _ = sh!("rm -rf '${home}'")
     Stdout.line!("ALL E2E CHECKS PASS")
@@ -322,6 +323,17 @@ b_cred_safety! = |ctx| {
     check!("secret was still stored", Str.trim(sql!(ctx.db, "SELECT value FROM config WHERE key='strava_client_secret';")) == "SETSECRET456")?
     perms = Str.trim(sh!("stat -c '%a' '${ctx.db}' 2>/dev/null || stat -f '%Lp' '${ctx.db}' 2>/dev/null"))
     check!("db is chmod 600", perms == "600")?
+    # The WAL sidecar holds recently written pages, and the write just above put the Strava
+    # client secret in one of them — so it needs the same protection as the db itself. The
+    # directory is the real guarantee (nobody else can traverse into 0700), which is why it
+    # is hardened BEFORE the schema runs and can create these files.
+    dperms = Str.trim(sh!("stat -c '%a' '${ctx.home}/.stride' 2>/dev/null || stat -f '%Lp' '${ctx.home}/.stride' 2>/dev/null"))
+    check!("the .stride directory is chmod 700", dperms == "700")?
+    # "absent" is a real, correct outcome: SQLite removes the -wal file when the last
+    # connection closes cleanly, so this cannot demand the file exist. Say which case ran
+    # rather than defaulting a missing file to "600", which passed while checking nothing.
+    wperms = Str.trim(sh!("if [ -f '${ctx.db}-wal' ]; then stat -c '%a' '${ctx.db}-wal' 2>/dev/null || stat -f '%Lp' '${ctx.db}-wal' 2>/dev/null; else echo absent; fi"))
+    check!("the WAL sidecar is chmod 600 when present", wperms == "600" or wperms == "absent")?
     Ok({})
 }
 
@@ -737,6 +749,51 @@ b_human! = |ctx| {
     check!("human summary banner", Str.contains(stride_human!(ctx.bin, ctx.home, ["summary"]), "stride report"))?
     check!("human week bundle", Str.contains(stride_human!(ctx.bin, ctx.home, ["week"]), "OPEN PLAN"))?
     check!("uppercase STRIDE_FORMAT selects JSON", Str.contains(stride_env!(ctx.bin, ctx.home, ["summary"], [("STRIDE_FORMAT", "JSON")]), "\"schema_version\""))?
+    Ok({})
+}
+
+# ── a reader must never be able to abort a writer (#80) ─────────────
+# analyze rebuilds daily_load in one transaction. Under the rollback journal that locked
+# the whole db, and with busy_timeout 0 a concurrent reader failed instantly — a single
+# `stride week` in another terminal killed a running analyze and discarded its work.
+b_concurrency! : Ctx => Try({}, _)
+b_concurrency! = |ctx| {
+    # Racing a real analyze proved nothing here — the sandbox db computes in well under a
+    # second, so the reader never overlapped the transaction and the check still passed with
+    # the fix reverted. Hold a lock DETERMINISTICALLY instead: a background sqlite3 keeps a
+    # transaction open, since its connection lives as long as its stdin does.
+    check!("journal mode is WAL", Str.trim(sql!(ctx.db, "PRAGMA journal_mode;")) == "wal")?
+    # Clear what analyze must rebuild. Without this the "it wrote" check below passed on
+    # rows left by earlier scenarios, so it proved nothing about the run under contention.
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics;")
+    _ = sql!(ctx.db, "DELETE FROM daily_load;")
+    # A FIFO, not a backgrounded pipeline: `$!` on a pipeline is the last command in some
+    # shells and the subshell in others, so `kill $!` could leave sqlite3 alive holding the
+    # transaction and block every test after this one. Feeding sqlite3 from a fifo makes it
+    # a single background command, so $! is unambiguously sqlite3; holding the write end
+    # open (fd 3) keeps its transaction open for exactly as long as this scenario needs,
+    # and closing fd 3 ends it immediately — no timer bounding the hold, and nothing left
+    # running afterwards. The one `sleep 1` below is a readiness wait, giving sqlite3 time
+    # to take its read lock before analyze starts; without it the two might not overlap and
+    # the check would pass without ever testing contention.
+    # No `set -e`: if analyze ever fails again, the shell would exit before `exec 3>&-`
+    # and the fifo cleanup, leaving sqlite3 alive holding the transaction and hanging every
+    # check after this one — the regression would present as a stuck suite instead of a
+    # failed assertion, and held.out would be lost.
+    # STRIDE_FORMAT is pinned because this bypasses the stride! helper, which sets it. The
+    # mode otherwise depends on CLAUDECODE being set in the developer's shell, so this
+    # passed locally and failed on CI, where the human table has no schema_version.
+    held = Str.trim(sh!("f='${ctx.home}/hold.fifo'; rm -f \"$f\"; mkfifo \"$f\"; sqlite3 '${ctx.db}' < \"$f\" > /dev/null 2>&1 & holder=$!; exec 3> \"$f\"; printf 'BEGIN;\\nSELECT COUNT(*) FROM activities;\\n' >&3; sleep 1; HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' analyze > '${ctx.home}/held.out' 2>&1; exec 3>&-; wait $holder 2>/dev/null; rm -f \"$f\"; cat '${ctx.home}/held.out'"))
+    # NOT schema_version: the ERROR envelope carries that too, so matching it would accept
+    # the very failure this scenario exists to catch. `converged` appears only in analyze's
+    # success payload, and daily_load — emptied above, rebuilt by analyze alone — proves
+    # THIS run wrote under contention rather than some earlier one.
+    check!("analyze finishes while a reader holds the db", Str.contains(held, "\"converged\":true"))?
+    check!("no busy error under a held read lock", !(Str.contains(held, "Busy")) and !(Str.contains(held, "locked")) and !(Str.contains(held, "\"error\"")))?
+    check!("and it rebuilt daily_load under contention", str_to_i64(Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM daily_load;"))) > 0)?
+    # doctor must report the mode actually in force, not assume it engaged
+    check!("doctor reports concurrent reads ok", strjq!(ctx, ["doctor"], ".data.concurrent_reads_ok") == "true")?
+    check!("doctor reports the journal mode", strjq!(ctx, ["doctor"], ".data.journal_mode") == "wal")?
     Ok({})
 }
 
