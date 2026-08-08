@@ -97,7 +97,8 @@ Plan :: [].{
                 \\SELECT id AS id, COALESCE(created_at,'') AS created_at, COALESCE(target_date,'') AS target_date,
                 \\       COALESCE(session_type,'') AS session_type, COALESCE(detail,'') AS detail,
                 \\       COALESCE(rationale,'') AS rationale, COALESCE(completed_activity_id,0) AS completed_activity_id,
-                \\       COALESCE(status,'open') AS status, COALESCE(skipped_reason,'') AS skipped_reason
+                \\       COALESCE(status,'open') AS status, COALESCE(skipped_reason,'') AS skipped_reason,
+                \\       COALESCE((SELECT substr(a.start_local,1,10) FROM activities a WHERE a.id = planned_sessions.completed_activity_id), '') AS done_date
                 \\FROM planned_sessions
                 \\WHERE (:all = 1 OR (COALESCE(target_date,'') >= '${Metrics.days_to_date_str(mon)}' AND COALESCE(target_date,'') <= '${Metrics.days_to_date_str(mon + 6)}' AND (COALESCE(status,'open') <> 'skipped' OR NOT EXISTS (SELECT 1 FROM planned_sessions p2 WHERE p2.target_date = planned_sessions.target_date AND (COALESCE(p2.status,'open') <> 'skipped' OR p2.id > planned_sessions.id)))))
                 \\ORDER BY target_date DESC, id DESC LIMIT 100
@@ -113,7 +114,8 @@ Plan :: [].{
                 completed_activity_id = Sqlite.i64("completed_activity_id")(cols)(stmt)?
                 status = Sqlite.str("status")(cols)(stmt)?
                 skipped_reason = Sqlite.str("skipped_reason")(cols)(stmt)?
-                Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, status, skipped_reason })
+                done_date = Sqlite.str("done_date")(cols)(stmt)?
+                Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, status, skipped_reason, done_date })
             },
         })?
         # most recent 100 by date, displayed in calendar order
@@ -136,11 +138,24 @@ Plan :: [].{
             completed_activity_id: p.completed_activity_id,
             status: p.status,
             skipped_reason: p.skipped_reason,
+            done_date: p.done_date,
+            # A session completed by an activity from ANOTHER day used to render exactly
+            # like one completed on time — the plan silently implied the work happened on
+            # the date it was prescribed for. Show the real day when they differ.
+            status_shown:
+                if p.status == "done" and p.done_date != "" and p.done_date != p.target_date {
+                    # Full date, year included: `plan all` spans years, so a bare month-day
+                    # would be ambiguous exactly where the log is longest. The wider cell
+                    # costs a line of wrapping in the detail column; that is the cheaper loss.
+                    "done (${dow(p.done_date)} ${p.done_date})"
+                } else {
+                    p.status
+                },
         })
         Output.out!(enriched, |rows_enriched|
             Render.render_table(
                 ["day", "date", "type", "status", "detail", "id"],
-                List.map(rows_enriched, |p| [p.day, p.target_date, p.session_type, p.status, p.detail, (p.id).to_str()]),
+                List.map(rows_enriched, |p| [p.day, p.target_date, p.session_type, p.status_shown, p.detail, (p.id).to_str()]),
             ))
     }
     plan_add! : Str, Str, Str, Str => Try({}, _)
