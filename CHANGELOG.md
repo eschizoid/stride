@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/eschizoid/stride/compare/v0.4.0...v0.4.1) (2026-08-08)
+
+
+### Bug Fixes
+
+* estimated watts no longer outrank honest fallbacks (device_watts) ([#74](https://github.com/eschizoid/stride/issues/74)) ([618edce](https://github.com/eschizoid/stride/commit/618edce95a252cc5d4d7c061a92648e92a843bfa))
+* stop sorting already-ordered streams, ~100x faster analyze ([#78](https://github.com/eschizoid/stride/issues/78)) ([d640523](https://github.com/eschizoid/stride/commit/d6405238603436ecaaf8c70bff19f53322ce77b5))
+
 ## [0.4.0](https://github.com/eschizoid/stride/compare/v0.3.0...v0.4.0) (2026-08-07)
 
 
