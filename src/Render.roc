@@ -324,7 +324,15 @@ Render :: [].{
             Ok(p) => " (${fmt0(p)}%)"
             Err(_) => ""
         }
-        verdict = "→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${U64.to_str(List.len(rows))} sessions — ${label}${pct_str}"
+        # One session compares its own score against itself, so trend_ends returns early ==
+        # late and pct_change dutifully reports a real 0% — "holding steady" reads as a
+        # measured finding when it is the absence of one. State the score and stop.
+        verdict =
+            if List.len(rows) == 1 {
+                "→ ${short} ${pfmt(avg)} — one comparable session, no trend yet"
+            } else {
+                "→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${U64.to_str(List.len(rows))} sessions — ${label}${pct_str}"
+            }
         footer = "${legend}\nbar = scaled worst→best · ◀ marks the asked date · ··· = a break over 90 days"
         "── ${name} ──\n${table}\n\n${verdict}${last_vs_best(rows, lens)}\n\n${footer}"
     }
@@ -648,6 +656,14 @@ expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream" }
     s = Render.progress_section("X", [pr("2025-01-01", 1.5), pr("2025-08-01", 1.2)], "2025-08-01", Ef, Asc)
     Str.contains(s, "···") and Str.contains(s, "2025-08-01 ◀") and Str.contains(s, "below your best") and Str.contains(s, "declining")
+}
+
+# a single session states its score and stops: comparing a value to itself yields a real
+# 0%, and "holding steady" would read as a measured finding rather than an absent one
+expect {
+    pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream" }
+    s = Render.progress_section("X", [pr("2025-01-01", 1.5)], "2025-01-01", Ef, Asc)
+    Str.contains(s, "one comparable session, no trend yet") and !(Str.contains(s, "holding steady")) and !(Str.contains(s, "(0%)"))
 }
 
 # the best row's value + full 12-block bar stay on ONE line: terse headers keep the

@@ -66,7 +66,6 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
 | `stride summary` | as_of, CTL/ATL/TSB, `last_7d` + `last_28d` zone blocks (seconds + easy/moderate/hard %), `last_hard_session_date` ('' = none on record), `pending_sessions`, FTP (config vs estimated, `stale` + `detraining` flags), HR zone bounds, per-sport 28d breakdown |
 | `stride activities [N] [sport]` | last N activities (default 30), optionally filtered by sport (case-insensitive, e.g. `activities 10 rowing`) — date, sport, tss, np_w, intensity, z1–z5 seconds, relative_effort, avg_hr |
 | `stride top <metric> [n] [sport]` | best sessions ranked by `hr`, `tss`, `power`, `intensity`, `distance`, `time`, or `output` (kJ) — the leaderboard to `activities`' timeline |
-| `stride progress [date]` | "am I improving on this workout?": `{ anchor_date, groups: [{ name, sessions: [...] }] }` — every comparable instance of that day's workout (bare = latest EF-capable), each with `ef` (NP/avg HR). In-band errors: `no_workout_on_date`, `no_ef_data` (workout exists, lacks power/HR), `no_ef_workouts` |
 | `stride zones` (alias `pz`) | the 7 power zones as watt ranges from configured FTP: `{ ftp, zones: [{ z, name, lo_w, hi_w }] }` (0 = open-ended bound) |
 | `stride activity <id>` | one session in depth: flat z1_s–z5_s + hard_s, hard minutes, power bests (1/3/5/20min) from streams, plus `streams_unreadable` (true = the 0s are corrupt data, NOT a real zero) — use to review whether a planned session hit its targets before `complete`-ing it |
 | `stride stats` | career + year-to-date totals per sport (sessions, hours, km) |
@@ -74,7 +73,7 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
 | `stride plan` | planned-session log with `status` (open/done/skipped) + `skipped_reason` |
 | `stride doctor` | dataset health: coverage counts, per-model load provenance (`scored_by`), `strength_unrated` (strength sessions awaiting a rating) |
 | `stride compare [week\|month]` | rolling window vs the prior one: `{period, current, prior}` each with tss/sessions/hard_min/easy_pct/ctl |
-| `stride progress [date]` | `{anchor_date, groups:[{name, lens, sessions}]}` — `lens` is `ef`\|`speed_hr`\|`rpe` (sport-aware); each session carries a `score` in that lens. Bare = latest analyzed workout. In-band errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts` |
+| `stride progress [date] [asc\|desc]` | `{anchor_date, anchor_scored, groups:[{name, lens, sessions}]}` — `lens` is `ef`\|`speed_hr`\|`rpe` (sport-aware); each session carries a `score` in that lens. Bare = latest analyzed workout; `desc` lists newest first without changing the trend. **`anchor_scored: false` means a workout anchored on that date could not be scored by its group's lens, so it is absent from `groups` and the trends exclude it** — do not read the trend as covering the session you asked about. In-band errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts` |
 
 ## Conventions & gotchas
 
