@@ -1,0 +1,32 @@
+# GitHub Actions only. Dependabot has no Roc ecosystem, so it cannot see the platform and
+# package tarballs in src/app.roc (their version AND content hash are baked into the URL),
+# and it cannot see the compiler pin either — `nightly-tag:` is an INPUT to setup-roc, not
+# an action version. Bumping the nightly stays a manual, tested decision; see
+# docs/roc-new-compiler-notes.md for why that matters right now.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      # Yields `ci(deps): bump ...` — the form GitHub documents, so it is a valid
+      # Conventional Commit whether or not Dependabot appends the colon itself. Type `ci`
+      # produces no release: a routine action bump must never move the version.
+      prefix: ci
+      include: scope
+    groups:
+      # Routine first-party actions travel together — one PR, one review.
+      github-official:
+        patterns:
+          - actions/*
+          - github/*
+    ignore:
+      # setup-roc decides HOW the compiler is resolved. A bump could change the default
+      # channel or the meaning of nightly-tag and silently move us off the pinned nightly —
+      # onto one that segfaults, as every nightly after 2026-08-04 currently does. CI would
+      # catch it (roc test src/Render.roc is what dies), but this is not a change to review
+      # in a batch with a checkout bump. Update it deliberately, with the pin re-verified.
+      - dependency-name: roc-lang/setup-roc
