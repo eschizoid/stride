@@ -7,8 +7,8 @@ against the compiler and roc-lang/roc source during the migration (completed
 ## Toolchain pin: do not bump past `nightly-2026-August-04-1cb06bc` yet
 
 Every nightly from **2026-08-05 onwards segfaults the compiler** on this codebase.
-Checked 2026-08-08 against 08-05, 08-06, 08-07 and 08-08 — all four crash; 08-04 (the
-current pin) passes all 179 Render tests. Nightlies live in `roc-lang/nightlies`, not
+Verified on 2026-08-08: the 08-05, 08-06, 08-07, and 08-08 nightlies all crash; 08-04
+(the current pin) passes all 179 Render tests. Nightlies live in `roc-lang/nightlies`, not
 `roc-lang/roc`; note the tag format changed mid-window (`2026-August-05` → `2026-08-06`).
 
 What breaks, precisely:
