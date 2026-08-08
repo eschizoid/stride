@@ -4,6 +4,63 @@ Working reference for the new (Zig) compiler + basic-cli 0.21, learned empirical
 against the compiler and roc-lang/roc source during the migration (completed
 2026-08-02). The migration's progress log is gone — this is the part worth keeping.
 
+## Toolchain pin: do not bump past `nightly-2026-August-04-1cb06bc` yet
+
+Every nightly from **2026-08-05 onward segfaults the compiler** on this codebase.
+Verified on 2026-08-08: the 2026-08-05, 2026-08-06, 2026-08-07 and 2026-08-08 nightlies
+all crash; 2026-08-04
+(the current pin) passes: `roc test src/Render.roc`. Nightlies live in `roc-lang/nightlies`, not
+`roc-lang/roc`; note the tag format changed mid-window (`2026-August-05` → `2026-08-06`).
+
+What breaks, precisely:
+
+- `roc test src/Render.roc` → `Segmentation fault (SIGSEGV) in the Roc compiler`, fault
+  address 0x0. Bisected in-repo to the **24th** expect, the one calling
+  `Render.progress_section(..., Ef, Asc)`.
+- `roc check` is fine on the new nightlies. `roc build` is not — see below; an earlier
+  version of this note said it was, because a successful build was mistaken for a working
+  binary without ever running it.
+
+Two traps if you re-test this:
+
+- **`roc test` on a copy outside the repo silently runs 0 expects** and exits 0 or 1 —
+  it needs the file in its project context under its own module name. A bisect done on
+  `/tmp/RenderCut.roc` "passes" every variant and tells you nothing. Bisect in-place
+  (copy the original aside, truncate `src/Render.roc`, restore with a shell `trap`), and
+  assert on the reported test COUNT, not just the exit code.
+- The macOS asset you want is `roc_nightly-macos_x86_64-*`; `uname -m` on this machine
+  reports `x86_64`, and the apple_silicon build dies with "bad CPU type in executable".
+
+**Root cause: closures stored in tuples inside a list.** The heart of it, excerpted from
+the seven-line repro module:
+
+```roc
+cols = [("a", |r| F64.to_str(r.a)), ("b", |r| F64.to_str(r.a))]
+Str.join_with(List.map(cols, |c| (c.1)(row)), ",")
+```
+
+(Both closures read `r.a` on purpose — that is the filed repro verbatim, and the second
+field is irrelevant to the crash.)
+
+That module fails with `hit a runtime error`. Put the same list behind a `match` on a tag
+union and it escalates to `Segmentation fault (SIGSEGV) in the Roc compiler`. The runnable
+repros live in the upstream issue, not in this repo.
+
+That second shape is exactly `Render.progress_section`, which picks its column list
+(header string + cell closure per column) by lens — which is why that one expect takes
+the whole test run down.
+
+**It is not confined to `roc test`.** `roc build` is hit too, and worse, a program can
+build with zero errors and then crash at runtime. An app whose value comes from argv (so
+nothing folds at compile time) builds clean and dies with `[ROC CRASHED]` when run;
+building stride itself with the 2026-08-08 nightly succeeds and the binary then exits 139
+with NO output at all on `progress <date>`. A green build proves nothing on these nightlies.
+
+Filed upstream as [roc-lang/roc#10693](https://github.com/roc-lang/roc/issues/10693).
+When it closes, re-run the repros from that issue first. The tag is pinned in THREE
+workflows — `build.yml` (twice), `manual-release.yml` and `release-please.yml` — so
+`grep -rn nightly-tag .github/workflows` before declaring the bump done.
+
 ## CLI flags: `=`, never a space
 
 `--output=stride`, `--main=src/app.roc`, `--opt=dev`, `--target=x64musl`. A
