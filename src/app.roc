@@ -74,7 +74,8 @@ help_text =
         \\    doctor      dataset health: coverage + how each activity was scored
         \\
         \\AM I IMPROVING?
-        \\    progress [date] [asc|desc]   trend on a repeated workout, sport-aware lens
+        \\    progress [date] [asc|desc]
+        \\                            trend on a repeated workout, sport-aware lens
         \\                            (power→EF, distance→speed/HR, rated→RPE); latest by default,
         \\                            oldest-first — desc lists newest first
         \\    compare [week|month]    this period vs the one before it (default week)
