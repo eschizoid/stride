@@ -575,7 +575,14 @@ b_progress_b! = |ctx| {
     check!("asked-date row carries marker on the date", Str.contains(prog_h, "2025-07-01 ◀"))?
     check!("far-apart sessions show gap row", Str.contains(prog_h, "···"))?
     check!("progress desc lists newest session first", strjq!(ctx, ["progress", "2025-07-01", "desc"], ".data.groups[0].sessions[0].date") == "2025-07-01")?
-    check!("progress desc keeps the chronological verdict", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-01", "desc"]), "below your best"))?
+    # The verdict must be computed on the CHRONOLOGICAL series regardless of display order:
+    # this fixture rises 1.20 -> 1.40 -> falls, and reads "declining" either way. Asserting
+    # the trend LABEL, not the last-vs-best footer — the footer compares the final session
+    # to the best one and would still read "below your best" even if reversing the list had
+    # flipped the trend, so it could not catch the regression this check is named for.
+    desc_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-01", "desc"])
+    asc_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-01", "asc"])
+    check!("progress desc keeps the chronological verdict", Str.contains(desc_h, "declining") and Str.contains(asc_h, "declining"))?
     check!("progress rejects a bad sort word", Str.contains(stride!(ctx.bin, ctx.home, ["progress", "2025-07-01", "sideways"]), "asc|desc"))?
     Ok({})
 }
