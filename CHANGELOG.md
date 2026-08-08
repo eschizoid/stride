@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.5.0](https://github.com/eschizoid/stride/compare/v0.4.0...v0.5.0) (2026-08-08)
+
+
+### Features
+
+* progress accepts asc|desc — list sessions newest-first ([#77](https://github.com/eschizoid/stride/issues/77)) ([64e0ac6](https://github.com/eschizoid/stride/commit/64e0ac635498604a6fb67ae30fee95a31d754c8a))
+* widen tables to 100 columns so the detail column is readable ([#90](https://github.com/eschizoid/stride/issues/90)) ([308b0f6](https://github.com/eschizoid/stride/commit/308b0f6a2407a7e3b831e3b3eba71131c8b1afe6))
+
+
+### Bug Fixes
+
+* a concurrent reader can no longer abort analyze ([#81](https://github.com/eschizoid/stride/issues/81)) ([25be2de](https://github.com/eschizoid/stride/commit/25be2de1b87d45158eb727a988c58df890f5bc35))
+* estimated watts no longer outrank honest fallbacks (device_watts) ([#74](https://github.com/eschizoid/stride/issues/74)) ([618edce](https://github.com/eschizoid/stride/commit/618edce95a252cc5d4d7c061a92648e92a843bfa))
+* progress bars no longer word-wrap mid-bar ([#76](https://github.com/eschizoid/stride/issues/76)) ([c388a16](https://github.com/eschizoid/stride/commit/c388a16a25a7cdff097377f5a7443da29deed470))
+* say when the asked session isn't in its own progress table ([#85](https://github.com/eschizoid/stride/issues/85)) ([df4b80f](https://github.com/eschizoid/stride/commit/df4b80fa3badb4e62e9f067f89da886e7ce4c1f1))
+* show when a session was actually completed ([#89](https://github.com/eschizoid/stride/issues/89)) ([72cb02d](https://github.com/eschizoid/stride/commit/72cb02d5a57b021a49c6f1fcb752810dfddf55ce))
+* stop sorting already-ordered streams, ~100x faster analyze ([#78](https://github.com/eschizoid/stride/issues/78)) ([d640523](https://github.com/eschizoid/stride/commit/d6405238603436ecaaf8c70bff19f53322ce77b5))
+* the pace threshold is period-accurate, like FTP ([#82](https://github.com/eschizoid/stride/issues/82)) ([a03bb0a](https://github.com/eschizoid/stride/commit/a03bb0a2086b0ad1f2f1562b313450ff9bc6a29d))
+
 ## [0.4.0](https://github.com/eschizoid/stride/compare/v0.3.0...v0.4.0) (2026-08-07)
 
 
