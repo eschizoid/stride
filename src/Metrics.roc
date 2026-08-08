@@ -43,18 +43,21 @@ Metrics :: [].{
     # 40.7s to sort sorted input, 0.97s to sort the same data shuffled, 0.41s for this
     # linear check with the sort skipped. Three streams per activity (watts, distance,
     # altitude) made a full re-analyze of a few hundred activities take hours.
+    # One pass, carrying the previous timestamp — deliberately NOT indexing back into the
+    # list per element. Indexing would read the same as the append-in-a-fold that turned CSV
+    # parsing quadratic (see Csv.roc), and a check that exists to avoid a quadratic sort must
+    # not itself invite that doubt. Equal timestamps count as ascending: the resample fold
+    # treats them as duplicates, and sorting would only shuffle equal keys.
     ascending_by_t : List({ t : I64, v : F64 }) -> Bool
     ascending_by_t = |samples|
-        List.fold_with_index(samples, True, |ok, s, i|
-            if !ok {
-                False
+        List.fold(samples, { ok: True, prev: 0.I64, started: False }, |acc, s|
+            if !acc.ok {
+                acc
+            } else if !acc.started {
+                { ok: True, prev: s.t, started: True }
             } else {
-                match List.get(samples, i + 1) {
-                    Ok(next) => s.t <= next.t
-                    # last element: nothing after it to violate the order
-                    Err(_) => True
-                }
-            })
+                { ok: s.t >= acc.prev, prev: s.t, started: True }
+            }).ok
 
     # ascending already? hand the list back untouched. Otherwise sort — the protection
     # against a stray timestamp is preserved for the streams that genuinely need it.
