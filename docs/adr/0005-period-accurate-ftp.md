@@ -1,6 +1,29 @@
-# ADR 0005 — FTP is period-accurate, not retroactive
+# ADR 0005 — the scoring threshold is period-accurate, not retroactive
 
 Status: accepted · 2026-08-05 — recompute cost explicitly accepted by the athlete
+
+**Amended 2026-08-08: extended to the derived pace threshold.** As accepted, this ADR
+moved the window anchor for FTP and said nothing about the pace threshold, which pace
+sports are scored against exactly as power sports are scored against FTP. That threshold
+was left anchored to *today* — the sport's best 20-minute grade-adjusted speed over the
+last 60 days, one global number applied to every activity in history. So a 2021 run was
+scored against 2026 fitness, which is precisely what this ADR rejected for power. The
+omission was not a decision; the pace rung simply was not in view when this was written.
+
+Two consequences made it visible. Scoring: identical work in different seasons received
+different load, the exact defect that motivated this ADR. Invalidation: because the window
+ends at *today*, deleting any recent metrics row moved the global threshold and invalidated
+**every** activity of that sport back to the beginning — an ordinary 22-activity sync
+queued all 723 rows for recompute (issue #79). That is a symptom of the retroactive anchor,
+not a separate problem, and it disappears once the window is anchored per activity.
+
+The decision below now reads on **both** derived thresholds. Everywhere it says FTP and
+`ftp_used`, it says the same of the derived pace threshold and `threshold_pace_used`: the
+sport's best 20-minute grade-adjusted speed × 0.95 over the 60 days **ending on that
+activity's date**, with the same cold-start forward-fill and the same per-row comparison in
+the recompute `WHERE`. Same derivation, same anchor, same reasoning. Delivered by a
+`metrics_rev` bump, no schema change — the column already existed and already carried
+per-row provenance.
 
 Refines, but does not supersede, [ADR 0002](0002-power-based-intensity.md). That ADR
 settled that intensity is power-based and per-sport, and noted in passing that an unset

@@ -173,28 +173,6 @@ Db :: [].{
         })?
         Ok(Metrics.ftp_from_best_20min(best))
     }
-    # the threshold PACE (as a speed in m/s) a sport's grade-adjusted pace is judged against.
-    # DERIVED like FTP — the sport's own best 20-min sustained grade-adjusted speed × 0.95,
-    # over the last 60 days. 0 when the sport has no pace history (needs dist+alt streams), in
-    # which case pace scoring falls through to HR. Zero-config, mirroring sport_ftp!.
-    sport_threshold_speed! : Str, Str => Try(F64, _)
-    sport_threshold_speed! = |path, sport| {
-        raw = derive_sport_threshold!(path, sport)?
-        # round to mm/s — keeps the stored threshold_pace_used and the invalidation CASE equal
-        Ok(((raw * 1000.0).round_to_i64_try().ok_or(0)).to_f64() / 1000.0)
-    }
-    derive_sport_threshold! : Str, Str => Try(F64, _)
-    derive_sport_threshold! = |path, sport| {
-        cutoff = Metrics.days_to_date_str(local_today_days!(path) - 60)
-        best = Sqlite.query!({
-            path: Path.utf8(path),
-            query: "SELECT CAST(COALESCE(MAX(m.best_20min_speed), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_type = :sport AND a.start_local >= :cutoff",
-            bindings: [{ name: ":sport", value: String(sport) }, { name: ":cutoff", value: String(cutoff) }],
-            row: Sqlite.f64("b"),
-        })?
-        # threshold ≈ best 20-min effort × 0.95 (mirrors the derived FTP)
-        Ok(best * 0.95)
-    }
     # ── migrations ───────────────────────────────────────────────────────
 
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
