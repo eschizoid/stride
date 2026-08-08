@@ -329,8 +329,11 @@ b_cred_safety! = |ctx| {
     # is hardened BEFORE the schema runs and can create these files.
     dperms = Str.trim(sh!("stat -c '%a' '${ctx.home}/.stride' 2>/dev/null || stat -f '%Lp' '${ctx.home}/.stride' 2>/dev/null"))
     check!("the .stride directory is chmod 700", dperms == "700")?
-    wperms = Str.trim(sh!("test -f '${ctx.db}-wal' && (stat -c '%a' '${ctx.db}-wal' 2>/dev/null || stat -f '%Lp' '${ctx.db}-wal' 2>/dev/null) || echo 600"))
-    check!("the WAL sidecar is chmod 600", wperms == "600")?
+    # "absent" is a real, correct outcome: SQLite removes the -wal file when the last
+    # connection closes cleanly, so this cannot demand the file exist. Say which case ran
+    # rather than defaulting a missing file to "600", which passed while checking nothing.
+    wperms = Str.trim(sh!("if [ -f '${ctx.db}-wal' ]; then stat -c '%a' '${ctx.db}-wal' 2>/dev/null || stat -f '%Lp' '${ctx.db}-wal' 2>/dev/null; else echo absent; fi"))
+    check!("the WAL sidecar is chmod 600 when present", wperms == "600" or wperms == "absent")?
     Ok({})
 }
 
