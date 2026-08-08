@@ -42,9 +42,9 @@ Str.join_with(List.map(cols, |c| (c.1)(row)), ",")
 (Both closures read `r.a` on purpose — that is the filed repro verbatim, and the second
 field is irrelevant to the crash.)
 
-fails with "hit a runtime error". Put that same list behind a `match` on a tag union and it
-escalates to `Segmentation fault (SIGSEGV) in the Roc compiler`. The runnable repros live in
-the upstream issue, not in this repo.
+That module fails with `hit a runtime error`. Put the same list behind a `match` on a tag
+union and it escalates to `Segmentation fault (SIGSEGV) in the Roc compiler`. The runnable
+repros live in the upstream issue, not in this repo.
 
 That second shape is exactly `Render.progress_section`, which picks its column list
 (header string + cell closure per column) by lens — which is why that one expect takes
