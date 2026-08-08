@@ -17,6 +17,10 @@ Render :: [].{
     max_line_width : List(Str) -> U64
     max_line_width = |ls| List.fold(ls, 0, |m, l| m.max(display_width(l)))
 
+    # the builtins have no List.reverse on this compiler — same fold+prepend as Csv.reverse
+    reverse_list : List(a) -> List(a)
+    reverse_list = |xs| List.fold(xs, [], |acc, x| List.prepend(acc, x))
+
     # [0, 1, .., n-1]
     indices : U64 -> List(U64)
     indices = |n| indices_go(n, [])
@@ -219,8 +223,8 @@ Render :: [].{
 
     # one workout's table + trend verdict, rendered through its sport-aware lens
     # (power->EF, distance->speed/HR, rated->RPE; RPE is lower-is-better)
-    progress_section : Str, List(Metrics.ProgressRow), Str, [Ef, SpeedHr, Rpe] -> Str
-    progress_section = |name, rows, asked, lens| {
+    progress_section : Str, List(Metrics.ProgressRow), Str, [Ef, SpeedHr, Rpe], [Asc, Desc] -> Str
+    progress_section = |name, rows, asked, lens, sort| {
         higher = Metrics.lens_higher_better(lens)
         sc = |row| Metrics.lens_score(lens, row).ok_or(0.0)
         scores = List.map(rows, sc)
@@ -281,7 +285,13 @@ Render :: [].{
                     }
                 { prev: days, cells: List.append(with_gap, to_cells(row)) }
             })
-            folded.cells
+            # gap markers, scores, and the trend verdict are all computed on the
+            # CHRONOLOGICAL rows above; Desc only flips the displayed order. Reversing
+            # after the fold keeps each ··· marker between the same two neighbours.
+            match sort {
+                Asc => folded.cells
+                Desc => reverse_list(folded.cells)
+            }
         }
         table = render_table(headers, body_rows)
         t = Metrics.trend_ends(scores)
@@ -636,7 +646,7 @@ expect Render.progress_group_label("Morning Ride", SimilarDistance(31400.0)) == 
 # EF lens: gap row for >90-day breaks, asked marker, last-vs-best all present
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream" }
-    s = Render.progress_section("X", [pr("2025-01-01", 1.5), pr("2025-08-01", 1.2)], "2025-08-01", Ef)
+    s = Render.progress_section("X", [pr("2025-01-01", 1.5), pr("2025-08-01", 1.2)], "2025-08-01", Ef, Asc)
     Str.contains(s, "···") and Str.contains(s, "2025-08-01 ◀") and Str.contains(s, "below your best") and Str.contains(s, "declining")
 }
 
@@ -645,14 +655,24 @@ expect {
 # widest-column victim of squeeze-and-word-wrap (a split bar reads as broken output)
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream" }
-    s = Render.progress_section("X", [pr("2025-01-01", 1.2), pr("2025-02-01", 1.66)], "2025-02-01", Ef)
+    s = Render.progress_section("X", [pr("2025-01-01", 1.2), pr("2025-02-01", 1.66)], "2025-02-01", Ef, Asc)
     Str.contains(s, "1.66 ████████████")
+}
+
+# Desc flips only the DISPLAY order — the newest row prints first (everything before
+# the 2025-01-01 row already contains 2025-02-01), while the trend verdict is still
+# computed chronologically (1.2 → 1.66 reads as improving, not declining)
+expect {
+    pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream" }
+    s = Render.progress_section("X", [pr("2025-01-01", 1.2), pr("2025-02-01", 1.66)], "2025-02-01", Ef, Desc)
+    before_old = List.first(Str.split_on(s, "2025-01-01")).ok_or("")
+    Str.contains(before_old, "2025-02-01") and Str.contains(s, "improving")
 }
 
 # RPE lens is lower-is-better: RPE dropping 8 -> 6 reads as improving, "above your easiest"
 expect {
     pr = |date, rpe| { name: "Lift", date, sport: "WeightTraining", distance_m: 0.0, moving_time: 2700, np_w: 0.0, avg_hr: 0.0, rpe, output_kj: 0.0, tss: 0.0, load_model: "session_rpe" }
-    s = Render.progress_section("Lift", [pr("2025-01-01", 8.0), pr("2025-02-01", 6.0), pr("2025-03-01", 7.0)], "2025-03-01", Rpe)
+    s = Render.progress_section("Lift", [pr("2025-01-01", 8.0), pr("2025-02-01", 6.0), pr("2025-03-01", 7.0)], "2025-03-01", Rpe, Asc)
     Str.contains(s, "│ rpe") and Str.contains(s, "improving") and Str.contains(s, "above your easiest")
 }
 

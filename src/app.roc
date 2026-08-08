@@ -74,8 +74,9 @@ help_text =
         \\    doctor      dataset health: coverage + how each activity was scored
         \\
         \\AM I IMPROVING?
-        \\    progress [date]         trend on a repeated workout, sport-aware lens
-        \\                            (power→EF, distance→speed/HR, rated→RPE); latest by default
+        \\    progress [date] [asc|desc]   trend on a repeated workout, sport-aware lens
+        \\                            (power→EF, distance→speed/HR, rated→RPE); latest by default,
+        \\                            oldest-first — desc lists newest first
         \\    compare [week|month]    this period vs the one before it (default week)
         \\    top <metric> [n] [sport]   best sessions by hr|tss|power|intensity|distance|time|output
         \\
@@ -141,7 +142,7 @@ dispatch! = |cmd|
         Command.Top(metric, c, sport) => Report.top!(metric, c, sport)
         Command.Import(src) => Import.import_archive!(src)
         Command.Rate(target, rpe_str) => Plan.rate!(target, rpe_str)
-        Command.Progress(name) => Report.progress!(name)
+        Command.Progress(name, sort) => Report.progress!(name, sort)
         Command.Activity(id_str) => Report.activity!(id_str)
         Command.Load(days) => Report.load_series!(days)
         Command.PowerCurve(days, sport) => Report.power_curve!(days, sport)
