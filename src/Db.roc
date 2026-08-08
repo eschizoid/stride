@@ -318,7 +318,12 @@ Db :: [].{
             bindings: [],
             rows: Sqlite.str("journal_mode"),
         })?
-        Ok(Str.with_ascii_lowercased(List.first(modes).ok_or("")))
+        # "unknown", never "": PRAGMA journal_mode always returns a row on a working
+        # connection, so no rows means the read itself failed. An empty string would render
+        # as a blank cell and read like a mode, hiding that. This stays a sentinel rather
+        # than an error because doctor is the command you run WHEN something is wrong — it
+        # should report the gap, not refuse to run because of it.
+        Ok(Str.with_ascii_lowercased(List.first(modes).ok_or("unknown")))
     }
     configure_concurrency! : Str => Try({}, _)
     configure_concurrency! = |path| {
