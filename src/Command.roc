@@ -19,7 +19,7 @@ Command := [
 	Top(Str, U64, Str),
 	Import(Str),
 	Rate(Str, Str),
-	Progress(Str),
+	Progress(Str, [Asc, Desc]),
 	Activity(Str),
 	Load(U64),
 	PowerCurve(U64, Str),
@@ -65,8 +65,14 @@ Command := [
 			[_, "doctor"] => Ok(Doctor)
 			[_, "zones"] => Ok(Zones)
 			[_, "pz"] => Ok(Zones)
-			[_, "progress"] => Ok(Progress(""))
-			[_, "progress", name] => Ok(Progress(name))
+			# a bare asc/desc is a sort on the latest anchor, not a date named "desc"
+			[_, "progress"] => Ok(Progress("", Asc))
+			[_, "progress", "asc"] => Ok(Progress("", Asc))
+			[_, "progress", "desc"] => Ok(Progress("", Desc))
+			[_, "progress", name] => Ok(Progress(name, Asc))
+			[_, "progress", name, "asc"] => Ok(Progress(name, Asc))
+			[_, "progress", name, "desc"] => Ok(Progress(name, Desc))
+			[_, "progress", ..] => Err(Usage("progress [date] [asc|desc]"))
 			[_, "activity", id_str] => Ok(Activity(id_str))
 			[_, "load"] => Ok(Load(90))
 			[_, "load", n] => count(n, |c| Load(c))
@@ -199,12 +205,29 @@ expect
 	}
 expect
 	match Command.parse(["stride", "progress"]) {
-		Ok(Progress("")) => True
+		Ok(Progress("", Asc)) => True
 		_ => False
 	}
 expect
 	match Command.parse(["stride", "progress", "2026-01-01"]) {
-		Ok(Progress("2026-01-01")) => True
+		Ok(Progress("2026-01-01", Asc)) => True
+		_ => False
+	}
+# a bare sort word is a sort, not a date anchor
+expect
+	match Command.parse(["stride", "progress", "desc"]) {
+		Ok(Progress("", Desc)) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "progress", "2026-01-01", "desc"]) {
+		Ok(Progress("2026-01-01", Desc)) => True
+		_ => False
+	}
+# a third arg that isn't asc/desc gets the targeted usage hint
+expect
+	match Command.parse(["stride", "progress", "2026-01-01", "sideways"]) {
+		Err(Usage(u)) => Str.contains(u, "asc|desc")
 		_ => False
 	}
 expect

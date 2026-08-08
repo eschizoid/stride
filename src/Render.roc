@@ -17,6 +17,10 @@ Render :: [].{
     max_line_width : List(Str) -> U64
     max_line_width = |ls| List.fold(ls, 0, |m, l| m.max(display_width(l)))
 
+    # the builtins have no List.reverse on this compiler — same fold+prepend as Csv.reverse
+    reverse_list : List(a) -> List(a)
+    reverse_list = |xs| List.fold(xs, [], |acc, x| List.prepend(acc, x))
+
     # [0, 1, .., n-1]
     indices : U64 -> List(U64)
     indices = |n| indices_go(n, [])
@@ -219,8 +223,8 @@ Render :: [].{
 
     # one workout's table + trend verdict, rendered through its sport-aware lens
     # (power->EF, distance->speed/HR, rated->RPE; RPE is lower-is-better)
-    progress_section : Str, List(Metrics.ProgressRow), Str, [Ef, SpeedHr, Rpe] -> Str
-    progress_section = |name, rows, asked, lens| {
+    progress_section : Str, List(Metrics.ProgressRow), Str, [Ef, SpeedHr, Rpe], [Asc, Desc] -> Str
+    progress_section = |name, rows, asked, lens, sort| {
         higher = Metrics.lens_higher_better(lens)
         sc = |row| Metrics.lens_score(lens, row).ok_or(0.0)
         scores = List.map(rows, sc)
@@ -235,36 +239,40 @@ Render :: [].{
         hr_of = |row| if row.avg_hr > 0.0 fmt0(row.avg_hr) else "-"
         prim_of = |row| {
             n = Metrics.scale_to_blocks(sc(row), worst, best, 12)
-            mark = if row.date == asked " ◀ asked" else ""
-            "${pfmt(sc(row))} ${Str.repeat("█", n)}${mark}"
+            "${pfmt(sc(row))} ${Str.repeat("█", n)}"
         }
+        # The ◀ marker rides on the DATE cell, and headers stay terse (meaning lives in
+        # the legend, per the numbers-in-tables philosophy) — both keep every column
+        # under render_table's 80-col budget so the BAR column is never the widest one
+        # that gets squeezed and word-wrapped mid-bar.
+        date_of = |row| if row.date == asked "${row.date} ◀" else row.date
         # each lens picks its own columns (list of header + per-row cell); the primary
         # (bar) column direction is already handled by best/worst above
         cols =
             match lens {
                 Ef => [
-                    ("power (np)", |row| fmt0(row.np_w)),
-                    ("heart rate (hr)", hr_of),
-                    ("efficiency (ef)", prim_of),
-                    ("output (kj)", |row| fmt0(row.output_kj)),
+                    ("np (w)", |row| fmt0(row.np_w)),
+                    ("hr", hr_of),
+                    ("ef", prim_of),
+                    ("kJ", |row| fmt0(row.output_kj)),
                     ("load", |row| fmt0(row.tss)),
                 ]
                 SpeedHr => [
                     ("pace (min/km)", |row| pace_per_km(row.distance_m, row.moving_time)),
-                    ("heart rate (hr)", hr_of),
-                    ("aero eff (spd/hr)", prim_of),
-                    ("distance (km)", |row| fmt1(row.distance_m / 1000.0)),
+                    ("hr", hr_of),
+                    ("spd/hr", prim_of),
+                    ("km", |row| fmt1(row.distance_m / 1000.0)),
                     ("load", |row| fmt0(row.tss)),
                 ]
                 Rpe => [
                     ("duration", |row| mins(row.moving_time)),
-                    ("heart rate (hr)", hr_of),
-                    ("effort (rpe)", prim_of),
+                    ("hr", hr_of),
+                    ("rpe", prim_of),
                     ("load", |row| fmt0(row.tss)),
                 ]
             }
         headers = List.prepend(List.map(cols, |c| c.0), "date")
-        to_cells = |row| List.prepend(List.map(cols, |c| (c.1)(row)), row.date)
+        to_cells = |row| List.prepend(List.map(cols, |c| (c.1)(row)), date_of(row))
         gap_row = List.map(headers, |_| "···")
         body_rows = {
             folded = List.fold(rows, { prev: -1000000.I64, cells: [] }, |acc, row| {
@@ -277,7 +285,13 @@ Render :: [].{
                     }
                 { prev: days, cells: List.append(with_gap, to_cells(row)) }
             })
-            folded.cells
+            # gap markers, scores, and the trend verdict are all computed on the
+            # CHRONOLOGICAL rows above; Desc only flips the displayed order. Reversing
+            # after the fold keeps each ··· marker between the same two neighbours.
+            match sort {
+                Asc => folded.cells
+                Desc => reverse_list(folded.cells)
+            }
         }
         table = render_table(headers, body_rows)
         t = Metrics.trend_ends(scores)
@@ -300,8 +314,8 @@ Render :: [].{
             Rpe => "rpe"
         }
         legend = match lens {
-            Ef => "ef = normalized power / avg HR (watts per heartbeat) — climbing = fitter"
-            SpeedHr => "aero-eff = speed per heartbeat — climbing = fitter · pace is min/km"
+            Ef => "ef = normalized power (np) / avg HR — watts per heartbeat, climbing = fitter · kJ = total work"
+            SpeedHr => "spd/hr (aero-eff) = speed per heartbeat — climbing = fitter · pace is min/km"
             Rpe => "rpe = how hard it felt (1-10) — for a fixed workout, dropping = adapting"
         }
         # no baseline -> no percentage. Printing "(0%)" there claimed a measurement we
@@ -311,7 +325,7 @@ Render :: [].{
             Err(_) => ""
         }
         verdict = "→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${U64.to_str(List.len(rows))} sessions — ${label}${pct_str}"
-        footer = "${legend}\nbar = scaled worst→best · ◀ asked marks the asked date · ··· = a break over 90 days"
+        footer = "${legend}\nbar = scaled worst→best · ◀ marks the asked date · ··· = a break over 90 days"
         "── ${name} ──\n${table}\n\n${verdict}${last_vs_best(rows, lens)}\n\n${footer}"
     }
 
@@ -632,15 +646,34 @@ expect Render.progress_group_label("Morning Ride", SimilarDistance(31400.0)) == 
 # EF lens: gap row for >90-day breaks, asked marker, last-vs-best all present
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream" }
-    s = Render.progress_section("X", [pr("2025-01-01", 1.5), pr("2025-08-01", 1.2)], "2025-08-01", Ef)
-    Str.contains(s, "···") and Str.contains(s, "◀ asked") and Str.contains(s, "below your best") and Str.contains(s, "declining")
+    s = Render.progress_section("X", [pr("2025-01-01", 1.5), pr("2025-08-01", 1.2)], "2025-08-01", Ef, Asc)
+    Str.contains(s, "···") and Str.contains(s, "2025-08-01 ◀") and Str.contains(s, "below your best") and Str.contains(s, "declining")
+}
+
+# the best row's value + full 12-block bar stay on ONE line: terse headers keep the
+# progress table under render_table's 80-col budget, so the bar column is never the
+# widest-column victim of squeeze-and-word-wrap (a split bar reads as broken output)
+expect {
+    pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream" }
+    s = Render.progress_section("X", [pr("2025-01-01", 1.2), pr("2025-02-01", 1.66)], "2025-02-01", Ef, Asc)
+    Str.contains(s, "1.66 ████████████")
+}
+
+# Desc flips only the DISPLAY order — the newest row prints first (everything before
+# the 2025-01-01 row already contains 2025-02-01), while the trend verdict is still
+# computed chronologically (1.2 → 1.66 reads as improving, not declining)
+expect {
+    pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream" }
+    s = Render.progress_section("X", [pr("2025-01-01", 1.2), pr("2025-02-01", 1.66)], "2025-02-01", Ef, Desc)
+    before_old = List.first(Str.split_on(s, "2025-01-01")).ok_or("")
+    Str.contains(before_old, "2025-02-01") and Str.contains(s, "improving")
 }
 
 # RPE lens is lower-is-better: RPE dropping 8 -> 6 reads as improving, "above your easiest"
 expect {
     pr = |date, rpe| { name: "Lift", date, sport: "WeightTraining", distance_m: 0.0, moving_time: 2700, np_w: 0.0, avg_hr: 0.0, rpe, output_kj: 0.0, tss: 0.0, load_model: "session_rpe" }
-    s = Render.progress_section("Lift", [pr("2025-01-01", 8.0), pr("2025-02-01", 6.0), pr("2025-03-01", 7.0)], "2025-03-01", Rpe)
-    Str.contains(s, "effort (rpe)") and Str.contains(s, "improving") and Str.contains(s, "above your easiest")
+    s = Render.progress_section("Lift", [pr("2025-01-01", 8.0), pr("2025-02-01", 6.0), pr("2025-03-01", 7.0)], "2025-03-01", Rpe, Asc)
+    Str.contains(s, "│ rpe") and Str.contains(s, "improving") and Str.contains(s, "above your easiest")
 }
 
 # short window: daily table, rest rows, verdict; long window: weekly rollup

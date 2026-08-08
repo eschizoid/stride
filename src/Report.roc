@@ -1024,8 +1024,8 @@ Report :: [].{
     # "am I improving on THIS workout?" — anchored on a date, rendered through the
     # sport-aware lens each repeated workout supports (power->EF, distance->speed/HR,
     # rated strength->RPE). Bare `progress` uses your latest analyzed workout.
-    progress! : Str => Try({}, _)
-    progress! = |date_arg| {
+    progress! : Str, [Asc, Desc] => Try({}, _)
+    progress! = |date_arg, sort| {
         path = Db.open_db!({})?
         date =
             if !(Str.is_empty(date_arg))
@@ -1123,7 +1123,9 @@ Report :: [].{
                 groups: List.map(scored, |g| {
                     name: g.name,
                     lens: lens_name(g.lens),
-                    sessions: List.map(g.rows, |r| {
+                    # scores/trends upstream are computed on chronological rows; the sort
+                    # only changes the ORDER sessions are listed in
+                    sessions: List.map((match sort { Asc => g.rows Desc => Render.reverse_list(g.rows) }), |r| {
                         date: r.date,
                         sport: r.sport,
                         score: Metrics.lens_score(g.lens, r).ok_or(0.0),
@@ -1138,7 +1140,7 @@ Report :: [].{
                 }),
             })
         } else {
-            Stdout.line!(Str.join_with(List.map(scored, |g| Render.progress_section(g.name, g.rows, date, g.lens)), "\n\n"))
+            Stdout.line!(Str.join_with(List.map(scored, |g| Render.progress_section(g.name, g.rows, date, g.lens, sort)), "\n\n"))
         }
     }
     load_series! : U64 => Try({}, _)

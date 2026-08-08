@@ -568,9 +568,15 @@ b_progress_b! = |ctx| {
     prog_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-01"])
     check!("weaker last shows below-your-best line", Str.contains(prog_h, "below your best"))?
     check!("verdict computes overall avg EF 1.20", Str.contains(prog_h, "(overall avg 1.20)"))?
-    check!("best session renders full ef bar", Str.contains(prog_h, "████████████"))?
-    check!("asked-date row carries marker", Str.contains(prog_h, "◀ asked"))?
+    # the value and the FULL 12-block bar on one physical line — the bar column must
+    # never be the one render_table squeezes and word-wraps (it was, before headers
+    # went terse: the split bar looked broken and unreadable)
+    check!("best session renders full ef bar unwrapped", Str.contains(prog_h, "1.40 ████████████"))?
+    check!("asked-date row carries marker on the date", Str.contains(prog_h, "2025-07-01 ◀"))?
     check!("far-apart sessions show gap row", Str.contains(prog_h, "···"))?
+    check!("progress desc lists newest session first", strjq!(ctx, ["progress", "2025-07-01", "desc"], ".data.groups[0].sessions[0].date") == "2025-07-01")?
+    check!("progress desc keeps the chronological verdict", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-01", "desc"]), "below your best"))?
+    check!("progress rejects a bad sort word", Str.contains(stride!(ctx.bin, ctx.home, ["progress", "2025-07-01", "sideways"]), "asc|desc"))?
     Ok({})
 }
 
