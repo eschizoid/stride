@@ -31,7 +31,8 @@ Two traps if you re-test this:
 - The macOS asset you want is `roc_nightly-macos_x86_64-*`; `uname -m` on this machine
   reports `x86_64`, and the apple_silicon build dies with "bad CPU type in executable".
 
-**Root cause: closures stored in tuples inside a list.** A seven-line module doing this:
+**Root cause: closures stored in tuples inside a list.** The heart of it, excerpted from
+the seven-line repro module:
 
 ```roc
 cols = [("a", |r| F64.to_str(r.a)), ("b", |r| F64.to_str(r.a))]
@@ -52,8 +53,8 @@ the whole test run down.
 **It is not confined to `roc test`.** `roc build` is hit too, and worse, a program can
 build with zero errors and then crash at runtime. An app whose value comes from argv (so
 nothing folds at compile time) builds clean and dies with `[ROC CRASHED]` when run;
-building stride itself with 08-08 succeeds and the binary then exits 139 with NO output at
-all on `progress <date>`. A green build proves nothing on these nightlies.
+building stride itself with the 2026-08-08 nightly succeeds and the binary then exits 139
+with NO output at all on `progress <date>`. A green build proves nothing on these nightlies.
 
 Filed upstream as [roc-lang/roc#10693](https://github.com/roc-lang/roc/issues/10693).
 When it closes, re-run the repros from that issue first. The tag is pinned in THREE
