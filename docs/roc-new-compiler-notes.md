@@ -16,8 +16,9 @@ What breaks, precisely:
 - `roc test src/Render.roc` → `Segmentation fault (SIGSEGV) in the Roc compiler`, fault
   address 0x0. Bisected in-repo to the **24th** expect, the one calling
   `Render.progress_section(..., Ef, Asc)`.
-- `roc check` and `roc build --opt=dev` are **fine** on the new nightlies, including the
-  same module. Only the expect runner crashes.
+- `roc check` is fine on the new nightlies. `roc build` is NOT — see below; an earlier
+  version of this note said it was, because a successful build was mistaken for a working
+  binary without ever running it.
 
 Two traps if you re-test this:
 
