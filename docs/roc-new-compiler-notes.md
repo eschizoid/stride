@@ -7,7 +7,8 @@ against the compiler and roc-lang/roc source during the migration (completed
 ## Toolchain pin: do not bump past `nightly-2026-August-04-1cb06bc` yet
 
 Every nightly from **2026-08-05 onward segfaults the compiler** on this codebase.
-Verified on 2026-08-08: the 08-05, 08-06, 08-07, and 08-08 nightlies all crash; 08-04
+Verified on 2026-08-08: the 2026-08-05, 2026-08-06, 2026-08-07 and 2026-08-08 nightlies
+all crash; 2026-08-04
 (the current pin) passes: `roc test src/Render.roc`. Nightlies live in `roc-lang/nightlies`, not
 `roc-lang/roc`; note the tag format changed mid-window (`2026-August-05` → `2026-08-06`).
 
@@ -36,6 +37,9 @@ Two traps if you re-test this:
 cols = [("a", |r| F64.to_str(r.a)), ("b", |r| F64.to_str(r.a))]
 Str.join_with(List.map(cols, |c| (c.1)(row)), ",")
 ```
+
+(Both closures read `r.a` on purpose — that is the filed repro verbatim, and the second
+field is irrelevant to the crash.)
 
 fails with "hit a runtime error". Put that same list behind a `match` on a tag union and it
 escalates to `Segmentation fault (SIGSEGV) in the Roc compiler`. The runnable repros live in
