@@ -1,8 +1,9 @@
 # Agent instructions for stride
 
-> **One file, every agent.** `AGENTS.md` is the canonical instruction file (the
-> cross-tool convention read by Codex and friends); `.claude/CLAUDE.md` is a symlink
-> to it for Claude Code. Edit this file, never the symlink.
+> **One file, every agent.** `AGENTS.md` is the canonical instruction file — the
+> cross-tool convention read by Codex and friends. Claude Code users: point your local
+> config at it once with `ln -s ../AGENTS.md .claude/CLAUDE.md` (untracked on purpose;
+> this line is the documentation for it). Edit this file, never a symlink.
 
 Local-first, deterministic training analytics engine in **Roc** (Strava is one
 ingestion layer). The engine computes metrics deterministically; an LLM coach (you,

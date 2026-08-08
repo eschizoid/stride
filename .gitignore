@@ -14,3 +14,4 @@
 
 # local Strava account exports contain private activity data
 /export_*.zip
+.claude/CLAUDE.md
