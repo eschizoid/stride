@@ -12,8 +12,11 @@ updates:
       day: monday
     open-pull-requests-limit: 3
     commit-message:
-      # `ci:` produces no release; a routine action bump must never move the version
+      # Yields `ci(deps): bump ...` — the form GitHub documents, so it is a valid
+      # Conventional Commit whether or not Dependabot appends the colon itself. Type `ci`
+      # produces no release: a routine action bump must never move the version.
       prefix: ci
+      include: scope
     groups:
       # Routine first-party actions travel together — one PR, one review.
       github-official:
