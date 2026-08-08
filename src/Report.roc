@@ -1140,8 +1140,10 @@ Report :: [].{
         } else if Output.json_mode!({}) {
             Output.emit_ok!({
                 anchor_date: date,
-                # False = the anchor session itself could not be scored, so it is absent from
-                # `groups` and the trend does not include it. Bool-TYPED, not a bare tag.
+                # False = at least one workout anchored on this date lost its own row after
+                # scoring (a date can hold several workouts, hence several groups), so that
+                # session is absent from `groups` and the trends exclude it. Bool-TYPED, not
+                # a bare tag.
                 anchor_scored: anchor_kept,
                 groups: List.map(scored, |g| {
                     name: g.name,
@@ -1169,7 +1171,7 @@ Report :: [].{
                 if anchor_kept {
                     ""
                 } else {
-                    "⚠ the session on ${date} isn't in this table — it can't be scored by this lens (needs power+HR, distance+HR, or a rating), so the trend below excludes it\n\n"
+                    "⚠ a session on ${date} isn't shown in its own table — it can't be scored by that lens (needs power+HR, distance+HR, or a rating), so the trend below excludes it\n\n"
                 }
             Stdout.line!("${note}${Str.join_with(List.map(scored, |g| Render.progress_section(g.name, g.rows, date, g.lens, sort)), "\n\n")}")
         }

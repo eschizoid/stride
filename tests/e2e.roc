@@ -649,11 +649,11 @@ b_progress_b! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (216,'Anchor Probe Ride','Ride','2025-04-20T08:00:00Z',3600,20000,140);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     anchor_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-04-01"])
-    check!("an unscorable anchor says so", Str.contains(anchor_h, "isn't in this table"))?
+    check!("an unscorable anchor says so", Str.contains(anchor_h, "isn't shown in its own table"))?
     check!("and the table still shows the scorable sibling", Str.contains(anchor_h, "2025-04-20"))?
     check!("anchor_scored false when the anchor drops out", strjq!(ctx, ["progress", "2025-04-01"], ".data.anchor_scored") == "false")?
     check!("anchor_scored true when the anchor survives", strjq!(ctx, ["progress", "2025-04-20"], ".data.anchor_scored") == "true")?
-    check!("a scorable anchor stays silent", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-04-20"]), "isn't in this table")))?
+    check!("a scorable anchor stays silent", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-04-20"]), "isn't shown in its own table")))?
 
     # ...and one surviving group must not mask another that lost its anchor. Same date, a
     # SECOND workout that scores fine: asking whether ANY group still holds the date said
@@ -662,7 +662,7 @@ b_progress_b! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (218,'Second Probe Ride','Ride','2025-04-25T18:00:00Z',3600,20000,150);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     both_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-04-01"])
-    check!("a scorable group does not mask an unscorable anchor", Str.contains(both_h, "isn't in this table"))?
+    check!("a scorable group does not mask an unscorable anchor", Str.contains(both_h, "isn't shown in its own table"))?
     check!("the scorable group still renders", Str.contains(both_h, "Second Probe Ride"))?
     check!("anchor_scored false while any group lost its anchor", strjq!(ctx, ["progress", "2025-04-01"], ".data.anchor_scored") == "false")?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (217,218);")
