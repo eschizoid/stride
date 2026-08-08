@@ -247,7 +247,7 @@ Render :: [].{
         cols =
             match lens {
                 Ef => [
-                    ("np (w)", |row| fmt0(row.np_w)),
+                    ("np (W)", |row| fmt0(row.np_w)),
                     ("hr", hr_of),
                     ("ef", prim_of),
                     ("kJ", |row| fmt0(row.output_kj)),
