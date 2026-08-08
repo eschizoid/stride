@@ -1,0 +1,193 @@
+# Agent instructions for stride
+
+> **One file, every agent.** `AGENTS.md` is the canonical instruction file (the
+> cross-tool convention read by Codex and friends); `CLAUDE.md` at the root is a
+> symlink to it for Claude Code. Edit this file, never the symlink.
+
+Local-first, deterministic training analytics engine in **Roc** (Strava is one
+ingestion layer). The engine computes metrics deterministically; an LLM coach (you,
+via the skill in `.claude/skills/stride/`) consumes the JSON and writes the plan
+back. **Never do training math yourself — read stride's numbers, add judgment.**
+
+Settled architecture + rationale live in `docs/adr/0000-architecture.md` (committed) —
+read it before proposing architectural changes; don't relitigate what it settles.
+`.claude/PLAN.md` (local, untracked) is disposable working scratch: live watch-items
+only, not decisions.
+
+## Build & test
+
+```bash
+just test      # THE entry point: pure expects → fresh build → e2e (same as CI)
+just build     # the binary, --opt=dev (see below); STRIDE_LINKER= is an escape hatch
+just install   # build + symlink to ~/.local/bin/stride
+```
+
+- **Always `just test` in one command, read the result, commit in a separate command.**
+  Never chain `test && commit` — a mid-chain failure has shipped red commits before.
+- A failed build leaves a stale binary that e2e would happily "pass" against; `just
+  test` orders steps to prevent this. Don't run `just e2e` after a failed build.
+- Toolchain: the new (Zig) compiler (`~/.local/roc-new/roc`, pinned by exact nightly
+  tag in `.github/workflows/build.yml`) · basic-cli **0.21** · builtin JSON (roc-json
+  dropped). The alpha4 / 0.20 / roc-json 0.13 pin is RETIRED — `~/.local/bin/roc` still
+  points at alpha4 and CANNOT parse the current source; never aim the justfile at it.
+  `check`, `test`, and a full `roc build` all work (roc#10469 was fixed by #10531).
+- **Build with `--opt=dev`.** The compiler defaults to `--opt=speed`, whose LLVM backend
+  miscompiles this codebase (issue #32's intermittent SIGABRT; it also silently drops the
+  progress pace column, caught by e2e). `just build`, CI, and the release workflow all
+  pin `--opt=dev`. Don't ship or test a `--opt=speed` binary.
+- **New-compiler flag gotcha: `=`, not a space.** `--output=x`, `--main=x`, `--opt=dev`.
+  A space-separated `--output x` fails with a confusing error (it broke a release once).
+
+## Code conventions
+
+- **Effects live in modules, by concern** — the new compiler lifted the alpha4
+  monomorphic-module-param wall, so I/O is split out of app.roc: `Db.roc` (SQLite +
+  schema/migrations), `Strava.roc` (OAuth + sync HTTP), `Analyze/Report/Plan/Import`
+  (their commands); `app.roc` is a thin argv → dispatch shell. (History: under alpha4
+  a decoder wider than 2 columns failed to type-check once effects were injected, so
+  everything effectful had to sit in app.roc — that wall is gone.)
+  Pure logic goes in `Metrics.roc` / `Render.roc` / `Command.roc` (argv → typed
+  `Command` union, `parse` is pure + unit-tested; `main!` is thin parse-then-dispatch)
+  / `Config.roc` (`is_secret` secret-key policy) / `Csv.roc` / `Streams.roc` /
+  `Backfill.roc` / `Schema.roc`, with `expect` tests. When adding logic: pure
+  function + expects first, thin effectful skin. Add new pure modules to the
+  `just test` recipe so their expects run.
+- **Query-command output goes through `out!`** (payload + render fn): JSON is wrapped
+  in the versioned envelope by `emit_ok!`/`emit_err!` (`{schema_version, data}` /
+  `{schema_version, error:{code,message}}`), humans get a pure `Render.<cmd>_screen`
+  (or inline closure). Errors are in-band (exit 0). New commands are born on this
+  pattern; older ones migrate as touched.
+- `tests/e2e.roc` is ONE binary in two roles: a mock Strava server (`E2E_MODE=mock`) and
+  the offline e2e driver (`E2E_MODE=sync` runs real sync + token refresh against it).
+  `STRIDE_API_BASE` points stride at the mock for network-free sync testing (`just
+  e2e-sync`, local-only — it's ~50% flaky on bug C, so it retries 5×).
+- **Effectful `expect`s can't run under the test runner** — so `roc test` covers the pure
+  modules only, and the e2e suite is a real Roc app (`tests/e2e.roc`, sandboxed HOME, no
+  network) driven by `just e2e`. **Verify features with Roc expects + that harness, not
+  throwaway awk/shell.** No python anywhere in this project.
+- **SQL queries stay next to their row decoders** in whichever module owns the query
+  (`Db.roc`, `Report.roc`, …) — the compiler can't check `SELECT ... AS x` aliases against
+  `Sqlite.i64("x")` decoders; adjacency is the guard. Only decoder-free SQL (DDL) lives
+  in Schema.roc.
+- **Verify platform/package APIs against docs before writing** (basic-cli 0.21 docs,
+  or package source in `~/.cache/roc/packages/`) — alpha APIs drift; this habit has
+  kept nearly every build at 0-errors-first-try.
+- **Floats have no `Eq`** — never `x == 0.0` in an expect; use `Num.abs(x) < 0.001`.
+- SQLite type affinity bites: INTEGER columns reject `Sqlite.f64` decoders — `CAST(...
+  AS REAL)` in the SELECT when unsure.
+- Table padding is display-width (code points), not bytes — keep emitted glyphs
+  monospace-single-width; no varying-height unicode blocks (they render as mush).
+- In bash test code: `grep -q` + `pipefail` = SIGPIPE trap; capture output first,
+  then grep the variable.
+- **If/else brace style** (`roc fmt` is blocked by #27, so hold this by hand):
+  braceless when both branches are single short expressions
+  (`if stamp == 0 Null else Integer(stamp)`); braces the moment a branch has a
+  local binding, spans lines, or nests another if/match. Matches what fmt emits
+  where it works, so the eventual repo-wide fmt commit stays small. Normalize
+  existing code only as touched — no style-only sweeps while fmt is broken.
+
+## Product invariants (enforced by code and/or e2e — keep them true)
+
+- Machine JSON: numeric **0 = "not available"**, never invent numbers; `-` in human tables.
+- Machine JSON is a **versioned envelope** — success `{schema_version, data}`, error
+  `{schema_version, error:{code, message}}`; bump `json_schema_version` on a shape
+  change. Deterministic (no timestamps) so golden fixtures stay stable.
+- **Load is a mixed model, not "TSS"** — power/HR score in TSS, rated strength/HIIT in
+  session-RPE. Don't relabel the blended total "TSS"; each metrics row carries
+  `load_model` (provenance) + `load_confidence` (high=power / medium=HR·RPE /
+  low=relative-effort / none). `doctor` reports the distribution.
+- One **open** planned session per date; lifecycle open → done/skipped (never
+  delete). Rest days complete WITHOUT an activity id; every other type requires
+  one — done means evidence.
+- **Three data tiers, three recovery stories**: mirror tables (`activities`,
+  `streams`) are replace-on-sync and re-pullable — design freely; computed tables
+  (`activity_metrics`, `daily_load`) rebuild from `analyze`; judgment tables
+  (`planned_sessions`, `config`, `ratings`) exist ONLY here — human input must
+  NEVER be a column on a mirror table (a re-sync would silently wipe it).
+- **Session-RPE load is `hours × RPE × 10`** (1h @ RPE 10 = 100, TSS-commensurate
+  by construction). Never "simplify" to Foster's raw minutes — ~6× too large,
+  corrupts CTL/ATL. Strength-class sports rank the athlete's rating above HR;
+  endurance ranks measured power/HR first (`Metrics.sport_class`).
+- HR samples outside 35–220 bpm are junk — filtered at analyze.
+- `activity_metrics.ftp_used` drives auto-recompute on FTP change — any new metric
+  input must join that invalidation story.
+- CTL/ATL/TSB extend through **today** (rest days decay fatigue in the engine).
+  "Today" is the **local** calendar day; the platform clock is UTC-only, so without
+  a local anchor, users west of UTC get a phantom "tomorrow" row each evening. The
+  anchor is resolved by `resolve_time_mode!` with precedence **timezone >
+  utc_offset_minutes > UTC**: config `timezone` (IANA, e.g. America/Chicago) reads
+  the DST-correct offset for *today* from the system tz db (`/usr/share/zoneinfo`
+  gate + `date +%z`); config `utc_offset_minutes` is a fixed fallback. An unknown
+  timezone name never silently becomes UTC — it falls back to the fixed offset and
+  `doctor` reports `time_ok:false`. (Historical per-activity dates already use
+  Strava's civil date, so only the today boundary needs this.)
+- Metric invalidation (recompute triggers): FTP change (`ftp_used`), **HR zone
+  change** (`zones_used` signature), **stream arrival** (store_streams! deletes
+  metrics), **Strava edit** (upsert_activity! deletes metrics), **rating change** (rate! deletes metrics). Any new metric
+  input must join this story — `ftp_used`/`zones_used`/`metrics_rev` are compared
+  in `compute_missing_metrics!`'s WHERE; stream/edit/rating paths DELETE the row.
+  **Bump the `metrics_rev` constant whenever Metrics math changes** — config
+  provenance can't see algorithm changes. Every metrics row also records WHICH
+  ladder rung scored it (`load_model`).
+- Schema changes: bump `schema_version` (in `Db.roc`, alongside `run_migrations!`) and
+  add the migration there; `ensure_schema!` (via open_db!) applies it on next command.
+  (Constant locations: `schema_version` → Db.roc · `metrics_rev` → Analyze.roc ·
+  `json_schema_version` → Output.roc · release `version` → app.roc.)
+  **Pre-1.0 the schema is NOT a stable contract** — break it freely (retype columns,
+  DROP+recreate the mirror/computed tables, or reset the db) when that's simpler than
+  a careful migration. Don't harden migrations against versions no real db is on. The
+  ONLY hard rule: never silently destroy judgment-tier data (`ratings`,
+  `planned_sessions`, `config`/tokens) — it can't be re-derived. See ADR §6.
+- Training weeks are **Monday–Sunday**.
+- Human output philosophy: numbers in tables, meaning in legends, conclusion in a
+  verdict line. No graphs — that experiment ran and failed; don't reintroduce.
+
+## Repo & CI
+
+`github.com/eschizoid/stride` (**public**). Remote is SSH — the gh OAuth token lacks
+workflow scope for pushing workflow files. Three workflows: `build.yml` (check + pure
+tests on linux/macOS/Windows, then build + e2e on macOS), `release-please.yml`
+(automated releases, below), and `manual-release.yml` (dispatch-only re-cut).
+
+- **Normal git history — no more squash/force-push on `main`.** Commit normally, push
+  fast-forward. (We used to amend one commit and force-push; that era is over. The one
+  exception was a single force-push to fix the transition commit's message.)
+
+## Releases (release-please)
+
+Releases are automated by **release-please**, driven by **Conventional Commit** messages
+on `main`. You never tag or edit the version by hand.
+
+- **Version lives in `src/app.roc`** (`version = "stride X.Y.Z" # x-release-please-version`)
+  and `.release-please-manifest.json`. release-please bumps both — **do not hand-edit the
+  version for a release.**
+- **Commit types → version bump** (config sets `bump-minor-pre-major` only — the
+  bump-patch-for-minor-pre-major flag was deliberately REMOVED so features bump
+  the minor pre-1.0):
+  - `feat: …` → **minor** (0.1.0 → 0.2.0)
+  - `fix: …` → **patch** (0.1.0 → 0.1.1)
+  - `feat!: …` / `BREAKING CHANGE:` footer → **minor while on 0.x** (breaking does NOT
+    auto-jump to 1.0.0 — that's deliberate). After 1.0.0 it bumps major.
+  - `chore:` / `docs:` / `ci:` / `refactor:` / `test:` / `style:` → **no release**
+  - Force an exact version (e.g. deliberately cutting 1.0.0) with a `Release-As: 1.0.0`
+    footer in any commit body.
+- **Commit subjects become the release notes** — write them as user-facing changelog
+  lines, not internal shorthand. Notes are generated from commits, not from CHANGELOG prose.
+- **The flow:** commit conventionally → release-please keeps an open "release PR" with the
+  pending version + notes → **merge that PR** → it tags `vX.Y.Z`, creates the GitHub
+  release, and the build/upload jobs attach the platform binaries. **Windows IS built and
+  shipped** (`stride-windows-x86_64`, since v0.3.0) — basic-cli 0.21 ships an x64win host
+  and `OsStr.display` decodes the `WindowsU16s` argv arm. Targets: linux-x86_64,
+  macOS arm64 + Intel (macos-15-intel), windows-x86_64. **linux-arm64 currently FAILS**
+  (needs an explicit `--target`; it detects arm64v1musl) — `fail-fast: false` plus an
+  `always()` upload means the other targets still attach. Fixing it is an open follow-up.
+- **Never cut a release without Mariano's explicit go-ahead** — landing feats on main is
+  fine, but merging the release PR / tagging waits for a clear yes.
+- **GOTCHA — never write `feat:`/`fix:` as literal text in a commit _body_.** release-please
+  scans the body and invents a phantom feature from it (this caused a bogus 0.2.0 bump once).
+  Keep conventional tokens only in the subject line; reword prose (e.g. "conventional commit
+  prefixes", not "feat:/fix:").
+- release-please needs the repo setting *Actions may create and approve PRs* (enabled via
+  `gh api -X PUT repos/eschizoid/stride/actions/permissions/workflow -F can_approve_pull_request_reviews=true`).
+- Release notes carry release-please's default commit/compare **URL links** (a known
+  tradeoff of the automation vs. the old hand-curated link-free notes).
