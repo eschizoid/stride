@@ -1171,7 +1171,7 @@ Report :: [].{
                 if anchor_kept {
                     ""
                 } else {
-                    "⚠ a session on ${date} isn't shown in its own table — it can't be scored by that lens (needs power+HR, distance+HR, or a rating), so the trend below excludes it\n\n"
+                    "⚠ a session on ${date} isn't shown in its own table — it can't be scored by its lens (needs power+HR, distance+HR, or a rating), so that workout's trend excludes it\n\n"
                 }
             Stdout.line!("${note}${Str.join_with(List.map(scored, |g| Render.progress_section(g.name, g.rows, date, g.lens, sort)), "\n\n")}")
         }
