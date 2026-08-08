@@ -1109,7 +1109,15 @@ Report :: [].{
         # speed/HR group while its older siblings remain. The group is then non-empty, so the
         # unscorable branch below never fires and the table renders as if nothing were wrong,
         # with a trend computed entirely from sessions the athlete did not ask about.
-        anchor_kept = List.any(scored, |g| List.any(g.rows, |r| r.date == date))
+        #
+        # Counted PER GROUP, not "any group still has the date": anchor_filter drops every
+        # group that lacks the anchor, so each labeled group starts with one. A date holding
+        # two workouts therefore makes two groups, and asking only whether SOME group kept
+        # the date lets a surviving group mask a sibling that lost its anchor — or was
+        # dropped whole. Equality against the labeled count catches both.
+        labeled_n = List.len(labeled)
+        anchored_n = List.len(List.keep_if(scored, |g| List.any(g.rows, |r| r.date == date)))
+        anchor_kept = anchored_n == labeled_n
         if List.is_empty(scored) {
             if Str.is_empty(date) {
                 Output.err_out!("no_scorable_workouts", "nothing to compare yet — analyze activities first (and `stride rate` your strength sessions)")

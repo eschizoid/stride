@@ -654,6 +654,19 @@ b_progress_b! = |ctx| {
     check!("anchor_scored false when the anchor drops out", strjq!(ctx, ["progress", "2025-04-01"], ".data.anchor_scored") == "false")?
     check!("anchor_scored true when the anchor survives", strjq!(ctx, ["progress", "2025-04-20"], ".data.anchor_scored") == "true")?
     check!("a scorable anchor stays silent", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-04-20"]), "isn't in this table")))?
+
+    # ...and one surviving group must not mask another that lost its anchor. Same date, a
+    # SECOND workout that scores fine: asking whether ANY group still holds the date said
+    # "all good" while the first group's anchor was missing from its own table.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (217,'Second Probe Ride','Ride','2025-04-01T18:00:00Z',3600,20000,145);")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (218,'Second Probe Ride','Ride','2025-04-25T18:00:00Z',3600,20000,150);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    both_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-04-01"])
+    check!("a scorable group does not mask an unscorable anchor", Str.contains(both_h, "isn't in this table"))?
+    check!("the scorable group still renders", Str.contains(both_h, "Second Probe Ride"))?
+    check!("anchor_scored false while any group lost its anchor", strjq!(ctx, ["progress", "2025-04-01"], ".data.anchor_scored") == "false")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (217,218);")
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (217,218);")
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (215,216);")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (215,216);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
