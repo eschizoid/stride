@@ -155,6 +155,7 @@ run_all! = || {
     b_activity_detail!(ctx)?
     b_junk_filter!(ctx)?
     b_period_ftp!(ctx)?
+    b_period_pace!(ctx)?
     b_progress_a!(ctx)?
     b_progress_b!(ctx)?
     b_import!(ctx)?
@@ -519,6 +520,48 @@ b_period_ftp! = |ctx| {
     Ok({})
 }
 
+# ── ADR 0005 (amended): the PACE threshold is period-accurate too (#79) ──
+# The pace twin of b_period_ftp!. A faster swim two years later must not rescore the old
+# one — under the old global threshold (best 20-min speed over the 60 days before TODAY)
+# it did, and deleting any recent row moved that single number and requeued all history.
+b_period_pace! : Ctx => Try({}, _)
+b_period_pace! = |ctx| {
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (811,'Old Swim','Swim','2024-02-10T09:00:00Z',1800,2400);")
+    _ = seed_pace_stream!(ctx.db, 811, 1300, 1)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    old = Str.trim(sql!(ctx.db, "SELECT ROUND(tss,3) FROM activity_metrics WHERE activity_id=811;"))
+    check!("old swim scored on pace", sfloat(old) > 0.0)?
+
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (812,'Fast Swim','Swim','2026-02-10T09:00:00Z',1800,4800);")
+    _ = seed_pace_stream!(ctx.db, 812, 1300, 2)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    after = Str.trim(sql!(ctx.db, "SELECT ROUND(tss,3) FROM activity_metrics WHERE activity_id=811;"))
+    check!("a later faster swim does NOT rescore the old one", old == after)?
+    thr_old = sfloat(Str.trim(sql!(ctx.db, "SELECT ROUND(threshold_pace_used,3) FROM activity_metrics WHERE activity_id=811;")))
+    thr_new = sfloat(Str.trim(sql!(ctx.db, "SELECT ROUND(threshold_pace_used,3) FROM activity_metrics WHERE activity_id=812;")))
+    check!("each swim carries its OWN period threshold", thr_old < thr_new)?
+
+    # The blast radius, which is what #79 was actually about: sync deletes the metrics for
+    # its rolling window, and that must requeue only the affected rows. Under the global
+    # threshold, dropping the recent row moved the one derived number and invalidated every
+    # activity of that sport in history.
+    # A sentinel, not a count: `computed` accumulates across fixed-point passes, so the
+    # dropped row legitimately recomputes more than once as its own best repopulates.
+    # load_model is rewritten by any recompute and is not read by the invalidation WHERE,
+    # so it survives iff the old row was genuinely left alone.
+    _ = sql!(ctx.db, "UPDATE activity_metrics SET load_model='SENTINEL' WHERE activity_id=811;")
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id=812;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("dropping a recent row leaves older rows untouched", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=811;")) == "SENTINEL")?
+    check!("the dropped row itself is rescored", str_to_i64(Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=812;"))) == 1)?
+
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (811,812);")
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (811,812);")
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id IN (811,812);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    Ok({})
+}
+
 # ── progress A: EF lens, date -> workout, chronological, no-workout ──
 b_progress_a! : Ctx => Try({}, _)
 b_progress_a! = |ctx| {
@@ -748,6 +791,17 @@ sql! = |db, query|
 # from stream power (not config), so a power ride needs real streams to score. Inserted
 # straight into the streams table via the heredoc sql! — the JSON's double-quotes sit fine
 # inside the single-quoted SQL literal (no single quotes in the JSON to escape).
+# a pace stream: time + CUMULATIVE distance at a constant speed (m/s), no altitude —
+# the flat-triple path a swim or indoor row produces
+seed_pace_stream! : Str, I64, U64, U64 => {}
+seed_pace_stream! = |db, id, n, mps| {
+    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
+    dist = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i * mps)), ",")
+    raw = "{\"time\":{\"data\":[${times}]},\"distance\":{\"data\":[${dist}]}}"
+    _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
+    {}
+}
+
 seed_power_stream! : Str, I64, U64, U64 => {}
 seed_power_stream! = |db, id, n, w| {
     times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
