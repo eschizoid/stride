@@ -19,7 +19,7 @@ Command := [
 	Top(Str, U64, Str),
 	Import(Str),
 	Rate(Str, Str),
-	Progress(Str),
+	Progress(Str, [Asc, Desc]),
 	Activity(Str),
 	Load(U64),
 	PowerCurve(U64, Str),
@@ -65,8 +65,19 @@ Command := [
 			[_, "doctor"] => Ok(Doctor)
 			[_, "zones"] => Ok(Zones)
 			[_, "pz"] => Ok(Zones)
-			[_, "progress"] => Ok(Progress(""))
-			[_, "progress", name] => Ok(Progress(name))
+			# a bare asc/desc is a sort on the latest anchor, not a date named "desc"
+			[_, "progress"] => Ok(Progress("", Asc))
+			[_, "progress", "asc"] => Ok(Progress("", Asc))
+			[_, "progress", "desc"] => Ok(Progress("", Desc))
+			# a sort word in the DATE position stays a sort word. Without these, `progress
+			# desc asc` fell through to the name+sort arms below and anchored on a workout
+			# named "desc" — the opposite of what the comment above promises.
+			[_, "progress", "asc", ..] => Err(Usage("progress [date] [asc|desc]"))
+			[_, "progress", "desc", ..] => Err(Usage("progress [date] [asc|desc]"))
+			[_, "progress", name] => Ok(Progress(name, Asc))
+			[_, "progress", name, "asc"] => Ok(Progress(name, Asc))
+			[_, "progress", name, "desc"] => Ok(Progress(name, Desc))
+			[_, "progress", ..] => Err(Usage("progress [date] [asc|desc]"))
 			[_, "activity", id_str] => Ok(Activity(id_str))
 			[_, "load"] => Ok(Load(90))
 			[_, "load", n] => count(n, |c| Load(c))
@@ -199,12 +210,41 @@ expect
 	}
 expect
 	match Command.parse(["stride", "progress"]) {
-		Ok(Progress("")) => True
+		Ok(Progress("", Asc)) => True
 		_ => False
 	}
 expect
 	match Command.parse(["stride", "progress", "2026-01-01"]) {
-		Ok(Progress("2026-01-01")) => True
+		Ok(Progress("2026-01-01", Asc)) => True
+		_ => False
+	}
+# a bare sort word is a sort, not a date anchor
+expect
+	match Command.parse(["stride", "progress", "desc"]) {
+		Ok(Progress("", Desc)) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "progress", "2026-01-01", "desc"]) {
+		Ok(Progress("2026-01-01", Desc)) => True
+		_ => False
+	}
+# a third arg that isn't asc/desc gets the targeted usage hint
+expect
+	match Command.parse(["stride", "progress", "2026-01-01", "sideways"]) {
+		Err(Usage(u)) => Str.contains(u, "asc|desc")
+		_ => False
+	}
+# a sort word in the DATE position is never a date: `progress desc asc` used to anchor on
+# a workout named "desc" instead of refusing
+expect
+	match Command.parse(["stride", "progress", "desc", "asc"]) {
+		Err(Usage(u)) => Str.contains(u, "asc|desc")
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "progress", "asc", "desc"]) {
+		Err(Usage(u)) => Str.contains(u, "asc|desc")
 		_ => False
 	}
 expect
