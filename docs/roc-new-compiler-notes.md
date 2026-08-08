@@ -39,7 +39,10 @@ repros in `docs/repro/`, both passing on 08-04 and failing on every nightly from
 
 That second shape is exactly `Render.progress_section`, which picks its column list
 (header string + cell closure per column) by lens — which is why that one expect takes
-the whole test run down. Not filed upstream yet.
+the whole test run down.
+
+Filed upstream as [roc-lang/roc#10693](https://github.com/roc-lang/roc/issues/10693).
+When it closes, re-run both repros before touching the pin in `build.yml`.
 
 ## CLI flags: `=`, never a space
 
