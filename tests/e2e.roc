@@ -750,13 +750,18 @@ b_concurrency! = |ctx| {
     check!("journal mode is WAL", Str.trim(sql!(ctx.db, "PRAGMA journal_mode;")) == "wal")?
     # Racing a real analyze proved nothing here — the sandbox db computes in well under a
     # second, so the reader never overlapped the transaction and the check still passed with
-    # the fix reverted. Hold the write lock DETERMINISTICALLY instead: a background sqlite3
-    # keeps BEGIN EXCLUSIVE open (its connection lives as long as its stdin does), and a
-    # read command must still succeed. The hold outlasts busy_timeout on purpose, so merely
-    # waiting the lock out cannot be mistaken for reading past it.
-    held = Str.trim(sh!("( printf 'BEGIN EXCLUSIVE;\\n'; sleep 8 ) | sqlite3 '${ctx.db}' > /dev/null 2>&1 & holder=$!; sleep 1; HOME='${ctx.home}' '${ctx.bin}' summary > '${ctx.home}/held.out' 2>&1; kill $holder > /dev/null 2>&1; cat '${ctx.home}/held.out'"))
-    check!("a read succeeds while a writer holds the db", Str.contains(held, "\"schema_version\""))?
-    check!("no busy error under a held write lock", !(Str.contains(held, "Busy")) and !(Str.contains(held, "locked")))?
+    # the fix reverted. Hold a lock DETERMINISTICALLY instead: a background sqlite3 keeps a
+    # transaction open, since its connection lives as long as its stdin does.
+    # Direction matters: the real failure was a READER aborting the WRITER. Under the
+    # rollback journal a reader holds SHARED, analyze's commit needs EXCLUSIVE, and with
+    # busy_timeout 0 analyze died instantly. So hold an open READ transaction (deferred
+    # BEGIN + SELECT keeps SHARED until the connection closes) and require analyze to
+    # finish anyway — which is exactly what WAL buys: readers never block a writer.
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics;")
+    held = Str.trim(sh!("( printf 'BEGIN;\\nSELECT COUNT(*) FROM activities;\\n'; sleep 8 ) | sqlite3 '${ctx.db}' > /dev/null 2>&1 & holder=$!; sleep 1; HOME='${ctx.home}' '${ctx.bin}' analyze > '${ctx.home}/held.out' 2>&1; kill $holder > /dev/null 2>&1; cat '${ctx.home}/held.out'"))
+    check!("analyze finishes while a reader holds the db", Str.contains(held, "\"schema_version\""))?
+    check!("no busy error under a held read lock", !(Str.contains(held, "Busy")) and !(Str.contains(held, "locked")))?
+    check!("and it actually wrote metrics", str_to_i64(Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics;"))) > 0)?
     Ok({})
 }
 
