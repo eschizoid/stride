@@ -29,28 +29,23 @@ Two traps if you re-test this:
 - The macOS asset you want is `roc_nightly-macos_x86_64-*`; `uname -m` on this machine
   reports `x86_64`, and the apple_silicon build dies with "bad CPU type in executable".
 
-**Root cause: closures stored in tuples inside a list.** Reduced to two standalone
-repros in `docs/repro/`, both passing on 08-04 and failing on every nightly from 08-05:
-
-- `RocTupleClosure.roc` — 7 lines, `[("a", |r| ...), ("b", |r| ...)]` then calling `c.1`.
-  Fails with "hit a runtime error".
-- `RocTupleClosureSegv.roc` — the same list behind a `match` on a tag union. Escalates to
-  `Segmentation fault (SIGSEGV) in the Roc compiler`, fault address 0x0.
+**Root cause: closures stored in tuples inside a list.** A seven-line module using
+`[("a", |r| ...), ("b", |r| ...)]` and calling `c.1` fails with "hit a runtime error"; put
+that list behind a `match` on a tag union and it escalates to `Segmentation fault (SIGSEGV)
+in the Roc compiler`. The runnable repros live in the upstream issue, not in this repo.
 
 That second shape is exactly `Render.progress_section`, which picks its column list
 (header string + cell closure per column) by lens — which is why that one expect takes
 the whole test run down.
 
 **It is not confined to `roc test`.** `roc build` is hit too, and worse, a program can
-build with zero errors and then crash at runtime. Verified on 08-08 with the app repros
-in `docs/repro/`: one reports a COMPILE TIME CRASH yet still emits a binary that dies
-with `[ROC CRASHED]`, one segfaults the compiler mid-build, and one — value taken from
-argv, so nothing to fold at compile time — builds clean and crashes when run. Building
-stride itself with 08-08 succeeds, and the resulting binary then exits 139 with NO
-output at all on `progress <date>`. A green build proves nothing on these nightlies.
+build with zero errors and then crash at runtime. An app whose value comes from argv (so
+nothing folds at compile time) builds clean and dies with `[ROC CRASHED]` when run;
+building stride itself with 08-08 succeeds and the binary then exits 139 with NO output at
+all on `progress <date>`. A green build proves nothing on these nightlies.
 
 Filed upstream as [roc-lang/roc#10693](https://github.com/roc-lang/roc/issues/10693).
-When it closes, re-run all five repros before touching the pin in `build.yml`.
+When it closes, re-run the repros from that issue before touching the pin in `build.yml`.
 
 ## CLI flags: `=`, never a space
 
