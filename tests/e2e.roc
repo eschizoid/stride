@@ -425,7 +425,17 @@ b_plan! = |ctx| {
     date_101 = Str.trim(sql!(ctx.db, "SELECT substr(start_local,1,10) FROM activities WHERE id=101;"))
     plan_early = stride_human!(ctx.bin, ctx.home, ["plan", "all"])
     check!("a session finished on another day shows that day", Str.contains(plan_early, "done (") and Str.contains(plan_early, date_101))?
-    check!("a session finished on its target date just says done", Str.contains(plan_early, "│ done "))?
+    # The control has to be an ON-TIME session checked BY ID. Asserting the output merely
+    # contains "│ done " is a false positive: it is a prefix of "│ done (Fri ...", so the
+    # check passed even when every row carried a date.
+    _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','${date_101}','endurance','same day ride','r','open');")
+    ontime_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
+    _ = stride!(ctx.bin, ctx.home, ["complete", ontime_id, "101"])
+    ontime_status = strjq!(ctx, ["plan", "all"], ".data[] | select(.id==${ontime_id}) | .status_shown")
+    early_status = strjq!(ctx, ["plan", "all"], ".data[] | select(.id==${early_id}) | .status_shown")
+    check!("an on-time session renders exactly done", ontime_status == "done")?
+    check!("the early one carries its real date", Str.starts_with(early_status, "done ("))?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${ontime_id};")
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date = '2025-01-15';")
     Ok({})
 }
