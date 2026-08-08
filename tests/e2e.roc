@@ -415,6 +415,18 @@ b_plan! = |ctx| {
     check!("fully-skipped day shows ONE row", strjq!(ctx, ["plan"], "[.data[] | select(.target_date==\"${ctx.today}\")] | length") == "1")?
     check!("fully-skipped day shows the FINAL tombstone", strjq!(ctx, ["plan"], ".data[] | select(.target_date==\"${ctx.today}\") | .id") == "6")?
     check!("plan all keeps every draft", strjq!(ctx, ["plan", "all"], "[.data[] | select(.target_date==\"${ctx.today}\")] | length") == "2")?
+    # #84 follow-up: a session completed by an activity from ANOTHER day rendered exactly
+    # like one completed on time, so the plan quietly implied the work happened on the date
+    # it was prescribed for. The completing activity's own day is shown when they differ.
+    # Activity 101 lives on ctx.d1, so target a fixed date it cannot coincide with.
+    _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','2025-01-15','endurance','early ride','r','open');")
+    early_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
+    _ = stride!(ctx.bin, ctx.home, ["complete", early_id, "101"])
+    date_101 = Str.trim(sql!(ctx.db, "SELECT substr(start_local,1,10) FROM activities WHERE id=101;"))
+    plan_early = stride_human!(ctx.bin, ctx.home, ["plan", "all"])
+    check!("a session finished on another day shows that day", Str.contains(plan_early, "done (") and Str.contains(plan_early, date_101))?
+    check!("a session finished on its target date just says done", Str.contains(plan_early, "│ done "))?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date = '2025-01-15';")
     Ok({})
 }
 
