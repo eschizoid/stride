@@ -752,13 +752,16 @@ b_concurrency! = |ctx| {
     # second, so the reader never overlapped the transaction and the check still passed with
     # the fix reverted. Hold a lock DETERMINISTICALLY instead: a background sqlite3 keeps a
     # transaction open, since its connection lives as long as its stdin does.
+    # STRIDE_FORMAT is pinned because this bypasses the stride! helper, which sets it.
+    # Output mode otherwise depends on CLAUDECODE being set in the developer's shell, so
+    # this passed locally and failed on CI, where the human table has no schema_version.
     # Direction matters: the real failure was a READER aborting the WRITER. Under the
     # rollback journal a reader holds SHARED, analyze's commit needs EXCLUSIVE, and with
     # busy_timeout 0 analyze died instantly. So hold an open READ transaction (deferred
     # BEGIN + SELECT keeps SHARED until the connection closes) and require analyze to
     # finish anyway — which is exactly what WAL buys: readers never block a writer.
     _ = sql!(ctx.db, "DELETE FROM activity_metrics;")
-    held = Str.trim(sh!("( printf 'BEGIN;\\nSELECT COUNT(*) FROM activities;\\n'; sleep 8 ) | sqlite3 '${ctx.db}' > /dev/null 2>&1 & holder=$!; sleep 1; HOME='${ctx.home}' '${ctx.bin}' analyze > '${ctx.home}/held.out' 2>&1; kill $holder > /dev/null 2>&1; cat '${ctx.home}/held.out'"))
+    held = Str.trim(sh!("( printf 'BEGIN;\\nSELECT COUNT(*) FROM activities;\\n'; sleep 8 ) | sqlite3 '${ctx.db}' > /dev/null 2>&1 & holder=$!; sleep 1; HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' analyze > '${ctx.home}/held.out' 2>&1; kill $holder > /dev/null 2>&1; cat '${ctx.home}/held.out'"))
     check!("analyze finishes while a reader holds the db", Str.contains(held, "\"schema_version\""))?
     check!("no busy error under a held read lock", !(Str.contains(held, "Busy")) and !(Str.contains(held, "locked")))?
     check!("and it actually wrote metrics", str_to_i64(Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics;"))) > 0)?
