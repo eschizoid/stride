@@ -1337,9 +1337,11 @@ expect {
     pi.hard_s == 60 and pi.easy_s == 0
 }
 
-# resample_1s_pairs sorts first. One out-of-order sample used to be dropped WITHOUT
+# resample_1s_pairs orders its input first — sorting the streams that need it, skipping the
+# sort for the ones already ascending. One out-of-order sample used to be dropped WITHOUT
 # advancing the anchor, so a single large stray timestamp swallowed every sample after it.
-# Same samples, shuffled: the result must be identical to the ordered case.
+# Same samples, shuffled: the result must be identical to the ordered case, which is exactly
+# the guarantee the skip must not break.
 expect {
     ordered = [{ t: 0.I64, v: 0.0.F64 }, { t: 1.I64, v: 4.0.F64 }, { t: 2.I64, v: 8.0.F64 }]
     shuffled = [{ t: 2.I64, v: 8.0.F64 }, { t: 0.I64, v: 0.0.F64 }, { t: 1.I64, v: 4.0.F64 }]
