@@ -752,6 +752,10 @@ b_concurrency! = |ctx| {
     # the fix reverted. Hold a lock DETERMINISTICALLY instead: a background sqlite3 keeps a
     # transaction open, since its connection lives as long as its stdin does.
     check!("journal mode is WAL", Str.trim(sql!(ctx.db, "PRAGMA journal_mode;")) == "wal")?
+    # Clear what analyze must rebuild. Without this the "it wrote" check below passed on
+    # rows left by earlier scenarios, so it proved nothing about the run under contention.
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics;")
+    _ = sql!(ctx.db, "DELETE FROM daily_load;")
     # A FIFO, not a backgrounded pipeline: `$!` on a pipeline is the last command in some
     # shells and the subshell in others, so `kill $!` could leave sqlite3 alive holding the
     # transaction and block every test after this one. Feeding sqlite3 from a fifo makes it
@@ -765,9 +769,13 @@ b_concurrency! = |ctx| {
     # mode otherwise depends on CLAUDECODE being set in the developer's shell, so this
     # passed locally and failed on CI, where the human table has no schema_version.
     held = Str.trim(sh!("set -e; f='${ctx.home}/hold.fifo'; rm -f \"$f\"; mkfifo \"$f\"; sqlite3 '${ctx.db}' < \"$f\" > /dev/null 2>&1 & holder=$!; exec 3> \"$f\"; printf 'BEGIN;\\nSELECT COUNT(*) FROM activities;\\n' >&3; sleep 1; HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' analyze > '${ctx.home}/held.out' 2>&1; exec 3>&-; wait $holder 2>/dev/null; rm -f \"$f\"; cat '${ctx.home}/held.out'"))
-    check!("analyze finishes while a reader holds the db", Str.contains(held, "\"schema_version\""))?
-    check!("no busy error under a held read lock", !(Str.contains(held, "Busy")) and !(Str.contains(held, "locked")))?
-    check!("and it actually wrote metrics", str_to_i64(Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics;"))) > 0)?
+    # NOT schema_version: the ERROR envelope carries that too, so matching it would accept
+    # the very failure this scenario exists to catch. `converged` appears only in analyze's
+    # success payload, and daily_load — emptied above, rebuilt by analyze alone — proves
+    # THIS run wrote under contention rather than some earlier one.
+    check!("analyze finishes while a reader holds the db", Str.contains(held, "\"converged\":true"))?
+    check!("no busy error under a held read lock", !(Str.contains(held, "Busy")) and !(Str.contains(held, "locked")) and !(Str.contains(held, "\"error\"")))?
+    check!("and it rebuilt daily_load under contention", str_to_i64(Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM daily_load;"))) > 0)?
     # doctor must report the mode actually in force, not assume it engaged
     check!("doctor reports concurrent reads ok", strjq!(ctx, ["doctor"], ".data.concurrent_reads_ok") == "true")?
     check!("doctor reports the journal mode", strjq!(ctx, ["doctor"], ".data.journal_mode") == "wal")?
