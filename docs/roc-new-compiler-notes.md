@@ -6,9 +6,9 @@ against the compiler and roc-lang/roc source during the migration (completed
 
 ## Toolchain pin: do not bump past `nightly-2026-August-04-1cb06bc` yet
 
-Every nightly from **2026-08-05 onwards segfaults the compiler** on this codebase.
+Every nightly from **2026-08-05 onward segfaults the compiler** on this codebase.
 Verified on 2026-08-08: the 08-05, 08-06, 08-07, and 08-08 nightlies all crash; 08-04
-(the current pin) passes all 179 Render tests. Nightlies live in `roc-lang/nightlies`, not
+(the current pin) passes: `roc test src/Render.roc`. Nightlies live in `roc-lang/nightlies`, not
 `roc-lang/roc`; note the tag format changed mid-window (`2026-August-05` → `2026-08-06`).
 
 What breaks, precisely:
@@ -52,7 +52,9 @@ building stride itself with 08-08 succeeds and the binary then exits 139 with NO
 all on `progress <date>`. A green build proves nothing on these nightlies.
 
 Filed upstream as [roc-lang/roc#10693](https://github.com/roc-lang/roc/issues/10693).
-When it closes, re-run the repros from that issue before touching the pin in `build.yml`.
+When it closes, re-run the repros from that issue first. The tag is pinned in THREE
+workflows — `build.yml` (twice), `manual-release.yml` and `release-please.yml` — so
+`grep -rn nightly-tag .github/workflows` before declaring the bump done.
 
 ## CLI flags: `=`, never a space
 
