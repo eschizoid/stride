@@ -323,6 +323,14 @@ b_cred_safety! = |ctx| {
     check!("secret was still stored", Str.trim(sql!(ctx.db, "SELECT value FROM config WHERE key='strava_client_secret';")) == "SETSECRET456")?
     perms = Str.trim(sh!("stat -c '%a' '${ctx.db}' 2>/dev/null || stat -f '%Lp' '${ctx.db}' 2>/dev/null"))
     check!("db is chmod 600", perms == "600")?
+    # The WAL sidecar holds recently written pages, and the write just above put the Strava
+    # client secret in one of them — so it needs the same protection as the db itself. The
+    # directory is the real guarantee (nobody else can traverse into 0700), which is why it
+    # is hardened BEFORE the schema runs and can create these files.
+    dperms = Str.trim(sh!("stat -c '%a' '${ctx.home}/.stride' 2>/dev/null || stat -f '%Lp' '${ctx.home}/.stride' 2>/dev/null"))
+    check!("the .stride directory is chmod 700", dperms == "700")?
+    wperms = Str.trim(sh!("test -f '${ctx.db}-wal' && (stat -c '%a' '${ctx.db}-wal' 2>/dev/null || stat -f '%Lp' '${ctx.db}-wal' 2>/dev/null) || echo 600"))
+    check!("the WAL sidecar is chmod 600", wperms == "600")?
     Ok({})
 }
 
@@ -765,10 +773,14 @@ b_concurrency! = |ctx| {
     # running afterwards. The one `sleep 1` below is a readiness wait, giving sqlite3 time
     # to take its read lock before analyze starts; without it the two might not overlap and
     # the check would pass without ever testing contention.
+    # No `set -e`: if analyze ever fails again, the shell would exit before `exec 3>&-`
+    # and the fifo cleanup, leaving sqlite3 alive holding the transaction and hanging every
+    # check after this one — the regression would present as a stuck suite instead of a
+    # failed assertion, and held.out would be lost.
     # STRIDE_FORMAT is pinned because this bypasses the stride! helper, which sets it. The
     # mode otherwise depends on CLAUDECODE being set in the developer's shell, so this
     # passed locally and failed on CI, where the human table has no schema_version.
-    held = Str.trim(sh!("set -e; f='${ctx.home}/hold.fifo'; rm -f \"$f\"; mkfifo \"$f\"; sqlite3 '${ctx.db}' < \"$f\" > /dev/null 2>&1 & holder=$!; exec 3> \"$f\"; printf 'BEGIN;\\nSELECT COUNT(*) FROM activities;\\n' >&3; sleep 1; HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' analyze > '${ctx.home}/held.out' 2>&1; exec 3>&-; wait $holder 2>/dev/null; rm -f \"$f\"; cat '${ctx.home}/held.out'"))
+    held = Str.trim(sh!("f='${ctx.home}/hold.fifo'; rm -f \"$f\"; mkfifo \"$f\"; sqlite3 '${ctx.db}' < \"$f\" > /dev/null 2>&1 & holder=$!; exec 3> \"$f\"; printf 'BEGIN;\\nSELECT COUNT(*) FROM activities;\\n' >&3; sleep 1; HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' analyze > '${ctx.home}/held.out' 2>&1; exec 3>&-; wait $holder 2>/dev/null; rm -f \"$f\"; cat '${ctx.home}/held.out'"))
     # NOT schema_version: the ERROR envelope carries that too, so matching it would accept
     # the very failure this scenario exists to catch. `converged` appears only in analyze's
     # success payload, and daily_load — emptied above, rebuilt by analyze alone — proves

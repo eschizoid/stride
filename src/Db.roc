@@ -312,12 +312,19 @@ Db :: [].{
     # below still turns most contention into a wait instead of a failure.
     journal_mode! : Str => Try(Str, _)
     journal_mode! = |path| {
-        modes = Sqlite.query_many!({
-            path: Path.utf8(path),
-            query: "PRAGMA journal_mode",
-            bindings: [],
-            rows: Sqlite.str("journal_mode"),
-        })?
+        # Best-effort for real: a `?` here would abort doctor on a Busy or unopenable db,
+        # which is precisely when someone runs doctor. The sentinel below is only honest if
+        # the failing paths reach it, so the query error becomes "unknown" too.
+        modes =
+            match Sqlite.query_many!({
+                path: Path.utf8(path),
+                query: "PRAGMA journal_mode",
+                bindings: [],
+                rows: Sqlite.str("journal_mode"),
+            }) {
+                Ok(rows) => rows
+                Err(_) => []
+            }
         # "unknown", never "": PRAGMA journal_mode always returns a row on a working
         # connection, so no rows means the read itself failed. An empty string would render
         # as a blank cell and read like a mode, hiding that. This stays a sentinel rather
@@ -365,9 +372,18 @@ Db :: [].{
     open_db! : {} => Try(Str, _)
     open_db! = |{}| {
         p = db_path!({})?
-        ensure_schema!(p)?
-        # harden on every open so existing world-readable installs get fixed too
         home = home_dir!({})?
+        # Harden BEFORE opening, not only after. Enabling WAL creates db.sqlite-wal and
+        # -shm, and the WAL file holds recently written pages — including config rows, which
+        # is where the Strava client secret and tokens live. Created under the default umask
+        # they can be world-readable for the window before the chmod below. Tightening the
+        # DIRECTORY to 0700 first closes that window regardless of umask: nobody else can
+        # traverse into it, so a sidecar cannot be read even in the instant before it is
+        # chmodded. Best-effort by design (see secure_perms!), so a platform without chmod
+        # is no worse off than before.
+        secure_perms!("${home}/.stride")?
+        ensure_schema!(p)?
+        # and again after, to set the modes on files this open just created
         secure_perms!("${home}/.stride")?
         Ok(p)
     }
