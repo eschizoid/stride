@@ -289,8 +289,39 @@ Db :: [].{
     # run migrations exactly when the db is behind, then stamp the version. Called
     # on every command entry (via open_db!) so upgrading the binary against an
     # existing db self-migrates instead of failing with an opaque missing-column error.
+    # Concurrency posture, applied on EVERY open (both pragmas are idempotent and cheap).
+    #
+    # analyze rebuilds daily_load inside one transaction on purpose — a partial day-walk
+    # would leave a truncated series that summary reads as valid. Under the rollback
+    # journal that transaction locks the whole database, and SQLite's default busy_timeout
+    # of 0 means any other connection fails IMMEDIATELY rather than waiting. A single
+    # `stride week` in a second terminal was enough to abort a running analyze with
+    # SqliteErr(Busy) and throw away all of its work.
+    #
+    # WAL lets readers proceed against a writer instead of blocking, which is exactly this
+    # workload: one long writer, several short read-only query commands. It is a PERSISTENT
+    # property of the database file, so it survives across the per-call connections. The
+    # busy_timeout additionally makes writer-vs-writer contention wait rather than fail.
+    # Both are read via query_many! because a PRAGMA assignment returns a row.
+    configure_concurrency! : Str => Try({}, _)
+    configure_concurrency! = |path| {
+        _ = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "PRAGMA journal_mode = WAL",
+            bindings: [],
+            rows: Sqlite.str("journal_mode"),
+        })?
+        _ = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "PRAGMA busy_timeout = 5000",
+            bindings: [],
+            rows: Sqlite.i64("timeout"),
+        })?
+        Ok({})
+    }
     ensure_schema! : Str => Try({}, _)
     ensure_schema! = |path| {
+        configure_concurrency!(path)?
         v = (Sqlite.query!({
                 path: Path.utf8(path),
                 query: "SELECT user_version AS v FROM pragma_user_version()",

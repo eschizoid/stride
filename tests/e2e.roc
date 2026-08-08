@@ -164,6 +164,7 @@ run_all! = || {
     b_doctor!(ctx)?
     b_device_watts!(ctx)?
     b_human!(ctx)?
+    b_concurrency!(ctx)?
     b_migration!(ctx)?
     _ = sh!("rm -rf '${home}'")
     Stdout.line!("ALL E2E CHECKS PASS")
@@ -737,6 +738,25 @@ b_human! = |ctx| {
     check!("human summary banner", Str.contains(stride_human!(ctx.bin, ctx.home, ["summary"]), "stride report"))?
     check!("human week bundle", Str.contains(stride_human!(ctx.bin, ctx.home, ["week"]), "OPEN PLAN"))?
     check!("uppercase STRIDE_FORMAT selects JSON", Str.contains(stride_env!(ctx.bin, ctx.home, ["summary"], [("STRIDE_FORMAT", "JSON")]), "\"schema_version\""))?
+    Ok({})
+}
+
+# ── a reader must never be able to abort a writer (#80) ─────────────
+# analyze rebuilds daily_load in one transaction. Under the rollback journal that locked
+# the whole db, and with busy_timeout 0 a concurrent reader failed instantly — a single
+# `stride week` in another terminal killed a running analyze and discarded its work.
+b_concurrency! : Ctx => Try({}, _)
+b_concurrency! = |ctx| {
+    check!("journal mode is WAL", Str.trim(sql!(ctx.db, "PRAGMA journal_mode;")) == "wal")?
+    # Racing a real analyze proved nothing here — the sandbox db computes in well under a
+    # second, so the reader never overlapped the transaction and the check still passed with
+    # the fix reverted. Hold the write lock DETERMINISTICALLY instead: a background sqlite3
+    # keeps BEGIN EXCLUSIVE open (its connection lives as long as its stdin does), and a
+    # read command must still succeed. The hold outlasts busy_timeout on purpose, so merely
+    # waiting the lock out cannot be mistaken for reading past it.
+    held = Str.trim(sh!("( printf 'BEGIN EXCLUSIVE;\\n'; sleep 8 ) | sqlite3 '${ctx.db}' > /dev/null 2>&1 & holder=$!; sleep 1; HOME='${ctx.home}' '${ctx.bin}' summary > '${ctx.home}/held.out' 2>&1; kill $holder > /dev/null 2>&1; cat '${ctx.home}/held.out'"))
+    check!("a read succeeds while a writer holds the db", Str.contains(held, "\"schema_version\""))?
+    check!("no busy error under a held write lock", !(Str.contains(held, "Busy")) and !(Str.contains(held, "locked")))?
     Ok({})
 }
 
