@@ -1095,7 +1095,15 @@ Report :: [].{
         # choose each group's lens, keep only rows it can score; drop unscorable groups
         keep_scored = |lens, g| {
             kept = List.keep_if(g.rows, |r| Metrics.lens_score(lens, r).is_ok())
-            if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, lens, rows: kept })
+            # Asked per GROUP, against the anchor ROW itself — not "is some row on that date
+            # still here". anchor_filter picks the FIRST row on the date, so two same-name
+            # sessions on one day mean a dropped anchor can hide behind its surviving twin.
+            anchor_ok =
+                match List.find_first(g.rows, |r| r.date == date) {
+                    Ok(a) => Metrics.lens_score(lens, a).is_ok()
+                    Err(_) => False
+                }
+            if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, lens, rows: kept, anchor_ok })
         }
         scored = List.keep_oks(labeled, |g|
             match Metrics.progress_lens(g.rows) {
@@ -1115,9 +1123,9 @@ Report :: [].{
         # two workouts therefore makes two groups, and asking only whether SOME group kept
         # the date lets a surviving group mask a sibling that lost its anchor — or was
         # dropped whole. Equality against the labeled count catches both.
-        labeled_n = List.len(labeled)
-        anchored_n = List.len(List.keep_if(scored, |g| List.any(g.rows, |r| r.date == date)))
-        anchor_kept = anchored_n == labeled_n
+        # Both failure modes: a whole group dropped (count mismatch), or a group that
+        # survived while the row we anchored on did not.
+        anchor_kept = List.len(scored) == List.len(labeled) and List.all(scored, |g| g.anchor_ok)
         if List.is_empty(scored) {
             if Str.is_empty(date) {
                 Output.err_out!("no_scorable_workouts", "nothing to compare yet — analyze activities first (and `stride rate` your strength sessions)")

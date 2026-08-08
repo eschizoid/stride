@@ -665,6 +665,18 @@ b_progress_b! = |ctx| {
     check!("a scorable group does not mask an unscorable anchor", Str.contains(both_h, "isn't shown in its own table"))?
     check!("the scorable group still renders", Str.contains(both_h, "Second Probe Ride"))?
     check!("anchor_scored false while any group lost its anchor", strjq!(ctx, ["progress", "2025-04-01"], ".data.anchor_scored") == "false")?
+    # ...and a twin on the SAME date must not cover for the anchor. anchor_filter takes the
+    # FIRST row on the date, so an unscorable anchor with a scorable same-day sibling was
+    # still "present by date" — the check has to ask whether the anchor ROW itself scores.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (219,'Twin Probe Ride','Ride','2025-05-01T08:00:00Z',3600,20000);")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (220,'Twin Probe Ride','Ride','2025-05-01T18:00:00Z',3600,20000,145);")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (221,'Twin Probe Ride','Ride','2025-05-20T08:00:00Z',3600,20000,150);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    twin_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-05-01"])
+    check!("a same-day twin does not cover for a dropped anchor", Str.contains(twin_h, "isn't shown in its own table"))?
+    check!("anchor_scored false when the anchor row itself cannot score", strjq!(ctx, ["progress", "2025-05-01"], ".data.anchor_scored") == "false")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (219,220,221);")
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (219,220,221);")
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (217,218);")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (217,218);")
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (215,216);")
