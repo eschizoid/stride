@@ -69,7 +69,7 @@ Metrics :: [].{
     # step below reads as a four-case table instead of a staircase of nested else-ifs.
     resample_case : Bool, I64 -> [First, OutOfOrder, Fill, Pause]
     resample_case = |started, gap|
-        if !started { First } else if gap <= 0 { OutOfOrder } else if gap <= max_fill_gap { Fill } else { Pause }
+        if !started First else if gap <= 0 OutOfOrder else if gap <= max_fill_gap Fill else Pause
 
     resample_step = |acc, s, mode| {
         emit = |out| { out: List.append(out, { t: s.t, v: s.v }), prev_t: s.t, prev_v: s.v, started: True }
@@ -291,7 +291,7 @@ Metrics :: [].{
     # split: the three buckets sum to PEDALLING time, not moving time.
     power_band : F64, F64, F64 -> [Coasting, Easy, Moderate, Hard]
     power_band = |watts, mod_lo, hard_lo|
-        if watts <= 0.0 { Coasting } else if watts < mod_lo { Easy } else if watts < hard_lo { Moderate } else { Hard }
+        if watts <= 0.0 Coasting else if watts < mod_lo Easy else if watts < hard_lo Moderate else Hard
 
     # Sum REAL elapsed seconds into three intensity bands, given a per-sample classifier.
     #
@@ -373,7 +373,7 @@ Metrics :: [].{
             mod_lo = threshold * 0.76
             hard_lo = threshold * 0.91
             time_in_bands(speed_pairs, |v|
-                if v < mod_lo { Easy } else if v < hard_lo { Moderate } else { Hard }
+                if v < mod_lo Easy else if v < hard_lo Moderate else Hard
             )
         }
 
@@ -672,7 +672,7 @@ Metrics :: [].{
                 # A fit can land on a negative CP or W' (noisy or near-collinear points).
                 # Neither is physically meaningful, so refuse rather than hand back a
                 # nonsense number the caller has to remember to check.
-                if cp <= 0.0 or w_prime <= 0.0 { Err(TooFew) } else { Ok({ cp, w_prime }) }
+                if cp <= 0.0 or w_prime <= 0.0 Err(TooFew) else Ok({ cp, w_prime })
             }
         }
     }
@@ -714,7 +714,7 @@ Metrics :: [].{
     # to come back as 0.0, so a first-ever week read as "load steady (0%)". The Try makes the
     # caller say which one it means.
     pct_change : F64, F64 -> Try(F64, [NoBaseline])
-    pct_change = |from, to| if from > 0.0 { Ok((to - from) / from * 100.0) } else { Err(NoBaseline) }
+    pct_change = |from, to| if from > 0.0 Ok((to - from) / from * 100.0) else Err(NoBaseline)
 
     # scale a value in [lo, hi] to 1..blocks bar segments (lo -> 1, hi -> blocks);
     # degenerate range -> full bar
@@ -1146,7 +1146,7 @@ Metrics :: [].{
     # s/km -> m/s (0 for a non-positive pace)
     pace_to_speed : F64 -> F64
     pace_to_speed = |pace_s_per_km|
-        if pace_s_per_km > 0.0 { 1000.0 / pace_s_per_km } else { 0.0 }
+        if pace_s_per_km > 0.0 1000.0 / pace_s_per_km else 0.0
 
     # per-sample flat-equivalent (grade-adjusted) speed, from time/dist/alt streams that
     # MUST be equal-length and index-aligned (the nested map2 silently truncates to the
@@ -1167,7 +1167,7 @@ Metrics :: [].{
     # Skipping it means the stream says "no data here", which is true.
     pace_step_case : F64, F64 -> [Moving, Stopped, NoTime, Gap]
     pace_step_case = |dt, dd|
-        if dt <= 0.0 { NoTime } else if dt > (max_fill_gap).to_f64() { Gap } else if dd > 0.0 { Moving } else { Stopped }
+        if dt <= 0.0 NoTime else if dt > (max_fill_gap).to_f64() Gap else if dd > 0.0 Moving else Stopped
 
     # grade-adjusted speed per interval, each carrying the REAL second it ends on, so a
     # rolling window over the result can tell contiguous seconds from stitched ones.
@@ -1249,7 +1249,7 @@ Metrics :: [].{
     # Squaring it under-scores hard swim sets badly: at IF 1.2, 144 vs 173 per hour.
     pace_tss_exponent : Str -> F64
     pace_tss_exponent = |sport|
-        if Str.contains(Str.with_ascii_lowercased(sport), "swim") { 3.0 } else { 2.0 }
+        if Str.contains(Str.with_ascii_lowercased(sport), "swim") 3.0 else 2.0
 
     pace_tss : { ngp_speed : F64, threshold_speed : F64, dur_s : F64, exponent : F64 } -> F64
     pace_tss = |{ ngp_speed, threshold_speed, dur_s, exponent }|
@@ -1327,7 +1327,7 @@ expect {
 expect {
     ride = List.map_with_index(List.repeat(0.0, 121), |_, i| {
         t: (i).to_i64_wrap(),
-        v: (if i < 60 { 100.0 } else { 0.0 }),
+        v: (if i < 60 100.0 else 0.0),
     })
     pi = Metrics.time_in_power_intensity(ride, 250.0)
     pi.easy_s == 59 and pi.moderate_s == 0 and pi.hard_s == 0
