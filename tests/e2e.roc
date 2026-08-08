@@ -423,8 +423,6 @@ b_plan! = |ctx| {
     early_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
     _ = stride!(ctx.bin, ctx.home, ["complete", early_id, "101"])
     date_101 = Str.trim(sql!(ctx.db, "SELECT substr(start_local,1,10) FROM activities WHERE id=101;"))
-    plan_early = stride_human!(ctx.bin, ctx.home, ["plan", "all"])
-    check!("a session finished on another day shows that day", Str.contains(plan_early, "done (") and Str.contains(plan_early, date_101))?
     # The control has to be an ON-TIME session checked BY ID. Asserting the output merely
     # contains "│ done " is a false positive: it is a prefix of "│ done (Fri ...", so the
     # check passed even when every row carried a date.
@@ -433,10 +431,13 @@ b_plan! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["complete", ontime_id, "101"])
     ontime_status = strjq!(ctx, ["plan", "all"], ".data[] | select(.id==${ontime_id}) | .status_shown")
     early_status = strjq!(ctx, ["plan", "all"], ".data[] | select(.id==${early_id}) | .status_shown")
+    # Every assertion selects its OWN row by id. Matching the whole plan output for
+    # "done (" proved nothing: session 2 is completed with activity 101 earlier in this
+    # scenario, so that string is already present regardless of what this row renders.
     check!("an on-time session renders exactly done", ontime_status == "done")?
-    check!("the early one carries its real date", Str.starts_with(early_status, "done ("))?
+    check!("the early one carries its real completion date", Str.starts_with(early_status, "done (") and Str.contains(early_status, date_101))?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${ontime_id};")
-    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date = '2025-01-15';")
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${early_id};")
     Ok({})
 }
 
