@@ -5,12 +5,18 @@ Render :: [].{
 
     # aligned table: headers + rows -> multiline string.
     # Keeps the WHOLE table within max_total display-columns so a row never wraps
-    # in an ~80-column terminal — but WITHOUT losing text. Columns take their
-    # natural width; if the table would overflow, the single widest column (in
-    # practice a free-text `detail` or a long activity name) is squeezed and its
-    # text is WORD-WRAPPED across continuation lines within the same row. The full
-    # text is always shown; it just spans several physical lines.
-    max_total = 80
+    # in the terminal — but WITHOUT losing text. Columns take their natural width;
+    # if the table would overflow, the single widest column (in practice a free-text
+    # `detail` or a long activity name) is squeezed and its text is WORD-WRAPPED
+    # across continuation lines within the same row. The full text is always shown;
+    # it just spans several physical lines.
+    #
+    # 100, not 80: the squeezed column is ALWAYS the free-text one, so every column
+    # the budget spends elsewhere comes straight out of the workout description —
+    # the part actually worth reading. A fixed number rather than $COLUMNS on
+    # purpose: env-dependent output would make the e2e layout assertions
+    # (bar-never-wraps, marker placement) unreproducible.
+    max_total = 100
     min_col = 12
 
     # widest display-width among a set of already-wrapped lines
@@ -634,14 +640,16 @@ expect {
     )
     Str.contains(t, "Long EASY ride") and Str.contains(t, "chasing wheels") and List.len(Str.split_on(t, "\n")) > 5
 }
-# the whole table stays within 80 display-columns (the top border spans full width)
+# the whole table stays within the budget (the top border spans full width). Asserted
+# against the constant, not a literal: hard-coding 80 made this fail the moment the budget
+# moved, for no reason other than the number being written down twice.
 expect {
     long = "Long EASY ride 90min-2h outdoor Z2 ONLY conversational the whole way no chasing wheels keep it truly easy today"
     t = Render.render_table(
         ["day", "date", "type", "status", "detail", "id"],
         [["Sat", "2026-08-08", "endurance", "open", long, "18"]],
     )
-    Render.display_width(List.get(Str.split_on(t, "\n"), 0).ok_or("")) <= 80
+    Render.display_width(List.get(Str.split_on(t, "\n"), 0).ok_or("")) <= Render.max_total
 }
 # a short cell is rendered whole on one line — exact match proves no wrapping
 expect {
