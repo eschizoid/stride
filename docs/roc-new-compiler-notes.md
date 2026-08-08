@@ -41,8 +41,16 @@ That second shape is exactly `Render.progress_section`, which picks its column l
 (header string + cell closure per column) by lens — which is why that one expect takes
 the whole test run down.
 
+**It is not confined to `roc test`.** `roc build` is hit too, and worse, a program can
+build with zero errors and then crash at runtime. Verified on 08-08 with the app repros
+in `docs/repro/`: one reports a COMPILE TIME CRASH yet still emits a binary that dies
+with `[ROC CRASHED]`, one segfaults the compiler mid-build, and one — value taken from
+argv, so nothing to fold at compile time — builds clean and crashes when run. Building
+stride itself with 08-08 succeeds, and the resulting binary then exits 139 with NO
+output at all on `progress <date>`. A green build proves nothing on these nightlies.
+
 Filed upstream as [roc-lang/roc#10693](https://github.com/roc-lang/roc/issues/10693).
-When it closes, re-run both repros before touching the pin in `build.yml`.
+When it closes, re-run all five repros before touching the pin in `build.yml`.
 
 ## CLI flags: `=`, never a space
 
