@@ -29,8 +29,17 @@ Two traps if you re-test this:
 - The macOS asset you want is `roc_nightly-macos_x86_64-*`; `uname -m` on this machine
   reports `x86_64`, and the apple_silicon build dies with "bad CPU type in executable".
 
-Not filed upstream yet — a minimal repro is still outstanding, since a hand-reduced
-version of the failing expect does NOT crash. It needs the real `progress_section`.
+**Root cause: closures stored in tuples inside a list.** Reduced to two standalone
+repros in `docs/repro/`, both passing on 08-04 and failing on every nightly from 08-05:
+
+- `RocTupleClosure.roc` — 7 lines, `[("a", |r| ...), ("b", |r| ...)]` then calling `c.1`.
+  Fails with "hit a runtime error".
+- `RocTupleClosureSegv.roc` — the same list behind a `match` on a tag union. Escalates to
+  `Segmentation fault (SIGSEGV) in the Roc compiler`, fault address 0x0.
+
+That second shape is exactly `Render.progress_section`, which picks its column list
+(header string + cell closure per column) by lens — which is why that one expect takes
+the whole test run down. Not filed upstream yet.
 
 ## CLI flags: `=`, never a space
 
