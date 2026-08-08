@@ -74,7 +74,7 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
 | `stride plan` | planned-session log with `status` (open/done/skipped) + `skipped_reason` |
 | `stride doctor` | dataset health: coverage counts, per-model load provenance (`scored_by`), `strength_unrated` (strength sessions awaiting a rating) |
 | `stride compare [week\|month]` | rolling window vs the prior one: `{period, current, prior}` each with tss/sessions/hard_min/easy_pct/ctl |
-| `stride progress [date]` | `{anchor_date, groups:[{name, lens, sessions}]}` — `lens` is `ef`\|`speed_hr`\|`rpe` (sport-aware); each session carries a `score` in that lens. Bare = latest analyzed workout. In-band errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts` |
+| `stride progress [date] [asc\|desc]` | `{anchor_date, anchor_scored, groups:[{name, lens, sessions}]}` — `lens` is `ef`\|`speed_hr`\|`rpe` (sport-aware); each session carries a `score` in that lens. Bare = latest analyzed workout; `desc` lists newest first without changing the trend. **`anchor_scored: false` means a workout anchored on that date could not be scored by its group's lens, so it is absent from `groups` and the trends exclude it** — do not read the trend as covering the session you asked about. In-band errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts` |
 
 ## Conventions & gotchas
 
