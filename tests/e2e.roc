@@ -756,8 +756,11 @@ b_concurrency! = |ctx| {
     # shells and the subshell in others, so `kill $!` could leave sqlite3 alive holding the
     # transaction and block every test after this one. Feeding sqlite3 from a fifo makes it
     # a single background command, so $! is unambiguously sqlite3; holding the write end
-    # open (fd 3) keeps its transaction open with no timer, and closing fd 3 ends it
-    # immediately — no fixed delay and no stray sleep left behind.
+    # open (fd 3) keeps its transaction open for exactly as long as this scenario needs,
+    # and closing fd 3 ends it immediately — no timer bounding the hold, and nothing left
+    # running afterwards. The one `sleep 1` below is a readiness wait, giving sqlite3 time
+    # to take its read lock before analyze starts; without it the two might not overlap and
+    # the check would pass without ever testing contention.
     # STRIDE_FORMAT is pinned because this bypasses the stride! helper, which sets it. The
     # mode otherwise depends on CLAUDECODE being set in the developer's shell, so this
     # passed locally and failed on CI, where the human table has no schema_version.

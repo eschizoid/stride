@@ -322,17 +322,21 @@ Db :: [].{
     }
     configure_concurrency! : Str => Try({}, _)
     configure_concurrency! = |path| {
-        _ = Sqlite.query_many!({
-            path: Path.utf8(path),
-            query: "PRAGMA journal_mode = WAL",
-            bindings: [],
-            rows: Sqlite.str("journal_mode"),
-        })?
+        # busy_timeout FIRST, and not as a style preference: switching journal mode takes a
+        # write lock, so with the default timeout of 0 the very statement meant to enable
+        # WAL is itself the one that fails instantly against a busy database — leaving the
+        # engine in the exact rollback-journal mode it was trying to escape.
         _ = Sqlite.query_many!({
             path: Path.utf8(path),
             query: "PRAGMA busy_timeout = 5000",
             bindings: [],
             rows: Sqlite.i64("timeout"),
+        })?
+        _ = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "PRAGMA journal_mode = WAL",
+            bindings: [],
+            rows: Sqlite.str("journal_mode"),
         })?
         Ok({})
     }
