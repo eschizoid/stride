@@ -438,6 +438,51 @@ b_plan! = |ctx| {
     check!("the early one carries its real completion date", Str.starts_with(early_status, "done (") and Str.contains(early_status, date_101))?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${ontime_id};")
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${early_id};")
+    # #97: `plan all` sections. Partition is by WEEK so no row appears twice, and rows
+    # older than last week are COUNTED rather than silently dropped — `plan all` still
+    # means all, and the JSON payload keeps every row.
+    _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','2099-06-01','vo2max','far future session','r','open');")
+    fut_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
+    _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','2020-01-06','rest','ancient session','r','skipped');")
+    old_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
+    all_h = stride_human!(ctx.bin, ctx.home, ["plan", "all"])
+    check!("plan all has the three sections", Str.contains(all_h, "── upcoming ──") and Str.contains(all_h, "── this week ──") and Str.contains(all_h, "── last week ──"))?
+    # anchor on the seeded target_date, not the detail text: `date` is its own
+    # non-wrapping column, and 2099/2020 are sentinels that cannot appear by accident.
+    # (The bare id would be worse than either — a 2-3 digit number matches digits in the
+    # date and load cells of unrelated rows, so the negative check would go flaky.)
+    check!("a future session lands in the table", Str.contains(all_h, "2099-06-01"))?
+    check!("an ancient session is not rendered", !(Str.contains(all_h, "2020-01-06")))?
+    check!("but it is counted, not dropped", Str.contains(all_h, "older session not shown"))?
+    # sections partition by DATE ALONE. An open-only `upcoming` would leave a future-dated
+    # skipped row in no section AND outside the hidden count — silently gone, which is the
+    # one thing `plan all` must never do. Skipping next week in advance is ordinary use.
+    _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','2099-06-02','rest','future skip','r','skipped');")
+    skip_h = stride_human!(ctx.bin, ctx.home, ["plan", "all"])
+    check!("a future-dated skipped session still renders", Str.contains(skip_h, "2099-06-02"))?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date = '2099-06-02';")
+    # JSON stays a FLAT array carrying every row — sections are presentation only
+    # an unparseable target_date belongs to no week. `plan add` stores the date string
+    # verbatim, so a typo reaches this code path; collapsing it to day 0 would count it
+    # as "older" and claim it was in the past. It must be named as undated instead.
+    _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','tomorrow','vo2max','typo date','r','open');")
+    undated_h = stride_human!(ctx.bin, ctx.home, ["plan", "all"])
+    check!("an undated session is counted as undated, not as older", Str.contains(undated_h, "1 undated"))?
+    check!("and it is not silently filed under a week", !(Str.contains(undated_h, "typo date")))?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date = 'tomorrow';")
+    check!("json still carries the ancient row", strjq!(ctx, ["plan", "all"], "[.data[] | select(.id==${old_id})] | length") == "1")?
+    check!("json carries the future row too", strjq!(ctx, ["plan", "all"], "[.data[] | select(.id==${fut_id})] | length") == "1")?
+    check!("bare plan is unsectioned", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["plan"]), "── upcoming ──")))?
+    # `plan all` must mean ALL — the older-count and its "json has every row" pointer are
+    # both lies if the query truncates. Seed past 100 rows and check nothing is dropped.
+    # a recursive CTE, not INSERT..SELECT FROM planned_sessions: that only adds as many
+    # rows as already exist (~30 here), never crosses 100, and the check passes against
+    # the capped build — the negative control caught it doing exactly that
+    _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x<150) SELECT '0','2019-03-04','rest','bulk filler','r','skipped' FROM c;")
+    total = Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions;"))
+    check!("plan all returns every row past the old 100 cap", strjq!(ctx, ["plan", "all"], ".data | length") == total)?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date = '2019-03-04';")
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${fut_id}, ${old_id});")
     Ok({})
 }
 

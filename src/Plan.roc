@@ -91,6 +91,16 @@ Plan :: [].{
                 AllTime => 1
                 ThisWeek => 0
             }
+        # `plan all` must mean ALL: the older-sessions count and the note pointing at the
+        # JSON are both lies if the query silently truncates. SQLite treats a negative
+        # LIMIT as unbounded, so this stays a BOUND value — no interpolated clause, which
+        # is the pattern that spliced an empty string into the query and crashed the
+        # backend (see the :all note above).
+        row_limit =
+            match scope {
+                AllTime => -1
+                ThisWeek => 100
+            }
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
@@ -101,9 +111,9 @@ Plan :: [].{
                 \\       COALESCE((SELECT substr(a.start_local,1,10) FROM activities a WHERE a.id = planned_sessions.completed_activity_id), '') AS done_date
                 \\FROM planned_sessions
                 \\WHERE (:all = 1 OR (COALESCE(target_date,'') >= '${Metrics.days_to_date_str(mon)}' AND COALESCE(target_date,'') <= '${Metrics.days_to_date_str(mon + 6)}' AND (COALESCE(status,'open') <> 'skipped' OR NOT EXISTS (SELECT 1 FROM planned_sessions p2 WHERE p2.target_date = planned_sessions.target_date AND (COALESCE(p2.status,'open') <> 'skipped' OR p2.id > planned_sessions.id)))))
-                \\ORDER BY target_date DESC, id DESC LIMIT 100
+                \\ORDER BY target_date DESC, id DESC LIMIT :lim
             ,
-            bindings: [{ name: ":all", value: Integer(scope_all) }],
+            bindings: [{ name: ":all", value: Integer(scope_all) }, { name: ":lim", value: Integer(row_limit) }],
             rows: |cols| |stmt| {
                 id = Sqlite.i64("id")(cols)(stmt)?
                 created_at = Sqlite.str("created_at")(cols)(stmt)?
@@ -118,8 +128,11 @@ Plan :: [].{
                 Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, status, skipped_reason, done_date })
             },
         })?
-        # most recent 100 by date, displayed in calendar order
-        ordered = List.fold(rows, [], |acc, x| List.concat([x], acc))
+        # newest-first from SQL, flipped to calendar order for display. `Render.reverse_list`
+        # (fold + prepend, linear) rather than fold + `List.concat([x], acc)`, which copies
+        # the whole accumulator every step and is quadratic — harmless behind the old
+        # LIMIT 100, unbounded now that `plan all` returns the full log.
+        ordered = Render.reverse_list(rows)
         dow = |date_str|
             match Metrics.date_str_to_days(date_str) {
                 Ok(d) => Metrics.day_of_week(d)
@@ -152,11 +165,79 @@ Plan :: [].{
                     p.status
                 },
         })
+        # `plan all` splits the log into sections: a single slab answers "whatever
+        # happened" when the question at hand is usually "what's coming". Partitioned by
+        # WEEK rather than by today, so no row can land in two sections — an open session
+        # later this week belongs to `this week`, not to `upcoming`. Sections are
+        # presentation only; the JSON payload stays one flat array.
+        plan_headers = ["day", "date", "type", "status", "detail", "id"]
+        plan_cells = |p| [p.day, p.target_date, p.session_type, p.status_shown, p.detail, (p.id).to_str()]
+        # an empty section says so rather than vanishing — an absent heading reads as
+        # "there is no such thing", which is a different claim from "nothing there yet"
+        section = |title, srows|
+            if List.is_empty(srows) {
+                "── ${title} ──\n(none)"
+            } else {
+                "── ${title} ──\n${Render.render_table(plan_headers, List.map(srows, plan_cells))}"
+            }
         Output.out!(enriched, |rows_enriched|
-            Render.render_table(
-                ["day", "date", "type", "status", "detail", "id"],
-                List.map(rows_enriched, |p| [p.day, p.target_date, p.session_type, p.status_shown, p.detail, (p.id).to_str()]),
-            ))
+            match scope {
+                ThisWeek => Render.render_table(plan_headers, List.map(rows_enriched, plan_cells))
+                AllTime => {
+                    # Parse each target_date ONCE and carry the result alongside its row:
+                    # every section below tests the same boundaries, so filtering on the
+                    # date string re-parsed it four times per row. Keyed here rather than
+                    # folded into `enriched` so the JSON payload keeps its shape.
+                    # `dated` matters as much as the number. `plan add` stores whatever
+                    # date string it is handed (no validation), so an unparseable one is
+                    # reachable from the CLI, not just by hand-editing the db. Collapsing
+                    # it to day 0 would file a typo under "older sessions" and quietly
+                    # claim it was in the past — it is undated, which is a different fact.
+                    keyed = List.map(rows_enriched, |p|
+                        match Metrics.date_str_to_days(p.target_date) {
+                            Ok(n) => { row: p, n, dated: True }
+                            Err(_) => { row: p, n: 0, dated: False }
+                        })
+                    pick = |pred| List.map(List.keep_if(keyed, pred), |k| k.row)
+                    # The rule is DATE ONLY, no status filter, and that is deliberate on
+                    # both counts. #97's original text said "open sessions dated after
+                    # today"; partitioning by week instead keeps a row out of two sections
+                    # at once (an open session later this week is `this week`, not
+                    # `upcoming`), and dropping the status test keeps a future-dated
+                    # skipped row visible — skipping next Tuesday in advance is a normal
+                    # act, and an open-only filter would leave that row in no section and
+                    # outside the hidden count, i.e. silently gone.
+                    upcoming = pick(|k| k.dated and k.n > mon + 6)
+                    current = pick(|k| k.dated and k.n >= mon and k.n <= mon + 6)
+                    # history reads newest-first: its top row sits directly under `this
+                    # week`, so the most recent past is nearest the present
+                    history = Render.reverse_list(pick(|k| k.dated and k.n < mon and k.n >= mon - 7))
+                    # Unrendered sessions are COUNTED, never silently dropped: `plan all`
+                    # still means all, and the JSON payload carries every row. Printing the
+                    # number keeps the human view short without the view lying about what
+                    # exists — including the undated rows, which belong to no week at all.
+                    older = List.len(List.keep_if(keyed, |k| k.dated and k.n < mon - 7))
+                    undated = List.len(List.keep_if(keyed, |k| !k.dated))
+                    hidden =
+                        if older > 0 and undated > 0 {
+                            "${(older).to_str()} older, ${(undated).to_str()} undated"
+                        } else if undated > 0 {
+                            "${(undated).to_str()} undated"
+                        } else {
+                            "${(older).to_str()} older"
+                        }
+                    # count the whole hidden set, not either part: the noun trails the
+                    # entire list, so "1 older, 1 undated" is two sessions and stays plural
+                    noun = if older + undated == 1 "session" else "sessions"
+                    older_note =
+                        if older == 0 and undated == 0 {
+                            ""
+                        } else {
+                            "\n\n(${hidden} ${noun} not shown — STRIDE_FORMAT=json stride plan all has every row)"
+                        }
+                    "${Str.join_with([section("upcoming", upcoming), section("this week", current), section("last week", history)], "\n\n")}${older_note}"
+                }
+            })
     }
     plan_add! : Str, Str, Str, Str => Try({}, _)
     plan_add! = |target_date, session_type, detail, rationale| {
