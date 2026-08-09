@@ -88,10 +88,10 @@ help_text =
         \\    power-curve [days] [sport]   power-duration curve + Critical Power (alias: pc)
         \\
         \\WHAT SHOULD I DO?
-        \\    week                    planning bundle: summary + open plan + last 14 days
-        \\    plan                    this week's plan (Mon-Sun)
-        \\    plan all                upcoming + this week + last week (older ones counted)
-        \\    plan add <date> <type> <detail> <rationale>    add a planned session
+        \\    plan                    planning bundle: summary + open sessions + last 14 days
+        \\    week                    this week's sessions (Mon-Sun, all statuses)
+        \\    week all                upcoming + this week + last week (older ones counted)
+        \\    week add <date> <type> <detail> <rationale>    add a planned session
         \\    complete <session_id> [activity_id]            mark done (bare = rest day)
         \\    skip <session_id> <reason>                     mark skipped, with reason
         \\    rate <activity_id|latest> <1-10>               session-RPE — scores strength honestly
@@ -135,7 +135,7 @@ dispatch! = |cmd|
         Command.Analyze => Analyze.analyze!({})
         Command.Summary => Report.summary!({})
         Command.Stats => Report.stats!({})
-        Command.Week => Report.week!({})
+        Command.Plan => Report.plan_bundle!({})
         Command.Doctor => Report.doctor!({})
         Command.Zones => Report.pz!({})
         Command.Version => Stdout.line!(version)
@@ -148,9 +148,9 @@ dispatch! = |cmd|
         Command.Activity(id_str) => Report.activity!(id_str)
         Command.Load(days) => Report.load_series!(days)
         Command.PowerCurve(days, sport) => Report.power_curve!(days, sport)
-        Command.PlanView => Plan.plan_view!(ThisWeek)
-        Command.PlanViewAll => Plan.plan_view!(AllTime)
-        Command.PlanAdd(date, session_type, detail, rationale) => Plan.plan_add!(date, session_type, detail, rationale)
+        Command.WeekView => Plan.plan_view!(ThisWeek)
+        Command.WeekViewAll => Plan.plan_view!(AllTime)
+        Command.WeekAdd(date, session_type, detail, rationale) => Plan.plan_add!(date, session_type, detail, rationale)
         Command.Complete(session_id, activity_id) => Plan.complete!(session_id, activity_id)
         Command.CompleteRest(session_id) => Plan.complete_rest!(session_id)
         Command.Skip(session_id, reason) => Plan.skip!(session_id, reason)

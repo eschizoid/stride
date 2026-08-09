@@ -247,7 +247,7 @@ Plan :: [].{
         # training week, matching no completion or adherence query, and would surface only
         # as a number in `plan all`'s undated count.
         if !(Metrics.is_canonical_date(target_date)) {
-            Output.err_out!("bad_date", "plan add needs a calendar date written YYYY-MM-DD — got '${target_date}'")
+            Output.err_out!("bad_date", "week add needs a calendar date written YYYY-MM-DD — got '${target_date}'")
         } else {
             plan_add_checked!(target_date, session_type, detail, rationale)
         }

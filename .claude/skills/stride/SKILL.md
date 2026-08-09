@@ -24,18 +24,18 @@ Never do training math yourself: read stride's numbers, add judgment.
 2. `stride analyze` — compute metrics for new/invalidated activities (idempotent;
    prints count + form verdict — the full report lives in `summary`). If any stored
    streams won't decode it says "N had unreadable stream data" (they retry next sync).
-3. **`stride week`** — THE weekly-planning payload: summary + the open plan +
+3. **`stride plan`** — THE weekly-planning payload: summary + the open sessions +
    last-14d activities in one call. Use `stride summary` alone for quick check-ins.
 4. Reason: polarization, zone gaps, form (TSB), FTP staleness, sport balance —
    AND reconcile the open plan against recent activities (match by date/type,
    then `stride complete <session_id> <activity_id>` for each match).
-5. Plan the coming week: `stride plan add <YYYY-MM-DD> <type> "<detail>" "<rationale>"`
+5. Plan the coming week: `stride week add <YYYY-MM-DD> <type> "<detail>" "<rationale>"`
    - `type` is the INTENSITY INTENT, not the sport: vo2max | threshold | endurance |
      recovery | strength | rest (free-form ok). The sport/modality goes in `detail`
      ("easy row...", "outdoor ride..."): type answers *why/how hard*, detail answers
      *what exactly*.
    - re-planning a date REVISES its open session in place (the response echoes the same
-     id) — a plan edit is not a skip, so you can just `plan add` again to change a day and
+     id) — a plan edit is not a skip, so you can just `week add` again to change a day and
      it never leaves skipped tombstones. Reserve `skip` for a session that was going to
      happen and didn't (a real adherence miss).
    - `complete`/`skip` also REFUSE unknown ids (`{"error":"session_not_found"}`
@@ -62,7 +62,7 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
 
 | Command | Returns |
 |---|---|
-| `stride week` | **planning bundle**: `summary` + `recent_activities_14d` + `open_sessions` |
+| `stride plan` | **planning bundle**: `summary` + `recent_activities_14d` + `open_sessions` |
 | `stride summary` | as_of, CTL/ATL/TSB, `last_7d` + `last_28d` zone blocks (seconds + easy/moderate/hard %), `last_hard_session_date` ('' = none on record), `pending_sessions`, FTP (config vs estimated, `stale` + `detraining` flags), HR zone bounds, per-sport 28d breakdown |
 | `stride activities [N] [sport]` | last N activities (default 30), optionally filtered by sport (case-insensitive, e.g. `activities 10 rowing`) — date, sport, tss, np_w, intensity, z1–z5 seconds, relative_effort, avg_hr |
 | `stride top <metric> [n] [sport]` | best sessions ranked by `hr`, `tss`, `power`, `intensity`, `distance`, `time`, or `output` (kJ) — the leaderboard to `activities`' timeline |
@@ -70,7 +70,7 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
 | `stride activity <id>` | one session in depth: flat z1_s–z5_s + hard_s, hard minutes, power bests (1/3/5/20min) from streams, plus `streams_unreadable` (true = the 0s are corrupt data, NOT a real zero) — use to review whether a planned session hit its targets before `complete`-ing it |
 | `stride stats` | career + year-to-date totals per sport (sessions, hours, km) |
 | `stride load [days]` | daily tss/ctl/atl/tsb series, chronological (default 90) |
-| `stride plan` | planned-session log with `status` (open/done/skipped) + `skipped_reason` |
+| `stride week` | this week (Mon-Sun); `stride week all` = full log. Rows carry `status` (open/done/skipped) + `skipped_reason` |
 | `stride doctor` | dataset health: coverage counts, per-model load provenance (`scored_by`), `strength_unrated` (strength sessions awaiting a rating) |
 | `stride compare [week\|month]` | rolling window vs the prior one: `{period, current, prior}` each with tss/sessions/hard_min/easy_pct/ctl |
 | `stride progress [date] [asc\|desc]` | `{anchor_date, anchor_scored, groups:[{name, lens, sessions}]}` — `lens` is `ef`\|`speed_hr`\|`rpe` (sport-aware); each session carries a `score` in that lens. Bare = latest analyzed workout; `desc` lists newest first without changing the trend. **`anchor_scored: false` means a workout anchored on that date could not be scored by its group's lens, so it is absent from `groups` and the trends exclude it** — do not read the trend as covering the session you asked about. In-band errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts` |
