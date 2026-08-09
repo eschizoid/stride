@@ -8,9 +8,11 @@ Features graduate into GitHub issues when work starts. Settled architecture stay
 
 Stride's edge is already decided: **deterministic, local-first, honest about provenance,
 judgment kept out of the engine**. TrainingPeaks hides its math. intervals.icu is
-cloud-locked. Golden Cheetah is powerful but impenetrable. The position nobody owns is
-"the engine that shows its work" — every number traceable to its inputs, recomputable
-from raw streams, explained in plain language.
+cloud-locked. Golden Cheetah deserves the fairest comparison — it is open source and
+does show its work — but it is a dense desktop GUI built for a human to click through,
+not an engine a coach (human or LLM) can script against. The position nobody owns is
+"the engine that shows its work *to a machine*": every number traceable to its inputs,
+recomputable from raw streams, and emitted as versioned JSON a tool can consume.
 
 Every feature below does one of two things: widens what the engine can honestly measure,
 or widens who can feed it data. None of them adds judgment to the engine — reasoning
