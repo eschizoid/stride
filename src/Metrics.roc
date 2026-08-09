@@ -1037,6 +1037,25 @@ Metrics :: [].{
     pad2 = |n|
         if n < 10 "0${I64.to_str(n)}" else I64.to_str(n)
 
+    # "does it parse" is NOT enough for a date the engine stores: target_date is TEXT
+    # and every week filter compares it as a STRING (a lexicographic BETWEEN), so the
+    # spelling has to be canonical YYYY-MM-DD, not merely numeric. Round-tripping
+    # through the day number tests both facts at once — days_from_civil silently
+    # NORMALIZES an out-of-range field (2026-02-30 becomes March 2, and the caller
+    # never learns their date moved), while an unpadded 2026-8-5 sorts after every
+    # 2026-1x-xx date and lands in the wrong week. The year bound holds the string at
+    # ten characters, since a 3-digit year would sort after every 2xxx one.
+    is_canonical_date : Str -> Bool
+    is_canonical_date = |s|
+        match date_str_to_days(s) {
+            Ok(d) => {
+                c = civil_from_days(d)
+                days_to_date_str(d) == s and c.y >= 1000 and c.y <= 9999
+            }
+
+            Err(_) => False
+        }
+
     # epoch day number -> "Mon".."Sun". Epoch day 0 (1970-01-01) was a Thursday, so
     # (days + 3) mod 7 makes Monday = 0 (matches the Mon-aligned week convention).
     day_of_week : I64 -> Str
@@ -1929,6 +1948,22 @@ expect {
 
 # leap-year boundary roundtrip
 expect Metrics.days_to_date_str(Metrics.days_from_civil(2024, 2, 29)) == "2024-02-29"
+
+# a storable date must be canonical, not merely parseable
+expect Metrics.is_canonical_date("2026-08-09")
+expect Metrics.is_canonical_date("2024-02-29") # real leap day
+expect !(Metrics.is_canonical_date("tomorrow"))
+expect !(Metrics.is_canonical_date(""))
+expect !(Metrics.is_canonical_date("2026-08"))
+# each of these PARSES and would be silently normalized to a different day
+expect !(Metrics.is_canonical_date("2026-13-45"))
+expect !(Metrics.is_canonical_date("2026-02-30"))
+expect !(Metrics.is_canonical_date("2026-02-29")) # 2026 is not a leap year
+# parses to the right day but sorts wrong as text, which is how it is compared
+expect !(Metrics.is_canonical_date("2026-8-5"))
+expect !(Metrics.is_canonical_date("999-01-01"))
+# a timestamp is not a plan date — date_str_to_days accepts the T suffix, this must not
+expect !(Metrics.is_canonical_date("2026-08-09T10:00:00Z"))
 
 # day-of-week: 2026-07-27 is a Monday (the anchor), through the week
 expect Metrics.day_of_week(Metrics.days_from_civil(2026, 7, 27)) == "Mon"
