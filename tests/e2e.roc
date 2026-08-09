@@ -379,6 +379,16 @@ b_invalidation! = |ctx| {
 # ── plan lifecycle: revise-in-place, skip, re-plan, done ─────────────
 b_plan! : Ctx => Try({}, _)
 b_plan! = |ctx| {
+    # #100: a bad date is refused at the door. planned_sessions is judgment tier, so a
+    # typo that lands there cannot be re-derived — and it would belong to no training
+    # week, matching no completion or adherence query. Each of the rejects below PARSES;
+    # the last two would be silently normalized to a different day than the one typed.
+    check!("a non-date is refused", Str.contains(stride!(ctx.bin, ctx.home, ["plan", "add", "tomorrow", "vo2max", "d", "r"]), "bad_date"))?
+    check!("an unpadded date is refused", Str.contains(stride!(ctx.bin, ctx.home, ["plan", "add", "2099-1-2", "vo2max", "d", "r"]), "bad_date"))?
+    check!("an impossible day is refused", Str.contains(stride!(ctx.bin, ctx.home, ["plan", "add", "2099-02-30", "vo2max", "d", "r"]), "bad_date"))?
+    check!("a timestamp is refused", Str.contains(stride!(ctx.bin, ctx.home, ["plan", "add", "2099-01-01T06:00:00Z", "vo2max", "d", "r"]), "bad_date"))?
+    # refused means NOT WRITTEN — the guard runs before the db is opened, so the very
+    # next add must still be id 1. Without that, this check would read id 5.
     check!("plan add id 1", strjq!(ctx, ["plan", "add", "2099-01-01", "vo2max", "d", "r"], ".data.id") == "1")?
     # re-planning an open date REVISES it in place (same id 1), not a refuse + tombstone
     check!("re-plan revises open in place", strjq!(ctx, ["plan", "add", "2099-01-01", "threshold", "d", "r"], ".data.id") == "1")?

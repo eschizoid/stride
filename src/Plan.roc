@@ -160,6 +160,19 @@ Plan :: [].{
     }
     plan_add! : Str, Str, Str, Str => Try({}, _)
     plan_add! = |target_date, session_type, detail, rationale| {
+        # Reject a bad date at the door, BEFORE the db is even opened. planned_sessions is
+        # judgment tier — nothing here can be re-derived from Strava — so a typo that lands
+        # in the table stays until someone edits SQL by hand. It would also belong to no
+        # training week, matching no completion or adherence query, and would surface only
+        # as a number in `plan all`'s undated count.
+        if !(Metrics.is_canonical_date(target_date)) {
+            Output.err_out!("bad_date", "plan add needs a calendar date written YYYY-MM-DD — got '${target_date}'")
+        } else {
+            plan_add_checked!(target_date, session_type, detail, rationale)
+        }
+    }
+    plan_add_checked! : Str, Str, Str, Str => Try({}, _)
+    plan_add_checked! = |target_date, session_type, detail, rationale| {
         path = Db.open_db!({})?
         # guard: one open planned session per date — skip or complete the old one first
         existing = Sqlite.query!({
