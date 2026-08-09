@@ -192,15 +192,21 @@ Plan :: [].{
             match scope {
                 ThisWeek => Render.render_table(plan_headers, List.map(rows_enriched, plan_cells))
                 AllTime => {
-                    upcoming = List.keep_if(rows_enriched, |p| day_of(p.target_date) > mon + 6)
-                    current = List.keep_if(rows_enriched, |p| day_of(p.target_date) >= mon and day_of(p.target_date) <= mon + 6)
+                    # parse each target_date ONCE and carry the number alongside its row:
+                    # every section below tests the same four boundaries, so filtering on
+                    # the date string re-parsed it four times per row. Keyed here rather
+                    # than folded into `enriched` so the JSON payload keeps its shape.
+                    keyed = List.map(rows_enriched, |p| { row: p, n: day_of(p.target_date) })
+                    pick = |pred| List.map(List.keep_if(keyed, pred), |k| k.row)
+                    upcoming = pick(|k| k.n > mon + 6)
+                    current = pick(|k| k.n >= mon and k.n <= mon + 6)
                     # history reads newest-first: its top row sits directly under `this
                     # week`, so the most recent past is nearest the present
-                    history = Render.reverse_list(List.keep_if(rows_enriched, |p| day_of(p.target_date) < mon and day_of(p.target_date) >= mon - 7))
+                    history = Render.reverse_list(pick(|k| k.n < mon and k.n >= mon - 7))
                     # Older sessions are COUNTED, never silently dropped: `plan all` still
                     # means all, and the JSON payload carries every row. Printing the number
                     # keeps the human view short without the view lying about what exists.
-                    older = List.len(List.keep_if(rows_enriched, |p| day_of(p.target_date) < mon - 7))
+                    older = List.len(List.keep_if(keyed, |k| k.n < mon - 7))
                     older_note =
                         if older == 0 {
                             ""
