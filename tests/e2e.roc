@@ -813,16 +813,26 @@ b_human! = |ctx| {
     check!("human stats section", Str.contains(stride_human!(ctx.bin, ctx.home, ["stats"]), "ALL TIME"))?
     check!("human activity zones row", Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "101"]), "Z1"))?
     check!("human summary banner", Str.contains(stride_human!(ctx.bin, ctx.home, ["summary"]), "stride report"))?
-    # one HUMAN-mode invocation shared by the three assertions below — `week` is the
-    # priciest read in the suite, and two copies of the same output can drift apart.
-    # The JSON contract check further down runs `week` again by necessity: it is a
-    # different output mode, so it cannot reuse this capture.
+    # `week` is the priciest read in the suite, so every HUMAN-mode assertion here shares
+    # one capture rather than shelling out again — two copies of the same output can drift
+    # apart. The JSON-mode checks still invoke it separately: a different output mode
+    # cannot reuse this capture. (No count here on purpose — one that says "three
+    # assertions" goes stale the next time somebody adds a fourth.)
     week_h = stride_human!(ctx.bin, ctx.home, ["week"])
     check!("human week bundle", Str.contains(week_h, "OPEN PLAN"))?
     # the 14-day table is a DATE RANGE: a day with nothing on it is information, and week
     # boundaries get the same `···` divider progress uses for a break in a series
     check!("days with no activity are shown, not skipped over", Str.contains(week_h, "(no activity)"))?
     check!("week boundaries are divided", Str.contains(week_h, "···"))?
+    # The window has to be as wide as its name. Both the header and the JSON field say 14,
+    # so the oldest day rendered is anchor-13 — an inclusive `>= anchor - 14` spans fifteen.
+    # Scoped to the text AFTER the header: the OPEN PLAN table above carries dates too, and
+    # matching the whole output would let one of those satisfy either check by accident.
+    recent_block = List.last(Str.split_on(week_h, "RECENT 14 DAYS")).ok_or("")
+    oldest_in = Str.trim(sql!(ctx.db, "SELECT date(MAX(day), '-13 days') FROM daily_load;"))
+    first_out = Str.trim(sql!(ctx.db, "SELECT date(MAX(day), '-14 days') FROM daily_load;"))
+    check!("the 14-day table reaches back exactly 13 days", Str.contains(recent_block, oldest_in))?
+    check!("and stops there — anchor-14 is outside the window", !(Str.contains(recent_block, first_out)))?
     # ...and the JSON stays a list of REAL activities — no pseudo-rows without an id
     check!("json recent list has no placeholder rows", strjq!(ctx, ["week"], "[.data.recent_activities_14d[] | select(.id == null or .id == 0)] | length") == "0")?
     check!("uppercase STRIDE_FORMAT selects JSON", Str.contains(stride_env!(ctx.bin, ctx.home, ["summary"], [("STRIDE_FORMAT", "JSON")]), "\"schema_version\""))?

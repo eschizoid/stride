@@ -380,7 +380,14 @@ Report :: [].{
                     Err(e) => Err(e)
                     Ok(s) => {
                 anchor = (Metrics.date_str_to_days(s.as_of)).ok_or(0)
-                cutoff14 = Metrics.days_to_date_str(anchor - 14)
+                # anchor-13, not anchor-14: the range is INCLUSIVE of both ends, so
+                # `>= anchor - 14` spans fifteen days while the section header and the
+                # `recent_activities_14d` field both promise fourteen. Nobody could count
+                # the difference while only days with activities were rendered; showing
+                # every day made the extra one visible. Narrowing the window keeps the
+                # name honest — the alternative, relabelling to 15, would have meant
+                # renaming the JSON field and breaking its consumers over a fencepost.
+                cutoff14 = Metrics.days_to_date_str(anchor - 13)
                 recent = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
@@ -451,8 +458,9 @@ Report :: [].{
                     # activities made the reader diff dates to notice a gap — an explicit row
                     # says it outright. Human table only: the JSON payload stays a list of
                     # real activities and never gains pseudo-rows with no id.
-                    # 15 entries, not 14: the query above takes `>= anchor - 14`, so the
-                    # oldest day it can return is anchor-14 and a 14-entry walk would drop it.
+                    # 14 entries, matching the `>= anchor - 13` cutoff above: the walk and
+                    # the query have to agree, or the table shows a day the query never
+                    # returned (always blank) or hides one it did.
                     # Week boundaries get a `···` divider — the same glyph `progress` uses
                     # for a break in a series, so the idiom is already in the legend
                     # vocabulary. The table runs newest-first, so the boundary falls just
@@ -463,7 +471,7 @@ Report :: [].{
                     # idiom `progress` uses for its gap row.
                     recent_headers = ["date", "sport", "name", "time", "load", "hard"]
                     week_div = List.map(recent_headers, |_| "···")
-                    recent_display = List.join(List.map(Render.indices(15), |i| {
+                    recent_display = List.join(List.map(Render.indices(14), |i| {
                         d = anchor - (i).to_i64_wrap()
                         ds = Metrics.days_to_date_str(d)
                         on_day = List.keep_if(recent, |a| a.date == ds)
