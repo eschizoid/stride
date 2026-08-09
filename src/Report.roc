@@ -458,8 +458,9 @@ Report :: [].{
                     # activities made the reader diff dates to notice a gap — an explicit row
                     # says it outright. Human table only: the JSON payload stays a list of
                     # real activities and never gains pseudo-rows with no id.
-                    # 14 entries, matching the `>= anchor - 13` cutoff above: the walk and
-                    # the query have to agree, or the table shows a day the query never
+                    # 14 DAYS, matching the `>= anchor - 13` cutoff above — not 14 rows: a
+                    # day with two activities contributes two. The walk and the query have
+                    # to span the same days, or the table shows one the query never
                     # returned (always blank) or hides one it did.
                     # Week boundaries get a `···` divider — the same glyph `progress` uses
                     # for a break in a series, so the idiom is already in the legend
