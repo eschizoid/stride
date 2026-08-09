@@ -1,6 +1,7 @@
 # Roadmap — what stride is missing to be The Sports Analytics Engine
 
-Drafted 2026-08-08; amended 2026-08-09 after review. Directional, not a promise;
+Drafted 2026-08-08; amended 2026-08-09 after review, then grilled — settled
+decisions are marked inline. Directional, not a promise;
 re-argue freely. Features graduate into GitHub issues when work starts. Settled
 architecture stays in `docs/adr/` — nothing here overrides an ADR.
 
@@ -18,18 +19,19 @@ Every feature below does one of two things: widens what the engine can honestly 
 or widens who can feed it data. None of them adds judgment to the engine — reasoning
 about the numbers stays with the coach (ADR 0000).
 
-## The unsettled question that orders everything
+## Settled 2026-08-09: both, interleaved — world-class in the foreground
 
-"The Sports Analytics Engine of the world" has two readings, and they produce different
-roadmaps:
+"World-class vs world-scale" got grilled and the answer is both tracks at once:
 
-- **World-class** — the deepest, most honest engine for the athletes already here.
-  Then trust features (interval detection, decoupling) come first, ingestion later.
-- **World-scale** — an engine anyone can feed regardless of platform. Then FIT import
-  comes first, because it gates every athlete who doesn't pay Strava.
+- **Foreground:** quick wins, then interval detection — depth for the athletes already
+  here, shipping value weekly.
+- **Background:** the FIT dedupe ADR (pure thinking, no compiler risk), then a minimal
+  decoder SPIKE (record/lap/session messages only, one real file) that retires the
+  Roc-parses-binary risk BEFORE any product commitment. If the spike fights the
+  compiler, a week is lost, not a quarter.
 
-The tiers below are grouped by theme and deliberately NOT force-ranked against each
-other until this is settled. It is the first thing to grill.
+Review bandwidth is the real constraint — one maintainer approves every PR — so the
+background track stays cheap until the spike says otherwise.
 
 ## Ground rules for every feature here
 
@@ -56,23 +58,37 @@ behind any tier:
 - **Ramp-rate guardrail.** CTL ramp per week — the best-validated overload signal
   computable from data stride holds. Pure arithmetic on `daily_load`, surfaced in
   `summary` as a number, not advice.
-- **Sync auto-retry.** Bug C (upstream compiler heap corruption) makes `stride sync`
-  fail ~25–50% of the time; the workaround is "run it again". The retry belongs INSIDE
-  the binary — sync is idempotent, so retrying internally is safe, honest, and turns
-  the engine's worst first impression into a non-event. Upstream bug stays filed;
-  users stop meeting it.
+- **Observable sync + analyze (with auto-retry).** Both commands are silent until they
+  finish — a 72 s full rescore reads as a hang (a healthy analyze got killed for
+  exactly that), and a mid-run sync death says nothing about how far it got. Progress
+  narration goes to **stderr** (`rescoring 128/723…`, `fetching streams 14/60…`) so the
+  stdout JSON envelope stays a single deterministic payload and golden fixtures are
+  untouched. Failures inherit context from the narration (`failed fetching streams for
+  <id>, attempt 2/3`). Bug C retries happen INSIDE the binary — sync is idempotent —
+  capped at 3, loud failure after, and counted in the summary (`synced 22 (2 retries)`)
+  so the upstream bug's frequency stays visible.
 - **Aerobic decoupling (Pw:HR drift).** First-half vs second-half efficiency within a
   session — the standard aerobic-durability metric. Every input already exists (1 Hz
   power + HR streams). Feeds `activity` and `progress`.
 
 ## Tier: trust what you already compute
 
-- **Interval detection.** The engine trusts session *names* and prescriptions; it never
-  reads the stream to see what actually happened. Detecting work/rest structure from
-  power/pace/HR turns three things done by eye today into measurements: whether a VO2
-  session actually reached its target range, matching activities to prescriptions by
-  *content* rather than date, and classifying unnamed outdoor rides. Highest-leverage
-  single feature on this list — it turns adherence from a claim into a measurement.
+- **Interval detection** — grilled 2026-08-09; the design is settled:
+  - **The detector reports; it never acts.** Output is structure on `activity`
+    (`5×[3:01 @ 258W / 3:04 easy]`) — matching it to a prescription stays a coach/human
+    act. Auto-completing (or even emitting match candidates) was rejected: prescriptions
+    are free text, so structure-matching would mean parsing prose, which is judgment.
+    If structured prescription targets ever earn their way in, re-argue then.
+  - **Power and pace place edges; both ship in v1.** One signal-agnostic detector
+    (smooth → sustained-level-shift segmentation → min-duration filter, deterministic).
+    Power covers rides AND rows; the existing 1 Hz grade-adjusted speed stream covers
+    runs and swims with conservative thresholds. No scored sport with a measured signal
+    is left out.
+  - **HR never places edges — it enriches them.** HR lags effort by 30+ s, so HR-derived
+    edges would be fiction. Inside detected segments HR is gold: per-rep peak/avg,
+    drift across reps (fatigue signature), post-rep recovery rate (a validated fitness
+    marker), and corroboration that target watts produced the expected physiological
+    cost. HR-only sessions detect nothing; `hard_s`/zones already tell their story.
 
 ## Tier: ingestion breadth
 
@@ -88,12 +104,15 @@ behind any tier:
     in a language with no FIT library and an unstable compiler (see the toolchain pin
     in `roc-new-compiler-notes.md`). Scope a minimal decoder (record/lap/session
     messages) first; the format has hundreds of message types we never need.
-- **Wellness inputs (resting HR, HRV) as judgment-tier data.** A `stride wellness`
-  command plus FIT extraction where devices record it. The engine stores and trends —
-  shown in `summary` and `week` — and the *coach* decides what a suppressed HRV means.
-  **Contingent: verify a data source exists before building.** Peloton records neither;
-  this ships only if the athlete's devices actually produce the data. Scope question
-  also open: resting HR + HRV only, or sleep and subjective ratings too.
+- **Wellness inputs (resting HR, HRV) as judgment-tier data.** The likely source is an
+  **Apple Health export** (Settings → Health → Export All Health Data — a local zip,
+  no API, no OAuth; stream-parse the XML, never load it whole), which fits stride's
+  local-first shape better than FIT extraction. But Apple Health only holds these
+  metrics if a wearable records them — an iPhone alone does not. **Contingent on a
+  real source: pending homework, does anyone in the circle sleep with a watch on?**
+  Manual export makes this a trend tool, not a daily readiness signal. Engine stores
+  and trends, shown in `summary`/`week`; the coach interprets. Scope still open:
+  resting HR + HRV only, or sleep too.
 
 ## Tier: the season, not just the week
 
@@ -136,8 +155,11 @@ the engine.
 
 Recorded so they get fought on purpose, not settled by default:
 
-1. **World-class vs world-scale** — settles the tier order. See above.
-2. **Wellness scope and source** — resting HR + HRV only, or sleep/subjective too;
-   and does a real data source exist for the current athletes?
+1. ~~World-class vs world-scale~~ — settled: both, interleaved, world-class foreground.
+2. **Wellness source (homework)** — does anyone in the circle wear a watch overnight?
+   Determines whether wellness ships at all. Scope (sleep? subjective?) waits on that.
 3. **FIT dedupe semantics** — which fields win, and what does a re-import invalidate?
    Needs its ADR before any parser work starts.
+4. **Structured prescription targets** — parked, not planned. Would make detection-to-
+   prescription matching honest arithmetic, at the cost of rigid prescribing. Re-argue
+   only if free-text reconciliation actually starts failing in practice.
