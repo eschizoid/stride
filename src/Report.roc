@@ -457,7 +457,12 @@ Report :: [].{
                     # for a break in a series, so the idiom is already in the legend
                     # vocabulary. The table runs newest-first, so the boundary falls just
                     # ABOVE each Sunday (never above the first row, which needs no divider).
-                    week_div = ["···", "···", "···", "···", "···", "···"]
+                    # derived from the headers, not hard-coded to today's six columns: a
+                    # literal row silently goes short if a column is ever added, and
+                    # render_table pads the gap with blanks rather than complaining. Same
+                    # idiom `progress` uses for its gap row.
+                    recent_headers = ["date", "sport", "name", "time", "load", "hard"]
+                    week_div = List.map(recent_headers, |_| "···")
                     recent_display = List.join(List.map(Render.indices(15), |i| {
                         d = anchor - (i).to_i64_wrap()
                         ds = Metrics.days_to_date_str(d)
@@ -474,10 +479,7 @@ Report :: [].{
                             day_rows
                         }
                     }))
-                    Stdout.line!(Render.render_table(
-                        ["date", "sport", "name", "time", "load", "hard"],
-                        recent_display,
-                    ))
+                    Stdout.line!(Render.render_table(recent_headers, recent_display))
                 }
                     }
                 }

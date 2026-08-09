@@ -813,10 +813,12 @@ b_human! = |ctx| {
     check!("human stats section", Str.contains(stride_human!(ctx.bin, ctx.home, ["stats"]), "ALL TIME"))?
     check!("human activity zones row", Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "101"]), "Z1"))?
     check!("human summary banner", Str.contains(stride_human!(ctx.bin, ctx.home, ["summary"]), "stride report"))?
-    check!("human week bundle", Str.contains(stride_human!(ctx.bin, ctx.home, ["week"]), "OPEN PLAN"))?
+    # one invocation, four assertions — `week` is a full sync-free read but still the
+    # priciest command in the suite, and re-running it invites the two copies to drift
+    week_h = stride_human!(ctx.bin, ctx.home, ["week"])
+    check!("human week bundle", Str.contains(week_h, "OPEN PLAN"))?
     # the 14-day table is a DATE RANGE: a day with nothing on it is information, and week
     # boundaries get the same `···` divider progress uses for a break in a series
-    week_h = stride_human!(ctx.bin, ctx.home, ["week"])
     check!("days with no activity are shown, not skipped over", Str.contains(week_h, "(no activity)"))?
     check!("week boundaries are divided", Str.contains(week_h, "···"))?
     # ...and the JSON stays a list of REAL activities — no pseudo-rows without an id
