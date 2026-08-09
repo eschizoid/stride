@@ -100,7 +100,13 @@ behind any tier:
   real one. FIT is the lingua franca — Garmin, Wahoo, COROS, every trainer. It removes
   the Strava-subscription dependency, delivers full-resolution streams where Strava
   downsamples, and gates every athlete who doesn't pay Strava. TCX/GPX ride along
-  nearly free. Two honest costs, stated up front:
+  nearly free. **Contingent on evidence, like wellness:** FIT files only exist where a
+  device wrote one — Garmin/Wahoo/COROS uploads. API-synced activities (Peloton,
+  phone-app recordings) leave NO original file in the bulk export; those rides are
+  server-to-server and fileless. One directory listing of a real export's `activities/`
+  folder tells us whether anyone in the circle produces FIT at all — that check comes
+  before even the spike. If it is all GPX and API-ghosts, this item serves the
+  hypothetical world, not the actual one. Two honest costs, stated up front:
   - **Dedupe is the feature, parsing is the chore.** The same ride arriving from a FIT
     file and a Strava sync must become one activity; the richer stream must win without
     wiping judgment-tier data. Needs an ADR before parser code.
