@@ -380,7 +380,14 @@ Report :: [].{
                     Err(e) => Err(e)
                     Ok(s) => {
                 anchor = (Metrics.date_str_to_days(s.as_of)).ok_or(0)
-                cutoff14 = Metrics.days_to_date_str(anchor - 14)
+                # anchor-13, not anchor-14: the range is INCLUSIVE of both ends, so
+                # `>= anchor - 14` spans fifteen days while the section header and the
+                # `recent_activities_14d` field both promise fourteen. Nobody could count
+                # the difference while only days with activities were rendered; showing
+                # every day made the extra one visible. Narrowing the window keeps the
+                # name honest — the alternative, relabelling to 15, would have meant
+                # renaming the JSON field and breaking its consumers over a fencepost.
+                cutoff14 = Metrics.days_to_date_str(anchor - 13)
                 recent = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
@@ -446,10 +453,54 @@ Report :: [].{
                     ))?
                     Stdout.line!("")?
                     Stdout.line!("RECENT 14 DAYS")?
-                    Stdout.line!(Render.render_table(
-                        ["date", "sport", "name", "time", "load", "hard"],
-                        List.map(recent, |a| [a.date, a.sport, a.name, Render.mins(a.moving_time), Render.fmt0(a.tss), Render.mins(a.hard_s)]),
-                    ))
+                    # This table is a DATE RANGE, so a day with nothing on it is information:
+                    # it was a rest day, planned or not. Rendering only the days that HAVE
+                    # activities made the reader diff dates to notice a gap — an explicit row
+                    # says it outright. Human table only: the JSON payload stays a list of
+                    # real activities and never gains pseudo-rows with no id.
+                    # 14 DAYS, matching the `>= anchor - 13` cutoff above — not 14 rows: a
+                    # day with two activities contributes two. The walk and the query have
+                    # to span the same days, or the table shows one the query never
+                    # returned (always blank) or hides one it did.
+                    # Week boundaries get a `···` divider — the same glyph `progress` uses
+                    # for a break in a series, so the idiom is already in the legend
+                    # vocabulary. The table runs newest-first, so the boundary falls just
+                    # ABOVE each Sunday (never above the first row, which needs no divider).
+                    # derived from the headers, not hard-coded to today's six columns: a
+                    # literal row silently goes short if a column is ever added, and
+                    # render_table pads the gap with blanks rather than complaining. Same
+                    # idiom `progress` uses for its gap row.
+                    recent_headers = ["date", "sport", "name", "time", "load", "hard"]
+                    week_div = List.map(recent_headers, |_| "···")
+                    recent_display = List.join(List.map(Render.indices(14), |i| {
+                        d = anchor - (i).to_i64_wrap()
+                        ds = Metrics.days_to_date_str(d)
+                        on_day = List.keep_if(recent, |a| a.date == ds)
+                        day_rows =
+                            if List.is_empty(on_day) {
+                                # header-driven like the divider: the label sits in whichever
+                                # column is NAMED "name" and every other cell is a dash, so a
+                                # new column widens this row instead of leaving it short. The
+                                # activity rows below stay positional by necessity — each cell
+                                # is a different field, which no header list can express.
+                                [List.map(recent_headers, |h|
+                                    if h == "date" {
+                                        ds
+                                    } else if h == "name" {
+                                        "(no activity)"
+                                    } else {
+                                        "-"
+                                    })]
+                            } else {
+                                List.map(on_day, |a| [a.date, a.sport, a.name, Render.mins(a.moving_time), Render.fmt0(a.tss), Render.mins(a.hard_s)])
+                            }
+                        if i > 0 and Metrics.day_of_week(d) == "Sun" {
+                            List.prepend(day_rows, week_div)
+                        } else {
+                            day_rows
+                        }
+                    }))
+                    Stdout.line!(Render.render_table(recent_headers, recent_display))
                 }
                     }
                 }
