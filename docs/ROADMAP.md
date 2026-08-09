@@ -45,6 +45,13 @@ The existing invariants, restated so no roadmap item forgets them:
 - Numeric 0 = "not available". The engine never invents a value to fill a gap.
 - **Reliability is a feature.** An engine that flakes on ingest is not the best engine
   in the world, whatever its math says.
+- **The ingestion boundary is the filesystem.** Where a device uploads its data —
+  Garmin Connect, Wahoo, Peloton's servers — is between the athlete and their vendor,
+  not stride's business. Stride reads files the athlete puts on disk (bulk export, USB —
+  Garmin devices mount as a disk with `Activities/*.fit` — email, anything). Strava
+  stays as the one grandfathered API because it exists and is an aggregator; no other
+  vendor-cloud integration ships, ever. This is one sentence that deletes an entire
+  category of scope.
 
 ## Quick wins — ship when convenient, regardless of tier
 
@@ -152,6 +159,8 @@ the engine.
 - **ML predictions** — the engine's identity is deterministic and explainable. Nothing
   ships that cannot be recomputed by hand from the stored inputs.
 - **Social features** — Strava exists.
+- **Vendor-cloud integrations** (Garmin Connect, Wahoo, Peloton APIs, ...) — see the
+  filesystem ground rule. The athlete brings the file; stride reads it.
 
 ## Known risks the roadmap inherits
 
