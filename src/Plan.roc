@@ -91,6 +91,16 @@ Plan :: [].{
                 AllTime => 1
                 ThisWeek => 0
             }
+        # `plan all` must mean ALL: the older-sessions count and the note pointing at the
+        # JSON are both lies if the query silently truncates. SQLite treats a negative
+        # LIMIT as unbounded, so this stays a BOUND value — no interpolated clause, which
+        # is the pattern that spliced an empty string into the query and crashed the
+        # backend (see the :all note above).
+        row_limit =
+            match scope {
+                AllTime => -1
+                ThisWeek => 100
+            }
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
@@ -101,9 +111,9 @@ Plan :: [].{
                 \\       COALESCE((SELECT substr(a.start_local,1,10) FROM activities a WHERE a.id = planned_sessions.completed_activity_id), '') AS done_date
                 \\FROM planned_sessions
                 \\WHERE (:all = 1 OR (COALESCE(target_date,'') >= '${Metrics.days_to_date_str(mon)}' AND COALESCE(target_date,'') <= '${Metrics.days_to_date_str(mon + 6)}' AND (COALESCE(status,'open') <> 'skipped' OR NOT EXISTS (SELECT 1 FROM planned_sessions p2 WHERE p2.target_date = planned_sessions.target_date AND (COALESCE(p2.status,'open') <> 'skipped' OR p2.id > planned_sessions.id)))))
-                \\ORDER BY target_date DESC, id DESC LIMIT 100
+                \\ORDER BY target_date DESC, id DESC LIMIT :lim
             ,
-            bindings: [{ name: ":all", value: Integer(scope_all) }],
+            bindings: [{ name: ":all", value: Integer(scope_all) }, { name: ":lim", value: Integer(row_limit) }],
             rows: |cols| |stmt| {
                 id = Sqlite.i64("id")(cols)(stmt)?
                 created_at = Sqlite.str("created_at")(cols)(stmt)?
@@ -152,7 +162,7 @@ Plan :: [].{
                     p.status
                 },
         })
-        # `plan all` splits the log into sections: a single slab answers "what ever
+        # `plan all` splits the log into sections: a single slab answers "whatever
         # happened" when the question at hand is usually "what's coming". Partitioned by
         # WEEK rather than by today, so no row can land in two sections — an open session
         # later this week belongs to `this week`, not to `upcoming`. Sections are

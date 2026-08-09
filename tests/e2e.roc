@@ -454,6 +454,15 @@ b_plan! = |ctx| {
     check!("json still carries the ancient row", strjq!(ctx, ["plan", "all"], "[.data[] | select(.id==${old_id})] | length") == "1")?
     check!("json carries the future row too", strjq!(ctx, ["plan", "all"], "[.data[] | select(.id==${fut_id})] | length") == "1")?
     check!("bare plan is unsectioned", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["plan"]), "── upcoming ──")))?
+    # `plan all` must mean ALL — the older-count and its "json has every row" pointer are
+    # both lies if the query truncates. Seed past 100 rows and check nothing is dropped.
+    # a recursive CTE, not INSERT..SELECT FROM planned_sessions: that only adds as many
+    # rows as already exist (~30 here), never crosses 100, and the check passes against
+    # the capped build — the negative control caught it doing exactly that
+    _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x<150) SELECT '0','2019-03-04','rest','bulk filler','r','skipped' FROM c;")
+    total = Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions;"))
+    check!("plan all returns every row past the old 100 cap", strjq!(ctx, ["plan", "all"], ".data | length") == total)?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date = '2019-03-04';")
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${fut_id}, ${old_id});")
     Ok({})
 }
