@@ -447,10 +447,22 @@ b_plan! = |ctx| {
     old_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
     all_h = stride_human!(ctx.bin, ctx.home, ["plan", "all"])
     check!("plan all has the three sections", Str.contains(all_h, "── upcoming ──") and Str.contains(all_h, "── this week ──") and Str.contains(all_h, "── last week ──"))?
-    check!("a future session lands in the table", Str.contains(all_h, "far future session"))?
-    check!("an ancient session is not rendered", !(Str.contains(all_h, "ancient session")))?
+    # anchor on the seeded target_date, not the detail text: `date` is its own
+    # non-wrapping column, and 2099/2020 are sentinels that cannot appear by accident.
+    # (The bare id would be worse than either — a 2-3 digit number matches digits in the
+    # date and load cells of unrelated rows, so the negative check would go flaky.)
+    check!("a future session lands in the table", Str.contains(all_h, "2099-06-01"))?
+    check!("an ancient session is not rendered", !(Str.contains(all_h, "2020-01-06")))?
     check!("but it is counted, not dropped", Str.contains(all_h, "older sessions not shown"))?
     # JSON stays a FLAT array carrying every row — sections are presentation only
+    # an unparseable target_date belongs to no week. `plan add` stores the date string
+    # verbatim, so a typo reaches this code path; collapsing it to day 0 would count it
+    # as "older" and claim it was in the past. It must be named as undated instead.
+    _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','tomorrow','vo2max','typo date','r','open');")
+    undated_h = stride_human!(ctx.bin, ctx.home, ["plan", "all"])
+    check!("an undated session is counted as undated, not as older", Str.contains(undated_h, "1 undated"))?
+    check!("and it is not silently filed under a week", !(Str.contains(undated_h, "typo date")))?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date = 'tomorrow';")
     check!("json still carries the ancient row", strjq!(ctx, ["plan", "all"], "[.data[] | select(.id==${old_id})] | length") == "1")?
     check!("json carries the future row too", strjq!(ctx, ["plan", "all"], "[.data[] | select(.id==${fut_id})] | length") == "1")?
     check!("bare plan is unsectioned", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["plan"]), "── upcoming ──")))?
