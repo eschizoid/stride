@@ -213,7 +213,7 @@ stride week                                       # everything needed to plan a 
 
 | Command | What it does |
 | --- | --- |
-| `plan add <date> <type> <detail> <rationale>` | Records a planned session. `type` is the intensity intent (vo2max, threshold, endurance, recovery, strength, rest); the sport goes in `detail`. Refuses a date that already has an open planned session. |
+| `plan add <date> <type> <detail> <rationale>` | Records a planned session. `type` is the intensity intent (vo2max, threshold, endurance, recovery, strength, rest); the sport goes in `detail`. Re-planning a date revises its open session in place rather than stacking a second row. Refuses a date that isn't a real calendar day written `YYYY-MM-DD`. |
 | `complete <id> [activity_id]` | Marks a planned session done, linked to the activity that fulfilled it (rest days need no activity). Refuses ids that don't exist. |
 | `skip <id> <reason>` | Marks a planned session skipped, with the reason — so adherence history stays honest. |
 
@@ -258,7 +258,9 @@ commands:
 1. `stride sync && stride analyze`
 2. `stride week` → reason about polarization, zone gaps, form, sport balance
 3. reconcile: match the open plan to completed activities → `stride complete`
-4. plan: `stride plan` the coming week (the binary refuses double-booked dates)
+4. plan: `stride plan add` the coming week (re-planning a date revises its open
+   session in place — same id, no tombstone; `skip` is for sessions that were
+   going to happen and didn't)
 5. sessions that didn't happen get `stride skip <id> "<reason>"` — adherence
    history stays honest
 
