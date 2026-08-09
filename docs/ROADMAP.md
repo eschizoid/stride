@@ -1,8 +1,8 @@
 # Roadmap — what stride is missing to be The Sports Analytics Engine
 
-Drafted 2026-08-08, second pass same day. Directional, not a promise; re-argue freely.
-Features graduate into GitHub issues when work starts. Settled architecture stays in
-`docs/adr/` — nothing here overrides an ADR.
+Drafted 2026-08-08; amended 2026-08-09 after review. Directional, not a promise;
+re-argue freely. Features graduate into GitHub issues when work starts. Settled
+architecture stays in `docs/adr/` — nothing here overrides an ADR.
 
 ## The thesis
 
@@ -18,11 +18,22 @@ Every feature below does one of two things: widens what the engine can honestly 
 or widens who can feed it data. None of them adds judgment to the engine — reasoning
 about the numbers stays with the coach (ADR 0000).
 
-Tiers are ordered: Tier 1 ships before Tier 2. Within a tier, order is open.
+## The unsettled question that orders everything
+
+"The Sports Analytics Engine of the world" has two readings, and they produce different
+roadmaps:
+
+- **World-class** — the deepest, most honest engine for the athletes already here.
+  Then trust features (interval detection, decoupling) come first, ingestion later.
+- **World-scale** — an engine anyone can feed regardless of platform. Then FIT import
+  comes first, because it gates every athlete who doesn't pay Strava.
+
+The tiers below are grouped by theme and deliberately NOT force-ranked against each
+other until this is settled. It is the first thing to grill.
 
 ## Ground rules for every feature here
 
-These are the existing invariants, restated so no roadmap item forgets them:
+The existing invariants, restated so no roadmap item forgets them:
 
 - Every new metric input **joins the invalidation story** (`ftp_used` / `zones_used` /
   `metrics_rev`, or row deletion on change) — a number that silently goes stale is worse
@@ -30,26 +41,31 @@ These are the existing invariants, restated so no roadmap item forgets them:
 - Human-entered data is **judgment-tier**: never a column on a mirror table, never wiped
   by a re-sync.
 - Numeric 0 = "not available". The engine never invents a value to fill a gap.
+- **Reliability is a feature.** An engine that flakes on ingest is not the best engine
+  in the world, whatever its math says.
 
-## Tier 1 — ingestion breadth (the "of the world" part)
+## Quick wins — ship when convenient, regardless of tier
 
-- **Native FIT import.** The ADR calls Strava "one ingestion layer," but it is the only
-  real one. FIT is the lingua franca — Garmin, Wahoo, COROS, every trainer. It removes
-  the Strava-subscription dependency, delivers full-resolution streams where Strava
-  downsamples, and is the adoption gate for athletes who don't pay Strava. TCX/GPX ride
-  along nearly free. The hard part is not parsing: it is **dedupe** — the same ride
-  arriving from both a FIT file and a Strava sync must become one activity, not two,
-  and the richer stream must win without wiping judgment-tier data. That dedupe story
-  needs an ADR before code.
-- **Wellness inputs (resting HR, HRV) as judgment-tier data.** A `stride wellness`
-  command plus FIT extraction where devices record it. The engine stores and trends —
-  shown in `summary` and `week` — and the *coach* decides what a suppressed HRV means.
-  Scope question still open: resting HR + HRV only, or sleep and subjective ratings too.
+Days-sized each, high value, all on data the engine already holds. These do not wait
+behind any tier:
 
-Sequenced first because it gates adoption, and every later feature benefits from
-full-resolution streams.
+- **Data-quality watchdog in `doctor`.** Streak detection: consecutive sessions without
+  HR, estimated-power rides, junk-filter percentages. The engine already knows; it
+  doesn't tell. (Two strap-less rides in a row went unnoticed for two days — the
+  motivating incident.)
+- **Ramp-rate guardrail.** CTL ramp per week — the best-validated overload signal
+  computable from data stride holds. Pure arithmetic on `daily_load`, surfaced in
+  `summary` as a number, not advice.
+- **Sync auto-retry.** Bug C (upstream compiler heap corruption) makes `stride sync`
+  fail ~25–50% of the time; the workaround is "run it again". The retry belongs INSIDE
+  the binary — sync is idempotent, so retrying internally is safe, honest, and turns
+  the engine's worst first impression into a non-event. Upstream bug stays filed;
+  users stop meeting it.
+- **Aerobic decoupling (Pw:HR drift).** First-half vs second-half efficiency within a
+  session — the standard aerobic-durability metric. Every input already exists (1 Hz
+  power + HR streams). Feeds `activity` and `progress`.
 
-## Tier 2 — trust what you already compute
+## Tier: trust what you already compute
 
 - **Interval detection.** The engine trusts session *names* and prescriptions; it never
   reads the stream to see what actually happened. Detecting work/rest structure from
@@ -57,19 +73,30 @@ full-resolution streams.
   session actually reached its target range, matching activities to prescriptions by
   *content* rather than date, and classifying unnamed outdoor rides. Highest-leverage
   single feature on this list — it turns adherence from a claim into a measurement.
-- **Aerobic decoupling (Pw:HR drift).** First-half vs second-half efficiency within a
-  session — the standard aerobic-durability metric. Every input already exists (1 Hz
-  power + HR streams). Feeds `activity` and `progress`.
-- **Data-quality watchdog in `doctor`.** Streak detection: consecutive sessions without
-  HR, estimated-power rides, junk-filter percentages. The engine already knows; it
-  doesn't tell. (Two strap-less rides in a row went unnoticed for two days — that is
-  the motivating incident.)
 
-## Tier 3 — the season, not just the week
+## Tier: ingestion breadth
 
-- **Ramp-rate guardrails.** CTL ramp per week — the best-validated overload signal
-  computable from data stride holds. Pure arithmetic on `daily_load`, surfaced in
-  `summary` as a number, not advice.
+- **Native FIT import.** The ADR calls Strava "one ingestion layer," but it is the only
+  real one. FIT is the lingua franca — Garmin, Wahoo, COROS, every trainer. It removes
+  the Strava-subscription dependency, delivers full-resolution streams where Strava
+  downsamples, and gates every athlete who doesn't pay Strava. TCX/GPX ride along
+  nearly free. Two honest costs, stated up front:
+  - **Dedupe is the feature, parsing is the chore.** The same ride arriving from a FIT
+    file and a Strava sync must become one activity; the richer stream must win without
+    wiping judgment-tier data. Needs an ADR before parser code.
+  - **This is the largest single build on the roadmap**, hand-rolling a binary parser
+    in a language with no FIT library and an unstable compiler (see the toolchain pin
+    in `roc-new-compiler-notes.md`). Scope a minimal decoder (record/lap/session
+    messages) first; the format has hundreds of message types we never need.
+- **Wellness inputs (resting HR, HRV) as judgment-tier data.** A `stride wellness`
+  command plus FIT extraction where devices record it. The engine stores and trends —
+  shown in `summary` and `week` — and the *coach* decides what a suppressed HRV means.
+  **Contingent: verify a data source exists before building.** Peloton records neither;
+  this ships only if the athlete's devices actually produce the data. Scope question
+  also open: resting HR + HRV only, or sleep and subjective ratings too.
+
+## Tier: the season, not just the week
+
 - **Event targeting.** `stride event add <date> <name>` → projected CTL/TSB on that
   date given the open plan. Projection is deterministic arithmetic; whether to change
   the plan stays with the coach.
@@ -79,13 +106,13 @@ full-resolution streams.
   claim is narrower and checkable: the whole history recomputes from raw streams, and
   the provenance of every number is visible.
 
-## Tier 4 — deeper power/pace science
+## Tier: deeper power/pace science
 
 W′ balance (match-burning within rides), time-to-exhaustion from the CP model already
 fitted, critical speed as the pace-sport analog of CP, and a taper projection built on
-the same CTL/TSB arithmetic as event targeting. Valuable, but sequenced last: these
-refine numbers for athletes who already trust the engine rather than widening who can
-use it.
+the same CTL/TSB arithmetic as event targeting. Sequenced last regardless of the
+world-class/world-scale answer: these refine numbers for athletes who already trust
+the engine.
 
 ## Explicitly not doing
 
@@ -97,15 +124,20 @@ use it.
   ships that cannot be recomputed by hand from the stored inputs.
 - **Social features** — Strava exists.
 
+## Known risks the roadmap inherits
+
+- **The compiler.** Pinned to `nightly-2026-August-04-1cb06bc`; every later nightly
+  miscompiles (roc-lang/roc#10693). Roc is pre-1.0 and moving. Every large build here
+  (FIT above all) carries this risk; small, well-tested increments are the mitigation.
+- **Stream storage.** Raw stream JSON already runs ~70 MB at full backfill; FIT's
+  full-resolution streams grow it further. Accepted for now; revisit if it hurts.
+
 ## Open arguments
 
 Recorded so they get fought on purpose, not settled by default:
 
-1. **FIT-before-intervals ordering.** Tier 1 gates adoption; Tier 2 has more per-user
-   leverage. The sequence above picks adoption. Reverse it if the near-term goal is
-   depth for current users over reach.
-2. **Wellness scope.** Resting HR + HRV are objective and device-measured. Sleep and
-   subjective ratings drift toward journaling — worth it only if the coach actually
-   consumes them.
-3. **FIT dedupe semantics.** Same activity from two sources: which fields win, and
-   what does a re-import invalidate? Needs its ADR before any parser work starts.
+1. **World-class vs world-scale** — settles the tier order. See above.
+2. **Wellness scope and source** — resting HR + HRV only, or sleep/subjective too;
+   and does a real data source exist for the current athletes?
+3. **FIT dedupe semantics** — which fields win, and what does a re-import invalidate?
+   Needs its ADR before any parser work starts.
