@@ -89,7 +89,8 @@ help_text =
         \\
         \\WHAT SHOULD I DO?
         \\    week                    planning bundle: summary + open plan + last 14 days
-        \\    plan                    this week's plan (Mon-Sun); `plan all` for the full log
+        \\    plan                    this week's plan (Mon-Sun)
+        \\    plan all                upcoming + this week + last week (older ones counted)
         \\    plan add <date> <type> <detail> <rationale>    add a planned session
         \\    complete <session_id> [activity_id]            mark done (bare = rest day)
         \\    skip <session_id> <reason>                     mark skipped, with reason
