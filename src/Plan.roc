@@ -128,8 +128,11 @@ Plan :: [].{
                 Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, status, skipped_reason, done_date })
             },
         })?
-        # most recent 100 by date, displayed in calendar order
-        ordered = List.fold(rows, [], |acc, x| List.concat([x], acc))
+        # newest-first from SQL, flipped to calendar order for display. `Render.reverse_list`
+        # (fold + prepend, linear) rather than fold + `List.concat([x], acc)`, which copies
+        # the whole accumulator every step and is quadratic — harmless behind the old
+        # LIMIT 100, unbounded now that `plan all` returns the full log.
+        ordered = Render.reverse_list(rows)
         dow = |date_str|
             match Metrics.date_str_to_days(date_str) {
                 Ok(d) => Metrics.day_of_week(d)
