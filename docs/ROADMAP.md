@@ -160,8 +160,10 @@ the engine.
 Recorded so they get fought on purpose, not settled by default:
 
 1. ~~World-class vs world-scale~~ — settled: both, interleaved, world-class foreground.
-2. **Wellness source (homework)** — does anyone in the circle wear a watch overnight?
-   Determines whether wellness ships at all. Scope (sleep? subjective?) waits on that.
+2. **Source-evidence homework, two cheap checks** — (a) does anyone in the circle wear
+   a watch overnight (gates wellness)? (b) does anyone's Strava export contain actual
+   .fit files in `activities/` (gates FIT priority)? Both answerable this week without
+   writing code.
 3. **FIT dedupe semantics** — which fields win, and what does a re-import invalidate?
    Needs its ADR before any parser work starts.
 4. **Structured prescription targets** — parked, not planned. Would make detection-to-
