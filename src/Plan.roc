@@ -152,11 +152,51 @@ Plan :: [].{
                     p.status
                 },
         })
+        # `plan all` splits the log into sections: a single slab answers "what ever
+        # happened" when the question at hand is usually "what's coming". Partitioned by
+        # WEEK rather than by today, so no row can land in two sections — an open session
+        # later this week belongs to `this week`, not to `upcoming`. Sections are
+        # presentation only; the JSON payload stays one flat array.
+        # compare DAY NUMBERS, not date strings: Roc's Str has no ordering operator, and
+        # numbers keep the boundaries honest for any malformed date (which resolves to 0
+        # and therefore sorts into the oldest bucket rather than crashing a comparison)
+        day_of = |d|
+            match Metrics.date_str_to_days(d) {
+                Ok(n) => n
+                Err(_) => 0
+            }
+        plan_headers = ["day", "date", "type", "status", "detail", "id"]
+        plan_cells = |p| [p.day, p.target_date, p.session_type, p.status_shown, p.detail, (p.id).to_str()]
+        # an empty section says so rather than vanishing — an absent heading reads as
+        # "there is no such thing", which is a different claim from "nothing there yet"
+        section = |title, srows|
+            if List.is_empty(srows) {
+                "── ${title} ──\n(none)"
+            } else {
+                "── ${title} ──\n${Render.render_table(plan_headers, List.map(srows, plan_cells))}"
+            }
         Output.out!(enriched, |rows_enriched|
-            Render.render_table(
-                ["day", "date", "type", "status", "detail", "id"],
-                List.map(rows_enriched, |p| [p.day, p.target_date, p.session_type, p.status_shown, p.detail, (p.id).to_str()]),
-            ))
+            match scope {
+                ThisWeek => Render.render_table(plan_headers, List.map(rows_enriched, plan_cells))
+                AllTime => {
+                    upcoming = List.keep_if(rows_enriched, |p| day_of(p.target_date) > mon + 6)
+                    current = List.keep_if(rows_enriched, |p| day_of(p.target_date) >= mon and day_of(p.target_date) <= mon + 6)
+                    # history reads newest-first: its top row sits directly under `this
+                    # week`, so the most recent past is nearest the present
+                    history = Render.reverse_list(List.keep_if(rows_enriched, |p| day_of(p.target_date) < mon and day_of(p.target_date) >= mon - 7))
+                    # Older sessions are COUNTED, never silently dropped: `plan all` still
+                    # means all, and the JSON payload carries every row. Printing the number
+                    # keeps the human view short without the view lying about what exists.
+                    older = List.len(List.keep_if(rows_enriched, |p| day_of(p.target_date) < mon - 7))
+                    older_note =
+                        if older == 0 {
+                            ""
+                        } else {
+                            "\n\n(${(older).to_str()} older sessions not shown — STRIDE_FORMAT=json stride plan all has every row)"
+                        }
+                    "${Str.join_with([section("upcoming", upcoming), section("this week", current), section("last week", history)], "\n\n")}${older_note}"
+                }
+            })
     }
     plan_add! : Str, Str, Str, Str => Try({}, _)
     plan_add! = |target_date, session_type, detail, rationale| {

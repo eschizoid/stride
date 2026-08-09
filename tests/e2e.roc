@@ -438,6 +438,23 @@ b_plan! = |ctx| {
     check!("the early one carries its real completion date", Str.starts_with(early_status, "done (") and Str.contains(early_status, date_101))?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${ontime_id};")
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${early_id};")
+    # #97: `plan all` sections. Partition is by WEEK so no row appears twice, and rows
+    # older than last week are COUNTED rather than silently dropped — `plan all` still
+    # means all, and the JSON payload keeps every row.
+    _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','2099-06-01','vo2max','far future session','r','open');")
+    fut_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
+    _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','2020-01-06','rest','ancient session','r','skipped');")
+    old_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
+    all_h = stride_human!(ctx.bin, ctx.home, ["plan", "all"])
+    check!("plan all has the three sections", Str.contains(all_h, "── upcoming ──") and Str.contains(all_h, "── this week ──") and Str.contains(all_h, "── last week ──"))?
+    check!("a future session lands in the table", Str.contains(all_h, "far future session"))?
+    check!("an ancient session is not rendered", !(Str.contains(all_h, "ancient session")))?
+    check!("but it is counted, not dropped", Str.contains(all_h, "older sessions not shown"))?
+    # JSON stays a FLAT array carrying every row — sections are presentation only
+    check!("json still carries the ancient row", strjq!(ctx, ["plan", "all"], "[.data[] | select(.id==${old_id})] | length") == "1")?
+    check!("json carries the future row too", strjq!(ctx, ["plan", "all"], "[.data[] | select(.id==${fut_id})] | length") == "1")?
+    check!("bare plan is unsectioned", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["plan"]), "── upcoming ──")))?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${fut_id}, ${old_id});")
     Ok({})
 }
 
