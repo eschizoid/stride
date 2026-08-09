@@ -814,6 +814,13 @@ b_human! = |ctx| {
     check!("human activity zones row", Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "101"]), "Z1"))?
     check!("human summary banner", Str.contains(stride_human!(ctx.bin, ctx.home, ["summary"]), "stride report"))?
     check!("human week bundle", Str.contains(stride_human!(ctx.bin, ctx.home, ["week"]), "OPEN PLAN"))?
+    # the 14-day table is a DATE RANGE: a day with nothing on it is information, and week
+    # boundaries get the same `···` divider progress uses for a break in a series
+    week_h = stride_human!(ctx.bin, ctx.home, ["week"])
+    check!("days with no activity are shown, not skipped over", Str.contains(week_h, "(no activity)"))?
+    check!("week boundaries are divided", Str.contains(week_h, "···"))?
+    # ...and the JSON stays a list of REAL activities — no pseudo-rows without an id
+    check!("json recent list has no placeholder rows", strjq!(ctx, ["week"], "[.data.recent_activities_14d[] | select(.id == null or .id == 0)] | length") == "0")?
     check!("uppercase STRIDE_FORMAT selects JSON", Str.contains(stride_env!(ctx.bin, ctx.home, ["summary"], [("STRIDE_FORMAT", "JSON")]), "\"schema_version\""))?
     Ok({})
 }

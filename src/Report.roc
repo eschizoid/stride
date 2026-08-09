@@ -446,9 +446,37 @@ Report :: [].{
                     ))?
                     Stdout.line!("")?
                     Stdout.line!("RECENT 14 DAYS")?
+                    # This table is a DATE RANGE, so a day with nothing on it is information:
+                    # it was a rest day, planned or not. Rendering only the days that HAVE
+                    # activities made the reader diff dates to notice a gap — an explicit row
+                    # says it outright. Human table only: the JSON payload stays a list of
+                    # real activities and never gains pseudo-rows with no id.
+                    # 15 entries, not 14: the query above takes `>= anchor - 14`, so the
+                    # oldest day it can return is anchor-14 and a 14-entry walk would drop it.
+                    # Week boundaries get a `···` divider — the same glyph `progress` uses
+                    # for a break in a series, so the idiom is already in the legend
+                    # vocabulary. The table runs newest-first, so the boundary falls just
+                    # ABOVE each Sunday (never above the first row, which needs no divider).
+                    week_div = ["···", "···", "···", "···", "···", "···"]
+                    recent_display = List.join(List.map(Render.indices(15), |i| {
+                        d = anchor - (i).to_i64_wrap()
+                        ds = Metrics.days_to_date_str(d)
+                        on_day = List.keep_if(recent, |a| a.date == ds)
+                        day_rows =
+                            if List.is_empty(on_day) {
+                                [[ds, "-", "(no activity)", "-", "-", "-"]]
+                            } else {
+                                List.map(on_day, |a| [a.date, a.sport, a.name, Render.mins(a.moving_time), Render.fmt0(a.tss), Render.mins(a.hard_s)])
+                            }
+                        if i > 0 and Metrics.day_of_week(d) == "Sun" {
+                            List.prepend(day_rows, week_div)
+                        } else {
+                            day_rows
+                        }
+                    }))
                     Stdout.line!(Render.render_table(
                         ["date", "sport", "name", "time", "load", "hard"],
-                        List.map(recent, |a| [a.date, a.sport, a.name, Render.mins(a.moving_time), Render.fmt0(a.tss), Render.mins(a.hard_s)]),
+                        recent_display,
                     ))
                 }
                     }
