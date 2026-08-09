@@ -66,7 +66,11 @@ behind any tier:
   untouched. Failures inherit context from the narration (`failed fetching streams for
   <id>, attempt 2/3`). Bug C retries happen INSIDE the binary — sync is idempotent —
   capped at 3, loud failure after, and counted in the summary (`synced 22 (2 retries)`)
-  so the upstream bug's frequency stays visible.
+  so the upstream bug's frequency stays visible. Human mode gets a live progress bar —
+  `rescoring [██████████░░░░]  358/723` — reusing the table bar's `█` glyph and redrawn
+  with `\r`; machine/CI mode gets plain appended lines, because carriage returns are
+  garbage in logs and basic-cli exposes no tty check. The existing output-mode switch
+  is the selector — same information, dressed for the reader.
 - **Aerobic decoupling (Pw:HR drift).** First-half vs second-half efficiency within a
   session — the standard aerobic-durability metric. Every input already exists (1 Hz
   power + HR streams). Feeds `activity` and `progress`.
