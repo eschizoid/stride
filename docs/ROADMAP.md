@@ -25,13 +25,11 @@ about the numbers stays with the coach (ADR 0000).
 
 - **Foreground:** quick wins, then interval detection — depth for the athletes already
   here, shipping value weekly.
-- **Background:** the FIT dedupe ADR (pure thinking, no compiler risk), then a minimal
-  decoder SPIKE (record/lap/session messages only, one real file) that retires the
-  Roc-parses-binary risk BEFORE any product commitment. If the spike fights the
-  compiler, a week is lost, not a quarter.
+- **Background:** wellness-via-Apple-Health, pending its homework. (The FIT track was
+  retired later the same day — see the ingestion tier: Strava is the parser.)
 
 Review bandwidth is the real constraint — one maintainer approves every PR — so the
-background track stays cheap until the spike says otherwise.
+background track stays cheap.
 
 ## Ground rules for every feature here
 
@@ -103,24 +101,19 @@ behind any tier:
 
 ## Tier: ingestion breadth
 
-- **Native FIT import.** The ADR calls Strava "one ingestion layer," but it is the only
-  real one. FIT is the lingua franca — Garmin, Wahoo, COROS, every trainer. It removes
-  the Strava-subscription dependency, delivers full-resolution streams where Strava
-  downsamples, and gates every athlete who doesn't pay Strava. TCX/GPX ride along
-  nearly free. **Contingent on evidence, like wellness:** FIT files only exist where a
-  device wrote one — Garmin/Wahoo/COROS uploads. API-synced activities (Peloton,
-  phone-app recordings) leave NO original file in the bulk export; those rides are
-  server-to-server and fileless. One directory listing of a real export's `activities/`
-  folder tells us whether anyone in the circle produces FIT at all — that check comes
-  before even the spike. If it is all GPX and API-ghosts, this item serves the
-  hypothetical world, not the actual one. Two honest costs, stated up front:
-  - **Dedupe is the feature, parsing is the chore.** The same ride arriving from a FIT
-    file and a Strava sync must become one activity; the richer stream must win without
-    wiping judgment-tier data. Needs an ADR before parser code.
-  - **This is the largest single build on the roadmap**, hand-rolling a binary parser
-    in a language with no FIT library and an unstable compiler (see the toolchain pin
-    in `roc-new-compiler-notes.md`). Scope a minimal decoder (record/lap/session
-    messages) first; the format has hundreds of message types we never need.
+- **~~Native FIT import~~ — settled 2026-08-09: Strava is the parser.** Every vendor
+  already syncs to Strava; Strava normalizes a hundred device formats into the two
+  outputs stride already reads — API JSON and the bulk export. Stride never parses a
+  raw device format (FIT/TCX/GPX); the dedupe ADR and decoder spike die with this,
+  taking the roadmap's largest build and its biggest compiler risk with them. The
+  facts behind the call: paid and free Strava serve the SAME data with full retention —
+  the June-2026 change only gated *holding API credentials* behind a subscription, and
+  the bulk export stays free for everyone. Two prices, paid knowingly:
+  - **The free path stays summary-level.** The export's stream data lives in original
+    device files stride declines to parse, so import users get CSV summaries — no
+    zones, NP, or detection on that history. Full-resolution stride = the API path.
+  - **Single-artery dependence.** Re-argue this decision only if Strava squeezes terms
+    again, or a real user arrives who cannot use Strava at all.
 - **Wellness inputs (resting HR, HRV) as judgment-tier data.** The likely source is an
   **Apple Health export** (Settings → Health → Export All Health Data — a local zip,
   no API, no OAuth; stream-parse the XML, never load it whole), which fits stride's
@@ -160,7 +153,9 @@ the engine.
   ships that cannot be recomputed by hand from the stored inputs.
 - **Social features** — Strava exists.
 - **Vendor-cloud integrations** (Garmin Connect, Wahoo, Peloton APIs, ...) — see the
-  filesystem ground rule. The athlete brings the file; stride reads it.
+  filesystem ground rule.
+- **Raw device-format parsing** (FIT/TCX/GPX) — Strava is the parser; stride ingests
+  its two outputs. Re-argue clause lives in the ingestion tier.
 
 ## Known risks the roadmap inherits
 
@@ -175,12 +170,9 @@ the engine.
 Recorded so they get fought on purpose, not settled by default:
 
 1. ~~World-class vs world-scale~~ — settled: both, interleaved, world-class foreground.
-2. **Source-evidence homework, two cheap checks** — (a) does anyone in the circle wear
-   a watch overnight (gates wellness)? (b) does anyone's Strava export contain actual
-   .fit files in `activities/` (gates FIT priority)? Both answerable this week without
-   writing code.
-3. **FIT dedupe semantics** — which fields win, and what does a re-import invalidate?
-   Needs its ADR before any parser work starts.
+2. **Wellness homework** — does anyone in the circle wear a watch overnight? Gates
+   wellness entirely.
+3. ~~FIT dedupe semantics~~ — moot; the FIT track was retired (Strava is the parser).
 4. **Structured prescription targets** — parked, not planned. Would make detection-to-
    prescription matching honest arithmetic, at the cost of rigid prescribing. Re-argue
    only if free-text reconciliation actually starts failing in practice.
