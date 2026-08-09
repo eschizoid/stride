@@ -453,7 +453,14 @@ b_plan! = |ctx| {
     # date and load cells of unrelated rows, so the negative check would go flaky.)
     check!("a future session lands in the table", Str.contains(all_h, "2099-06-01"))?
     check!("an ancient session is not rendered", !(Str.contains(all_h, "2020-01-06")))?
-    check!("but it is counted, not dropped", Str.contains(all_h, "older sessions not shown"))?
+    check!("but it is counted, not dropped", Str.contains(all_h, "older session not shown"))?
+    # sections partition by DATE ALONE. An open-only `upcoming` would leave a future-dated
+    # skipped row in no section AND outside the hidden count — silently gone, which is the
+    # one thing `plan all` must never do. Skipping next week in advance is ordinary use.
+    _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','2099-06-02','rest','future skip','r','skipped');")
+    skip_h = stride_human!(ctx.bin, ctx.home, ["plan", "all"])
+    check!("a future-dated skipped session still renders", Str.contains(skip_h, "2099-06-02"))?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date = '2099-06-02';")
     # JSON stays a FLAT array carrying every row — sections are presentation only
     # an unparseable target_date belongs to no week. `plan add` stores the date string
     # verbatim, so a typo reaches this code path; collapsing it to day 0 would count it

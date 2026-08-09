@@ -199,6 +199,14 @@ Plan :: [].{
                             Err(_) => { row: p, n: 0, dated: False }
                         })
                     pick = |pred| List.map(List.keep_if(keyed, pred), |k| k.row)
+                    # The rule is DATE ONLY, no status filter, and that is deliberate on
+                    # both counts. #97's original text said "open sessions dated after
+                    # today"; partitioning by week instead keeps a row out of two sections
+                    # at once (an open session later this week is `this week`, not
+                    # `upcoming`), and dropping the status test keeps a future-dated
+                    # skipped row visible — skipping next Tuesday in advance is a normal
+                    # act, and an open-only filter would leave that row in no section and
+                    # outside the hidden count, i.e. silently gone.
                     upcoming = pick(|k| k.dated and k.n > mon + 6)
                     current = pick(|k| k.dated and k.n >= mon and k.n <= mon + 6)
                     # history reads newest-first: its top row sits directly under `this
@@ -218,11 +226,14 @@ Plan :: [].{
                         } else {
                             "${(older).to_str()} older"
                         }
+                    # count the whole hidden set, not either part: the noun trails the
+                    # entire list, so "1 older, 1 undated" is two sessions and stays plural
+                    noun = if older + undated == 1 "session" else "sessions"
                     older_note =
                         if older == 0 and undated == 0 {
                             ""
                         } else {
-                            "\n\n(${hidden} sessions not shown — STRIDE_FORMAT=json stride plan all has every row)"
+                            "\n\n(${hidden} ${noun} not shown — STRIDE_FORMAT=json stride plan all has every row)"
                         }
                     "${Str.join_with([section("upcoming", upcoming), section("this week", current), section("last week", history)], "\n\n")}${older_note}"
                 }
