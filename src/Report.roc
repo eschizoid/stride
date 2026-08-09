@@ -469,7 +469,19 @@ Report :: [].{
                         on_day = List.keep_if(recent, |a| a.date == ds)
                         day_rows =
                             if List.is_empty(on_day) {
-                                [[ds, "-", "(no activity)", "-", "-", "-"]]
+                                # header-driven like the divider: the label sits in whichever
+                                # column is NAMED "name" and every other cell is a dash, so a
+                                # new column widens this row instead of leaving it short. The
+                                # activity rows below stay positional by necessity — each cell
+                                # is a different field, which no header list can express.
+                                [List.map(recent_headers, |h|
+                                    if h == "date" {
+                                        ds
+                                    } else if h == "name" {
+                                        "(no activity)"
+                                    } else {
+                                        "-"
+                                    })]
                             } else {
                                 List.map(on_day, |a| [a.date, a.sport, a.name, Render.mins(a.moving_time), Render.fmt0(a.tss), Render.mins(a.hard_s)])
                             }
