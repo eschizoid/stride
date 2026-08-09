@@ -813,8 +813,10 @@ b_human! = |ctx| {
     check!("human stats section", Str.contains(stride_human!(ctx.bin, ctx.home, ["stats"]), "ALL TIME"))?
     check!("human activity zones row", Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "101"]), "Z1"))?
     check!("human summary banner", Str.contains(stride_human!(ctx.bin, ctx.home, ["summary"]), "stride report"))?
-    # one invocation, four assertions — `week` is a full sync-free read but still the
-    # priciest command in the suite, and re-running it invites the two copies to drift
+    # one HUMAN-mode invocation shared by the three assertions below — `week` is the
+    # priciest read in the suite, and two copies of the same output can drift apart.
+    # The JSON contract check further down runs `week` again by necessity: it is a
+    # different output mode, so it cannot reuse this capture.
     week_h = stride_human!(ctx.bin, ctx.home, ["week"])
     check!("human week bundle", Str.contains(week_h, "OPEN PLAN"))?
     # the 14-day table is a DATE RANGE: a day with nothing on it is information, and week
