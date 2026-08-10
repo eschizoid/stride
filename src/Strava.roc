@@ -357,9 +357,15 @@ Strava :: [].{
                 uri = "${api_base!({})}/api/v3/activities/${id_str}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
                 resp = send_bearer!(uri, token)?
                 if Response.status(resp) == 429 {
-                    # rate limited — stop gracefully, next sync continues the backfill
+                    # rate limited — stop gracefully, next sync continues the backfill.
+                    # STDERR, not stdout: this runs inside `sync`, which emits a JSON
+                    # envelope at the end, so a plain line on stdout would sit in front of
+                    # that JSON and break every machine consumer parsing it. It is
+                    # narration about how the run went, which is exactly what stderr is
+                    # for. (`backfill` prints its own progress on stdout legitimately —
+                    # that command emits no envelope, so its lines ARE its output.)
                     _ = if total > 0 { Output.narrate_done!({})? } else { {} }
-                    Stdout.line!("rate limited by Strava — stopping streams backfill for now (will resume next sync)")?
+                    Output.say!("rate limited by Strava — stopping streams backfill for now (will resume next sync)")?
                     Ok(acc)
                 } else if Response.status(resp) >= 300 and Response.status(resp) != 404 {
                     Err(HttpStatus(Response.status(resp), Str.from_utf8(Response.body(resp)).ok_or("<non-utf8 body>")))
