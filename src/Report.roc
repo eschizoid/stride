@@ -1035,6 +1035,32 @@ Report :: [].{
             bindings: [{ name: ":cutoff", value: String(cutoff30) }],
             row: Sqlite.i64("n"),
         })?
+        # Pooled share over the window AND the worst single session, because they answer
+        # different questions: pooled is the trend ("is my strap degrading"), worst is the
+        # incident ("did something break on Tuesday"). A pooled number alone hides one
+        # dead-strap session inside a big volume week; a per-session average alone spikes
+        # every week with a lot of short sessions. Both, or neither is trustworthy.
+        # NULLIF guards the divide: an activity with no samples contributes nothing rather
+        # than a division by zero.
+        junk = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT COALESCE(
+                \\         100.0 * SUM(COALESCE(m.hr_samples_dropped,0) + COALESCE(m.watts_samples_dropped,0))
+                \\         / NULLIF(SUM(COALESCE(m.hr_samples_total,0) + COALESCE(m.watts_samples_total,0)), 0), 0.0) AS pooled,
+                \\       COALESCE(MAX(
+                \\         100.0 * (COALESCE(m.hr_samples_dropped,0) + COALESCE(m.watts_samples_dropped,0))
+                \\         / NULLIF(COALESCE(m.hr_samples_total,0) + COALESCE(m.watts_samples_total,0), 0)), 0.0) AS worst
+                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                \\WHERE a.start_local >= :cutoff
+            ,
+            bindings: [{ name: ":cutoff", value: String(cutoff30) }],
+            row: |cols| |stmt| {
+                pooled = Sqlite.f64("pooled")(cols)(stmt)?
+                worst = Sqlite.f64("worst")(cols)(stmt)?
+                Ok({ pooled, worst })
+            },
+        })?
         jmode = Db.journal_mode!(path)?
         mode = Db.resolve_time_mode!(path)
         time_desc =
@@ -1080,6 +1106,8 @@ Report :: [].{
             # numbers only, no advice — the coach reads them and decides (house rule)
             hr_missing_streak: hr_missing_streak.to_i64_wrap(),
             estimated_power_count_30d: est_power_30d,
+            junk_filtered_pct_30d: junk.pooled,
+            junk_worst_session_pct_30d: junk.worst,
         }
         Output.out!(payload, |p| {
             model_lines = List.map(p.scored_by, |mrow| "    ${mrow.model}: ${(mrow.n).to_str()}")
@@ -1113,6 +1141,7 @@ Report :: [].{
                         "",
                         "  hr-less endurance sessions in a row: ${(p.hr_missing_streak).to_str()}",
                         "  rides on estimated power (30d): ${(p.estimated_power_count_30d).to_str()}",
+                        "  junk samples dropped (30d): ${Render.fmt1(p.junk_filtered_pct_30d)}% overall · worst session ${Render.fmt1(p.junk_worst_session_pct_30d)}%",
                         "  zero load (no usable data): ${(p.zero_load).to_str()}",
                         "  not yet analyzed: ${(p.unanalyzed).to_str()}",
                         "  pending stream backfill: ${(p.pending_streams).to_str()}",

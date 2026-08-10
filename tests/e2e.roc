@@ -902,6 +902,25 @@ b_doctor! = |ctx| {
     est_after = sfloat(strjq!(ctx, ["doctor"], ".data.estimated_power_count_30d"))
     check_near!("an estimated-power ride is counted in 30d", est_after, est_before + 1.0, 0.001)?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (9401,9402,9403,9404,9405);")
+    # #92 junk%: pooled share over the window AND the worst single session, which answer
+    # different questions — pooled is the trend, worst is the incident. Counters are
+    # written where valid_hr / valid_watts run, so they are seeded directly here rather
+    # than by re-analyzing.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation) VALUES (9410,'clean','Ride','${ctx.today}T07:00:00Z',3600,30000,0);")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation) VALUES (9411,'junky','WeightTraining','${ctx.today}T08:00:00Z',600,0,0);")
+    # Counts deliberately far larger than anything the fixture's own activities carry, so
+    # the pooled figure is dominated by these two and the assertion tests the pooling rule
+    # rather than whatever the rest of the fixture happens to contribute.
+    # 9410: 100k of 1M HR samples dropped (10%). 9411: 100k of 200k dropped (50%).
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,hr_samples_total,hr_samples_dropped,watts_samples_total,watts_samples_dropped,metrics_rev) VALUES (9410,1000000,100000,0,0,0);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,hr_samples_total,hr_samples_dropped,watts_samples_total,watts_samples_dropped,metrics_rev) VALUES (9411,200000,100000,0,0,0);")
+    # pooled = 200k dropped / 1.2M total = 16.67%. A per-session MEAN would give 30% —
+    # the assertion fails against that, which is the whole point of choosing pooled.
+    check_near!("junk pct pools across the window", sfloat(strjq!(ctx, ["doctor"], ".data.junk_filtered_pct_30d")), 16.667, 0.5)?
+    # worst session = 100/200 = 50%, which pooling alone would have hidden
+    check_near!("worst session is reported separately", sfloat(strjq!(ctx, ["doctor"], ".data.junk_worst_session_pct_30d")), 50.0, 0.05)?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (9410,9411);")
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (9410,9411);")
     check!("doctor rated 1", strjq!(ctx, ["doctor"], ".data.rated") == "1")?
     check!("doctor strength_unrated 0", strjq!(ctx, ["doctor"], ".data.strength_unrated") == "0")?
     check!("doctor scored_by session_rpe 1", strjq!(ctx, ["doctor"], "[.data.scored_by[] | select(.model==\"session_rpe\") | .n] | add // 0") == "1")?
