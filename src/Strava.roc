@@ -582,6 +582,10 @@ Strava :: [].{
         page_str = (page).to_str()
         per_str = (per_page).to_str()
         uri = "${api_base!({})}/api/v3/athlete/activities?per_page=${per_str}&page=${page_str}${after_param}"
+        # page 1 only, and BEFORE the request: the per-page lines below report pages that
+        # already landed, so a stalled first request would otherwise print nothing at all.
+        # Later pages need no such line — by then the reader has seen output.
+        _ = if narrate and page == 1 { Output.say!("fetching activity list…")? } else { {} }
         body = get_bearer!(uri, token)?
         text = Str.from_utf8(body).map_err(|_| ActivityDecodeFailed(page))?
         decoded : Try(List(ActivitySummary), _)

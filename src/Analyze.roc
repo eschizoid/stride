@@ -17,6 +17,12 @@ Analyze :: [].{
             Err(MissingConfig) => Output.missing_config!({})
             Err(other) => Err(other)
             Ok(zb) => {
+                # ...and this line comes BEFORE the count, because the count is itself a
+                # slow query: it runs the period-FTP and period-threshold correlated
+                # subqueries over every activity. Narrating only after it returns leaves
+                # the very first moment of the command silent, which is where "it looks
+                # hung" starts.
+                Output.say!("checking what needs scoring…")?
                 # the denominator is read ONCE up front: this is the number whose absence
                 # made a healthy 72s rebuild look hung, and got it killed mid-transaction
                 goal = pending_metrics_count!(path, zb)?
