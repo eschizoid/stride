@@ -1,6 +1,8 @@
 import pf.Stdout
+import pf.Stderr
 import pf.Env
 import pf.OsStr
+import Render
 
 Output :: [].{
     usage! : Str => Try({}, _)
@@ -65,6 +67,38 @@ Output :: [].{
 
                 }
         }
+    # ── progress narration (ADR 0007) ────────────────────────────────────
+    #
+    # STDERR ONLY, always. stdout carries either the versioned envelope or the human
+    # table — both deterministic and golden-fixtured — so narration must never touch it.
+    # Stderr carries no contract, so a machine consumer parsing stdout never sees any of
+    # this and no fixture changes.
+    #
+    # Dress follows the SAME output-mode switch as everything else, because basic-cli
+    # exposes no tty check: humans get a `\r`-redrawn bar, machines get appended lines.
+    # A carriage return is garbage in a CI log, so machine mode must never emit one.
+
+    narrate! : Str, U64, U64 => Try({}, _)
+    narrate! = |label, done, total|
+        if json_mode!({}) {
+            Stderr.line!(Render.progress_line(label, done, total))
+        } else {
+            # no newline: the next frame's `\r` returns here and overwrites in place
+            Stderr.write!("\r${Render.progress_bar(label, done, total)}")
+        }
+
+    # Close the bar's line. Without this the command's first stdout line lands on the
+    # same terminal row as the final frame, which reads as corruption. No-op in machine
+    # mode, where every narration line was already terminated.
+    narrate_done! : {} => Try({}, _)
+    narrate_done! = |{}|
+        if json_mode!({}) Ok({}) else Stderr.line!("")
+
+    # a step with no countable total ("rebuilding daily load…"). Always its own line in
+    # both modes — call narrate_done! first if a bar is mid-flight.
+    say! : Str => Try({}, _)
+    say! = |msg| Stderr.line!(msg)
+
     # a known, user-fixable error: machine-readable JSON for tool callers, a plain
     # line for humans. Exit stays 0 (in-band errors are the codebase convention —
     # same as plan-add's dedup guard); the payload carries the failure.

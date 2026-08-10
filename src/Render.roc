@@ -136,6 +136,51 @@ Render :: [].{
         if n >= w s else Str.concat(s, Str.repeat(" ", w - n))
     }
 
+    pad_left : Str, U64 -> Str
+    pad_left = |s, w| {
+        n = display_width(s)
+        if n >= w s else Str.concat(Str.repeat(" ", w - n), s)
+    }
+
+    # A `\r`-redrawn progress bar for the commands slow enough to look hung. Reuses the
+    # table's `█` so the glyph vocabulary stays one thing.
+    #
+    # CONSTANT WIDTH is the whole trick, not cosmetics: `\r` returns the cursor without
+    # clearing the line, so a frame shorter than the one before it leaves the tail of the
+    # previous frame on screen ("358/723" redrawn as "9/723" would read "9/7233"). The bar
+    # is a fixed cell count and `done` is left-padded to the width of `total`, so every
+    # frame of a given run is exactly as wide as the last.
+    progress_bar_cells : U64
+    progress_bar_cells = 10
+
+    progress_bar : Str, U64, U64 -> Str
+    progress_bar = |label, done, total|
+        if total == 0 {
+            # nothing to divide by, and no honest fraction to show. Same spelling as
+            # progress_line's, so a total==0 run reads identically in both modes.
+            "${label}…"
+        } else {
+            capped = if done > total total else done
+            filled = (capped * progress_bar_cells) // total
+            counts = "${pad_left((capped).to_str(), Str.count_utf8_bytes((total).to_str()))}/${(total).to_str()}"
+            "${label} [${Str.repeat("█", filled)}${Str.repeat("░", progress_bar_cells - filled)}] ${counts}"
+        }
+
+    # machine mode gets the same information with no carriage returns and no padding —
+    # a `\r` is garbage in a CI log, and these lines are appended, never redrawn
+    progress_line : Str, U64, U64 -> Str
+    progress_line = |label, done, total|
+        if total == 0 {
+            "${label}…"
+        } else {
+            # clamp exactly as the bar does. The denominator is read once up front and a
+            # later pass can re-invalidate rows, so the running count CAN exceed it —
+            # without this, machine mode prints an impossible `730/723` while human mode
+            # shows a full bar at 723/723.
+            capped = if done > total total else done
+            "${label} ${(capped).to_str()}/${(total).to_str()}"
+        }
+
     # terminal columns, not bytes. Each UTF-8 code point has exactly one lead byte
     # (< 0x80, or >= 0xC0); continuation bytes (0x80–0xBF) don't count. Astral-plane
     # code points (4-byte lead, >= 0xF0) are emoji — Strava activity names have them
@@ -617,6 +662,30 @@ expect Render.display_width("café") == 4 # accented Latin stays width 1 per cha
 expect Render.display_width("🚴") == 2 # 4-byte emoji is two columns
 expect Render.display_width("ab🔥") == 4 # a + b + wide emoji
 expect Render.pad_right("██", 4) == "██  "
+expect Render.pad_left("7", 3) == "  7"
+expect Render.pad_left("1234", 3) == "1234" # never truncates
+
+# ── progress bar ──
+expect Render.progress_bar("rescoring", 0, 10) == "rescoring [░░░░░░░░░░]  0/10"
+expect Render.progress_bar("rescoring", 5, 10) == "rescoring [█████░░░░░]  5/10"
+expect Render.progress_bar("rescoring", 10, 10) == "rescoring [██████████] 10/10"
+# a zero total has no honest fraction to render, and must not divide
+expect Render.progress_bar("syncing", 0, 0) == "syncing…"
+# ...spelled exactly as the machine-mode line, so the two modes cannot drift apart
+expect Render.progress_bar("syncing", 0, 0) == Render.progress_line("syncing", 0, 0)
+# done > total would overfill the bar; clamp rather than emit a wider frame
+expect Render.progress_bar("x", 99, 10) == "x [██████████] 10/10"
+# EVERY frame of one run is the same width — `\r` does not clear the line, so a
+# shorter frame would leave the previous frame's tail behind it on screen
+expect {
+    frames = List.map([0, 7, 42, 358, 723], |d| Render.display_width(Render.progress_bar("rescoring", d, 723)))
+    List.all(frames, |w| w == List.first(frames).ok_or(0))
+}
+# machine mode: same information, no carriage return and no padding
+expect Render.progress_line("rescoring", 5, 10) == "rescoring 5/10"
+expect !(Str.contains(Render.progress_line("rescoring", 5, 10), "\r"))
+# ...and it clamps like the bar, so neither mode can print an impossible fraction
+expect Render.progress_line("rescoring", 730, 723) == "rescoring 723/723"
 
 # unicode bars must not skew column alignment
 expect {

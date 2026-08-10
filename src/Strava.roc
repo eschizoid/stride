@@ -284,7 +284,7 @@ Strava :: [].{
                         Some(a) => Metrics.epoch_to_iso(a + 86400)
                         None => ""
                     }
-                count = fetch_pages!(path, token, after_param, started, 1, 0)?
+                count = fetch_pages!(path, token, after_param, started, 1, 0, True)?
                 pruned = prune_deleted!(path, started, window_start)?
                 Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
                 streams_n = backfill_streams!(path, token)?
@@ -323,7 +323,26 @@ Strava :: [].{
             bindings: [],
             rows: Sqlite.i64("id"),
         })?
-        fetch_streams_all!(path, token, ids, 0)
+        # the stream backfill is the long half of a sync and its total IS knowable — the
+        # id list is already in hand — so this half gets a real bar rather than a spinner.
+        #
+        # The completion and rate-limit paths close the bar themselves, because each prints
+        # something straight after. Every OTHER way out is an error propagating from the
+        # HTTP call, the status check or the store — none of which can close it on the way
+        # past — so the error case is closed here, once, instead of at each `?`.
+        # An immediate 0/total frame BEFORE the first request. Narrating only after a
+        # response returns means a stalled network call shows nothing for exactly as long
+        # as the stall lasts — which is the "it looks hung" failure this whole change
+        # exists to prevent, reintroduced at the one moment it matters most.
+        _ = if !(List.is_empty(ids)) { Output.narrate!("fetching streams", 0, List.len(ids))? } else { {} }
+        res = fetch_streams_all!(path, token, ids, 0, List.len(ids))
+        match res {
+            Ok(n) => Ok(n)
+            Err(e) => {
+                _ = if !(List.is_empty(ids)) { Output.narrate_done!({})? } else { {} }
+                Err(e)
+            }
+        }
     }
     # count activities still lacking streams (so sync can report incomplete backfill
     # honestly instead of letting the 60/run cap look like completion)
@@ -340,25 +359,43 @@ Strava :: [].{
             row: Sqlite.i64("n"),
         })
 
-    fetch_streams_all! : Str, Str, List(I64), U64 => Try(U64, _)
-    fetch_streams_all! = |path, token, ids, acc|
+    fetch_streams_all! : Str, Str, List(I64), U64, U64 => Try(U64, _)
+    fetch_streams_all! = |path, token, ids, acc, total|
         match ids {
-            [] => Ok(acc)
+            [] => {
+                # close the bar before sync's stdout summary prints, or the summary lands
+                # on the same terminal row as the last frame
+                _ = if total > 0 { Output.narrate_done!({})? } else { {} }
+                Ok(acc)
+            }
+
             [id, .. as rest] => {
                 id_str = (id).to_str()
                 uri = "${api_base!({})}/api/v3/activities/${id_str}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
                 resp = send_bearer!(uri, token)?
                 if Response.status(resp) == 429 {
-                    # rate limited — stop gracefully, next sync continues the backfill
-                    Stdout.line!("rate limited by Strava — stopping streams backfill for now (will resume next sync)")?
+                    # rate limited — stop gracefully, next sync continues the backfill.
+                    # STDERR, not stdout: this runs inside `sync`, which emits a JSON
+                    # envelope at the end, so a plain line on stdout would sit in front of
+                    # that JSON and break every machine consumer parsing it. It is
+                    # narration about how the run went, which is exactly what stderr is
+                    # for. (`backfill` prints its own progress on stdout legitimately —
+                    # that command emits no envelope, so its lines ARE its output.)
+                    _ = if total > 0 { Output.narrate_done!({})? } else { {} }
+                    Output.say!("rate limited by Strava — stopping streams backfill for now (will resume next sync)")?
                     Ok(acc)
                 } else if Response.status(resp) >= 300 and Response.status(resp) != 404 {
                     Err(HttpStatus(Response.status(resp), Str.from_utf8(Response.body(resp)).ok_or("<non-utf8 body>")))
                 } else {
+                    # narrate on the id just RETIRED, counting attempts rather than stores:
+                    # a 404 or non-utf8 body is progress through the queue too, so counting
+                    # only stored rows would stall the bar on a run full of skips.
+                    done = total - List.len(rest)
+                    _ = if total > 0 { Output.narrate!("fetching streams", done, total)? } else { {} }
                     # 404/2xx/non-utf8 policy lives in store_stream_response! (shared with backfill)
                     match store_stream_response!(path, id, resp)? {
-                        Stored => fetch_streams_all!(path, token, rest, acc + 1)
-                        SkippedNonUtf8 => fetch_streams_all!(path, token, rest, acc)
+                        Stored => fetch_streams_all!(path, token, rest, acc + 1, total)
+                        SkippedNonUtf8 => fetch_streams_all!(path, token, rest, acc, total)
 
                     }
                 }
@@ -450,7 +487,7 @@ Strava :: [].{
                 # no need to run `sync` beforehand (that's what made it two commands)
                 Stdout.line!("backfill: refreshing the activity list...")?
                 started = Db.now_secs!({})
-                count = fetch_pages!(path, token, "", started, 1, 0)?
+                count = fetch_pages!(path, token, "", started, 1, 0, False)?
                 # full re-pull: window_start "" prunes every activity Strava no longer lists
                 pruned = prune_deleted!(path, started, "")?
                 (if pruned > 0 Stdout.line!("backfill: pruned ${U64.to_str(pruned)} activities removed on Strava") else Ok({}))?
@@ -540,11 +577,15 @@ Strava :: [].{
         }
     per_page = 100
 
-    fetch_pages! : Str, Str, Str, I64, U64, U64 => Try(U64, _)
-    fetch_pages! = |path, token, after_param, stamp, page, acc| {
+    fetch_pages! : Str, Str, Str, I64, U64, U64, Bool => Try(U64, _)
+    fetch_pages! = |path, token, after_param, stamp, page, acc, narrate| {
         page_str = (page).to_str()
         per_str = (per_page).to_str()
         uri = "${api_base!({})}/api/v3/athlete/activities?per_page=${per_str}&page=${page_str}${after_param}"
+        # page 1 only, and BEFORE the request: the per-page lines below report pages that
+        # already landed, so a stalled first request would otherwise print nothing at all.
+        # Later pages need no such line — by then the reader has seen output.
+        _ = if narrate and page == 1 { Output.say!("fetching activity list…")? } else { {} }
         body = get_bearer!(uri, token)?
         text = Str.from_utf8(body).map_err(|_| ActivityDecodeFailed(page))?
         decoded : Try(List(ActivitySummary), _)
@@ -553,10 +594,16 @@ Strava :: [].{
         upsert_all!(path, stamp, acts)?
         got = List.len(acts)
         total = acc + got
+        # a plain line per page, not a bar: Strava's activity list is paged and its length
+        # is unknowable until the short page arrives, so any denominator here would be
+        # invented. Pages are few at `per_page` (100) a page, so the lines stay countable.
+        # Gated because `backfill!` shares this function and ALREADY reports its own
+        # progress on stdout — narrating here too would duplicate it in a second stream.
+        _ = if narrate { Output.say!("fetched activities page ${(page).to_str()} — ${(total).to_str()} so far")? } else { {} }
         if got < per_page
             Ok(total)
         else
-            fetch_pages!(path, token, after_param, stamp, page + 1, total)
+            fetch_pages!(path, token, after_param, stamp, page + 1, total, narrate)
     }
     upsert_all! : Str, I64, List(ActivitySummary) => Try({}, _)
     upsert_all! = |path, stamp, acts|
