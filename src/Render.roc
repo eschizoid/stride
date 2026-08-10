@@ -136,10 +136,18 @@ Render :: [].{
         if n >= w s else Str.concat(s, Str.repeat(" ", w - n))
     }
 
-    # a delta that keeps its sign: "+5" reads as a build, "-3" as an unload. Shared by the
+    # A delta that keeps its sign: "+5" reads as a build, "-3" as an unload. Shared by the
     # compare table and the summary ramp line so the two spell a delta the same way.
+    #
+    # The sign comes from x, NOT from the rounded string. fmt0 rounds -0.4 to "0", so
+    # deciding the sign afterwards silently turned every small unload into a flat zero —
+    # and left the two directions asymmetric, since +0.4 still printed "+0". A magnitude
+    # that rounds away is still a direction that did not.
     signed : F64 -> Str
-    signed = |x| if x >= 0.0 "+${fmt0(x)}" else fmt0(x)
+    signed = |x| {
+        mag = fmt0((x).abs())
+        if x >= 0.0 "+${mag}" else "-${mag}"
+    }
 
     pad_left : Str, U64 -> Str
     pad_left = |s, w| {
@@ -671,6 +679,16 @@ expect Render.display_width("🚴") == 2 # 4-byte emoji is two columns
 expect Render.display_width("ab🔥") == 4 # a + b + wide emoji
 expect Render.pad_right("██", 4) == "██  "
 expect Render.pad_left("7", 3) == "  7"
+# ── signed: the sign comes from the value, not from the rounded text ──
+expect Render.signed(5.0) == "+5"
+expect Render.signed(-3.0) == "-3"
+expect Render.signed(0.0) == "+0"
+# a magnitude that rounds away is still a direction that did not: a slight unload must
+# not print the same as no change at all
+expect Render.signed(-0.4) == "-0"
+expect Render.signed(0.4) == "+0"
+# and the two directions stay symmetric either side of zero
+expect Render.signed(-0.4) != Render.signed(0.4)
 expect Render.pad_left("1234", 3) == "1234" # never truncates
 
 # ── progress bar ──
