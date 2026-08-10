@@ -88,7 +88,9 @@ Every item here cost a debugging session at least once — they are not style op
   with `Metrics.date_str_to_days` and compare `I64`. Note SQL does NOT share this
   restriction — SQLite happily compares `target_date` as text, which is exactly why a
   stored date must be canonical `YYYY-MM-DD` (`Metrics.is_canonical_date`).
-- **Floats have no `Eq`** — never `x == 0.0` in an expect; use `Num.abs(x) < 0.001`.
+- **Floats have no `Eq`** — never `x == 0.0` in an expect; use `(x).abs() < 0.001`.
+  Method-style: there is no `Num.abs` in this compiler, and reaching for it fails the
+  build with DOES NOT EXIST.
 
 ### Performance
 
@@ -149,8 +151,11 @@ Every item here cost a debugging session at least once — they are not style op
 
 - Machine JSON: numeric **0 = "not available"**, never invent numbers; `-` in human tables.
 - Machine JSON is a **versioned envelope** — success `{schema_version, data}`, error
-  `{schema_version, error:{code, message}}`; bump `json_schema_version` on a shape
-  change. Deterministic (no timestamps) so golden fixtures stay stable.
+  `{schema_version, error:{code, message}}`. Bump `json_schema_version` when the WRAPPER
+  changes, or when a payload field is REMOVED or retyped. **Adding** a field does not bump
+  it: the version describes the envelope, not the keys inside `data`, and a consumer
+  reading known keys is unaffected by a new one appearing (precedent: `converged`, 9c67470).
+  Deterministic (no timestamps) so golden fixtures stay stable.
 - **Load is a mixed model, not "TSS"** — power/HR score in TSS, rated strength/HIIT in
   session-RPE. Don't relabel the blended total "TSS"; each metrics row carries
   `load_model` (provenance) + `load_confidence` (high=power / medium=HR·RPE /

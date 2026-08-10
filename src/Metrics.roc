@@ -443,6 +443,61 @@ Metrics :: [].{
         if List.contains(strengthish, sport_type) StrengthLike else Endurance
     }
 
+    # ── ramp rate (#93): weekly CTL delta, as a number ───────────────────
+    #
+    # CTL on the most recent day at or before `target`. Missing is NOT zero: a series that
+    # does not reach back that far has no answer, and treating absence as a CTL of 0 would
+    # report the whole of today's fitness as this week's gain — a spectacular fake ramp on
+    # exactly the short histories that can least afford one.
+    ctl_as_of : List({ day : I64, ctl : F64 }), I64 -> [Found(F64), Missing]
+    ctl_as_of = |series, target| {
+        # ONE pass, carrying the best candidate rather than re-scanning the list to ask
+        # whether a later qualifying day exists — that inner scan made this quadratic,
+        # which is the fold trap this codebase has already been bitten by twice.
+        # The caller may pass any order, so the walk cannot assume sortedness.
+        # DISTINCT tags for the accumulator: it carries a whole {day, ctl} row while the
+        # return carries a bare ctl, and reusing Found for both reads like a type error
+        # even though the compiler accepts it.
+        best = List.fold(series, NoCandidate, |acc, e|
+            if e.day > target {
+                acc
+            } else {
+                match acc {
+                    NoCandidate => Candidate(e)
+                    Candidate(b) => if e.day > b.day Candidate(e) else acc
+                }
+            })
+        match best {
+            NoCandidate => Missing
+            Candidate(b) => Found(b.ctl)
+        }
+    }
+
+    # ramp_7d is the standard weekly delta. ramp_28d_avg is the mean of the last four
+    # weekly deltas, which telescopes to (now - 28d ago) / 4 — the intermediate weeks
+    # cancel. The PAIR is what carries information: four steady weeks put the two numbers
+    # together, while one spike week pushes ramp_7d far above the average. Neither number
+    # alone distinguishes those shapes, and neither carries a verdict — bands are the
+    # coach's business.
+    ramp_rates : List({ day : I64, ctl : F64 }), I64 -> { ramp_7d : F64, ramp_28d_avg : F64 }
+    ramp_rates = |series, today|
+        match ctl_as_of(series, today) {
+            Missing => { ramp_7d: 0.0, ramp_28d_avg: 0.0 }
+            Found(now) => {
+                r7 =
+                    match ctl_as_of(series, today - 7) {
+                        Found(then) => now - then
+                        Missing => 0.0
+                    }
+                r28 =
+                    match ctl_as_of(series, today - 28) {
+                        Found(then) => (now - then) / 4.0
+                        Missing => 0.0
+                    }
+                { ramp_7d: r7, ramp_28d_avg: r28 }
+            }
+        }
+
     # How many of the most recent ENDURANCE sessions in a row recorded no usable HR.
     # `rows` must be newest-first; the walk stops at the first session that did record it.
     #
@@ -1971,6 +2026,45 @@ expect {
 
 # leap-year boundary roundtrip
 expect Metrics.days_to_date_str(Metrics.days_from_civil(2024, 2, 29)) == "2024-02-29"
+
+# ── ramp rates: weekly CTL delta, honest 0 on short history ──
+# a steady +5/wk build: 28 days back is 20 lower, so both numbers agree at 5
+expect {
+    series = [{ day: 100, ctl: 50.0 }, { day: 93, ctl: 45.0 }, { day: 86, ctl: 40.0 }, { day: 79, ctl: 35.0 }, { day: 72, ctl: 30.0 }]
+    r = Metrics.ramp_rates(series, 100)
+    (r.ramp_7d - 5.0).abs() < 0.001 and (r.ramp_28d_avg - 5.0).abs() < 0.001
+}
+# one spike week on a flat month: the WEEK is 20, the 4-week average only 5 — the pair
+# is what separates a spike from a sustained build; neither number does it alone
+expect {
+    series = [{ day: 100, ctl: 50.0 }, { day: 93, ctl: 30.0 }, { day: 86, ctl: 30.0 }, { day: 79, ctl: 30.0 }, { day: 72, ctl: 30.0 }]
+    r = Metrics.ramp_rates(series, 100)
+    (r.ramp_7d - 20.0).abs() < 0.001 and (r.ramp_28d_avg - 5.0).abs() < 0.001
+}
+# short history: nothing 7 days back, so the honest answer is 0 — NOT today's whole CTL
+expect {
+    series = [{ day: 100, ctl: 42.0 }, { day: 99, ctl: 40.0 }]
+    r = Metrics.ramp_rates(series, 100)
+    (r.ramp_7d).abs() < 0.001 and (r.ramp_28d_avg).abs() < 0.001
+}
+# no history at all
+expect {
+    r = Metrics.ramp_rates([], 100)
+    (r.ramp_7d).abs() < 0.001 and (r.ramp_28d_avg).abs() < 0.001
+}
+# a detraining block reads negative rather than clamping to 0
+expect {
+    series = [{ day: 100, ctl: 30.0 }, { day: 93, ctl: 40.0 }]
+    r = Metrics.ramp_rates(series, 100)
+    (r.ramp_7d + 10.0).abs() < 0.001
+}
+# a gap in the series resolves to the most recent day AT OR BEFORE the target, matching
+# the SQL the caller uses, rather than skipping to a later row
+expect {
+    series = [{ day: 100, ctl: 50.0 }, { day: 90, ctl: 20.0 }]
+    r = Metrics.ramp_rates(series, 100)
+    (r.ramp_7d - 30.0).abs() < 0.001
+}
 
 # ── hr_missing_streak: newest-first walk, endurance only ──
 expect Metrics.hr_missing_streak([]) == 0

@@ -623,9 +623,46 @@ Report :: [].{
             row: Sqlite.i64("n"),
         })?
 
+        # #93 ramp: reuses the `anchor` this function already computed, rather than
+        # deriving the same day again — two bindings for one day can drift, and then the
+        # ramp window and summary's 7d/28d windows would disagree about which day "now"
+        # is. 30 days of series covers the 28-day lookback with room for gaps.
+        ramp_rows = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "SELECT day AS day, CAST(ctl AS REAL) AS ctl FROM daily_load WHERE day >= :cutoff ORDER BY day DESC",
+            bindings: [{ name: ":cutoff", value: String(Metrics.days_to_date_str(anchor - 30)) }],
+            rows: |cols| |stmt| {
+                d = Sqlite.str("day")(cols)(stmt)?
+                c = Sqlite.f64("ctl")(cols)(stmt)?
+                Ok({ d, ctl: c })
+            },
+        })?
+        # Convert OUTSIDE the decoder, whose error union has no room for BadDate, and
+        # PROPAGATE rather than defaulting a bad day to epoch-day 0. That default is not
+        # harmless: a day-0 row is a valid candidate for any lookback, so where the series
+        # genuinely does not reach back far enough, ctl_as_of would return that row's ctl
+        # as Found instead of Missing — a fabricated ramp exactly where the honest answer
+        # is 0. daily_load days are engine-written and canonical, so this is a guard
+        # against corruption, and corruption should stop the command rather than quietly
+        # change the number it prints.
+        # Prepend, not append: ctl_as_of takes the max qualifying day and so does not care
+        # about order, and appending inside a fold is the quadratic trap.
+        ramp_series = List.fold(ramp_rows, Ok([]), |acc, r|
+            match acc {
+                Err(e) => Err(e)
+                Ok(xs) =>
+                    match Metrics.date_str_to_days(r.d) {
+                        Ok(day) => Ok(List.prepend(xs, { day, ctl: r.ctl }))
+                        Err(_) => Err(BadDailyLoadDay(r.d))
+                    }
+            })?
+        ramps = Metrics.ramp_rates(ramp_series, anchor)
+
         Ok({
             as_of: latest.day,
             fitness_ctl: latest.ctl,
+            ramp_7d: ramps.ramp_7d,
+            ramp_28d_avg: ramps.ramp_28d_avg,
             fatigue_atl: latest.atl,
             form_tsb: latest.tsb,
             load_days: load_days,
