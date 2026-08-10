@@ -415,7 +415,7 @@ b_plan! = |ctx| {
     # a day that ends up FULLY skipped shows only its FINAL tombstone. With no live session on
     # the date, supersession falls to the "is there a LATER row?" arm — without it every earlier
     # draft leaked through and a re-planned-then-missed day rendered as near-identical duplicate
-    # rows. Dated ctx.today because the bare `plan` view is scoped to the current week — and
+    # rows. Dated ctx.today because the bare `week` view is scoped to the current week — and
     # ctx.today is the suite's ONE time source (captured once at startup), so these assertions
     # can't straddle a midnight boundary the way a freshly-sampled clock could.
     check!("today draft id 5", strjq!(ctx, ["week", "add", ctx.today, "strength", "draft", "r"], ".data.id") == "5")?
