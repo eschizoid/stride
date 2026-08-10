@@ -455,18 +455,21 @@ Metrics :: [].{
         # whether a later qualifying day exists — that inner scan made this quadratic,
         # which is the fold trap this codebase has already been bitten by twice.
         # The caller may pass any order, so the walk cannot assume sortedness.
-        best = List.fold(series, Missing, |acc, e|
+        # DISTINCT tags for the accumulator: it carries a whole {day, ctl} row while the
+        # return carries a bare ctl, and reusing Found for both reads like a type error
+        # even though the compiler accepts it.
+        best = List.fold(series, NoCandidate, |acc, e|
             if e.day > target {
                 acc
             } else {
                 match acc {
-                    Missing => Found(e)
-                    Found(b) => if e.day > b.day Found(e) else acc
+                    NoCandidate => Candidate(e)
+                    Candidate(b) => if e.day > b.day Candidate(e) else acc
                 }
             })
         match best {
-            Missing => Missing
-            Found(b) => Found(b.ctl)
+            NoCandidate => Missing
+            Candidate(b) => Found(b.ctl)
         }
     }
 

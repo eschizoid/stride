@@ -353,9 +353,14 @@ b_seed_analyze! = |ctx| {
     # #93: ramp carries BOTH fields, and a short history reports an honest 0 rather than
     # today's whole CTL — which is what treating "no data 7 days back" as a CTL of 0 would
     # produce. The fixture has only a couple of days, so 0 is the correct answer here.
-    check!("summary carries ramp_7d", strjq!(ctx, ["summary"], ".data | has(\"ramp_7d\")") == "true")?
-    check!("summary carries ramp_28d_avg", strjq!(ctx, ["summary"], ".data | has(\"ramp_28d_avg\")") == "true")?
+    # `| type` rather than `has(...)`: the value check below compares against 0.0, and
+    # sfloat of a missing field is ALSO 0.0 — so presence and value together would still
+    # pass if the field vanished or came back null. Asserting the JSON type is what makes
+    # the pair non-vacuous.
+    check!("summary ramp_7d is a number", strjq!(ctx, ["summary"], ".data.ramp_7d | type") == "number")?
+    check!("summary ramp_28d_avg is a number", strjq!(ctx, ["summary"], ".data.ramp_28d_avg | type") == "number")?
     check_near!("short history ramps to an honest 0", sfloat(strjq!(ctx, ["summary"], ".data.ramp_7d")), 0.0, 0.001)?
+    check_near!("...and so does the 28d average", sfloat(strjq!(ctx, ["summary"], ".data.ramp_28d_avg")), 0.0, 0.001)?
     check!("ctl_warming_up agrees it is short", strjq!(ctx, ["summary"], ".data.ctl_warming_up") == "true")?
     # power ride NP 200 @ derived FTP 190 => TSS ~110.8; HR row ~55 => ~166
     check_near!("28d tss ~166 (111 power + 55 hr)", sfloat(strjq!(ctx, ["summary"], ".data.last_28d.tss")), 165.8, 1.0)?
