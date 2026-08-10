@@ -448,8 +448,8 @@ b_plan! = |ctx| {
     check!("the early one carries its real completion date", Str.starts_with(early_status, "done (") and Str.contains(early_status, date_101))?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${ontime_id};")
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${early_id};")
-    # #97: `plan all` sections. Partition is by WEEK so no row appears twice, and rows
-    # older than last week are COUNTED rather than silently dropped — `plan all` still
+    # #97: `week all` sections. Partition is by WEEK so no row appears twice, and rows
+    # older than last week are COUNTED rather than silently dropped — `week all` still
     # means all, and the JSON payload keeps every row.
     _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','2099-06-01','vo2max','far future session','r','open');")
     fut_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
@@ -466,13 +466,13 @@ b_plan! = |ctx| {
     check!("but it is counted, not dropped", Str.contains(all_h, "older session not shown"))?
     # sections partition by DATE ALONE. An open-only `upcoming` would leave a future-dated
     # skipped row in no section AND outside the hidden count — silently gone, which is the
-    # one thing `plan all` must never do. Skipping next week in advance is ordinary use.
+    # one thing `week all` must never do. Skipping next week in advance is ordinary use.
     _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','2099-06-02','rest','future skip','r','skipped');")
     skip_h = stride_human!(ctx.bin, ctx.home, ["week", "all"])
     check!("a future-dated skipped session still renders", Str.contains(skip_h, "2099-06-02"))?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date = '2099-06-02';")
     # JSON stays a FLAT array carrying every row — sections are presentation only
-    # an unparseable target_date belongs to no week. `plan add` stores the date string
+    # an unparseable target_date belongs to no week. `week add` stores the date string
     # verbatim, so a typo reaches this code path; collapsing it to day 0 would count it
     # as "older" and claim it was in the past. It must be named as undated instead.
     _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','tomorrow','vo2max','typo date','r','open');")
@@ -483,7 +483,7 @@ b_plan! = |ctx| {
     check!("json still carries the ancient row", strjq!(ctx, ["week", "all"], "[.data[] | select(.id==${old_id})] | length") == "1")?
     check!("json carries the future row too", strjq!(ctx, ["week", "all"], "[.data[] | select(.id==${fut_id})] | length") == "1")?
     check!("bare week is unsectioned", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["week"]), "── upcoming ──")))?
-    # `plan all` must mean ALL — the older-count and its "json has every row" pointer are
+    # `week all` must mean ALL — the older-count and its "json has every row" pointer are
     # both lies if the query truncates. Seed past 100 rows and check nothing is dropped.
     # a recursive CTE, not INSERT..SELECT FROM planned_sessions: that only adds as many
     # rows as already exist (~30 here), never crosses 100, and the check passes against

@@ -79,7 +79,7 @@ Plan :: [].{
         # every earlier draft used to surface, so a re-planned-then-missed day rendered as
         # near-identical duplicate rows. A day that was genuinely missed still shows its one
         # final tombstone (nothing supersedes it) — the adherence miss you want to see.
-        # `plan all` shows the full log unfiltered.
+        # `week all` shows the full log unfiltered.
         # scope filter via a BOUND :all flag, never string interpolation: AllTime binds
         # :all=1 (all rows); ThisWeek binds :all=0 so the date/skip conditions apply. The
         # earlier approach interpolated an optional filter string whose EMPTY branch spliced
@@ -91,7 +91,7 @@ Plan :: [].{
                 AllTime => 1
                 ThisWeek => 0
             }
-        # `plan all` must mean ALL: the older-sessions count and the note pointing at the
+        # `week all` must mean ALL: the older-sessions count and the note pointing at the
         # JSON are both lies if the query silently truncates. SQLite treats a negative
         # LIMIT as unbounded, so this stays a BOUND value — no interpolated clause, which
         # is the pattern that spliced an empty string into the query and crashed the
@@ -131,7 +131,7 @@ Plan :: [].{
         # newest-first from SQL, flipped to calendar order for display. `Render.reverse_list`
         # (fold + prepend, linear) rather than fold + `List.concat([x], acc)`, which copies
         # the whole accumulator every step and is quadratic — harmless behind the old
-        # LIMIT 100, unbounded now that `plan all` returns the full log.
+        # LIMIT 100, unbounded now that `week all` returns the full log.
         ordered = Render.reverse_list(rows)
         dow = |date_str|
             match Metrics.date_str_to_days(date_str) {
@@ -157,7 +157,7 @@ Plan :: [].{
             # the date it was prescribed for. Show the real day when they differ.
             status_shown:
                 if p.status == "done" and p.done_date != "" and p.done_date != p.target_date {
-                    # Full date, year included: `plan all` spans years, so a bare month-day
+                    # Full date, year included: `week all` spans years, so a bare month-day
                     # would be ambiguous exactly where the log is longest. The wider cell
                     # costs a line of wrapping in the detail column; that is the cheaper loss.
                     "done (${dow(p.done_date)} ${p.done_date})"
@@ -165,7 +165,7 @@ Plan :: [].{
                     p.status
                 },
         })
-        # `plan all` splits the log into sections: a single slab answers "whatever
+        # `week all` splits the log into sections: a single slab answers "whatever
         # happened" when the question at hand is usually "what's coming". Partitioned by
         # WEEK rather than by today, so no row can land in two sections — an open session
         # later this week belongs to `this week`, not to `upcoming`. Sections are
@@ -188,7 +188,7 @@ Plan :: [].{
                     # every section below tests the same boundaries, so filtering on the
                     # date string re-parsed it four times per row. Keyed here rather than
                     # folded into `enriched` so the JSON payload keeps its shape.
-                    # `dated` matters as much as the number. `plan add` stores whatever
+                    # `dated` matters as much as the number. `week add` stores whatever
                     # date string it is handed (no validation), so an unparseable one is
                     # reachable from the CLI, not just by hand-editing the db. Collapsing
                     # it to day 0 would file a typo under "older sessions" and quietly
@@ -212,7 +212,7 @@ Plan :: [].{
                     # history reads newest-first: its top row sits directly under `this
                     # week`, so the most recent past is nearest the present
                     history = Render.reverse_list(pick(|k| k.dated and k.n < mon and k.n >= mon - 7))
-                    # Unrendered sessions are COUNTED, never silently dropped: `plan all`
+                    # Unrendered sessions are COUNTED, never silently dropped: `week all`
                     # still means all, and the JSON payload carries every row. Printing the
                     # number keeps the human view short without the view lying about what
                     # exists — including the undated rows, which belong to no week at all.
@@ -233,7 +233,7 @@ Plan :: [].{
                         if older == 0 and undated == 0 {
                             ""
                         } else {
-                            "\n\n(${hidden} ${noun} not shown — STRIDE_FORMAT=json stride plan all has every row)"
+                            "\n\n(${hidden} ${noun} not shown — STRIDE_FORMAT=json stride week all has every row)"
                         }
                     "${Str.join_with([section("upcoming", upcoming), section("this week", current), section("last week", history)], "\n\n")}${older_note}"
                 }
@@ -245,7 +245,7 @@ Plan :: [].{
         # judgment tier — nothing here can be re-derived from Strava — so a typo that lands
         # in the table stays until someone edits SQL by hand. It would also belong to no
         # training week, matching no completion or adherence query, and would surface only
-        # as a number in `plan all`'s undated count.
+        # as a number in `week all`'s undated count.
         if !(Metrics.is_canonical_date(target_date)) {
             Output.err_out!("bad_date", "week add needs a calendar date written YYYY-MM-DD — got '${target_date}'")
         } else {
@@ -313,7 +313,7 @@ Plan :: [].{
     # ONE not-found message for complete/complete-rest/skip — can't drift apart
     session_not_found! : I64 => Try({}, _)
     session_not_found! = |session_id|
-        Output.err_out!("session_not_found", "no planned session #${(session_id).to_str()} — run `stride plan` to see ids")
+        Output.err_out!("session_not_found", "no planned session #${(session_id).to_str()} — run `stride week` to see ids")
 
     complete! : Str, Str => Try({}, _)
     complete! = |session_id_str, activity_id_str| {
