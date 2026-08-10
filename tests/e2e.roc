@@ -868,7 +868,7 @@ b_human! = |ctx| {
     check!("human stats section", Str.contains(stride_human!(ctx.bin, ctx.home, ["stats"]), "ALL TIME"))?
     check!("human activity zones row", Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "101"]), "Z1"))?
     check!("human summary banner", Str.contains(stride_human!(ctx.bin, ctx.home, ["summary"]), "stride report"))?
-    # `week` is the priciest read in the suite, so every HUMAN-mode assertion here shares
+    # `plan` is the priciest read in the suite, so every HUMAN-mode assertion here shares
     # one capture rather than shelling out again — two copies of the same output can drift
     # apart. The JSON-mode checks still invoke it separately: a different output mode
     # cannot reuse this capture. (No count here on purpose — one that says "three
@@ -894,7 +894,7 @@ b_human! = |ctx| {
     # used to drop four fields `activities` returns for the same rows — avg_hr worst of
     # all, since "was that ride actually easy" is an average-HR question. Assert every row
     # carries the full shape, not just the first.
-    check!("bundle rows carry the same fields as activities", strjq!(ctx, ["plan"], "[.data.recent_activities_14d[] | select(has(\"avg_hr\") and has(\"np_w\") and has(\"relative_effort\") and has(\"distance_m\") | not)] | length") == "0")?
+    check!("bundle rows carry the same fields as activities", strjq!(ctx, ["plan"], "[.data.recent_activities_14d[] | select((has(\"avg_hr\") and has(\"np_w\") and has(\"relative_effort\") and has(\"distance_m\")) | not)] | length") == "0")?
     check!("uppercase STRIDE_FORMAT selects JSON", Str.contains(stride_env!(ctx.bin, ctx.home, ["summary"], [("STRIDE_FORMAT", "JSON")]), "\"schema_version\""))?
     Ok({})
 }

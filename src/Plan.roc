@@ -313,7 +313,7 @@ Plan :: [].{
     # ONE not-found message for complete/complete-rest/skip — can't drift apart
     session_not_found! : I64 => Try({}, _)
     session_not_found! = |session_id|
-        Output.err_out!("session_not_found", "no planned session #${(session_id).to_str()} — run `stride week` to see ids")
+        Output.err_out!("session_not_found", "no planned session #${(session_id).to_str()} — `stride plan` lists open ones, `stride week all` the whole log")
 
     complete! : Str, Str => Try({}, _)
     complete! = |session_id_str, activity_id_str| {
