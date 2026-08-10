@@ -168,7 +168,7 @@ After `auth`, credentials live in the db — no env vars ever again. Day-to-day:
 
 ```bash
 stride sync && stride analyze && stride summary   # the daily loop (repo: `just up`)
-stride week                                       # everything needed to plan a week
+stride plan                                       # everything needed to plan a week
 ```
 
 ## Commands
@@ -203,8 +203,8 @@ stride week                                       # everything needed to plan a 
 | `progress [date] [asc\|desc]` | *Am I improving on this workout?* Every past instance of a workout, compared with a **sport-aware lens** — Efficiency Factor (NP ÷ HR) for power rides, speed ÷ HR for distance sports, RPE for rated strength/HIIT — with a trend verdict and last-vs-best. Bare `progress` uses your latest session; `stride --help` has the exact matching rules. Sessions list oldest-first (`asc`, the default) so the trend reads left to right; `desc` puts the newest first when you only want the last few. The verdict is computed chronologically either way. |
 | `load [days]` | *Is my training working over time?* Daily fitness/fatigue/form rows for windows ≤14 days; Monday-aligned **weekly rollups** (sessions, load, fitness trend) for longer windows (default 90). Ends with today's form verdict. |
 | `compare [week\|month]` | *Is this period better than the last?* The last rolling window (7 or 28 days) beside the one before it — load, sessions, hard minutes, easy %, and end-of-window fitness — with signed deltas and a ramp/fitness verdict. |
-| `week` | *What should this week look like?* One call bundling `summary` + the open plan + the last 14 days of activities — the complete planning context. |
-| `plan` / `plan all` | *What was planned, and did it happen?* `plan` is the current training week (Mon–Sun). `plan all` sections the log — **upcoming**, **this week**, **last week** — and counts anything older rather than hiding it; the JSON payload always carries every row. Status is open / done / skipped, and a session completed on a different day than planned shows that date. |
+| `plan` | *What should I do next?* One call bundling `summary` + every open session + the last 14 days of activities — the complete planning context. |
+| `week` / `week all` | *What was planned, and did it happen?* `week` is the current training week (Mon–Sun). `week all` sections the log — **upcoming**, **this week**, **last week** — and counts anything older rather than hiding it; the JSON payload always carries every row. Status is open / done / skipped, and a session completed on a different day than planned shows that date. |
 | `activity <id>` | *How did one session actually go?* Deep view of a single activity: load, intensity, zone minutes, hard time, and power bests (1/3/5/20 min) computed from its streams. The session-review tool. |
 | `power-curve [days] [sport]` (alias `pc`) | *What's my power at every duration?* The power-duration curve — best watts held for 5 s through 60 min across a window (default 90 days), per sport — with a **Critical Power / W′** fit: your sustainable aerobic ceiling and the finite battery above it. Reads the stored per-activity bests; the shape behind FTP. |
 | `stats` | *What have I done, ever and this year?* Career and year-to-date totals per sport: sessions, hours, distance. |
@@ -213,7 +213,7 @@ stride week                                       # everything needed to plan a 
 
 | Command | What it does |
 | --- | --- |
-| `plan add <date> <type> <detail> <rationale>` | Records a planned session. `type` is the intensity intent (vo2max, threshold, endurance, recovery, strength, rest); the sport goes in `detail`. Re-planning a date revises its open session in place rather than stacking a second row. Refuses a date that isn't a real calendar day written `YYYY-MM-DD`. |
+| `week add <date> <type> <detail> <rationale>` | Records a planned session. `type` is the intensity intent (vo2max, threshold, endurance, recovery, strength, rest); the sport goes in `detail`. Re-planning a date revises its open session in place rather than stacking a second row. Refuses a date that isn't a real calendar day written `YYYY-MM-DD`. |
 | `complete <id> [activity_id]` | Marks a planned session done, linked to the activity that fulfilled it (rest days need no activity). Refuses ids that don't exist. |
 | `skip <id> <reason>` | Marks a planned session skipped, with the reason — so adherence history stays honest. |
 
@@ -256,9 +256,9 @@ language, and writes its planned sessions back through the coaching-log
 commands:
 
 1. `stride sync && stride analyze`
-2. `stride week` → reason about polarization, zone gaps, form, sport balance
+2. `stride plan` → reason about polarization, zone gaps, form, sport balance
 3. reconcile: match the open plan to completed activities → `stride complete`
-4. plan: `stride plan add` the coming week (re-planning a date revises its open
+4. plan: `stride week add` the coming week (re-planning a date revises its open
    session in place — same id, no tombstone; `skip` is for sessions that were
    going to happen and didn't)
 5. sessions that didn't happen get `stride skip <id> "<reason>"` — adherence

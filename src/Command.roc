@@ -10,7 +10,7 @@ Command := [
 	Analyze,
 	Summary,
 	Stats,
-	Week,
+	Plan,
 	Doctor,
 	Zones,
 	Version,
@@ -23,9 +23,9 @@ Command := [
 	Activity(Str),
 	Load(U64),
 	PowerCurve(U64, Str),
-	PlanView,
-	PlanViewAll,
-	PlanAdd(Str, Str, Str, Str),
+	WeekView,
+	WeekViewAll,
+	WeekAdd(Str, Str, Str, Str),
 	Complete(Str, Str),
 	CompleteRest(Str),
 	Skip(Str, Str),
@@ -51,7 +51,7 @@ Command := [
 			[_, "analyze"] => Ok(Analyze)
 			[_, "summary"] => Ok(Summary)
 			[_, "stats"] => Ok(Stats)
-			[_, "week"] => Ok(Week)
+			[_, "plan"] => Ok(Plan)
 			[_, "compare"] => Ok(Compare("week"))
 			[_, "compare", period] => Ok(Compare(period))
 			[_, "activities"] => Ok(Activities(30, ""))
@@ -87,16 +87,22 @@ Command := [
 			[_, "pc", n] => count(n, |c| PowerCurve(c, ""))
 			[_, "power-curve", n, sport] => count(n, |c| PowerCurve(c, sport))
 			[_, "pc", n, sport] => count(n, |c| PowerCurve(c, sport))
-			[_, "plan"] => Ok(PlanView)
-			[_, "plan", "all"] => Ok(PlanViewAll)
-			[_, "plan", "add", date, session_type, detail, rationale] => Ok(PlanAdd(date, session_type, detail, rationale))
+			[_, "week"] => Ok(WeekView)
+			[_, "week", "all"] => Ok(WeekViewAll)
+			[_, "week", "add", date, session_type, detail, rationale] => Ok(WeekAdd(date, session_type, detail, rationale))
 			[_, "complete", session_id, activity_id] => Ok(Complete(session_id, activity_id))
 			[_, "complete", session_id] => Ok(CompleteRest(session_id))
 			[_, "skip", session_id, reason] => Ok(Skip(session_id, reason))
 			[_, "config", "get", key] => Ok(ConfigGet(key))
 			[_, "config", "set", key, val] => Ok(ConfigSet(key, val))
 			[_, "--version"] => Ok(Version)
-			[_, "plan", ..] => Err(Usage("plan add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `plan` to view the log"))
+			[_, "week", ..] => Err(Usage("week add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `week` for this week's sessions, `week all` for the whole log"))
+			# `plan` and `week` traded names, so muscle memory sends the old forms here.
+			# Point each one at its actual replacement rather than a generic arity moan —
+			# `plan all` meant the session log, which is now `week all`, not `week add`.
+			[_, "plan", "all", ..] => Err(Usage("week all — `plan` is now the planning bundle; the session log moved to `week`"))
+			[_, "plan", "add", ..] => Err(Usage("week add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — `plan add` moved to `week add`"))
+			[_, "plan", ..] => Err(Usage("plan takes no arguments — it bundles summary + open sessions + recent activities"))
 			[_, "complete", ..] => Err(Usage("complete <session_id> [activity_id]"))
 			[_, "skip", ..] => Err(Usage("skip <session_id> \"<reason>\""))
 			[_, "activity", ..] => Err(Usage("activity <activity_id>"))
@@ -248,18 +254,18 @@ expect
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "plan"]) {
-		Ok(PlanView) => True
+	match Command.parse(["stride", "week"]) {
+		Ok(WeekView) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "plan", "all"]) {
-		Ok(PlanViewAll) => True
+	match Command.parse(["stride", "week", "all"]) {
+		Ok(WeekViewAll) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "plan", "add", "2026-01-01", "vo2max", "d", "r"]) {
-		Ok(PlanAdd("2026-01-01", "vo2max", "d", "r")) => True
+	match Command.parse(["stride", "week", "add", "2026-01-01", "vo2max", "d", "r"]) {
+		Ok(WeekAdd("2026-01-01", "vo2max", "d", "r")) => True
 		_ => False
 	}
 expect
@@ -288,8 +294,26 @@ expect
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "plan", "add"]) {
-		Err(Usage("plan add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `plan` to view the log")) => True
+	match Command.parse(["stride", "week", "add"]) {
+		Err(Usage("week add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `week` for this week's sessions, `week all` for the whole log")) => True
+		_ => False
+	}
+# the old spellings must land on their REPLACEMENT, not on generic help — `plan all`
+# meant the session log, so it points at `week all`, not at `week add`
+expect
+	match Command.parse(["stride", "plan", "all"]) {
+		Err(Usage(u)) => Str.contains(u, "week all")
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "plan", "add", "2026-01-01", "vo2max", "d", "r"]) {
+		Err(Usage(u)) => Str.contains(u, "week add")
+		_ => False
+	}
+# bare `plan` is the bundle and takes no arguments
+expect
+	match Command.parse(["stride", "plan"]) {
+		Ok(Plan) => True
 		_ => False
 	}
 expect

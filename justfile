@@ -62,8 +62,8 @@ analyze: build
     ./stride analyze
 
 # weekly planning payload (human tables in a terminal)
-week: build
-    ./stride week
+plan: build
+    ./stride plan
 
 # quick form check
 summary: build

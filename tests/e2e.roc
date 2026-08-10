@@ -383,48 +383,48 @@ b_plan! = |ctx| {
     # typo that lands there cannot be re-derived — and it would belong to no training
     # week, matching no completion or adherence query. Each of the rejects below PARSES;
     # the last two would be silently normalized to a different day than the one typed.
-    check!("a non-date is refused", Str.contains(stride!(ctx.bin, ctx.home, ["plan", "add", "tomorrow", "vo2max", "d", "r"]), "bad_date"))?
-    check!("an unpadded date is refused", Str.contains(stride!(ctx.bin, ctx.home, ["plan", "add", "2099-1-2", "vo2max", "d", "r"]), "bad_date"))?
-    check!("an impossible day is refused", Str.contains(stride!(ctx.bin, ctx.home, ["plan", "add", "2099-02-30", "vo2max", "d", "r"]), "bad_date"))?
-    check!("a timestamp is refused", Str.contains(stride!(ctx.bin, ctx.home, ["plan", "add", "2099-01-01T06:00:00Z", "vo2max", "d", "r"]), "bad_date"))?
+    check!("a non-date is refused", Str.contains(stride!(ctx.bin, ctx.home, ["week", "add", "tomorrow", "vo2max", "d", "r"]), "bad_date"))?
+    check!("an unpadded date is refused", Str.contains(stride!(ctx.bin, ctx.home, ["week", "add", "2099-1-2", "vo2max", "d", "r"]), "bad_date"))?
+    check!("an impossible day is refused", Str.contains(stride!(ctx.bin, ctx.home, ["week", "add", "2099-02-30", "vo2max", "d", "r"]), "bad_date"))?
+    check!("a timestamp is refused", Str.contains(stride!(ctx.bin, ctx.home, ["week", "add", "2099-01-01T06:00:00Z", "vo2max", "d", "r"]), "bad_date"))?
     # refused means NOT WRITTEN — the guard runs before the db is opened, so the very
     # next add must still be id 1. Without that, this check would read id 5.
-    check!("plan add id 1", strjq!(ctx, ["plan", "add", "2099-01-01", "vo2max", "d", "r"], ".data.id") == "1")?
+    check!("week add id 1", strjq!(ctx, ["week", "add", "2099-01-01", "vo2max", "d", "r"], ".data.id") == "1")?
     # re-planning an open date REVISES it in place (same id 1), not a refuse + tombstone
-    check!("re-plan revises open in place", strjq!(ctx, ["plan", "add", "2099-01-01", "threshold", "d", "r"], ".data.id") == "1")?
+    check!("re-plan revises open in place", strjq!(ctx, ["week", "add", "2099-01-01", "threshold", "d", "r"], ".data.id") == "1")?
     check!("skip session", Str.contains(stride!(ctx.bin, ctx.home, ["skip", "1", "sick"]), "\"skipped_session\""))?
-    check!("re-plan after skip id 2", strjq!(ctx, ["plan", "add", "2099-01-01", "threshold", "d2", "r2"], ".data.id") == "2")?
+    check!("re-plan after skip id 2", strjq!(ctx, ["week", "add", "2099-01-01", "threshold", "d2", "r2"], ".data.id") == "2")?
     check!("complete session", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "2", "101"]), "\"completed_session\""))?
-    check!("plan 1 skipped with reason", strjq!(ctx, ["plan", "all"], ".data[] | select(.id==1) | .skipped_reason") == "sick")?
-    check!("plan 1 status skipped", strjq!(ctx, ["plan", "all"], ".data[] | select(.id==1) | .status") == "skipped")?
-    check!("plan 2 done", strjq!(ctx, ["plan", "all"], ".data[] | select(.id==2) | .status") == "done")?
-    check!("plan 2 completed activity 101", strjq!(ctx, ["plan", "all"], ".data[] | select(.id==2) | .completed_activity_id") == "101")?
+    check!("session 1 skipped with reason", strjq!(ctx, ["week", "all"], ".data[] | select(.id==1) | .skipped_reason") == "sick")?
+    check!("session 1 status skipped", strjq!(ctx, ["week", "all"], ".data[] | select(.id==1) | .status") == "skipped")?
+    check!("session 2 done", strjq!(ctx, ["week", "all"], ".data[] | select(.id==2) | .status") == "done")?
+    check!("session 2 completed activity 101", strjq!(ctx, ["week", "all"], ".data[] | select(.id==2) | .completed_activity_id") == "101")?
     check!("complete nonexistent session", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "999", "101"]), "session_not_found"))?
     check!("complete nonexistent activity", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "2", "88888"]), "activity_not_found"))?
     check!("skip nonexistent session", Str.contains(stride!(ctx.bin, ctx.home, ["skip", "999", "x"]), "session_not_found"))?
     check!("complete non-numeric id", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "abc", "101"]), "bad_id"))?
-    check!("plan rest id 3", strjq!(ctx, ["plan", "add", "2099-01-02", "rest", "planned rest", "recovery"], ".data.id") == "3")?
-    check!("plan vo2max id 4", strjq!(ctx, ["plan", "add", "2099-01-03", "vo2max", "intervals", "stimulus"], ".data.id") == "4")?
+    check!("week add rest id 3", strjq!(ctx, ["week", "add", "2099-01-02", "rest", "planned rest", "recovery"], ".data.id") == "3")?
+    check!("week add vo2max id 4", strjq!(ctx, ["week", "add", "2099-01-03", "vo2max", "intervals", "stimulus"], ".data.id") == "4")?
     check!("non-rest bare complete refused", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "4"]), "activity_required"))?
     check!("rest bare complete", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "3"]), "\"rest\":true"))?
     check!("rest is done in db", Str.trim(sql!(ctx.db, "SELECT status FROM planned_sessions WHERE id=3;")) == "done")?
     _ = stride!(ctx.bin, ctx.home, ["skip", "4", "cleanup"])
     check!("pending_sessions 0", strjq!(ctx, ["summary"], ".data.pending_sessions") == "0")?
-    check!("week open_sessions empty", strjq!(ctx, ["week"], ".data.open_sessions | length") == "0")?
-    check!("bare plan is week-scoped (no far-future 2099 sessions)", strjq!(ctx, ["plan"], "[.data[].target_date] | map(select(. >= \"2099\")) | length") == "0")?
+    check!("plan open_sessions empty", strjq!(ctx, ["plan"], ".data.open_sessions | length") == "0")?
+    check!("bare week is week-scoped (no far-future 2099 sessions)", strjq!(ctx, ["week"], "[.data[].target_date] | map(select(. >= \"2099\")) | length") == "0")?
     # a day that ends up FULLY skipped shows only its FINAL tombstone. With no live session on
     # the date, supersession falls to the "is there a LATER row?" arm — without it every earlier
     # draft leaked through and a re-planned-then-missed day rendered as near-identical duplicate
-    # rows. Dated ctx.today because the bare `plan` view is scoped to the current week — and
+    # rows. Dated ctx.today because the bare `week` view is scoped to the current week — and
     # ctx.today is the suite's ONE time source (captured once at startup), so these assertions
     # can't straddle a midnight boundary the way a freshly-sampled clock could.
-    check!("today draft id 5", strjq!(ctx, ["plan", "add", ctx.today, "strength", "draft", "r"], ".data.id") == "5")?
+    check!("today draft id 5", strjq!(ctx, ["week", "add", ctx.today, "strength", "draft", "r"], ".data.id") == "5")?
     _ = stride!(ctx.bin, ctx.home, ["skip", "5", "re-tag as upper body"])
-    check!("today final id 6", strjq!(ctx, ["plan", "add", ctx.today, "strength", "final", "r"], ".data.id") == "6")?
+    check!("today final id 6", strjq!(ctx, ["week", "add", ctx.today, "strength", "final", "r"], ".data.id") == "6")?
     _ = stride!(ctx.bin, ctx.home, ["skip", "6", "exhausted"])
-    check!("fully-skipped day shows ONE row", strjq!(ctx, ["plan"], "[.data[] | select(.target_date==\"${ctx.today}\")] | length") == "1")?
-    check!("fully-skipped day shows the FINAL tombstone", strjq!(ctx, ["plan"], ".data[] | select(.target_date==\"${ctx.today}\") | .id") == "6")?
-    check!("plan all keeps every draft", strjq!(ctx, ["plan", "all"], "[.data[] | select(.target_date==\"${ctx.today}\")] | length") == "2")?
+    check!("fully-skipped day shows ONE row", strjq!(ctx, ["week"], "[.data[] | select(.target_date==\"${ctx.today}\")] | length") == "1")?
+    check!("fully-skipped day shows the FINAL tombstone", strjq!(ctx, ["week"], ".data[] | select(.target_date==\"${ctx.today}\") | .id") == "6")?
+    check!("week all keeps every draft", strjq!(ctx, ["week", "all"], "[.data[] | select(.target_date==\"${ctx.today}\")] | length") == "2")?
     # #84 follow-up: a session completed by an activity from ANOTHER day rendered exactly
     # like one completed on time, so the plan quietly implied the work happened on the date
     # it was prescribed for. The completing activity's own day is shown when they differ.
@@ -439,8 +439,8 @@ b_plan! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','${date_101}','endurance','same day ride','r','open');")
     ontime_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
     _ = stride!(ctx.bin, ctx.home, ["complete", ontime_id, "101"])
-    ontime_status = strjq!(ctx, ["plan", "all"], ".data[] | select(.id==${ontime_id}) | .status_shown")
-    early_status = strjq!(ctx, ["plan", "all"], ".data[] | select(.id==${early_id}) | .status_shown")
+    ontime_status = strjq!(ctx, ["week", "all"], ".data[] | select(.id==${ontime_id}) | .status_shown")
+    early_status = strjq!(ctx, ["week", "all"], ".data[] | select(.id==${early_id}) | .status_shown")
     # Every assertion selects its OWN row by id. Matching the whole plan output for
     # "done (" proved nothing: session 2 is completed with activity 101 earlier in this
     # scenario, so that string is already present regardless of what this row renders.
@@ -448,15 +448,15 @@ b_plan! = |ctx| {
     check!("the early one carries its real completion date", Str.starts_with(early_status, "done (") and Str.contains(early_status, date_101))?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${ontime_id};")
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${early_id};")
-    # #97: `plan all` sections. Partition is by WEEK so no row appears twice, and rows
-    # older than last week are COUNTED rather than silently dropped — `plan all` still
+    # #97: `week all` sections. Partition is by WEEK so no row appears twice, and rows
+    # older than last week are COUNTED rather than silently dropped — `week all` still
     # means all, and the JSON payload keeps every row.
     _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','2099-06-01','vo2max','far future session','r','open');")
     fut_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
     _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','2020-01-06','rest','ancient session','r','skipped');")
     old_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
-    all_h = stride_human!(ctx.bin, ctx.home, ["plan", "all"])
-    check!("plan all has the three sections", Str.contains(all_h, "── upcoming ──") and Str.contains(all_h, "── this week ──") and Str.contains(all_h, "── last week ──"))?
+    all_h = stride_human!(ctx.bin, ctx.home, ["week", "all"])
+    check!("week all has the three sections", Str.contains(all_h, "── upcoming ──") and Str.contains(all_h, "── this week ──") and Str.contains(all_h, "── last week ──"))?
     # anchor on the seeded target_date, not the detail text: `date` is its own
     # non-wrapping column, and 2099/2020 are sentinels that cannot appear by accident.
     # (The bare id would be worse than either — a 2-3 digit number matches digits in the
@@ -466,31 +466,31 @@ b_plan! = |ctx| {
     check!("but it is counted, not dropped", Str.contains(all_h, "older session not shown"))?
     # sections partition by DATE ALONE. An open-only `upcoming` would leave a future-dated
     # skipped row in no section AND outside the hidden count — silently gone, which is the
-    # one thing `plan all` must never do. Skipping next week in advance is ordinary use.
+    # one thing `week all` must never do. Skipping next week in advance is ordinary use.
     _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','2099-06-02','rest','future skip','r','skipped');")
-    skip_h = stride_human!(ctx.bin, ctx.home, ["plan", "all"])
+    skip_h = stride_human!(ctx.bin, ctx.home, ["week", "all"])
     check!("a future-dated skipped session still renders", Str.contains(skip_h, "2099-06-02"))?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date = '2099-06-02';")
     # JSON stays a FLAT array carrying every row — sections are presentation only
-    # an unparseable target_date belongs to no week. `plan add` stores the date string
+    # an unparseable target_date belongs to no week. `week add` stores the date string
     # verbatim, so a typo reaches this code path; collapsing it to day 0 would count it
     # as "older" and claim it was in the past. It must be named as undated instead.
     _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','tomorrow','vo2max','typo date','r','open');")
-    undated_h = stride_human!(ctx.bin, ctx.home, ["plan", "all"])
+    undated_h = stride_human!(ctx.bin, ctx.home, ["week", "all"])
     check!("an undated session is counted as undated, not as older", Str.contains(undated_h, "1 undated"))?
     check!("and it is not silently filed under a week", !(Str.contains(undated_h, "typo date")))?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date = 'tomorrow';")
-    check!("json still carries the ancient row", strjq!(ctx, ["plan", "all"], "[.data[] | select(.id==${old_id})] | length") == "1")?
-    check!("json carries the future row too", strjq!(ctx, ["plan", "all"], "[.data[] | select(.id==${fut_id})] | length") == "1")?
-    check!("bare plan is unsectioned", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["plan"]), "── upcoming ──")))?
-    # `plan all` must mean ALL — the older-count and its "json has every row" pointer are
+    check!("json still carries the ancient row", strjq!(ctx, ["week", "all"], "[.data[] | select(.id==${old_id})] | length") == "1")?
+    check!("json carries the future row too", strjq!(ctx, ["week", "all"], "[.data[] | select(.id==${fut_id})] | length") == "1")?
+    check!("bare week is unsectioned", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["week"]), "── upcoming ──")))?
+    # `week all` must mean ALL — the older-count and its "json has every row" pointer are
     # both lies if the query truncates. Seed past 100 rows and check nothing is dropped.
     # a recursive CTE, not INSERT..SELECT FROM planned_sessions: that only adds as many
     # rows as already exist (~30 here), never crosses 100, and the check passes against
     # the capped build — the negative control caught it doing exactly that
     _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x<150) SELECT '0','2019-03-04','rest','bulk filler','r','skipped' FROM c;")
     total = Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions;"))
-    check!("plan all returns every row past the old 100 cap", strjq!(ctx, ["plan", "all"], ".data | length") == total)?
+    check!("week all returns every row past the old 100 cap", strjq!(ctx, ["week", "all"], ".data | length") == total)?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date = '2019-03-04';")
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${fut_id}, ${old_id});")
     Ok({})
@@ -862,34 +862,39 @@ b_device_watts! = |ctx| {
 # ── human output mode ────────────────────────────────────────────────
 b_human! : Ctx => Try({}, _)
 b_human! = |ctx| {
-    check!("human plan header", Str.contains(stride_human!(ctx.bin, ctx.home, ["plan", "all"]), "status"))?
+    check!("human week all header", Str.contains(stride_human!(ctx.bin, ctx.home, ["week", "all"]), "status"))?
     check!("human activities header", Str.contains(stride_human!(ctx.bin, ctx.home, ["activities"]), "sport"))?
     check!("human load verdict line", Str.contains(stride_human!(ctx.bin, ctx.home, ["load", "7"]), "today: form"))?
     check!("human stats section", Str.contains(stride_human!(ctx.bin, ctx.home, ["stats"]), "ALL TIME"))?
     check!("human activity zones row", Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "101"]), "Z1"))?
     check!("human summary banner", Str.contains(stride_human!(ctx.bin, ctx.home, ["summary"]), "stride report"))?
-    # `week` is the priciest read in the suite, so every HUMAN-mode assertion here shares
+    # `plan` is the priciest read in the suite, so every HUMAN-mode assertion here shares
     # one capture rather than shelling out again — two copies of the same output can drift
     # apart. The JSON-mode checks still invoke it separately: a different output mode
     # cannot reuse this capture. (No count here on purpose — one that says "three
     # assertions" goes stale the next time somebody adds a fourth.)
-    week_h = stride_human!(ctx.bin, ctx.home, ["week"])
-    check!("human week bundle", Str.contains(week_h, "OPEN PLAN"))?
+    plan_h = stride_human!(ctx.bin, ctx.home, ["plan"])
+    check!("human plan bundle", Str.contains(plan_h, "OPEN PLAN"))?
     # the 14-day table is a DATE RANGE: a day with nothing on it is information, and week
     # boundaries get the same `···` divider progress uses for a break in a series
-    check!("days with no activity are shown, not skipped over", Str.contains(week_h, "(no activity)"))?
-    check!("week boundaries are divided", Str.contains(week_h, "···"))?
+    check!("days with no activity are shown, not skipped over", Str.contains(plan_h, "(no activity)"))?
+    check!("week boundaries are divided", Str.contains(plan_h, "···"))?
     # The window has to be as wide as its name. Both the header and the JSON field say 14,
     # so the oldest day rendered is anchor-13 — an inclusive `>= anchor - 14` spans fifteen.
     # Scoped to the text AFTER the header: the OPEN PLAN table above carries dates too, and
     # matching the whole output would let one of those satisfy either check by accident.
-    recent_block = List.last(Str.split_on(week_h, "RECENT 14 DAYS")).ok_or("")
+    recent_block = List.last(Str.split_on(plan_h, "RECENT 14 DAYS")).ok_or("")
     oldest_in = Str.trim(sql!(ctx.db, "SELECT date(MAX(day), '-13 days') FROM daily_load;"))
     first_out = Str.trim(sql!(ctx.db, "SELECT date(MAX(day), '-14 days') FROM daily_load;"))
     check!("the 14-day table reaches back exactly 13 days", Str.contains(recent_block, oldest_in))?
     check!("and stops there — anchor-14 is outside the window", !(Str.contains(recent_block, first_out)))?
     # ...and the JSON stays a list of REAL activities — no pseudo-rows without an id
-    check!("json recent list has no placeholder rows", strjq!(ctx, ["week"], "[.data.recent_activities_14d[] | select(.id == null or .id == 0)] | length") == "0")?
+    check!("json recent list has no placeholder rows", strjq!(ctx, ["plan"], "[.data.recent_activities_14d[] | select(.id == null or .id == 0)] | length") == "0")?
+    # #103: the bundle exists to answer a planning question in ONE call. Its activity rows
+    # used to drop four fields `activities` returns for the same rows — avg_hr worst of
+    # all, since "was that ride actually easy" is an average-HR question. Assert every row
+    # carries the full shape, not just the first.
+    check!("bundle rows carry the same fields as activities", strjq!(ctx, ["plan"], "[.data.recent_activities_14d[] | select((has(\"avg_hr\") and has(\"np_w\") and has(\"relative_effort\") and has(\"distance_m\")) | not)] | length") == "0")?
     check!("uppercase STRIDE_FORMAT selects JSON", Str.contains(stride_env!(ctx.bin, ctx.home, ["summary"], [("STRIDE_FORMAT", "JSON")]), "\"schema_version\""))?
     Ok({})
 }

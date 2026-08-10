@@ -368,8 +368,8 @@ Report :: [].{
         }
     }
     # weekly-planning bundle: everything the coach needs to plan a week, in one call
-    week! : {} => Try({}, _)
-    week! = |{}| {
+    plan_bundle! : {} => Try({}, _)
+    plan_bundle! = |{}| {
         path = Db.open_db!({})?
         match Analyze.load_zone_config!(path) {
             Err(MissingConfig) => Output.missing_config!({})
@@ -396,7 +396,11 @@ Report :: [].{
                         \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
                         \\       COALESCE(m.z1_s,0) AS z1_s, COALESCE(m.z2_s,0) AS z2_s, COALESCE(m.z3_s,0) AS z3_s,
                         \\       COALESCE(m.z4_s,0) AS z4_s, COALESCE(m.z5_s,0) AS z5_s,
-                        \\       COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) AS hard_s
+                        \\       COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) AS hard_s,
+                        \\       CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
+                        \\       CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
+                        \\       CAST(COALESCE(a.relative_effort,0) AS REAL) AS relative_effort,
+                        \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr
                         \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                         \\WHERE a.start_local >= :cutoff
                         \\ORDER BY a.start_local DESC, a.id DESC
@@ -416,7 +420,14 @@ Report :: [].{
                         z4_s = Sqlite.i64("z4_s")(cols)(stmt)?
                         z5_s = Sqlite.i64("z5_s")(cols)(stmt)?
                         hard_s = Sqlite.i64("hard_s")(cols)(stmt)?
-                        Ok({ id, date, sport, name, moving_time, tss, intensity, z1_s, z2_s, z3_s, z4_s, z5_s, hard_s })
+                        distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
+
+                        np_w = Sqlite.f64("np_w")(cols)(stmt)?
+
+                        relative_effort = Sqlite.f64("relative_effort")(cols)(stmt)?
+
+                        avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
+                        Ok({ id, date, sport, name, moving_time, tss, intensity, z1_s, z2_s, z3_s, z4_s, z5_s, hard_s, distance_m, np_w, relative_effort, avg_hr })
                     },
                 })?
                 open_p = Sqlite.query_many!({
