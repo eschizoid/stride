@@ -178,7 +178,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 15
+    schema_version = 16
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -238,6 +238,17 @@ Db :: [].{
         # pace twin of ftp_used, compared in the recompute WHERE so a threshold change reanalyzes.
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_20min_speed REAL")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN threshold_pace_used REAL")?
+        # v16: sample-validity counters (#92). How many HR / power samples the validity
+        # filters DROPPED versus how many the stream offered, recorded where the filters
+        # actually run. Nothing else could tell a dying sensor from a clean one — the
+        # filtered values are gone by the time anything downstream sees the metrics.
+        # These count ONLY samples rejected by valid_hr / valid_watts. The wholesale
+        # exclusion of an ESTIMATED watts stream (#73) is a policy decision, not junk, and
+        # counting it would report every strapless-power athlete as 100% junk.
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN hr_samples_total INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN hr_samples_dropped INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN watts_samples_total INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN watts_samples_dropped INTEGER")?
         # v2: index the column every date-range filter and the activities sort use
         # (queries now compare a.start_local directly — sargable — instead of substr)
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })?

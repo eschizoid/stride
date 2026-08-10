@@ -413,23 +413,23 @@ Analyze :: [].{
 
         # sanity-filter HR: some sources (Peloton strength workouts) emit junk
         # near-zero samples — Metrics.valid_hr is the one place the bounds live
-        hr_pairs = List.keep_if(
-            Streams.stream_pairs(streams.time, streams.heartrate),
-            |p| Metrics.valid_hr(p.v),
-        )
+        hr_raw = Streams.stream_pairs(streams.time, streams.heartrate)
+        hr_pairs = List.keep_if(hr_raw, |p| Metrics.valid_hr(p.v))
         # drop non-physiological power samples (sensor glitches) the same way HR is
         # filtered — one 1s spike would inflate NP and the 20-min best behind FTP.
         # Estimated watts (#73): device_watts=False means the whole stream is Strava's
         # model output, not a measurement — it must not feed NP, the 20-min best behind
         # DERIVED FTP, the power curve, or the intensity split. Drop it wholesale.
-        watts_pairs =
-            if row.dw
-                List.keep_if(
-                    Streams.stream_pairs(streams.time, streams.watts),
-                    |p| Metrics.valid_watts(p.v),
-                )
-            else
-                []
+        watts_raw = if row.dw Streams.stream_pairs(streams.time, streams.watts) else []
+        watts_pairs = List.keep_if(watts_raw, |p| Metrics.valid_watts(p.v))
+        # #92 sample-validity counters. Counted against `*_raw`, which for watts is ALREADY
+        # empty when the stream is estimated — so the wholesale #73 exclusion contributes
+        # 0 dropped of 0 total rather than reading as 100% junk. Only samples a validity
+        # filter rejected are counted as dropped.
+        hr_total = List.len(hr_raw)
+        hr_dropped = hr_total - List.len(hr_pairs)
+        watts_total = List.len(watts_raw)
+        watts_dropped = watts_total - List.len(watts_pairs)
         # held pairs: NP wants values, the bests need real seconds to reject pause-spanning windows
         watts_1s_pairs = Metrics.resample_1s_pairs(watts_pairs, Hold)
         watts_1s = List.map(watts_1s_pairs, |p| p.v)
@@ -557,10 +557,14 @@ Analyze :: [].{
             path: Path.utf8(path),
             query:
                 \\INSERT OR REPLACE INTO activity_metrics
-                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, threshold_pace_used)
-                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :thru)
+                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped)
+                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :thru, :hrt, :hrd, :wt, :wd)
             ,
             bindings: [
+                { name: ":hrt", value: Integer((hr_total).to_i64_wrap()) },
+                { name: ":hrd", value: Integer((hr_dropped).to_i64_wrap()) },
+                { name: ":wt", value: Integer((watts_total).to_i64_wrap()) },
+                { name: ":wd", value: Integer((watts_dropped).to_i64_wrap()) },
                 { name: ":pie", value: Integer(pintensity.easy_s) },
                 { name: ":pim", value: Integer(pintensity.moderate_s) },
                 { name: ":pih", value: Integer(pintensity.hard_s) },
@@ -682,5 +686,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 23
+    metrics_rev = 24
 }
