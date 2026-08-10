@@ -70,16 +70,74 @@ just install   # build + symlink to ~/.local/bin/stride
   (`Db.roc`, `Report.roc`, …) — the compiler can't check `SELECT ... AS x` aliases against
   `Sqlite.i64("x")` decoders; adjacency is the guard. Only decoder-free SQL (DDL) lives
   in Schema.roc.
-- **Verify platform/package APIs against docs before writing** (basic-cli 0.21 docs,
-  or package source in `~/.cache/roc/packages/`) — alpha APIs drift; this habit has
-  kept nearly every build at 0-errors-first-try.
-- **Floats have no `Eq`** — never `x == 0.0` in an expect; use `Num.abs(x) < 0.001`.
-- SQLite type affinity bites: INTEGER columns reject `Sqlite.f64` decoders — `CAST(...
-  AS REAL)` in the SELECT when unsure.
 - Table padding is display-width (code points), not bytes — keep emitted glyphs
   monospace-single-width; no varying-height unicode blocks (they render as mush).
 - In bash test code: `grep -q` + `pipefail` = SIGPIPE trap; capture output first,
   then grep the variable.
+
+## Idiomatic Roc (and the traps that actually bit us)
+
+Language- and toolchain-level, as opposed to the stride-specific conventions above.
+Every item here cost a debugging session at least once — they are not style opinions.
+
+### Shaping data
+
+- **Records are immutable and `&` only UPDATES fields — it cannot ADD one.** To widen a
+  record, construct it explicitly field by field (see the `enriched` build in `Plan.roc`).
+- **`Str` has no ordering operator.** Compare numbers, not strings: parse to a day number
+  with `Metrics.date_str_to_days` and compare `I64`. Note SQL does NOT share this
+  restriction — SQLite happily compares `target_date` as text, which is exactly why a
+  stored date must be canonical `YYYY-MM-DD` (`Metrics.is_canonical_date`).
+- **Floats have no `Eq`** — never `x == 0.0` in an expect; use `Num.abs(x) < 0.001`.
+
+### Performance
+
+- **`List.sort_with` degrades to O(n²) on already-sorted input.** That is the common case
+  for streams, which arrive sorted, so the worst case is the default case. Check first and
+  sort only if needed — `Metrics.ascending_by_t` / `sorted_by_t`. This took a full analyze
+  from 40.7s per 2700 samples to 0.41s, after the command looked like it had hung.
+- **Never accumulate with `List.concat([x], acc)` inside a fold** — it copies the whole
+  accumulator every step, so it is quadratic. Fold and prepend instead
+  (`Render.reverse_list`). Harmless behind a `LIMIT`, fatal the moment the query is
+  unbounded, which is how it shipped and then had to be fixed.
+
+### Compiler behavior that reads like a bug
+
+- **A compile-time-known condition is an ERROR, not a warning.** `if False { … }` fails
+  with UNCONDITIONAL CONDITION, so you cannot stub a guard off that way to run a negative
+  control. Delete the guard instead — that is the truer pre-fix state anyway.
+- **Interpolating a compile-time-constant `""` can crash the backend** in `str_concat`
+  (heap-corruption SIGABRT, same class as #32). Bind values rather than splicing optional
+  fragments into SQL; a bound `:flag = 0/1` in the WHERE beats a conditional string.
+- **`--opt=speed` miscompiles this codebase** (#32) — always `--opt=dev`. Flags take `=`,
+  not a space: `--output=x`, not `--output x`.
+
+### Testing
+
+- **Effectful `expect`s don't run under the test runner** — pure expects cover the pure
+  modules; everything effectful goes through the e2e harness.
+- **`roc test` caches.** A run can report `(cached)` while your new expects never
+  executed. Prove they run by breaking one and watching the count drop.
+- **`roc test --main=src/app.roc <module>` runs every expect reachable from the app**, not
+  just that module's — so the number it prints is not that file's test count.
+- **The e2e harness aborts at the first failing `check!`.** A negative control that
+  reverts two fixes at once only ever proves the first one. Revert one at a time.
+- **Prove a test before trusting it**: revert the fix, watch it fail, restore. Several
+  tests in this repo once passed against reverted code and proved nothing.
+
+### Platform APIs
+
+- **Verify against the docs before writing** (basic-cli 0.21 docs, or package source in
+  `~/.cache/roc/packages/`) — alpha APIs drift; this habit has kept nearly every build at
+  0-errors-first-try.
+- **`Sqlite.query!` on a row that may not exist is a deterministic SIGABRT.** Use
+  `query_many!` and match the empty list — this is how config loading must read any
+  possibly-absent key.
+- **SQLite type affinity bites**: INTEGER columns reject `Sqlite.f64` decoders — `CAST(…
+  AS REAL)` in the SELECT when unsure.
+
+### Style
+
 - **If/else brace style** (`roc fmt` is blocked by #27, so hold this by hand):
   braceless when both branches are single short expressions
   (`if stamp == 0 Null else Integer(stamp)`); braces the moment a branch has a
