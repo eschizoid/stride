@@ -379,17 +379,14 @@ b_narration! = |ctx| {
     narr_j = sh!("cat '${ej}'")
     check!("analyze narrates rescoring progress on stderr", Str.contains(narr_j, "rescoring"))?
     check!("analyze narrates the daily_load rebuild", Str.contains(narr_j, "rebuilding daily load"))?
-    # a carriage return is garbage in a CI log, so machine mode must never emit one.
-    # Counted with `tr -cd` rather than matched in Roc, which has no \r literal.
-    crs_j = Str.trim(sh!("tr -cd '\\r' < '${ej}' | wc -c | tr -d ' '"))
-    check!("machine-mode narration has no carriage returns", crs_j == "0")?
+    # a carriage return is garbage in a CI log, so machine mode must never emit one
+    check!("machine-mode narration has no carriage returns", !(Str.contains(narr_j, "\r")))?
     # ...while human mode DOES redraw in place, and draws the bar with the table glyph
     _ = sql!(ctx.db, "UPDATE activity_metrics SET metrics_rev = 0;")
     _ = sh!("HOME='${ctx.home}' STRIDE_FORMAT=human '${ctx.bin}' analyze 2>'${eh}' >/dev/null")
     narr_h = sh!("cat '${eh}'")
     check!("human narration draws the bar", Str.contains(narr_h, "█") or Str.contains(narr_h, "░"))?
-    crs_h = Str.trim(sh!("tr -cd '\\r' < '${eh}' | wc -c | tr -d ' '"))
-    check!("human narration redraws in place", crs_h != "0")?
+    check!("human narration redraws in place", Str.contains(narr_h, "\r"))?
     # the contract that matters: narration NEVER reaches stdout, so machine consumers and
     # golden fixtures are untouched. stdout must still be exactly the envelope — asserted
     # on the SAME run whose stderr carried the narration above.

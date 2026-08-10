@@ -169,7 +169,16 @@ Render :: [].{
     # a `\r` is garbage in a CI log, and these lines are appended, never redrawn
     progress_line : Str, U64, U64 -> Str
     progress_line = |label, done, total|
-        if total == 0 "${label}…" else "${label} ${(done).to_str()}/${(total).to_str()}"
+        if total == 0 {
+            "${label}…"
+        } else {
+            # clamp exactly as the bar does. The denominator is read once up front and a
+            # later pass can re-invalidate rows, so the running count CAN exceed it —
+            # without this, machine mode prints an impossible `730/723` while human mode
+            # shows a full bar at 723/723.
+            capped = if done > total total else done
+            "${label} ${(capped).to_str()}/${(total).to_str()}"
+        }
 
     # terminal columns, not bytes. Each UTF-8 code point has exactly one lead byte
     # (< 0x80, or >= 0xC0); continuation bytes (0x80–0xBF) don't count. Astral-plane
@@ -672,6 +681,8 @@ expect {
 # machine mode: same information, no carriage return and no padding
 expect Render.progress_line("rescoring", 5, 10) == "rescoring 5/10"
 expect !(Str.contains(Render.progress_line("rescoring", 5, 10), "\r"))
+# ...and it clamps like the bar, so neither mode can print an impossible fraction
+expect Render.progress_line("rescoring", 730, 723) == "rescoring 723/723"
 
 # unicode bars must not skew column alignment
 expect {

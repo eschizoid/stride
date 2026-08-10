@@ -284,7 +284,7 @@ Strava :: [].{
                         Some(a) => Metrics.epoch_to_iso(a + 86400)
                         None => ""
                     }
-                count = fetch_pages!(path, token, after_param, started, 1, 0)?
+                count = fetch_pages!(path, token, after_param, started, 1, 0, True)?
                 pruned = prune_deleted!(path, started, window_start)?
                 Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
                 streams_n = backfill_streams!(path, token)?
@@ -464,7 +464,7 @@ Strava :: [].{
                 # no need to run `sync` beforehand (that's what made it two commands)
                 Stdout.line!("backfill: refreshing the activity list...")?
                 started = Db.now_secs!({})
-                count = fetch_pages!(path, token, "", started, 1, 0)?
+                count = fetch_pages!(path, token, "", started, 1, 0, False)?
                 # full re-pull: window_start "" prunes every activity Strava no longer lists
                 pruned = prune_deleted!(path, started, "")?
                 (if pruned > 0 Stdout.line!("backfill: pruned ${U64.to_str(pruned)} activities removed on Strava") else Ok({}))?
@@ -554,8 +554,8 @@ Strava :: [].{
         }
     per_page = 100
 
-    fetch_pages! : Str, Str, Str, I64, U64, U64 => Try(U64, _)
-    fetch_pages! = |path, token, after_param, stamp, page, acc| {
+    fetch_pages! : Str, Str, Str, I64, U64, U64, Bool => Try(U64, _)
+    fetch_pages! = |path, token, after_param, stamp, page, acc, narrate| {
         page_str = (page).to_str()
         per_str = (per_page).to_str()
         uri = "${api_base!({})}/api/v3/athlete/activities?per_page=${per_str}&page=${page_str}${after_param}"
@@ -570,11 +570,13 @@ Strava :: [].{
         # a plain line per page, not a bar: Strava's activity list is paged and its length
         # is unknowable until the short page arrives, so any denominator here would be
         # invented. Pages are few (200 per page), so the lines stay countable.
-        Output.say!("fetched activities page ${(page).to_str()} — ${(total).to_str()} so far")?
+        # Gated because `backfill!` shares this function and ALREADY reports its own
+        # progress on stdout — narrating here too would duplicate it in a second stream.
+        _ = if narrate { Output.say!("fetched activities page ${(page).to_str()} — ${(total).to_str()} so far")? } else { {} }
         if got < per_page
             Ok(total)
         else
-            fetch_pages!(path, token, after_param, stamp, page + 1, total)
+            fetch_pages!(path, token, after_param, stamp, page + 1, total, narrate)
     }
     upsert_all! : Str, I64, List(ActivitySummary) => Try({}, _)
     upsert_all! = |path, stamp, acts|
