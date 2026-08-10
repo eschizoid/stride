@@ -1,7 +1,6 @@
 # ADR 0006 — Strava is the parser; the ingestion boundary is the filesystem
 
-Status: proposed · 2026-08-09 — decision made by Mariano during the roadmap grill;
-written up for his review, not yet blessed as accepted
+Status: accepted · 2026-08-09 — blessed by Mariano. The FIT track stays retired.
 
 Refines ADR 0000's "Strava is one ingestion layer." It answers the question that ADR
 left open: which *other* ingestion layers stride will grow — and the answer is none

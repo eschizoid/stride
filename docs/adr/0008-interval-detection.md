@@ -1,7 +1,8 @@
 # ADR 0008 — interval detection: a reporting-only detector, segments as computed tier
 
-Status: proposed · 2026-08-09 — design boundaries settled in the roadmap grill;
-storage and parameters drafted here for review before implementation
+Status: accepted · 2026-08-09 — blessed by Mariano; unblocks #95. Parameters in
+"Parameters (initial, expect tuning)" are a starting point, not settled numbers —
+the validation bar below governs whether they ship.
 
 ## Context
 
