@@ -26,9 +26,16 @@ Output :: [].{
 
     # one payload, two mouths: JSON for machines, a pure Render screen for humans.
     # The pattern for query commands — payload record + Render.<cmd>_screen.
-    # JSON envelope contract version. Bumped when the wrapper shape changes (NOT the
+    # JSON envelope contract version. Bumped when the WRAPPER shape changes (NOT the
     # db schema_version / metrics_rev). Every machine response is versioned so tool
     # callers can detect a contract change.
+    #
+    # ADDING a field to a command's payload does NOT bump this, and that is a decision
+    # rather than an oversight: the version describes `{schema_version, data}` vs
+    # `{schema_version, error}`, not the keys inside `data`. A consumer reading known keys
+    # is unaffected by a new one appearing beside them. Precedent: `converged` was added to
+    # the analyze payload in 9c67470 without a bump. Bump when the wrapper changes, or when
+    # a field is REMOVED or retyped — those do break a reader. See ADR 0007 Consequences.
     json_schema_version : I64
     json_schema_version = 2
 

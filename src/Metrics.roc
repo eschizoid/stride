@@ -450,18 +450,25 @@ Metrics :: [].{
     # report the whole of today's fitness as this week's gain — a spectacular fake ramp on
     # exactly the short histories that can least afford one.
     ctl_as_of : List({ day : I64, ctl : F64 }), I64 -> [Found(F64), Missing]
-    ctl_as_of = |series, target|
-        List.fold(series, Missing, |acc, e|
+    ctl_as_of = |series, target| {
+        # ONE pass, carrying the best candidate rather than re-scanning the list to ask
+        # whether a later qualifying day exists — that inner scan made this quadratic,
+        # which is the fold trap this codebase has already been bitten by twice.
+        # The caller may pass any order, so the walk cannot assume sortedness.
+        best = List.fold(series, Missing, |acc, e|
             if e.day > target {
                 acc
             } else {
                 match acc {
-                    Missing => Found(e.ctl)
-                    Found(prev) =>
-                        # keep the LATEST qualifying day; the caller may pass any order
-                        if List.any(series, |o| o.day <= target and o.day > e.day) Found(prev) else Found(e.ctl)
+                    Missing => Found(e)
+                    Found(b) => if e.day > b.day Found(e) else acc
                 }
             })
+        match best {
+            Missing => Missing
+            Found(b) => Found(b.ctl)
+        }
+    }
 
     # ramp_7d is the standard weekly delta. ramp_28d_avg is the mean of the last four
     # weekly deltas, which telescopes to (now - 28d ago) / 4 — the intermediate weeks
