@@ -25,6 +25,10 @@ Analyze :: [].{
                 # the close runs before it is unwrapped, so an error propagating out of the
                 # passes closes the line too — otherwise the error message itself would be
                 # the thing printed on top of a half-drawn frame.
+                # same reasoning as the stream backfill: the FIRST batch is the slowest
+                # (cold streams, 64 rows) and narrating only on its completion leaves the
+                # command silent through the longest single wait of the run
+                _ = if goal > 0 { Output.narrate!("rescoring", 0, goal)? } else { {} }
                 passes = converge_metrics!(path, zb, 1000, { computed: 0, stream_errors: 0 }, goal)
                 _ = if goal > 0 { Output.narrate_done!({})? } else { {} }
                 res = passes?

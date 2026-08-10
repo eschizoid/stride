@@ -330,6 +330,11 @@ Strava :: [].{
         # something straight after. Every OTHER way out is an error propagating from the
         # HTTP call, the status check or the store — none of which can close it on the way
         # past — so the error case is closed here, once, instead of at each `?`.
+        # An immediate 0/total frame BEFORE the first request. Narrating only after a
+        # response returns means a stalled network call shows nothing for exactly as long
+        # as the stall lasts — which is the "it looks hung" failure this whole change
+        # exists to prevent, reintroduced at the one moment it matters most.
+        _ = if !(List.is_empty(ids)) { Output.narrate!("fetching streams", 0, List.len(ids))? } else { {} }
         res = fetch_streams_all!(path, token, ids, 0, List.len(ids))
         match res {
             Ok(n) => Ok(n)

@@ -156,8 +156,9 @@ Render :: [].{
     progress_bar : Str, U64, U64 -> Str
     progress_bar = |label, done, total|
         if total == 0 {
-            # nothing to divide by, and no honest fraction to show
-            "${label} …"
+            # nothing to divide by, and no honest fraction to show. Same spelling as
+            # progress_line's, so a total==0 run reads identically in both modes.
+            "${label}…"
         } else {
             capped = if done > total total else done
             filled = (capped * progress_bar_cells) // total
@@ -669,7 +670,9 @@ expect Render.progress_bar("rescoring", 0, 10) == "rescoring [░░░░░░
 expect Render.progress_bar("rescoring", 5, 10) == "rescoring [█████░░░░░]  5/10"
 expect Render.progress_bar("rescoring", 10, 10) == "rescoring [██████████] 10/10"
 # a zero total has no honest fraction to render, and must not divide
-expect Render.progress_bar("syncing", 0, 0) == "syncing …"
+expect Render.progress_bar("syncing", 0, 0) == "syncing…"
+# ...spelled exactly as the machine-mode line, so the two modes cannot drift apart
+expect Render.progress_bar("syncing", 0, 0) == Render.progress_line("syncing", 0, 0)
 # done > total would overfill the bar; clamp rather than emit a wider frame
 expect Render.progress_bar("x", 99, 10) == "x [██████████] 10/10"
 # EVERY frame of one run is the same width — `\r` does not clear the line, so a
