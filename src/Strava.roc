@@ -323,7 +323,9 @@ Strava :: [].{
             bindings: [],
             rows: Sqlite.i64("id"),
         })?
-        fetch_streams_all!(path, token, ids, 0)
+        # the stream backfill is the long half of a sync and its total IS knowable — the
+        # id list is already in hand — so this half gets a real bar rather than a spinner
+        fetch_streams_all!(path, token, ids, 0, List.len(ids))
     }
     # count activities still lacking streams (so sync can report incomplete backfill
     # honestly instead of letting the 60/run cap look like completion)
@@ -340,25 +342,37 @@ Strava :: [].{
             row: Sqlite.i64("n"),
         })
 
-    fetch_streams_all! : Str, Str, List(I64), U64 => Try(U64, _)
-    fetch_streams_all! = |path, token, ids, acc|
+    fetch_streams_all! : Str, Str, List(I64), U64, U64 => Try(U64, _)
+    fetch_streams_all! = |path, token, ids, acc, total|
         match ids {
-            [] => Ok(acc)
+            [] => {
+                # close the bar before sync's stdout summary prints, or the summary lands
+                # on the same terminal row as the last frame
+                _ = if total > 0 { Output.narrate_done!({})? } else { {} }
+                Ok(acc)
+            }
+
             [id, .. as rest] => {
                 id_str = (id).to_str()
                 uri = "${api_base!({})}/api/v3/activities/${id_str}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
                 resp = send_bearer!(uri, token)?
                 if Response.status(resp) == 429 {
                     # rate limited — stop gracefully, next sync continues the backfill
+                    _ = if total > 0 { Output.narrate_done!({})? } else { {} }
                     Stdout.line!("rate limited by Strava — stopping streams backfill for now (will resume next sync)")?
                     Ok(acc)
                 } else if Response.status(resp) >= 300 and Response.status(resp) != 404 {
                     Err(HttpStatus(Response.status(resp), Str.from_utf8(Response.body(resp)).ok_or("<non-utf8 body>")))
                 } else {
+                    # narrate on the id just RETIRED, counting attempts rather than stores:
+                    # a 404 or non-utf8 body is progress through the queue too, so counting
+                    # only stored rows would stall the bar on a run full of skips.
+                    done = total - List.len(rest)
+                    _ = if total > 0 { Output.narrate!("fetching streams", done, total)? } else { {} }
                     # 404/2xx/non-utf8 policy lives in store_stream_response! (shared with backfill)
                     match store_stream_response!(path, id, resp)? {
-                        Stored => fetch_streams_all!(path, token, rest, acc + 1)
-                        SkippedNonUtf8 => fetch_streams_all!(path, token, rest, acc)
+                        Stored => fetch_streams_all!(path, token, rest, acc + 1, total)
+                        SkippedNonUtf8 => fetch_streams_all!(path, token, rest, acc, total)
 
                     }
                 }
@@ -553,6 +567,10 @@ Strava :: [].{
         upsert_all!(path, stamp, acts)?
         got = List.len(acts)
         total = acc + got
+        # a plain line per page, not a bar: Strava's activity list is paged and its length
+        # is unknowable until the short page arrives, so any denominator here would be
+        # invented. Pages are few (200 per page), so the lines stay countable.
+        Output.say!("fetched activities page ${(page).to_str()} — ${(total).to_str()} so far")?
         if got < per_page
             Ok(total)
         else

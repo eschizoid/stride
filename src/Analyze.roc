@@ -17,7 +17,14 @@ Analyze :: [].{
             Err(MissingConfig) => Output.missing_config!({})
             Err(other) => Err(other)
             Ok(zb) => {
-                res = converge_metrics!(path, zb, 1000, { computed: 0, stream_errors: 0 })?
+                # the denominator is read ONCE up front: this is the number whose absence
+                # made a healthy 72s rebuild look hung, and got it killed mid-transaction
+                goal = pending_metrics_count!(path, zb)?
+                res = converge_metrics!(path, zb, 1000, { computed: 0, stream_errors: 0 }, goal)?
+                # close the bar's line before anything else prints, or the next line lands
+                # on the same terminal row as the final frame
+                _ = if goal > 0 { Output.narrate_done!({})? } else { {} }
+                Output.say!("rebuilding daily load…")?
                 rebuild_daily_load!(path)?
                 form =
                     match Sqlite.query!({
@@ -116,8 +123,8 @@ Analyze :: [].{
     # pace threshold invalidated them.
     # `converged: False` means fuel ran out with work remaining — the caller says so
     # instead of presenting a partial recompute as a finished one.
-    converge_metrics! : Str, Metrics.ZoneBounds, U64, { computed : U64, stream_errors : U64 } => Try({ computed : U64, stream_errors : U64, converged : Bool }, _)
-    converge_metrics! = |path, zb, fuel, acc|
+    converge_metrics! : Str, Metrics.ZoneBounds, U64, { computed : U64, stream_errors : U64 }, U64 => Try({ computed : U64, stream_errors : U64, converged : Bool }, _)
+    converge_metrics! = |path, zb, fuel, acc, goal|
         if fuel == 0 {
             Ok({ computed: acc.computed, stream_errors: acc.stream_errors, converged: False })
         } else {
@@ -126,7 +133,14 @@ Analyze :: [].{
             # rows, so taking only its stream_errors would erase unreadable-stream warnings
             # raised in earlier passes and hide them from the report / JSON.
             total = { computed: acc.computed + r.computed, stream_errors: acc.stream_errors + r.stream_errors }
-            if r.computed == 0 { Ok({ computed: total.computed, stream_errors: total.stream_errors, converged: True }) } else converge_metrics!(path, zb, fuel - 1, total)
+            # narrate AFTER the batch lands, so the number on screen is work actually done
+            # rather than work announced. A run with nothing to score says nothing.
+            # ...and a pass that scored NOTHING reports nothing: the final converged pass
+            # computes 0 rows, so narrating it would redraw an identical frame (invisible
+            # under `\r`, a duplicated line in machine mode). The last frame drawn is
+            # already the finished state.
+            _ = if goal > 0 and r.computed > 0 { Output.narrate!("rescoring", total.computed, goal)? } else { {} }
+            if r.computed == 0 { Ok({ computed: total.computed, stream_errors: total.stream_errors, converged: True }) } else converge_metrics!(path, zb, fuel - 1, total, goal)
         }
 
     compute_missing_metrics! : Str, Metrics.ZoneBounds => Try({ computed : U64, stream_errors : U64 }, _)
@@ -156,11 +170,7 @@ Analyze :: [].{
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\LEFT JOIN ratings r ON r.activity_id = a.id
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
-                \\WHERE m.activity_id IS NULL
-                \\      OR CAST(COALESCE(m.ftp_used, 0) AS INTEGER) <> CAST(ROUND(${period_ftp_sql}) AS INTEGER)
-                \\      OR CAST(ROUND(COALESCE(m.threshold_pace_used, 0) * 1000) AS INTEGER) <> CAST(ROUND((${period_threshold_sql}) * 1000) AS INTEGER)
-                \\      OR COALESCE(m.zones_used, '') <> (${zones_case})
-                \\      OR COALESCE(m.metrics_rev, 0) <> :rev
+                \\${pending_where(zones_case)}
                 \\ORDER BY a.start_local, a.id LIMIT 64
             ,
             bindings: [
@@ -264,6 +274,40 @@ Analyze :: [].{
         \\            AND date(b3.start_local) <= date((SELECT MIN(b4.start_local) FROM activities b4
         \\                                              WHERE b4.sport_type = a.sport_type), '+60 days')), 0),
         \\  0)
+
+    # The "needs rescoring" predicate, shared by the batch SELECT and the COUNT that
+    # gives the progress bar its denominator. ONE definition on purpose: two copies of
+    # this would drift, and a denominator computed from a different predicate than the
+    # work is a bar that lies. Only `a` and `m` are referenced, so a caller needs just
+    # those two tables joined.
+    pending_where : Str -> Str
+    pending_where = |zones_case|
+        \\WHERE m.activity_id IS NULL
+        \\      OR CAST(COALESCE(m.ftp_used, 0) AS INTEGER) <> CAST(ROUND(${period_ftp_sql}) AS INTEGER)
+        \\      OR CAST(ROUND(COALESCE(m.threshold_pace_used, 0) * 1000) AS INTEGER) <> CAST(ROUND((${period_threshold_sql}) * 1000) AS INTEGER)
+        \\      OR COALESCE(m.zones_used, '') <> (${zones_case})
+        \\      OR COALESCE(m.metrics_rev, 0) <> :rev
+
+    # how many rows the run has left to score. Read ONCE before the passes so the bar has
+    # a stable denominator; passes can re-invalidate rows, so the running count may exceed
+    # it — Render.progress_bar clamps rather than overfilling.
+    pending_metrics_count! : Str, Metrics.ZoneBounds => Try(U64, _)
+    pending_metrics_count! = |path, zb| {
+        cfg = load_config!(path)?
+        zone_sigs = sport_zone_sigs!(path, cfg, zb)?
+        zones_case = zones_case_from_sigs(zone_sigs, zb)
+        n = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT COUNT(*) AS n FROM activities a
+                \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
+                \\${pending_where(zones_case)}
+            ,
+            bindings: [{ name: ":rev", value: Integer(metrics_rev) }],
+            row: Sqlite.i64("n"),
+        })?
+        Ok(if n < 0 0 else (n).to_u64_wrap())
+    }
     # ── per-sport HR zones ───────────────────────────────────────────────
     # HR zones default to one global set (hr_z*_max) but can be overridden per sport
     # (hr_z*_max_<sport>) — a rowing Z2 ceiling need not equal a running one. The whole

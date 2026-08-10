@@ -147,6 +147,7 @@ run_all! = || {
     b_cred_safety!(ctx)?
     b_seed_analyze!(ctx)?
     b_pz!(ctx)?
+    b_narration!(ctx)?
     b_invalidation!(ctx)?
     b_plan!(ctx)?
     b_activities!(ctx)?
@@ -357,6 +358,43 @@ b_seed_analyze! = |ctx| {
     check_near!("derived FTP ~190 (best-20min 200 x 0.95)", sfloat(strjq!(ctx, ["summary"], ".data.ftp.estimated_ftp_w")), 190.0, 1.0)?
     check!("fitness_ctl > 0", sfloat(strjq!(ctx, ["summary"], ".data.fitness_ctl")) > 0.0)?
     check!("fatigue_atl > 0", sfloat(strjq!(ctx, ["summary"], ".data.fatigue_atl")) > 0.0)?
+    Ok({})
+}
+
+# ── ADR 0007: analyze narrates progress on STDERR, and stdout stays byte-identical.
+# Both streams are captured SEPARATELY here (`2>&1 >/dev/null` swaps them: stderr goes
+# to the pipe, stdout to /dev/null) — the point of the ADR is that these two never mix.
+b_narration! : Ctx => Try({}, _)
+b_narration! = |ctx| {
+    # Each capture gets its OWN forced invalidation, and each mode is run ONCE with both
+    # streams saved to files. The first draft re-ran analyze per assertion, which quietly
+    # broke them: the first run rescored everything, so every later run had nothing
+    # pending and narrated nothing — making "machine mode emits no carriage returns" pass
+    # for the wrong reason. One run, one capture, several assertions.
+    ej = "${ctx.home}/narr-json.err"
+    eh = "${ctx.home}/narr-human.err"
+    oj = "${ctx.home}/narr-json.out"
+    _ = sql!(ctx.db, "UPDATE activity_metrics SET metrics_rev = 0;")
+    _ = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' analyze 2>'${ej}' >'${oj}'")
+    narr_j = sh!("cat '${ej}'")
+    check!("analyze narrates rescoring progress on stderr", Str.contains(narr_j, "rescoring"))?
+    check!("analyze narrates the daily_load rebuild", Str.contains(narr_j, "rebuilding daily load"))?
+    # a carriage return is garbage in a CI log, so machine mode must never emit one.
+    # Counted with `tr -cd` rather than matched in Roc, which has no \r literal.
+    crs_j = Str.trim(sh!("tr -cd '\\r' < '${ej}' | wc -c | tr -d ' '"))
+    check!("machine-mode narration has no carriage returns", crs_j == "0")?
+    # ...while human mode DOES redraw in place, and draws the bar with the table glyph
+    _ = sql!(ctx.db, "UPDATE activity_metrics SET metrics_rev = 0;")
+    _ = sh!("HOME='${ctx.home}' STRIDE_FORMAT=human '${ctx.bin}' analyze 2>'${eh}' >/dev/null")
+    narr_h = sh!("cat '${eh}'")
+    check!("human narration draws the bar", Str.contains(narr_h, "█") or Str.contains(narr_h, "░"))?
+    crs_h = Str.trim(sh!("tr -cd '\\r' < '${eh}' | wc -c | tr -d ' '"))
+    check!("human narration redraws in place", crs_h != "0")?
+    # the contract that matters: narration NEVER reaches stdout, so machine consumers and
+    # golden fixtures are untouched. stdout must still be exactly the envelope — asserted
+    # on the SAME run whose stderr carried the narration above.
+    out_only = Str.trim(sh!("cat '${oj}'"))
+    check!("stdout carries the envelope and nothing else", Str.starts_with(out_only, "{\"schema_version\"") and !(Str.contains(out_only, "rescoring")))?
     Ok({})
 }
 
