@@ -362,8 +362,9 @@ b_seed_analyze! = |ctx| {
 }
 
 # ── ADR 0007: analyze narrates progress on STDERR, and stdout stays byte-identical.
-# Both streams are captured SEPARATELY here (`2>&1 >/dev/null` swaps them: stderr goes
-# to the pipe, stdout to /dev/null) — the point of the ADR is that these two never mix.
+# Both streams are captured SEPARATELY here — each run redirects stderr and stdout to
+# its OWN file (`2>'…err' >'…out'`) — because the point of the ADR is that the two
+# never mix, and asserting that needs them held apart rather than interleaved.
 b_narration! : Ctx => Try({}, _)
 b_narration! = |ctx| {
     # Each capture gets its OWN forced invalidation, and each mode is run ONCE with both

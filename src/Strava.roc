@@ -575,7 +575,7 @@ Strava :: [].{
         total = acc + got
         # a plain line per page, not a bar: Strava's activity list is paged and its length
         # is unknowable until the short page arrives, so any denominator here would be
-        # invented. Pages are few (200 per page), so the lines stay countable.
+        # invented. Pages are few at `per_page` (100) a page, so the lines stay countable.
         # Gated because `backfill!` shares this function and ALREADY reports its own
         # progress on stdout — narrating here too would duplicate it in a second stream.
         _ = if narrate { Output.say!("fetched activities page ${(page).to_str()} — ${(total).to_str()} so far")? } else { {} }
