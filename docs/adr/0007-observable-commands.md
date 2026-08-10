@@ -1,6 +1,6 @@
 # ADR 0007 — observable long commands: progress narration on stderr
 
-Status: accepted · 2026-08-09 — blessed by Mariano; implemented by #91
+Status: accepted · 2026-08-09 — Mariano approved it; implemented by #91
 
 ## Context
 
