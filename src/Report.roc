@@ -623,9 +623,27 @@ Report :: [].{
             row: Sqlite.i64("n"),
         })?
 
+        # #93 ramp: anchored to the SAME day the rest of summary reports as_of, so the
+        # numbers cannot disagree about which day "now" is. 30 days of series covers the
+        # 28-day lookback with room for gaps.
+        anchor_day = Metrics.date_str_to_days(latest.day).ok_or(0)
+        ramp_series = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "SELECT day AS day, CAST(ctl AS REAL) AS ctl FROM daily_load WHERE day >= :cutoff ORDER BY day DESC",
+            bindings: [{ name: ":cutoff", value: String(Metrics.days_to_date_str(anchor_day - 30)) }],
+            rows: |cols| |stmt| {
+                d = Sqlite.str("day")(cols)(stmt)?
+                c = Sqlite.f64("ctl")(cols)(stmt)?
+                Ok({ day: Metrics.date_str_to_days(d).ok_or(0), ctl: c })
+            },
+        })?
+        ramps = Metrics.ramp_rates(ramp_series, anchor_day)
+
         Ok({
             as_of: latest.day,
             fitness_ctl: latest.ctl,
+            ramp_7d: ramps.ramp_7d,
+            ramp_28d_avg: ramps.ramp_28d_avg,
             fatigue_atl: latest.atl,
             form_tsb: latest.tsb,
             load_days: load_days,

@@ -350,6 +350,13 @@ b_seed_analyze! = |ctx| {
     # -> FTP 0), pass 2 recomputes the ride once its best_20min_w resolves FTP to 190: 2+1=3
     check!("analyze computes 3 (derived-FTP convergence)", strjq!(ctx, ["analyze"], ".data.computed") == "3")?
     check!("summary as_of is today", strjq!(ctx, ["summary"], ".data.as_of") == ctx.today)?
+    # #93: ramp carries BOTH fields, and a short history reports an honest 0 rather than
+    # today's whole CTL — which is what treating "no data 7 days back" as a CTL of 0 would
+    # produce. The fixture has only a couple of days, so 0 is the correct answer here.
+    check!("summary carries ramp_7d", strjq!(ctx, ["summary"], ".data | has(\"ramp_7d\")") == "true")?
+    check!("summary carries ramp_28d_avg", strjq!(ctx, ["summary"], ".data | has(\"ramp_28d_avg\")") == "true")?
+    check_near!("short history ramps to an honest 0", sfloat(strjq!(ctx, ["summary"], ".data.ramp_7d")), 0.0, 0.001)?
+    check!("ctl_warming_up agrees it is short", strjq!(ctx, ["summary"], ".data.ctl_warming_up") == "true")?
     # power ride NP 200 @ derived FTP 190 => TSS ~110.8; HR row ~55 => ~166
     check_near!("28d tss ~166 (111 power + 55 hr)", sfloat(strjq!(ctx, ["summary"], ".data.last_28d.tss")), 165.8, 1.0)?
     mp = sfloat(strjq!(ctx, ["summary"], ".data.last_28d.measured_pct"))

@@ -136,6 +136,11 @@ Render :: [].{
         if n >= w s else Str.concat(s, Str.repeat(" ", w - n))
     }
 
+    # a delta that keeps its sign: "+5" reads as a build, "-3" as an unload. Shared by the
+    # compare table and the summary ramp line so the two spell a delta the same way.
+    signed : F64 -> Str
+    signed = |x| if x >= 0.0 "+${fmt0(x)}" else fmt0(x)
+
     pad_left : Str, U64 -> Str
     pad_left = |s, w| {
         n = display_width(s)
@@ -561,6 +566,10 @@ Render :: [].{
                     "",
                     "  fitness (CTL): ${fmt0(s.fitness_ctl)}   fatigue (ATL): ${fmt0(s.fatigue_atl)}   form (TSB): ${fmt0(s.form_tsb)}",
                     "  → ${Metrics.form_label(s.form_tsb)}",
+                    # Numbers, no verdict: the usual sustainable band is the coach's
+                    # knowledge, not the engine's. Signed, because a taper reads negative
+                    # and clamping that to 0 would hide a deliberate unload.
+                    "  ramp: ${signed(s.ramp_7d)}/wk · ${signed(s.ramp_28d_avg)}/wk over 28d",
                     # CTL starts at zero, so a short history reads LOW rather than unknown and the
                     # form verdict above is drawn from absolute bands that do not apply yet. Say so
                     # here, not only in the JSON — a human reading a confident-looking number has no
@@ -599,7 +608,6 @@ Render :: [].{
         c = p.current
         pr = p.prior
         lab = p.window_label
-        signed = |x| if x >= 0.0 "+${fmt0(x)}" else fmt0(x)
         df = |cur, prev| signed(cur - prev)
         di = |cur, prev| signed(cur.to_f64() - prev.to_f64())
         table = render_table(
@@ -805,6 +813,8 @@ expect {
         fitness_ctl: 20.0,
         fatigue_atl: 10.0,
         form_tsb: 10.0,
+        ramp_7d: 4.0,
+        ramp_28d_avg: -1.0,
         load_days: 400,
         ctl_warming_up: False,
         last_28d: { tss: 100.0, z1_s: 600.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 100.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 4.I64, intensity_streams: 4.I64 },
@@ -816,12 +826,16 @@ expect {
     }
     out = Render.summary_screen(s)
     Str.contains(out, "stride report") and Str.contains(out, "zone gap") and Str.contains(out, "none on record")
+        # a build and an unload each keep their sign in the same line
+        and Str.contains(out, "+4/wk")
+        and Str.contains(out, "-1/wk")
 }
 
 # Missing detailed data is unavailable, never a false zero or a bogus Z5 warning.
 expect {
     s = {
         as_of: "2025-01-01", fitness_ctl: 20.0, fatigue_atl: 10.0, form_tsb: 10.0,
+        ramp_7d: 0.0, ramp_28d_avg: 0.0,
         load_days: 400, ctl_warming_up: False,
         last_28d: { tss: 100.0, z1_s: 0.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 0.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 0.I64, intensity_streams: 0.I64 },
         last_7d: { tss: 50.0, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 0.I64, intensity_streams: 0.I64 },
