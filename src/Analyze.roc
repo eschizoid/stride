@@ -20,10 +20,14 @@ Analyze :: [].{
                 # the denominator is read ONCE up front: this is the number whose absence
                 # made a healthy 72s rebuild look hung, and got it killed mid-transaction
                 goal = pending_metrics_count!(path, zb)?
-                res = converge_metrics!(path, zb, 1000, { computed: 0, stream_errors: 0 }, goal)?
-                # close the bar's line before anything else prints, or the next line lands
-                # on the same terminal row as the final frame
+                # Close the bar's line before anything else prints, or the next line lands
+                # on the same terminal row as the final frame. The result is CAPTURED and
+                # the close runs before it is unwrapped, so an error propagating out of the
+                # passes closes the line too — otherwise the error message itself would be
+                # the thing printed on top of a half-drawn frame.
+                passes = converge_metrics!(path, zb, 1000, { computed: 0, stream_errors: 0 }, goal)
                 _ = if goal > 0 { Output.narrate_done!({})? } else { {} }
+                res = passes?
                 Output.say!("rebuilding daily load…")?
                 rebuild_daily_load!(path)?
                 form =

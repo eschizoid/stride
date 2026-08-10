@@ -324,8 +324,20 @@ Strava :: [].{
             rows: Sqlite.i64("id"),
         })?
         # the stream backfill is the long half of a sync and its total IS knowable — the
-        # id list is already in hand — so this half gets a real bar rather than a spinner
-        fetch_streams_all!(path, token, ids, 0, List.len(ids))
+        # id list is already in hand — so this half gets a real bar rather than a spinner.
+        #
+        # The completion and rate-limit paths close the bar themselves, because each prints
+        # something straight after. Every OTHER way out is an error propagating from the
+        # HTTP call, the status check or the store — none of which can close it on the way
+        # past — so the error case is closed here, once, instead of at each `?`.
+        res = fetch_streams_all!(path, token, ids, 0, List.len(ids))
+        match res {
+            Ok(n) => Ok(n)
+            Err(e) => {
+                _ = if !(List.is_empty(ids)) { Output.narrate_done!({})? } else { {} }
+                Err(e)
+            }
+        }
     }
     # count activities still lacking streams (so sync can report incomplete backfill
     # honestly instead of letting the 60/run cap look like completion)
