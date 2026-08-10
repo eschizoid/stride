@@ -870,6 +870,26 @@ b_compare! = |ctx| {
 b_doctor! : Ctx => Try({}, _)
 b_doctor! = |ctx| {
     check!("doctor activities > 0", sfloat(strjq!(ctx, ["doctor"], ".data.activities")) > 0.0)?
+    # #92 watchdog. Every assertion selects its OWN field with jq rather than matching the
+    # whole report, so a number appearing elsewhere cannot satisfy it by accident.
+    # Seeded dated AFTER the fixture activities so they are genuinely the most recent —
+    # the streak is a newest-first walk, and rows seeded in the past would prove nothing.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation) VALUES (9401,'strapless ride 1','Ride','2099-03-01T10:00:00Z',3600,30000,0);")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation) VALUES (9402,'strapless ride 2','Ride','2099-03-02T10:00:00Z',3600,30000,0);")
+    check!("two strapless rides make a streak of 2", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "2")?
+    # a lifting session with no strap sits between them and must NOT reset the streak —
+    # strength routinely runs strapless, and counting it would hide the endurance gap
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation) VALUES (9403,'lift','WeightTraining','2099-03-03T10:00:00Z',2700,0,0);")
+    check!("a strapless lift neither counts nor resets the streak", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "2")?
+    # ...and a strapped ride on top resets it to 0
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9404,'strapped ride','Ride','2099-03-04T10:00:00Z',3600,30000,0,140);")
+    check!("a strapped ride resets the streak", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "0")?
+    # device_watts = 0 is Strava flagging ESTIMATED watts; dated today so it lands in 30d
+    est_before = sfloat(strjq!(ctx, ["doctor"], ".data.estimated_power_count_30d"))
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_watts,device_watts) VALUES (9405,'estimated watts','Ride','${ctx.today}T09:00:00Z',3600,30000,0,180,0);")
+    est_after = sfloat(strjq!(ctx, ["doctor"], ".data.estimated_power_count_30d"))
+    check_near!("an estimated-power ride is counted in 30d", est_after, est_before + 1.0, 0.001)?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (9401,9402,9403,9404,9405);")
     check!("doctor rated 1", strjq!(ctx, ["doctor"], ".data.rated") == "1")?
     check!("doctor strength_unrated 0", strjq!(ctx, ["doctor"], ".data.strength_unrated") == "0")?
     check!("doctor scored_by session_rpe 1", strjq!(ctx, ["doctor"], "[.data.scored_by[] | select(.model==\"session_rpe\") | .n] | add // 0") == "1")?

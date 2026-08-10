@@ -443,6 +443,29 @@ Metrics :: [].{
         if List.contains(strengthish, sport_type) StrengthLike else Endurance
     }
 
+    # How many of the most recent ENDURANCE sessions in a row recorded no usable HR.
+    # `rows` must be newest-first; the walk stops at the first session that did record it.
+    #
+    # Strength-like sports are FILTERED OUT rather than treated as breaks in the streak.
+    # They routinely run without a strap, so counting them would inflate the number and
+    # letting them stop the walk would hide the thing worth seeing: two strapless rides in
+    # a row went unnoticed for two days, and a lifting session in between must not reset
+    # that. This reports a count and nothing else — what it means is the coach's call.
+    hr_missing_streak : List({ sport : Str, has_hr : Bool }) -> U64
+    hr_missing_streak = |rows|
+        List.fold(
+            List.keep_if(rows, |r| sport_class(r.sport) == Endurance),
+            { n: 0, stopped: False },
+            |acc, r|
+                if acc.stopped {
+                    acc
+                } else if r.has_hr {
+                    { n: acc.n, stopped: True }
+                } else {
+                    { n: acc.n + 1, stopped: False }
+                },
+        ).n
+
     # ── session-RPE load (Foster) ───────────────────────────────────────
     # hours × RPE × 10, so one hour at RPE 10 = 100 — TSS-commensurate BY
     # CONSTRUCTION. Raw Foster units (minutes × RPE) would be ~6x too large and
@@ -1948,6 +1971,20 @@ expect {
 
 # leap-year boundary roundtrip
 expect Metrics.days_to_date_str(Metrics.days_from_civil(2024, 2, 29)) == "2024-02-29"
+
+# ── hr_missing_streak: newest-first walk, endurance only ──
+expect Metrics.hr_missing_streak([]) == 0
+# the motivating incident: two strapless rides in a row
+expect Metrics.hr_missing_streak([{ sport: "Ride", has_hr: False }, { sport: "Ride", has_hr: False }, { sport: "Ride", has_hr: True }]) == 2
+# the most recent session recorded HR, so there is no streak at all
+expect Metrics.hr_missing_streak([{ sport: "Ride", has_hr: True }, { sport: "Ride", has_hr: False }]) == 0
+# a strength session between two strapless rides neither counts nor resets: lifting
+# without a strap is normal, and letting it stop the walk would hide the real gap
+expect Metrics.hr_missing_streak([{ sport: "Ride", has_hr: False }, { sport: "WeightTraining", has_hr: False }, { sport: "Ride", has_hr: False }, { sport: "Ride", has_hr: True }]) == 2
+# ...and a strength session WITH hr still does not stop it, for the same reason
+expect Metrics.hr_missing_streak([{ sport: "Ride", has_hr: False }, { sport: "Yoga", has_hr: True }, { sport: "Ride", has_hr: False }]) == 2
+# nothing but strength sessions: no endurance history to judge, so no streak
+expect Metrics.hr_missing_streak([{ sport: "WeightTraining", has_hr: False }, { sport: "Yoga", has_hr: False }]) == 0
 
 # a storable date must be canonical, not merely parseable
 expect Metrics.is_canonical_date("2026-08-09")

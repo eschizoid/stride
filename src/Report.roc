@@ -963,6 +963,41 @@ Report :: [].{
         })?
         strength_unrated = List.len(List.keep_if(sports, |r| Metrics.sport_class(r.sport) == StrengthLike and r.rated == 0))
         rated_total = List.len(List.keep_if(sports, |r| r.rated == 1))
+        # ── data-quality watchdog (#92): streaks and counts the engine already knows ──
+        # Anchored to the LOCAL day like every other window, not SQLite's `now`, so a user
+        # west of UTC does not get a window that ends tomorrow.
+        cutoff30 = Metrics.days_to_date_str(Db.local_today_days!(path) - 30)
+        # newest-first, and bounded: a streak only needs enough rows to find the session
+        # that DID record HR. 200 is far past any plausible strapless run.
+        recent_hr = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT COALESCE(sport_type, '') AS sport,
+                \\       CASE WHEN COALESCE(avg_hr, 0) > 0 THEN 1 ELSE 0 END AS has_hr
+                \\FROM activities ORDER BY start_local DESC, id DESC LIMIT 200
+            ,
+            bindings: [],
+            rows: |cols| |stmt| {
+                sport = Sqlite.str("sport")(cols)(stmt)?
+                has_hr = Sqlite.i64("has_hr")(cols)(stmt)?
+                Ok({ sport, has_hr: has_hr == 1 })
+            },
+        })?
+        hr_missing_streak = Metrics.hr_missing_streak(recent_hr)
+        # device_watts = 0 is Strava saying the watts were ESTIMATED, not measured. NULL
+        # (pre-flag syncs, CSV imports) coalesces to 1: unknown is not evidence of
+        # estimation, matching how the scoring ladder reads the same column.
+        est_power_30d = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT COUNT(*) AS n FROM activities
+                \\WHERE start_local >= :cutoff
+                \\  AND COALESCE(device_watts, 1) = 0
+                \\  AND COALESCE(avg_watts, weighted_avg_watts, 0) > 0
+            ,
+            bindings: [{ name: ":cutoff", value: String(cutoff30) }],
+            row: Sqlite.i64("n"),
+        })?
         jmode = Db.journal_mode!(path)?
         mode = Db.resolve_time_mode!(path)
         time_desc =
@@ -1005,6 +1040,9 @@ Report :: [].{
             # memory it needs, so report what is actually in force instead of assuming.
             journal_mode: jmode,
             concurrent_reads_ok: jmode == "wal",
+            # numbers only, no advice — the coach reads them and decides (house rule)
+            hr_missing_streak: hr_missing_streak.to_i64_wrap(),
+            estimated_power_count_30d: est_power_30d,
         }
         Output.out!(payload, |p| {
             model_lines = List.map(p.scored_by, |mrow| "    ${mrow.model}: ${(mrow.n).to_str()}")
@@ -1036,6 +1074,8 @@ Report :: [].{
                         "    low (relative effort): ${(p.conf_low).to_str()}",
                         "    none (unscored): ${(p.conf_none).to_str()}",
                         "",
+                        "  hr-less endurance sessions in a row: ${(p.hr_missing_streak).to_str()}",
+                        "  rides on estimated power (30d): ${(p.estimated_power_count_30d).to_str()}",
                         "  zero load (no usable data): ${(p.zero_load).to_str()}",
                         "  not yet analyzed: ${(p.unanalyzed).to_str()}",
                         "  pending stream backfill: ${(p.pending_streams).to_str()}",
