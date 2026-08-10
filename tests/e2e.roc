@@ -392,7 +392,17 @@ b_narration! = |ctx| {
     # golden fixtures are untouched. stdout must still be exactly the envelope — asserted
     # on the SAME run whose stderr carried the narration above.
     out_only = Str.trim(sh!("cat '${oj}'"))
-    check!("stdout carries the envelope and nothing else", Str.starts_with(out_only, "{\"schema_version\"") and !(Str.contains(out_only, "rescoring")))?
+    # "nothing else" has to mean it: starts_with + "no rescoring" would still accept any
+    # amount of text appended AFTER the envelope. Pin both ends and the line count, so a
+    # stray line anywhere in stdout fails rather than sneaking past on a substring miss.
+    check!(
+        "stdout carries the envelope and nothing else",
+        Str.starts_with(out_only, "{\"schema_version\"")
+        and Str.ends_with(out_only, "}")
+        and List.len(Str.split_on(out_only, "\n")) == 1
+        and !(Str.contains(out_only, "rescoring"))
+        and !(Str.contains(out_only, "rebuilding")),
+    )?
     Ok({})
 }
 
