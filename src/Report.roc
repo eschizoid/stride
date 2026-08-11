@@ -473,10 +473,9 @@ Report :: [].{
                     # day with two activities contributes two. The walk and the query have
                     # to span the same days, or the table shows one the query never
                     # returned (always blank) or hides one it did.
-                    # Week boundaries get a `···` divider — the same glyph `progress` uses
-                    # for a break in a series, so the idiom is already in the legend
-                    # vocabulary. The table runs newest-first, so the boundary falls just
-                    # ABOVE each Sunday (never above the first row, which needs no divider).
+                    # Week boundaries get a full-width rule. The table runs newest-first, so
+                    # the boundary falls just ABOVE each Sunday — never above the first row,
+                    # which needs no divider.
                     recent_headers = ["date", "sport", "name", "time", "load", "hard"]
                     # A full-width horizontal rule, drawn by render_table in the table's own
                     # border glyphs so it lines up with the header rule. It must not be a

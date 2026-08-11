@@ -141,9 +141,18 @@ Render :: [].{
         }
         border = |left, mid, right|
             "${left}${Str.join_with(List.map(widths, |w| Str.repeat("─", w + 2)), mid)}${right}"
-        # walk the ORIGINAL rows so rule positions are preserved, rendering each as either
-        # a data row or the divider
-        body = List.map(rows, |row| if is_rule(row) border("├", "┼", "┤") else render_wrow(wrap_row(row)))
+        # Walk the ORIGINAL rows so rule positions are preserved, but REUSE the already
+        # wrapped `wrs` rather than wrapping every row a second time — wrapping is the
+        # expensive part of rendering. `i` indexes wrs, advancing only on data rows, since
+        # rules were excluded from it. Prepend + reverse, never append in a fold.
+        body = reverse_list(
+            List.fold(rows, { i: 0, out: [] }, |acc, row|
+                if is_rule(row) {
+                    { i: acc.i, out: List.prepend(acc.out, border("├", "┼", "┤")) }
+                } else {
+                    { i: acc.i + 1, out: List.prepend(acc.out, render_wrow(List.get(wrs, acc.i).ok_or([]))) }
+                }).out,
+        )
         all_lines = List.join([
             [border("╭", "┬", "╮"), render_wrow(wh), border("├", "┼", "┤")],
             body,

@@ -973,7 +973,7 @@ b_human! = |ctx| {
     plan_h = stride_human!(ctx.bin, ctx.home, ["plan"])
     check!("human plan bundle", Str.contains(plan_h, "OPEN PLAN"))?
     # the 14-day table is a DATE RANGE: a day with nothing on it is information, and week
-    # boundaries get the same `···` divider progress uses for a break in a series
+    # boundaries are drawn as full-width rules
     check!("days with no activity are shown, not skipped over", Str.contains(plan_h, "(no activity)"))?
     # A full-width RULE in the table's own border glyphs, not dotted cells: `···` reads as
     # data, and `progress` already uses it to mean a GAP in time, so a boundary between two
