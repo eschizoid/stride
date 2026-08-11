@@ -856,7 +856,11 @@ b_import! = |ctx| {
     # which is why the comparison is value-by-value.
     # Rewritten with sed rather than a second CSV helper: adding another top-level function
     # to this file segfaults the compiler (it already sits near the limit noted at the top).
-    _ = sh!("sed -i '' '/^9001,/ s/,55,3600,20100\\.0,/,55,3607,20099.0,/' '${expdir}/activities.csv'")
+    # `sed -i.bak … && rm` rather than `sed -i ''`: the empty-argument form is BSD-only and
+    # fails on GNU sed, so a contributor running `just e2e` on Linux would break. CI runs
+    # macOS, which is exactly how that would have gone unnoticed. No new tool either — the
+    # harness already depends on sed via sh.
+    _ = sh!("sed -i.bak '/^9001,/ s/,55,3600,20100\\.0,/,55,3607,20099.0,/' '${expdir}/activities.csv' && rm -f '${expdir}/activities.csv.bak'")
     _ = stride!(ctx.bin, ctx.home, ["import", expdir])
     check!("an edited row keeps its metrics row until analyze runs", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=9001;")) == "1")?
     check!("analyze rescores the edited row", strjq!(ctx, ["analyze"], ".data.computed") != "0")?
