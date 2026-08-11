@@ -310,36 +310,11 @@ Analyze :: [].{
         \\                                              WHERE b4.sport_type = a.sport_type), '+60 days')), 0),
         \\  0)
 
-    # A signature of the ACTIVITY fields that feed scoring. Stored on the metrics row and
-    # compared on every analyze, exactly like `zones_used` and `ftp_used` — a changed input
-    # makes the stored signature stale, so the row rescores.
-    #
-    # This is why `sync` does NOT delete metrics: it re-lists a rolling 30-day window every
-    # run and cannot cheaply tell an edit from a no-op, so invalidating there wiped a month
-    # of metrics per sync. Comparing stored inputs here costs nothing extra — analyze
-    # already runs this predicate — and it is the same mechanism the other inputs use.
-    #
-    # ONE definition, interpolated into both the write and the comparison: two spellings
-    # would drift and either rescore forever or never.
-    # The activity inputs a metrics row was computed from, compared VALUE BY VALUE — the
-    # same contract as `ftp_used`, which stores the FTP it used rather than a summary of it.
-    #
-    # A hash was tried and rejected: with additive coefficients a +7s duration and a -1m
-    # distance cancel exactly, so a real Strava edit produced an identical signature and
-    # never rescored. That failure is silent, which is the worst kind. Comparing the values
-    # themselves cannot collide and can be read by a human debugging a stale row.
-    #
-    # Integer/real comparisons only — no concatenation. Building a string signature in SQL
-    # aborted the process (str_concat heap corruption, the #32 class), which is why this is
-    # a list of comparisons rather than one composed key.
-    #
-    # `synced_at` is deliberately absent: it changes every sync by design, so including it
-    # would mark every row stale, which is the bug this exists to fix.
-    # Each activity input expressed ONCE. Both the SELECT that stores the value and the
-    # predicate that compares it interpolate the same constant, so the two cannot drift
-    # into rescoring forever (write differs from compare) or never (compare too lax).
-    # Compile-time constants, never user data — the interpolation hazard in AGENTS.md is
-    # about splicing a possibly-EMPTY string, which these never are.
+    # Each activity input that feeds scoring, expressed ONCE as a SQL expression. The
+    # SELECT that stores the value (inputs_select_sql) and the predicate that compares it
+    # (inputs_changed_sql) both interpolate these, so the write and the check cannot drift
+    # apart into rescoring forever or never. Compile-time constants, never user data.
+    # The design rationale lives on inputs_changed_sql below.
     e_mt = "COALESCE(a.moving_time,0)"
     e_dist = "CAST(ROUND(COALESCE(a.distance,0)) AS INTEGER)"
     e_elev = "CAST(ROUND(COALESCE(a.elevation,0)) AS INTEGER)"
@@ -360,16 +335,25 @@ Analyze :: [].{
 
     # The activity inputs a metrics row was computed from, compared VALUE BY VALUE — the
     # same contract as `ftp_used`, which stores the FTP it used rather than a summary of it.
+    # A changed input makes the stored value stale, so the row rescores.
+    #
+    # This is why `sync` does NOT delete metrics: it re-lists a rolling 30-day window every
+    # run and cannot cheaply tell an edit from a no-op, so invalidating there wiped a month
+    # of metrics per sync. Comparing stored inputs here costs nothing extra — analyze
+    # already runs this predicate — and it is the same mechanism the other inputs use.
     #
     # A hash was tried and rejected: with additive coefficients a +7s duration and a -1m
     # distance cancel exactly, so a real Strava edit produced an identical signature and
     # never rescored. That failure is silent, which is the worst kind. Comparing the values
-    # themselves cannot collide and can be read by a human debugging a stale row.
+    # themselves cannot collide, and a human debugging a stale row can read them.
     #
-    # A string signature was tried too and aborted the process (str_concat heap corruption,
-    # the #32 class), which is why this is a list of comparisons rather than one composed
-    # key. `synced_at` is deliberately absent: it changes every sync by design, so including
-    # it would mark every row stale, which is the bug this exists to fix.
+    # A composed string key was also tried, and an abort was blamed on it at the time. That
+    # blame was wrong: SQL string concatenation later ran 3,000 statements clean (#114), so
+    # the abort was bug C (#105) surfacing nearby rather than anything this query did. The
+    # hash collision above is the real reason to compare values, and it is sufficient.
+    #
+    # `synced_at` is deliberately absent: it changes every sync by design, so including it
+    # would mark every row stale, which is the bug this exists to fix.
     inputs_changed_sql =
         \\   COALESCE(m.mt_used,-1) <> ${e_mt}
         \\OR COALESCE(m.dist_used,-1) <> ${e_dist}
@@ -426,13 +410,16 @@ Analyze :: [].{
     # (hr_z*_max_<sport>) — a rowing Z2 ceiling need not equal a running one. The whole
     # config table is read ONCE (query_many cleanly handles 0+ rows) and resolution is
     # then PURE. This deliberately avoids a per-key Sqlite.query! on the many OPTIONAL,
-    # usually-ABSENT per-sport keys: that single-row-with-zero-rows path corrupts the heap
-    # in this basic-cli/compiler combo when hit repeatedly (deterministic SIGABRT in
-    # hosted_sqlite_prepare — see PLAN.md). (The four REQUIRED global hr_z*_max keys are
-    # still read via Db.config_opt! in load_zone_config!, but they're normally present, so
-    # that zero-row path isn't exercised there.) Each sport's zone SIGNATURE is frozen for
-    # the invalidation CASE; per-row scoring re-resolves bounds from the same in-memory
-    # config. No circular dependency like FTP has.
+    # usually-ABSENT per-sport keys: on basic-cli 0.21 that path returns
+    # Err(NoRowsReturned), which would fail the whole command on the first missing
+    # override. (An earlier note here called it a SIGABRT in hosted_sqlite_prepare; that
+    # was the alpha4/0.20 behaviour and no longer reproduces — #114.) The four REQUIRED
+    # global hr_z*_max keys are still read via Db.config_opt! in load_zone_config!, but
+    # they're normally present, so that zero-row path isn't exercised there.
+    #
+    # Each sport's zone SIGNATURE is frozen for the invalidation CASE; per-row scoring
+    # re-resolves bounds from the same in-memory config. No circular dependency like
+    # FTP has.
     load_config! : Str => Try(List((Str, Str)), _)
     load_config! = |path|
         Sqlite.query_many!({
