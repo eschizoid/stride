@@ -191,15 +191,7 @@ Analyze :: [].{
                 \\       COALESCE(a.device_watts, 1) AS dw,
                 \\       CAST(ROUND(${period_ftp_sql}) AS REAL) AS pftp,
                 \\       CAST(ROUND((${period_threshold_sql}) * 1000) AS REAL) / 1000.0 AS pthr,
-                \\       COALESCE(a.moving_time,0) AS s_mt,
-                \\       CAST(ROUND(COALESCE(a.distance,0)) AS INTEGER) AS s_dist,
-                \\       CAST(ROUND(COALESCE(a.elevation,0)) AS INTEGER) AS s_elev,
-                \\       CAST(ROUND(COALESCE(a.avg_watts,0) * 100) AS INTEGER) AS s_aw,
-                \\       CAST(ROUND(COALESCE(a.avg_hr,0) * 100) AS INTEGER) AS s_ahr,
-                \\       CAST(ROUND(COALESCE(a.weighted_avg_watts,0) * 100) AS INTEGER) AS s_waw,
-                \\       CAST(ROUND(COALESCE(a.relative_effort,0)) AS INTEGER) AS s_re,
-                \\       COALESCE(a.device_watts,-1) AS s_dw,
-                \\       (CASE WHEN s.raw_json IS NULL THEN 0 ELSE LENGTH(s.raw_json) END) AS s_slen
+                \\       ${inputs_select_sql}
                 \\FROM activities a
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\LEFT JOIN ratings r ON r.activity_id = a.id
@@ -343,18 +335,53 @@ Analyze :: [].{
     #
     # `synced_at` is deliberately absent: it changes every sync by design, so including it
     # would mark every row stale, which is the bug this exists to fix.
+    # Each activity input expressed ONCE. Both the SELECT that stores the value and the
+    # predicate that compares it interpolate the same constant, so the two cannot drift
+    # into rescoring forever (write differs from compare) or never (compare too lax).
+    # Compile-time constants, never user data — the interpolation hazard in AGENTS.md is
+    # about splicing a possibly-EMPTY string, which these never are.
+    e_mt = "COALESCE(a.moving_time,0)"
+    e_dist = "CAST(ROUND(COALESCE(a.distance,0)) AS INTEGER)"
+    e_elev = "CAST(ROUND(COALESCE(a.elevation,0)) AS INTEGER)"
+    e_aw = "CAST(ROUND(COALESCE(a.avg_watts,0) * 100) AS INTEGER)"
+    e_ahr = "CAST(ROUND(COALESCE(a.avg_hr,0) * 100) AS INTEGER)"
+    e_waw = "CAST(ROUND(COALESCE(a.weighted_avg_watts,0) * 100) AS INTEGER)"
+    e_re = "CAST(ROUND(COALESCE(a.relative_effort,0)) AS INTEGER)"
+    e_dw = "COALESCE(a.device_watts,-1)"
+    e_sport = "COALESCE(a.sport_type,'')"
+    e_start = "COALESCE(a.start_local,'')"
+    e_slen = "(CASE WHEN s.raw_json IS NULL THEN 0 ELSE LENGTH(s.raw_json) END)"
+
+    # The columns the SELECT adds so a scored row can record what it was scored from.
+    inputs_select_sql =
+        \\${e_mt} AS s_mt, ${e_dist} AS s_dist, ${e_elev} AS s_elev,
+        \\${e_aw} AS s_aw, ${e_ahr} AS s_ahr, ${e_waw} AS s_waw,
+        \\${e_re} AS s_re, ${e_dw} AS s_dw, ${e_slen} AS s_slen
+
+    # The activity inputs a metrics row was computed from, compared VALUE BY VALUE — the
+    # same contract as `ftp_used`, which stores the FTP it used rather than a summary of it.
+    #
+    # A hash was tried and rejected: with additive coefficients a +7s duration and a -1m
+    # distance cancel exactly, so a real Strava edit produced an identical signature and
+    # never rescored. That failure is silent, which is the worst kind. Comparing the values
+    # themselves cannot collide and can be read by a human debugging a stale row.
+    #
+    # A string signature was tried too and aborted the process (str_concat heap corruption,
+    # the #32 class), which is why this is a list of comparisons rather than one composed
+    # key. `synced_at` is deliberately absent: it changes every sync by design, so including
+    # it would mark every row stale, which is the bug this exists to fix.
     inputs_changed_sql =
-        \\   COALESCE(m.mt_used,-1) <> COALESCE(a.moving_time,0)
-        \\OR COALESCE(m.dist_used,-1) <> CAST(ROUND(COALESCE(a.distance,0)) AS INTEGER)
-        \\OR COALESCE(m.elev_used,-1) <> CAST(ROUND(COALESCE(a.elevation,0)) AS INTEGER)
-        \\OR COALESCE(m.aw_used,-1) <> CAST(ROUND(COALESCE(a.avg_watts,0) * 100) AS INTEGER)
-        \\OR COALESCE(m.ahr_used,-1) <> CAST(ROUND(COALESCE(a.avg_hr,0) * 100) AS INTEGER)
-        \\OR COALESCE(m.waw_used,-1) <> CAST(ROUND(COALESCE(a.weighted_avg_watts,0) * 100) AS INTEGER)
-        \\OR COALESCE(m.re_used,-1) <> CAST(ROUND(COALESCE(a.relative_effort,0)) AS INTEGER)
-        \\OR COALESCE(m.dw_used,-2) <> COALESCE(a.device_watts,-1)
-        \\OR COALESCE(m.sport_used,'~') <> COALESCE(a.sport_type,'')
-        \\OR COALESCE(m.start_used,'~') <> COALESCE(a.start_local,'')
-        \\OR COALESCE(m.stream_len_used,-1) <> (CASE WHEN s.raw_json IS NULL THEN 0 ELSE LENGTH(s.raw_json) END)
+        \\   COALESCE(m.mt_used,-1) <> ${e_mt}
+        \\OR COALESCE(m.dist_used,-1) <> ${e_dist}
+        \\OR COALESCE(m.elev_used,-1) <> ${e_elev}
+        \\OR COALESCE(m.aw_used,-1) <> ${e_aw}
+        \\OR COALESCE(m.ahr_used,-1) <> ${e_ahr}
+        \\OR COALESCE(m.waw_used,-1) <> ${e_waw}
+        \\OR COALESCE(m.re_used,-1) <> ${e_re}
+        \\OR COALESCE(m.dw_used,-2) <> ${e_dw}
+        \\OR COALESCE(m.sport_used,'~') <> ${e_sport}
+        \\OR COALESCE(m.start_used,'~') <> ${e_start}
+        \\OR COALESCE(m.stream_len_used,-1) <> ${e_slen}
 
     # The "needs rescoring" predicate, shared by the batch SELECT and the COUNT that
     # gives the progress bar its denominator. ONE definition on purpose: two copies of
