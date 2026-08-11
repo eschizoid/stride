@@ -359,8 +359,11 @@ Analyze :: [].{
     # The "needs rescoring" predicate, shared by the batch SELECT and the COUNT that
     # gives the progress bar its denominator. ONE definition on purpose: two copies of
     # this would drift, and a denominator computed from a different predicate than the
-    # work is a bar that lies. Only `a` and `m` are referenced, so a caller needs just
-    # those two tables joined.
+    # work is a bar that lies.
+    #
+    # CALLERS MUST JOIN `activities a`, `activity_metrics m` AND `streams s` — the input
+    # comparison reads `s.raw_json` to notice a stream arriving, so omitting that join is
+    # a SQL error rather than a silently weaker check.
     pending_where : Str -> Str
     pending_where = |zones_case|
         \\WHERE m.activity_id IS NULL

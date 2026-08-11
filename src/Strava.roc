@@ -296,7 +296,13 @@ Strava :: [].{
                             " (${I64.to_str(p.pending_streams)} still need streams — run `stride backfill` to pull them all)"
                         else
                             ""
-                    "synced ${U64.to_str(p.synced)} activities${prune_note}, fetched streams for ${U64.to_str(p.streams_fetched)}${tail}"
+                    # "re-checked", not "synced": this is how many rows the rolling 30-day
+                    # window re-listed, which is a function of how often you train rather
+                    # than of this sync. Reported as "synced 22 activities" it read as 22
+                    # NEW ones, which is the question it kept provoking. Splitting new from
+                    # updated needs a per-row comparison in this loop, which is exactly
+                    # what destabilised it — tracked separately in #112.
+                    "re-checked ${U64.to_str(p.synced)} activities in the 30-day window${prune_note}, fetched streams for ${U64.to_str(p.streams_fetched)}${tail}"
                 })
             }
         }
