@@ -352,9 +352,12 @@ Two consequences worth knowing:
 
 **Self-healing by construction:**
 
-- Every metrics row stores the FTP it was scored with — the one in force on that
-  activity's date — so only genuinely affected rows recompute.
-- Stream arrival and Strava edits invalidate the affected metrics automatically.
+- Every metrics row stores what it was scored with — the FTP in force on that
+  activity's date, the HR zones, and the activity's own inputs — so `analyze`
+  recomputes exactly the rows whose inputs actually changed, and nothing else.
+- Edit a ride on Strava and the next `analyze` notices and rescores it. `sync`
+  itself never discards computed work: it re-lists a rolling 30-day window every
+  run and cannot tell an edit from a no-op.
 - The schema versions itself — upgrading the binary against an existing db
   migrates on the next command.
 
