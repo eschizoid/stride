@@ -415,9 +415,11 @@ Analyze :: [].{
     # override. (An earlier note here called it a SIGABRT in hosted_sqlite_prepare; that
     # was the alpha4/0.20 behaviour and no longer reproduces — #114.) The four REQUIRED
     # global hr_z*_max keys are still read via Db.config_opt! in load_zone_config!, but
-    # they're normally present, so that zero-row path isn't exercised there. Each sport's zone SIGNATURE is frozen for
-    # the invalidation CASE; per-row scoring re-resolves bounds from the same in-memory
-    # config. No circular dependency like FTP has.
+    # they're normally present, so that zero-row path isn't exercised there.
+    #
+    # Each sport's zone SIGNATURE is frozen for the invalidation CASE; per-row scoring
+    # re-resolves bounds from the same in-memory config. No circular dependency like
+    # FTP has.
     load_config! : Str => Try(List((Str, Str)), _)
     load_config! = |path|
         Sqlite.query_many!({
