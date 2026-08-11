@@ -87,7 +87,9 @@ Render :: [].{
     }
 
     # A row that renders as a horizontal RULE spanning the whole table — the spreadsheet
-    # divider — instead of as cells. Pass `[Render.rule]` as a row.
+    # divider — instead of as cells. `Render.rule` IS the row, so pass it directly:
+    # `render_table(headers, [row_a, Render.rule, row_b])`. Not `[Render.rule]`, which
+    # would nest it.
     #
     # Drawn with the table's own border glyphs so it lines up with the header rule and the
     # top/bottom edges. The previous attempt filled every cell with `···`, which read as
