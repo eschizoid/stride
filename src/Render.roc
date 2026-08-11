@@ -93,15 +93,15 @@ Render :: [].{
     # top/bottom edges. The previous attempt filled every cell with `···`, which read as
     # data (and collided with `progress`, where `···` means a GAP in time, so a boundary
     # between two CONSECUTIVE days looked like missing days).
-    rule : Str
-    rule = "__RENDER_RULE__"
+    # An EMPTY row, not a string sentinel. A sentinel is ambiguous: in a one-column table
+    # a legitimate cell holding that exact text would render as a divider instead of data.
+    # A row with no cells cannot collide with anything, because every data row has one
+    # cell per column.
+    rule : List(Str)
+    rule = []
 
     is_rule : List(Str) -> Bool
-    is_rule = |row|
-        match row {
-            [only] => only == rule
-            _ => False
-        }
+    is_rule = |row| List.is_empty(row)
 
     render_table : List(Str), List(List(Str)) -> Str
     render_table = |headers, rows| {
@@ -737,7 +737,7 @@ expect Render.progress_line("rescoring", 730, 723) == "rescoring 723/723"
 
 # ── rule rows: a full-width divider, not cells ──
 expect {
-    t = Render.render_table(["a", "b"], [["1", "2"], [Render.rule], ["3", "4"]])
+    t = Render.render_table(["a", "b"], [["1", "2"], Render.rule, ["3", "4"]])
     lines = Str.split_on(t, "\n")
     # the rule sits between the two data rows and is drawn with border glyphs, so it
     # matches the header rule exactly rather than containing any cell text
@@ -745,8 +745,14 @@ expect {
 }
 # a rule row carries no data, so it must not widen a column or leave stray text
 expect {
-    t = Render.render_table(["a"], [["x"], [Render.rule]])
+    t = Render.render_table(["a"], [["x"], Render.rule])
     !(Str.contains(t, "__RENDER_RULE__")) and !(Str.contains(t, "···"))
+}
+# the marker cannot collide with data: a one-column table whose cell holds the OLD
+# sentinel text renders it as content, because only a cell-less row is a rule
+expect {
+    t = Render.render_table(["a"], [["__RENDER_RULE__"]])
+    Str.contains(t, "__RENDER_RULE__")
 }
 # ...and a table with no rule row is completely unchanged by the feature
 expect Render.render_table(["a", "b"], [["1", "2"]]) == "╭───┬───╮\n│ a │ b │\n├───┼───┤\n│ 1 │ 2 │\n╰───┴───╯"

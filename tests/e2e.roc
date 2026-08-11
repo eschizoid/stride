@@ -982,10 +982,13 @@ b_human! = |ctx| {
     # Scoped to the RECENT block and COUNTED. The first draft asserted `contains "├────"`,
     # which every table satisfies via its header rule, and `!contains "│ ··· │"`, which
     # never matched because cells are padded — both passed against the dotted version.
-    # A rule table has 3+ mid-borders (header + one per week boundary); a dotted one has 1.
+    # A ruled table has 2+ mid-borders, a dotted one exactly 1 (its header rule), so >= 2
+    # discriminates. NOT >= 3: a 14-day window spans two Sundays, but when the anchor day
+    # is itself a Sunday the first one is suppressed (no divider above the first row), so
+    # the count drops to 2 — this check would have failed every Sunday in CI.
     rules_block = List.last(Str.split_on(plan_h, "RECENT 14 DAYS")).ok_or("")
     rule_count = List.len(Str.split_on(rules_block, "├────")) - 1
-    check!("week boundaries are drawn as full-width rules", rule_count >= 3)?
+    check!("week boundaries are drawn as full-width rules", rule_count >= 2)?
     check!("and no dotted cells remain anywhere in the table", !(Str.contains(rules_block, "···")))?
     # The window has to be as wide as its name. Both the header and the JSON field say 14,
     # so the oldest day rendered is anchor-13 — an inclusive `>= anchor - 14` spans fifteen.

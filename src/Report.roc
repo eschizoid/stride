@@ -478,11 +478,12 @@ Report :: [].{
                     # vocabulary. The table runs newest-first, so the boundary falls just
                     # ABOVE each Sunday (never above the first row, which needs no divider).
                     recent_headers = ["date", "sport", "name", "time", "load", "hard"]
-                    # a real horizontal rule, drawn by render_table with the table's own
-                    # border glyphs. NOT `···` in every cell: that read as data, and worse,
-                    # `progress` uses `···` to mean a GAP in time — so a boundary between
-                    # two CONSECUTIVE days looked like missing days.
-                    week_div = [Render.rule]
+                    # A full-width horizontal rule, drawn by render_table in the table's own
+                    # border glyphs so it lines up with the header rule. It must not be a
+                    # glyph in every cell: `progress` uses `···` to mean a GAP in time, so
+                    # reusing it here made a boundary between two CONSECUTIVE days read as
+                    # missing days.
+                    week_div = Render.rule
                     recent_display = List.join(List.map(Render.indices(14), |i| {
                         d = anchor - (i).to_i64_wrap()
                         ds = Metrics.days_to_date_str(d)
