@@ -296,7 +296,13 @@ Strava :: [].{
                             " (${I64.to_str(p.pending_streams)} still need streams — run `stride backfill` to pull them all)"
                         else
                             ""
-                    "synced ${U64.to_str(p.synced)} activities${prune_note}, fetched streams for ${U64.to_str(p.streams_fetched)}${tail}"
+                    # "re-checked", not "synced": this is how many rows the rolling 30-day
+                    # window re-listed, which is a function of how often you train rather
+                    # than of this sync. Reported as "synced 22 activities" it read as 22
+                    # NEW ones, which is the question it kept provoking. Splitting new from
+                    # updated needs a per-row comparison in this loop, which is exactly
+                    # what destabilised it — tracked separately in #112.
+                    "re-checked ${U64.to_str(p.synced)} activities in the 30-day window${prune_note}, fetched streams for ${U64.to_str(p.streams_fetched)}${tail}"
                 })
             }
         }
@@ -646,9 +652,16 @@ Strava :: [].{
                 { name: ":synced", value: synced_val },
             ],
         })?
-        # the row's raw fields may have changed (Strava edit within the rolling
-        # window) — invalidate its metrics so "edits self-heal" is actually true
-        invalidate_metrics!(path, a.id)
+        # NO metrics invalidation here, deliberately. `sync` re-lists a rolling 30-day
+        # window every run and cannot cheaply tell an edit from a no-op, so deleting here
+        # wiped a month of computed metrics on every sync and left every report
+        # under-reporting load until the next analyze.
+        #
+        # Staleness is detected in `analyze` instead, by comparing the activity inputs each
+        # metrics row was computed from against the row as it now stands — the same
+        # contract as `ftp_used`. That path is stateless and self-correcting: it cannot
+        # drift, and it costs nothing extra because analyze already runs that predicate.
+        Ok({})
     }
 
     # remove activities that vanished from Strava. A row is a victim when this sync run

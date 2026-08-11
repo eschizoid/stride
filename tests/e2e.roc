@@ -834,8 +834,38 @@ b_import! = |ctx| {
     check!("analyze after import", Str.contains(stride!(ctx.bin, ctx.home, ["analyze"]), "\"computed\":"))?
     tss9001 = Str.trim(sql!(ctx.db, "SELECT ROUND(tss) FROM activity_metrics WHERE activity_id=9001;"))
     check!("imported power ride gets TSS", tss9001 != "" and tss9001 != "0.0")?
+    # #112: invalidation must fire on a REAL change, not on every re-write. `sync` re-lists
+    # a rolling 30-day window every run, so invalidating on re-list deleted a month of
+    # metrics per sync and left reports under-reporting load until the next analyze.
+    # `import` shares upsert_activity!, so it exercises the same mechanism without network.
+    before = Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id IN (9001,9002);"))
     _ = stride!(ctx.bin, ctx.home, ["import", expdir])
     check!("re-import idempotent (2 rows)", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id IN (9001, 9002);")) == "2")?
+    after = Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id IN (9001,9002);"))
+    # `before == "2"` matters as much as the equality: if both were 0 this would pass while
+    # proving nothing
+    check!("a no-op re-import keeps the computed metrics", before == "2" and after == "2")?
+    # ...and the other half: a GENUINE change must still be rescored, or "edits self-heal"
+    # quietly stops being true and the no-op check above could be satisfied by never
+    # invalidating anything at all.
+    #
+    # Staleness lives in analyze now, which compares the inputs each metrics row was scored
+    # from against the row as it stands. So the row is NOT deleted on write — it is
+    # rescored on the next analyze. The edit is +7s duration and -1m distance on purpose:
+    # a hash-based signature cancelled exactly on that pair and missed the edit entirely,
+    # which is why the comparison is value-by-value.
+    # Rewritten with sed rather than a second CSV helper: adding another top-level function
+    # to this file segfaults the compiler (it already sits near the limit noted at the top).
+    # `sed -i.bak … && rm` rather than `sed -i ''`: the empty-argument form is BSD-only and
+    # fails on GNU sed, so a contributor running `just e2e` on Linux would break. CI runs
+    # macOS, which is exactly how that would have gone unnoticed. No new tool either — the
+    # harness already depends on sed via sh.
+    _ = sh!("sed -i.bak '/^9001,/ s/,55,3600,20100\\.0,/,55,3607,20099.0,/' '${expdir}/activities.csv' && rm -f '${expdir}/activities.csv.bak'")
+    _ = stride!(ctx.bin, ctx.home, ["import", expdir])
+    check!("an edited row keeps its metrics row until analyze runs", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=9001;")) == "1")?
+    check!("analyze rescores the edited row", strjq!(ctx, ["analyze"], ".data.computed") != "0")?
+    check!("and the stored duration now matches the edit", Str.trim(sql!(ctx.db, "SELECT mt_used FROM activity_metrics WHERE activity_id=9001;")) == "3607")?
+    check!("and it settles instead of rescoring forever", strjq!(ctx, ["analyze"], ".data.computed") == "0")?
     _ = sh!("cd '${expdir}' && zip -q export.zip activities.csv 2>/dev/null")
     check!("import from zip", Str.contains(stride!(ctx.bin, ctx.home, ["import", "${expdir}/export.zip"]), "\"imported\":2"))?
     check!("missing export explains itself", Str.contains(stride_human!(ctx.bin, ctx.home, ["import", "/nonexistent-dir-xyz"]), "no activities.csv"))?

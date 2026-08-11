@@ -178,7 +178,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 16
+    schema_version = 18
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -249,6 +249,24 @@ Db :: [].{
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN hr_samples_dropped INTEGER")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN watts_samples_total INTEGER")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN watts_samples_dropped INTEGER")?
+        # v17: the activity-input signature a metrics row was computed from. Compared on
+        # every analyze like ftp_used / zones_used / metrics_rev, so a changed activity
+        # rescores itself. This is what lets `sync` stop deleting metrics: it re-lists a
+        # rolling 30-day window every run and cannot cheaply tell an edit from a no-op, so
+        # invalidating there wiped a month of metrics on every sync.
+        # the activity inputs each metrics row was computed from, stored so analyze can
+        # compare them value by value — same contract as ftp_used
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN mt_used INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN dist_used INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN elev_used INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN aw_used INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN ahr_used INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN waw_used INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN re_used INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN dw_used INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN sport_used TEXT")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN start_used TEXT")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN stream_len_used INTEGER")?
         # v2: index the column every date-range filter and the activities sort use
         # (queries now compare a.start_local directly — sargable — instead of substr)
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })?
@@ -258,7 +276,44 @@ Db :: [].{
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_sport_start ON activities(sport_type, start_local)", bindings: [] })?
         # v15: NULL = Strava never said (pre-flag rows, CSV imports); 1 = real meter; 0 =
         # estimated. Estimated watts must not outrank honest fallbacks (#73).
-        alter_add_column!(path, "ALTER TABLE activities ADD COLUMN device_watts INTEGER")
+        alter_add_column!(path, "ALTER TABLE activities ADD COLUMN device_watts INTEGER")?
+        # v18: re-run the v17 backfill. A db that reached 17 before the backfill existed
+        # has the columns but NULL values, and ensure_schema! only re-runs migrations when
+        # the db is BEHIND — so that state would rescore its whole history on every analyze,
+        # forever. Bumping the version re-runs everything here; the ALTERs already ignore
+        # duplicates and the backfill only touches NULL rows, so it is safe to repeat.
+        # Backfill so upgrading does not rescore the entire history just to populate these.
+        # Sound because the code being replaced deleted the metrics row on EVERY upsert: a
+        # metrics row that still exists therefore belongs to an activity that has not been
+        # written since it was computed, so the activity's current values ARE the values it
+        # was scored from. Rows whose activity was edited but not yet re-analyzed have no
+        # metrics row to backfill — the old code had already deleted it.
+        # Only NULL rows are touched, so re-running the migration is a no-op.
+        Sqlite.execute!({
+            path: Path.utf8(path),
+            query:
+                \\UPDATE activity_metrics SET
+                \\  mt_used = (SELECT COALESCE(a.moving_time,0) FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  dist_used = (SELECT CAST(ROUND(COALESCE(a.distance,0)) AS INTEGER) FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  elev_used = (SELECT CAST(ROUND(COALESCE(a.elevation,0)) AS INTEGER) FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  aw_used = (SELECT CAST(ROUND(COALESCE(a.avg_watts,0) * 100) AS INTEGER) FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  ahr_used = (SELECT CAST(ROUND(COALESCE(a.avg_hr,0) * 100) AS INTEGER) FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  waw_used = (SELECT CAST(ROUND(COALESCE(a.weighted_avg_watts,0) * 100) AS INTEGER) FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  re_used = (SELECT CAST(ROUND(COALESCE(a.relative_effort,0)) AS INTEGER) FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  dw_used = (SELECT COALESCE(a.device_watts,-1) FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  sport_used = (SELECT COALESCE(a.sport_type,'') FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  start_used = (SELECT COALESCE(a.start_local,'') FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  -- COALESCE around the SUBQUERY, not inside it: with no streams row the
+                \\  -- subquery yields NULL before the CASE is ever evaluated, and a NULL here
+                \\  -- reads as stale, rescoring exactly the activities this backfill exists to
+                \\  -- spare. An activity with no stream must record 0, the same value the
+                \\  -- compute path stores for it via its LEFT JOIN.
+                \\  stream_len_used = COALESCE((SELECT LENGTH(s.raw_json) FROM streams s WHERE s.activity_id = activity_metrics.activity_id), 0)
+                \\WHERE mt_used IS NULL
+                \\  AND EXISTS (SELECT 1 FROM activities a WHERE a.id = activity_metrics.activity_id)
+            ,
+            bindings: [],
+        })
     }
 
     # rename old => new when old exists and new doesn't (idempotent, data-preserving)

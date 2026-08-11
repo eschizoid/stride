@@ -126,6 +126,17 @@ Analyze :: [].{
         # False = Strava flagged the watts as ESTIMATED (no meter). NULL rows (pre-flag
         # syncs, CSV imports) coalesce to True — unknown is not evidence of estimation.
         dw : Bool,
+        # the activity inputs this row was selected with, stored on the metrics row so the
+        # next analyze can tell value-by-value whether any of them has since changed
+        s_mt : I64,
+        s_dist : I64,
+        s_elev : I64,
+        s_aw : I64,
+        s_ahr : I64,
+        s_waw : I64,
+        s_re : I64,
+        s_dw : I64,
+        s_slen : I64,
     }
 
     # analyze runs compute_missing_metrics! to a FIXED POINT (bounded), not once. A batch can
@@ -179,7 +190,8 @@ Analyze :: [].{
                 \\       CAST(a.weighted_avg_watts AS REAL) AS waw, CAST(r.rpe AS REAL) AS rpe, s.raw_json AS raw,
                 \\       COALESCE(a.device_watts, 1) AS dw,
                 \\       CAST(ROUND(${period_ftp_sql}) AS REAL) AS pftp,
-                \\       CAST(ROUND((${period_threshold_sql}) * 1000) AS REAL) / 1000.0 AS pthr
+                \\       CAST(ROUND((${period_threshold_sql}) * 1000) AS REAL) / 1000.0 AS pthr,
+                \\       ${inputs_select_sql}
                 \\FROM activities a
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\LEFT JOIN ratings r ON r.activity_id = a.id
@@ -204,7 +216,16 @@ Analyze :: [].{
                 pftp = Sqlite.f64("pftp")(cols)(stmt)?
                 pthr = Sqlite.f64("pthr")(cols)(stmt)?
                 dw = Sqlite.i64("dw")(cols)(stmt)?
-                Ok({ id, start, mt, sport, re, aw, ahr, waw, rpe, raw, pftp, pthr, dw: dw != 0 })
+                s_mt = Sqlite.i64("s_mt")(cols)(stmt)?
+                s_dist = Sqlite.i64("s_dist")(cols)(stmt)?
+                s_elev = Sqlite.i64("s_elev")(cols)(stmt)?
+                s_aw = Sqlite.i64("s_aw")(cols)(stmt)?
+                s_ahr = Sqlite.i64("s_ahr")(cols)(stmt)?
+                s_waw = Sqlite.i64("s_waw")(cols)(stmt)?
+                s_re = Sqlite.i64("s_re")(cols)(stmt)?
+                s_dw = Sqlite.i64("s_dw")(cols)(stmt)?
+                s_slen = Sqlite.i64("s_slen")(cols)(stmt)?
+                Ok({ id, start, mt, sport, re, aw, ahr, waw, rpe, raw, pftp, pthr, dw: dw != 0, s_mt, s_dist, s_elev, s_aw, s_ahr, s_waw, s_re, s_dw, s_slen })
             },
         })?
         process_rows!(path, zb, cfg, rows, { computed: 0, stream_errors: 0 })
@@ -289,11 +310,87 @@ Analyze :: [].{
         \\                                              WHERE b4.sport_type = a.sport_type), '+60 days')), 0),
         \\  0)
 
+    # A signature of the ACTIVITY fields that feed scoring. Stored on the metrics row and
+    # compared on every analyze, exactly like `zones_used` and `ftp_used` — a changed input
+    # makes the stored signature stale, so the row rescores.
+    #
+    # This is why `sync` does NOT delete metrics: it re-lists a rolling 30-day window every
+    # run and cannot cheaply tell an edit from a no-op, so invalidating there wiped a month
+    # of metrics per sync. Comparing stored inputs here costs nothing extra — analyze
+    # already runs this predicate — and it is the same mechanism the other inputs use.
+    #
+    # ONE definition, interpolated into both the write and the comparison: two spellings
+    # would drift and either rescore forever or never.
+    # The activity inputs a metrics row was computed from, compared VALUE BY VALUE — the
+    # same contract as `ftp_used`, which stores the FTP it used rather than a summary of it.
+    #
+    # A hash was tried and rejected: with additive coefficients a +7s duration and a -1m
+    # distance cancel exactly, so a real Strava edit produced an identical signature and
+    # never rescored. That failure is silent, which is the worst kind. Comparing the values
+    # themselves cannot collide and can be read by a human debugging a stale row.
+    #
+    # Integer/real comparisons only — no concatenation. Building a string signature in SQL
+    # aborted the process (str_concat heap corruption, the #32 class), which is why this is
+    # a list of comparisons rather than one composed key.
+    #
+    # `synced_at` is deliberately absent: it changes every sync by design, so including it
+    # would mark every row stale, which is the bug this exists to fix.
+    # Each activity input expressed ONCE. Both the SELECT that stores the value and the
+    # predicate that compares it interpolate the same constant, so the two cannot drift
+    # into rescoring forever (write differs from compare) or never (compare too lax).
+    # Compile-time constants, never user data — the interpolation hazard in AGENTS.md is
+    # about splicing a possibly-EMPTY string, which these never are.
+    e_mt = "COALESCE(a.moving_time,0)"
+    e_dist = "CAST(ROUND(COALESCE(a.distance,0)) AS INTEGER)"
+    e_elev = "CAST(ROUND(COALESCE(a.elevation,0)) AS INTEGER)"
+    e_aw = "CAST(ROUND(COALESCE(a.avg_watts,0) * 100) AS INTEGER)"
+    e_ahr = "CAST(ROUND(COALESCE(a.avg_hr,0) * 100) AS INTEGER)"
+    e_waw = "CAST(ROUND(COALESCE(a.weighted_avg_watts,0) * 100) AS INTEGER)"
+    e_re = "CAST(ROUND(COALESCE(a.relative_effort,0)) AS INTEGER)"
+    e_dw = "COALESCE(a.device_watts,-1)"
+    e_sport = "COALESCE(a.sport_type,'')"
+    e_start = "COALESCE(a.start_local,'')"
+    e_slen = "(CASE WHEN s.raw_json IS NULL THEN 0 ELSE LENGTH(s.raw_json) END)"
+
+    # The columns the SELECT adds so a scored row can record what it was scored from.
+    inputs_select_sql =
+        \\${e_mt} AS s_mt, ${e_dist} AS s_dist, ${e_elev} AS s_elev,
+        \\${e_aw} AS s_aw, ${e_ahr} AS s_ahr, ${e_waw} AS s_waw,
+        \\${e_re} AS s_re, ${e_dw} AS s_dw, ${e_slen} AS s_slen
+
+    # The activity inputs a metrics row was computed from, compared VALUE BY VALUE — the
+    # same contract as `ftp_used`, which stores the FTP it used rather than a summary of it.
+    #
+    # A hash was tried and rejected: with additive coefficients a +7s duration and a -1m
+    # distance cancel exactly, so a real Strava edit produced an identical signature and
+    # never rescored. That failure is silent, which is the worst kind. Comparing the values
+    # themselves cannot collide and can be read by a human debugging a stale row.
+    #
+    # A string signature was tried too and aborted the process (str_concat heap corruption,
+    # the #32 class), which is why this is a list of comparisons rather than one composed
+    # key. `synced_at` is deliberately absent: it changes every sync by design, so including
+    # it would mark every row stale, which is the bug this exists to fix.
+    inputs_changed_sql =
+        \\   COALESCE(m.mt_used,-1) <> ${e_mt}
+        \\OR COALESCE(m.dist_used,-1) <> ${e_dist}
+        \\OR COALESCE(m.elev_used,-1) <> ${e_elev}
+        \\OR COALESCE(m.aw_used,-1) <> ${e_aw}
+        \\OR COALESCE(m.ahr_used,-1) <> ${e_ahr}
+        \\OR COALESCE(m.waw_used,-1) <> ${e_waw}
+        \\OR COALESCE(m.re_used,-1) <> ${e_re}
+        \\OR COALESCE(m.dw_used,-2) <> ${e_dw}
+        \\OR COALESCE(m.sport_used,'~') <> ${e_sport}
+        \\OR COALESCE(m.start_used,'~') <> ${e_start}
+        \\OR COALESCE(m.stream_len_used,-1) <> ${e_slen}
+
     # The "needs rescoring" predicate, shared by the batch SELECT and the COUNT that
     # gives the progress bar its denominator. ONE definition on purpose: two copies of
     # this would drift, and a denominator computed from a different predicate than the
-    # work is a bar that lies. Only `a` and `m` are referenced, so a caller needs just
-    # those two tables joined.
+    # work is a bar that lies.
+    #
+    # CALLERS MUST JOIN `activities a`, `activity_metrics m` AND `streams s` — the input
+    # comparison reads `s.raw_json` to notice a stream arriving, so omitting that join is
+    # a SQL error rather than a silently weaker check.
     pending_where : Str -> Str
     pending_where = |zones_case|
         \\WHERE m.activity_id IS NULL
@@ -301,6 +398,7 @@ Analyze :: [].{
         \\      OR CAST(ROUND(COALESCE(m.threshold_pace_used, 0) * 1000) AS INTEGER) <> CAST(ROUND((${period_threshold_sql}) * 1000) AS INTEGER)
         \\      OR COALESCE(m.zones_used, '') <> (${zones_case})
         \\      OR COALESCE(m.metrics_rev, 0) <> :rev
+        \\      OR (${inputs_changed_sql})
 
     # how many rows the run has left to score. Read ONCE before the passes so the bar has
     # a stable denominator; passes can re-invalidate rows, so the running count may exceed
@@ -314,6 +412,7 @@ Analyze :: [].{
             path: Path.utf8(path),
             query:
                 \\SELECT COUNT(*) AS n FROM activities a
+                \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\${pending_where(zones_case)}
             ,
@@ -557,10 +656,21 @@ Analyze :: [].{
             path: Path.utf8(path),
             query:
                 \\INSERT OR REPLACE INTO activity_metrics
-                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped)
-                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :thru, :hrt, :hrd, :wt, :wd)
+                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped, mt_used, dist_used, elev_used, aw_used, ahr_used, waw_used, re_used, dw_used, sport_used, start_used, stream_len_used)
+                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :thru, :hrt, :hrd, :wt, :wd, :umt, :udist, :uelev, :uaw, :uahr, :uwaw, :ure, :udw, :usport, :ustart, :uslen)
             ,
             bindings: [
+                { name: ":umt", value: Integer(row.s_mt) },
+                { name: ":udist", value: Integer(row.s_dist) },
+                { name: ":uelev", value: Integer(row.s_elev) },
+                { name: ":uaw", value: Integer(row.s_aw) },
+                { name: ":uahr", value: Integer(row.s_ahr) },
+                { name: ":uwaw", value: Integer(row.s_waw) },
+                { name: ":ure", value: Integer(row.s_re) },
+                { name: ":udw", value: Integer(row.s_dw) },
+                { name: ":usport", value: String(row.sport) },
+                { name: ":ustart", value: String(row.start) },
+                { name: ":uslen", value: Integer(row.s_slen) },
                 { name: ":hrt", value: Integer((hr_total).to_i64_wrap()) },
                 { name: ":hrd", value: Integer((hr_dropped).to_i64_wrap()) },
                 { name: ":wt", value: Integer((watts_total).to_i64_wrap()) },

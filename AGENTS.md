@@ -187,9 +187,11 @@ Every item here cost a debugging session at least once — they are not style op
   Strava's civil date, so only the today boundary needs this.)
 - Metric invalidation (recompute triggers): FTP change (`ftp_used`), **HR zone
   change** (`zones_used` signature), **stream arrival** (store_streams! deletes
-  metrics), **Strava edit** (upsert_activity! deletes metrics), **rating change** (rate! deletes metrics). Any new metric
-  input must join this story — `ftp_used`/`zones_used`/`metrics_rev` are compared
-  in `compute_missing_metrics!`'s WHERE; stream/edit/rating paths DELETE the row.
+  metrics), **activity-input change** (each metrics row stores the inputs it was scored from — `mt_used`, `aw_used`, `sport_used`, … — and analyze compares them value by value, like `ftp_used`. `sync` does NOT delete metrics: it re-lists a rolling 30-day window every run and cannot tell an edit from a no-op, so invalidating there wiped a month of metrics per sync), **rating change** (rate! deletes metrics). Any new metric
+  input must join this story — `ftp_used`/`zones_used`/`metrics_rev`/the `*_used`
+  input columns are all compared in `compute_missing_metrics!`'s WHERE; only the
+  stream-arrival and rating paths DELETE the row. An activity edit does NOT delete:
+  `sync` cannot tell an edit from a no-op, so analyze detects it by comparison.
   **Bump the `metrics_rev` constant whenever Metrics math changes** — config
   provenance can't see algorithm changes. Every metrics row also records WHICH
   ladder rung scored it (`load_model`).
