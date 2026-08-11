@@ -86,12 +86,31 @@ Render :: [].{
         }
     }
 
+    # A row that renders as a horizontal RULE spanning the whole table — the spreadsheet
+    # divider — instead of as cells. Pass `[Render.rule]` as a row.
+    #
+    # Drawn with the table's own border glyphs so it lines up with the header rule and the
+    # top/bottom edges. The previous attempt filled every cell with `···`, which read as
+    # data (and collided with `progress`, where `···` means a GAP in time, so a boundary
+    # between two CONSECUTIVE days looked like missing days).
+    rule : Str
+    rule = "__RENDER_RULE__"
+
+    is_rule : List(Str) -> Bool
+    is_rule = |row|
+        match row {
+            [only] => only == rule
+            _ => False
+        }
+
     render_table : List(Str), List(List(Str)) -> Str
     render_table = |headers, rows| {
         ncols = List.len(headers)
         overhead = 3 * ncols + 1
+        # rule rows carry no data, so they must not influence column widths or wrapping
+        data_rows = List.keep_if(rows, |r| !(is_rule(r)))
         nat = List.fold(
-            List.prepend(rows, headers),
+            List.prepend(data_rows, headers),
             List.map(headers, |_| 0),
             |acc, row|
                 List.map_with_index(acc, |w, i| w.max(display_width(List.get(row, i).ok_or("")))),
@@ -100,7 +119,7 @@ Render :: [].{
         # each row/header becomes a list of columns, each column a list of wrapped lines
         wrap_row = |row| List.map_with_index(row, |cell, i| wrap_cell(cell, List.get(caps, i).ok_or(display_width(cell))))
         wh = wrap_row(headers)
-        wrs = List.map(rows, wrap_row)
+        wrs = List.map(data_rows, wrap_row)
         widths = List.fold(
             List.prepend(wrs, wh),
             List.map(headers, |_| 0),
@@ -122,9 +141,12 @@ Render :: [].{
         }
         border = |left, mid, right|
             "${left}${Str.join_with(List.map(widths, |w| Str.repeat("─", w + 2)), mid)}${right}"
+        # walk the ORIGINAL rows so rule positions are preserved, rendering each as either
+        # a data row or the divider
+        body = List.map(rows, |row| if is_rule(row) border("├", "┼", "┤") else render_wrow(wrap_row(row)))
         all_lines = List.join([
             [border("╭", "┬", "╮"), render_wrow(wh), border("├", "┼", "┤")],
-            List.map(wrs, render_wrow),
+            body,
             [border("╰", "┴", "╯")],
         ])
         Str.join_with(all_lines, "\n")
@@ -712,6 +734,22 @@ expect Render.progress_line("rescoring", 5, 10) == "rescoring 5/10"
 expect !(Str.contains(Render.progress_line("rescoring", 5, 10), "\r"))
 # ...and it clamps like the bar, so neither mode can print an impossible fraction
 expect Render.progress_line("rescoring", 730, 723) == "rescoring 723/723"
+
+# ── rule rows: a full-width divider, not cells ──
+expect {
+    t = Render.render_table(["a", "b"], [["1", "2"], [Render.rule], ["3", "4"]])
+    lines = Str.split_on(t, "\n")
+    # the rule sits between the two data rows and is drawn with border glyphs, so it
+    # matches the header rule exactly rather than containing any cell text
+    List.get(lines, 4).ok_or("") == List.get(lines, 2).ok_or("")
+}
+# a rule row carries no data, so it must not widen a column or leave stray text
+expect {
+    t = Render.render_table(["a"], [["x"], [Render.rule]])
+    !(Str.contains(t, "__RENDER_RULE__")) and !(Str.contains(t, "···"))
+}
+# ...and a table with no rule row is completely unchanged by the feature
+expect Render.render_table(["a", "b"], [["1", "2"]]) == "╭───┬───╮\n│ a │ b │\n├───┼───┤\n│ 1 │ 2 │\n╰───┴───╯"
 
 # unicode bars must not skew column alignment
 expect {

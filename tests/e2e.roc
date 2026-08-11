@@ -975,7 +975,11 @@ b_human! = |ctx| {
     # the 14-day table is a DATE RANGE: a day with nothing on it is information, and week
     # boundaries get the same `···` divider progress uses for a break in a series
     check!("days with no activity are shown, not skipped over", Str.contains(plan_h, "(no activity)"))?
-    check!("week boundaries are divided", Str.contains(plan_h, "···"))?
+    # a full-width RULE in the table's own border glyphs, not dotted cells: `···` reads as
+    # data, and `progress` already uses it to mean a GAP in time, so a boundary between two
+    # CONSECUTIVE days looked like missing days
+    check!("week boundaries are divided by a rule", Str.contains(plan_h, "├────"))?
+    check!("and not by dotted cells", !(Str.contains(plan_h, "│ ··· │")))?
     # The window has to be as wide as its name. Both the header and the JSON field say 14,
     # so the oldest day rendered is anchor-13 — an inclusive `>= anchor - 14` spans fifteen.
     # Scoped to the text AFTER the header: the OPEN PLAN table above carries dates too, and

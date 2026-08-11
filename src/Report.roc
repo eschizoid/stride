@@ -477,12 +477,12 @@ Report :: [].{
                     # for a break in a series, so the idiom is already in the legend
                     # vocabulary. The table runs newest-first, so the boundary falls just
                     # ABOVE each Sunday (never above the first row, which needs no divider).
-                    # derived from the headers, not hard-coded to today's six columns: a
-                    # literal row silently goes short if a column is ever added, and
-                    # render_table pads the gap with blanks rather than complaining. Same
-                    # idiom `progress` uses for its gap row.
                     recent_headers = ["date", "sport", "name", "time", "load", "hard"]
-                    week_div = List.map(recent_headers, |_| "···")
+                    # a real horizontal rule, drawn by render_table with the table's own
+                    # border glyphs. NOT `···` in every cell: that read as data, and worse,
+                    # `progress` uses `···` to mean a GAP in time — so a boundary between
+                    # two CONSECUTIVE days looked like missing days.
+                    week_div = [Render.rule]
                     recent_display = List.join(List.map(Render.indices(14), |i| {
                         d = anchor - (i).to_i64_wrap()
                         ds = Metrics.days_to_date_str(d)
