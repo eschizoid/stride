@@ -86,12 +86,32 @@ Render :: [].{
         }
     }
 
+    # A row that renders as a horizontal RULE spanning the whole table — the spreadsheet
+    # divider — instead of as cells. It IS a row, so it sits in the rows list alongside
+    # the others: `render_table(headers, [row_a, Render.rule, row_b])`.
+    #
+    # Drawn with the table's own border glyphs so it lines up with the header rule and the
+    # top/bottom edges. The previous attempt filled every cell with `···`, which read as
+    # data (and collided with `progress`, where `···` means a GAP in time, so a boundary
+    # between two CONSECUTIVE days looked like missing days).
+    # An EMPTY row, not a string sentinel. A sentinel is ambiguous: in a one-column table
+    # a legitimate cell holding that exact text would render as a divider instead of data.
+    # A row with no cells cannot collide with anything, because every data row has one
+    # cell per column.
+    rule : List(Str)
+    rule = []
+
+    is_rule : List(Str) -> Bool
+    is_rule = |row| List.is_empty(row)
+
     render_table : List(Str), List(List(Str)) -> Str
     render_table = |headers, rows| {
         ncols = List.len(headers)
         overhead = 3 * ncols + 1
+        # rule rows carry no data, so they must not influence column widths or wrapping
+        data_rows = List.keep_if(rows, |r| !(is_rule(r)))
         nat = List.fold(
-            List.prepend(rows, headers),
+            List.prepend(data_rows, headers),
             List.map(headers, |_| 0),
             |acc, row|
                 List.map_with_index(acc, |w, i| w.max(display_width(List.get(row, i).ok_or("")))),
@@ -100,7 +120,16 @@ Render :: [].{
         # each row/header becomes a list of columns, each column a list of wrapped lines
         wrap_row = |row| List.map_with_index(row, |cell, i| wrap_cell(cell, List.get(caps, i).ok_or(display_width(cell))))
         wh = wrap_row(headers)
-        wrs = List.map(rows, wrap_row)
+        # Wrap ONCE, keeping rule positions inline. The earlier shapes each had a cost:
+        # re-wrapping in the body did the expensive work twice, and indexing a parallel
+        # wrapped list needed a running counter plus a silent `.ok_or([])` fallback whose
+        # complexity depends on how List.get is implemented. Tagging each entry sidesteps
+        # both — one pass, no index, linear whatever the list representation.
+        tagged = List.map(rows, |row| if is_rule(row) Rule else Data(wrap_row(row)))
+        wrs = List.keep_oks(tagged, |t| match t {
+            Data(w) => Ok(w)
+            Rule => Err({})
+        })
         widths = List.fold(
             List.prepend(wrs, wh),
             List.map(headers, |_| 0),
@@ -122,9 +151,15 @@ Render :: [].{
         }
         border = |left, mid, right|
             "${left}${Str.join_with(List.map(widths, |w| Str.repeat("─", w + 2)), mid)}${right}"
+        # `tagged` already holds every row in order, wrapped once, with rules marked — so
+        # emitting the body is a straight map with no counter and no second wrapping pass.
+        body = List.map(tagged, |t| match t {
+            Rule => border("├", "┼", "┤")
+            Data(w) => render_wrow(w)
+        })
         all_lines = List.join([
             [border("╭", "┬", "╮"), render_wrow(wh), border("├", "┼", "┤")],
-            List.map(wrs, render_wrow),
+            body,
             [border("╰", "┴", "╯")],
         ])
         Str.join_with(all_lines, "\n")
@@ -712,6 +747,28 @@ expect Render.progress_line("rescoring", 5, 10) == "rescoring 5/10"
 expect !(Str.contains(Render.progress_line("rescoring", 5, 10), "\r"))
 # ...and it clamps like the bar, so neither mode can print an impossible fraction
 expect Render.progress_line("rescoring", 730, 723) == "rescoring 723/723"
+
+# ── rule rows: a full-width divider, not cells ──
+expect {
+    t = Render.render_table(["a", "b"], [["1", "2"], Render.rule, ["3", "4"]])
+    lines = Str.split_on(t, "\n")
+    # the rule sits between the two data rows and is drawn with border glyphs, so it
+    # matches the header rule exactly rather than containing any cell text
+    List.get(lines, 4).ok_or("") == List.get(lines, 2).ok_or("")
+}
+# a rule row carries no data, so it must not widen a column or leave stray text
+expect {
+    t = Render.render_table(["a"], [["x"], Render.rule])
+    !(Str.contains(t, "__RENDER_RULE__")) and !(Str.contains(t, "···"))
+}
+# the marker cannot collide with data: a one-column table whose cell holds the OLD
+# sentinel text renders it as content, because only a cell-less row is a rule
+expect {
+    t = Render.render_table(["a"], [["__RENDER_RULE__"]])
+    Str.contains(t, "__RENDER_RULE__")
+}
+# ...and a table with no rule row is completely unchanged by the feature
+expect Render.render_table(["a", "b"], [["1", "2"]]) == "╭───┬───╮\n│ a │ b │\n├───┼───┤\n│ 1 │ 2 │\n╰───┴───╯"
 
 # unicode bars must not skew column alignment
 expect {
