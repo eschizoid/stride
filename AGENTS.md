@@ -132,11 +132,26 @@ Every item here cost a debugging session at least once — they are not style op
 - **Verify against the docs before writing** (basic-cli 0.21 docs, or package source in
   `~/.cache/roc/packages/`) — alpha APIs drift; this habit has kept nearly every build at
   0-errors-first-try.
-- **`Sqlite.query!` on a row that may not exist is a deterministic SIGABRT.** Use
-  `query_many!` and match the empty list — this is how config loading must read any
-  possibly-absent key.
+- **`Sqlite.query!` on a row that may not exist fails the command.** Use `query_many!`
+  and match the empty list — this is how config loading must read any possibly-absent
+  key. (Measured on basic-cli 0.21: it returns `Err(NoRowsReturned)`, so an unhandled `?`
+  exits 1 rather than aborting. The SIGABRT this note used to claim was the alpha4 / 0.20
+  behaviour; the rule is unchanged, only the failure mode is milder than advertised.)
 - **SQLite type affinity bites**: INTEGER columns reject `Sqlite.f64` decoders — `CAST(…
   AS REAL)` in the SELECT when unsure.
+- **Bug C is heap corruption that lands on the NEXT string handed to the host, not on the
+  code that caused it.** Characterised 2026-08-11 against `just e2e-sync` (50% failure over
+  20 runs). What surfaces is always the `Authorization: Bearer …` value arriving corrupt at
+  `_hosted_http_send_request`, in one of two ways: invalid UTF-8 → host panic + SIGABRT
+  (exit 134), or bytes that are valid UTF-8 but illegal in a header → a clean
+  `HttpErr(Other("failed to parse header value"))`. It always strikes after the activity-list
+  JSON parse, and the run that also refreshes OAuth (one extra parse) failed 7/12 versus 2/12
+  without it — consistent with the `Json.parse` attribution in the justfile. **The damage is
+  silent and not confined to tests**: a crashed sync leaves streams unfetched, so `analyze`
+  scores those activities off a lower ladder rung and the TSS is quietly wrong.
+  SQL shape is NOT the trigger — 12 statement shapes (runtime-assembled SQL, 128KB string
+  reads, correlated subqueries, 11 bindings, single-row `query!`) ran 200 iterations × 15
+  runs each with zero failures.
 
 ### Style
 
