@@ -986,15 +986,17 @@ b_human! = |ctx| {
     # discriminates. NOT >= 3: a 14-day window spans two Sundays, but when the anchor day
     # is itself a Sunday the first one is suppressed (no divider above the first row), so
     # the count drops to 2 — this check would have failed every Sunday in CI.
-    rules_block = List.last(Str.split_on(plan_h, "RECENT 14 DAYS")).ok_or("")
-    rule_count = List.len(Str.split_on(rules_block, "├────")) - 1
+    # ONE block, and its header asserted FIRST. Splitting on a marker that is absent
+    # returns the whole output, so every assertion below would then be measuring the OPEN
+    # PLAN table above and passing for the wrong reason — the same vacuous-pass shape this
+    # block has already been bitten by twice.
+    check!("the recent-activity section is present", Str.contains(plan_h, "RECENT 14 DAYS"))?
+    recent_block = List.last(Str.split_on(plan_h, "RECENT 14 DAYS")).ok_or("")
+    rule_count = List.len(Str.split_on(recent_block, "├────")) - 1
     check!("week boundaries are drawn as full-width rules", rule_count >= 2)?
-    check!("and no dotted cells remain anywhere in the table", !(Str.contains(rules_block, "···")))?
+    check!("and no dotted cells remain anywhere in the table", !(Str.contains(recent_block, "···")))?
     # The window has to be as wide as its name. Both the header and the JSON field say 14,
     # so the oldest day rendered is anchor-13 — an inclusive `>= anchor - 14` spans fifteen.
-    # Scoped to the text AFTER the header: the OPEN PLAN table above carries dates too, and
-    # matching the whole output would let one of those satisfy either check by accident.
-    recent_block = List.last(Str.split_on(plan_h, "RECENT 14 DAYS")).ok_or("")
     oldest_in = Str.trim(sql!(ctx.db, "SELECT date(MAX(day), '-13 days') FROM daily_load;"))
     first_out = Str.trim(sql!(ctx.db, "SELECT date(MAX(day), '-14 days') FROM daily_load;"))
     check!("the 14-day table reaches back exactly 13 days", Str.contains(recent_block, oldest_in))?
