@@ -120,7 +120,16 @@ Render :: [].{
         # each row/header becomes a list of columns, each column a list of wrapped lines
         wrap_row = |row| List.map_with_index(row, |cell, i| wrap_cell(cell, List.get(caps, i).ok_or(display_width(cell))))
         wh = wrap_row(headers)
-        wrs = List.map(data_rows, wrap_row)
+        # Wrap ONCE, keeping rule positions inline. The earlier shapes each had a cost:
+        # re-wrapping in the body did the expensive work twice, and indexing a parallel
+        # wrapped list needed a running counter plus a silent `.ok_or([])` fallback whose
+        # complexity depends on how List.get is implemented. Tagging each entry sidesteps
+        # both — one pass, no index, linear whatever the list representation.
+        tagged = List.map(rows, |row| if is_rule(row) Rule else Data(wrap_row(row)))
+        wrs = List.keep_oks(tagged, |t| match t {
+            Data(w) => Ok(w)
+            Rule => Err({})
+        })
         widths = List.fold(
             List.prepend(wrs, wh),
             List.map(headers, |_| 0),
@@ -146,14 +155,10 @@ Render :: [].{
         # wrapped `wrs` rather than wrapping every row a second time — wrapping is the
         # expensive part of rendering. `i` indexes wrs, advancing only on data rows, since
         # rules were excluded from it. Prepend + reverse, never append in a fold.
-        body = reverse_list(
-            List.fold(rows, { i: 0, out: [] }, |acc, row|
-                if is_rule(row) {
-                    { i: acc.i, out: List.prepend(acc.out, border("├", "┼", "┤")) }
-                } else {
-                    { i: acc.i + 1, out: List.prepend(acc.out, render_wrow(List.get(wrs, acc.i).ok_or([]))) }
-                }).out,
-        )
+        body = List.map(tagged, |t| match t {
+            Rule => border("├", "┼", "┤")
+            Data(w) => render_wrow(w)
+        })
         all_lines = List.join([
             [border("╭", "┬", "╮"), render_wrow(wh), border("├", "┼", "┤")],
             body,
