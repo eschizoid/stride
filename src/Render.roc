@@ -151,10 +151,8 @@ Render :: [].{
         }
         border = |left, mid, right|
             "${left}${Str.join_with(List.map(widths, |w| Str.repeat("─", w + 2)), mid)}${right}"
-        # Walk the ORIGINAL rows so rule positions are preserved, but REUSE the already
-        # wrapped `wrs` rather than wrapping every row a second time — wrapping is the
-        # expensive part of rendering. `i` indexes wrs, advancing only on data rows, since
-        # rules were excluded from it. Prepend + reverse, never append in a fold.
+        # `tagged` already holds every row in order, wrapped once, with rules marked — so
+        # emitting the body is a straight map with no counter and no second wrapping pass.
         body = List.map(tagged, |t| match t {
             Rule => border("├", "┼", "┤")
             Data(w) => render_wrow(w)
