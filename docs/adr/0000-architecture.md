@@ -118,7 +118,13 @@ the inputs it was computed under, and recomputation is triggered by:
 - **Algorithm change** — the `metrics_rev` constant; bump it whenever `Metrics`
   math changes (config provenance can't see code changes).
 - **Stream arrival / Strava edit / rating change** — these paths delete the
-  affected metrics row so the next `analyze` rescores it.
+  affected metrics row so the next `analyze` rescores it. "Strava edit" means a
+  tracked field ACTUALLY changed: `sync` re-lists a rolling 30-day window every
+  run, so treating every re-listed row as an edit deleted a month of metrics on
+  every sync and left reports under-reporting load until the next `analyze`.
+  `upsert_activity!` compares the tracked columns first and only invalidates on a
+  real difference; `synced_at` is excluded from that comparison, since it changes
+  by design every run and would make every row look edited.
 
 Any new metric input must join this story.
 

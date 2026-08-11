@@ -57,7 +57,9 @@ Import :: [].{
                     Ok(summary) => {
                         # stamp 0 → synced_at stays NULL: CSV imports were never on Strava,
                         # so a later sync's prune must never treat them as deletions
-                        Strava.upsert_activity!(db, 0, summary)?
+                        # import counts its own rows; the insert/update/unchanged split
+                        # only means something for a sync against Strava
+                        _ = Strava.upsert_activity!(db, 0, summary)?
                         import_rows!(db, headers, rest, { ..acc, imported: acc.imported + 1 })
                     }
                     Err(_) =>

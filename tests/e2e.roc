@@ -834,8 +834,26 @@ b_import! = |ctx| {
     check!("analyze after import", Str.contains(stride!(ctx.bin, ctx.home, ["analyze"]), "\"computed\":"))?
     tss9001 = Str.trim(sql!(ctx.db, "SELECT ROUND(tss) FROM activity_metrics WHERE activity_id=9001;"))
     check!("imported power ride gets TSS", tss9001 != "" and tss9001 != "0.0")?
+    # #112: invalidation must fire on a REAL change, not on every re-write. `sync` re-lists
+    # a rolling 30-day window every run, so invalidating on re-list deleted a month of
+    # metrics per sync and left reports under-reporting load until the next analyze.
+    # `import` shares upsert_activity!, so it exercises the same mechanism without network.
+    before = Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id IN (9001,9002);"))
     _ = stride!(ctx.bin, ctx.home, ["import", expdir])
     check!("re-import idempotent (2 rows)", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id IN (9001, 9002);")) == "2")?
+    after = Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id IN (9001,9002);"))
+    # `before == "2"` matters as much as the equality: if both were 0 this would pass while
+    # proving nothing
+    check!("a no-op re-import keeps the computed metrics", before == "2" and after == "2")?
+    # ...and the guard against the lazy version of that fix: a GENUINE change must STILL
+    # invalidate, or "edits self-heal" quietly stops being true. One tracked field differs
+    # (moving_time 3600 -> 3000), which is what a real Strava edit looks like to the upsert.
+    # Rewritten with sed rather than a second CSV helper: adding another top-level function
+    # to this file segfaults the compiler (it already sits near the limit noted at the top).
+    _ = sh!("sed -i '' 's/,55,3600,20100.0,/,55,3000,20100.0,/' '${expdir}/activities.csv'")
+    _ = stride!(ctx.bin, ctx.home, ["import", expdir])
+    check!("an edited row still invalidates its metrics", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=9001;")) == "0")?
+    check!("while the untouched row keeps its own", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=9002;")) == "1")?
     _ = sh!("cd '${expdir}' && zip -q export.zip activities.csv 2>/dev/null")
     check!("import from zip", Str.contains(stride!(ctx.bin, ctx.home, ["import", "${expdir}/export.zip"]), "\"imported\":2"))?
     check!("missing export explains itself", Str.contains(stride_human!(ctx.bin, ctx.home, ["import", "/nonexistent-dir-xyz"]), "no activities.csv"))?

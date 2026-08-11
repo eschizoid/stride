@@ -187,7 +187,7 @@ Every item here cost a debugging session at least once — they are not style op
   Strava's civil date, so only the today boundary needs this.)
 - Metric invalidation (recompute triggers): FTP change (`ftp_used`), **HR zone
   change** (`zones_used` signature), **stream arrival** (store_streams! deletes
-  metrics), **Strava edit** (upsert_activity! deletes metrics), **rating change** (rate! deletes metrics). Any new metric
+  metrics), **Strava edit** (upsert_activity! deletes metrics — only when a tracked field actually differs; `sync` re-lists a rolling 30-day window, so invalidating on every re-list wiped a month of metrics per sync), **rating change** (rate! deletes metrics). Any new metric
   input must join this story — `ftp_used`/`zones_used`/`metrics_rev` are compared
   in `compute_missing_metrics!`'s WHERE; stream/edit/rating paths DELETE the row.
   **Bump the `metrics_rev` constant whenever Metrics math changes** — config
