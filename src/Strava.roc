@@ -284,24 +284,19 @@ Strava :: [].{
                         Some(a) => Metrics.epoch_to_iso(a + 86400)
                         None => ""
                     }
-                counts = fetch_pages!(path, token, after_param, started, 1, { inserted: 0, updated: 0, unchanged: 0 }, True)?
-                count = counts.inserted + counts.updated + counts.unchanged
+                count = fetch_pages!(path, token, after_param, started, 1, 0, True)?
                 pruned = prune_deleted!(path, started, window_start)?
                 Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
                 streams_n = backfill_streams!(path, token)?
                 remaining = pending_streams!(path)?
-                Output.out!({ synced: count, new_activities: counts.inserted, updated_activities: counts.updated, pruned, streams_fetched: streams_n, pending_streams: remaining }, |p| {
+                Output.out!({ synced: count, pruned, streams_fetched: streams_n, pending_streams: remaining }, |p| {
                     prune_note = if p.pruned > 0 " (pruned ${U64.to_str(p.pruned)} removed on Strava)" else ""
                     tail =
                         if p.pending_streams > 0
                             " (${I64.to_str(p.pending_streams)} still need streams — run `stride backfill` to pull them all)"
                         else
                             ""
-                    # Lead with what CHANGED. The re-listed count is a function of how
-                    # often you train, not of this sync, and reporting it alone reads as
-                    # "22 new activities" when the honest answer is usually none.
-                    changed = "${U64.to_str(p.new_activities)} new, ${U64.to_str(p.updated_activities)} updated"
-                    "synced ${changed} (${U64.to_str(p.synced)} re-checked in the 30-day window)${prune_note}, fetched streams for ${U64.to_str(p.streams_fetched)}${tail}"
+                    "synced ${U64.to_str(p.synced)} activities${prune_note}, fetched streams for ${U64.to_str(p.streams_fetched)}${tail}"
                 })
             }
         }
@@ -492,8 +487,7 @@ Strava :: [].{
                 # no need to run `sync` beforehand (that's what made it two commands)
                 Stdout.line!("backfill: refreshing the activity list...")?
                 started = Db.now_secs!({})
-                bf = fetch_pages!(path, token, "", started, 1, { inserted: 0, updated: 0, unchanged: 0 }, False)?
-                count = bf.inserted + bf.updated + bf.unchanged
+                count = fetch_pages!(path, token, "", started, 1, 0, False)?
                 # full re-pull: window_start "" prunes every activity Strava no longer lists
                 pruned = prune_deleted!(path, started, "")?
                 (if pruned > 0 Stdout.line!("backfill: pruned ${U64.to_str(pruned)} activities removed on Strava") else Ok({}))?
@@ -583,7 +577,7 @@ Strava :: [].{
         }
     per_page = 100
 
-    fetch_pages! : Str, Str, Str, I64, U64, SyncCounts, Bool => Try(SyncCounts, _)
+    fetch_pages! : Str, Str, Str, I64, U64, U64, Bool => Try(U64, _)
     fetch_pages! = |path, token, after_param, stamp, page, acc, narrate| {
         page_str = (page).to_str()
         per_str = (per_page).to_str()
@@ -597,9 +591,9 @@ Strava :: [].{
         decoded : Try(List(ActivitySummary), _)
         decoded = Json.parse(text)
         acts = decoded.map_err(|_| ActivityDecodeFailed(page))?
-        counts = upsert_all!(path, stamp, acts, acc)?
+        upsert_all!(path, stamp, acts)?
         got = List.len(acts)
-        total = counts.inserted + counts.updated + counts.unchanged
+        total = acc + got
         # a plain line per page, not a bar: Strava's activity list is paged and its length
         # is unknowable until the short page arrives, so any denominator here would be
         # invented. Pages are few at `per_page` (100) a page, so the lines stay countable.
@@ -607,110 +601,61 @@ Strava :: [].{
         # progress on stdout — narrating here too would duplicate it in a second stream.
         _ = if narrate { Output.say!("fetched activities page ${(page).to_str()} — ${(total).to_str()} so far")? } else { {} }
         if got < per_page
-            Ok(counts)
+            Ok(total)
         else
-            fetch_pages!(path, token, after_param, stamp, page + 1, counts, narrate)
+            fetch_pages!(path, token, after_param, stamp, page + 1, total, narrate)
     }
-    # what a sync actually did, as opposed to how many rows it re-listed
-    SyncCounts : { inserted : U64, updated : U64, unchanged : U64 }
-
-    upsert_all! : Str, I64, List(ActivitySummary), SyncCounts => Try(SyncCounts, _)
-    upsert_all! = |path, stamp, acts, acc|
+    upsert_all! : Str, I64, List(ActivitySummary) => Try({}, _)
+    upsert_all! = |path, stamp, acts|
         match acts {
-            [] => Ok(acc)
+            [] => Ok({})
             [a, .. as rest] => {
-                next =
-                    match upsert_activity!(path, stamp, a)? {
-                        Inserted => { inserted: acc.inserted + 1, updated: acc.updated, unchanged: acc.unchanged }
-                        Updated => { inserted: acc.inserted, updated: acc.updated + 1, unchanged: acc.unchanged }
-                        Unchanged => { inserted: acc.inserted, updated: acc.updated, unchanged: acc.unchanged + 1 }
-                    }
-                upsert_all!(path, stamp, rest, next)
+                upsert_activity!(path, stamp, a)?
+                upsert_all!(path, stamp, rest)
             }
 
         }
-    # Inserted / Updated = the row is new or genuinely differs upstream, so its computed
-    # metrics are stale and must go. Unchanged = Strava sent us exactly what we already
-    # had, which is the overwhelmingly common case inside the rolling 30-day window.
-    UpsertOutcome : [Inserted, Updated, Unchanged]
-
-    upsert_activity! : Str, I64, ActivitySummary => Try(UpsertOutcome, _)
+    upsert_activity! : Str, I64, ActivitySummary => Try({}, _)
     upsert_activity! = |path, stamp, a| {
         # stamp 0 = a non-sync writer (CSV import): leave synced_at NULL so the prune
         # never mistakes an imported activity (never on Strava) for a deleted one. Real
         # sync stamps are now_secs epochs, never 0.
         synced_val = if stamp == 0 Null else Integer(stamp)
-        binds = [
-            { name: ":id", value: Integer(a.id) },
-            { name: ":name", value: String(a.name) },
-            { name: ":sport", value: String(a.sport_type) },
-            { name: ":start", value: String(a.start_date_local) },
-            { name: ":mt", value: Integer(a.moving_time) },
-            { name: ":dist", value: Real(a.distance) },
-            { name: ":elev", value: Real(a.total_elevation_gain) },
-            { name: ":re", value: opt_real(a.suffer_score) },
-            { name: ":aw", value: opt_real(a.average_watts) },
-            { name: ":ahr", value: opt_real(a.average_heartrate) },
-            { name: ":waw", value: opt_real(a.weighted_average_watts) },
-            # NULL = Strava did not say (old data); 1 = real meter; 0 = estimated
-            { name: ":dw", value: match a.device_watts { Ok(True) => Integer(1)  Ok(False) => Integer(0)  Err(_) => Null } },
-        ]
-        # Ask the DB whether this row already exists and whether anything TRACKED differs.
-        # Compared in SQL, not Roc: several of these columns are REAL and Roc floats have
-        # no Eq, so an in-language comparison would need a tolerance that SQL does not.
-        # `synced_at` is deliberately NOT compared — it changes every run by design, and
-        # including it would make every row look modified, which is the present bug.
-        # NULL-safe via a sentinel both sides, since NULL = NULL is never true in SQL.
-        state = Sqlite.query!({
+        Sqlite.execute!({
             path: Path.utf8(path),
             query:
-                \\SELECT COUNT(*) AS present,
-                \\       COALESCE(SUM(CASE WHEN COALESCE(name,'') = :name
-                \\                     AND COALESCE(sport_type,'') = :sport
-                \\                     AND COALESCE(start_local,'') = :start
-                \\                     AND COALESCE(moving_time,0) = :mt
-                \\                     AND COALESCE(distance,-1e18) = COALESCE(:dist,-1e18)
-                \\                     AND COALESCE(elevation,-1e18) = COALESCE(:elev,-1e18)
-                \\                     AND COALESCE(relative_effort,-1e18) = COALESCE(:re,-1e18)
-                \\                     AND COALESCE(avg_watts,-1e18) = COALESCE(:aw,-1e18)
-                \\                     AND COALESCE(avg_hr,-1e18) = COALESCE(:ahr,-1e18)
-                \\                     AND COALESCE(weighted_avg_watts,-1e18) = COALESCE(:waw,-1e18)
-                \\                     AND COALESCE(device_watts,-1) = COALESCE(:dw,-1)
-                \\                    THEN 1 ELSE 0 END), 0) AS same
-                \\FROM activities WHERE id = :id
+                \\INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance, elevation, relative_effort, avg_watts, avg_hr, weighted_avg_watts, device_watts, synced_at)
+                \\VALUES (:id, :name, :sport, :start, :mt, :dist, :elev, :re, :aw, :ahr, :waw, :dw, :synced)
             ,
-            bindings: binds,
-            row: |cols| |stmt| {
-                present = Sqlite.i64("present")(cols)(stmt)?
-                same = Sqlite.i64("same")(cols)(stmt)?
-                Ok({ present, same })
-            },
+            bindings: [
+                { name: ":id", value: Integer(a.id) },
+                { name: ":name", value: String(a.name) },
+                { name: ":sport", value: String(a.sport_type) },
+                { name: ":start", value: String(a.start_date_local) },
+                { name: ":mt", value: Integer(a.moving_time) },
+                { name: ":dist", value: Real(a.distance) },
+                { name: ":elev", value: Real(a.total_elevation_gain) },
+                { name: ":re", value: opt_real(a.suffer_score) },
+                { name: ":aw", value: opt_real(a.average_watts) },
+                { name: ":ahr", value: opt_real(a.average_heartrate) },
+                { name: ":waw", value: opt_real(a.weighted_average_watts) },
+                # NULL = Strava did not say (old data); 1 = real meter; 0 = estimated
+                { name: ":dw", value: match a.device_watts { Ok(True) => Integer(1)  Ok(False) => Integer(0)  Err(_) => Null } },
+                # stamp this row with the current sync run so prune_deleted! can tell which
+                # activities Strava still has (re-stamped) from ones it deleted (stale stamp)
+                { name: ":synced", value: synced_val },
+            ],
         })?
-        if state.present > 0 and state.same > 0 {
-            # Nothing changed upstream. Re-stamp synced_at ANYWAY — prune_deleted! reads
-            # that stamp to tell "Strava still has this" from "deleted upstream", so
-            # skipping the write entirely would make the next prune delete the activity.
-            # The metrics row is left alone: that is the whole point of this branch.
-            Sqlite.execute!({
-                path: Path.utf8(path),
-                query: "UPDATE activities SET synced_at = :synced WHERE id = :id",
-                bindings: [{ name: ":id", value: Integer(a.id) }, { name: ":synced", value: synced_val }],
-            })?
-            Ok(Unchanged)
-        } else {
-            Sqlite.execute!({
-                path: Path.utf8(path),
-                query:
-                    \\INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance, elevation, relative_effort, avg_watts, avg_hr, weighted_avg_watts, device_watts, synced_at)
-                    \\VALUES (:id, :name, :sport, :start, :mt, :dist, :elev, :re, :aw, :ahr, :waw, :dw, :synced)
-                ,
-                bindings: List.append(binds, { name: ":synced", value: synced_val }),
-            })?
-            # the row is new or genuinely edited upstream, so its metrics are stale —
-            # invalidate so "edits self-heal" is actually true
-            invalidate_metrics!(path, a.id)?
-            if state.present > 0 Ok(Updated) else Ok(Inserted)
-        }
+        # NO metrics invalidation here, deliberately. `sync` re-lists a rolling 30-day
+        # window every run and cannot cheaply tell an edit from a no-op, so deleting here
+        # wiped a month of computed metrics on every sync and left every report
+        # under-reporting load until the next analyze.
+        #
+        # Staleness is detected in `analyze` instead, by comparing the activity inputs each
+        # metrics row was computed from against the row as it now stands — the same
+        # contract as `ftp_used`. That path is stateless and self-correcting: it cannot
+        # drift, and it costs nothing extra because analyze already runs that predicate.
+        Ok({})
     }
 
     # remove activities that vanished from Strava. A row is a victim when this sync run

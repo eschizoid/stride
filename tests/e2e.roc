@@ -845,15 +845,23 @@ b_import! = |ctx| {
     # `before == "2"` matters as much as the equality: if both were 0 this would pass while
     # proving nothing
     check!("a no-op re-import keeps the computed metrics", before == "2" and after == "2")?
-    # ...and the guard against the lazy version of that fix: a GENUINE change must STILL
-    # invalidate, or "edits self-heal" quietly stops being true. One tracked field differs
-    # (moving_time 3600 -> 3000), which is what a real Strava edit looks like to the upsert.
+    # ...and the other half: a GENUINE change must still be rescored, or "edits self-heal"
+    # quietly stops being true and the no-op check above could be satisfied by never
+    # invalidating anything at all.
+    #
+    # Staleness lives in analyze now, which compares the inputs each metrics row was scored
+    # from against the row as it stands. So the row is NOT deleted on write — it is
+    # rescored on the next analyze. The edit is +7s duration and -1m distance on purpose:
+    # a hash-based signature cancelled exactly on that pair and missed the edit entirely,
+    # which is why the comparison is value-by-value.
     # Rewritten with sed rather than a second CSV helper: adding another top-level function
     # to this file segfaults the compiler (it already sits near the limit noted at the top).
-    _ = sh!("sed -i '' 's/,55,3600,20100.0,/,55,3000,20100.0,/' '${expdir}/activities.csv'")
+    _ = sh!("sed -i '' 's/,55,3600,20100.0,/,55,3607,20099.0,/' '${expdir}/activities.csv'")
     _ = stride!(ctx.bin, ctx.home, ["import", expdir])
-    check!("an edited row still invalidates its metrics", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=9001;")) == "0")?
-    check!("while the untouched row keeps its own", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=9002;")) == "1")?
+    check!("an edited row keeps its metrics row until analyze runs", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=9001;")) == "1")?
+    check!("analyze rescores the edited row", strjq!(ctx, ["analyze"], ".data.computed") != "0")?
+    check!("and the stored duration now matches the edit", Str.trim(sql!(ctx.db, "SELECT mt_used FROM activity_metrics WHERE activity_id=9001;")) == "3607")?
+    check!("and it settles instead of rescoring forever", strjq!(ctx, ["analyze"], ".data.computed") == "0")?
     _ = sh!("cd '${expdir}' && zip -q export.zip activities.csv 2>/dev/null")
     check!("import from zip", Str.contains(stride!(ctx.bin, ctx.home, ["import", "${expdir}/export.zip"]), "\"imported\":2"))?
     check!("missing export explains itself", Str.contains(stride_human!(ctx.bin, ctx.home, ["import", "/nonexistent-dir-xyz"]), "no activities.csv"))?

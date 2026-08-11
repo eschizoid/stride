@@ -178,7 +178,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 16
+    schema_version = 17
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -249,6 +249,24 @@ Db :: [].{
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN hr_samples_dropped INTEGER")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN watts_samples_total INTEGER")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN watts_samples_dropped INTEGER")?
+        # v17: the activity-input signature a metrics row was computed from. Compared on
+        # every analyze like ftp_used / zones_used / metrics_rev, so a changed activity
+        # rescores itself. This is what lets `sync` stop deleting metrics: it re-lists a
+        # rolling 30-day window every run and cannot cheaply tell an edit from a no-op, so
+        # invalidating there wiped a month of metrics on every sync.
+        # the activity inputs each metrics row was computed from, stored so analyze can
+        # compare them value by value — same contract as ftp_used
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN mt_used INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN dist_used INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN elev_used INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN aw_used INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN ahr_used INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN waw_used INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN re_used INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN dw_used INTEGER")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN sport_used TEXT")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN start_used TEXT")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN stream_len_used INTEGER")?
         # v2: index the column every date-range filter and the activities sort use
         # (queries now compare a.start_local directly — sargable — instead of substr)
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })?

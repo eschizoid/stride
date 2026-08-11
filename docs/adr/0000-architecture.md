@@ -117,14 +117,21 @@ the inputs it was computed under, and recomputation is triggered by:
 - **HR-zone change** — compared via a `zones_used` signature.
 - **Algorithm change** — the `metrics_rev` constant; bump it whenever `Metrics`
   math changes (config provenance can't see code changes).
-- **Stream arrival / Strava edit / rating change** — these paths delete the
-  affected metrics row so the next `analyze` rescores it. "Strava edit" means a
-  tracked field ACTUALLY changed: `sync` re-lists a rolling 30-day window every
-  run, so treating every re-listed row as an edit deleted a month of metrics on
-  every sync and left reports under-reporting load until the next `analyze`.
-  `upsert_activity!` compares the tracked columns first and only invalidates on a
-  real difference; `synced_at` is excluded from that comparison, since it changes
-  by design every run and would make every row look edited.
+- **Activity inputs** — each metrics row stores the activity fields it was scored
+  from (`mt_used`, `aw_used`, `sport_used`, …) and `analyze` compares them value by
+  value, exactly as `ftp_used` works. A changed activity rescores itself.
+- **Stream arrival / rating change** — these paths delete the affected metrics row
+  so the next `analyze` rescores it.
+
+`sync` deliberately does NOT delete metrics. It re-lists a rolling 30-day window
+every run and cannot cheaply tell an edit from a no-op, so invalidating there wiped
+a month of computed metrics on every sync and left every report under-reporting
+load until the next `analyze` — a correctness bug, not just wasted work. Detecting
+staleness in `analyze` is stateless and self-correcting: there is no flag to drift,
+and the comparison costs nothing extra because `analyze` already runs that
+predicate. `synced_at` is excluded from it, since it changes by design every run
+and would mark every row stale. The comparison is value-by-value rather than a
+hash: an additive signature cancelled on a +7s/-1m edit and missed it silently.
 
 Any new metric input must join this story.
 
