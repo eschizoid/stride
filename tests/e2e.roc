@@ -856,7 +856,7 @@ b_import! = |ctx| {
     # which is why the comparison is value-by-value.
     # Rewritten with sed rather than a second CSV helper: adding another top-level function
     # to this file segfaults the compiler (it already sits near the limit noted at the top).
-    _ = sh!("sed -i '' 's/,55,3600,20100.0,/,55,3607,20099.0,/' '${expdir}/activities.csv'")
+    _ = sh!("sed -i '' '/^9001,/ s/,55,3600,20100\\.0,/,55,3607,20099.0,/' '${expdir}/activities.csv'")
     _ = stride!(ctx.bin, ctx.home, ["import", expdir])
     check!("an edited row keeps its metrics row until analyze runs", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=9001;")) == "1")?
     check!("analyze rescores the edited row", strjq!(ctx, ["analyze"], ".data.computed") != "0")?

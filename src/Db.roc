@@ -276,7 +276,34 @@ Db :: [].{
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_sport_start ON activities(sport_type, start_local)", bindings: [] })?
         # v15: NULL = Strava never said (pre-flag rows, CSV imports); 1 = real meter; 0 =
         # estimated. Estimated watts must not outrank honest fallbacks (#73).
-        alter_add_column!(path, "ALTER TABLE activities ADD COLUMN device_watts INTEGER")
+        alter_add_column!(path, "ALTER TABLE activities ADD COLUMN device_watts INTEGER")?
+        # Backfill so upgrading does not rescore the entire history just to populate these.
+        # Sound because the code being replaced deleted the metrics row on EVERY upsert: a
+        # metrics row that still exists therefore belongs to an activity that has not been
+        # written since it was computed, so the activity's current values ARE the values it
+        # was scored from. Rows whose activity was edited but not yet re-analyzed have no
+        # metrics row to backfill — the old code had already deleted it.
+        # Only NULL rows are touched, so re-running the migration is a no-op.
+        Sqlite.execute!({
+            path: Path.utf8(path),
+            query:
+                \\UPDATE activity_metrics SET
+                \\  mt_used = (SELECT COALESCE(a.moving_time,0) FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  dist_used = (SELECT CAST(ROUND(COALESCE(a.distance,0)) AS INTEGER) FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  elev_used = (SELECT CAST(ROUND(COALESCE(a.elevation,0)) AS INTEGER) FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  aw_used = (SELECT CAST(ROUND(COALESCE(a.avg_watts,0) * 100) AS INTEGER) FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  ahr_used = (SELECT CAST(ROUND(COALESCE(a.avg_hr,0) * 100) AS INTEGER) FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  waw_used = (SELECT CAST(ROUND(COALESCE(a.weighted_avg_watts,0) * 100) AS INTEGER) FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  re_used = (SELECT CAST(ROUND(COALESCE(a.relative_effort,0)) AS INTEGER) FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  dw_used = (SELECT COALESCE(a.device_watts,-1) FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  sport_used = (SELECT COALESCE(a.sport_type,'') FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  start_used = (SELECT COALESCE(a.start_local,'') FROM activities a WHERE a.id = activity_metrics.activity_id),
+                \\  stream_len_used = (SELECT CASE WHEN s.raw_json IS NULL THEN 0 ELSE LENGTH(s.raw_json) END FROM streams s WHERE s.activity_id = activity_metrics.activity_id)
+                \\WHERE mt_used IS NULL
+                \\  AND EXISTS (SELECT 1 FROM activities a WHERE a.id = activity_metrics.activity_id)
+            ,
+            bindings: [],
+        })
     }
 
     # rename old => new when old exists and new doesn't (idempotent, data-preserving)
