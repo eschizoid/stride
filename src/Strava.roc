@@ -155,6 +155,24 @@ Strava :: [].{
         # ONE atomic multi-row upsert. Strava rotates the refresh token on every refresh, so
         # three separate writes risked a crash between them leaving new-access + a DEAD refresh
         # token → auth bricked until a manual re-`auth`. A single SQL statement is atomic.
+        #
+        # BUG C — do not "simplify" the "${…}" interpolation below back to a bare field.
+        # A Str that Json.parse produced FROM AN HTTP RESPONSE BODY aliases memory the host
+        # owns; binding it into SQLite hands that memory back across the host boundary after
+        # it has been reused, corrupting the heap. The damage then lands on whatever string
+        # is handed to the host NEXT — in practice the Authorization header of the following
+        # request, which is why the backtrace always accused `_hosted_http_send_request`
+        # rather than anything here (that is the host symbol to grep for in a crash log).
+        # Interpolating forces a fresh allocation and the corruption stops.
+        #
+        # Isolated three ways, each ingredient removed in turn: parse without SQL is clean,
+        # SQL without parse is clean, and parsing the SAME JSON from a string literal instead
+        # of a response body is clean. Only parse-of-a-response-body bound into SQLite fails,
+        # and it fails every time. Against `just e2e-sync`: 0/20 failures with this, 13/20
+        # with it reverted.
+        #
+        # This is a workaround for a roc/basic-cli memory bug, not a fix for one. Revisit on
+        # the next toolchain bump; if the underlying bug is gone, this can go with it.
         Sqlite.execute!({
             path: Path.utf8(path),
             query:
@@ -162,8 +180,8 @@ Strava :: [].{
                 \\  ('strava_access_token', :at), ('strava_refresh_token', :rt), ('strava_expires_at', :exp)
             ,
             bindings: [
-                { name: ":at", value: String(tokens.access_token) },
-                { name: ":rt", value: String(tokens.refresh_token) },
+                { name: ":at", value: String("${tokens.access_token}") },
+                { name: ":rt", value: String("${tokens.refresh_token}") },
                 { name: ":exp", value: String(I64.to_str(tokens.expires_at)) },
             ],
         })
@@ -635,9 +653,13 @@ Strava :: [].{
             ,
             bindings: [
                 { name: ":id", value: Integer(a.id) },
-                { name: ":name", value: String(a.name) },
-                { name: ":sport", value: String(a.sport_type) },
-                { name: ":start", value: String(a.start_date_local) },
+                # "${a.name}" rather than a.name is LOAD-BEARING, not a stylistic wart —
+                # see the bug C note above save_tokens!. These three Strs came out of
+                # Json.parse over an HTTP response body; binding them directly is what
+                # corrupts the heap. The interpolation forces a fresh allocation.
+                { name: ":name", value: String("${a.name}") },
+                { name: ":sport", value: String("${a.sport_type}") },
+                { name: ":start", value: String("${a.start_date_local}") },
                 { name: ":mt", value: Integer(a.moving_time) },
                 { name: ":dist", value: Real(a.distance) },
                 { name: ":elev", value: Real(a.total_elevation_gain) },
