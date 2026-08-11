@@ -161,8 +161,9 @@ Strava :: [].{
         # owns; binding it into SQLite hands that memory back across the host boundary after
         # it has been reused, corrupting the heap. The damage then lands on whatever string
         # is handed to the host NEXT — in practice the Authorization header of the following
-        # request, which is why the backtrace always accused http_send_request rather than
-        # anything here. Interpolating forces a fresh allocation and the corruption stops.
+        # request, which is why the backtrace always accused `_hosted_http_send_request`
+        # rather than anything here (that is the host symbol to grep for in a crash log).
+        # Interpolating forces a fresh allocation and the corruption stops.
         #
         # Isolated three ways, each ingredient removed in turn: parse without SQL is clean,
         # SQL without parse is clean, and parsing the SAME JSON from a string literal instead
