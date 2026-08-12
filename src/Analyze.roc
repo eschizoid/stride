@@ -84,7 +84,15 @@ Analyze :: [].{
                         stream_errors: res.stream_errors,
                         form_tsb,
                         form_delta_7d: match form_delta { Known(d) => d  Unknown => 0.0 },
-                        form_delta_known: match form_delta { Known(_) => True  Unknown => False },
+                        # `(1 == 1)` rather than a bare `True` tag: the builtin JSON renders
+                        # an unconstrained tag as the STRING "True", and this record has no
+                        # other Bool to unify it with, so it silently shipped
+                        # "form_delta_known":"True". That is worse than ugly — in JavaScript
+                        # both "True" and "False" are truthy, so a consumer testing the flag
+                        # got true either way and the field was actively misleading.
+                        # summary's payload escaped it only because it sits beside real
+                        # Bools like ctl_warming_up.
+                        form_delta_known: match form_delta { Known(_) => (1 == 1)  Unknown => (1 == 0) },
                         converged: res.converged,
                     })
                 } else {

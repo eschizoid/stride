@@ -1075,9 +1075,12 @@ Metrics :: [].{
     # same form band. THE thing a band label structurally cannot express: 16 days at -11 and
     # one day at -11 render identically, yet mean different things.
     #
-    # Known/Unknown rather than a bare count, same contract as form_delta_7d: a series that
-    # does not reach back far enough has no answer, and reporting 1 would claim a streak
-    # just started when the truth is that nothing is known before it.
+    # Known/Unknown, same shape as form_delta_7d but a NARROWER meaning of Unknown: it
+    # says only that the series has no value at or before `today`, so there is no band to
+    # be in. Once today is known the answer is always Known(n >= 1) — including Known(1)
+    # when the day before is missing or in a different band. 1 is a truthful "today, and
+    # nothing established before it"; the renderer suppresses it because a one-day streak
+    # carries no information, not because it is wrong.
     days_in_band : List({ day : I64, tsb : F64 }), I64 -> [Known(I64), Unknown]
     days_in_band = |series, today|
         match tsb_as_of(series, today) {
