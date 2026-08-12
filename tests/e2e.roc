@@ -509,6 +509,17 @@ b_plan! = |ctx| {
     # session 4 is 2099-01-03 and the fixture activity 101 is not within a day of it, so
     # this exercises the EMPTY branch — which must still hand the reader a next step
     check!("...and says what to do when nothing is near", Str.contains(bare_refusal, "No activities recorded within a day"))?
+    # ...and the NON-empty branch, which is the whole point of the change. Without this the
+    # suite passes with the candidate lookup returning [] every time: the two checks above
+    # assert text that BOTH branches emit, so they cannot tell a working lookup from a
+    # dead one. Caught by deliberately blanking the lookup and watching nothing fail.
+    near_date = Str.trim(sql!(ctx.db, "SELECT substr(start_local,1,10) FROM activities WHERE id=101;"))
+    _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','${near_date}','endurance','needs an id','r','open');")
+    near_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
+    near_refusal = stride!(ctx.bin, ctx.home, ["complete", near_id])
+    check!("a refusal lists the activity ids actually near that date", Str.contains(near_refusal, "Activities near that date"))?
+    check!("...naming the real activity, not a placeholder", Str.contains(near_refusal, "101"))?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${near_id};")
     check!("rest bare complete", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "3"]), "\"rest\":true"))?
     check!("rest is done in db", Str.trim(sql!(ctx.db, "SELECT status FROM planned_sessions WHERE id=3;")) == "done")?
     _ = stride!(ctx.bin, ctx.home, ["skip", "4", "cleanup"])
