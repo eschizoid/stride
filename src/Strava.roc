@@ -645,7 +645,7 @@ Strava :: [].{
                 # IS established: forcing a copy here crashed real sync 12/12 while the e2e
                 # mock stayed green, because every mock name is short enough to live inline
                 # in a RocStr and only the heap-allocated copy gets freed underneath SQLite.
-                # Same warning as save_tokens!. See #105 for the full history.
+                # See #105 for the full history.
                 { name: ":name", value: String(a.name) },
                 { name: ":sport", value: String(a.sport_type) },
                 { name: ":start", value: String(a.start_date_local) },

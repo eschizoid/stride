@@ -145,19 +145,23 @@ Every item here cost a debugging session at least once — they are not style op
   behaviour; the rule is unchanged, only the failure mode is milder than advertised.)
 - **SQLite type affinity bites**: INTEGER columns reject `Sqlite.f64` decoders — `CAST(…
   AS REAL)` in the SELECT when unsure.
-- **Bug C is heap corruption that lands on the NEXT string handed to the host, not on the
-  code that caused it.** Characterised 2026-08-11 against `just e2e-sync` (50% failure over
-  20 runs). What surfaces is always the `Authorization: Bearer …` value arriving corrupt at
-  `_hosted_http_send_request`, in one of two ways: invalid UTF-8 → host panic + SIGABRT
-  (exit 134), or bytes that are valid UTF-8 but illegal in a header → a clean
-  `HttpErr(Other("failed to parse header value"))`. It always strikes after the activity-list
-  JSON parse, and the run that also refreshes OAuth (one extra parse) failed 7/12 versus 2/12
-  without it — consistent with the `Json.parse` attribution in the justfile. **The damage is
+- **#105 is heap corruption that surfaces on a LATER host call than the one that caused
+  it.** It shows up as the `Authorization: Bearer …` value arriving corrupt at
+  `_hosted_http_send_request`: invalid UTF-8 → SIGABRT (exit 134), or bytes that are valid
+  UTF-8 but illegal in a header → a clean `HttpErr(Other("failed to parse header value"))`.
+  The accusing symbol is where the damage LANDED, not where it came from. **The damage is
   silent and not confined to tests**: a crashed sync leaves streams unfetched, so `analyze`
   scores those activities off a lower ladder rung and the TSS is quietly wrong.
-  SQL shape is NOT the trigger — 12 statement shapes (runtime-assembled SQL, 128KB string
-  reads, correlated subqueries, 11 bindings, single-row `query!`) ran 200 iterations × 15
-  runs each with zero failures.
+- **The trigger is a decoded string long enough to be HEAP-allocated.** Changing only an
+  activity's name from 15 to 68 bytes, nothing else, flips a clean run into a crashing one.
+  Short strings live inline in a RocStr and never touch the heap, which is why the e2e mock
+  — every fixture string short — cannot reproduce it and why a green `e2e-sync` says nothing
+  about real payloads. Ruled out by measurement, so don't re-litigate: SQL statement shape
+  (12 shapes, ~36k statements, clean), `Json.parse` alone (real 33KB payload from a file,
+  clean), payload size, and copying the decoded string before use — that last one CAUSED a
+  12/12 crash and had to be reverted.
+- **Verify anything touching sync decode/bind against real Strava data**, not `just test`.
+  A change validated only on the mock shipped and broke daily sync for every real payload.
 
 ### Style
 

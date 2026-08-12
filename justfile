@@ -72,7 +72,7 @@ e2e-sync:
         R=0
         break
       fi
-      echo "  (sync attempt $i failed, retrying)"
+      if [ "$i" -lt 5 ]; then echo "  (sync attempt $i failed, retrying)"; else echo "  (sync attempt $i failed, giving up)"; fi
     done
     exit $R
 
