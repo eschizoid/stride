@@ -380,7 +380,7 @@ Plan :: [].{
                 \\JOIN planned_sessions p ON p.id = :pid
                 \\WHERE a.start_local >= date(p.target_date, '-1 day')
                 \\  AND a.start_local <  date(p.target_date, '+2 day')
-                \\ORDER BY a.start_local DESC
+                \\ORDER BY a.start_local DESC, a.id DESC
                 \\LIMIT 5
             ,
             bindings: [{ name: ":pid", value: Integer(session_id) }],
