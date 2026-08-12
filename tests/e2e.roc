@@ -195,9 +195,33 @@ run_sync! = || {
 
     _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','stale-access'),('strava_refresh_token','stale-refresh'),('strava_expires_at','1');")
 
-    _ = sync_stride!(bin, home, base, ["sync"])
+    first_sync = sync_stride!(bin, home, base, ["sync"])
     tok = Str.trim(sql!(db, "SELECT value FROM config WHERE key='strava_access_token';"))
     check!("expired token refreshed via /oauth/token (stale-access -> mock-access)", tok == "mock-access")?
+
+    # #112: the first sync sees both mock activities for the first time, so both are NEW.
+    # Asserting 2/0 rather than just "some number" — a classifier stuck on Updated, or one
+    # that counted every re-listed row as new, would both pass a looser check.
+    check!("first sync reports 2 new", Str.contains(first_sync, "\"new_activities\":2"))?
+    check!("...and 0 updated", Str.contains(first_sync, "\"updated_activities\":0"))?
+
+    # ONE further sync, not two, covering both remaining cases at once. Each extra `sync`
+    # multiplies this driver's exposure to #105 — three syncs per attempt needs three
+    # consecutive crash-free runs and dropped the suite to passing 1 invocation in 6, so
+    # the shape of this test is bounded by that bug until it is fixed.
+    #
+    # Edit 501 locally to stand in for a Strava-side edit: the next sync re-lists the
+    # mock's ORIGINAL name and must see it differ from what is now stored. 502 is left
+    # untouched in the same run, so one sync proves three things — a changed row counts as
+    # updated, an unchanged row does NOT (updated is 1, not 2), and neither is miscounted
+    # as new. Without the edited row the feature could pass by never classifying anything
+    # as changed; without the untouched row it could pass by counting every re-listed row.
+    _ = sql!(db, "UPDATE activities SET name='edited upstream' WHERE id=501;")
+    second_sync = sync_stride!(bin, home, base, ["sync"])
+    check!("an edited row counts as updated", Str.contains(second_sync, "\"updated_activities\":1"))?
+    check!("...the untouched row does not (1, not 2)", !(Str.contains(second_sync, "\"updated_activities\":2")))?
+    check!("...and nothing is miscounted as new", Str.contains(second_sync, "\"new_activities\":0"))?
+    check!("...while both rows are still re-checked", Str.contains(second_sync, "\"synced\":2"))?
 
     _ = sync_stride!(bin, home, base, ["analyze"])
     check!("2 mock activities synced", sync_strjq!(bin, home, base, ["activities"], ".data | length") == "2")?
