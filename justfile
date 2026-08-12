@@ -58,8 +58,14 @@ e2e-sync:
     MOCK=$!
     # kill the mock on ANY exit, including Ctrl-C — the old single-line form only killed
     # it on the success path, so an interrupted run left the port bound and every later
-    # run failed to bind until someone found the stray process
-    trap 'kill $MOCK 2>/dev/null' EXIT INT TERM
+    # run failed to bind until someone found the stray process.
+    #
+    # EXIT alone, deliberately. Adding INT/TERM to a handler that does not itself exit
+    # REPLACES the default terminate-on-signal, so Ctrl-C ran the cleanup and then carried
+    # on through all five retries. Measured: with `EXIT INT TERM` a SIGTERM'd run completed
+    # the whole loop and exited 0; with `EXIT` alone it stopped at once (143) and still ran
+    # the cleanup, which is the behaviour we want.
+    trap 'kill $MOCK 2>/dev/null' EXIT
     R=1
     for i in 1 2 3 4 5; do
       if E2E_MODE=sync STRIDE_API_BASE=http://127.0.0.1:{{mock_port}} ./e2e; then
