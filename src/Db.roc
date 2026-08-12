@@ -178,7 +178,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 18
+    schema_version = 19
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -267,6 +267,11 @@ Db :: [].{
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN sport_used TEXT")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN start_used TEXT")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN stream_len_used INTEGER")?
+        # v19: aerobic decoupling / Pw:HR drift (#94). NULLABLE on purpose — 0.0 is a
+        # legitimate PERFECT result (no drift), so a 0 default would make an ideal ride
+        # and a session with no power meter indistinguishable. NULL means "not computable
+        # for this activity"; a stored 0.0 means "computed, and it was flat".
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN decoupling_pct REAL")?
         # v2: index the column every date-range filter and the activities sort use
         # (queries now compare a.start_local directly — sargable — instead of substr)
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })?

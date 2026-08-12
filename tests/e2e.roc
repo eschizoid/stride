@@ -666,6 +666,31 @@ b_activity_detail! = |ctx| {
     check!("101 w60 computed from stream = 200", strjq!(ctx, ["activity", "101"], ".data.power_bests.w60") == "200")?
     check!("no power streams -> w60 honest 0", strjq!(ctx, ["activity", "102"], ".data.power_bests.w60") == "0")?
     check!("activity not-found", Str.contains(stride!(ctx.bin, ctx.home, ["activity", "999"]), "activity_not_found"))?
+
+    # ── aerobic decoupling (#94) ─────────────────────────────────────
+    # 101 has power streams but NO heart rate, so drift is not computable. It must report
+    # honest ABSENCE, not 0 — a 0 would render a session with no strap identically to a
+    # perfectly steady ride, which is the whole reason the flag exists.
+    check!("no HR -> decoupling is not known", strjq!(ctx, ["activity", "101"], ".data.decoupling_known") == "false")?
+    check!("...and the human line omits it entirely", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "101"]), "drift")))?
+
+    # A ride with FLAT 200W and HR stepping 130 -> 150 at the midpoint. Efficiency falls
+    # from 200/130 to ~200/150, so the drift is ~13% — the same watts costing more
+    # heartbeats. Pinning the value, not just its presence: a stub returning any constant
+    # would satisfy "is a number".
+    dtimes = Str.join_with(List.map(int_seq(600), |i| U64.to_str(i)), ",")
+    dwatts = Str.join_with(List.map(int_seq(600), |_| "200"), ",")
+    dhr = Str.join_with(List.map(int_seq(600), |i| if i < 300 "130" else "150"), ",")
+    draw = "{\"time\":{\"data\":[${dtimes}]},\"watts\":{\"data\":[${dwatts}]},\"heartrate\":{\"data\":[${dhr}]}}"
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,device_watts) VALUES (777,'drift ride','Ride','${ctx.d1}T09:00:00Z',600,10000,1);")
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (777, '${draw}');")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("a drifting ride knows its decoupling", strjq!(ctx, ["activity", "777"], ".data.decoupling_known") == "true")?
+    check_near!("...and reports ~13% Pw:HR drift", sfloat(strjq!(ctx, ["activity", "777"], ".data.decoupling_pct")), 13.3, 0.5)?
+    check!("...and the human line shows it", Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "777"]), "drift"))?
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 777;")
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 777;")
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 777;")
     Ok({})
 }
 

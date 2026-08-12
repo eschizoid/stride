@@ -542,6 +542,17 @@ Analyze :: [].{
         hr_dropped = hr_total - List.len(hr_pairs)
         watts_total = List.len(watts_raw)
         watts_dropped = watts_total - List.len(watts_pairs)
+        # aerobic decoupling (#94), from the SAME filtered pairs the rest of the scoring
+        # uses — so a junk HR sample or an estimated-watts stream cannot produce a drift
+        # number that nothing else in the row would agree with. Estimated watts are already
+        # dropped wholesale above (#73), which is what we want: modelled power divided by
+        # real heartbeats is not an efficiency measurement.
+        #
+        # POWER ONLY for now. The pace variant wants the grade-adjusted stream rTSS
+        # consumes, which is derived further down; wiring it here would either duplicate
+        # that derivation or reorder the function. Tracked as follow-up rather than done
+        # badly — a wrong decoupling number on every run is worse than none.
+        decoupling = Metrics.decoupling_pct(watts_pairs, hr_pairs)
         # held pairs: NP wants values, the bests need real seconds to reject pause-spanning windows
         watts_1s_pairs = Metrics.resample_1s_pairs(watts_pairs, Hold)
         watts_1s = List.map(watts_1s_pairs, |p| p.v)
@@ -669,8 +680,8 @@ Analyze :: [].{
             path: Path.utf8(path),
             query:
                 \\INSERT OR REPLACE INTO activity_metrics
-                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped, mt_used, dist_used, elev_used, aw_used, ahr_used, waw_used, re_used, dw_used, sport_used, start_used, stream_len_used)
-                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :thru, :hrt, :hrd, :wt, :wd, :umt, :udist, :uelev, :uaw, :uahr, :uwaw, :ure, :udw, :usport, :ustart, :uslen)
+                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped, mt_used, dist_used, elev_used, aw_used, ahr_used, waw_used, re_used, dw_used, sport_used, start_used, stream_len_used, decoupling_pct)
+                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :thru, :hrt, :hrd, :wt, :wd, :umt, :udist, :uelev, :uaw, :uahr, :uwaw, :ure, :udw, :usport, :ustart, :uslen, :decoup)
             ,
             bindings: [
                 { name: ":umt", value: Integer(row.s_mt) },
@@ -684,6 +695,9 @@ Analyze :: [].{
                 { name: ":usport", value: String(row.sport) },
                 { name: ":ustart", value: String(row.start) },
                 { name: ":uslen", value: Integer(row.s_slen) },
+                # NULL, not 0, when there is nothing to measure — 0.0 is a real result
+                # here (a perfectly steady session) and the two must stay distinguishable
+                { name: ":decoup", value: match decoupling { Known(d) => Real(d)  Unknown => Null } },
                 { name: ":hrt", value: Integer((hr_total).to_i64_wrap()) },
                 { name: ":hrd", value: Integer((hr_dropped).to_i64_wrap()) },
                 { name: ":wt", value: Integer((watts_total).to_i64_wrap()) },
@@ -809,5 +823,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 24
+    metrics_rev = 25
 }
