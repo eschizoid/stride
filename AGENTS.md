@@ -61,7 +61,13 @@ just install   # build + symlink to ~/.local/bin/stride
 - `tests/e2e.roc` is ONE binary in two roles: a mock Strava server (`E2E_MODE=mock`) and
   the offline e2e driver (`E2E_MODE=sync` runs real sync + token refresh against it).
   `STRIDE_API_BASE` points stride at the mock for network-free sync testing (`just
-  e2e-sync`, local-only — it's ~50% flaky on bug C, so it retries 5×).
+  e2e-sync`, local-only — it's ~50% flaky on #105, so it retries 5×). **That retry is a
+  crutch and masks genuine regressions as readily as it masks #105, so a green `e2e-sync`
+  is weak evidence.** Weaker still for sync itself: every string in the mock fixture is
+  short enough to live inline in a RocStr, and #105 only bites heap-allocated decoded
+  strings — so this suite CANNOT reproduce the real-data crash, and a change to the sync
+  decode/bind path must be run against real Strava data before it is called working. That
+  mistake has shipped once.
 - **Effectful `expect`s can't run under the test runner** — so `roc test` covers the pure
   modules only, and the e2e suite is a real Roc app (`tests/e2e.roc`, sandboxed HOME, no
   network) driven by `just e2e`. **Verify features with Roc expects + that harness, not

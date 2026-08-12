@@ -156,9 +156,9 @@ Strava :: [].{
         # three separate writes risked a crash between them leaving new-access + a DEAD refresh
         # token → auth bricked until a manual re-`auth`. A single SQL statement is atomic.
         #
-        # DO NOT wrap these bindings in "${...}" to force a copy. That was PR #116's
-        # attempt at bug C (#105) and it crashed real sync every run — see the longer note
-        # in upsert_activity!. Bug C remains open; copying is not the fix.
+        # DO NOT wrap these bindings in "${...}" to force a copy. That was tried against
+        # #105 and crashed real sync every run — see the longer note in upsert_activity!.
+        # #105 remains open; copying is not the fix.
         Sqlite.execute!({
             path: Path.utf8(path),
             query:
@@ -639,13 +639,13 @@ Strava :: [].{
             ,
             bindings: [
                 { name: ":id", value: Integer(a.id) },
-                # DO NOT "copy" these before binding. Passing the decoded Str straight
-                # through is correct; wrapping it as String("${a.name}") to force a fresh
-                # allocation is what PR #116 did, and it crashed real sync 12/12 while the
-                # e2e mock stayed green — every mock name is short enough to live inline in
-                # a RocStr, so the copy never reached the heap there, and the heap copy is
-                # the thing that gets freed underneath SQLite. Same warning as save_tokens!.
-                # Bug C (#105) is still open; it is NOT fixed by copying.
+                # DO NOT wrap these in "${...}" to force a copy before binding. Passing the
+                # decoded Str straight through is the least-bad known behaviour, not a
+                # guarantee of correctness — #105 is open and this path is still flaky. What
+                # IS established: forcing a copy here crashed real sync 12/12 while the e2e
+                # mock stayed green, because every mock name is short enough to live inline
+                # in a RocStr and only the heap-allocated copy gets freed underneath SQLite.
+                # Same warning as save_tokens!. See #105 for the full history.
                 { name: ":name", value: String(a.name) },
                 { name: ":sport", value: String(a.sport_type) },
                 { name: ":start", value: String(a.start_date_local) },
