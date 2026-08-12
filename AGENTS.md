@@ -61,7 +61,9 @@ just install   # build + symlink to ~/.local/bin/stride
 - `tests/e2e.roc` is ONE binary in two roles: a mock Strava server (`E2E_MODE=mock`) and
   the offline e2e driver (`E2E_MODE=sync` runs real sync + token refresh against it).
   `STRIDE_API_BASE` points stride at the mock for network-free sync testing (`just
-  e2e-sync`, local-only — it's ~50% flaky on bug C, so it retries 5×).
+  e2e-sync`, local-only because it binds a port). It runs ONCE and does not retry — it
+  used to retry 5× around bug C, which is now fixed at the source, so a failure there
+  means something is genuinely broken rather than flaky.
 - **Effectful `expect`s can't run under the test runner** — so `roc test` covers the pure
   modules only, and the e2e suite is a real Roc app (`tests/e2e.roc`, sandboxed HOME, no
   network) driven by `just e2e`. **Verify features with Roc expects + that harness, not
@@ -139,19 +141,25 @@ Every item here cost a debugging session at least once — they are not style op
   behaviour; the rule is unchanged, only the failure mode is milder than advertised.)
 - **SQLite type affinity bites**: INTEGER columns reject `Sqlite.f64` decoders — `CAST(…
   AS REAL)` in the SELECT when unsure.
-- **Bug C is heap corruption that lands on the NEXT string handed to the host, not on the
-  code that caused it.** Characterised 2026-08-11 against `just e2e-sync` (50% failure over
-  20 runs). What surfaces is always the `Authorization: Bearer …` value arriving corrupt at
-  `_hosted_http_send_request`, in one of two ways: invalid UTF-8 → host panic + SIGABRT
-  (exit 134), or bytes that are valid UTF-8 but illegal in a header → a clean
-  `HttpErr(Other("failed to parse header value"))`. It always strikes after the activity-list
-  JSON parse, and the run that also refreshes OAuth (one extra parse) failed 7/12 versus 2/12
-  without it — consistent with the `Json.parse` attribution in the justfile. **The damage is
-  silent and not confined to tests**: a crashed sync leaves streams unfetched, so `analyze`
-  scores those activities off a lower ladder rung and the TSS is quietly wrong.
-  SQL shape is NOT the trigger — 12 statement shapes (runtime-assembled SQL, 128KB string
-  reads, correlated subqueries, 11 bindings, single-row `query!`) ran 200 iterations × 15
-  runs each with zero failures.
+- **A `Str` decoded from an HTTP response body must be COPIED before it crosses back
+  into the host.** This was bug C, characterised and fixed 2026-08-11 (#105, #116). A
+  `Str` that `Json.parse` produced from a response body aliases memory the host owns;
+  binding it into SQLite hands that memory back after reuse and corrupts the heap. Copy
+  it — `String("${a.name}")` rather than `String(a.name)` — at any site that binds a
+  decoded string. `save_tokens!` and `upsert_activity!` in `Strava.roc` carry the long
+  version. This is a workaround for a roc/basic-cli bug, not a fix for one; re-test on
+  the next toolchain bump.
+- **A crash at a host-boundary symbol names where corruption SURFACED, not where it was
+  caused.** Bug C's backtrace accused `_hosted_http_send_request` for months while the
+  cause sat several calls upstream, because the damage lands on the NEXT string handed
+  to the host. Bisect by removing one ingredient at a time — that is what found it, and
+  it disproved two long-standing beliefs on the way: SQL shape was irrelevant (12 shapes,
+  ~36,000 statements, zero failures), and parsing the SAME JSON from a string literal
+  instead of a response body was clean. Do not trust the accusation in the backtrace.
+- **`roc build` can crash where `roc check` reports a clean error** — SIGILL/SIGSEGV with
+  zero diagnostics on an undeclared type or a private-module import. Three times in one
+  day. Always `roc check` a new file before `roc build`, or you will debug the compiler
+  instead of your code.
 
 ### Style
 
