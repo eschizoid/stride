@@ -498,6 +498,32 @@ Metrics :: [].{
             }
         }
 
+    # ── form trend (#111): the weekly TSB delta ──────────────────────────
+    #
+    # A band label has no memory. TSB spent a full month inside the -15..-5 band while
+    # moving 9 points, so the verdict line read identically for weeks — and a conclusion
+    # that never changes is indistinguishable from no conclusion. The band is right; it
+    # just cannot say whether you are digging deeper or climbing out. This is that.
+    #
+    # Same lookback as ramp_rates, over tsb instead of ctl.
+    tsb_as_of : List({ day : I64, tsb : F64 }), I64 -> [Found(F64), Missing]
+    tsb_as_of = |series, target|
+        # delegate rather than re-implement: ctl_as_of already carries the one-pass
+        # "latest day at or before target" logic, including the quadratic trap it was
+        # written to avoid. Two copies of that walk would drift.
+        ctl_as_of(List.map(series, |e| { day: e.day, ctl: e.tsb }), target)
+
+    # Known vs Unknown, NOT a bare 0.0. Both "form is exactly where it was" and "there is
+    # no history to compare against" would collapse to zero, and the renderer must not
+    # tell the reader form is level when it simply does not know. The JSON layer flattens
+    # Unknown to 0.0, which is the house meaning of a numeric 0 (#111 acceptance).
+    form_delta_7d : List({ day : I64, tsb : F64 }), I64 -> [Known(F64), Unknown]
+    form_delta_7d = |series, today|
+        match (tsb_as_of(series, today), tsb_as_of(series, today - 7)) {
+            (Found(now), Found(before)) => Known(now - before)
+            _ => Unknown
+        }
+
     # How many of the most recent ENDURANCE sessions in a row recorded no usable HR.
     # `rows` must be newest-first; the walk stops at the first session that did record it.
     #
@@ -2007,6 +2033,50 @@ expect {
     z1 = List.first(zs).ok_or({ z: "", name: "", lo_w: 9.0, hi_w: 0.0 })
     z7 = List.last(zs).ok_or({ z: "", name: "", lo_w: 0.0, hi_w: 9.0 })
     (z1.lo_w).abs() < 0.001 and (z7.hi_w).abs() < 0.001
+}
+
+# ── form trend (#111) ────────────────────────────────────────────────
+# Mariano's real shape: a month inside one band, so the label never moved while form
+# actually swung 7 points. The delta is the thing that carries the information.
+expect {
+    series = [
+        { day: 100, tsb: -13.0 },
+        { day: 103, tsb: -11.0 },
+        { day: 107, tsb: -6.0 },
+    ]
+    match Metrics.form_delta_7d(series, 107) {
+        Known(d) => (d - 7.0).abs() < 0.001
+        Unknown => False
+    }
+}
+
+# the anchor is the latest day AT OR BEFORE the target, so a gap in the series still
+# answers — 105 has no row, 103 is the standing value
+expect {
+    series = [{ day: 98, tsb: -4.0 }, { day: 103, tsb: -10.0 }]
+    match Metrics.form_delta_7d(series, 105) {
+        Known(d) => (d - (-6.0)).abs() < 0.001
+        Unknown => False
+    }
+}
+
+# Short history is Unknown, NOT a fabricated swing. Nothing reaches back to day 93, and
+# reporting -6 - 0 = -6 here would invent a week-long plunge out of an empty series.
+expect {
+    series = [{ day: 100, tsb: -6.0 }]
+    match Metrics.form_delta_7d(series, 100) {
+        Known(_) => False
+        Unknown => True
+    }
+}
+
+# genuinely level is Known(0), and must stay distinguishable from Unknown above
+expect {
+    series = [{ day: 93, tsb: -8.0 }, { day: 100, tsb: -8.0 }]
+    match Metrics.form_delta_7d(series, 100) {
+        Known(d) => (d).abs() < 0.001
+        Unknown => False
+    }
 }
 
 expect Metrics.form_label(-20.0) == "high modeled fatigue — consider recovery"

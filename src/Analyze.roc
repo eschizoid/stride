@@ -40,29 +40,53 @@ Analyze :: [].{
                 res = passes?
                 Output.say!("rebuilding daily load…")?
                 rebuild_daily_load!(path)?
-                form =
-                    match Sqlite.query!({
-                        path: Path.utf8(path),
-                        query: "SELECT tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
-                        bindings: [],
-                        row: Sqlite.f64("tsb"),
-                    }) {
-                        Ok(tsb) => Ok(Some(tsb))
-                        # no daily_load yet (nothing computed) is fine — skip the verdict;
-                        # a real query error propagates instead of being swallowed
-                        Err(NoRowsReturned) => Ok(None)
-                        Err(other) => Err(other)
+                # The last 10 days, not just today: the verdict now carries the weekly
+                # delta (#111), which needs the value 7 days back. query_many rather than
+                # query! because an empty daily_load is a normal state (nothing analyzed
+                # yet), and the empty list says so without an error to translate.
+                form_rows = Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query: "SELECT day AS day, CAST(tsb AS REAL) AS tsb FROM daily_load ORDER BY day DESC LIMIT 10",
+                    bindings: [],
+                    rows: |cols| |stmt| {
+                        day = Sqlite.str("day")(cols)(stmt)?
+                        tsb = Sqlite.f64("tsb")(cols)(stmt)?
+                        Ok({ day, tsb })
+                    },
+                })?
+                # ORDER BY day DESC, so the head is today
+                tsb_opt =
+                    match List.first(form_rows) {
+                        Ok(latest) => Some(latest)
+                        Err(_) => None
                     }
-                tsb_opt = form?
+                form_delta =
+                    match tsb_opt {
+                        None => Unknown
+                        Some(latest) =>
+                            Metrics.form_delta_7d(
+                                List.map(form_rows, |r| { day: Metrics.date_str_to_days(r.day).ok_or(0), tsb: r.tsb }),
+                                Metrics.date_str_to_days(latest.day).ok_or(0),
+                            )
+                    }
                 if Output.json_mode!({}) {
                     form_tsb =
                         match tsb_opt {
-                            Some(tsb) => tsb
+                            Some(latest) => latest.tsb
                             None => 0.0
                         }
                     # `converged` is an ADDITIVE field — existing consumers keep working, so the
                     # envelope version stays. False = fuel ran out; run analyze again to continue.
-                    Output.emit_ok!({ computed: res.computed, stream_errors: res.stream_errors, form_tsb, converged: res.converged })
+                    # form_delta_7d/known are additive on the same grounds (#111); the flag is
+                    # needed because 0.0 means both "level" and "not enough history" here.
+                    Output.emit_ok!({
+                        computed: res.computed,
+                        stream_errors: res.stream_errors,
+                        form_tsb,
+                        form_delta_7d: match form_delta { Known(d) => d  Unknown => 0.0 },
+                        form_delta_known: match form_delta { Known(_) => True  Unknown => False },
+                        converged: res.converged,
+                    })
                 } else {
                     Stdout.line!("computed metrics for ${U64.to_str(res.computed)} activities")?
                     (if !(res.converged)
@@ -75,7 +99,9 @@ Analyze :: [].{
                         Ok({}))?
                     # one verdict line; the full report lives in `stride summary`
                     match tsb_opt {
-                        Some(tsb) => Stdout.line!("→ today: form ${Render.fmt0(tsb)} — ${Metrics.form_label(tsb)}")
+                        Some(latest) =>
+                            Stdout.line!("→ today: form ${Render.fmt0(latest.tsb)}${Render.form_trend_phrase(form_delta)} — ${Metrics.form_label(latest.tsb)}")
+
                         None => Ok({})
 
                     }

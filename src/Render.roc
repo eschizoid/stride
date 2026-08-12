@@ -184,6 +184,29 @@ Render :: [].{
         if x >= 0.0 "+${mag}" else "-${mag}"
     }
 
+    # The clause that gives the form verdict a memory (#111). Words, not a signed number,
+    # because this sits mid-sentence between the value and the band label.
+    #
+    # Unknown renders as "" and the caller drops the clause entirely: too little history to
+    # compare is NOT "level with a week ago", and saying so would be the same fabrication
+    # `form_delta_7d` returns a tag to avoid.
+    #
+    # Rounding is what decides "level", not the raw value: the line prints whole points, so
+    # a 0.4 swing that displays as 0 must not read "up 0 from a week ago".
+    form_trend_phrase : [Known(F64), Unknown] -> Str
+    form_trend_phrase = |delta|
+        match delta {
+            Unknown => ""
+            Known(d) =>
+                if fmt0((d).abs()) == "0" {
+                    ", level with a week ago"
+                } else if d > 0.0 {
+                    ", up ${fmt0(d)} from a week ago"
+                } else {
+                    ", down ${fmt0((d).abs())} from a week ago"
+                }
+        }
+
     pad_left : Str, U64 -> Str
     pad_left = |s, w| {
         n = display_width(s)
@@ -479,7 +502,14 @@ Render :: [].{
     load_screen = |ordered| {
         verdict =
             match List.last(ordered) {
-                Ok(today) => "→ today: form ${fmt0(today.tsb)} — ${Metrics.form_label(today.tsb)}"
+                Ok(today) => {
+                    # the series is right here, so the trend costs nothing extra — no
+                    # payload field and no second query, unlike the summary screen
+                    anchor = Metrics.date_str_to_days(today.day).ok_or(0)
+                    tsb_series = List.map(ordered, |d| { day: Metrics.date_str_to_days(d.day).ok_or(0), tsb: d.tsb })
+                    trend = form_trend_phrase(Metrics.form_delta_7d(tsb_series, anchor))
+                    "→ today: form ${fmt0(today.tsb)}${trend} — ${Metrics.form_label(today.tsb)}"
+                }
                 Err(_) => ""
             }
         if List.len(ordered) > 14 {
@@ -608,7 +638,7 @@ Render :: [].{
                     "── stride report (as of ${s.as_of}) ──────────────────",
                     "",
                     "  fitness (CTL): ${fmt0(s.fitness_ctl)}   fatigue (ATL): ${fmt0(s.fatigue_atl)}   form (TSB): ${fmt0(s.form_tsb)}",
-                    "  → ${Metrics.form_label(s.form_tsb)}",
+                    "  → form ${fmt0(s.form_tsb)}${form_trend_phrase(if s.form_delta_known Known(s.form_delta_7d) else Unknown)} — ${Metrics.form_label(s.form_tsb)}",
                     # Numbers, no verdict: the usual sustainable band is the coach's
                     # knowledge, not the engine's. Signed, because a taper reads negative
                     # and clamping that to 0 would hide a deliberate unload.
@@ -888,6 +918,8 @@ expect {
         fitness_ctl: 20.0,
         fatigue_atl: 10.0,
         form_tsb: 10.0,
+        form_delta_7d: 5.0,
+        form_delta_known: True,
         ramp_7d: 4.0,
         ramp_28d_avg: -1.0,
         load_days: 400,
@@ -904,12 +936,41 @@ expect {
         # a build and an unload each keep their sign in the same line
         and Str.contains(out, "+4/wk")
         and Str.contains(out, "-1/wk")
+        # the verdict carries the trend, not just the band (#111)
+        and Str.contains(out, "form 10, up 5 from a week ago")
+}
+
+# #111: too little history says nothing about the trend rather than claiming form is level.
+# Asserts the ABSENCE of the clause AND the presence of the rest of the line, so it cannot
+# pass by the whole verdict having gone missing.
+expect {
+    s = {
+        as_of: "2025-01-01",
+        fitness_ctl: 20.0,
+        fatigue_atl: 10.0,
+        form_tsb: 10.0,
+        form_delta_7d: 0.0,
+        form_delta_known: False,
+        ramp_7d: 4.0,
+        ramp_28d_avg: -1.0,
+        load_days: 400,
+        ctl_warming_up: False,
+        last_28d: { tss: 100.0, z1_s: 600.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 100.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 4.I64, intensity_streams: 4.I64 },
+        last_7d: { tss: 50.0, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 2.I64, intensity_streams: 2.I64 },
+        ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
+        last_hard_session_date: "",
+        pending_sessions: 2.I64,
+        sports_28d: [{ sport: "Run", sessions: 4.I64, tss: 100.0, moving_time: 7200.I64, distance_m: 30000.0 }],
+    }
+    out = Render.summary_screen(s)
+    Str.contains(out, "form 10 —") and !(Str.contains(out, "week ago"))
 }
 
 # Missing detailed data is unavailable, never a false zero or a bogus Z5 warning.
 expect {
     s = {
         as_of: "2025-01-01", fitness_ctl: 20.0, fatigue_atl: 10.0, form_tsb: 10.0,
+        form_delta_7d: 0.0, form_delta_known: False,
         ramp_7d: 0.0, ramp_28d_avg: 0.0,
         load_days: 400, ctl_warming_up: False,
         last_28d: { tss: 100.0, z1_s: 0.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 0.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 0.I64, intensity_streams: 0.I64 },
