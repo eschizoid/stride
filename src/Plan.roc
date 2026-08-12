@@ -360,6 +360,15 @@ Plan :: [].{
     # refusal to complete can show the reader the ids they might have meant. ±1 day rather
     # than the exact date: start_local is a civil timestamp, and a late-evening or
     # early-morning session routinely lands on the neighbouring day.
+    #
+    # A HALF-OPEN range on the raw column, not `date(a.start_local) BETWEEN …`. Wrapping the
+    # column in a function makes the predicate non-sargable, so idx_activities_start cannot
+    # be used and the query degrades to a full scan. The bounds work because start_local is
+    # ISO text and the comparison is lexical: `date()` yields '2026-08-10', and
+    # '2026-08-10T09:30:00Z' sorts after it, so `>=` catches the whole lower day; the upper
+    # bound is target+2 EXCLUSIVE, so every timestamp on target+1 still sorts below
+    # '2026-08-13' and is included. (Same lexical reasoning as period_ftp_sql in
+    # Analyze.roc, where getting it wrong dropped every activity on the cutoff day.)
     candidate_activities! : Str, I64 => Try(List({ id : I64, start : Str, sport : Str, name : Str }), _)
     candidate_activities! = |path, session_id|
         Sqlite.query_many!({
@@ -369,7 +378,8 @@ Plan :: [].{
                 \\       COALESCE(a.sport_type, '') AS sport, COALESCE(a.name, '') AS name
                 \\FROM activities a
                 \\JOIN planned_sessions p ON p.id = :pid
-                \\WHERE date(a.start_local) BETWEEN date(p.target_date, '-1 day') AND date(p.target_date, '+1 day')
+                \\WHERE a.start_local >= date(p.target_date, '-1 day')
+                \\  AND a.start_local <  date(p.target_date, '+2 day')
                 \\ORDER BY a.start_local DESC
                 \\LIMIT 5
             ,
