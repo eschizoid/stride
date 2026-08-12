@@ -288,7 +288,7 @@ Strava :: [].{
                         Some(a) => Metrics.epoch_to_iso(a + 86400)
                         None => ""
                     }
-                counts = fetch_pages!(path, token, after_param, started, 1, { relisted: 0, new_n: 0, updated_n: 0 }, True)?
+                counts = fetch_pages!(path, token, after_param, started, 1, { relisted: 0, new_n: 0, updated_n: 0 }, True, True)?
                 pruned = prune_deleted!(path, started, window_start)?
                 Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
                 streams_n = backfill_streams!(path, token)?
@@ -499,7 +499,8 @@ Strava :: [].{
                 # no need to run `sync` beforehand (that's what made it two commands)
                 Stdout.line!("backfill: refreshing the activity list...")?
                 started = Db.now_secs!({})
-                counts = fetch_pages!(path, token, "", started, 1, { relisted: 0, new_n: 0, updated_n: 0 }, False)?
+                # backfill reports neither counts, so it skips the per-row classify SELECT
+                counts = fetch_pages!(path, token, "", started, 1, { relisted: 0, new_n: 0, updated_n: 0 }, False, False)?
                 # full re-pull: window_start "" prunes every activity Strava no longer lists
                 pruned = prune_deleted!(path, started, "")?
                 (if pruned > 0 Stdout.line!("backfill: pruned ${U64.to_str(pruned)} activities removed on Strava") else Ok({}))?
@@ -591,8 +592,11 @@ Strava :: [].{
 
     # acc carries the re-listed total AND the new/updated split (#112): the first is a
     # function of training frequency, the second is what actually happened this run.
-    fetch_pages! : Str, Str, Str, I64, U64, { relisted : U64, new_n : U64, updated_n : U64 }, Bool => Try({ relisted : U64, new_n : U64, updated_n : U64 }, _)
-    fetch_pages! = |path, token, after_param, stamp, page, acc, narrate| {
+    # `classify` is SEPARATE from `narrate` on purpose. They happen to agree today (sync
+    # narrates and counts; backfill does neither), but they answer different questions, and
+    # one flag doing double duty is how the next caller silently gets the wrong behaviour.
+    fetch_pages! : Str, Str, Str, I64, U64, { relisted : U64, new_n : U64, updated_n : U64 }, Bool, Bool => Try({ relisted : U64, new_n : U64, updated_n : U64 }, _)
+    fetch_pages! = |path, token, after_param, stamp, page, acc, narrate, classify| {
         page_str = (page).to_str()
         per_str = (per_page).to_str()
         uri = "${api_base!({})}/api/v3/athlete/activities?per_page=${per_str}&page=${page_str}${after_param}"
@@ -605,7 +609,7 @@ Strava :: [].{
         decoded : Try(List(ActivitySummary), _)
         decoded = Json.parse(text)
         acts = decoded.map_err(|_| ActivityDecodeFailed(page))?
-        counts = upsert_all!(path, stamp, acts, { new_n: acc.new_n, updated_n: acc.updated_n })?
+        counts = upsert_all!(path, stamp, acts, { new_n: acc.new_n, updated_n: acc.updated_n }, classify)?
         got = List.len(acts)
         total = acc.relisted + got
         # a plain line per page, not a bar: Strava's activity list is paged and its length
@@ -618,7 +622,7 @@ Strava :: [].{
         if got < per_page
             Ok(next)
         else
-            fetch_pages!(path, token, after_param, stamp, page + 1, next, narrate)
+            fetch_pages!(path, token, after_param, stamp, page + 1, next, narrate, classify)
     }
     # What a sync did to one row. Most rows on most days are Unchanged: sync re-lists a
     # rolling 30-day window every run, so the re-listed count is a function of how often
@@ -627,8 +631,12 @@ Strava :: [].{
 
     SyncCounts : { new_n : U64, updated_n : U64 }
 
-    upsert_all! : Str, I64, List(ActivitySummary), SyncCounts => Try(SyncCounts, _)
-    upsert_all! = |path, stamp, acts, acc|
+    # `classify` off skips the per-row SELECT entirely and leaves the counts at zero.
+    # backfill! re-lists the WHOLE account (thousands of rows) and never reads them, so
+    # paying a query each would be a real cost for nothing — the same mistake as running
+    # the classify inside upsert_activity!, where CSV import paid it.
+    upsert_all! : Str, I64, List(ActivitySummary), SyncCounts, Bool => Try(SyncCounts, _)
+    upsert_all! = |path, stamp, acts, acc, classify|
         match acts {
             [] => Ok(acc)
             [a, .. as rest] => {
@@ -637,8 +645,8 @@ Strava :: [].{
                 # made every imported row pay for an extra query it never reads — and that
                 # extra per-row query in the import loop made the offline e2e flaky
                 # (import checks failing ~1 run in 3). The counts are a sync concern; keep
-                # the cost on the sync path.
-                outcome = classify_activity!(path, a)?
+                # the cost on the sync path, and only when someone will read them.
+                outcome = if classify { classify_activity!(path, a)? } else { Unchanged }
                 _ = upsert_activity!(path, stamp, a)?
                 next =
                     match outcome {
@@ -646,7 +654,7 @@ Strava :: [].{
                         Updated => { new_n: acc.new_n, updated_n: acc.updated_n + 1 }
                         Unchanged => acc
                     }
-                upsert_all!(path, stamp, rest, next)
+                upsert_all!(path, stamp, rest, next, classify)
             }
 
         }
