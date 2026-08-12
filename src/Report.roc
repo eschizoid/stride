@@ -664,6 +664,8 @@ Report :: [].{
         # projections keep the date validation above from being done twice
         ramps = Metrics.ramp_rates(List.map(dated_load, |e| { day: e.day, ctl: e.ctl }), anchor)
         form_delta = Metrics.form_delta_7d(List.map(dated_load, |e| { day: e.day, tsb: e.tsb }), anchor)
+        # how long the band has held (#123) — the thing the label itself cannot say
+        band_days = Metrics.days_in_band(List.map(dated_load, |e| { day: e.day, tsb: e.tsb }), anchor)
 
         Ok({
             as_of: latest.day,
@@ -682,6 +684,8 @@ Report :: [].{
             # exactly 0. So the flag carries what the number cannot, for machine consumers
             # as much as for the renderer.
             form_delta_known: match form_delta { Known(_) => True  Unknown => False },
+            # 0 = not available, per the house rule; a real streak is always >= 1
+            form_band_days: match band_days { Known(n) => n  Unknown => 0 },
             load_days: load_days,
             ctl_warming_up: load_days < 90,
             last_hard_session_date: last_hard,

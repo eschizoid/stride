@@ -394,6 +394,12 @@ b_seed_analyze! = |ctx| {
     # say so rather than the 0.0 being read as "form held level" — that distinction is the
     # whole reason the field exists.
     check!("form_delta_known is false on a short history", strjq!(ctx, ["summary"], ".data.form_delta_known") == "false")?
+    # #123: the verdict NAMES the state and stops prescribing. Asserting the absence of the
+    # old advice AND the presence of the label, so it cannot pass by the line disappearing.
+    check!("form_band_days is a number", strjq!(ctx, ["summary"], ".data.form_band_days | type") == "number")?
+    summary_verdict = stride_human!(ctx.bin, ctx.home, ["summary"])
+    check!("the verdict still names the state", Str.contains(summary_verdict, "form "))?
+    check!("...and no longer prescribes training", !(Str.contains(summary_verdict, "favor easy work")) and !(Str.contains(summary_verdict, "good day for")))?
     check_near!("...and the delta itself is an honest 0", sfloat(strjq!(ctx, ["summary"], ".data.form_delta_7d")), 0.0, 0.001)?
     # and the human line must NOT claim a trend it does not have
     summary_h = stride_human!(ctx.bin, ctx.home, ["summary"])
