@@ -629,12 +629,16 @@ Report :: [].{
         # is. 30 days of series covers the 28-day lookback with room for gaps.
         ramp_rows = Sqlite.query_many!({
             path: Path.utf8(path),
-            query: "SELECT day AS day, CAST(ctl AS REAL) AS ctl FROM daily_load WHERE day >= :cutoff ORDER BY day DESC",
+            query: "SELECT day AS day, CAST(ctl AS REAL) AS ctl, CAST(tsb AS REAL) AS tsb FROM daily_load WHERE day >= :cutoff ORDER BY day DESC",
             bindings: [{ name: ":cutoff", value: String(Metrics.days_to_date_str(anchor - 30)) }],
             rows: |cols| |stmt| {
                 d = Sqlite.str("day")(cols)(stmt)?
                 c = Sqlite.f64("ctl")(cols)(stmt)?
-                Ok({ d, ctl: c })
+                # tsb rides along on the ramp query rather than getting its own: the two
+                # lookbacks want the same rows over the same window, and a second query
+                # could disagree with this one about which days exist (#111).
+                t = Sqlite.f64("tsb")(cols)(stmt)?
+                Ok({ d, ctl: c, tsb: t })
             },
         })?
         # Convert OUTSIDE the decoder, whose error union has no room for BadDate, and
@@ -647,16 +651,19 @@ Report :: [].{
         # change the number it prints.
         # Prepend, not append: ctl_as_of takes the max qualifying day and so does not care
         # about order, and appending inside a fold is the quadratic trap.
-        ramp_series = List.fold(ramp_rows, Ok([]), |acc, r|
+        dated_load = List.fold(ramp_rows, Ok([]), |acc, r|
             match acc {
                 Err(e) => Err(e)
                 Ok(xs) =>
                     match Metrics.date_str_to_days(r.d) {
-                        Ok(day) => Ok(List.prepend(xs, { day, ctl: r.ctl }))
+                        Ok(day) => Ok(List.prepend(xs, { day, ctl: r.ctl, tsb: r.tsb }))
                         Err(_) => Err(BadDailyLoadDay(r.d))
                     }
             })?
-        ramps = Metrics.ramp_rates(ramp_series, anchor)
+        # one validated series, two views — each helper takes a closed record, so the
+        # projections keep the date validation above from being done twice
+        ramps = Metrics.ramp_rates(List.map(dated_load, |e| { day: e.day, ctl: e.ctl }), anchor)
+        form_delta = Metrics.form_delta_7d(List.map(dated_load, |e| { day: e.day, tsb: e.tsb }), anchor)
 
         Ok({
             as_of: latest.day,
@@ -665,6 +672,16 @@ Report :: [].{
             ramp_28d_avg: ramps.ramp_28d_avg,
             fatigue_atl: latest.atl,
             form_tsb: latest.tsb,
+            # ADDITIVE field, so the envelope version stays (same precedent as `converged`
+            # and the ramp fields). Unknown flattens to 0.0 here, which is the house
+            # meaning of a numeric 0 — "not available", not "form did not move". The human
+            # renderer keeps the distinction and simply omits the clause.
+            form_delta_7d: match form_delta { Known(d) => d  Unknown => 0.0 },
+            # 0.0 is ambiguous HERE in a way the house "0 = not available" rule does not
+            # cover: form genuinely level for a week is a real, useful answer that is also
+            # exactly 0. So the flag carries what the number cannot, for machine consumers
+            # as much as for the renderer.
+            form_delta_known: match form_delta { Known(_) => True  Unknown => False },
             load_days: load_days,
             ctl_warming_up: load_days < 90,
             last_hard_session_date: last_hard,

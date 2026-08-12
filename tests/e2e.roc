@@ -362,6 +362,19 @@ b_seed_analyze! = |ctx| {
     check_near!("short history ramps to an honest 0", sfloat(strjq!(ctx, ["summary"], ".data.ramp_7d")), 0.0, 0.001)?
     check_near!("...and so does the 28d average", sfloat(strjq!(ctx, ["summary"], ".data.ramp_28d_avg")), 0.0, 0.001)?
     check!("ctl_warming_up agrees it is short", strjq!(ctx, ["summary"], ".data.ctl_warming_up") == "true")?
+    # #111: the form verdict carries a weekly delta. Same non-vacuity trick as the ramp
+    # checks above — assert the JSON type, because sfloat of a missing field is also 0.0
+    # and value-alone would pass if the field disappeared.
+    check!("summary form_delta_7d is a number", strjq!(ctx, ["summary"], ".data.form_delta_7d | type") == "number")?
+    # This fixture has only a couple of days, so nothing reaches back a week. The flag must
+    # say so rather than the 0.0 being read as "form held level" — that distinction is the
+    # whole reason the field exists.
+    check!("form_delta_known is false on a short history", strjq!(ctx, ["summary"], ".data.form_delta_known") == "false")?
+    check_near!("...and the delta itself is an honest 0", sfloat(strjq!(ctx, ["summary"], ".data.form_delta_7d")), 0.0, 0.001)?
+    # and the human line must NOT claim a trend it does not have
+    summary_h = stride_human!(ctx.bin, ctx.home, ["summary"])
+    check!("human verdict still prints the form line", Str.contains(summary_h, "form "))?
+    check!("...but omits the week-ago clause when unknown", !(Str.contains(summary_h, "week ago")))?
     # power ride NP 200 @ derived FTP 190 => TSS ~110.8; HR row ~55 => ~166
     check_near!("28d tss ~166 (111 power + 55 hr)", sfloat(strjq!(ctx, ["summary"], ".data.last_28d.tss")), 165.8, 1.0)?
     mp = sfloat(strjq!(ctx, ["summary"], ".data.last_28d.measured_pct"))
