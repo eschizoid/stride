@@ -288,25 +288,27 @@ Strava :: [].{
                         Some(a) => Metrics.epoch_to_iso(a + 86400)
                         None => ""
                     }
-                count = fetch_pages!(path, token, after_param, started, 1, 0, True)?
+                counts = fetch_pages!(path, token, after_param, started, 1, { relisted: 0, new_n: 0, updated_n: 0 }, True, True)?
                 pruned = prune_deleted!(path, started, window_start)?
                 Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
                 streams_n = backfill_streams!(path, token)?
                 remaining = pending_streams!(path)?
-                Output.out!({ synced: count, pruned, streams_fetched: streams_n, pending_streams: remaining }, |p| {
+                # `synced` keeps its original meaning (rows re-listed) so existing consumers
+                # are untouched; new_activities/updated_activities are ADDITIVE, so the
+                # envelope version stays put.
+                Output.out!({ synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: streams_n, pending_streams: remaining }, |p| {
                     prune_note = if p.pruned > 0 " (pruned ${U64.to_str(p.pruned)} removed on Strava)" else ""
                     tail =
                         if p.pending_streams > 0
                             " (${I64.to_str(p.pending_streams)} still need streams — run `stride backfill` to pull them all)"
                         else
                             ""
-                    # "re-checked", not "synced": this is how many rows the rolling 30-day
-                    # window re-listed, which is a function of how often you train rather
-                    # than of this sync. Reported as "synced 22 activities" it read as 22
-                    # NEW ones, which is the question it kept provoking. Splitting new from
-                    # updated needs a per-row comparison in this loop, which is exactly
-                    # what destabilised it — tracked separately in #112.
-                    "re-checked ${U64.to_str(p.synced)} activities in the 30-day window${prune_note}, fetched streams for ${U64.to_str(p.streams_fetched)}${tail}"
+                    # New and updated FIRST, re-checked in parentheses behind them. The old
+                    # line led with the re-listed count, which is a function of how often you
+                    # train rather than of this sync, and reading "synced 22 activities" as 22
+                    # NEW ones is the question it kept provoking (#112). On a typical day the
+                    # leading numbers are 0 and 0, which is the honest answer.
+                    "synced ${U64.to_str(p.new_activities)} new, ${U64.to_str(p.updated_activities)} updated (${U64.to_str(p.synced)} re-checked in the 30-day window)${prune_note}, fetched streams for ${U64.to_str(p.streams_fetched)}${tail}"
                 })
             }
         }
@@ -497,7 +499,8 @@ Strava :: [].{
                 # no need to run `sync` beforehand (that's what made it two commands)
                 Stdout.line!("backfill: refreshing the activity list...")?
                 started = Db.now_secs!({})
-                count = fetch_pages!(path, token, "", started, 1, 0, False)?
+                # backfill reports neither counts, so it skips the per-row classify SELECT
+                counts = fetch_pages!(path, token, "", started, 1, { relisted: 0, new_n: 0, updated_n: 0 }, False, False)?
                 # full re-pull: window_start "" prunes every activity Strava no longer lists
                 pruned = prune_deleted!(path, started, "")?
                 (if pruned > 0 Stdout.line!("backfill: pruned ${U64.to_str(pruned)} activities removed on Strava") else Ok({}))?
@@ -515,9 +518,9 @@ Strava :: [].{
                 })?
                 missing = List.len(missing_ids)
                 if missing == 0 {
-                    Stdout.line!("backfill: ${U64.to_str(count)} activities, all streams already present — nothing to do")
+                    Stdout.line!("backfill: ${U64.to_str(counts.relisted)} activities, all streams already present — nothing to do")
                 } else {
-                    Stdout.line!("backfill: ${U64.to_str(count)} activities, ${U64.to_str(missing)} need streams. Strava allows ~1000 reads/day, so a large first pull can span a few days — this run drains as far as today's limit allows and is resumable (just run `stride backfill` again).")?
+                    Stdout.line!("backfill: ${U64.to_str(counts.relisted)} activities, ${U64.to_str(missing)} need streams. Strava allows ~1000 reads/day, so a large first pull can span a few days — this run drains as far as today's limit allows and is resumable (just run `stride backfill` again).")?
                     drain_streams!(path, token, missing_ids, { done: 0, window: 0, retries: 0 })
                 }
             }
@@ -587,8 +590,13 @@ Strava :: [].{
         }
     per_page = 100
 
-    fetch_pages! : Str, Str, Str, I64, U64, U64, Bool => Try(U64, _)
-    fetch_pages! = |path, token, after_param, stamp, page, acc, narrate| {
+    # acc carries the re-listed total AND the new/updated split (#112): the first is a
+    # function of training frequency, the second is what actually happened this run.
+    # `classify` is SEPARATE from `narrate` on purpose. They happen to agree today (sync
+    # narrates and counts; backfill does neither), but they answer different questions, and
+    # one flag doing double duty is how the next caller silently gets the wrong behaviour.
+    fetch_pages! : Str, Str, Str, I64, U64, { relisted : U64, new_n : U64, updated_n : U64 }, Bool, Bool => Try({ relisted : U64, new_n : U64, updated_n : U64 }, _)
+    fetch_pages! = |path, token, after_param, stamp, page, acc, narrate, classify| {
         page_str = (page).to_str()
         per_str = (per_page).to_str()
         uri = "${api_base!({})}/api/v3/athlete/activities?per_page=${per_str}&page=${page_str}${after_param}"
@@ -601,30 +609,123 @@ Strava :: [].{
         decoded : Try(List(ActivitySummary), _)
         decoded = Json.parse(text)
         acts = decoded.map_err(|_| ActivityDecodeFailed(page))?
-        upsert_all!(path, stamp, acts)?
+        counts = upsert_all!(path, stamp, acts, { new_n: acc.new_n, updated_n: acc.updated_n }, classify)?
         got = List.len(acts)
-        total = acc + got
+        total = acc.relisted + got
         # a plain line per page, not a bar: Strava's activity list is paged and its length
         # is unknowable until the short page arrives, so any denominator here would be
         # invented. Pages are few at `per_page` (100) a page, so the lines stay countable.
         # Gated because `backfill!` shares this function and ALREADY reports its own
         # progress on stdout — narrating here too would duplicate it in a second stream.
         _ = if narrate { Output.say!("fetched activities page ${(page).to_str()} — ${(total).to_str()} so far")? } else { {} }
+        next = { relisted: total, new_n: counts.new_n, updated_n: counts.updated_n }
         if got < per_page
-            Ok(total)
+            Ok(next)
         else
-            fetch_pages!(path, token, after_param, stamp, page + 1, total, narrate)
+            fetch_pages!(path, token, after_param, stamp, page + 1, next, narrate, classify)
     }
-    upsert_all! : Str, I64, List(ActivitySummary) => Try({}, _)
-    upsert_all! = |path, stamp, acts|
+    # What a sync did to one row. Most rows on most days are Unchanged: sync re-lists a
+    # rolling 30-day window every run, so the re-listed count is a function of how often
+    # the athlete trains, not of anything this sync did (#112).
+    UpsertOutcome : [Inserted, Updated, Unchanged]
+
+    SyncCounts : { new_n : U64, updated_n : U64 }
+
+    # `classify` off skips the per-row SELECT entirely and leaves the counts at zero.
+    # backfill! re-lists the WHOLE account (thousands of rows) and never reads them, so
+    # paying a query each would be a real cost for nothing — the same mistake as running
+    # the classify inside upsert_activity!, where CSV import paid it.
+    upsert_all! : Str, I64, List(ActivitySummary), SyncCounts, Bool => Try(SyncCounts, _)
+    upsert_all! = |path, stamp, acts, acc, classify|
         match acts {
-            [] => Ok({})
+            [] => Ok(acc)
             [a, .. as rest] => {
-                upsert_activity!(path, stamp, a)?
-                upsert_all!(path, stamp, rest)
+                # classify HERE, not inside upsert_activity!. Import.roc calls that
+                # directly for CSV loads and discards the outcome, so classifying there
+                # made every imported row pay for an extra query it never reads — and that
+                # extra per-row query in the import loop made the offline e2e flaky
+                # (import checks failing ~1 run in 3). The counts are a sync concern; keep
+                # the cost on the sync path, and only when someone will read them.
+                outcome = if classify { classify_activity!(path, a)? } else { Unchanged }
+                _ = upsert_activity!(path, stamp, a)?
+                next =
+                    match outcome {
+                        Inserted => { new_n: acc.new_n + 1, updated_n: acc.updated_n }
+                        Updated => { new_n: acc.new_n, updated_n: acc.updated_n + 1 }
+                        Unchanged => acc
+                    }
+                upsert_all!(path, stamp, rest, next, classify)
             }
 
         }
+
+    # Classify BEFORE writing, in one read. `changes()` after the write would have been
+    # cheaper, but it is per-CONNECTION state and every Sqlite call here takes a path
+    # rather than a handle — whether two calls share a connection is a platform detail we
+    # would be silently depending on. A rolling window is ~20 rows, so one extra SELECT
+    # each is not worth that risk.
+    #
+    # `IS` rather than `=` throughout: these columns are nullable and `= NULL` is NULL, not
+    # false, so every row with a missing avg_watts would look changed on every sync.
+    #
+    # synced_at is deliberately NOT compared. It is re-stamped every run by design, so
+    # including it would mark every row updated — which is precisely the misreporting this
+    # exists to remove.
+    classify_activity! : Str, ActivitySummary => Try(UpsertOutcome, _)
+    classify_activity! = |path, a| {
+        rows = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT
+                \\  (SELECT COUNT(*) FROM activities WHERE id = :id) AS existed,
+                \\  (SELECT COUNT(*) FROM activities WHERE id = :id
+                \\     AND name IS :name AND sport_type IS :sport AND start_local IS :start
+                \\     AND moving_time IS :mt AND distance IS :dist AND elevation IS :elev
+                \\     AND relative_effort IS :re AND avg_watts IS :aw AND avg_hr IS :ahr
+                \\     AND weighted_avg_watts IS :waw AND device_watts IS :dw) AS same
+            ,
+            bindings: activity_bindings(a),
+            rows: |cols| |stmt| {
+                existed = Sqlite.i64("existed")(cols)(stmt)?
+                same = Sqlite.i64("same")(cols)(stmt)?
+                Ok((existed, same))
+            },
+        })?
+        match List.first(rows) {
+            Ok((0, _)) => Ok(Inserted)
+            Ok((_, 0)) => Ok(Updated)
+            Ok(_) => Ok(Unchanged)
+            # a COUNT always returns a row, so this is unreachable; call it Updated rather
+            # than Unchanged so an impossible state over-reports rather than hiding work
+            Err(_) => Ok(Updated)
+        }
+    }
+
+    # The column bindings shared by the classify SELECT and the upsert INSERT, so the two
+    # cannot drift into comparing one set of values and writing another. `:synced` is NOT
+    # here: it is appended by the writer only, because the comparison must ignore it.
+    activity_bindings : ActivitySummary -> List(_)
+    activity_bindings = |a| [
+        { name: ":id", value: Integer(a.id) },
+        # DO NOT wrap these in "${...}" to force a copy before binding. Passing the decoded
+        # Str straight through is the least-bad known behaviour, not a guarantee of
+        # correctness — #105 is open and this path is still flaky. What IS established:
+        # forcing a copy here crashed real sync 12/12 while the e2e mock stayed green,
+        # because every mock name is short enough to live inline in a RocStr and only the
+        # heap-allocated copy gets freed underneath SQLite. See #105 for the full history.
+        { name: ":name", value: String(a.name) },
+        { name: ":sport", value: String(a.sport_type) },
+        { name: ":start", value: String(a.start_date_local) },
+        { name: ":mt", value: Integer(a.moving_time) },
+        { name: ":dist", value: Real(a.distance) },
+        { name: ":elev", value: Real(a.total_elevation_gain) },
+        { name: ":re", value: opt_real(a.suffer_score) },
+        { name: ":aw", value: opt_real(a.average_watts) },
+        { name: ":ahr", value: opt_real(a.average_heartrate) },
+        { name: ":waw", value: opt_real(a.weighted_average_watts) },
+        # NULL = Strava did not say (old data); 1 = real meter; 0 = estimated
+        { name: ":dw", value: match a.device_watts { Ok(True) => Integer(1)  Ok(False) => Integer(0)  Err(_) => Null } },
+    ]
     upsert_activity! : Str, I64, ActivitySummary => Try({}, _)
     upsert_activity! = |path, stamp, a| {
         # stamp 0 = a non-sync writer (CSV import): leave synced_at NULL so the prune
@@ -637,31 +738,15 @@ Strava :: [].{
                 \\INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance, elevation, relative_effort, avg_watts, avg_hr, weighted_avg_watts, device_watts, synced_at)
                 \\VALUES (:id, :name, :sport, :start, :mt, :dist, :elev, :re, :aw, :ahr, :waw, :dw, :synced)
             ,
-            bindings: [
-                { name: ":id", value: Integer(a.id) },
-                # DO NOT wrap these in "${...}" to force a copy before binding. Passing the
-                # decoded Str straight through is the least-bad known behaviour, not a
-                # guarantee of correctness — #105 is open and this path is still flaky. What
-                # IS established: forcing a copy here crashed real sync 12/12 while the e2e
-                # mock stayed green, because every mock name is short enough to live inline
-                # in a RocStr and only the heap-allocated copy gets freed underneath SQLite.
-                # See #105 for the full history.
-                { name: ":name", value: String(a.name) },
-                { name: ":sport", value: String(a.sport_type) },
-                { name: ":start", value: String(a.start_date_local) },
-                { name: ":mt", value: Integer(a.moving_time) },
-                { name: ":dist", value: Real(a.distance) },
-                { name: ":elev", value: Real(a.total_elevation_gain) },
-                { name: ":re", value: opt_real(a.suffer_score) },
-                { name: ":aw", value: opt_real(a.average_watts) },
-                { name: ":ahr", value: opt_real(a.average_heartrate) },
-                { name: ":waw", value: opt_real(a.weighted_average_watts) },
-                # NULL = Strava did not say (old data); 1 = real meter; 0 = estimated
-                { name: ":dw", value: match a.device_watts { Ok(True) => Integer(1)  Ok(False) => Integer(0)  Err(_) => Null } },
+            # the SAME values classify_activity! compared against, so the check and the
+            # write cannot disagree about what "changed" means. :synced is appended here
+            # only — it is re-stamped every run and must stay out of the comparison.
+            bindings: List.append(
+                activity_bindings(a),
                 # stamp this row with the current sync run so prune_deleted! can tell which
                 # activities Strava still has (re-stamped) from ones it deleted (stale stamp)
                 { name: ":synced", value: synced_val },
-            ],
+            ),
         })?
         # NO metrics invalidation here, deliberately. `sync` re-lists a rolling 30-day
         # window every run and cannot cheaply tell an edit from a no-op, so deleting here
