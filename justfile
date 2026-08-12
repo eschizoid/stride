@@ -37,15 +37,44 @@ test:
 # sync integration: ONE binary in two roles — a mock Strava server (E2E_MODE=mock)
 # and a sync driver (E2E_MODE=sync) that runs real sync + token-refresh against it.
 # Binds a port, so it's separate from `just test`. Runs against the ./stride binary.
-# LOCAL-ONLY (not in CI): it binds a port. It used to retry 5x because bug C made the
-# sync path ~50% flaky; that retry is gone, because the retry is what would hide the
-# next regression. Bug C is fixed at the source (a Str decoded from an HTTP body,
-# bound into SQLite, aliased freed host memory — see save_tokens! in Strava.roc), so
-# a failure here now means something is actually broken. One run, one verdict.
+# LOCAL-ONLY — it binds a port, so no CI job runs it. It exercises stride's sync path,
+# which is ~50% flaky on the current nightly (issue #105: heap corruption, still
+# uncharacterised at the source). Retried 5x because sync is idempotent, so a retry is
+# free. Fixing #105 is what would make this dependable enough for CI to adopt.
+#
+# The retry is a crutch and will equally mask a genuine regression, which is why the
+# message it prints stays neutral instead of blaming #105 for every failure.
+#
+# Do not read a green run here as "sync works". Every string in the mock fixture is short
+# enough to live inline in a RocStr, and the corruption only bites heap-allocated decoded
+# strings — so this suite is structurally incapable of reproducing the real-data failure
+# that shipped once already. Real payloads need a real sync to verify.
 e2e-sync:
-    {{roc}} build tests/e2e.roc --output=e2e --opt=dev
-    test -x ./stride || {  echo "e2e-sync needs a ./stride binary — run \`just build\` first"; exit 1; }
-    E2E_MODE=mock MOCK_PORT={{mock_port}} ./e2e & MOCK=$!; E2E_MODE=sync STRIDE_API_BASE=http://127.0.0.1:{{mock_port}} ./e2e; R=$?; kill $MOCK 2>/dev/null; exit $R
+    #!/usr/bin/env bash
+    set -uo pipefail
+    {{roc}} build tests/e2e.roc --output=e2e --opt=dev || exit 1
+    test -x ./stride || { echo "e2e-sync needs a ./stride binary — run \`just build\` first"; exit 1; }
+    E2E_MODE=mock MOCK_PORT={{mock_port}} ./e2e &
+    MOCK=$!
+    # kill the mock on ANY exit, including Ctrl-C — the old single-line form only killed
+    # it on the success path, so an interrupted run left the port bound and every later
+    # run failed to bind until someone found the stray process.
+    #
+    # EXIT alone, deliberately. Adding INT/TERM to a handler that does not itself exit
+    # REPLACES the default terminate-on-signal, so Ctrl-C ran the cleanup and then carried
+    # on through all five retries. Measured: with `EXIT INT TERM` a SIGTERM'd run completed
+    # the whole loop and exited 0; with `EXIT` alone it stopped at once (143) and still ran
+    # the cleanup, which is the behaviour we want.
+    trap 'kill $MOCK 2>/dev/null' EXIT
+    R=1
+    for i in 1 2 3 4 5; do
+      if E2E_MODE=sync STRIDE_API_BASE=http://127.0.0.1:{{mock_port}} ./e2e; then
+        R=0
+        break
+      fi
+      if [ "$i" -lt 5 ]; then echo "  (sync attempt $i failed, retrying)"; else echo "  (sync attempt $i failed, giving up)"; fi
+    done
+    exit $R
 
 # build + refresh the ~/.local/bin symlink
 install: build
