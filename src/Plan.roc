@@ -170,8 +170,21 @@ Plan :: [].{
         # WEEK rather than by today, so no row can land in two sections — an open session
         # later this week belongs to `this week`, not to `upcoming`. Sections are
         # presentation only; the JSON payload stays one flat array.
-        plan_headers = ["day", "date", "type", "status", "detail", "id"]
-        plan_cells = |p| [p.day, p.target_date, p.session_type, p.status_shown, p.detail, (p.id).to_str()]
+        # Two id columns, because they are two different things and the table was the only
+        # place either was visible. `id` is the SESSION — the handle every command takes
+        # (`complete`, `skip`, `rate`). `activity` is the Strava activity linked to it,
+        # which exists only once the session is done; an open row has nothing to show yet,
+        # so it reads `-` like every other unavailable value.
+        plan_headers = ["day", "date", "type", "status", "detail", "id", "activity"]
+        plan_cells = |p| [
+            p.day,
+            p.target_date,
+            p.session_type,
+            p.status_shown,
+            p.detail,
+            (p.id).to_str(),
+            if p.completed_activity_id == 0 "-" else (p.completed_activity_id).to_str(),
+        ]
         # an empty section says so rather than vanishing — an absent heading reads as
         # "there is no such thing", which is a different claim from "nothing there yet"
         section = |title, srows|
@@ -343,6 +356,43 @@ Plan :: [].{
 
         }
     }
+    # Activities within a day either side of a planned session's date, newest first, so a
+    # refusal to complete can show the reader the ids they might have meant. ±1 day rather
+    # than the exact date: start_local is a civil timestamp, and a late-evening or
+    # early-morning session routinely lands on the neighbouring day.
+    #
+    # A HALF-OPEN range on the raw column, not `date(a.start_local) BETWEEN …`. Wrapping the
+    # column in a function makes the predicate non-sargable, so idx_activities_start cannot
+    # be used and the query degrades to a full scan. The bounds work because start_local is
+    # ISO text and the comparison is lexical: `date()` yields '2026-08-10', and
+    # '2026-08-10T09:30:00Z' sorts after it, so `>=` catches the whole lower day; the upper
+    # bound is target+2 EXCLUSIVE, so every timestamp on target+1 still sorts below
+    # '2026-08-13' and is included. (Same lexical reasoning as period_ftp_sql in
+    # Analyze.roc, where getting it wrong dropped every activity on the cutoff day.)
+    candidate_activities! : Str, I64 => Try(List({ id : I64, start : Str, sport : Str, name : Str }), _)
+    candidate_activities! = |path, session_id|
+        Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT a.id AS id, a.start_local AS start,
+                \\       COALESCE(a.sport_type, '') AS sport, COALESCE(a.name, '') AS name
+                \\FROM activities a
+                \\JOIN planned_sessions p ON p.id = :pid
+                \\WHERE a.start_local >= date(p.target_date, '-1 day')
+                \\  AND a.start_local <  date(p.target_date, '+2 day')
+                \\ORDER BY a.start_local DESC, a.id DESC
+                \\LIMIT 5
+            ,
+            bindings: [{ name: ":pid", value: Integer(session_id) }],
+            rows: |cols| |stmt| {
+                id = Sqlite.i64("id")(cols)(stmt)?
+                start = Sqlite.str("start")(cols)(stmt)?
+                sport = Sqlite.str("sport")(cols)(stmt)?
+                name = Sqlite.str("name")(cols)(stmt)?
+                Ok({ id, start, sport, name })
+            },
+        })
+
     # rest days have no activity to link — `complete <id>` alone closes them. Any
     # other session type still demands its activity id: done means evidence.
     complete_rest! : Str => Try({}, _)
@@ -361,7 +411,22 @@ Plan :: [].{
                         row: Sqlite.str("t"),
                     })?
                     if session_type != "rest" {
-                        Output.err_out!("activity_required", "planned session #${(session_id).to_str()} is '${session_type}' — completing it needs the activity id (only rest days close without one)")
+                        # Naming the rule is not enough: the id lives in the database and
+                        # the old message left the reader with no way to find it short of
+                        # opening SQLite. So list the activities actually near this
+                        # session's date — the answer is almost always one of them.
+                        candidates = candidate_activities!(path, session_id)?
+                        hint =
+                            if List.is_empty(candidates) {
+                                "\nNo activities recorded within a day of that date. Run `stride sync` first, or `stride skip ${(session_id).to_str()} \"<reason>\"` if it didn't happen."
+                            } else {
+                                lines = List.map(candidates, |c| "  ${(c.id).to_str()}  ${c.start}  ${c.sport}  ${c.name}")
+                                "\nActivities near that date:\n${Str.join_with(lines, "\n")}"
+                            }
+                        Output.err_out!(
+                            "activity_required",
+                            "planned session #${(session_id).to_str()} is '${session_type}' — done means evidence, so it needs an activity id (only rest days close without one).\n  stride complete ${(session_id).to_str()} <activity_id>${hint}",
+                        )
                     } else {
                         Sqlite.execute!({
                             path: Path.utf8(path),

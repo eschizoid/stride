@@ -501,6 +501,25 @@ b_plan! = |ctx| {
     check!("week add rest id 3", strjq!(ctx, ["week", "add", "2099-01-02", "rest", "planned rest", "recovery"], ".data.id") == "3")?
     check!("week add vo2max id 4", strjq!(ctx, ["week", "add", "2099-01-03", "vo2max", "intervals", "stimulus"], ".data.id") == "4")?
     check!("non-rest bare complete refused", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "4"]), "activity_required"))?
+    # Refusing is not enough — the id lives in the database, and a message that names the
+    # rule without naming the ids leaves the reader with no way forward short of opening
+    # SQLite. The refusal must show the exact command AND the candidate activities.
+    bare_refusal = stride!(ctx.bin, ctx.home, ["complete", "4"])
+    check!("...and shows the command to run", Str.contains(bare_refusal, "stride complete 4 <activity_id>"))?
+    # session 4 is 2099-01-03 and the fixture activity 101 is not within a day of it, so
+    # this exercises the EMPTY branch — which must still hand the reader a next step
+    check!("...and says what to do when nothing is near", Str.contains(bare_refusal, "No activities recorded within a day"))?
+    # ...and the NON-empty branch, which is the whole point of the change. Without this the
+    # suite passes with the candidate lookup returning [] every time: the two checks above
+    # assert text that BOTH branches emit, so they cannot tell a working lookup from a
+    # dead one. Caught by deliberately blanking the lookup and watching nothing fail.
+    near_date = Str.trim(sql!(ctx.db, "SELECT substr(start_local,1,10) FROM activities WHERE id=101;"))
+    _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','${near_date}','endurance','needs an id','r','open');")
+    near_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
+    near_refusal = stride!(ctx.bin, ctx.home, ["complete", near_id])
+    check!("a refusal lists the activity ids actually near that date", Str.contains(near_refusal, "Activities near that date"))?
+    check!("...naming the real activity, not a placeholder", Str.contains(near_refusal, "101"))?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${near_id};")
     check!("rest bare complete", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "3"]), "\"rest\":true"))?
     check!("rest is done in db", Str.trim(sql!(ctx.db, "SELECT status FROM planned_sessions WHERE id=3;")) == "done")?
     _ = stride!(ctx.bin, ctx.home, ["skip", "4", "cleanup"])
@@ -552,6 +571,12 @@ b_plan! = |ctx| {
     old_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
     all_h = stride_human!(ctx.bin, ctx.home, ["week", "all"])
     check!("week all has the three sections", Str.contains(all_h, "── upcoming ──") and Str.contains(all_h, "── this week ──") and Str.contains(all_h, "── last week ──"))?
+    # Both ids are visible, because they are different things and the table was the only
+    # place either appeared. Session 2 was completed by activity 101 above; asserting the
+    # ACTIVITY id proves the new column carries a real value rather than a placeholder,
+    # and the header proves the column exists at all even if no row happens to be done.
+    check!("the week table has an activity column", Str.contains(all_h, "activity"))?
+    check!("...showing the linked activity for a done session", Str.contains(all_h, "101"))?
     # anchor on the seeded target_date, not the detail text: `date` is its own
     # non-wrapping column, and 2099/2020 are sentinels that cannot appear by accident.
     # (The bare id would be worse than either — a 2-3 digit number matches digits in the
