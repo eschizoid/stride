@@ -1104,78 +1104,18 @@ Metrics :: [].{
 
     # verdicts describe MODELED load only — the engine can't see sleep, illness,
     # soreness, or life stress, so it suggests rather than commands
-    # NAMES the modeled state. It does not prescribe (#123).
-    #
-    # These labels used to end in advice — "favor easy work", "good day for a big effort".
-    # Two problems, both seen in real use. It repeated: one athlete read "modeled fatigue
-    # building — favor easy work" every day for 16 days, because TSB wandered between -12.5
-    # and -5.5 without leaving the band. And it was WRONG, because TSB is one number and a
-    # training prescription needs more than one: that same fortnight was 81% easy / 1% hard
-    # with no hard session in 9 days, so the honest advice was "go hard", and a fatigue
-    # model with no sight of intensity distribution said the opposite.
-    #
-    # The engine already declines to guess where guessing needs judgment — it will not match
-    # an activity to a planned session for the same reason. Prescribing training from a
-    # scalar is the same overreach. State here; prescriptions from the coach, who can see
-    # distribution, travel, equipment and intent (ADR 0000's engine/coach split).
     form_label : F64 -> Str
     form_label = |tsb|
         if tsb <= -15.0 {
-            "high modeled fatigue"
+            "high modeled fatigue — consider recovery"
         } else if tsb <= -5.0 {
-            "modeled fatigue building"
+            "modeled fatigue building — favor easy work"
         } else if tsb < 5.0 {
-            "balanced"
+            "balanced — good day for intensity if you feel it"
         } else if tsb < 15.0 {
-            "fresh"
+            "fresh — good day for a big effort"
         } else {
             "very fresh — load has been light lately"
-        }
-
-    # How many consecutive days, counting back from `today`, the series has stayed in the
-    # same form band. THE thing a band label structurally cannot express: 16 days at -11 and
-    # one day at -11 render identically, yet mean different things.
-    #
-    # Known/Unknown, same shape as form_delta_7d but a NARROWER meaning of Unknown: it
-    # says only that the series has no value at or before `today`, so there is no band to
-    # be in. Once today is known the answer is always Known(n >= 1) — including Known(1)
-    # when the day before is missing or in a different band. 1 is a truthful "today, and
-    # nothing established before it"; the renderer suppresses it because a one-day streak
-    # carries no information, not because it is wrong.
-    days_in_band : List({ day : I64, tsb : F64 }), I64 -> [Known(I64), Unknown]
-    days_in_band = |series, today|
-        match tsb_as_of(series, today) {
-            Missing => Unknown
-            Found(now) => {
-                label_now = form_label(now)
-                # walk back a day at a time while the band holds. Stops at the first day
-                # the series cannot answer for, so a gap ends the streak rather than being
-                # silently skipped — an unknown day is not evidence the band held.
-                Known(streak_back(series, today, label_now, 1))
-            }
-        }
-
-    streak_back : List({ day : I64, tsb : F64 }), I64, Str, I64 -> I64
-    streak_back = |series, today, label_now, acc|
-        # bounded by the series length: daily_load is one row per day, so it cannot run
-        # longer than that, and a runaway walk on a corrupt series would hang the command
-        if acc >= (List.len(series)).to_i64_wrap() {
-            acc
-        } else {
-            match tsb_as_of_exact(series, today - acc) {
-                Missing => acc
-                Found(v) => if form_label(v) == label_now streak_back(series, today, label_now, acc + 1) else acc
-            }
-        }
-
-    # tsb on EXACTLY this day, not the latest at-or-before it. The streak walk must not
-    # reuse an older day's value to fill a gap — that would report a run of days the series
-    # has no rows for.
-    tsb_as_of_exact : List({ day : I64, tsb : F64 }), I64 -> [Found(F64), Missing]
-    tsb_as_of_exact = |series, target|
-        match List.keep_if(series, |e| e.day == target) {
-            [e, ..] => Found(e.tsb)
-            [] => Missing
         }
 
     # ── weekly rollup (Monday-aligned, the user's week convention) ──────
@@ -2327,72 +2267,10 @@ expect {
     }
 }
 
-# ── form band duration (#123) ────────────────────────────────────────
-# The case that prompted the issue: 16 days inside -15..-5 without ever leaving. The label
-# is identical on every one of them, so the COUNT is the only thing carrying information.
-expect {
-    series = [
-        { day: 100, tsb: -11.0 },
-        { day: 101, tsb: -11.0 },
-        { day: 102, tsb: -11.0 },
-        { day: 103, tsb: -11.0 },
-        { day: 104, tsb: -11.0 },
-        { day: 105, tsb: -11.0 },
-        { day: 106, tsb: -11.0 },
-        { day: 107, tsb: -11.0 },
-        { day: 108, tsb: -11.0 },
-        { day: 109, tsb: -11.0 },
-        { day: 110, tsb: -11.0 },
-        { day: 111, tsb: -11.0 },
-        { day: 112, tsb: -11.0 },
-        { day: 113, tsb: -11.0 },
-        { day: 114, tsb: -11.0 },
-        { day: 115, tsb: -11.0 },
-    ]
-    match Metrics.days_in_band(series, 115) {
-        Known(n) => n == 16
-        Unknown => False
-    }
-}
-
-# a day that LEFT the band ends the streak there — the run is 2 (today and yesterday),
-# not the whole series, because day 112 sits in `balanced`
-expect {
-    series = [
-        { day: 111, tsb: -11.0 },
-        { day: 112, tsb: -1.0 },
-        { day: 113, tsb: -11.0 },
-        { day: 114, tsb: -11.0 },
-    ]
-    match Metrics.days_in_band(series, 114) {
-        Known(n) => n == 2
-        Unknown => False
-    }
-}
-
-# a GAP ends the streak rather than being stepped over: nothing is known about day 113, so
-# claiming the band held across it would be an invention
-expect {
-    series = [{ day: 112, tsb: -11.0 }, { day: 114, tsb: -11.0 }]
-    match Metrics.days_in_band(series, 114) {
-        Known(n) => n == 1
-        Unknown => False
-    }
-}
-
-# no series reaching the anchor at all is Unknown, not a streak of 0 or 1
-expect {
-    match Metrics.days_in_band([], 114) {
-        Known(_) => False
-        Unknown => True
-    }
-}
-
-# the labels NAME the state and no longer prescribe (#123)
-expect Metrics.form_label(-20.0) == "high modeled fatigue"
-expect Metrics.form_label(-9.0) == "modeled fatigue building"
-expect Metrics.form_label(-1.0) == "balanced"
-expect Metrics.form_label(8.0) == "fresh"
+expect Metrics.form_label(-20.0) == "high modeled fatigue — consider recovery"
+expect Metrics.form_label(-9.0) == "modeled fatigue building — favor easy work"
+expect Metrics.form_label(-1.0) == "balanced — good day for intensity if you feel it"
+expect Metrics.form_label(8.0) == "fresh — good day for a big effort"
 expect Metrics.form_label(20.0) == "very fresh — load has been light lately"
 
 # epoch day 0 is 1970-01-01, and roundtrips

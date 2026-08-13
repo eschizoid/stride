@@ -193,13 +193,6 @@ Render :: [].{
     #
     # Rounding is what decides "level", not the raw value: the line prints whole points, so
     # a 0.4 swing that displays as 0 must not read "up 0 from a week ago".
-    # How long the band has held, appended to the state (#123). Suppressed at 1 day, where
-    # "1 day in this band" is noise — the number only carries information once the label has
-    # been repeating. 0 means not available (short history) and prints nothing.
-    band_days_phrase : I64 -> Str
-    band_days_phrase = |n|
-        if n <= 1 "" else ", ${(n).to_str()} days in this band"
-
     form_trend_phrase : [Known(F64), Unknown] -> Str
     form_trend_phrase = |delta|
         match delta {
@@ -515,10 +508,7 @@ Render :: [].{
                     anchor = Metrics.date_str_to_days(today.day).ok_or(0)
                     tsb_series = List.map(ordered, |d| { day: Metrics.date_str_to_days(d.day).ok_or(0), tsb: d.tsb })
                     trend = form_trend_phrase(Metrics.form_delta_7d(tsb_series, anchor))
-                    # the streak can only count as far back as the window `load` was asked
-                    # for, so a short window reports a short run — honest for what it saw
-                    band = band_days_phrase(match Metrics.days_in_band(tsb_series, anchor) { Known(n) => n  Unknown => 0 })
-                    "→ today: form ${fmt0(today.tsb)}${trend} — ${Metrics.form_label(today.tsb)}${band}"
+                    "→ today: form ${fmt0(today.tsb)}${trend} — ${Metrics.form_label(today.tsb)}"
                 }
                 Err(_) => ""
             }
@@ -648,7 +638,7 @@ Render :: [].{
                     "── stride report (as of ${s.as_of}) ──────────────────",
                     "",
                     "  fitness (CTL): ${fmt0(s.fitness_ctl)}   fatigue (ATL): ${fmt0(s.fatigue_atl)}   form (TSB): ${fmt0(s.form_tsb)}",
-                    "  → form ${fmt0(s.form_tsb)}${form_trend_phrase(if s.form_delta_known Known(s.form_delta_7d) else Unknown)} — ${Metrics.form_label(s.form_tsb)}${band_days_phrase(s.form_band_days)}",
+                    "  → form ${fmt0(s.form_tsb)}${form_trend_phrase(if s.form_delta_known Known(s.form_delta_7d) else Unknown)} — ${Metrics.form_label(s.form_tsb)}",
                     # Numbers, no verdict: the usual sustainable band is the coach's
                     # knowledge, not the engine's. Signed, because a taper reads negative
                     # and clamping that to 0 would hide a deliberate unload.
@@ -930,7 +920,6 @@ expect {
         form_tsb: 10.0,
         form_delta_7d: 5.0,
         form_delta_known: True,
-        form_band_days: 16,
         ramp_7d: 4.0,
         ramp_28d_avg: -1.0,
         load_days: 400,
@@ -949,10 +938,6 @@ expect {
         and Str.contains(out, "-1/wk")
         # the verdict carries the trend, not just the band (#111)
         and Str.contains(out, "form 10, up 5 from a week ago")
-        # the label NAMES the state and no longer prescribes (#123), and the streak says
-        # how long it has held — the thing a band label cannot express
-        and Str.contains(out, "fresh, 16 days in this band")
-        and !(Str.contains(out, "good day for a big effort"))
 }
 
 # #111: too little history says nothing about the trend rather than claiming form is level.
@@ -966,7 +951,6 @@ expect {
         form_tsb: 10.0,
         form_delta_7d: 0.0,
         form_delta_known: False,
-        form_band_days: 0,
         ramp_7d: 4.0,
         ramp_28d_avg: -1.0,
         load_days: 400,
@@ -986,7 +970,7 @@ expect {
 expect {
     s = {
         as_of: "2025-01-01", fitness_ctl: 20.0, fatigue_atl: 10.0, form_tsb: 10.0,
-        form_delta_7d: 0.0, form_delta_known: False, form_band_days: 0,
+        form_delta_7d: 0.0, form_delta_known: False,
         ramp_7d: 0.0, ramp_28d_avg: 0.0,
         load_days: 400, ctl_warming_up: False,
         last_28d: { tss: 100.0, z1_s: 0.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 0.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 0.I64, intensity_streams: 0.I64 },
