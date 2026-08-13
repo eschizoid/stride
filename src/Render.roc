@@ -458,10 +458,7 @@ Render :: [].{
         # measured finding when it is the absence of one. State the score and stop.
         verdict =
             if List.len(rows) == 1 {
-                # "one comparable session" read as though it were pointing at some OTHER
-                # session to compare with. The single row IS this session — there is simply
-                # no history behind it yet (#96).
-                "→ ${short} ${pfmt(avg)} — first session of this workout, nothing to compare against yet"
+                "→ ${short} ${pfmt(avg)} — one comparable session, no trend yet"
             } else {
                 "→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${U64.to_str(List.len(rows))} sessions — ${label}${pct_str}"
             }
@@ -866,7 +863,7 @@ expect {
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream" }
     s = Render.progress_section("X", [pr("2025-01-01", 1.5)], "2025-01-01", Ef, Asc)
-    Str.contains(s, "first session of this workout, nothing to compare against yet") and !(Str.contains(s, "holding steady")) and !(Str.contains(s, "(0%)"))
+    Str.contains(s, "one comparable session, no trend yet") and !(Str.contains(s, "holding steady")) and !(Str.contains(s, "(0%)"))
 }
 
 # the best row's value + full 12-block bar stay on ONE line: terse headers keep the
