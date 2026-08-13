@@ -399,6 +399,7 @@ b_seed_analyze! = |ctx| {
     # This fixture has only a couple of days, so nothing reaches back a week. The flag must
     # say so rather than the 0.0 being read as "form held level" — that distinction is the
     # whole reason the field exists.
+    check!("summary form_delta_known is a boolean too", strjq!(ctx, ["summary"], ".data.form_delta_known | type") == "boolean")?
     check!("form_delta_known is false on a short history", strjq!(ctx, ["summary"], ".data.form_delta_known") == "false")?
     # #123: the verdict NAMES the state and stops prescribing. Asserting the absence of the
     # old advice AND the presence of the label, so it cannot pass by the line disappearing.

@@ -69,6 +69,13 @@ Analyze :: [].{
                                 Metrics.date_str_to_days(latest.day).ok_or(0),
                             )
                     }
+                # ANNOTATED Bool, not a bare `True`/`False` tag. The builtin JSON serializes
+                # an unconstrained tag as the STRING "True", and this record has no other
+                # Bool to unify with, so it silently shipped "form_delta_known":"True" —
+                # which every JavaScript consumer reads as truthy for BOTH values, making
+                # the flag actively wrong in the one case it exists to disambiguate.
+                delta_known : Bool
+                delta_known = match form_delta { Known(_) => True  Unknown => False }
                 if Output.json_mode!({}) {
                     form_tsb =
                         match tsb_opt {
@@ -84,15 +91,7 @@ Analyze :: [].{
                         stream_errors: res.stream_errors,
                         form_tsb,
                         form_delta_7d: match form_delta { Known(d) => d  Unknown => 0.0 },
-                        # `(1 == 1)` rather than a bare `True` tag: the builtin JSON renders
-                        # an unconstrained tag as the STRING "True", and this record has no
-                        # other Bool to unify it with, so it silently shipped
-                        # "form_delta_known":"True". That is worse than ugly — in JavaScript
-                        # both "True" and "False" are truthy, so a consumer testing the flag
-                        # got true either way and the field was actively misleading.
-                        # summary's payload escaped it only because it sits beside real
-                        # Bools like ctl_warming_up.
-                        form_delta_known: match form_delta { Known(_) => (1 == 1)  Unknown => (1 == 0) },
+                        form_delta_known: delta_known,
                         converged: res.converged,
                     })
                 } else {
