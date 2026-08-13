@@ -684,6 +684,16 @@ Report :: [].{
         # projections keep the date validation above from being done twice
         ramps = Metrics.ramp_rates(List.map(dated_load, |e| { day: e.day, ctl: e.ctl }), anchor)
         form_delta = Metrics.form_delta_7d(List.map(dated_load, |e| { day: e.day, tsb: e.tsb }), anchor)
+        # how long the band has held (#123) — the thing the label itself cannot say
+        band_days = Metrics.days_in_band(List.map(dated_load, |e| { day: e.day, tsb: e.tsb }), anchor)
+        # ANNOTATED Bool, not a bare `True`/`False` tag. The builtin JSON serializes an
+        # unconstrained tag as the STRING "True", and this only renders correctly today
+        # because it happens to unify with real Bools elsewhere in the record. analyze's
+        # payload had no such neighbour and silently shipped "True" — which every
+        # JavaScript consumer reads as truthy for BOTH values. The annotation makes the
+        # type explicit instead of accidental.
+        delta_known : Bool
+        delta_known = match form_delta { Known(_) => True  Unknown => False }
 
         Ok({
             as_of: latest.day,
@@ -701,7 +711,9 @@ Report :: [].{
             # cover: form genuinely level for a week is a real, useful answer that is also
             # exactly 0. So the flag carries what the number cannot, for machine consumers
             # as much as for the renderer.
-            form_delta_known: match form_delta { Known(_) => True  Unknown => False },
+            form_delta_known: delta_known,
+            # 0 = not available, per the house rule; a real streak is always >= 1
+            form_band_days: match band_days { Known(n) => n  Unknown => 0 },
             load_days: load_days,
             ctl_warming_up: load_days < 90,
             last_hard_session_date: last_hard,

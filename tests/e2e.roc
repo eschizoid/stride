@@ -373,6 +373,12 @@ b_seed_analyze! = |ctx| {
     # first analyze converges the derived FTP: pass 1 scores both rows (best_20min_w still 0
     # -> FTP 0), pass 2 recomputes the ride once its best_20min_w resolves FTP to 190: 2+1=3
     check!("analyze computes 3 (derived-FTP convergence)", strjq!(ctx, ["analyze"], ".data.computed") == "3")?
+    # form_delta_known must be a JSON BOOLEAN, not the string "True". An unconstrained Roc
+    # tag renders as a quoted string, and this record has no other Bool to unify it with,
+    # so it shipped "True" — which every JavaScript consumer reads as truthy for BOTH
+    # values, making the flag actively wrong rather than merely ugly. Asserting the TYPE is
+    # the only check that catches it; comparing to "true" would pass on the string too.
+    check!("analyze form_delta_known is a boolean, not a string", strjq!(ctx, ["analyze"], ".data.form_delta_known | type") == "boolean")?
     check!("summary as_of is today", strjq!(ctx, ["summary"], ".data.as_of") == ctx.today)?
     # #93: ramp carries BOTH fields, and a short history reports an honest 0 rather than
     # today's whole CTL — which is what treating "no data 7 days back" as a CTL of 0 would
@@ -393,12 +399,18 @@ b_seed_analyze! = |ctx| {
     # This fixture has only a couple of days, so nothing reaches back a week. The flag must
     # say so rather than the 0.0 being read as "form held level" — that distinction is the
     # whole reason the field exists.
+    check!("summary form_delta_known is a boolean too", strjq!(ctx, ["summary"], ".data.form_delta_known | type") == "boolean")?
     check!("form_delta_known is false on a short history", strjq!(ctx, ["summary"], ".data.form_delta_known") == "false")?
+    # #123: the verdict NAMES the state and stops prescribing. Asserting the absence of the
+    # old advice AND the presence of the label, so it cannot pass by the line disappearing.
+    check!("form_band_days is a number", strjq!(ctx, ["summary"], ".data.form_band_days | type") == "number")?
+    summary_verdict = stride_human!(ctx.bin, ctx.home, ["summary"])
+    check!("the verdict still names the state", Str.contains(summary_verdict, "form "))?
+    check!("...and no longer prescribes training", !(Str.contains(summary_verdict, "favor easy work")) and !(Str.contains(summary_verdict, "good day for")))?
     check_near!("...and the delta itself is an honest 0", sfloat(strjq!(ctx, ["summary"], ".data.form_delta_7d")), 0.0, 0.001)?
-    # and the human line must NOT claim a trend it does not have
-    summary_h = stride_human!(ctx.bin, ctx.home, ["summary"])
-    check!("human verdict still prints the form line", Str.contains(summary_h, "form "))?
-    check!("...but omits the week-ago clause when unknown", !(Str.contains(summary_h, "week ago")))?
+    # reuses summary_verdict above rather than running `summary` a second time — one
+    # invocation, several assertions about the same output
+    check!("...and omits the week-ago clause when the trend is unknown", !(Str.contains(summary_verdict, "week ago")))?
     # power ride NP 200 @ derived FTP 190 => TSS ~110.8; HR row ~55 => ~166
     check_near!("28d tss ~166 (111 power + 55 hr)", sfloat(strjq!(ctx, ["summary"], ".data.last_28d.tss")), 165.8, 1.0)?
     mp = sfloat(strjq!(ctx, ["summary"], ".data.last_28d.measured_pct"))
