@@ -846,18 +846,28 @@ b_progress_a! = |ctx| {
     # session" read as though it pointed at some other session to compare with — the single
     # row IS the session. Seeded as its own uniquely-named class so it cannot group with
     # the Test Class rows above.
-    _ = seed_ride!(ctx.db, "203", "Solo Class", "2025-03-03T10:00:00Z", "3600", "20000", "190", "150")
-    _ = seed_power_stream!(ctx.db, 203, 1300, 190)
+    # id 204, not 203: b_progress_b! below re-seeds 203 as a DIFFERENT activity, and
+    # seed_ride! is a plain INSERT whose UNIQUE failure sql! would swallow. Today this
+    # block's DELETEs run first so the collision never bites — but that makes correctness
+    # depend on cleanup that looks redundant, and deleting it would break a check 30 lines
+    # away with a message naming verdict averaging rather than a duplicate id.
+    _ = seed_ride!(ctx.db, "204", "Solo Class", "2025-03-03T10:00:00Z", "3600", "20000", "190", "150")
+    _ = seed_power_stream!(ctx.db, 204, 1300, 190)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     solo_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-03-03"])
     check!("a lone session says it is the first, not that it has a comparable", Str.contains(solo_h, "first session of this workout"))?
-    check!("...and does not claim a trend", !(Str.contains(solo_h, "one comparable session")))?
+    # NOT `!contains("one comparable session")` — that is the mutually exclusive arm of the
+    # same `if`, so proving the new string present already proves it absent and the check
+    # could never fail independently. These two catch a different regression: the
+    # single-session branch being removed entirely so a lone row falls through to the trend
+    # arm, which would report a fabricated 0% change.
+    check!("...and does not fall through to the trend arm", !(Str.contains(solo_h, "holding steady")) and !(Str.contains(solo_h, "(0%)")))?
     # remove the fixture and REBUILD daily_load — later checks assert on fitness numbers,
     # and an extra scored activity left behind silently moves them. A seeded row that
     # outlives its own check is how a suite starts testing the state of its neighbours.
-    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 203;")
-    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 203;")
-    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 203;")
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 204;")
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 204;")
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 204;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("progress json no-workout error", Str.contains(stride!(ctx.bin, ctx.home, ["progress", "1999-01-01"]), "no_workout_on_date"))?
     Ok({})
