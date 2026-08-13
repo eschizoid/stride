@@ -1026,6 +1026,67 @@ Metrics :: [].{
     valid_hr = |hr|
         hr >= 35.0 and hr <= 220.0
 
+    # ── aerobic decoupling / Pw:HR drift (#94) ──────────────────────────
+    #
+    # Split the session in half BY TIME, compute efficiency (signal per heartbeat) in each
+    # half, and report how much it fell. Positive = the second half cost more heartbeats
+    # for the same output, the classic sign the effort exceeded what the aerobic system
+    # could sustain.
+    #
+    # By time, not by sample COUNT: a stream with dropouts has uneven sample density, so
+    # halving the list would put more elapsed time in one half than the other and compare
+    # unlike windows.
+    #
+    # The two signals are averaged over the same window rather than joined sample-by-sample.
+    # A join would drop every second where one sensor blinked, silently shrinking the window
+    # and biasing whichever half dropped more.
+    #
+    # Known/Unknown, never a bare 0.0 — the same trap as form_delta_7d, and worse here:
+    # 0.0 is a legitimate PERFECT result (no drift at all), so a 0-sentinel would render an
+    # ideal ride and a session with no power meter identically.
+    decoupling_pct : List({ t : I64, v : F64 }), List({ t : I64, v : F64 }) -> [Known(F64), Unknown]
+    decoupling_pct = |signal, hr| {
+        clean_hr = List.keep_if(hr, |p| valid_hr(p.v))
+        # a signal sample of 0 is a real reading (coasting, standing still) and must stay:
+        # dropping it would flatter the half that contained more of it
+        if List.is_empty(signal) or List.is_empty(clean_hr) {
+            Unknown
+        } else {
+            t_lo = List.fold(signal, (List.first(signal)).map_ok(|p| p.t).ok_or(0), |m, p| if p.t < m p.t else m)
+            t_hi = List.fold(signal, t_lo, |m, p| if p.t > m p.t else m)
+            mid = t_lo + (t_hi - t_lo) // 2
+            # halves are [lo, mid) and [mid, hi] — mid belongs to exactly one of them, so a
+            # sample can never be counted twice or dropped
+            eff1 = half_efficiency(signal, clean_hr, t_lo, mid, First)
+            eff2 = half_efficiency(signal, clean_hr, mid, t_hi, Second)
+            match (eff1, eff2) {
+                (Known(e1), Known(e2)) if e1 > 0.0 => Known((e1 - e2) / e1 * 100.0)
+                _ => Unknown
+            }
+        }
+    }
+
+    # mean signal / mean HR over one time window. Unknown when either side has no samples
+    # in the window or the HR mean is not positive — dividing by it would be meaningless
+    # rather than merely imprecise.
+    half_efficiency : List({ t : I64, v : F64 }), List({ t : I64, v : F64 }), I64, I64, [First, Second] -> [Known(F64), Unknown]
+    half_efficiency = |signal, hr, lo, hi, which| {
+        in_window = |p|
+            match which {
+                First => p.t >= lo and p.t < hi
+                Second => p.t >= lo and p.t <= hi
+            }
+        s = List.keep_if(signal, in_window)
+        h = List.keep_if(hr, in_window)
+        if List.is_empty(s) or List.is_empty(h) {
+            Unknown
+        } else {
+            mean_s = List.fold(s, 0.0, |a, p| a + p.v) / (List.len(s)).to_f64()
+            mean_h = List.fold(h, 0.0, |a, p| a + p.v) / (List.len(h)).to_f64()
+            if mean_h > 0.0 Known(mean_s / mean_h) else Unknown
+        }
+    }
+
     # ── power sample validity ───────────────────────────────────────────
     # A negative watt is impossible; a 1-second sample above 2500 W exceeds the
     # highest human peak power ever recorded (elite track sprinters top out ~2500 W),
@@ -1831,6 +1892,133 @@ expect {
 
 
 
+
+# ── aerobic decoupling (#94) ─────────────────────────────────────────
+# Flat 200W throughout; HR rises 100 -> 110 exactly at the halfway sample (t=9, the
+# midpoint of 0..19, which belongs to the SECOND half). Efficiency goes 200/100 = 2.0 to
+# 200/110 = 1.818, so the drift is (2.0 - 1.818) / 2.0 = 9.09% — the same output costing
+# more heartbeats.
+expect {
+    power = [
+        { t: 0, v: 200.0 },
+        { t: 1, v: 200.0 },
+        { t: 2, v: 200.0 },
+        { t: 3, v: 200.0 },
+        { t: 4, v: 200.0 },
+        { t: 5, v: 200.0 },
+        { t: 6, v: 200.0 },
+        { t: 7, v: 200.0 },
+        { t: 8, v: 200.0 },
+        { t: 9, v: 200.0 },
+        { t: 10, v: 200.0 },
+        { t: 11, v: 200.0 },
+        { t: 12, v: 200.0 },
+        { t: 13, v: 200.0 },
+        { t: 14, v: 200.0 },
+        { t: 15, v: 200.0 },
+        { t: 16, v: 200.0 },
+        { t: 17, v: 200.0 },
+        { t: 18, v: 200.0 },
+        { t: 19, v: 200.0 },
+    ]
+    hr = [
+        { t: 0, v: 100.0 },
+        { t: 1, v: 100.0 },
+        { t: 2, v: 100.0 },
+        { t: 3, v: 100.0 },
+        { t: 4, v: 100.0 },
+        { t: 5, v: 100.0 },
+        { t: 6, v: 100.0 },
+        { t: 7, v: 100.0 },
+        { t: 8, v: 100.0 },
+        { t: 9, v: 110.0 },
+        { t: 10, v: 110.0 },
+        { t: 11, v: 110.0 },
+        { t: 12, v: 110.0 },
+        { t: 13, v: 110.0 },
+        { t: 14, v: 110.0 },
+        { t: 15, v: 110.0 },
+        { t: 16, v: 110.0 },
+        { t: 17, v: 110.0 },
+        { t: 18, v: 110.0 },
+        { t: 19, v: 110.0 },
+    ]
+    match Metrics.decoupling_pct(power, hr) {
+        Known(d) => (d - 9.0909).abs() < 0.01
+        Unknown => False
+    }
+}
+
+# a perfectly steady session drifts 0 — and that 0 is a REAL answer, which is exactly why
+# the return is Known/Unknown rather than a bare float
+expect {
+    power = [
+        { t: 0, v: 200.0 },
+        { t: 1, v: 200.0 },
+        { t: 2, v: 200.0 },
+        { t: 3, v: 200.0 },
+        { t: 4, v: 200.0 },
+        { t: 5, v: 200.0 },
+        { t: 6, v: 200.0 },
+        { t: 7, v: 200.0 },
+        { t: 8, v: 200.0 },
+        { t: 9, v: 200.0 },
+        { t: 10, v: 200.0 },
+        { t: 11, v: 200.0 },
+        { t: 12, v: 200.0 },
+        { t: 13, v: 200.0 },
+        { t: 14, v: 200.0 },
+        { t: 15, v: 200.0 },
+        { t: 16, v: 200.0 },
+        { t: 17, v: 200.0 },
+        { t: 18, v: 200.0 },
+        { t: 19, v: 200.0 },
+    ]
+    hr = [
+        { t: 0, v: 100.0 },
+        { t: 1, v: 100.0 },
+        { t: 2, v: 100.0 },
+        { t: 3, v: 100.0 },
+        { t: 4, v: 100.0 },
+        { t: 5, v: 100.0 },
+        { t: 6, v: 100.0 },
+        { t: 7, v: 100.0 },
+        { t: 8, v: 100.0 },
+        { t: 9, v: 100.0 },
+        { t: 10, v: 100.0 },
+        { t: 11, v: 100.0 },
+        { t: 12, v: 100.0 },
+        { t: 13, v: 100.0 },
+        { t: 14, v: 100.0 },
+        { t: 15, v: 100.0 },
+        { t: 16, v: 100.0 },
+        { t: 17, v: 100.0 },
+        { t: 18, v: 100.0 },
+        { t: 19, v: 100.0 },
+    ]
+    match Metrics.decoupling_pct(power, hr) {
+        Known(d) => (d).abs() < 0.001
+        Unknown => False
+    }
+}
+
+# no power at all is Unknown, not 0 — a session without a meter must not render as a
+# flawless one
+expect {
+    match Metrics.decoupling_pct([], [{ t: 0, v: 100.0 }]) {
+        Known(_) => False
+        Unknown => True
+    }
+}
+
+# HR that is all junk (a dropped strap reading 20 bpm) leaves nothing to divide by
+expect {
+    power = [{ t: 0, v: 200.0 }, { t: 10, v: 200.0 }]
+    match Metrics.decoupling_pct(power, [{ t: 0, v: 20.0 }, { t: 10, v: 20.0 }]) {
+        Known(_) => False
+        Unknown => True
+    }
+}
 
 expect Metrics.valid_hr(150.0) and !(Metrics.valid_hr(20.0)) and !(Metrics.valid_hr(230.0)) and Metrics.valid_hr(35.0) and Metrics.valid_hr(220.0)
 expect Metrics.valid_watts(200.0) and Metrics.valid_watts(0.0) and Metrics.valid_watts(2500.0) and !(Metrics.valid_watts(-5.0)) and !(Metrics.valid_watts(9999.0))

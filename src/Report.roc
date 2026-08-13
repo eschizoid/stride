@@ -179,7 +179,9 @@ Report :: [].{
                 \\       CAST(COALESCE(m.ftp_used,0) AS REAL) AS ftp_used,
                 \\       COALESCE(m.z1_s,0) AS z1_s, COALESCE(m.z2_s,0) AS z2_s, COALESCE(m.z3_s,0) AS z3_s,
                 \\       COALESCE(m.z4_s,0) AS z4_s, COALESCE(m.z5_s,0) AS z5_s,
-                \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr
+                \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
+                \\       CAST(COALESCE(m.decoupling_pct, 0) AS REAL) AS decoupling_pct,
+                \\       CASE WHEN m.decoupling_pct IS NULL THEN 0 ELSE 1 END AS decoupling_known
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE a.id = :id LIMIT 1
             ,
@@ -201,7 +203,12 @@ Report :: [].{
                 z4_s = Sqlite.i64("z4_s")(cols)(stmt)?
                 z5_s = Sqlite.i64("z5_s")(cols)(stmt)?
                 avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
-                Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr })
+                # split into value + flag in SQL rather than a nullable decoder: 0.0 is a
+                # REAL result here (a perfectly steady session), so the flag is the only
+                # thing that separates "flat" from "no power meter" (#94)
+                decoupling_pct = Sqlite.f64("decoupling_pct")(cols)(stmt)?
+                decoupling_known = Sqlite.i64("decoupling_known")(cols)(stmt)?
+                Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr, decoupling_pct, decoupling_known: decoupling_known != 0 })
             },
         })?
         match List.first(rows) {
@@ -273,6 +280,12 @@ Report :: [].{
                         # true = stored streams exist but wouldn't decode, so the 0s
                         # above are "unreadable", NOT "no power meter / no strap"
                         streams_unreadable: detail.failed,
+                        # aerobic decoupling (#94), ADDITIVE so the envelope version stays.
+                        # The flag is load-bearing rather than decorative: 0.0 here is a
+                        # real, good result (no drift), so the house "0 = not available"
+                        # rule cannot carry the distinction on its own.
+                        decoupling_pct: a.decoupling_pct,
+                        decoupling_known: a.decoupling_known,
                     })
                 else {
                     dist_str = if a.distance_m >= 1000.0 " · ${Render.fmt1(a.distance_m / 1000.0)} km" else ""
@@ -293,6 +306,13 @@ Report :: [].{
                         Ok({})?
                     (if detail.max_hr > 0
                         Stdout.line!("hr     max ${Render.fmt0(detail.max_hr)} · avg ${Render.fmt0(a.avg_hr)}")
+                    else
+                        Ok({}))?
+                    # aerobic decoupling (#94). Printed ONLY when it was computable —
+                    # an absent line is honest, a "drift 0%" line on a session with no
+                    # power meter would be a fabricated perfect score.
+                    (if a.decoupling_known
+                        Stdout.line!("drift   ${Render.signed(a.decoupling_pct)}% Pw:HR — second-half heartbeats per watt vs first")
                     else
                         Ok({}))?
                     if detail.failed
