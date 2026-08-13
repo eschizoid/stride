@@ -842,6 +842,23 @@ b_progress_a! = |ctx| {
     check!("progress chronological (earliest first)", strjq!(ctx, ["progress", "2025-06-01"], ".data.groups[0].sessions[0].date") == "2025-01-01")?
     check_near!("progress EF[0] ~1.20", sfloat(strjq!(ctx, ["progress", "2025-06-01"], ".data.groups[0].sessions[0].score")), 1.20, 0.01)?
     check_near!("progress EF[1] ~1.40", sfloat(strjq!(ctx, ["progress", "2025-06-01"], ".data.groups[0].sessions[1].score")), 1.40, 0.01)?
+    # #96: a workout with only ONE session must say so in its own terms. "one comparable
+    # session" read as though it pointed at some other session to compare with — the single
+    # row IS the session. Seeded as its own uniquely-named class so it cannot group with
+    # the Test Class rows above.
+    _ = seed_ride!(ctx.db, "203", "Solo Class", "2025-03-03T10:00:00Z", "3600", "20000", "190", "150")
+    _ = seed_power_stream!(ctx.db, 203, 1300, 190)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    solo_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-03-03"])
+    check!("a lone session says it is the first, not that it has a comparable", Str.contains(solo_h, "first session of this workout"))?
+    check!("...and does not claim a trend", !(Str.contains(solo_h, "one comparable session")))?
+    # remove the fixture and REBUILD daily_load — later checks assert on fitness numbers,
+    # and an extra scored activity left behind silently moves them. A seeded row that
+    # outlives its own check is how a suite starts testing the state of its neighbours.
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 203;")
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 203;")
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 203;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("progress json no-workout error", Str.contains(stride!(ctx.bin, ctx.home, ["progress", "1999-01-01"]), "no_workout_on_date"))?
     Ok({})
 }
