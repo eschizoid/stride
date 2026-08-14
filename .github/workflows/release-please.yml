@@ -52,11 +52,11 @@ jobs:
             runs-on: ubuntu-latest
           - target: linux-arm64
             runs-on: ubuntu-24.04-arm
-            # UNVERIFIED: this target has never produced an asset. On ubuntu-24.04-arm the
-            # compiler auto-detects arm64v1musl, which does not resolve to a usable host, so
-            # the job fails and the release ships without it (fail-fast is off, upload runs
-            # with always()). Naming the target explicitly is the documented fix; it can only
-            # be confirmed by a real release, and it cannot regress the other four.
+            # VERIFIED 2026-08-14 via the dispatch-only verify-arm64 workflow (run
+            # 31832832308): this exact flag on this runner class builds a binary that
+            # runs and initializes its SQLite db. History: without the explicit target
+            # the compiler auto-detects arm64v1musl, which resolves to no usable host,
+            # and every release shipped four targets instead of five (#141).
             roc_target: arm64musl
           - target: macos-arm64
             runs-on: macos-latest # Apple Silicon
