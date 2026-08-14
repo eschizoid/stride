@@ -178,7 +178,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 20
+    schema_version = 21
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -196,6 +196,10 @@ Db :: [].{
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.ratings, bindings: [] })?
         alter_add_column!(path, "ALTER TABLE activities ADD COLUMN weighted_avg_watts REAL")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_20min_w REAL")?
+        # v21: which signal produced decoupling_pct — provenance stored at analyze
+        # time (like load_model), because re-deriving it at render time from the
+        # stream mislabels estimated-watts sessions and re-pull windows (#142 retro)
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN decoupling_signal TEXT")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN ftp_used REAL")?
         alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN status TEXT")?
         alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN skipped_reason TEXT")?

@@ -181,7 +181,8 @@ Report :: [].{
                 \\       COALESCE(m.z4_s,0) AS z4_s, COALESCE(m.z5_s,0) AS z5_s,
                 \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
                 \\       CAST(COALESCE(m.decoupling_pct, 0) AS REAL) AS decoupling_pct,
-                \\       CASE WHEN m.decoupling_pct IS NULL THEN 0 ELSE 1 END AS decoupling_known
+                \\       CASE WHEN m.decoupling_pct IS NULL THEN 0 ELSE 1 END AS decoupling_known,
+                \\       COALESCE(m.decoupling_signal, '') AS decoupling_signal
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE a.id = :id LIMIT 1
             ,
@@ -208,7 +209,8 @@ Report :: [].{
                 # thing that separates "flat" from "no power meter" (#94)
                 decoupling_pct = Sqlite.f64("decoupling_pct")(cols)(stmt)?
                 decoupling_known = Sqlite.i64("decoupling_known")(cols)(stmt)?
-                Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr, decoupling_pct, decoupling_known: decoupling_known != 0 })
+                decoupling_signal = Sqlite.str("decoupling_signal")(cols)(stmt)?
+                Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr, decoupling_pct, decoupling_known: decoupling_known != 0, decoupling_signal })
             },
         })?
         match List.first(rows) {
@@ -313,8 +315,11 @@ Report :: [].{
                         # rule cannot carry the distinction on its own.
                         decoupling_pct: a.decoupling_pct,
                         decoupling_known: a.decoupling_known,
-                        # which signal the drift came from — "" when unknown (additive, #134)
-                        decoupling_signal: if !(a.decoupling_known) "" else if detail.has_watts "power" else "pace",
+                        # which signal the drift came from — STORED provenance (like
+                        # load_model), never re-derived from the stream at render time:
+                        # a re-derivation mislabels estimated-watts sessions and re-pull
+                        # windows where streams are momentarily absent (#142 retro)
+                        decoupling_signal: a.decoupling_signal,
                         # detected structure (ADR 0008), ADDITIVE. Empty list + "" = none
                         # detected or no stream signal — reporting only, never a judgment.
                         segments: seg_rows,
@@ -363,10 +368,12 @@ Report :: [].{
                     # power meter would be a fabricated perfect score.
                     (if a.decoupling_known {
                         drift_tail =
-                            if detail.has_watts
+                            if a.decoupling_signal == "power"
                                 "Pw:HR — second-half heartbeats per watt vs first"
-                            else
+                            else if a.decoupling_signal == "pace"
                                 "Pa:HR — second-half heartbeats per grade-adjusted m/s vs first"
+                            else
+                                "Spd:HR — per raw m/s (no altitude stream, terrain not normalized)"
                         Stdout.line!("drift   ${Render.signed(a.decoupling_pct)}% ${drift_tail}")
                     } else
                         Ok({}))?
