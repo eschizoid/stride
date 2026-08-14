@@ -6,6 +6,7 @@ import pf.OsStr
 import pf.Path
 import Schema
 import Metrics
+import Sql
 
 Db :: [].{
     # ── paths ────────────────────────────────────────────────────────────
@@ -40,12 +41,7 @@ Db :: [].{
 
     config_get! : Str, Str => Try(Str, _)
     config_get! = |path, key|
-        Sqlite.query!({
-            path: Path.utf8(path),
-            query: "SELECT value FROM config WHERE key = :key",
-            bindings: [{ name: ":key", value: String(key) }],
-            row: Sqlite.str("value"),
-        })
+        Sqlite.query!(Sql.row(Path.utf8(path), "SELECT value FROM config WHERE key = :key", [{ name: ":key", value: String(key) }], Sqlite.str("value")))
 
     # read a config key, distinguishing "genuinely absent" from "the db read failed"
     # — so a locked/corrupt db surfaces as a real error instead of masquerading as
@@ -60,14 +56,14 @@ Db :: [].{
         }
     config_set! : Str, Str, Str => Try({}, _)
     config_set! = |path, key, value|
-        Sqlite.execute!({
-            path: Path.utf8(path),
-            query: "INSERT OR REPLACE INTO config (key, value) VALUES (:key, :value)",
-            bindings: [
+        Sqlite.execute!(Sql.stmt(
+            Path.utf8(path),
+            "INSERT OR REPLACE INTO config (key, value) VALUES (:key, :value)",
+            [
                 { name: ":key", value: String(key) },
                 { name: ":value", value: String(value) },
             ],
-        })
+        ))
 
     now_secs! : {} => I64
     now_secs! = |{}| {
@@ -165,12 +161,7 @@ Db :: [].{
         # RECENT form: best 20-min power over the last 60 days, not all-time. An old peak
         # shouldn't keep judging today's rides as easy — FTP tracks current fitness.
         cutoff = Metrics.days_to_date_str(local_today_days!(path) - 60)
-        best = Sqlite.query!({
-            path: Path.utf8(path),
-            query: "SELECT CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_type = :sport AND a.start_local >= :cutoff",
-            bindings: [{ name: ":sport", value: String(sport) }, { name: ":cutoff", value: String(cutoff) }],
-            row: Sqlite.f64("b"),
-        })?
+        best = Sqlite.query!(Sql.row(Path.utf8(path), "SELECT CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_type = :sport AND a.start_local >= :cutoff", [{ name: ":sport", value: String(sport) }, { name: ":cutoff", value: String(cutoff) }], Sqlite.f64("b")))?
         Ok(Metrics.ftp_from_best_20min(best))
     }
     # ── migrations ───────────────────────────────────────────────────────
@@ -186,13 +177,13 @@ Db :: [].{
         # medical word is gone). MUST run before the CREATEs below, or an empty
         # planned_sessions would shadow the old data.
         rename_table_if_exists!(path, "prescriptions", "planned_sessions")?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.activities, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.metrics, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.daily_load, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.planned_sessions, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.config, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.streams, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.ratings, bindings: [] })?
+        Sqlite.execute!(Sql.stmt(Path.utf8(path), Schema.activities, []))?
+        Sqlite.execute!(Sql.stmt(Path.utf8(path), Schema.metrics, []))?
+        Sqlite.execute!(Sql.stmt(Path.utf8(path), Schema.daily_load, []))?
+        Sqlite.execute!(Sql.stmt(Path.utf8(path), Schema.planned_sessions, []))?
+        Sqlite.execute!(Sql.stmt(Path.utf8(path), Schema.config, []))?
+        Sqlite.execute!(Sql.stmt(Path.utf8(path), Schema.streams, []))?
+        Sqlite.execute!(Sql.stmt(Path.utf8(path), Schema.ratings, []))?
         alter_add_column!(path, "ALTER TABLE activities ADD COLUMN weighted_avg_watts REAL")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_20min_w REAL")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN ftp_used REAL")?
@@ -217,7 +208,7 @@ Db :: [].{
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN pi_hard_s INTEGER")?
         # v10: FTP is now per-sport under `ftp_<sport>` (uniform, no special cycling key).
         # Move the old cycling `ftp` value to `ftp_ride` if it hasn't been set already.
-        Sqlite.execute!({ path: Path.utf8(path), query: "UPDATE config SET key = 'ftp_ride' WHERE key = 'ftp' AND (SELECT COUNT(*) FROM config WHERE key = 'ftp_ride') = 0", bindings: [] })?
+        Sqlite.execute!(Sql.stmt(Path.utf8(path), "UPDATE config SET key = 'ftp_ride' WHERE key = 'ftp' AND (SELECT COUNT(*) FROM config WHERE key = 'ftp_ride') = 0", []))?
         # v11: synced_at stamps each activity with the sync run that last saw it, so a
         # sync can prune activities deleted on Strava — any row in the pulled window not
         # re-stamped this run is gone upstream. Mirror tier (activities) is re-pullable.
@@ -274,11 +265,11 @@ Db :: [].{
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN decoupling_pct REAL")?
         # v2: index the column every date-range filter and the activities sort use
         # (queries now compare a.start_local directly — sargable — instead of substr)
-        Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })?
+        Sqlite.execute!(Sql.stmt(Path.utf8(path), "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", []))?
         # v14: the period-FTP subquery (ADR 0005) filters on sport_type AND start_local
         # together, once per row being scored. start_local alone leaves a scan over every
         # activity of every OTHER sport on each lookup; the composite makes it a range seek.
-        Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_sport_start ON activities(sport_type, start_local)", bindings: [] })?
+        Sqlite.execute!(Sql.stmt(Path.utf8(path), "CREATE INDEX IF NOT EXISTS idx_activities_sport_start ON activities(sport_type, start_local)", []))?
         # v15: NULL = Strava never said (pre-flag rows, CSV imports); 1 = real meter; 0 =
         # estimated. Estimated watts must not outrank honest fallbacks (#73).
         alter_add_column!(path, "ALTER TABLE activities ADD COLUMN device_watts INTEGER")?
@@ -294,9 +285,8 @@ Db :: [].{
         # was scored from. Rows whose activity was edited but not yet re-analyzed have no
         # metrics row to backfill — the old code had already deleted it.
         # Only NULL rows are touched, so re-running the migration is a no-op.
-        Sqlite.execute!({
-            path: Path.utf8(path),
-            query:
+        Sqlite.execute!(Sql.stmt(
+            Path.utf8(path),
                 \\UPDATE activity_metrics SET
                 \\  mt_used = (SELECT COALESCE(a.moving_time,0) FROM activities a WHERE a.id = activity_metrics.activity_id),
                 \\  dist_used = (SELECT CAST(ROUND(COALESCE(a.distance,0)) AS INTEGER) FROM activities a WHERE a.id = activity_metrics.activity_id),
@@ -317,21 +307,16 @@ Db :: [].{
                 \\WHERE mt_used IS NULL
                 \\  AND EXISTS (SELECT 1 FROM activities a WHERE a.id = activity_metrics.activity_id)
             ,
-            bindings: [],
-        })
+            [],
+        ))
     }
 
     # rename old => new when old exists and new doesn't (idempotent, data-preserving)
     rename_table_if_exists! : Str, Str, Str => Try({}, _)
     rename_table_if_exists! = |path, old, new| {
-        count = Sqlite.query!({
-            path: Path.utf8(path),
-            query: "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = :old",
-            bindings: [{ name: ":old", value: String(old) }],
-            row: Sqlite.i64("n"),
-        })?
+        count = Sqlite.query!(Sql.row(Path.utf8(path), "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = :old", [{ name: ":old", value: String(old) }], Sqlite.i64("n")))?
         if count > 0
-            Sqlite.execute!({ path: Path.utf8(path), query: "ALTER TABLE ${old} RENAME TO ${new}", bindings: [] })
+            Sqlite.execute!(Sql.stmt(Path.utf8(path), "ALTER TABLE ${old} RENAME TO ${new}", []))
         else
             Ok({})
     }
@@ -339,7 +324,7 @@ Db :: [].{
     # case); a locked db, disk error, etc. propagate instead of failing silently.
     alter_add_column! : Str, Str => Try({}, _)
     alter_add_column! = |path, q|
-        match Sqlite.execute!({ path: Path.utf8(path), query: q, bindings: [] }) {
+        match Sqlite.execute!(Sql.stmt(Path.utf8(path), q, [])) {
             Ok({}) => Ok({})
             Err(SqliteErr(Error, msg)) =>
                 if Str.contains(msg, "duplicate column") Ok({}) else Err(SqliteErr(Error, msg))
@@ -350,7 +335,7 @@ Db :: [].{
     # reports "no such column" — that's the converged state, not a failure.
     drop_column_if_exists! : Str, Str => Try({}, _)
     drop_column_if_exists! = |path, q|
-        match Sqlite.execute!({ path: Path.utf8(path), query: q, bindings: [] }) {
+        match Sqlite.execute!(Sql.stmt(Path.utf8(path), q, [])) {
             Ok({}) => Ok({})
             Err(SqliteErr(Error, msg)) =>
                 if Str.contains(msg, "no such column") Ok({}) else Err(SqliteErr(Error, msg))
@@ -387,12 +372,7 @@ Db :: [].{
         # which is precisely when someone runs doctor. The sentinel below is only honest if
         # the failing paths reach it, so the query error becomes "unknown" too.
         modes =
-            match Sqlite.query_many!({
-                path: Path.utf8(path),
-                query: "PRAGMA journal_mode",
-                bindings: [],
-                rows: Sqlite.str("journal_mode"),
-            }) {
+            match Sqlite.query_many!(Sql.rows(Path.utf8(path), "PRAGMA journal_mode", [], Sqlite.str("journal_mode"))) {
                 Ok(rows) => rows
                 Err(_) => []
             }
@@ -409,12 +389,7 @@ Db :: [].{
         # write lock, so with the default timeout of 0 the very statement meant to enable
         # WAL is itself the one that fails instantly against a busy database — leaving the
         # engine in the exact rollback-journal mode it was trying to escape.
-        _ = Sqlite.query_many!({
-            path: Path.utf8(path),
-            query: "PRAGMA busy_timeout = 5000",
-            bindings: [],
-            rows: Sqlite.i64("timeout"),
-        })?
+        _ = Sqlite.query_many!(Sql.rows(Path.utf8(path), "PRAGMA busy_timeout = 5000", [], Sqlite.i64("timeout")))?
         # Read before assigning. Setting journal_mode wants a write lock, and EVERY command
         # opens through here — so issuing the assignment unconditionally would have each
         # short read command reach for a write lock before it reads anything, which is the
@@ -425,29 +400,19 @@ Db :: [].{
         if journal_mode!(path)? == "wal" {
             Ok({})
         } else {
-            _ = Sqlite.query_many!({
-                path: Path.utf8(path),
-                query: "PRAGMA journal_mode = WAL",
-                bindings: [],
-                rows: Sqlite.str("journal_mode"),
-            })?
+            _ = Sqlite.query_many!(Sql.rows(Path.utf8(path), "PRAGMA journal_mode = WAL", [], Sqlite.str("journal_mode")))?
             Ok({})
         }
     }
     ensure_schema! : Str => Try({}, _)
     ensure_schema! = |path| {
         configure_concurrency!(path)?
-        v = (Sqlite.query!({
-                path: Path.utf8(path),
-                query: "SELECT user_version AS v FROM pragma_user_version()",
-                bindings: [],
-                row: Sqlite.i64("v"),
-            })).ok_or(0)
+        v = (Sqlite.query!(Sql.row(Path.utf8(path), "SELECT user_version AS v FROM pragma_user_version()", [], Sqlite.i64("v")))).ok_or(0)
         if v >= schema_version {
             Ok({})
         } else {
             run_migrations!(path)?
-            Sqlite.execute!({ path: Path.utf8(path), query: "PRAGMA user_version = ${(schema_version).to_str()}", bindings: [] })
+            Sqlite.execute!(Sql.stmt(Path.utf8(path), "PRAGMA user_version = ${(schema_version).to_str()}", []))
         }
     }
     # db path + guaranteed-current schema. Every command opens through this.

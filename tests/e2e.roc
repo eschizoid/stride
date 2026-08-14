@@ -503,6 +503,23 @@ b_plan! = |ctx| {
     # typo that lands there cannot be re-derived — and it would belong to no training
     # week, matching no completion or adherence query. Each of the rejects below PARSES;
     # the last two would be silently normalized to a different day than the one typed.
+    # #105 workaround: dynamic text is now SPLICED into SQL as an escaped literal, not
+    # bound — so apostrophes are the case that must round-trip byte-for-byte. This detail
+    # exercises the escape (one quote, a doubled quote, and SQL-looking text) through the
+    # INSERT and back out through the reader. A broken escape either corrupts the text
+    # (assert catches it) or fails the INSERT loudly (also caught — the id check fails).
+    # stride! (direct exec, no shell) rather than strjq! — the harness's sh-based jq
+    # wrapper single-quotes its args, so an apostrophed arg breaks the TEST's own
+    # quoting before stride ever sees it. The id is read back with sql!, whose command
+    # text contains no user data.
+    apo_detail = "coach's 3x12' @ FTP — don''t skip; O'Brien's rule"
+    apo_out = stride!(ctx.bin, ctx.home, ["week", "add", "2099-03-01", "threshold", apo_detail, "it's the plan"])
+    check!("a detail full of apostrophes inserts", Str.contains(apo_out, "\"target_date\":\"2099-03-01\""))?
+    apo_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions WHERE target_date = '2099-03-01';"))
+    stored = Str.trim(sql!(ctx.db, "SELECT detail FROM planned_sessions WHERE id = ${apo_id};"))
+    check!("...and round-trips byte-for-byte", stored == apo_detail)?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${apo_id};")
+
     check!("a non-date is refused", Str.contains(stride!(ctx.bin, ctx.home, ["week", "add", "tomorrow", "vo2max", "d", "r"]), "bad_date"))?
     check!("an unpadded date is refused", Str.contains(stride!(ctx.bin, ctx.home, ["week", "add", "2099-1-2", "vo2max", "d", "r"]), "bad_date"))?
     check!("an impossible day is refused", Str.contains(stride!(ctx.bin, ctx.home, ["week", "add", "2099-02-30", "vo2max", "d", "r"]), "bad_date"))?
