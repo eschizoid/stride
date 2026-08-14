@@ -184,6 +184,28 @@ Render :: [].{
         if x >= 0.0 "+${mag}" else "-${mag}"
     }
 
+    # How long the band has held, appended to the state (#123).
+    #
+    # Takes the TAG, not a flattened number: the caller must not decide what Unknown means
+    # on the renderer's behalf, and AtLeast must not arrive here already collapsed into an
+    # exact-looking integer.
+    #
+    #   Known(n)   n >= 2  -> ", 12 days in this band"
+    #   AtLeast(n) n >= 2  -> ", 31+ days in this band"   the window ran out mid-streak
+    #   either,    n <= 1  -> ""                          a one-day streak is noise
+    #   Unknown            -> ""                          nothing known about today
+    #
+    # The `+` is the whole point of AtLeast reaching this far: `summary` reads a 31-day
+    # window, so a 45-day streak truncates, and printing a bare "31" would present the
+    # window size as a measurement.
+    band_days_phrase : [Known(I64), AtLeast(I64), Unknown] -> Str
+    band_days_phrase = |band|
+        match band {
+            Unknown => ""
+            Known(n) => if n <= 1 "" else ", ${(n).to_str()} days in this band"
+            AtLeast(n) => if n <= 1 "" else ", ${(n).to_str()}+ days in this band"
+        }
+
     # The clause that gives the form verdict a memory (#111). Words, not a signed number,
     # because this sits mid-sentence between the value and the band label.
     #
@@ -506,9 +528,22 @@ Render :: [].{
                     # the series is right here, so the trend costs nothing extra — no
                     # payload field and no second query, unlike the summary screen
                     anchor = Metrics.date_str_to_days(today.day).ok_or(0)
-                    tsb_series = List.map(ordered, |d| { day: Metrics.date_str_to_days(d.day).ok_or(0), tsb: d.tsb })
+                    # DROP unparseable days rather than collapsing them to epoch day 0.
+                    # Day 0 is a valid day number, so a collapsed row both truncates the
+                    # streak early (the walk hits a "missing" day that is really present)
+                    # and becomes a spurious candidate for the 7-days-back lookup on a
+                    # short window — a fabricated trend where the honest answer is Unknown.
+                    tsb_series = List.keep_oks(ordered, |d|
+                        match Metrics.date_str_to_days(d.day) {
+                            Ok(day) => Ok({ day, tsb: d.tsb })
+                            Err(_) => Err({})
+                        })
                     trend = form_trend_phrase(Metrics.form_delta_7d(tsb_series, anchor))
-                    "→ today: form ${fmt0(today.tsb)}${trend} — ${Metrics.form_label(today.tsb)}"
+                    # the streak can only count as far back as the window `load` was asked
+                    # for — and now it SAYS so: a streak filling the window renders "N+"
+                    # rather than a bare N that reads as a measurement
+                    band = band_days_phrase(Metrics.days_in_band(tsb_series, anchor))
+                    "→ today: form ${fmt0(today.tsb)}${trend} — ${Metrics.form_label(today.tsb)}${band}"
                 }
                 Err(_) => ""
             }
@@ -638,7 +673,10 @@ Render :: [].{
                     "── stride report (as of ${s.as_of}) ──────────────────",
                     "",
                     "  fitness (CTL): ${fmt0(s.fitness_ctl)}   fatigue (ATL): ${fmt0(s.fatigue_atl)}   form (TSB): ${fmt0(s.form_tsb)}",
-                    "  → form ${fmt0(s.form_tsb)}${form_trend_phrase(if s.form_delta_known Known(s.form_delta_7d) else Unknown)} — ${Metrics.form_label(s.form_tsb)}",
+                    # the tag is reconstructed from the pair the payload carries, the same way the
+                    # trend clause is: JSON needs a number, the renderer needs to know whether
+                    # that number is exact or a floor (#123)
+                    "  → form ${fmt0(s.form_tsb)}${form_trend_phrase(if s.form_delta_known Known(s.form_delta_7d) else Unknown)} — ${Metrics.form_label(s.form_tsb)}${band_days_phrase(if s.form_band_days <= 0 Unknown else if s.form_band_days_capped AtLeast(s.form_band_days) else Known(s.form_band_days))}",
                     # Numbers, no verdict: the usual sustainable band is the coach's
                     # knowledge, not the engine's. Signed, because a taper reads negative
                     # and clamping that to 0 would hide a deliberate unload.
@@ -834,6 +872,18 @@ expect {
     Render.display_width(List.get(Str.split_on(t, "\n"), 0).ok_or("")) <= Render.max_total
 }
 # a short cell is rendered whole on one line — exact match proves no wrapping
+# #123: the phrase distinguishes an exact streak from a truncated one, and stays silent
+# where the number carries no information. The n=1/n=2 pair pins the suppression threshold
+# — with only n=0 and n=16 tested, `n <= 1` could drift to `n <= 0` and ship ", 1 days".
+expect Render.band_days_phrase(Unknown) == ""
+expect Render.band_days_phrase(Known(0)) == ""
+expect Render.band_days_phrase(Known(1)) == ""
+expect Render.band_days_phrase(Known(2)) == ", 2 days in this band"
+expect Render.band_days_phrase(Known(16)) == ", 16 days in this band"
+# AtLeast prints a FLOOR. A bare "31" would present the window size as a measurement.
+expect Render.band_days_phrase(AtLeast(31)) == ", 31+ days in this band"
+expect Render.band_days_phrase(AtLeast(1)) == ""
+
 expect {
     t = Render.render_table(["a"], [["short"]])
     t == "╭───────╮\n│ a     │\n├───────┤\n│ short │\n╰───────╯"
@@ -886,7 +936,12 @@ expect {
 expect {
     d = |day, tss| { day, tss, ctl: 10.0, atl: 5.0, tsb: 5.0 }
     s = Render.load_screen([d("2025-01-01", 50.0), d("2025-01-02", 0.0)])
+    # Both rows sit at tsb 5.0 (Fresh) on consecutive days, and the 2-row series is fully
+    # consumed by the streak — so this is the AtLeast path, and it must render the floor
+    # marker rather than a bare 2. Without asserting the clause at all, `band = ""` in
+    # load_screen passes every test in this file.
     Str.contains(s, "load") and Str.contains(s, "rest") and Str.contains(s, "→ today: form 5")
+        and Str.contains(s, ", 2+ days in this band")
 }
 
 expect {
@@ -920,6 +975,8 @@ expect {
         form_tsb: 10.0,
         form_delta_7d: 5.0,
         form_delta_known: True,
+        form_band_days: 16,
+        form_band_days_capped: False,
         ramp_7d: 4.0,
         ramp_28d_avg: -1.0,
         load_days: 400,
@@ -938,6 +995,10 @@ expect {
         and Str.contains(out, "-1/wk")
         # the verdict carries the trend, not just the band (#111)
         and Str.contains(out, "form 10, up 5 from a week ago")
+        # the label NAMES the state and no longer prescribes (#123), and the streak says
+        # how long it has held — the thing a band label cannot express
+        and Str.contains(out, "fresh, 16 days in this band")
+        and !(Str.contains(out, "good day for a big effort"))
 }
 
 # #111: too little history says nothing about the trend rather than claiming form is level.
@@ -951,6 +1012,8 @@ expect {
         form_tsb: 10.0,
         form_delta_7d: 0.0,
         form_delta_known: False,
+        form_band_days: 0,
+        form_band_days_capped: False,
         ramp_7d: 4.0,
         ramp_28d_avg: -1.0,
         load_days: 400,
@@ -970,7 +1033,7 @@ expect {
 expect {
     s = {
         as_of: "2025-01-01", fitness_ctl: 20.0, fatigue_atl: 10.0, form_tsb: 10.0,
-        form_delta_7d: 0.0, form_delta_known: False,
+        form_delta_7d: 0.0, form_delta_known: False, form_band_days: 0, form_band_days_capped: False,
         ramp_7d: 0.0, ramp_28d_avg: 0.0,
         load_days: 400, ctl_warming_up: False,
         last_28d: { tss: 100.0, z1_s: 0.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 0.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 0.I64, intensity_streams: 0.I64 },

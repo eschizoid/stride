@@ -558,7 +558,15 @@ Report :: [].{
                 Err(NoRowsReturned) => Err(NoDataYet)
                 Err(e) => Err(e)
             }?
-        anchor = (Metrics.date_str_to_days(latest.day)).ok_or(0)
+        # PROPAGATE a bad anchor day, exactly as the ramp rows below do — the same guard,
+        # applied to the value those rows are compared AGAINST. Defaulting to epoch day 0
+        # here is worse than for a row: this one binding drives every cutoff, the ramp
+        # window, form_delta_7d and days_in_band. A junk `day` sorts to the top of
+        # `ORDER BY day DESC` (string sort), becomes `latest`, and then either lands the
+        # cutoffs in the far future (every window returns nothing, and summary prints a
+        # confident all-zero report) or in 1969 (every "last 28 days" window silently
+        # becomes all-time). Both exit 0 with nothing flagged.
+        anchor = (Metrics.date_str_to_days(latest.day)).map_err(|_| BadDailyLoadDay(latest.day))?
         # Inclusive >= cutoffs: today plus 27/59 prior days are true 28/60-day windows.
         cutoff28 = Metrics.days_to_date_str(anchor - 27)
         cutoff60 = Metrics.days_to_date_str(anchor - 59)
@@ -646,7 +654,10 @@ Report :: [].{
         # #93 ramp: reuses the `anchor` this function already computed, rather than
         # deriving the same day again — two bindings for one day can drift, and then the
         # ramp window and summary's 7d/28d windows would disagree about which day "now"
-        # is. 30 days of series covers the 28-day lookback with room for gaps.
+        # is. 30 days of series covers the 28-day ramp lookback with room for gaps — and now
+        # also bounds days_in_band, which has NO natural upper limit. That is why the streak
+        # returns AtLeast when it fills this window rather than a bare number: widening the
+        # window moves the truncation point, it does not remove it.
         ramp_rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query: "SELECT day AS day, CAST(ctl AS REAL) AS ctl, CAST(tsb AS REAL) AS tsb FROM daily_load WHERE day >= :cutoff ORDER BY day DESC",
@@ -684,6 +695,21 @@ Report :: [].{
         # projections keep the date validation above from being done twice
         ramps = Metrics.ramp_rates(List.map(dated_load, |e| { day: e.day, ctl: e.ctl }), anchor)
         form_delta = Metrics.form_delta_7d(List.map(dated_load, |e| { day: e.day, tsb: e.tsb }), anchor)
+        # how long the band has held (#123) — the thing the label itself cannot say
+        band_days = Metrics.days_in_band(List.map(dated_load, |e| { day: e.day, tsb: e.tsb }), anchor)
+        # ANNOTATED Bool, not a bare `True`/`False` tag. The builtin JSON serializes an
+        # unconstrained tag as the STRING "True". This payload happens to escape that
+        # already — but for a reason worth stating correctly, because the wrong reason
+        # teaches the wrong rule: it is RENDERED as well as encoded, and
+        # `Render.summary_screen` consumes the field as an `if` condition, which flows the
+        # Bool constraint back through the un-annotated renderer. analyze's payload is
+        # encode-only, so nothing constrained it and it shipped "True". Neighbouring Bool
+        # fields have nothing to do with it — record fields do not constrain one another.
+        # The rule: an encode-only payload has no constraint on its tags, so annotate.
+        band_capped : Bool
+        band_capped = match band_days { AtLeast(_) => True  _ => False }
+        delta_known : Bool
+        delta_known = match form_delta { Known(_) => True  Unknown => False }
 
         Ok({
             as_of: latest.day,
@@ -701,7 +727,16 @@ Report :: [].{
             # cover: form genuinely level for a week is a real, useful answer that is also
             # exactly 0. So the flag carries what the number cannot, for machine consumers
             # as much as for the renderer.
-            form_delta_known: match form_delta { Known(_) => True  Unknown => False },
+            form_delta_known: delta_known,
+            # 0 = not available, per the house rule; a real streak is always >= 1.
+            # The value alone cannot say whether it is exact or truncated by the window,
+            # so it travels with a flag — see form_band_days_capped.
+            form_band_days: match band_days { Known(n) => n  AtLeast(n) => n  Unknown => 0 },
+            # TRUE means the streak filled the whole series and is a FLOOR, not a count.
+            # `dated_load` is a 31-day window sized for the #93 ramp, so a 45-day streak
+            # arrives here as 31; without this flag the coach reads 31 as fact. Annotated
+            # Bool for the same reason delta_known is.
+            form_band_days_capped: band_capped,
             load_days: load_days,
             ctl_warming_up: load_days < 90,
             last_hard_session_date: last_hard,

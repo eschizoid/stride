@@ -1102,20 +1102,126 @@ Metrics :: [].{
 
     # ── form interpretation (standard TSB bands) ────────────────────────
 
-    # verdicts describe MODELED load only — the engine can't see sleep, illness,
-    # soreness, or life stress, so it suggests rather than commands
+    # NAMES the modeled state. It does not prescribe (#123).
+    #
+    # These verdicts describe MODELED load only — the engine cannot see sleep, illness,
+    # soreness or life stress. That was once the reason they were phrased as suggestions;
+    # it is now the reason they say nothing about what to do at all.
+    #
+    # FOUR of the five used to end in advice ("favor easy work", "good day for a big
+    # effort"); `very fresh` always carried an observation rather than an instruction,
+    # which is why it alone keeps a trailing clause. Two problems with the advice, both
+    # seen in real use:
+    #
+    #   - It repeated. One athlete read the identical line every day for over two weeks,
+    #     because TSB drifted inside the -15..-5 band without ever leaving it.
+    #   - It was WRONG. That same stretch was overwhelmingly easy with no hard session in
+    #     over a week, so the honest reading was "go hard" — and a model that sees only
+    #     TSB, with no view of intensity distribution, advised the opposite.
+    #
+    # Prescribing training from a single scalar is more than one number can support.
+    # State here; prescriptions come from the coach, who can see distribution, travel,
+    # equipment and intent — the engine/LLM split ADR 0000 settles ("the engine does the
+    # math, the LLM does the judgment").
+    # The band as an IDENTITY, separate from how it is worded. `days_in_band` asks "is this
+    # the same band as that one", which is a question about the band, not about the prose —
+    # comparing rendered strings meant a future wording change that made two labels read the
+    # same would silently merge them into one streak, with no error and a count that just
+    # grows. #123 is a PR that rewrote four of these strings, so that coupling was being
+    # exercised while unnamed.
+    #
+    # Still an if/else chain rather than a match: these are FLOAT RANGE tests, and no
+    # pattern-matching form expresses `-15.0 < tsb <= -5.0` more directly than the
+    # comparison itself. The tag is what buys safety here, not the branching syntax.
+    FormBand : [HighFatigue, FatigueBuilding, Balanced, Fresh, VeryFresh]
+
+    form_band : F64 -> FormBand
+    form_band = |tsb|
+        if tsb <= -15.0 {
+            HighFatigue
+        } else if tsb <= -5.0 {
+            FatigueBuilding
+        } else if tsb < 5.0 {
+            Balanced
+        } else if tsb < 15.0 {
+            Fresh
+        } else {
+            VeryFresh
+        }
+
+    # Rendering, and ONLY rendering. Two labels reading alike would now be a cosmetic bug
+    # rather than a correctness one.
     form_label : F64 -> Str
     form_label = |tsb|
-        if tsb <= -15.0 {
-            "high modeled fatigue — consider recovery"
-        } else if tsb <= -5.0 {
-            "modeled fatigue building — favor easy work"
-        } else if tsb < 5.0 {
-            "balanced — good day for intensity if you feel it"
-        } else if tsb < 15.0 {
-            "fresh — good day for a big effort"
+        match form_band(tsb) {
+            HighFatigue => "high modeled fatigue"
+            FatigueBuilding => "modeled fatigue building"
+            Balanced => "balanced"
+            Fresh => "fresh"
+            VeryFresh => "very fresh — load has been light lately"
+        }
+
+    # How many consecutive days, counting back from `today`, the series has stayed in the
+    # same form band. THE thing a band label structurally cannot express: 16 days at -11 and
+    # one day at -11 render identically, yet mean different things.
+    #
+    # Known/Unknown, same shape as form_delta_7d but a NARROWER meaning of Unknown: it
+    # says only that the series has no value at or before `today`, so there is no band to
+    # be in. Once today is known the answer is always Known(n >= 1) — including Known(1)
+    # when the day before is missing or in a different band. 1 is a truthful "today, and
+    # nothing established before it"; the renderer suppresses it because a one-day streak
+    # carries no information, not because it is wrong.
+    # THREE outcomes, not two. `AtLeast` exists because the walk can stop for a reason that
+    # is not an answer: running out of series. Callers hand this a WINDOW (summary passes 31
+    # days sized for the #93 ramp, `load` passes whatever window it was asked for), so a
+    # streak longer than the window is truncated — and a truncated 31 is indistinguishable
+    # from a real 31 unless the type says so. Reporting the cap as an exact count is the
+    # same class of lie as a 0 that means "no data": the number looks like a measurement.
+    days_in_band : List({ day : I64, tsb : F64 }), I64 -> [Known(I64), AtLeast(I64), Unknown]
+    days_in_band = |series, today|
+        # EXACT lookup for the anchor, not at-or-before. With at-or-before, a `today` the
+        # series has no row for would borrow an older day's value and then count today as
+        # day 1 of a streak the series cannot vouch for — precisely what tsb_as_of_exact
+        # exists to prevent one function below. Unknown now means exactly what the contract
+        # says: nothing is known about the anchor day itself.
+        match tsb_as_of_exact(series, today) {
+            Missing => Unknown
+            Found(now) => {
+                band_now = form_band(now)
+                # walk back a day at a time while the band holds. A gap ends the streak
+                # rather than being silently skipped — an unknown day is not evidence the
+                # band held. Re-tagged rather than returned directly so streak_back keeps
+                # its precise two-outcome type — it can never produce Unknown.
+                match streak_back(series, today, band_now, 1) {
+                    Known(n) => Known(n)
+                    AtLeast(n) => AtLeast(n)
+                }
+            }
+        }
+
+    streak_back : List({ day : I64, tsb : F64 }), I64, FormBand, I64 -> [Known(I64), AtLeast(I64)]
+    streak_back = |series, today, band_now, acc|
+        # Hitting the series length is NOT a terminating answer — it means the window ran
+        # out while the band was still holding, so the true streak is at least this long.
+        # (It is a genuine bound, not a hang guard: `today - acc` decreases every step over
+        # a finite series, so the walk terminates regardless.)
+        if acc >= (List.len(series)).to_i64_wrap() {
+            AtLeast(acc)
         } else {
-            "very fresh — load has been light lately"
+            match tsb_as_of_exact(series, today - acc) {
+                Missing => Known(acc)
+                Found(v) => if form_band(v) == band_now streak_back(series, today, band_now, acc + 1) else Known(acc)
+            }
+        }
+
+    # tsb on EXACTLY this day, not the latest at-or-before it. The streak walk must not
+    # reuse an older day's value to fill a gap — that would report a run of days the series
+    # has no rows for.
+    tsb_as_of_exact : List({ day : I64, tsb : F64 }), I64 -> [Found(F64), Missing]
+    tsb_as_of_exact = |series, target|
+        match List.keep_if(series, |e| e.day == target) {
+            [e, ..] => Found(e.tsb)
+            [] => Missing
         }
 
     # ── weekly rollup (Monday-aligned, the user's week convention) ──────
@@ -2267,10 +2373,128 @@ expect {
     }
 }
 
-expect Metrics.form_label(-20.0) == "high modeled fatigue — consider recovery"
-expect Metrics.form_label(-9.0) == "modeled fatigue building — favor easy work"
-expect Metrics.form_label(-1.0) == "balanced — good day for intensity if you feel it"
-expect Metrics.form_label(8.0) == "fresh — good day for a big effort"
+# ── form band duration (#123) ────────────────────────────────────────
+# The case that prompted the issue: 16 days inside -15..-5 without ever leaving. The
+# values DRIFT (-12.5 up to -5.1) rather than repeating, because that is what real TSB
+# does and because a constant fixture cannot tell band identity from value equality — an
+# implementation comparing `v == now` instead of `form_label(v) == label_now` would pass a
+# constant fixture and then return 1 every day in production, silently emitting nothing.
+expect {
+    series = [
+        # day 99 sits in a DIFFERENT band, so the streak has a real left edge and the walk
+        # stops because the band changed rather than because the series ran out. Without
+        # it the answer is AtLeast(16) — correct, but it would not exercise Known at all.
+        { day: 99, tsb: -20.0 },
+        { day: 100, tsb: -12.5 },
+        { day: 101, tsb: -12.1 },
+        { day: 102, tsb: -11.4 },
+        { day: 103, tsb: -10.8 },
+        { day: 104, tsb: -10.2 },
+        { day: 105, tsb: -9.6 },
+        { day: 106, tsb: -9.1 },
+        { day: 107, tsb: -8.5 },
+        { day: 108, tsb: -8.0 },
+        { day: 109, tsb: -7.4 },
+        { day: 110, tsb: -6.9 },
+        { day: 111, tsb: -6.3 },
+        { day: 112, tsb: -5.8 },
+        { day: 113, tsb: -5.4 },
+        { day: 114, tsb: -5.2 },
+        { day: 115, tsb: -5.1 },
+    ]
+    match Metrics.days_in_band(series, 115) {
+        Known(n) => n == 16
+        AtLeast(_) => False
+        Unknown => False
+    }
+}
+
+# -5.1 and -4.9 are numerically adjacent and in DIFFERENT bands (the boundary is -5.0).
+# This is the sharpest test of band-vs-value: any implementation comparing magnitudes
+# rather than labels calls these the same and returns 2.
+expect {
+    series = [{ day: 100, tsb: -5.1 }, { day: 101, tsb: -4.9 }]
+    match Metrics.days_in_band(series, 101) {
+        Known(n) => n == 1
+        AtLeast(_) => False
+        Unknown => False
+    }
+}
+
+# a day that LEFT the band ends the streak there — 2, not the whole series
+expect {
+    series = [
+        { day: 111, tsb: -11.0 },
+        { day: 112, tsb: -1.0 },
+        { day: 113, tsb: -11.0 },
+        { day: 114, tsb: -11.4 },
+    ]
+    match Metrics.days_in_band(series, 114) {
+        Known(n) => n == 2
+        AtLeast(_) => False
+        Unknown => False
+    }
+}
+
+# a GAP ends the streak rather than being stepped over: nothing is known about day 113
+expect {
+    series = [{ day: 112, tsb: -11.0 }, { day: 114, tsb: -11.4 }]
+    match Metrics.days_in_band(series, 114) {
+        Known(n) => n == 1
+        AtLeast(_) => False
+        Unknown => False
+    }
+}
+
+# A streak that fills the whole window reports AtLeast, never Known — the caller passes a
+# WINDOW, so "the walk ran out of series" is not the same answer as "the band changed".
+# Reporting the cap as an exact count is how `summary` claimed 31 for a 45-day streak.
+expect {
+    series = [{ day: 100, tsb: -11.0 }, { day: 101, tsb: -11.2 }, { day: 102, tsb: -11.4 }]
+    match Metrics.days_in_band(series, 102) {
+        AtLeast(n) => n == 3
+        Known(_) => False
+        Unknown => False
+    }
+}
+
+# no series reaching the anchor at all is Unknown, not a streak of 0 or 1
+expect {
+    match Metrics.days_in_band([], 114) {
+        Known(_) => False
+        AtLeast(_) => False
+        Unknown => True
+    }
+}
+
+# The anchor day itself must be present. A series ending BEFORE the anchor is Unknown —
+# not Known(1) borrowed from an older day, which is what an at-or-before anchor produced.
+expect {
+    match Metrics.days_in_band([{ day: 100, tsb: -11.0 }], 114) {
+        Known(_) => False
+        AtLeast(_) => False
+        Unknown => True
+    }
+}
+
+# the labels NAME the state and no longer prescribe (#123)
+# Band BOUNDARIES, pinned exactly. Every comparator here (<= vs <) used to survive any
+# mutation, because the five samples sat far from the edges. It matters more now than it
+# did for prose: days_in_band derives identity from form_band, so a boundary that shifts by
+# one comparator silently changes streak COUNTS rather than one word of text.
+expect Metrics.form_band(-15.0) == HighFatigue      # <= -15 is high fatigue
+expect Metrics.form_band(-14.9) == FatigueBuilding
+expect Metrics.form_band(-5.0) == FatigueBuilding   # <= -5 is still building
+expect Metrics.form_band(-4.9) == Balanced
+expect Metrics.form_band(4.9) == Balanced
+expect Metrics.form_band(5.0) == Fresh              # < 5 is balanced, so 5.0 is fresh
+expect Metrics.form_band(14.9) == Fresh
+expect Metrics.form_band(15.0) == VeryFresh
+
+expect Metrics.form_label(-20.0) == "high modeled fatigue"
+expect Metrics.form_label(-9.0) == "modeled fatigue building"
+expect Metrics.form_label(-1.0) == "balanced"
+expect Metrics.form_label(8.0) == "fresh"
 expect Metrics.form_label(20.0) == "very fresh — load has been light lately"
 
 # epoch day 0 is 1970-01-01, and roundtrips
