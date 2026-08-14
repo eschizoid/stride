@@ -1,7 +1,7 @@
 # Roadmap — what stride is missing to be The Sports Analytics Engine
 
-Drafted 2026-08-08; amended 2026-08-09 after review, then grilled — settled
-decisions are marked inline. Directional, not a promise;
+Drafted 2026-08-08; amended 2026-08-09 after review, then grilled; status refreshed
+2026-08-13 against what actually shipped — settled decisions are marked inline. Directional, not a promise;
 re-argue freely. Features graduate into GitHub issues when work starts. Settled
 architecture stays in `docs/adr/` — nothing here overrides an ADR.
 
@@ -18,6 +18,15 @@ recomputable from raw streams, and emitted as versioned JSON a tool can consume.
 Every feature below does one of two things: widens what the engine can honestly measure,
 or widens who can feed it data. None of them adds judgment to the engine — reasoning
 about the numbers stays with the coach (ADR 0000).
+
+**Applied backwards, 2026-08-13 (#123 — SHIPPED in #127):** the rule caught something
+already in main. The `form` verdict line ended in advice ("favor easy work"), a
+prescription derived from a single scalar. It repeated for 17 straight days, and worse, it
+was WRONG — it told an athlete to go easy through a fortnight that was 81% easy with no
+hard session in nine days, because TSB alone cannot see intensity distribution. The labels
+now name the state and say how long it has held ("balanced, 16 days in this band" — with a
+`+` when the count is truncated by the window rather than ended by a band change). Worth
+re-reading this thesis against anything that emits words rather than numbers.
 
 ## Settled 2026-08-09: both, interleaved — world-class in the foreground
 
@@ -54,31 +63,48 @@ The existing invariants, restated so no roadmap item forgets them:
 ## Quick wins — ship when convenient, regardless of tier
 
 Days-sized each, high value, all on data the engine already holds. These do not wait
-behind any tier:
+behind any tier.
 
-- **Data-quality watchdog in `doctor`.** Streak detection: consecutive sessions without
+**Status 2026-08-13:** the watchdog, the ramp guardrail, observable commands and aerobic
+decoupling have all landed. What is left of this tier is the pace variant of decoupling
+and the in-binary sync retry, both noted inline below.
+
+- **~~Data-quality watchdog in `doctor`~~ — SHIPPED (#92).** Streak detection: consecutive sessions without
   HR, estimated-power rides, junk-filter percentages. The engine already knows; it
   doesn't tell. (Two strap-less rides in a row went unnoticed for two days — the
   motivating incident.)
-- **Ramp-rate guardrail.** CTL ramp per week — the best-validated overload signal
+- **~~Ramp-rate guardrail~~ — SHIPPED (#93).** CTL ramp per week — the best-validated overload signal
   computable from data stride holds. Pure arithmetic on `daily_load`, surfaced in
   `summary` as a number, not advice.
-- **Observable sync + analyze (with auto-retry).** Both commands are silent until they
+- **~~Observable sync + analyze~~ — SHIPPED (#91), EXCEPT the in-binary retry.** Both commands were silent until they
   finish — a 72 s full rescore reads as a hang (a healthy analyze got killed for
   exactly that), and a mid-run sync death says nothing about how far it got. Progress
   narration goes to **stderr** (`rescoring 128/723…`, `fetching streams 14/60…`) so the
   stdout JSON envelope stays a single deterministic payload and golden fixtures are
   untouched. Failures inherit context from the narration (`failed fetching streams for
-  <id>, attempt 2/3`). Bug C retries happen INSIDE the binary — sync is idempotent —
-  capped at 3, loud failure after, and counted in the summary (`synced 22 (2 retries)`)
-  so the upstream bug's frequency stays visible. Human mode gets a live progress bar —
+  <id>, attempt 2/3`). Human mode gets a live progress bar —
   `rescoring [██████████░░░░]  358/723` — reusing the table bar's `█` glyph and redrawn
   with `\r`; machine/CI mode gets plain appended lines, because carriage returns are
   garbage in logs and basic-cli exposes no tty check. The existing output-mode switch
   is the selector — same information, dressed for the reader.
-- **Aerobic decoupling (Pw:HR drift).** First-half vs second-half efficiency within a
-  session — the standard aerobic-durability metric. Every input already exists (1 Hz
-  power + HR streams). Feeds `activity` and `progress`.
+  **The in-binary retry is the part still outstanding, and #105 gates it deliberately:**
+  retrying is only honest once the failure it absorbs is understood, or the counter
+  (`synced 22 (2 retries)`) reports a bug nobody can name. Bug C is now characterised but
+  unfixed, so this is buildable again — capped at 3, loud failure after, counted in the
+  summary so the frequency stays visible. Note `just e2e-sync` already retries 5× at the
+  shell level; that crutch would move inside the binary, where users actually feel it.
+- **~~Aerobic decoupling (Pw:HR drift)~~ — SHIPPED for POWER (#94/#125).** First-half vs
+  second-half efficiency within a session. Stored as a NULLABLE `decoupling_pct` with a
+  paired `decoupling_known` flag, because 0.0 is a legitimate perfect result here and the
+  house "0 = not available" rule cannot carry that distinction on its own.
+  **Still open: the pace variant.** It needs the grade-adjusted stream `rTSS` consumes,
+  which is derived further down the same function; wiring it in place would duplicate that
+  derivation or reorder the function. Deferred deliberately — a wrong drift number on every
+  run is worse than none. `progress` integration also still pending; it feeds `activity`
+  only today.
+  **Reading caveat worth carrying:** decoupling only means "aerobic durability" on a
+  STEADY effort. On a structured interval session a high number reflects the workout's
+  shape, not the athlete's ceiling.
 
 ## Tier: trust what you already compute
 
@@ -160,8 +186,29 @@ the engine.
 ## Known risks the roadmap inherits
 
 - **The compiler.** Pinned to `nightly-2026-August-04-1cb06bc`; every later nightly
-  miscompiles (roc-lang/roc#10693). Roc is pre-1.0 and moving. Every large build here
-  (FIT above all) carries this risk; small, well-tested increments are the mitigation.
+  miscompiles (roc-lang/roc#10693). Roc is pre-1.0 and moving. Small, well-tested
+  increments are the mitigation.
+  **Re-tested 2026-08-13 against `nightly-2026-08-11-56acb9b`: still broken**, so the pin
+  stands. One thing did change — the `match`-wrapped case no longer takes the compiler
+  down with SIGSEGV, it now compiles and fails at runtime instead. The miscompile itself
+  is untouched: a program still builds with `0 errors and 0 warnings` and crashes when
+  run, which is the worst shape of the bug. Also observed: `roc build` can die with
+  SIGILL/SIGSEGV and no diagnostics on code `roc check` rejects cleanly, so **`roc check`
+  before `roc build` on any new file**.
+- **Bug C is characterised but NOT fixed (#105).** Heap corruption that surfaces on a
+  LATER host call than the one that caused it — in practice the `Authorization` header
+  arriving corrupt at `_hosted_http_send_request`, which is why it accused HTTP for months.
+  The trigger is a decoded string long enough to be **heap-allocated**: flipping one mock
+  activity's name from 15 to 68 bytes turns a clean run into a crashing one.
+  Consequences the roadmap inherits: `sync` can abort mid-run, and a crashed sync leaves
+  streams unfetched so `analyze` scores those activities off a lower ladder rung — the TSS
+  is quietly wrong rather than obviously missing. `just e2e-sync` retries 5× to absorb it.
+  **The attempted fix made it worse and was reverted (#116/#118)**: copying decoded strings
+  before binding them crashed real sync 12/12 while the e2e mock stayed green, because
+  every fixture string in the mock is short enough to live inline and never touch the heap.
+  The standing rule from that: **the e2e mock cannot reproduce this class of bug, so any
+  change to the sync decode/bind path must be run against real Strava data before it is
+  called working.**
 - **Stream storage.** Raw stream JSON already runs ~70 MB at full backfill; FIT's
   full-resolution streams grow it further. Accepted for now; revisit if it hurts.
 
