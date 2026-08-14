@@ -1,0 +1,28 @@
+# Dispatch-only verification for the linux-arm64 release target (#141).
+# The release workflow's arm64 entry (roc_target: arm64musl) has never produced
+# an asset; this proves the exact same build command yields a RUNNING binary on
+# the same runner class, without cutting a release. Keep it — it is the cheap
+# re-verification tool for any future toolchain/platform bump.
+name: verify-arm64
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-run:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: roc-lang/setup-roc@v0.3.0
+        with:
+          version: nightly-new-compiler
+          nightly-tag: nightly-2026-August-04-1cb06bc
+      - name: Build with the release workflow's exact target flag
+        run: |
+          set -euo pipefail
+          roc build src/app.roc --output=stride-linux-arm64 --opt=dev --target=arm64musl
+          test -f stride-linux-arm64
+      - name: Run the binary
+        run: |
+          set -euo pipefail
+          ./stride-linux-arm64 --version
+          HOME=$(mktemp -d) ./stride-linux-arm64 init
