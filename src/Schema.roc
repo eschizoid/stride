@@ -32,6 +32,24 @@ Schema :: [].{
         \\  computed_at      TEXT  -- provenance only; written, never read back
         \\)
 
+    # computed tier (ADR 0008): detected interval structure, rebuilt by analyze,
+    # deletable at will — exactly like activity_metrics. HR columns are NULL when
+    # the session carried no HR (honest absence, never zeros).
+    segments =
+        \\CREATE TABLE IF NOT EXISTS activity_segments (
+        \\  activity_id  INTEGER REFERENCES activities(id),
+        \\  ordinal      INTEGER,
+        \\  kind         TEXT,     -- work | recovery | warmup | cooldown
+        \\  start_s      INTEGER,
+        \\  dur_s        INTEGER,
+        \\  avg_signal   REAL,
+        \\  signal       TEXT,     -- power | pace
+        \\  peak_hr      REAL,
+        \\  avg_hr       REAL,
+        \\  rec_drop_60s REAL,
+        \\  PRIMARY KEY (activity_id, ordinal)
+        \\)
+
     daily_load =
         \\CREATE TABLE IF NOT EXISTS daily_load (
         \\  day  TEXT PRIMARY KEY,

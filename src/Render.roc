@@ -356,6 +356,85 @@ Render :: [].{
     mins = |secs|
         Str.concat(I64.to_str(secs // 60), "m")
 
+    # m:ss for interval durations — 181 -> "3:01"; whole minutes keep :00 so
+    # columns align ("12:00", not "12m")
+    mmss : I64 -> Str
+    mmss = |secs| {
+        m = secs // 60
+        sec = secs - m * 60
+        pad = if sec < 10 "0" else ""
+        "${I64.to_str(m)}:${pad}${I64.to_str(sec)}"
+    }
+
+    SegRow : { ordinal : I64, kind : Str, start_s : I64, dur_s : I64, avg_signal : F64, signal : Str, peak_hr : F64, avg_hr : F64, rec_drop : F64, rec_drop_known : Bool }
+
+    seg_unit : Str -> Str
+    seg_unit = |signal| if signal == "power" "W" else " m/s"
+
+    seg_value : F64, Str -> Str
+    seg_value = |v, signal| if signal == "power" fmt0(v) else fmt2(v)
+
+    # "4×[3:00 @ 251W / 2:00 easy]" — the detected shape in one line. Reps vary in
+    # the wild, so durations/levels are MEDIANS of the work reps; recovery is the
+    # median of recovery segments lying BETWEEN the first and last work (a
+    # mislabeled pre-work block must not become the "easy" half of a summary).
+    # No between-works recoveries (blocks back to back, or a single rep) drops
+    # the "/ ..." half.
+    interval_summary : List(SegRow) -> Str
+    interval_summary = |segs| {
+        works = List.keep_if(segs, |s| s.kind == "work")
+        n = List.len(works)
+        if n == 0 {
+            ""
+        } else {
+            first_work = (List.first(works)).map_ok(|w| w.ordinal).ok_or(0)
+            last_work = (List.last(works)).map_ok(|w| w.ordinal).ok_or(0)
+            recs = List.keep_if(segs, |s| s.kind == "recovery" and s.ordinal > first_work and s.ordinal < last_work)
+            med = |xs| {
+                sorted = List.sort_with(xs, |a, b| if a < b LT else if a > b GT else EQ)
+                (List.get(sorted, List.len(sorted) // 2)).ok_or(0.0)
+            }
+            sig = (List.first(works)).map_ok(|w| w.signal).ok_or("power")
+            dur_med = med(List.map(works, |w| ((w.dur_s)).to_f64()))
+            level_med = med(List.map(works, |w| w.avg_signal))
+            work_part = "${I64.to_str((n).to_i64_wrap())}×[${mmss((dur_med).round_to_i64_try().ok_or(0))} @ ${seg_value(level_med, sig)}${seg_unit(sig)}"
+            if List.is_empty(recs) {
+                Str.concat(work_part, "]")
+            } else {
+                rec_med = med(List.map(recs, |r| ((r.dur_s)).to_f64()))
+                "${work_part} / ${mmss((rec_med).round_to_i64_try().ok_or(0))} easy]"
+            }
+        }
+    }
+
+    # per-rep detail lines under the summary — one work rep per line, HR only when
+    # measured (honest absence: a rep with no HR simply has no hr clause)
+    segments_block : List(SegRow) -> Str
+    segments_block = |segs| {
+        works = List.keep_if(segs, |s| s.kind == "work")
+        lines = List.map_with_index(works, |w, i| {
+            base = "rep ${I64.to_str(((i)).to_i64_wrap() + 1)}  ${mmss(w.dur_s)} @ ${seg_value(w.avg_signal, w.signal)}${seg_unit(w.signal)}"
+            hr_part = if w.avg_hr > 0.0 " · hr ${fmt0(w.avg_hr)} avg / ${fmt0(w.peak_hr)} peak" else ""
+            drop_part = if w.rec_drop_known " · 60s drop ${signed(w.rec_drop)}" else ""
+            Str.join_with([base, hr_part, drop_part], "")
+        })
+        Str.join_with(lines, "\n")
+    }
+
+    # HR drift across work reps (fatigue signature): last rep's avg minus first's,
+    # only when both were measured. Err(NotEnough) below 2 measured reps.
+    seg_hr_drift : List(SegRow) -> Try(F64, [NotEnough])
+    seg_hr_drift = |segs| {
+        measured = List.keep_if(segs, |s| s.kind == "work" and s.avg_hr > 0.0)
+        if List.len(measured) < 2 {
+            Err(NotEnough)
+        } else {
+            first = (List.first(measured)).map_ok(|s| s.avg_hr).ok_or(0.0)
+            last = (List.last(measured)).map_ok(|s| s.avg_hr).ok_or(0.0)
+            Ok(last - first)
+        }
+    }
+
     # display label for a progress group, from anchor_filter's structured kind
     progress_group_label : Str, [Exact, SimilarDistance(F64), LoneNoDistance] -> Str
     progress_group_label = |name, kind|
@@ -1064,4 +1143,31 @@ expect {
     w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl }
     s = Render.compare_screen({ period: "week", window_label: "7d", current: w(200.0, 4.I64, 10.I64, 40.I64, 20.0), prior: w(0.0, 0.I64, 0.I64, 0.I64, 18.0) })
     Str.contains(s, "load resumed") and !(Str.contains(s, "steady"))
+}
+
+# ── interval structure rendering ────────────────────────────────────
+
+# summary uses medians and drops the recovery half when there are no recoveries
+expect {
+    seg = |o, k, d, v| { ordinal: o, kind: k, start_s: 0.I64, dur_s: d, avg_signal: v, signal: "power", peak_hr: 0.0, avg_hr: 0.0, rec_drop: 0.0, rec_drop_known: False }
+    full = Render.interval_summary([seg(0.I64, "warmup", 300.I64, 120.0), seg(1.I64, "work", 181.I64, 251.0), seg(2.I64, "recovery", 120.I64, 100.0), seg(3.I64, "work", 179.I64, 249.0), seg(4.I64, "cooldown", 300.I64, 110.0)])
+    lone = Render.interval_summary([seg(0.I64, "work", 1200.I64, 258.0)])
+    none = Render.interval_summary([seg(0.I64, "recovery", 600.I64, 100.0)])
+    # a recovery-shaped block BEFORE the first work must not become the "easy" half
+    pre = Render.interval_summary([seg(0.I64, "recovery", 300.I64, 100.0), seg(1.I64, "work", 1200.I64, 258.0)])
+    full == "2×[3:01 @ 251W / 2:00 easy]" and lone == "1×[20:00 @ 258W]" and none == "" and pre == "1×[20:00 @ 258W]"
+}
+
+# rep lines carry HR only when measured; drift needs two measured reps
+expect {
+    seg = |hr, drop_known| { ordinal: 0.I64, kind: "work", start_s: 0.I64, dur_s: 180.I64, avg_signal: 250.0, signal: "power", peak_hr: hr + 8.0, avg_hr: hr, rec_drop: 20.0, rec_drop_known: drop_known }
+    with_hr = Render.segments_block([seg(150.0, True)])
+    no_hr = Render.segments_block([seg(0.0, False)])
+    drift = Render.seg_hr_drift([seg(150.0, True), seg(158.0, True)])
+    Str.contains(with_hr, "hr 150 avg / 158 peak") and Str.contains(with_hr, "60s drop +20")
+    and !(Str.contains(no_hr, "hr"))
+    and drift == Ok(8.0)
+    # one measured rep is NOT a drift — Ok(0.0) here would print a fabricated
+    # flat-drift verdict on every single-rep session
+    and Render.seg_hr_drift([seg(150.0, True)]) == Err(NotEnough)
 }

@@ -431,12 +431,22 @@ Strava :: [].{
     # drop an activity's computed metrics so the next analyze recomputes it. the
     # invalidation story: FTP change (ftp_used check), stream arrival, Strava edit.
     invalidate_metrics! : Str, I64 => Try({}, _)
-    invalidate_metrics! = |path, id|
-        Sqlite.execute!({
+    invalidate_metrics! = |path, id| {
+        # metrics FIRST, segments second, deliberately: if the second delete fails,
+        # the missing metrics row makes the next analyze redo the activity, which
+        # re-deletes and rebuilds segments — the failure self-heals. The reverse
+        # order strands segment-less activities that analyze never revisits.
+        _ = Sqlite.execute!({
             path: Path.utf8(path),
             query: "DELETE FROM activity_metrics WHERE activity_id = :id",
             bindings: [{ name: ":id", value: Integer(id) }],
+        })?
+        Sqlite.execute!({
+            path: Path.utf8(path),
+            query: "DELETE FROM activity_segments WHERE activity_id = :id",
+            bindings: [{ name: ":id", value: Integer(id) }],
         })
+    }
 
     # ── backfill (pull ALL stream history, rate-limit-aware) ─────────────
     # For a new user with thousands of activities, the 60/run sync cap means dozens
@@ -813,6 +823,7 @@ Strava :: [].{
             [id, .. as rest] => {
                 b = [{ name: ":id", value: Integer(id) }]
                 _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activity_metrics WHERE activity_id = :id", bindings: b })?
+                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activity_segments WHERE activity_id = :id", bindings: b })?
                 _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM streams WHERE activity_id = :id", bindings: b })?
                 _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activities WHERE id = :id", bindings: b })?
                 prune_txn!(path, rest)
