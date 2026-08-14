@@ -66,15 +66,11 @@ e2e-sync:
     # the whole loop and exited 0; with `EXIT` alone it stopped at once (143) and still ran
     # the cleanup, which is the behaviour we want.
     trap 'kill $MOCK 2>/dev/null' EXIT
-    R=1
-    for i in 1 2 3 4 5; do
-      if E2E_MODE=sync STRIDE_API_BASE=http://127.0.0.1:{{mock_port}} ./e2e; then
-        R=0
-        break
-      fi
-      if [ "$i" -lt 5 ]; then echo "  (sync attempt $i failed, retrying)"; else echo "  (sync attempt $i failed, giving up)"; fi
-    done
-    exit $R
+    # single shot, no retry. The 5x retry loop that used to live here absorbed bug C's
+    # ~50% flake; with the bug fixed (basic-cli 0.22.0, #105) the flake is gone —
+    # measured 10/10 clean unretried on 2026-08-14. If this starts failing again it
+    # should fail LOUDLY, not be absorbed: a new flake deserves a new investigation.
+    E2E_MODE=sync STRIDE_API_BASE=http://127.0.0.1:{{mock_port}} ./e2e
 
 # build + refresh the ~/.local/bin symlink
 install: build
