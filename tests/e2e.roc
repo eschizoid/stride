@@ -436,6 +436,26 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=103; DELETE FROM activity_metrics WHERE activity_id=103;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("segments rebuild with the metrics row", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_segments WHERE activity_id=103 AND kind='work';")) == "3")?
+    # ── pace decoupling (#134/#135) ─────────────────────────────────────
+    # a run with pace+HR streams gets a real decoupling number (HR steps up in the
+    # second half at constant speed => positive drift); a meter-less RIDE with the
+    # same streams stays NULL — terrain speed over HR is not efficiency
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (104,'drift run','Run','${ctx.d2}T07:00:00Z',1300,4000,145);")
+    _ = seed_pace_hr_stream!(ctx.db, 104, 1300, 3)
+    # a comparable earlier run with the same name, so progress has a group to score
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (106,'drift run','Run','${ctx.d1}T07:00:00Z',1300,4000,144);")
+    _ = seed_pace_hr_stream!(ctx.db, 106, 1300, 3)
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (105,'meterless ride','Ride','${ctx.d2}T09:00:00Z',1300,9000);")
+    _ = seed_pace_hr_stream!(ctx.db, 105, 1300, 7)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    run_drift = Str.trim(sql!(ctx.db, "SELECT ROUND(COALESCE(decoupling_pct, -999), 1) FROM activity_metrics WHERE activity_id=104;"))
+    check!("run decoupling is computed and positive", sfloat(run_drift) > 0.0)?
+    check!("meter-less ride decoupling stays NULL", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=105 AND decoupling_pct IS NOT NULL;")) == "0")?
+    check!("activity JSON labels the run drift as pace", strjq!(ctx, ["activity", "104"], ".data.decoupling_signal") == "pace")?
+    # progress rows carry the per-session drift with its known flag (#135)
+    check!("progress sessions carry a KNOWN decoupling", strjq!(ctx, ["progress", "${ctx.d2}"], "[.data.groups[].sessions[] | select(.decoupling_known == true)] | length | . >= 1") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (104,105,106); DELETE FROM activity_metrics WHERE activity_id IN (104,105,106); DELETE FROM streams WHERE activity_id IN (104,105,106); DELETE FROM activities WHERE id IN (104,105,106);")
+
     # keep later fixture-sensitive checks honest: remove the interval ride again
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=103; DELETE FROM activity_metrics WHERE activity_id=103; DELETE FROM streams WHERE activity_id=103; DELETE FROM activities WHERE id=103;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
@@ -1343,6 +1363,18 @@ sql! = |db, query|
 # inside the single-quoted SQL literal (no single quotes in the JSON to escape).
 # a pace stream: time + CUMULATIVE distance at a constant speed (m/s), no altitude —
 # the flat-triple path a swim or indoor row produces
+# pace + HR stream: constant speed, HR drifting up in the second half — the shape
+# pace decoupling (#134) exists to measure
+seed_pace_hr_stream! : Str, I64, U64, U64 => {}
+seed_pace_hr_stream! = |db, id, n, mps| {
+    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
+    dist = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i * mps)), ",")
+    hr = Str.join_with(List.map(int_seq(n), |i| U64.to_str(if i * 2 < n 140 else 150)), ",")
+    raw = "{\"time\":{\"data\":[${times}]},\"distance\":{\"data\":[${dist}]},\"heartrate\":{\"data\":[${hr}]}}"
+    _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
+    {}
+}
+
 seed_pace_stream! : Str, I64, U64, U64 => {}
 seed_pace_stream! = |db, id, n, mps| {
     times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
