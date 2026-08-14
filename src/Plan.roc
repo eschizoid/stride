@@ -7,6 +7,7 @@ import pf.Stdout
 import pf.Path
 import Metrics
 import Render
+import Sql
 
 Plan :: [].{
     # session-RPE rating: the athlete is the sensor for sports without power meters.
@@ -26,12 +27,7 @@ Plan :: [].{
             Ok(rpe) => {
                 id_result =
                     if target == "latest" {
-                        match Sqlite.query!({
-                            path: Path.utf8(path),
-                            query: "SELECT COALESCE(MAX(id), 0) AS id FROM activities WHERE start_local = (SELECT MAX(start_local) FROM activities)",
-                            bindings: [],
-                            row: Sqlite.i64("id"),
-                        }) {
+                        match Sqlite.query!(Sql.row(Path.utf8(path), "SELECT COALESCE(MAX(id), 0) AS id FROM activities WHERE start_local = (SELECT MAX(start_local) FROM activities)", [], Sqlite.i64("id"))) {
                             Ok(0) => Err(NoActivities)
                             Ok(id) => Ok(id)
                             Err(e) => Err(e)
@@ -47,15 +43,15 @@ Plan :: [].{
                         if !(Report.row_exists!(path, "activities", activity_id)?) {
                             Output.err_out!("activity_not_found", "no activity ${I64.to_str(activity_id)} in the db — `stride sync` first?")
                         } else {
-                            Sqlite.execute!({
-                                path: Path.utf8(path),
-                                query: "INSERT OR REPLACE INTO ratings (activity_id, rpe, rated_at) VALUES (:id, :rpe, :at)",
-                                bindings: [
+                            Sqlite.execute!(Sql.stmt(
+                                Path.utf8(path),
+                                "INSERT OR REPLACE INTO ratings (activity_id, rpe, rated_at) VALUES (:id, :rpe, :at)",
+                                [
                                     { name: ":id", value: Integer(activity_id) },
                                     { name: ":rpe", value: Real(rpe) },
                                     { name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
                                 ],
-                            })?
+                            ))?
                             # a rating is a metric input — invalidate so analyze rescores
                             Strava.invalidate_metrics!(path, activity_id)?
                             Output.out!({ rated: activity_id, rpe }, |p| "activity ${I64.to_str(p.rated)} rated ${Render.fmt0(p.rpe)}/10 — run `stride analyze` to rescore")
@@ -101,9 +97,8 @@ Plan :: [].{
                 AllTime => -1
                 ThisWeek => 100
             }
-        rows = Sqlite.query_many!({
-            path: Path.utf8(path),
-            query:
+        rows = Sqlite.query_many!(Sql.rows(
+            Path.utf8(path),
                 \\SELECT id AS id, COALESCE(created_at,'') AS created_at, COALESCE(target_date,'') AS target_date,
                 \\       COALESCE(session_type,'') AS session_type, COALESCE(detail,'') AS detail,
                 \\       COALESCE(rationale,'') AS rationale, COALESCE(completed_activity_id,0) AS completed_activity_id,
@@ -113,8 +108,8 @@ Plan :: [].{
                 \\WHERE (:all = 1 OR (COALESCE(target_date,'') >= '${Metrics.days_to_date_str(mon)}' AND COALESCE(target_date,'') <= '${Metrics.days_to_date_str(mon + 6)}' AND (COALESCE(status,'open') <> 'skipped' OR NOT EXISTS (SELECT 1 FROM planned_sessions p2 WHERE p2.target_date = planned_sessions.target_date AND (COALESCE(p2.status,'open') <> 'skipped' OR p2.id > planned_sessions.id)))))
                 \\ORDER BY target_date DESC, id DESC LIMIT :lim
             ,
-            bindings: [{ name: ":all", value: Integer(scope_all) }, { name: ":lim", value: Integer(row_limit) }],
-            rows: |cols| |stmt| {
+            [{ name: ":all", value: Integer(scope_all) }, { name: ":lim", value: Integer(row_limit) }],
+            |cols| |stmt| {
                 id = Sqlite.i64("id")(cols)(stmt)?
                 created_at = Sqlite.str("created_at")(cols)(stmt)?
                 target_date = Sqlite.str("target_date")(cols)(stmt)?
@@ -127,7 +122,7 @@ Plan :: [].{
                 done_date = Sqlite.str("done_date")(cols)(stmt)?
                 Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, status, skipped_reason, done_date })
             },
-        })?
+        ))?
         # newest-first from SQL, flipped to calendar order for display. `Render.reverse_list`
         # (fold + prepend, linear) rather than fold + `List.concat([x], acc)`, which copies
         # the whole accumulator every step and is quadratic — harmless behind the old
@@ -269,12 +264,7 @@ Plan :: [].{
     plan_add_checked! = |target_date, session_type, detail, rationale| {
         path = Db.open_db!({})?
         # guard: one open planned session per date — skip or complete the old one first
-        existing = Sqlite.query!({
-            path: Path.utf8(path),
-            query: "SELECT COALESCE(MAX(id), 0) AS id FROM planned_sessions WHERE target_date = :date AND COALESCE(status, 'open') = 'open'",
-            bindings: [{ name: ":date", value: String(target_date) }],
-            row: Sqlite.i64("id"),
-        })?
+        existing = Sqlite.query!(Sql.row(Path.utf8(path), "SELECT COALESCE(MAX(id), 0) AS id FROM planned_sessions WHERE target_date = :date AND COALESCE(status, 'open') = 'open'", [{ name: ":date", value: String(target_date) }], Sqlite.i64("id")))?
         if existing > 0
             # re-planning a date REVISES its open session in place. Editing a future plan
             # is not a "skip" (skip = a session that was going to happen and didn't), so
@@ -286,41 +276,35 @@ Plan :: [].{
     }
     revise_planned_session! : Str, I64, Str, Str, Str, Str => Try({}, _)
     revise_planned_session! = |path, id, target_date, session_type, detail, rationale| {
-        Sqlite.execute!({
-            path: Path.utf8(path),
-            query: "UPDATE planned_sessions SET session_type = :type, detail = :detail, rationale = :rationale, created_at = :at WHERE id = :id",
-            bindings: [
+        Sqlite.execute!(Sql.stmt(
+            Path.utf8(path),
+            "UPDATE planned_sessions SET session_type = :type, detail = :detail, rationale = :rationale, created_at = :at WHERE id = :id",
+            [
                 { name: ":type", value: String(session_type) },
                 { name: ":detail", value: String(detail) },
                 { name: ":rationale", value: String(rationale) },
                 { name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
                 { name: ":id", value: Integer(id) },
             ],
-        })?
+        ))?
         Output.out!({ id, target_date, session_type }, |p| "revised #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}")
     }
     insert_planned_session! : Str, Str, Str, Str, Str => Try({}, _)
     insert_planned_session! = |path, target_date, session_type, detail, rationale| {
-        Sqlite.execute!({
-            path: Path.utf8(path),
-            query:
+        Sqlite.execute!(Sql.stmt(
+            Path.utf8(path),
                 \\INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status)
                 \\VALUES (:at, :date, :type, :detail, :rationale, 'open')
             ,
-            bindings: [
+            [
                 { name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
                 { name: ":date", value: String(target_date) },
                 { name: ":type", value: String(session_type) },
                 { name: ":detail", value: String(detail) },
                 { name: ":rationale", value: String(rationale) },
             ],
-        })?
-        new_id = Sqlite.query!({
-            path: Path.utf8(path),
-            query: "SELECT MAX(id) AS id FROM planned_sessions",
-            bindings: [],
-            row: Sqlite.i64("id"),
-        })?
+        ))?
+        new_id = Sqlite.query!(Sql.row(Path.utf8(path), "SELECT MAX(id) AS id FROM planned_sessions", [], Sqlite.i64("id")))?
         Output.out!({ id: new_id, target_date, session_type }, |p| "planned #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}")
     }
     # ONE not-found message for complete/complete-rest/skip — can't drift apart
@@ -341,14 +325,14 @@ Plan :: [].{
                 } else if !(Report.row_exists!(path, "activities", activity_id)?) {
                     Output.err_out!("activity_not_found", "no activity ${I64.to_str(activity_id)} in the db — `stride sync` first?")
                 } else {
-                    Sqlite.execute!({
-                        path: Path.utf8(path),
-                        query: "UPDATE planned_sessions SET completed_activity_id = :aid, status = 'done' WHERE id = :pid",
-                        bindings: [
+                    Sqlite.execute!(Sql.stmt(
+                        Path.utf8(path),
+                        "UPDATE planned_sessions SET completed_activity_id = :aid, status = 'done' WHERE id = :pid",
+                        [
                             { name: ":aid", value: Integer(activity_id) },
                             { name: ":pid", value: Integer(session_id) },
                         ],
-                    })?
+                    ))?
                     Output.out!({ completed_session: session_id, activity: activity_id }, |p| "planned session #${I64.to_str(p.completed_session)} completed by activity ${I64.to_str(p.activity)}")
                 }
             _ =>
@@ -371,9 +355,8 @@ Plan :: [].{
     # Analyze.roc, where getting it wrong dropped every activity on the cutoff day.)
     candidate_activities! : Str, I64 => Try(List({ id : I64, start : Str, sport : Str, name : Str }), _)
     candidate_activities! = |path, session_id|
-        Sqlite.query_many!({
-            path: Path.utf8(path),
-            query:
+        Sqlite.query_many!(Sql.rows(
+            Path.utf8(path),
                 \\SELECT a.id AS id, a.start_local AS start,
                 \\       COALESCE(a.sport_type, '') AS sport, COALESCE(a.name, '') AS name
                 \\FROM activities a
@@ -383,15 +366,15 @@ Plan :: [].{
                 \\ORDER BY a.start_local DESC, a.id DESC
                 \\LIMIT 5
             ,
-            bindings: [{ name: ":pid", value: Integer(session_id) }],
-            rows: |cols| |stmt| {
+            [{ name: ":pid", value: Integer(session_id) }],
+            |cols| |stmt| {
                 id = Sqlite.i64("id")(cols)(stmt)?
                 start = Sqlite.str("start")(cols)(stmt)?
                 sport = Sqlite.str("sport")(cols)(stmt)?
                 name = Sqlite.str("name")(cols)(stmt)?
                 Ok({ id, start, sport, name })
             },
-        })
+        ))
 
     # rest days have no activity to link — `complete <id>` alone closes them. Any
     # other session type still demands its activity id: done means evidence.
@@ -404,12 +387,7 @@ Plan :: [].{
                 if !(Report.row_exists!(path, "planned_sessions", session_id)?)
                     session_not_found!(session_id)
                 else {
-                    session_type = Sqlite.query!({
-                        path: Path.utf8(path),
-                        query: "SELECT COALESCE(session_type, '') AS t FROM planned_sessions WHERE id = :pid",
-                        bindings: [{ name: ":pid", value: Integer(session_id) }],
-                        row: Sqlite.str("t"),
-                    })?
+                    session_type = Sqlite.query!(Sql.row(Path.utf8(path), "SELECT COALESCE(session_type, '') AS t FROM planned_sessions WHERE id = :pid", [{ name: ":pid", value: Integer(session_id) }], Sqlite.str("t")))?
                     if session_type != "rest" {
                         # Naming the rule is not enough: the id lives in the database and
                         # the old message left the reader with no way to find it short of
@@ -428,11 +406,7 @@ Plan :: [].{
                             "planned session #${(session_id).to_str()} is '${session_type}' — done means evidence, so it needs an activity id (only rest days close without one).\n  stride complete ${(session_id).to_str()} <activity_id>${hint}",
                         )
                     } else {
-                        Sqlite.execute!({
-                            path: Path.utf8(path),
-                            query: "UPDATE planned_sessions SET status = 'done' WHERE id = :pid",
-                            bindings: [{ name: ":pid", value: Integer(session_id) }],
-                        })?
+                        Sqlite.execute!(Sql.stmt(Path.utf8(path), "UPDATE planned_sessions SET status = 'done' WHERE id = :pid", [{ name: ":pid", value: Integer(session_id) }]))?
                         # rest must be Bool-TYPED (1 == 1), not a bare `True` tag — the new
                         # builtin JSON renders a bare tag as the string "True", not true.
                         Output.out!({ completed_session: session_id, rest: 1 == 1 }, |p| "planned session #${(p.completed_session).to_str()} (rest) marked done")
@@ -448,14 +422,14 @@ Plan :: [].{
                 if !(Report.row_exists!(path, "planned_sessions", session_id)?) {
                     session_not_found!(session_id)
                 } else {
-                    Sqlite.execute!({
-                        path: Path.utf8(path),
-                        query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why WHERE id = :pid",
-                        bindings: [
+                    Sqlite.execute!(Sql.stmt(
+                        Path.utf8(path),
+                        "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why WHERE id = :pid",
+                        [
                             { name: ":why", value: String(reason) },
                             { name: ":pid", value: Integer(session_id) },
                         ],
-                    })?
+                    ))?
                     Output.out!({ skipped_session: session_id, reason }, |p| "planned session #${I64.to_str(p.skipped_session)} skipped: ${p.reason}")
                 }
             Err(_) =>

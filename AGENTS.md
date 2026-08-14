@@ -145,21 +145,33 @@ Every item here cost a debugging session at least once — they are not style op
   behaviour; the rule is unchanged, only the failure mode is milder than advertised.)
 - **SQLite type affinity bites**: INTEGER columns reject `Sqlite.f64` decoders — `CAST(…
   AS REAL)` in the SELECT when unsure.
-- **#105 is heap corruption that surfaces on a LATER host call than the one that caused
-  it.** It shows up as the `Authorization: Bearer …` value arriving corrupt at
-  `_hosted_http_send_request`: invalid UTF-8 → SIGABRT (exit 134), or bytes that are valid
-  UTF-8 but illegal in a header → a clean `HttpErr(Other("failed to parse header value"))`.
-  The accusing symbol is where the damage LANDED, not where it came from. **The damage is
-  silent and not confined to tests**: a crashed sync leaves streams unfetched, so `analyze`
-  scores those activities off a lower ladder rung and the TSS is quietly wrong.
-- **The trigger is a decoded string long enough to be HEAP-allocated.** Changing only an
-  activity's name from 15 to 68 bytes, nothing else, flips a clean run into a crashing one.
-  Short strings live inline in a RocStr and never touch the heap, which is why the e2e mock
-  — every fixture string short — cannot reproduce it and why a green `e2e-sync` says nothing
-  about real payloads. Ruled out by measurement, so don't re-litigate: SQL statement shape
-  (12 shapes, ~36k statements, clean), `Json.parse` alone (real 33KB payload from a file,
-  clean), payload size, and copying the decoded string before use — that last one CAUSED a
-  12/12 crash and had to be reverted.
+- **Every SQLite call goes through `Sql.stmt`/`Sql.row`/`Sql.rows` (#105, basic-cli#471).**
+  Bug C's ROOT CAUSE, proven 2026-08-14 with a 45-line reproducer under guard-malloc: a
+  heap-allocated `Str` inside a `Sqlite` bindings list is DOUBLE-FREED — the platform's
+  `hosted_sqlite_bind` drops every element after use, and the generated caller drops them
+  again. The second free corrupts whatever allocation recycled the memory, so for weeks it
+  surfaced as unrelated errors (`invalid UTF-8` in HTTP headers, `SqliteErr(TooBig)`,
+  `UnexpectedType(Bytes)`, `malloc: free list damaged`) far from the SQLite call that
+  caused it. Inline (≤ small-string) and literal Strs are immune — decref of a static is a
+  no-op — which made it intermittent and made the short-named e2e mock structurally blind
+  to it. Call sites still write ordinary parameterized SQL (`:name` placeholders, String
+  bindings included); the constructors rewrite each String binding into the query as a
+  `Sql.quote`d literal so the list that reaches the host carries only `Integer`/`Real`/
+  `Null`, which hold no heap (the `query:` argument is consumed exactly once and is proven
+  clean under guard-malloc). NEVER call `Sqlite.execute!`/`query!`/`query_many!` with a
+  raw record, and never splice text by hand — the workaround lives in `Sql.expand` alone,
+  so when a fixed basic-cli release is consumable (upstream fix merged as basic-cli#472,
+  unreleased; also gated on roc#10693 for the nightly bump) the revert is one function
+  becoming the identity, zero call-site changes.
+- **A crash at a host-boundary symbol names where corruption SURFACED, not where it was
+  caused.** The backtrace accused `_hosted_http_send_request` for weeks while the cause
+  was the bind path. Bisect by removing one ingredient at a time, and reach for
+  guard-malloc early (`DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib` under lldb): it
+  makes use-after-free deterministic and faults at the culprit instruction instead of the
+  next victim. Disproven along the way, don't re-litigate: SQL statement shape (12
+  shapes, ~36k statements, clean), `Json.parse` alone (clean from a file), and COPYING
+  decoded strings before binding — copies are fresh heap strings, i.e. MORE double-free
+  surface, which is why the copy "fix" crashed 12/12 and was reverted.
 - **Verify anything touching sync decode/bind against real Strava data**, not `just test`.
   A change validated only on the mock shipped and broke daily sync for every real payload.
 

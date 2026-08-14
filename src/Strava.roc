@@ -16,6 +16,7 @@ import Streams
 import Backfill
 import Metrics
 import Config
+import Sql
 
 Strava :: [].{
     # push a new FTP to Strava (PUT /athlete?ftp=). Best-effort: any failure just
@@ -159,18 +160,17 @@ Strava :: [].{
         # DO NOT wrap these bindings in "${...}" to force a copy. That was tried against
         # #105 and crashed real sync every run — see the longer note in upsert_activity!.
         # #105 remains open; copying is not the fix.
-        Sqlite.execute!({
-            path: Path.utf8(path),
-            query:
+        Sqlite.execute!(Sql.stmt(
+            Path.utf8(path),
                 \\INSERT OR REPLACE INTO config (key, value) VALUES
                 \\  ('strava_access_token', :at), ('strava_refresh_token', :rt), ('strava_expires_at', :exp)
             ,
-            bindings: [
+            [
                 { name: ":at", value: String(tokens.access_token) },
                 { name: ":rt", value: String(tokens.refresh_token) },
                 { name: ":exp", value: String(I64.to_str(tokens.expires_at)) },
             ],
-        })
+        ))
     # returns a valid access token, refreshing if expired; NotAuthed if never
     # authorized (a genuinely absent token — NOT a db read failure, which propagates)
     get_valid_token! : Str => Try(Str, _)
@@ -323,18 +323,17 @@ Strava :: [].{
 
     backfill_streams! : Str, Str => Try(U64, _)
     backfill_streams! = |path, token| {
-        ids = Sqlite.query_many!({
-            path: Path.utf8(path),
-            query:
+        ids = Sqlite.query_many!(Sql.rows(
+            Path.utf8(path),
                 \\SELECT a.id AS id FROM activities a
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\WHERE s.activity_id IS NULL AND a.moving_time > 0
                 \\ORDER BY a.start_local DESC
                 \\LIMIT ${(streams_per_run).to_str()}
             ,
-            bindings: [],
-            rows: Sqlite.i64("id"),
-        })?
+            [],
+            Sqlite.i64("id"),
+        ))?
         # the stream backfill is the long half of a sync and its total IS knowable — the
         # id list is already in hand — so this half gets a real bar rather than a spinner.
         #
@@ -360,16 +359,15 @@ Strava :: [].{
     # honestly instead of letting the 60/run cap look like completion)
     pending_streams! : Str => Try(I64, _)
     pending_streams! = |path|
-        Sqlite.query!({
-            path: Path.utf8(path),
-            query:
+        Sqlite.query!(Sql.row(
+            Path.utf8(path),
                 \\SELECT COUNT(*) AS n FROM activities a
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\WHERE s.activity_id IS NULL AND a.moving_time > 0
             ,
-            bindings: [],
-            row: Sqlite.i64("n"),
-        })
+            [],
+            Sqlite.i64("n"),
+        ))
 
     fetch_streams_all! : Str, Str, List(I64), U64, U64 => Try(U64, _)
     fetch_streams_all! = |path, token, ids, acc, total|
@@ -415,14 +413,14 @@ Strava :: [].{
         }
     store_streams! : Str, I64, Str => Try({}, _)
     store_streams! = |path, id, text| {
-        Sqlite.execute!({
-            path: Path.utf8(path),
-            query: "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (:id, :raw)",
-            bindings: [
+        Sqlite.execute!(Sql.stmt(
+            Path.utf8(path),
+            "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (:id, :raw)",
+            [
                 { name: ":id", value: Integer(id) },
                 { name: ":raw", value: String(text) },
             ],
-        })?
+        ))?
         # streams just arrived — invalidate any metrics computed before them so the
         # next analyze recomputes zones/NP from the real data (they were frozen otherwise)
         invalidate_metrics!(path, id)
@@ -432,11 +430,7 @@ Strava :: [].{
     # invalidation story: FTP change (ftp_used check), stream arrival, Strava edit.
     invalidate_metrics! : Str, I64 => Try({}, _)
     invalidate_metrics! = |path, id|
-        Sqlite.execute!({
-            path: Path.utf8(path),
-            query: "DELETE FROM activity_metrics WHERE activity_id = :id",
-            bindings: [{ name: ":id", value: Integer(id) }],
-        })
+        Sqlite.execute!(Sql.stmt(Path.utf8(path), "DELETE FROM activity_metrics WHERE activity_id = :id", [{ name: ":id", value: Integer(id) }]))
 
     # ── backfill (pull ALL stream history, rate-limit-aware) ─────────────
     # For a new user with thousands of activities, the 60/run sync cap means dozens
@@ -505,17 +499,16 @@ Strava :: [].{
                 pruned = prune_deleted!(path, started, "")?
                 (if pruned > 0 Stdout.line!("backfill: pruned ${U64.to_str(pruned)} activities removed on Strava") else Ok({}))?
                 Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
-                missing_ids = Sqlite.query_many!({
-                    path: Path.utf8(path),
-                    query:
+                missing_ids = Sqlite.query_many!(Sql.rows(
+                    Path.utf8(path),
                         \\SELECT a.id AS id FROM activities a
                         \\LEFT JOIN streams s ON s.activity_id = a.id
                         \\WHERE s.activity_id IS NULL AND a.moving_time > 0
                         \\ORDER BY a.start_local DESC
                     ,
-                    bindings: [],
-                    rows: Sqlite.i64("id"),
-                })?
+                    [],
+                    Sqlite.i64("id"),
+                ))?
                 missing = List.len(missing_ids)
                 if missing == 0 {
                     Stdout.line!("backfill: ${U64.to_str(counts.relisted)} activities, all streams already present — nothing to do")
@@ -673,9 +666,8 @@ Strava :: [].{
     # exists to remove.
     classify_activity! : Str, ActivitySummary => Try(UpsertOutcome, _)
     classify_activity! = |path, a| {
-        rows = Sqlite.query_many!({
-            path: Path.utf8(path),
-            query:
+        rows = Sqlite.query_many!(Sql.rows(
+            Path.utf8(path),
                 \\SELECT
                 \\  (SELECT COUNT(*) FROM activities WHERE id = :id) AS existed,
                 \\  (SELECT COUNT(*) FROM activities WHERE id = :id
@@ -684,13 +676,13 @@ Strava :: [].{
                 \\     AND relative_effort IS :re AND avg_watts IS :aw AND avg_hr IS :ahr
                 \\     AND weighted_avg_watts IS :waw AND device_watts IS :dw) AS same
             ,
-            bindings: activity_bindings(a),
-            rows: |cols| |stmt| {
+            activity_bindings(a),
+            |cols| |stmt| {
                 existed = Sqlite.i64("existed")(cols)(stmt)?
                 same = Sqlite.i64("same")(cols)(stmt)?
                 Ok((existed, same))
             },
-        })?
+        ))?
         match List.first(rows) {
             Ok((0, _)) => Ok(Inserted)
             Ok((_, 0)) => Ok(Updated)
@@ -707,12 +699,11 @@ Strava :: [].{
     activity_bindings : ActivitySummary -> List(_)
     activity_bindings = |a| [
         { name: ":id", value: Integer(a.id) },
-        # DO NOT wrap these in "${...}" to force a copy before binding. Passing the decoded
-        # Str straight through is the least-bad known behaviour, not a guarantee of
-        # correctness — #105 is open and this path is still flaky. What IS established:
-        # forcing a copy here crashed real sync 12/12 while the e2e mock stayed green,
-        # because every mock name is short enough to live inline in a RocStr and only the
-        # heap-allocated copy gets freed underneath SQLite. See #105 for the full history.
+        # These String values never reach the host as bindings: Sql.expand splices them
+        # into the query as quoted literals (#105 workaround — the double-free only bites
+        # heap Strs in the bindings list). Still DO NOT wrap them in "${...}" to force a
+        # copy: a copy is a fresh heap Str, and the copy "fix" crashed real sync 12/12
+        # while the short-fixture e2e mock stayed green. See #105 for the full history.
         { name: ":name", value: String(a.name) },
         { name: ":sport", value: String(a.sport_type) },
         { name: ":start", value: String(a.start_date_local) },
@@ -732,22 +723,21 @@ Strava :: [].{
         # never mistakes an imported activity (never on Strava) for a deleted one. Real
         # sync stamps are now_secs epochs, never 0.
         synced_val = if stamp == 0 Null else Integer(stamp)
-        Sqlite.execute!({
-            path: Path.utf8(path),
-            query:
+        Sqlite.execute!(Sql.stmt(
+            Path.utf8(path),
                 \\INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance, elevation, relative_effort, avg_watts, avg_hr, weighted_avg_watts, device_watts, synced_at)
                 \\VALUES (:id, :name, :sport, :start, :mt, :dist, :elev, :re, :aw, :ahr, :waw, :dw, :synced)
             ,
             # the SAME values classify_activity! compared against, so the check and the
             # write cannot disagree about what "changed" means. :synced is appended here
             # only — it is re-stamped every run and must stay out of the comparison.
-            bindings: List.append(
+            List.append(
                 activity_bindings(a),
                 # stamp this row with the current sync run so prune_deleted! can tell which
                 # activities Strava still has (re-stamped) from ones it deleted (stale stamp)
                 { name: ":synced", value: synced_val },
             ),
-        })?
+        ))?
         # NO metrics invalidation here, deliberately. `sync` re-lists a rolling 30-day
         # window every run and cannot cheaply tell an edit from a no-op, so deleting here
         # wiped a month of computed metrics on every sync and left every report
@@ -770,9 +760,8 @@ Strava :: [].{
     # transaction so a crash can't half-prune. Returns the number of activities removed.
     prune_deleted! : Str, I64, Str => Try(U64, _)
     prune_deleted! = |path, stamp, window_start| {
-        victims = Sqlite.query_many!({
-            path: Path.utf8(path),
-            query:
+        victims = Sqlite.query_many!(Sql.rows(
+            Path.utf8(path),
                 \\SELECT id AS id FROM activities
                 \\-- only rows a PRIOR sync stamped then this run didn't re-stamp are
                 \\-- confirmed Strava deletions. NULL (CSV imports, pre-migration rows)
@@ -782,25 +771,25 @@ Strava :: [].{
                 \\  AND id NOT IN (SELECT activity_id FROM ratings)
                 \\  AND id NOT IN (SELECT completed_activity_id FROM planned_sessions WHERE completed_activity_id IS NOT NULL)
             ,
-            bindings: [
+            [
                 { name: ":stamp", value: Integer(stamp) },
                 { name: ":ws", value: String(window_start) },
             ],
-            rows: Sqlite.i64("id"),
-        })?
+            Sqlite.i64("id"),
+        ))?
         if List.len(victims) == 0
             Ok(0)
         else {
-            _ = Sqlite.execute!({ path: Path.utf8(path), query: "BEGIN", bindings: [] })?
+            _ = Sqlite.execute!(Sql.stmt(Path.utf8(path), "BEGIN", []))?
             match prune_txn!(path, victims) {
                 Ok(_) => {
-                    _ = Sqlite.execute!({ path: Path.utf8(path), query: "COMMIT", bindings: [] })?
+                    _ = Sqlite.execute!(Sql.stmt(Path.utf8(path), "COMMIT", []))?
                     Ok(List.len(victims))
                 }
                 Err(e) =>
                     # a failed ROLLBACK (lock, corruption) is the more actionable signal —
                     # surface it; otherwise return the error that aborted the prune
-                    match Sqlite.execute!({ path: Path.utf8(path), query: "ROLLBACK", bindings: [] }) {
+                    match Sqlite.execute!(Sql.stmt(Path.utf8(path), "ROLLBACK", [])) {
                         Ok(_) => Err(e)
                         Err(re) => Err(re)
                     }
@@ -813,9 +802,9 @@ Strava :: [].{
             [] => Ok({})
             [id, .. as rest] => {
                 b = [{ name: ":id", value: Integer(id) }]
-                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activity_metrics WHERE activity_id = :id", bindings: b })?
-                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM streams WHERE activity_id = :id", bindings: b })?
-                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activities WHERE id = :id", bindings: b })?
+                _ = Sqlite.execute!(Sql.stmt(Path.utf8(path), "DELETE FROM activity_metrics WHERE activity_id = :id", b))?
+                _ = Sqlite.execute!(Sql.stmt(Path.utf8(path), "DELETE FROM streams WHERE activity_id = :id", b))?
+                _ = Sqlite.execute!(Sql.stmt(Path.utf8(path), "DELETE FROM activities WHERE id = :id", b))?
                 prune_txn!(path, rest)
             }
         }
