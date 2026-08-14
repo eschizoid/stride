@@ -402,6 +402,43 @@ b_seed_analyze! = |ctx| {
     # say so rather than the 0.0 being read as "form held level" — that distinction is the
     # whole reason the field exists.
     check!("summary form_delta_known is a boolean too", strjq!(ctx, ["summary"], ".data.form_delta_known | type") == "boolean")?
+
+    # ── interval detection (ADR 0008, #95) ──────────────────────────────
+    # a stream with 3 clean 180s@250W reps over a 120s@100W floor must detect
+    # EXACTLY 3 work segments; the constant-200W ride (101) must detect NONE —
+    # a steady effort has no interval structure, and inventing reps there is the
+    # failure mode the min_spread gate exists to prevent.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,weighted_avg_watts,avg_watts,device_watts) VALUES (103,'interval ride','Ride','${ctx.d2}T18:00:00Z',1500,15000,50,180,180,1)")
+    _ = seed_interval_stream!(ctx.db, 103)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("interval ride detects exactly 3 work segments", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_segments WHERE activity_id=103 AND kind='work';")) == "3")?
+    check!("steady ride detects zero segments", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_segments WHERE activity_id=101;")) == "0")?
+    check!("work reps sit near 250W", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_segments WHERE activity_id=103 AND kind='work' AND avg_signal BETWEEN 235 AND 265;")) == "3")?
+    # the activity payload carries the structure — WIRING check (count + non-empty
+    # summary), not just types, per the #127 lesson
+    check!("activity JSON carries 3 work segments", strjq!(ctx, ["activity", "103"], "[.data.segments[] | select(.kind == \"work\")] | length") == "3")?
+    check!("activity JSON interval_summary is non-empty", strjq!(ctx, ["activity", "103"], ".data.interval_summary | length > 3") == "true")?
+    check!("activity JSON says detection was attempted", strjq!(ctx, ["activity", "103"], ".data.detection_attempted") == "true")?
+    # ordinal 0 is the warmup and ordinals ascend with start_s — a scrambled insert
+    # order would flip the drift verdict's sign while every count check stays green
+    check!("ordinal 0 is the warmup", Str.trim(sql!(ctx.db, "SELECT kind FROM activity_segments WHERE activity_id=103 AND ordinal=0;")) == "warmup")?
+    check!("ordinals ascend with start_s", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM (SELECT ordinal, start_s, LAG(start_s) OVER (ORDER BY ordinal) AS prev FROM activity_segments WHERE activity_id=103) WHERE prev IS NOT NULL AND start_s <= prev;")) == "0")?
+    # work durations, not just counts — the seeded reps are 180 s
+    check!("work reps last ~180s", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_segments WHERE activity_id=103 AND kind='work' AND dur_s BETWEEN 176 AND 184;")) == "3")?
+    # the seeded stream has NO heartrate: HR columns must be NULL (honest absence),
+    # never 0 posing as a measurement
+    check!("absent HR stores NULL, not zero", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_segments WHERE activity_id=103 AND kind='work' AND (peak_hr IS NOT NULL OR avg_hr IS NOT NULL OR rec_drop_60s IS NOT NULL);")) == "0")?
+    # computed tier: segments live and die WITH the metrics row — every real
+    # invalidation path (stream arrival, rating, prune) deletes both, and the next
+    # analyze rebuilds both. Deleting segments alone is not a supported operation:
+    # analyze keys recompute off the metrics row, and an empty segments set is a
+    # legitimate result (steady ride), not a "please recompute" marker.
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=103; DELETE FROM activity_metrics WHERE activity_id=103;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("segments rebuild with the metrics row", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_segments WHERE activity_id=103 AND kind='work';")) == "3")?
+    # keep later fixture-sensitive checks honest: remove the interval ride again
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=103; DELETE FROM activity_metrics WHERE activity_id=103; DELETE FROM streams WHERE activity_id=103; DELETE FROM activities WHERE id=103;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("form_delta_known is false on a short history", strjq!(ctx, ["summary"], ".data.form_delta_known") == "false")?
     # #123: the verdict NAMES the state and stops prescribing. Asserting the absence of the
     # old advice AND the presence of the label, so it cannot pass by the line disappearing.
@@ -1319,6 +1356,22 @@ seed_power_stream! : Str, I64, U64, U64 => {}
 seed_power_stream! = |db, id, n, w| {
     times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
     watts = Str.join_with(List.map(int_seq(n), |_| U64.to_str(w)), ",")
+    raw = "{\"time\":{\"data\":[${times}]},\"watts\":{\"data\":[${watts}]}}"
+    _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
+    {}
+}
+# interval-shaped power stream: warmup, reps x (work_s @ work_w / rec_s @ rec_w), cooldown
+seed_interval_stream! : Str, I64 => {}
+seed_interval_stream! = |db, id| {
+    wtt = |i| {
+        # 300s warmup @120, 3x(180s @250 / 120s @100), then cooldown @110
+        rel = if i >= 300 (i - 300) % 300 else 0
+        if i < 300 120 else if i < 1200 (if rel < 180 250 else 100) else 110
+    }
+    n : U64
+    n = 1500
+    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
+    watts = Str.join_with(List.map(int_seq(n), |i| U64.to_str(wtt(i))), ",")
     raw = "{\"time\":{\"data\":[${times}]},\"watts\":{\"data\":[${watts}]}}"
     _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
     {}

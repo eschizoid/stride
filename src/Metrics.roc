@@ -1549,6 +1549,292 @@ Metrics :: [].{
             intensity = ngp_speed / threshold_speed
             (dur_s / 3600.0) * intensity.pow(exponent) * 100.0
         }
+
+    # ── interval detection (ADR 0008) — reporting only, power/pace edges ──
+    #
+    # One signal-agnostic pipeline: smooth (trailing mean) → two-window level-shift
+    # edges (a shift counts when the H-second forward mean moves ≥ shift_frac of the
+    # session IQR away from the H-second backward mean) → segments between edges →
+    # merge neighbors closer than the shift threshold → label work/recovery against
+    # the session's own distribution. HR never places edges (it lags effort by 30+ s);
+    # it only enriches segments already found (enrich_hr below).
+    #
+    # These constants are the ADR 0008 starting point, validated against the
+    # maintainer's own VO2/threshold sessions — every change bumps metrics_rev
+    # (Analyze), because a tuning change recomputes history.
+    #
+    # min_spread is the no-invented-intervals gate: a session whose smoothed IQR
+    # never exceeds it (steady endurance ride, GPS-wobble run) has no structure to
+    # find, and the detector returns NOTHING rather than dressing noise as reps.
+    DetectParams : { smooth_w : U64, hold : U64, shift_frac : F64, min_spread : F64 }
+
+    detect_power_params : DetectParams
+    detect_power_params = { smooth_w: 15, hold: 60, shift_frac: 0.20, min_spread: 40.0 }
+
+    detect_pace_params : DetectParams
+    detect_pace_params = { smooth_w: 30, hold: 90, shift_frac: 0.20, min_spread: 0.4 }
+
+    SegmentKind : [Work, Recovery, Warmup, Cooldown]
+
+    # start_s/end_s are REAL stream timestamps (first/last recorded sample of the
+    # segment); dur_s is pause-capped elapsed time — per-sample dt clipped at
+    # max_sample_gap_s, the same rule time_in_zones lives by — so a traffic stop
+    # inside a rep is bridged but never SOLD as sustained effort.
+    Segment : { kind : SegmentKind, start_s : I64, end_s : I64, dur_s : I64, avg_signal : F64 }
+
+    # inclusive-prefix sums with a leading 0, so mean over [i, j) is O(1)
+    prefix_sums : List(F64) -> List(F64)
+    prefix_sums = |xs|
+        List.fold(xs, [0.0.F64], |acc, x| List.append(acc, last_or_zero(acc) + x))
+
+    range_mean : List(F64), U64, U64 -> F64
+    range_mean = |prefix, i, j|
+        if j <= i {
+            0.0
+        } else {
+            hi = List.get(prefix, j) ?? 0.0
+            lo = List.get(prefix, i) ?? 0.0
+            (hi - lo) / ((j - i)).to_f64()
+        }
+
+    # trailing rolling mean: out[i] = mean(xs[max(0, i+1-w) .. i])
+    smooth_trailing : List(F64), U64 -> List(F64)
+    smooth_trailing = |xs, w| {
+        prefix = prefix_sums(xs)
+        List.map_with_index(xs, |_, i| {
+            lo = if i + 1 >= w i + 1 - w else 0
+            range_mean(prefix, lo, i + 1)
+        })
+    }
+
+    # List.sort_with degrades to O(n^2) on already-sorted input (see the AGENTS
+    # performance note) and a smoothed ramp test is EXACTLY that — check first
+    ascending_f64 : List(F64) -> Bool
+    ascending_f64 = |xs|
+        (List.fold(xs, { ok: True, prev: 0.0.F64, started: False }, |acc, x|
+            if !acc.ok {
+                acc
+            } else if !acc.started {
+                { ok: True, prev: x, started: True }
+            } else {
+                { ok: x >= acc.prev, prev: x, started: True }
+            })).ok
+
+    # value at the given fraction of a SORTED list (nearest-rank)
+    sorted_quantile : List(F64), F64 -> F64
+    sorted_quantile = |sorted, frac| {
+        n = List.len(sorted)
+        if n == 0 {
+            0.0
+        } else {
+            idx_f = frac * ((n - 1)).to_f64()
+            List.get(sorted, (idx_f + 0.5).to_u64_wrap()) ?? 0.0
+        }
+    }
+
+    # edge indices: positions where the forward H-mean sits ≥ delta from the backward
+    # H-mean. Contiguous qualifying runs collapse to the single strongest position, so
+    # one physical transition yields one edge.
+    shift_edges : List(F64), U64, F64 -> List(U64)
+    shift_edges = |sm, h, delta| {
+        n = List.len(sm)
+        if n <= 2 * h {
+            []
+        } else {
+            prefix = prefix_sums(sm)
+            walk = Iter.fold(
+                h..<(n - h),
+                { edges: [], run_best: 0.0.F64, run_at: 0, in_run: False },
+                |acc, i| {
+                    d = (range_mean(prefix, i, i + h) - range_mean(prefix, i - h, i)).abs()
+                    if d >= delta {
+                        if !(acc.in_run) or d > acc.run_best {
+                            { ..acc, run_best: d, run_at: i, in_run: True }
+                        } else {
+                            acc
+                        }
+                    } else if acc.in_run {
+                        { edges: List.append(acc.edges, acc.run_at), run_best: 0.0, run_at: 0, in_run: False }
+                    } else {
+                        acc
+                    }
+                },
+            )
+            if walk.in_run List.append(walk.edges, walk.run_at) else walk.edges
+        }
+    }
+
+    # merge boundary list into segments, folding neighbors whose raw means are
+    # within delta of each other back together (one physical rep, one segment)
+    segments_between : List(F64), List(U64), F64 -> List({ lo : U64, hi : U64, mean : F64 })
+    segments_between = |xs, edges, delta| {
+        prefix = prefix_sums(xs)
+        n = List.len(xs)
+        bounds = List.concat(List.concat([0], edges), [n])
+        raw = List.map_with_index(edges, |_, k| {
+            lo = List.get(bounds, k) ?? 0
+            hi = List.get(bounds, k + 1) ?? n
+            { lo, hi, mean: range_mean(prefix, lo, hi) }
+        })
+        last_piece = {
+            lo = List.get(bounds, List.len(edges)) ?? 0
+            { lo, hi: n, mean: range_mean(prefix, lo, n) }
+        }
+        List.fold(List.append(raw, last_piece), [], |acc, seg|
+            match List.last(acc) {
+                Ok(prev) =>
+                    if (prev.mean - seg.mean).abs() < delta {
+                        merged = { lo: prev.lo, hi: seg.hi, mean: range_mean(prefix, prev.lo, seg.hi) }
+                        List.append(drop_last(acc), merged)
+                    } else {
+                        List.append(acc, seg)
+                    }
+                Err(_) => List.append(acc, seg)
+            })
+    }
+
+    drop_last : List(a) -> List(a)
+    drop_last = |xs| List.take_first(xs, if List.is_empty(xs) 0 else List.len(xs) - 1)
+
+    # the detector. `pairs` is a 1 Hz series with REAL trailing timestamps (the
+    # resampler's output) — pauses appear as t-jumps and are bridged: a traffic
+    # stop inside a rep does not split it, and unrecorded time is never averaged in.
+    detect_segments : List({ t : I64, v : F64 }), DetectParams -> List(Segment)
+    detect_segments = |pairs, p| {
+        n = List.len(pairs)
+        if n < 4 * p.hold {
+            []
+        } else {
+            xs = List.map(pairs, |x| x.v)
+            sm = smooth_trailing(xs, p.smooth_w)
+            sorted = if ascending_f64(sm) sm else List.sort_with(sm, |a, b| if a < b LT else if a > b GT else EQ)
+            q25 = sorted_quantile(sorted, 0.25)
+            q75 = sorted_quantile(sorted, 0.75)
+            iqr = q75 - q25
+            if iqr < p.min_spread {
+                []
+            } else {
+                delta = p.shift_frac * iqr
+                # the trailing smoother lags the signal by (w-1)/2 samples, so raw edge
+                # positions land that late — shift them back or every work rep starts
+                # late and averages in recovery samples (measured: 250 W reps read ~242)
+                lag = (p.smooth_w - 1) // 2
+                raw_edges = shift_edges(sm, p.hold, delta)
+                edges = List.fold(raw_edges, [], |acc, e| {
+                    shifted = if e > lag e - lag else 1
+                    keep = match List.last(acc) {
+                        Ok(prev) => shifted > prev
+                        Err(_) => True
+                    }
+                    if keep List.append(acc, shifted) else acc
+                })
+                segs = segments_between(xs, edges, delta)
+                # a piece shorter than the hold window is not a segment of its own —
+                # fold it into its predecessor (or successor when it leads) so the
+                # timeline stays gapless instead of leaving unclassified holes
+                prefix = prefix_sums(xs)
+                absorbed = List.fold(segs, [], |acc, seg|
+                    match List.last(acc) {
+                        Ok(prev) =>
+                            if seg.hi - seg.lo < p.hold or prev.hi - prev.lo < p.hold {
+                                List.append(drop_last(acc), { lo: prev.lo, hi: seg.hi, mean: range_mean(prefix, prev.lo, seg.hi) })
+                            } else {
+                                List.append(acc, seg)
+                            }
+                        Err(_) => List.append(acc, seg)
+                    })
+                kept = List.keep_if(absorbed, |s| s.hi - s.lo >= p.hold)
+                if List.is_empty(kept) {
+                    []
+                } else {
+                    work_thr = (q25 + q75) / 2.0 + delta / 2.0
+                    labeled = List.map(kept, |s| {
+                        # in-range by construction (bounds within [0, n), hi > lo) — the
+                        # fallback can't fire; it exists so an editing mistake fails a
+                        # duration expect instead of crashing
+                        start_t = (List.get(pairs, s.lo)).map_ok(|x| x.t).ok_or(0)
+                        end_t = (List.get(pairs, s.hi - 1)).map_ok(|x| x.t).ok_or(0)
+                        capped = Iter.fold((s.lo + 1)..<s.hi, 1.I64, |acc, i| {
+                            prev_t = (List.get(pairs, i - 1)).map_ok(|x| x.t).ok_or(0)
+                            cur_t = (List.get(pairs, i)).map_ok(|x| x.t).ok_or(0)
+                            dt = cur_t - prev_t
+                            acc + (if dt > max_sample_gap_s max_sample_gap_s else dt)
+                        })
+                        kind : SegmentKind
+                        kind = if s.mean >= work_thr Work else Recovery
+                        { kind, start_s: start_t, end_s: end_t, dur_s: capped, avg_signal: s.mean }
+                    })
+                    has_work = List.any(labeled, |s| s.kind == Work)
+                    if !has_work {
+                        # structure without work is not structure — a drifting ride's
+                        # levels are all easy; report nothing rather than fake reps
+                        []
+                    } else {
+                        with_warm = match List.first(labeled) {
+                            Ok(f) => if f.kind == Recovery (List.set(labeled, 0, { ..f, kind: Warmup })).ok_or(labeled) else labeled
+                            Err(_) => labeled
+                        }
+                        match List.last(with_warm) {
+                            Ok(l) => if l.kind == Recovery (List.set(with_warm, List.len(with_warm) - 1, { ..l, kind: Cooldown })).ok_or(with_warm) else with_warm
+                            Err(_) => with_warm
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    # ── HR enrichment of detected segments (never places edges) ───────
+
+    RepHr : { peak_hr : F64, avg_hr : F64, rec_drop_60s : [Known(F64), Unknown] }
+
+    # HR for ONE work rep, from the 1 Hz HR series (pass the RESAMPLED stream —
+    # raw smart-recording samples arrive 4-10 s apart and would leave the short
+    # windows below empty on real activities). NoHr when the rep's span holds no
+    # samples — honest absence, never zeros posing as measurements.
+    #
+    # The 60 s recovery drop is only a fitness marker if those 60 s are actually
+    # recovery: when the NEXT work rep starts inside the measurement window the
+    # drop is Unknown, not a number measured half-way into the following effort.
+    segment_hr : Segment, [NextWorkAt(I64), NoNextWork], List({ t : I64, v : F64 }) -> [Hr(RepHr), NoHr]
+    segment_hr = |seg, next_work, hr_pairs| {
+        inside = List.keep_if(hr_pairs, |h| h.t >= seg.start_s and h.t <= seg.end_s)
+        if List.is_empty(inside) {
+            NoHr
+        } else {
+            peak = List.fold(inside, 0.0.F64, |m, h| if h.v > m h.v else m)
+            avg = List.fold(inside, 0.0.F64, |sum, h| sum + h.v) / ((List.len(inside))).to_f64()
+            end_t = seg.end_s + 1
+            window_clear = match next_work {
+                NextWorkAt(nw) => nw >= end_t + 65
+                NoNextWork => True
+            }
+            drop = if !window_clear {
+                Unknown
+            } else {
+                end_win = List.keep_if(hr_pairs, |h| h.t >= end_t - 5 and h.t < end_t)
+                after_win = List.keep_if(hr_pairs, |h| h.t >= end_t + 55 and h.t < end_t + 65)
+                if List.is_empty(end_win) or List.is_empty(after_win) {
+                    Unknown
+                } else {
+                    end_m = List.fold(end_win, 0.0.F64, |sm2, h| sm2 + h.v) / ((List.len(end_win))).to_f64()
+                    aft_m = List.fold(after_win, 0.0.F64, |sm2, h| sm2 + h.v) / ((List.len(after_win))).to_f64()
+                    Known(end_m - aft_m)
+                }
+            }
+            Hr({ peak_hr: peak, avg_hr: avg, rec_drop_60s: drop })
+        }
+    }
+
+    # detection runs on pace only for sports where speed IS the effort signal —
+    # runs and swims per ADR 0008. A meter-less RIDE must not fall through to
+    # pace detection: cycling speed varies with terrain, and run-tuned pace
+    # parameters would read every descent as a work rep.
+    pace_detect_sport : Str -> Bool
+    pace_detect_sport = |sport| {
+        low = Str.with_ascii_lowercased(sport)
+        Str.contains(low, "run") or Str.contains(low, "swim")
+    }
 }
 
 # ── tests ───────────────────────────────────────────────────────────
@@ -2711,4 +2997,235 @@ expect {
 expect {
     pts = Metrics.resample_1s_linear([{ t: 0.I64, v: 0.0.F64 }, { t: 5.I64, v: 20.0.F64 }])
     List.len(pts) == 6 and List.all(pts, |p| ((p.v) - (p.t).to_f64() * 4.0).abs() < 0.001)
+}
+
+# ── interval detection fixtures (ADR 0008) ──────────────────────────
+
+# clean steps: warmup 300s@120, 4×(180s@250 / 120s@100), cooldown 300s@110.
+# Expect exactly 4 work segments at ~250W, first segment Warmup, last Cooldown.
+expect {
+    mk = |dur, w, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v: w }))
+    rep = |k| {
+        base : I64
+        base = 300 + k * 300
+        List.concat(mk(180.I64, 250.0, base), mk(120.I64, 100.0, base + 180))
+    }
+    fixture = List.concat(
+        List.concat(mk(300.I64, 120.0, 0.I64), List.join([rep(0.I64), rep(1.I64), rep(2.I64), rep(3.I64)])),
+        mk(300.I64, 110.0, 1500.I64),
+    )
+    segs = Metrics.detect_segments(fixture, Metrics.detect_power_params)
+    works = List.keep_if(segs, |s| s.kind == Work)
+    first_warm = (List.first(segs)).map_ok(|s| s.kind == Warmup).ok_or(False)
+    last_cool = (List.last(segs)).map_ok(|s| s.kind == Cooldown).ok_or(False)
+    first_work_start = (List.first(works)).map_ok(|w| w.start_s).ok_or(-1)
+    List.len(works) == 4
+    and first_warm
+    and last_cool
+    # tight on purpose: the lag-compensated edges must land within 2 s / 2 W of
+    # truth — the wide tolerances that hid the smoothing bias are not coming back
+    and List.all(works, |s| (s.avg_signal - 250.0).abs() < 2.0)
+    and List.all(works, |s| s.dur_s >= 176 and s.dur_s <= 184)
+    and first_work_start >= 298 and first_work_start <= 302
+    # tiling: 4 works + 3 recoveries + warmup + cooldown, interiors all Recovery
+    and List.len(segs) == 9
+    and List.all(List.drop_first(List.take_first(segs, 8), 1), |s| s.kind == Work or s.kind == Recovery)
+}
+
+# negative control on the same fixture: an impossible spread gate detects nothing —
+# proves the gate is live and the expect above cannot pass vacuously
+expect {
+    mk = |dur, w, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v: w }))
+    rep = |k| {
+        base : I64
+        base = 300 + k * 300
+        List.concat(mk(180.I64, 250.0, base), mk(120.I64, 100.0, base + 180))
+    }
+    fixture = List.concat(
+        List.concat(mk(300.I64, 120.0, 0.I64), List.join([rep(0.I64), rep(1.I64), rep(2.I64), rep(3.I64)])),
+        mk(300.I64, 110.0, 1500.I64),
+    )
+    gated = Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, min_spread: 1000.0 })
+    long_hold = Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, hold: 200 })
+    List.is_empty(gated) and List.is_empty(List.keep_if(long_hold, |s| s.kind == Work and s.dur_s < 200))
+}
+
+# noisy steps: same structure under deterministic ±10W noise — count must hold at 4
+expect {
+    noise = |i| (((i * 7919) % 21)).to_f64() - 10.0
+    mk = |dur, w, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v: w + noise(t0 + i) }))
+    rep = |k| {
+        base : I64
+        base = 300 + k * 300
+        List.concat(mk(180.I64, 250.0, base), mk(120.I64, 100.0, base + 180))
+    }
+    fixture = List.concat(
+        List.concat(mk(300.I64, 120.0, 0.I64), List.join([rep(0.I64), rep(1.I64), rep(2.I64), rep(3.I64)])),
+        mk(300.I64, 110.0, 1500.I64),
+    )
+    works = List.keep_if(Metrics.detect_segments(fixture, Metrics.detect_power_params), |s| s.kind == Work)
+    List.len(works) == 4 and List.all(works, |s| (s.avg_signal - 250.0).abs() < 15.0)
+}
+
+# smooth endurance ride: an hour at ~140W with slow drift has NO structure —
+# the detector must return nothing, not dress noise up as reps
+expect {
+    fixture = Iter.fold(0.I64..<3600, [], |acc, i| List.append(acc, { t: i, v: 140.0 + ((i).to_f64()) / 360.0 }))
+    List.is_empty(Metrics.detect_segments(fixture, Metrics.detect_power_params))
+}
+
+# GPS-wobble steady run: 40 min at ~3.3 m/s with deterministic wobble — zero work
+# segments under PACE parameters (wobble must not invent efforts)
+expect {
+    wobble = |i| ((((i * 31) % 7)).to_f64() - 3.0) * 0.1
+    fixture = Iter.fold(0.I64..<2400, [], |acc, i| List.append(acc, { t: i, v: 3.3 + wobble(i) }))
+    List.is_empty(Metrics.detect_segments(fixture, Metrics.detect_pace_params))
+}
+
+# traffic stop mid-rep: a 60 s recording pause inside the first work rep must be
+# BRIDGED — still exactly 2 work segments, and the paused rep's span covers the gap
+expect {
+    mk = |dur, w, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v: w }))
+    fixture = List.join([
+        mk(300.I64, 120.0, 0.I64),           # warmup
+        mk(90.I64, 250.0, 300.I64),          # rep 1 first half...
+        mk(90.I64, 250.0, 450.I64),          # ...pause 390..450, then second half
+        mk(120.I64, 100.0, 540.I64),         # recovery
+        mk(180.I64, 250.0, 660.I64),         # rep 2
+        mk(300.I64, 110.0, 840.I64),         # cooldown
+    ])
+    segs = Metrics.detect_segments(fixture, Metrics.detect_power_params)
+    works = List.keep_if(segs, |s| s.kind == Work)
+    # bridged but pause-capped: 180 recorded seconds + a 60 s stop credited at most
+    # max_sample_gap_s (30) = 210, never 240 — a stop is not sustained effort
+    first_dur = (List.first(works)).map_ok(|s| s.dur_s).ok_or(0)
+    List.len(works) == 2 and first_dur >= 206 and first_dur <= 212
+}
+
+# per-rep HR: peak/avg, the 60 s recovery drop, honest absence without HR, and the
+# window guard — a drop is Unknown both when the stream ends at the rep and when the
+# next work rep starts inside the measurement window
+expect {
+    seg = |s2, e| { kind: Work, start_s: s2, end_s: e, dur_s: e - s2 + 1, avg_signal: 250.0 }
+    hr_to = |n| Iter.fold(0.I64..<n, [], |acc, t| {
+        v = if t >= 300 and t < 480 150.0 else if t >= 600 and t < 780 160.0 else 110.0
+        List.append(acc, { t, v })
+    })
+    rep1 = seg(300.I64, 479.I64)
+    full = hr_to(1080)
+    r1 = Metrics.segment_hr(rep1, NextWorkAt(600.I64), full)
+    r1_ok = match r1 {
+        Hr(h) => (h.avg_hr - 150.0).abs() < 0.001 and (h.peak_hr - 150.0).abs() < 0.001 and h.rec_drop_60s == Known(40.0)
+        NoHr => False
+    }
+    # next work at 520 < end+65: the "recovery" window would measure the next effort
+    guarded = match Metrics.segment_hr(rep1, NextWorkAt(520.I64), full) {
+        Hr(h) => h.rec_drop_60s == Unknown
+        NoHr => False
+    }
+    # stream truncated right at the rep's end: no after-window, drop must be Unknown —
+    # a 0.0 here would be a fabricated flat-recovery fitness marker
+    truncated = match Metrics.segment_hr(rep1, NoNextWork, hr_to(485)) {
+        Hr(h) => h.rec_drop_60s == Unknown
+        NoHr => False
+    }
+    no_hr = Metrics.segment_hr(rep1, NoNextWork, []) == NoHr
+    r1_ok and guarded and truncated and no_hr
+}
+
+# pace detection is scoped to sports where speed IS the effort signal
+expect {
+    Metrics.pace_detect_sport("Run") and Metrics.pace_detect_sport("VirtualRun")
+    and Metrics.pace_detect_sport("TrailRun") and Metrics.pace_detect_sport("OpenWaterSwim")
+    and !(Metrics.pace_detect_sport("Ride")) and !(Metrics.pace_detect_sport("Walk"))
+    and !(Metrics.pace_detect_sport("Hike")) and !(Metrics.pace_detect_sport("Rowing"))
+}
+
+# POSITIVE pace fixture — the pace path must be able to detect something, or a
+# params swap / units regression silently kills detection for every run and swim
+# while all the negative pace tests stay green. 4×(180 s @ 4.5 m/s / 120 s @ 2.0).
+expect {
+    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    rep = |k| {
+        base : I64
+        base = 300 + k * 300
+        List.concat(mk(180.I64, 4.5, base), mk(120.I64, 2.0, base + 180))
+    }
+    fixture = List.concat(
+        List.concat(mk(300.I64, 2.5, 0.I64), List.join([rep(0.I64), rep(1.I64), rep(2.I64), rep(3.I64)])),
+        mk(300.I64, 2.3, 1500.I64),
+    )
+    works = List.keep_if(Metrics.detect_segments(fixture, Metrics.detect_pace_params), |s| s.kind == Work)
+    List.len(works) == 4 and List.all(works, |s| (s.avg_signal - 4.5).abs() < 0.1)
+}
+
+# reps AT the hold boundary: 60 s on / 60 s off is a real VO2 format sitting
+# exactly on the parameter — 6 reps must all survive
+expect {
+    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    rep = |k| {
+        base : I64
+        base = 300 + k * 120
+        List.concat(mk(60.I64, 300.0, base), mk(60.I64, 100.0, base + 60))
+    }
+    fixture = List.concat(
+        List.concat(mk(300.I64, 120.0, 0.I64), List.join([rep(0.I64), rep(1.I64), rep(2.I64), rep(3.I64), rep(4.I64), rep(5.I64)])),
+        mk(300.I64, 110.0, 1020.I64),
+    )
+    works = List.keep_if(Metrics.detect_segments(fixture, Metrics.detect_power_params), |s| s.kind == Work)
+    List.len(works) == 6
+}
+
+# sub-hold efforts (40/20s HIIT) cannot become individual reps BY DESIGN — the
+# whole rep block reads as ONE sustained work segment at its blended level, which
+# is the honest v1 semantic (a 40/20 block IS ~continuous sweet-spot effort).
+# Tuning hold downward must consciously break this expect, not slip through.
+expect {
+    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    rep = |k| {
+        base : I64
+        base = 300 + k * 60
+        List.concat(mk(40.I64, 320.0, base), mk(20.I64, 90.0, base + 40))
+    }
+    fixture = List.concat(
+        List.concat(mk(300.I64, 120.0, 0.I64), List.join([rep(0.I64), rep(1.I64), rep(2.I64), rep(3.I64), rep(4.I64), rep(5.I64), rep(6.I64), rep(7.I64)])),
+        mk(300.I64, 110.0, 780.I64),
+    )
+    works = List.keep_if(Metrics.detect_segments(fixture, Metrics.detect_power_params), |s| s.kind == Work)
+    one_block = (List.first(works)).map_ok(|s| s.dur_s >= 400).ok_or(False)
+    List.len(works) == 1 and one_block
+}
+
+# third knob's negative control: an absurd shift_frac finds no edges at all
+expect {
+    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    rep = |k| {
+        base : I64
+        base = 300 + k * 300
+        List.concat(mk(180.I64, 250.0, base), mk(120.I64, 100.0, base + 180))
+    }
+    fixture = List.concat(
+        List.concat(mk(300.I64, 120.0, 0.I64), List.join([rep(0.I64), rep(1.I64), rep(2.I64), rep(3.I64)])),
+        mk(300.I64, 110.0, 1500.I64),
+    )
+    List.is_empty(Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, shift_frac: 5.0 }))
+}
+
+# the min_spread gate, straddled from both sides with the same low-contrast shape:
+# work/recovery 40 W apart passes a 30 W gate and is silenced by a 60 W gate —
+# these are the tripwires that make future gate tuning a conscious act
+expect {
+    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    rep = |k| {
+        base : I64
+        base = 300 + k * 300
+        List.concat(mk(180.I64, 205.0, base), mk(120.I64, 165.0, base + 180))
+    }
+    fixture = List.concat(
+        List.concat(mk(300.I64, 170.0, 0.I64), List.join([rep(0.I64), rep(1.I64), rep(2.I64), rep(3.I64)])),
+        mk(300.I64, 168.0, 1500.I64),
+    )
+    above = Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, min_spread: 30.0 })
+    below = Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, min_spread: 60.0 })
+    List.len(List.keep_if(above, |s| s.kind == Work)) == 4 and List.is_empty(below)
 }

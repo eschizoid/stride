@@ -708,6 +708,24 @@ Analyze :: [].{
                 Err(_) => Null
 
             }
+        # ADR 0008: detected interval structure — same lifecycle as the metrics row
+        # (invalidate paths DELETE it; it recomputes here whenever the row recomputes).
+        # Segments are written BEFORE the metrics row on purpose: the metrics row is
+        # the commit marker for this activity, so a failure mid-segment-write leaves
+        # the row absent and the next analyze redoes the whole activity — no frozen
+        # partial rep set can survive. Power detects when real watts exist; pace only
+        # for pace-routed sports (runs/swims) — a meter-less RIDE must not get
+        # run-tuned pace detection of its terrain speed.
+        _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activity_segments WHERE activity_id = :id", bindings: [{ name: ":id", value: Integer(row.id) }] })?
+        hr_1s_pairs = Metrics.resample_1s_pairs(hr_pairs, Hold)
+        _ =
+            if !(List.is_empty(watts_1s_pairs)) {
+                insert_segments!(path, row.id, "power", Metrics.detect_segments(watts_1s_pairs, Metrics.detect_power_params), hr_1s_pairs)?
+            } else if Metrics.pace_detect_sport(row.sport) and !(List.is_empty(gas_1s_pairs)) {
+                insert_segments!(path, row.id, "pace", Metrics.detect_segments(gas_1s_pairs, Metrics.detect_pace_params), hr_1s_pairs)?
+            } else {
+                {}
+            }
         Sqlite.execute!({
             path: Path.utf8(path),
             query:
@@ -767,6 +785,69 @@ Analyze :: [].{
         })?
         Ok(decoded.failed)
     }
+
+    # write detected segments with per-WORK-rep HR enrichment; NULL HR columns are
+    # honest absence (no HR samples inside the rep), never zeros
+    insert_segments! : Str, I64, Str, List(Metrics.Segment), List({ t : I64, v : F64 }) => Try({}, _)
+    insert_segments! = |path, id, signal_name, segs, hr_pairs|
+        walk_segments!(path, id, signal_name, segs, hr_pairs, 0)
+
+    # first WORK segment strictly after index ix — the rec-drop window guard needs it
+    next_work_after : List(Metrics.Segment), U64 -> [NextWorkAt(I64), NoNextWork]
+    next_work_after = |segs, ix|
+        List.fold(List.drop_first(segs, ix + 1), NoNextWork, |acc, s2|
+            match acc {
+                NextWorkAt(t) => NextWorkAt(t)
+                NoNextWork => if s2.kind == Work NextWorkAt(s2.start_s) else NoNextWork
+            })
+
+    walk_segments! : Str, I64, Str, List(Metrics.Segment), List({ t : I64, v : F64 }), U64 => Try({}, _)
+    walk_segments! = |path, id, signal_name, segs, hr_pairs, ix|
+        match List.get(segs, ix) {
+            Err(_) => Ok({})
+            Ok(seg) => {
+                kind_str = match seg.kind {
+                    Work => "work"
+                    Recovery => "recovery"
+                    Warmup => "warmup"
+                    Cooldown => "cooldown"
+                }
+                hr = if seg.kind == Work Metrics.segment_hr(seg, next_work_after(segs, ix), hr_pairs) else NoHr
+                hr_bind = |get| match hr {
+                    Hr(r) => Real(get(r))
+                    NoHr => Null
+                }
+                drop_bind = match hr {
+                    Hr(r) =>
+                        match r.rec_drop_60s {
+                            Known(d) => Real(d)
+                            Unknown => Null
+                        }
+                    NoHr => Null
+                }
+                Sqlite.execute!({
+                    path: Path.utf8(path),
+                    query:
+                        \\INSERT OR REPLACE INTO activity_segments
+                        \\  (activity_id, ordinal, kind, start_s, dur_s, avg_signal, signal, peak_hr, avg_hr, rec_drop_60s)
+                        \\VALUES (:id, :ord, :kind, :ss, :ds, :avg, :sig, :phr, :ahr, :drop)
+                    ,
+                    bindings: [
+                        { name: ":id", value: Integer(id) },
+                        { name: ":ord", value: Integer((ix).to_i64_wrap()) },
+                        { name: ":kind", value: String(kind_str) },
+                        { name: ":ss", value: Integer(seg.start_s) },
+                        { name: ":ds", value: Integer(seg.dur_s) },
+                        { name: ":avg", value: Real(seg.avg_signal) },
+                        { name: ":sig", value: String(signal_name) },
+                        { name: ":phr", value: hr_bind(|r| r.peak_hr) },
+                        { name: ":ahr", value: hr_bind(|r| r.avg_hr) },
+                        { name: ":drop", value: drop_bind },
+                    ],
+                })?
+                walk_segments!(path, id, signal_name, segs, hr_pairs, ix + 1)
+            }
+        }
     # ── daily load (CTL/ATL/TSB) ────────────────────────────────────────
 
     rebuild_daily_load! : Str => Try({}, _)
@@ -855,5 +936,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 25
+    metrics_rev = 27
 }

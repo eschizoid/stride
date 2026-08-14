@@ -178,7 +178,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 19
+    schema_version = 20
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -188,6 +188,7 @@ Db :: [].{
         rename_table_if_exists!(path, "prescriptions", "planned_sessions")?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.activities, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.metrics, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.segments, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.daily_load, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.planned_sessions, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.config, bindings: [] })?

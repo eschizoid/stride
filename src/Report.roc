@@ -231,6 +231,33 @@ Report :: [].{
                 # non-cycling power sports need their own threshold (not yet configured),
                 # so they get 0 here and fall back to the HR "hard" signal.
                 pi_ftp = Db.sport_ftp!(path, a.sport)?
+                # detected interval structure (ADR 0008) — computed tier, may be empty
+                seg_rows = Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query:
+                        \\SELECT ordinal, kind, start_s, dur_s, CAST(avg_signal AS REAL) AS avg_signal, signal,
+                        \\       CAST(COALESCE(peak_hr, 0) AS REAL) AS peak_hr, CAST(COALESCE(avg_hr, 0) AS REAL) AS avg_hr,
+                        \\       CAST(COALESCE(rec_drop_60s, 0) AS REAL) AS rec_drop,
+                        \\       CASE WHEN rec_drop_60s IS NULL THEN 0 ELSE 1 END AS rec_drop_known
+                        \\FROM activity_segments WHERE activity_id = :id ORDER BY ordinal
+                    ,
+                    bindings: [{ name: ":id", value: Integer(aid) }],
+                    rows: |cols| |stmt| {
+                        ordinal = Sqlite.i64("ordinal")(cols)(stmt)?
+                        kind = Sqlite.str("kind")(cols)(stmt)?
+                        start_s = Sqlite.i64("start_s")(cols)(stmt)?
+                        dur_s = Sqlite.i64("dur_s")(cols)(stmt)?
+                        avg_signal = Sqlite.f64("avg_signal")(cols)(stmt)?
+                        signal = Sqlite.str("signal")(cols)(stmt)?
+                        peak_hr = Sqlite.f64("peak_hr")(cols)(stmt)?
+                        avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
+                        rec_drop = Sqlite.f64("rec_drop")(cols)(stmt)?
+                        rdk = Sqlite.i64("rec_drop_known")(cols)(stmt)?
+                        Ok({ ordinal, kind, start_s, dur_s, avg_signal, signal, peak_hr, avg_hr, rec_drop, rec_drop_known: rdk == 1 })
+                    },
+                })?
+                interval_summary = Render.interval_summary(seg_rows)
+                seg_drift = Render.seg_hr_drift(seg_rows)
                 detail =
                     match raw_opt {
                         NotNull(_) => {
@@ -245,9 +272,9 @@ Report :: [].{
                                         Err(_) => 0.0
                                     }
                                 pi = Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
-                                { max_hr: List.fold(hr_pairs, 0.0.F64, |acc, p| (acc).max(p.v)), best_60: best(60), best_180: best(180), best_300: best(300), best_1200: best(1200), easy_s: pi.easy_s, moderate_s: pi.moderate_s, hard_s: pi.hard_s, failed: decoded.failed }
+                                { max_hr: List.fold(hr_pairs, 0.0.F64, |acc, p| (acc).max(p.v)), best_60: best(60), best_180: best(180), best_300: best(300), best_1200: best(1200), easy_s: pi.easy_s, moderate_s: pi.moderate_s, hard_s: pi.hard_s, failed: decoded.failed, has_watts: !(List.is_empty(watts_pairs)), has_dist: !(List.is_empty(Streams.stream_pairs(streams.time, streams.distance))) }
                             }
-                        Null => { max_hr: 0.0, best_60: 0.0, best_180: 0.0, best_300: 0.0, best_1200: 0.0, easy_s: 0, moderate_s: 0, hard_s: 0, failed: False }
+                        Null => { max_hr: 0.0, best_60: 0.0, best_180: 0.0, best_300: 0.0, best_1200: 0.0, easy_s: 0, moderate_s: 0, hard_s: 0, failed: False, has_watts: False, has_dist: False }
                     }
                 pintensity = { easy_s: detail.easy_s, moderate_s: detail.moderate_s, hard_s: detail.hard_s }
                 has_power_intensity = (pintensity.easy_s + pintensity.moderate_s + pintensity.hard_s) > 0
@@ -286,6 +313,17 @@ Report :: [].{
                         # rule cannot carry the distinction on its own.
                         decoupling_pct: a.decoupling_pct,
                         decoupling_known: a.decoupling_known,
+                        # detected structure (ADR 0008), ADDITIVE. Empty list + "" = none
+                        # detected or no stream signal — reporting only, never a judgment.
+                        segments: seg_rows,
+                        interval_summary,
+                        # TRUE = the detector actually ran with a signal (power, or
+                        # pace on a pace-routed sport). Distinguishes "verified: no
+                        # interval structure" from "couldn't look" — an empty segments
+                        # list alone conflates the two.
+                        detection_attempted: detail.has_watts or (Metrics.pace_detect_sport(a.sport) and detail.has_dist),
+                        hr_drift: (seg_drift).ok_or(0.0),
+                        hr_drift_known: seg_drift.is_ok(),
                     })
                 else {
                     dist_str = if a.distance_m >= 1000.0 " · ${Render.fmt1(a.distance_m / 1000.0)} km" else ""
@@ -308,6 +346,16 @@ Report :: [].{
                         Stdout.line!("hr     max ${Render.fmt0(detail.max_hr)} · avg ${Render.fmt0(a.avg_hr)}")
                     else
                         Ok({}))?
+                    # detected structure — absent line when nothing detected (honest absence)
+                    (if Str.is_empty(interval_summary)
+                        Ok({})
+                    else {
+                        drift_line = match seg_drift {
+                            Ok(d) => "\nhr drift ${Render.signed(d)} bpm across reps — rising = fatigue accumulating"
+                            Err(_) => ""
+                        }
+                        Stdout.line!("shape  ${interval_summary}\n${Render.segments_block(seg_rows)}${drift_line}")
+                    })?
                     # aerobic decoupling (#94). Printed ONLY when it was computable —
                     # an absent line is honest, a "drift 0%" line on a session with no
                     # power meter would be a fabricated perfect score.
