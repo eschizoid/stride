@@ -452,8 +452,26 @@ b_seed_analyze! = |ctx| {
     check!("run decoupling is computed and positive", sfloat(run_drift) > 0.0)?
     check!("meter-less ride decoupling stays NULL", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=105 AND decoupling_pct IS NOT NULL;")) == "0")?
     check!("activity JSON labels the run drift as pace", strjq!(ctx, ["activity", "104"], ".data.decoupling_signal") == "pace")?
-    # progress rows carry the per-session drift with its known flag (#135)
-    check!("progress sessions carry a KNOWN decoupling", strjq!(ctx, ["progress", "${ctx.d2}"], "[.data.groups[].sessions[] | select(.decoupling_known == true)] | length | . >= 1") == "true")?
+    # an altitude-less run (a watch without a barometer — a REAL common case) still
+    # gets its drift, labeled "speed" so nobody reads terrain effects as grade-adjusted
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (107,'barometerless run','Run','${ctx.d2}T05:00:00Z',1300,4000,140);")
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) SELECT 107, json_remove(raw_json, '$.altitude') FROM streams WHERE activity_id = 104;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("altitude-less run drift is known", strjq!(ctx, ["activity", "107"], ".data.decoupling_known") == "true")?
+    check!("altitude-less run drift is labeled speed", strjq!(ctx, ["activity", "107"], ".data.decoupling_signal") == "speed")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id=107; DELETE FROM activity_segments WHERE activity_id=107; DELETE FROM streams WHERE activity_id=107; DELETE FROM activities WHERE id=107;")
+
+    # F1 lock (#142 retro): a run whose stream CARRIES a watts channel flagged
+    # device_watts=0 must still label its drift "pace" — the label is stored
+    # provenance from analyze's gated routing, never re-derived from the raw stream
+    _ = sql!(ctx.db, "UPDATE activities SET device_watts = 0 WHERE id = 104;")
+    _ = sql!(ctx.db, "UPDATE streams SET raw_json = (SELECT json_insert(raw_json, '$.watts', json('{\"data\": ' || (SELECT json_extract(raw_json,'$.heartrate.data') FROM streams WHERE activity_id=104) || '}')) FROM streams s2 WHERE s2.activity_id=104) WHERE activity_id = 104;")
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id=104; DELETE FROM activity_segments WHERE activity_id=104;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("estimated-watts run still labels drift as pace", strjq!(ctx, ["activity", "104"], ".data.decoupling_signal") == "pace")?
+    # progress rows carry the per-session drift with its known flag (#135), pinned
+    # PER SESSION so a flag inversion cannot pass on some other session's row
+    check!("the drift run's session is known and positive", strjq!(ctx, ["progress", "${ctx.d2}"], "[.data.groups[] | select(.name | contains(\"drift run\")) | .sessions[] | select(.date == \"${ctx.d2}\")] | .[0] | (.decoupling_known == true and .decoupling_pct > 0)") == "true")?
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (104,105,106); DELETE FROM activity_metrics WHERE activity_id IN (104,105,106); DELETE FROM streams WHERE activity_id IN (104,105,106); DELETE FROM activities WHERE id IN (104,105,106);")
 
     # keep later fixture-sensitive checks honest: remove the interval ride again
@@ -1370,7 +1388,11 @@ seed_pace_hr_stream! = |db, id, n, mps| {
     times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
     dist = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i * mps)), ",")
     hr = Str.join_with(List.map(int_seq(n), |i| U64.to_str(if i * 2 < n 140 else 150)), ",")
-    raw = "{\"time\":{\"data\":[${times}]},\"distance\":{\"data\":[${dist}]},\"heartrate\":{\"data\":[${hr}]}}"
+    # flat measured altitude: real outdoor streams carry one, and the pace
+    # decoupling arm requires a graded triple (an altitude-less "run" cannot
+    # prove its terrain was flat, so it honestly gets Unknown)
+    alt = Str.join_with(List.map(int_seq(n), |_| "100"), ",")
+    raw = "{\"time\":{\"data\":[${times}]},\"distance\":{\"data\":[${dist}]},\"altitude\":{\"data\":[${alt}]},\"heartrate\":{\"data\":[${hr}]}}"
     _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
     {}
 }

@@ -541,8 +541,8 @@ Render :: [].{
             Rpe => "rpe"
         }
         legend = match lens {
-            Ef => "ef = normalized power (np) / avg HR — watts per heartbeat, climbing = fitter · kJ = total work"
-            SpeedHr => "spd/hr (aero-eff) = speed per heartbeat — climbing = fitter · pace is min/km"
+            Ef => "ef = normalized power (np) / avg HR — watts per heartbeat, climbing = fitter · drift = aerobic decoupling, 2nd half vs 1st — LOWER is better, - = not computable · kJ = total work"
+            SpeedHr => "spd/hr (aero-eff) = speed per heartbeat — climbing = fitter · drift = aerobic decoupling, 2nd half vs 1st — LOWER is better, - = not computable · pace is min/km"
             Rpe => "rpe = how hard it felt (1-10) — for a fixed workout, dropping = adapting"
         }
         # no baseline -> no percentage. Printing "(0%)" there claimed a measurement we

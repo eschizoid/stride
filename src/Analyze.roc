@@ -574,12 +574,6 @@ Analyze :: [].{
         hr_dropped = hr_total - List.len(hr_pairs)
         watts_total = List.len(watts_raw)
         watts_dropped = watts_total - List.len(watts_pairs)
-        # aerobic decoupling (#94), from the SAME filtered pairs the rest of the scoring
-        # uses — so a junk HR sample or an estimated-watts stream cannot produce a drift
-        # number that nothing else in the row would agree with. Estimated watts are already
-        # dropped wholesale above (#73), which is what we want: modelled power divided by
-        # real heartbeats is not an efficiency measurement.
-        #
         # held pairs: NP wants values, the bests need real seconds to reject pause-spanning windows
         watts_1s_pairs = Metrics.resample_1s_pairs(watts_pairs, Hold)
         watts_1s = List.map(watts_1s_pairs, |p| p.v)
@@ -627,13 +621,31 @@ Analyze :: [].{
         # graded speed vs HR — same drift arithmetic, same Known/Unknown honesty.
         # Everything else (meter-less rides, rows without watts) stays Unknown:
         # terrain speed over HR is not an efficiency measurement.
+        # Signal provenance is three-valued and stored honestly: "power" (real
+        # watts), "pace" (grade-adjusted speed — a graded triple existed, or a swim
+        # where water is flat and grading is meaningless), or "speed" (raw speed —
+        # no altitude stream, so terrain effects are NOT normalized out; real runs
+        # without a barometer land here and deserve the number WITH the disclosure,
+        # not an amputated feature). Rides never reach the pace/speed arms at all.
         decoupling =
             if !(List.is_empty(watts_pairs))
-                Metrics.decoupling_pct(watts_pairs, hr_pairs)
+                Metrics.decoupling_pct(watts_pairs, hr_pairs, row.s_mt)
             else if Metrics.pace_detect_sport(row.sport)
-                Metrics.decoupling_pct(gas_1s_pairs, hr_pairs)
+                Metrics.decoupling_pct(gas_1s_pairs, hr_pairs, row.s_mt)
             else
                 Unknown
+        graded = !(List.is_empty(graded_triple.time)) or Str.contains(Str.with_ascii_lowercased(row.sport), "swim")
+        decoupling_signal_val =
+            match decoupling {
+                Unknown => Null
+                Known(_) =>
+                    if !(List.is_empty(watts_pairs))
+                        String("power")
+                    else if graded
+                        String("pace")
+                    else
+                        String("speed")
+            }
         gas_speeds = List.map(gas_1s_pairs, |p| p.v)
         ngp_speed = Metrics.normalized_power(gas_speeds)
         best20_speed = Metrics.best_rolling_mean_1s(gas_1s_pairs, 1200)
@@ -739,8 +751,8 @@ Analyze :: [].{
             path: Path.utf8(path),
             query:
                 \\INSERT OR REPLACE INTO activity_metrics
-                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped, mt_used, dist_used, elev_used, aw_used, ahr_used, waw_used, re_used, dw_used, sport_used, start_used, stream_len_used, decoupling_pct)
-                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :thru, :hrt, :hrd, :wt, :wd, :umt, :udist, :uelev, :uaw, :uahr, :uwaw, :ure, :udw, :usport, :ustart, :uslen, :decoup)
+                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped, mt_used, dist_used, elev_used, aw_used, ahr_used, waw_used, re_used, dw_used, sport_used, start_used, stream_len_used, decoupling_pct, decoupling_signal)
+                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :thru, :hrt, :hrd, :wt, :wd, :umt, :udist, :uelev, :uaw, :uahr, :uwaw, :ure, :udw, :usport, :ustart, :uslen, :decoup, :dsig)
             ,
             bindings: [
                 { name: ":umt", value: Integer(row.s_mt) },
@@ -757,6 +769,7 @@ Analyze :: [].{
                 # NULL, not 0, when there is nothing to measure — 0.0 is a real result
                 # here (a perfectly steady session) and the two must stay distinguishable
                 { name: ":decoup", value: match decoupling { Known(d) => Real(d)  Unknown => Null } },
+                { name: ":dsig", value: decoupling_signal_val },
                 { name: ":hrt", value: Integer((hr_total).to_i64_wrap()) },
                 { name: ":hrd", value: Integer((hr_dropped).to_i64_wrap()) },
                 { name: ":wt", value: Integer((watts_total).to_i64_wrap()) },
@@ -945,5 +958,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 28
+    metrics_rev = 29
 }

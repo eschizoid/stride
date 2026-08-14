@@ -1041,11 +1041,19 @@ Metrics :: [].{
     # A join would drop every second where one sensor blinked, silently shrinking the window
     # and biasing whichever half dropped more.
     #
+    # KNOWN ASYMMETRY for the pace signal (#134): grade_step emits nothing for stopped
+    # time, but the HR samples from those same seconds stay in the half mean — so a half
+    # with many stops mixes standing HR against moving-only speeds and biases the number.
+    # Owned rather than hidden: the honest fix (excluding HR over non-emitting stretches)
+    # needs the emitter to publish its gaps, tracked for a future pass. Power is immune —
+    # coasting emits a real 0 W sample, which is exactly why the zeros-stay rule below
+    # only fully holds for power.
+    #
     # Known/Unknown, never a bare 0.0 — the same trap as form_delta_7d, and worse here:
     # 0.0 is a legitimate PERFECT result (no drift at all), so a 0-sentinel would render an
     # ideal ride and a session with no power meter identically.
-    decoupling_pct : List({ t : I64, v : F64 }), List({ t : I64, v : F64 }) -> [Known(F64), Unknown]
-    decoupling_pct = |signal, hr| {
+    decoupling_pct : List({ t : I64, v : F64 }), List({ t : I64, v : F64 }), I64 -> [Known(F64), Unknown]
+    decoupling_pct = |signal, hr, session_s| {
         clean_hr = List.keep_if(hr, |p| valid_hr(p.v))
         # a signal sample of 0 is a real reading (coasting, standing still) and must stay:
         # dropping it would flatter the half that contained more of it
@@ -1059,8 +1067,23 @@ Metrics :: [].{
             # sample can never be counted twice or dropped
             eff1 = half_efficiency(signal, clean_hr, t_lo, mid, First)
             eff2 = half_efficiency(signal, clean_hr, mid, t_hi, Second)
+            # Coverage gate, relative to the SESSION: the signal must span at least
+            # ~10 minutes AND at least half the session's moving time, or the
+            # "session drift" is computed from a fragment — a foot pod that died at
+            # minute 10 of a 60-minute run must not have its fragment sold as the
+            # session. (t_lo/t_hi come from the signal, so a dead sensor shrinks
+            # the span; session_s is the activity's moving time.)
+            span_ok = (t_hi - t_lo) >= 570 and (t_hi - t_lo) >= session_s // 2
             match (eff1, eff2) {
-                (Known(e1), Known(e2)) if e1 > 0.0 => Known((e1 - e2) / e1 * 100.0)
+                (Known(e1), Known(e2)) if e1 > 0.0 and span_ok => {
+                    pct = (e1 - e2) / e1 * 100.0
+                    # Magnitude gate: physiological decoupling lives within tens of
+                    # percent. Beyond ±50 the number is a measurement artifact —
+                    # GPS creep while standing produces near-zero first-half
+                    # efficiency and a four-digit "drift" — and an artifact stored
+                    # as Known poisons every table it reaches. Unknown is honest.
+                    if (pct).abs() <= 50.0 Known(pct) else Unknown
+                }
                 _ => Unknown
             }
         }
@@ -1826,10 +1849,13 @@ Metrics :: [].{
         }
     }
 
-    # detection runs on pace only for sports where speed IS the effort signal —
-    # runs and swims per ADR 0008. A meter-less RIDE must not fall through to
-    # pace detection: cycling speed varies with terrain, and run-tuned pace
-    # parameters would read every descent as a work rep.
+    # Sports where speed IS the effort signal — runs and swims per ADR 0008.
+    # LOAD-BEARING FOR TWO POLICIES: interval detection's pace routing AND
+    # aerobic decoupling's pace arm (#134). A meter-less RIDE must not fall
+    # through to either: cycling speed varies with terrain, so run-tuned pace
+    # parameters would invent work reps, and speed-over-HR would masquerade as
+    # efficiency. Widening this list widens both features at once — on purpose,
+    # but consciously.
     pace_detect_sport : Str -> Bool
     pace_detect_sport = |sport| {
         low = Str.with_ascii_lowercased(sport)
@@ -2286,109 +2312,25 @@ expect {
 
 
 # ── aerobic decoupling (#94) ─────────────────────────────────────────
-# Flat 200W throughout; HR rises 100 -> 110 exactly at the halfway sample (t=9, the
-# midpoint of 0..19, which belongs to the SECOND half). Efficiency goes 200/100 = 2.0 to
-# 200/110 = 1.818, so the drift is (2.0 - 1.818) / 2.0 = 9.09% — the same output costing
-# more heartbeats.
+# Flat 200W for 20 minutes; HR rises 100 -> 110 exactly at the half boundary (mid =
+# t_lo + span//2 = 599, which belongs to the SECOND half). Efficiency goes 200/100 = 2.0 to 200/110 = 1.818,
+# so the drift is (2.0 - 1.818) / 2.0 = 9.09% — the same output costing more heartbeats.
+# 20 minutes, not 20 samples: each half must clear the 5-minute coverage gate.
 expect {
-    power = [
-        { t: 0, v: 200.0 },
-        { t: 1, v: 200.0 },
-        { t: 2, v: 200.0 },
-        { t: 3, v: 200.0 },
-        { t: 4, v: 200.0 },
-        { t: 5, v: 200.0 },
-        { t: 6, v: 200.0 },
-        { t: 7, v: 200.0 },
-        { t: 8, v: 200.0 },
-        { t: 9, v: 200.0 },
-        { t: 10, v: 200.0 },
-        { t: 11, v: 200.0 },
-        { t: 12, v: 200.0 },
-        { t: 13, v: 200.0 },
-        { t: 14, v: 200.0 },
-        { t: 15, v: 200.0 },
-        { t: 16, v: 200.0 },
-        { t: 17, v: 200.0 },
-        { t: 18, v: 200.0 },
-        { t: 19, v: 200.0 },
-    ]
-    hr = [
-        { t: 0, v: 100.0 },
-        { t: 1, v: 100.0 },
-        { t: 2, v: 100.0 },
-        { t: 3, v: 100.0 },
-        { t: 4, v: 100.0 },
-        { t: 5, v: 100.0 },
-        { t: 6, v: 100.0 },
-        { t: 7, v: 100.0 },
-        { t: 8, v: 100.0 },
-        { t: 9, v: 110.0 },
-        { t: 10, v: 110.0 },
-        { t: 11, v: 110.0 },
-        { t: 12, v: 110.0 },
-        { t: 13, v: 110.0 },
-        { t: 14, v: 110.0 },
-        { t: 15, v: 110.0 },
-        { t: 16, v: 110.0 },
-        { t: 17, v: 110.0 },
-        { t: 18, v: 110.0 },
-        { t: 19, v: 110.0 },
-    ]
-    match Metrics.decoupling_pct(power, hr) {
+    power = Iter.fold(0.I64..<1200, [], |acc, t| List.append(acc, { t, v: 200.0 }))
+    hr = Iter.fold(0.I64..<1200, [], |acc, t| List.append(acc, { t, v: if t < 599 100.0 else 110.0 }))
+    match Metrics.decoupling_pct(power, hr, 1200) {
         Known(d) => (d - 9.0909).abs() < 0.01
         Unknown => False
     }
 }
 
 # a perfectly steady session drifts 0 — and that 0 is a REAL answer, which is exactly why
-# the return is Known/Unknown rather than a bare float
+# the Known/Unknown pair exists instead of a 0-sentinel
 expect {
-    power = [
-        { t: 0, v: 200.0 },
-        { t: 1, v: 200.0 },
-        { t: 2, v: 200.0 },
-        { t: 3, v: 200.0 },
-        { t: 4, v: 200.0 },
-        { t: 5, v: 200.0 },
-        { t: 6, v: 200.0 },
-        { t: 7, v: 200.0 },
-        { t: 8, v: 200.0 },
-        { t: 9, v: 200.0 },
-        { t: 10, v: 200.0 },
-        { t: 11, v: 200.0 },
-        { t: 12, v: 200.0 },
-        { t: 13, v: 200.0 },
-        { t: 14, v: 200.0 },
-        { t: 15, v: 200.0 },
-        { t: 16, v: 200.0 },
-        { t: 17, v: 200.0 },
-        { t: 18, v: 200.0 },
-        { t: 19, v: 200.0 },
-    ]
-    hr = [
-        { t: 0, v: 100.0 },
-        { t: 1, v: 100.0 },
-        { t: 2, v: 100.0 },
-        { t: 3, v: 100.0 },
-        { t: 4, v: 100.0 },
-        { t: 5, v: 100.0 },
-        { t: 6, v: 100.0 },
-        { t: 7, v: 100.0 },
-        { t: 8, v: 100.0 },
-        { t: 9, v: 100.0 },
-        { t: 10, v: 100.0 },
-        { t: 11, v: 100.0 },
-        { t: 12, v: 100.0 },
-        { t: 13, v: 100.0 },
-        { t: 14, v: 100.0 },
-        { t: 15, v: 100.0 },
-        { t: 16, v: 100.0 },
-        { t: 17, v: 100.0 },
-        { t: 18, v: 100.0 },
-        { t: 19, v: 100.0 },
-    ]
-    match Metrics.decoupling_pct(power, hr) {
+    power = Iter.fold(0.I64..<1200, [], |acc, t| List.append(acc, { t, v: 200.0 }))
+    hr = Iter.fold(0.I64..<1200, [], |acc, t| List.append(acc, { t, v: 100.0 }))
+    match Metrics.decoupling_pct(power, hr, 1200) {
         Known(d) => (d).abs() < 0.001
         Unknown => False
     }
@@ -2397,7 +2339,29 @@ expect {
 # no power at all is Unknown, not 0 — a session without a meter must not render as a
 # flawless one
 expect {
-    match Metrics.decoupling_pct([], [{ t: 0, v: 100.0 }]) {
+    match Metrics.decoupling_pct([], [{ t: 0, v: 100.0 }], 1200) {
+        Known(_) => False
+        Unknown => True
+    }
+}
+
+# a signal that only spans a FRAGMENT of the session (foot pod died at minute 10 of 60)
+# must not have that fragment sold as the session's drift — under 5 min per half is Unknown
+expect {
+    power = Iter.fold(0.I64..<400, [], |acc, t| List.append(acc, { t, v: 200.0 }))
+    hr = Iter.fold(0.I64..<400, [], |acc, t| List.append(acc, { t, v: 120.0 }))
+    match Metrics.decoupling_pct(power, hr, 1200) {
+        Known(_) => False
+        Unknown => True
+    }
+}
+
+# GPS creep: standing 10 min (jitter speeds ~0.05 m/s) then running 10 min computes a
+# four-digit "drift" — an artifact, not physiology. Beyond ±50% is Unknown, never Known
+expect {
+    speed = Iter.fold(0.I64..<1200, [], |acc, t| List.append(acc, { t, v: if t < 600 0.05 else 3.0 }))
+    hr = Iter.fold(0.I64..<1200, [], |acc, t| List.append(acc, { t, v: if t < 600 80.0 else 150.0 }))
+    match Metrics.decoupling_pct(speed, hr, 1200) {
         Known(_) => False
         Unknown => True
     }
@@ -2406,7 +2370,7 @@ expect {
 # HR that is all junk (a dropped strap reading 20 bpm) leaves nothing to divide by
 expect {
     power = [{ t: 0, v: 200.0 }, { t: 10, v: 200.0 }]
-    match Metrics.decoupling_pct(power, [{ t: 0, v: 20.0 }, { t: 10, v: 20.0 }]) {
+    match Metrics.decoupling_pct(power, [{ t: 0, v: 20.0 }, { t: 10, v: 20.0 }], 1200) {
         Known(_) => False
         Unknown => True
     }
