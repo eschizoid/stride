@@ -20,7 +20,7 @@ $ stride summary
 ── stride report (as of 2026-07-31) ──────────────────
 
   fitness (CTL): 25   fatigue (ATL): 25   form (TSB): 0
-  → balanced — good day for intensity if you feel it
+  → form 0, level with a week ago — balanced
 
   last 28 days:
     training load: 819 (79% measured — rest estimated from HR/RPE; see doctor)

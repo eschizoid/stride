@@ -373,6 +373,14 @@ b_seed_analyze! = |ctx| {
     # first analyze converges the derived FTP: pass 1 scores both rows (best_20min_w still 0
     # -> FTP 0), pass 2 recomputes the ride once its best_20min_w resolves FTP to 190: 2+1=3
     check!("analyze computes 3 (derived-FTP convergence)", strjq!(ctx, ["analyze"], ".data.computed") == "3")?
+    # form_delta_known must be a JSON BOOLEAN, not the string "True". An unconstrained Roc
+    # tag serializes as a quoted string, and analyze's payload is encode-only so nothing
+    # constrains it — that is how "True" shipped. Asserting the TYPE rather than the value:
+    # `jq -r` prints the string "True" as True, so `== "true"` would in fact have caught
+    # THAT spelling, but it would still pass on a lowercase string, and on null/absent.
+    # The type check catches every one.
+    check!("analyze form_delta_known is a boolean, not a string", strjq!(ctx, ["analyze"], ".data.form_delta_known | type") == "boolean")?
+    check!("analyze form_tsb_known is a boolean too", strjq!(ctx, ["analyze"], ".data.form_tsb_known | type") == "boolean")?
     check!("summary as_of is today", strjq!(ctx, ["summary"], ".data.as_of") == ctx.today)?
     # #93: ramp carries BOTH fields, and a short history reports an honest 0 rather than
     # today's whole CTL — which is what treating "no data 7 days back" as a CTL of 0 would
@@ -393,12 +401,29 @@ b_seed_analyze! = |ctx| {
     # This fixture has only a couple of days, so nothing reaches back a week. The flag must
     # say so rather than the 0.0 being read as "form held level" — that distinction is the
     # whole reason the field exists.
+    check!("summary form_delta_known is a boolean too", strjq!(ctx, ["summary"], ".data.form_delta_known | type") == "boolean")?
     check!("form_delta_known is false on a short history", strjq!(ctx, ["summary"], ".data.form_delta_known") == "false")?
+    # #123: the verdict NAMES the state and stops prescribing. Asserting the absence of the
+    # old advice AND the presence of the label, so it cannot pass by the line disappearing.
+    check!("form_band_days is a number", strjq!(ctx, ["summary"], ".data.form_band_days | type") == "number")?
+    # The TYPE check alone is stub-safe: a hard-coded `form_band_days: 0` satisfies it, and
+    # band_days_phrase suppresses 0, so the feature could be fully disconnected from
+    # days_in_band with the suite green. The fixture's daily_load runs consecutive days
+    # ending today, so a real streak is >= 1 — pin that it is WIRED, and that the capped
+    # flag is a genuine boolean rather than another stringified tag.
+    check!("...and is wired to a real streak, not a stub", str_to_i64(strjq!(ctx, ["summary"], ".data.form_band_days")) >= 1)?
+    check!("...with a boolean capped flag beside it", strjq!(ctx, ["summary"], ".data.form_band_days_capped | type") == "boolean")?
+    summary_verdict = stride_human!(ctx.bin, ctx.home, ["summary"])
+    # "→ form " — the ARROW is what makes this the verdict line. Plain "form " also matches
+    # the header row above it ("fitness (CTL): ... form (TSB): ..."), so the earlier version
+    # of this check passed even with the entire verdict deleted, which is exactly what its
+    # comment claimed it prevented.
+    check!("the verdict still names the state", Str.contains(summary_verdict, "→ form "))?
+    check!("...and no longer prescribes training", !(Str.contains(summary_verdict, "favor easy work")) and !(Str.contains(summary_verdict, "good day for")))?
     check_near!("...and the delta itself is an honest 0", sfloat(strjq!(ctx, ["summary"], ".data.form_delta_7d")), 0.0, 0.001)?
-    # and the human line must NOT claim a trend it does not have
-    summary_h = stride_human!(ctx.bin, ctx.home, ["summary"])
-    check!("human verdict still prints the form line", Str.contains(summary_h, "form "))?
-    check!("...but omits the week-ago clause when unknown", !(Str.contains(summary_h, "week ago")))?
+    # reuses summary_verdict above rather than running `summary` a second time — one
+    # invocation, several assertions about the same output
+    check!("...and omits the week-ago clause when the trend is unknown", !(Str.contains(summary_verdict, "week ago")))?
     # power ride NP 200 @ derived FTP 190 => TSS ~110.8; HR row ~55 => ~166
     check_near!("28d tss ~166 (111 power + 55 hr)", sfloat(strjq!(ctx, ["summary"], ".data.last_28d.tss")), 165.8, 1.0)?
     mp = sfloat(strjq!(ctx, ["summary"], ".data.last_28d.measured_pct"))

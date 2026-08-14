@@ -60,15 +60,45 @@ Analyze :: [].{
                         Ok(latest) => Some(latest)
                         Err(_) => None
                     }
+                # DROP rows whose day will not parse rather than mapping them to epoch day
+                # 0. Day 0 is a perfectly valid day number, so a collapsed row becomes a
+                # legitimate-looking candidate for the 7-days-back lookup: on a young
+                # database that turns "no history to compare" into a confident
+                # `up 34 from a week ago`, certified by form_delta_known: true. Dropping
+                # leaves a genuine gap, and a gap is what form_delta_7d reports honestly.
+                dated_form_rows = List.keep_oks(form_rows, |r|
+                    match Metrics.date_str_to_days(r.day) {
+                        Ok(day) => Ok({ day, tsb: r.tsb })
+                        Err(_) => Err({})
+                    })
                 form_delta =
                     match tsb_opt {
                         None => Unknown
                         Some(latest) =>
-                            Metrics.form_delta_7d(
-                                List.map(form_rows, |r| { day: Metrics.date_str_to_days(r.day).ok_or(0), tsb: r.tsb }),
-                                Metrics.date_str_to_days(latest.day).ok_or(0),
-                            )
+                            match Metrics.date_str_to_days(latest.day) {
+                                # an unparseable anchor is not an anchor — no comparison is
+                                # possible, and Unknown is the honest report
+                                Err(_) => Unknown
+                                Ok(anchor) => Metrics.form_delta_7d(dated_form_rows, anchor)
+                            }
                     }
+                # ANNOTATED Bool, not a bare `True`/`False` tag. The builtin JSON serializes
+                # an unconstrained tag as the STRING "True", and nothing here constrains it:
+                # this payload is ENCODE-ONLY. summary's identical expression is fine only
+                # because its payload is also RENDERED, and `Render.summary_screen` consumes
+                # the field as an `if` condition, which flows Bool back through the
+                # un-annotated renderer. Neighbouring Bool fields are irrelevant — record
+                # fields do not constrain each other, and `converged: Bool` sits two lines
+                # below this one while the bug shipped anyway.
+                delta_known : Bool
+                delta_known = match form_delta { Known(_) => True  Unknown => False }
+                # form_tsb needs the same treatment as form_delta_7d: 0.0 TSB is a real and
+                # common value meaning "balanced", so an empty daily_load flattening to 0.0
+                # tells a machine consumer that form is balanced when the truth is that
+                # there is no form yet. The human branch already gets this right by printing
+                # nothing; this makes the JSON agree with it.
+                tsb_known : Bool
+                tsb_known = match tsb_opt { Some(_) => True  None => False }
                 if Output.json_mode!({}) {
                     form_tsb =
                         match tsb_opt {
@@ -77,14 +107,16 @@ Analyze :: [].{
                         }
                     # `converged` is an ADDITIVE field — existing consumers keep working, so the
                     # envelope version stays. False = fuel ran out; run analyze again to continue.
-                    # form_delta_7d/known are additive on the same grounds (#111); the flag is
-                    # needed because 0.0 means both "level" and "not enough history" here.
+                    # form_delta_7d/known and form_tsb_known are additive on the same grounds;
+                    # each flag exists because its number has a legitimate value (0.0) that
+                    # collides with "not available".
                     Output.emit_ok!({
                         computed: res.computed,
                         stream_errors: res.stream_errors,
                         form_tsb,
                         form_delta_7d: match form_delta { Known(d) => d  Unknown => 0.0 },
-                        form_delta_known: match form_delta { Known(_) => True  Unknown => False },
+                        form_delta_known: delta_known,
+                        form_tsb_known: tsb_known,
                         converged: res.converged,
                     })
                 } else {
