@@ -9,7 +9,6 @@ import pf.Stdout
 import pf.Path
 import Metrics
 import Render
-import Sql
 
 Report :: [].{
     # ── shared queries ──────────────────────────────────────────────────
@@ -17,8 +16,9 @@ Report :: [].{
     # zone + TSS totals for activities on/after a cutoff date
     zone_sum! : Str, Str => Try({ z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, measured : F64, easy : I64, moderate : I64, hard : I64, sessions : I64, moving_time : I64, distance_m : F64, hr_streams : I64, intensity_streams : I64 }, _)
     zone_sum! = |path, cutoff|
-        Sqlite.query!(Sql.row(
-            Path.utf8(path),
+        Sqlite.query!({
+            path: Path.utf8(path),
+            query:
                 \\SELECT COALESCE(SUM(m.z1_s),0) AS z1, COALESCE(SUM(m.z2_s),0) AS z2, COALESCE(SUM(m.z3_s),0) AS z3,
                 \\       COALESCE(SUM(m.z4_s),0) AS z4, COALESCE(SUM(m.z5_s),0) AS z5, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
                 \\       -- load from a MEASURED source — a power meter or GPS-measured pace
@@ -39,8 +39,8 @@ Report :: [].{
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\WHERE a.start_local >= :cutoff
             ,
-            [{ name: ":cutoff", value: String(cutoff) }],
-            |cols| |stmt| {
+            bindings: [{ name: ":cutoff", value: String(cutoff) }],
+            row: |cols| |stmt| {
                 z1 = Sqlite.i64("z1")(cols)(stmt)?
                 z2 = Sqlite.i64("z2")(cols)(stmt)?
                 z3 = Sqlite.i64("z3")(cols)(stmt)?
@@ -58,22 +58,23 @@ Report :: [].{
                 intensity_streams = Sqlite.i64("intensity_streams")(cols)(stmt)?
                 Ok({ z1, z2, z3, z4, z5, tss, measured, easy, moderate, hard, sessions, moving_time, distance_m, hr_streams, intensity_streams })
             },
-        ))
+        })
 
     # activity stats within a half-open [from, to) date window (both are date strings
     # compared against start_local; ISO makes the lexical compare correct)
     window_stats! : Str, Str, Str => Try({ z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, sessions : I64 }, _)
     window_stats! = |path, from_str, to_str|
-        Sqlite.query!(Sql.row(
-            Path.utf8(path),
+        Sqlite.query!({
+            path: Path.utf8(path),
+            query:
                 \\SELECT COALESCE(SUM(m.z1_s),0) AS z1, COALESCE(SUM(m.z2_s),0) AS z2, COALESCE(SUM(m.z3_s),0) AS z3,
                 \\       COALESCE(SUM(m.z4_s),0) AS z4, COALESCE(SUM(m.z5_s),0) AS z5,
                 \\       CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss, COUNT(*) AS sessions
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE a.start_local >= :from AND a.start_local < :to
             ,
-            [{ name: ":from", value: String(from_str) }, { name: ":to", value: String(to_str) }],
-            |cols| |stmt| {
+            bindings: [{ name: ":from", value: String(from_str) }, { name: ":to", value: String(to_str) }],
+            row: |cols| |stmt| {
                 z1 = Sqlite.i64("z1")(cols)(stmt)?
                 z2 = Sqlite.i64("z2")(cols)(stmt)?
                 z3 = Sqlite.i64("z3")(cols)(stmt)?
@@ -83,12 +84,17 @@ Report :: [].{
                 sessions = Sqlite.i64("sessions")(cols)(stmt)?
                 Ok({ z1, z2, z3, z4, z5, tss, sessions })
             },
-        ))
+        })
 
     # CTL as of a given day (most recent daily_load row on or before it); 0 if none
     ctl_at! : Str, Str => Try(F64, _)
     ctl_at! = |path, day_str|
-        match Sqlite.query!(Sql.row(Path.utf8(path), "SELECT ctl AS ctl FROM daily_load WHERE day <= :d ORDER BY day DESC LIMIT 1", [{ name: ":d", value: String(day_str) }], Sqlite.f64("ctl"))) {
+        match Sqlite.query!({
+            path: Path.utf8(path),
+            query: "SELECT ctl AS ctl FROM daily_load WHERE day <= :d ORDER BY day DESC LIMIT 1",
+            bindings: [{ name: ":d", value: String(day_str) }],
+            row: Sqlite.f64("ctl"),
+        }) {
             Ok(v) => Ok(v)
             Err(NoRowsReturned) => Ok(0.0)
             Err(e) => Err(e)
@@ -103,7 +109,7 @@ Report :: [].{
         } else {
             days = if period == "month" 28 else 7
             label = if period == "month" "28d" else "7d"
-            match Sqlite.query!(Sql.row(Path.utf8(path), "SELECT day AS day FROM daily_load ORDER BY day DESC LIMIT 1", [], Sqlite.str("day"))) {
+            match Sqlite.query!({ path: Path.utf8(path), query: "SELECT day AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sqlite.str("day") }) {
                 Err(NoRowsReturned) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
                 Err(e) => Err(e)
                 Ok(latest_day) => {
@@ -136,7 +142,12 @@ Report :: [].{
     # does a row with this id exist? (table is an internal literal, never user input)
     row_exists! : Str, Str, I64 => Try(Bool, _)
     row_exists! = |path, table, id| {
-        n = Sqlite.query!(Sql.row(Path.utf8(path), "SELECT COUNT(*) AS n FROM ${table} WHERE id = :id", [{ name: ":id", value: Integer(id) }], Sqlite.i64("n")))?
+        n = Sqlite.query!({
+            path: Path.utf8(path),
+            query: "SELECT COUNT(*) AS n FROM ${table} WHERE id = :id",
+            bindings: [{ name: ":id", value: Integer(id) }],
+            row: Sqlite.i64("n"),
+        })?
         Ok(n > 0)
     }
     pct_num : I64, I64 -> I64
@@ -158,8 +169,9 @@ Report :: [].{
     }
     activity_body! : Str, Str, I64 => Try({}, _)
     activity_body! = |path, id_str, aid| {
-        rows = Sqlite.query_many!(Sql.rows(
-            Path.utf8(path),
+        rows = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
                 \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport, a.name AS name,
                 \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
@@ -173,8 +185,8 @@ Report :: [].{
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE a.id = :id LIMIT 1
             ,
-            [{ name: ":id", value: Integer(aid) }],
-            |cols| |stmt| {
+            bindings: [{ name: ":id", value: Integer(aid) }],
+            rows: |cols| |stmt| {
                 id = Sqlite.i64("id")(cols)(stmt)?
                 date = Sqlite.str("date")(cols)(stmt)?
                 sport = Sqlite.str("sport")(cols)(stmt)?
@@ -198,11 +210,16 @@ Report :: [].{
                 decoupling_known = Sqlite.i64("decoupling_known")(cols)(stmt)?
                 Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr, decoupling_pct, decoupling_known: decoupling_known != 0 })
             },
-        ))?
+        })?
         match List.first(rows) {
             Err(_) => Output.err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
             Ok(a) => {
-                raw_rows = Sqlite.query_many!(Sql.rows(Path.utf8(path), "SELECT raw_json AS raw FROM streams WHERE activity_id = :id", [{ name: ":id", value: Integer(aid) }], Sqlite.str("raw")))?
+                raw_rows = Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query: "SELECT raw_json AS raw FROM streams WHERE activity_id = :id",
+                    bindings: [{ name: ":id", value: Integer(aid) }],
+                    rows: Sqlite.str("raw"),
+                })?
                 raw_opt =
                     match List.first(raw_rows) {
                         Ok(text) => NotNull(text)
@@ -336,23 +353,24 @@ Report :: [].{
     }
     stats_rows! : Str, Str => Try(List({ sport : Str, sessions : I64, hours : F64, km : F64 }), _)
     stats_rows! = |path, cutoff|
-        Sqlite.query_many!(Sql.rows(
-            Path.utf8(path),
+        Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
                 \\SELECT sport_type AS sport, COUNT(*) AS sessions,
                 \\       CAST(SUM(moving_time) / 3600.0 AS REAL) AS hours,
                 \\       CAST(COALESCE(SUM(distance), 0) / 1000.0 AS REAL) AS km
                 \\FROM activities WHERE start_local >= :cutoff
                 \\GROUP BY sport_type ORDER BY sessions DESC, sport_type
             ,
-            [{ name: ":cutoff", value: String(cutoff) }],
-            |cols| |stmt| {
+            bindings: [{ name: ":cutoff", value: String(cutoff) }],
+            rows: |cols| |stmt| {
                 sport = Sqlite.str("sport")(cols)(stmt)?
                 sessions = Sqlite.i64("sessions")(cols)(stmt)?
                 hours = Sqlite.f64("hours")(cols)(stmt)?
                 km = Sqlite.f64("km")(cols)(stmt)?
                 Ok({ sport, sessions, hours, km })
             },
-        ))
+        })
 
     # the one-call coach-input payload
     summary! : {} => Try({}, _)
@@ -390,8 +408,9 @@ Report :: [].{
                 # name honest — the alternative, relabelling to 15, would have meant
                 # renaming the JSON field and breaking its consumers over a fencepost.
                 cutoff14 = Metrics.days_to_date_str(anchor - 13)
-                recent = Sqlite.query_many!(Sql.rows(
-                    Path.utf8(path),
+                recent = Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query:
                         \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport, a.name AS name,
                         \\       a.moving_time AS moving_time, CAST(COALESCE(m.tss,0) AS REAL) AS tss,
                         \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
@@ -406,8 +425,8 @@ Report :: [].{
                         \\WHERE a.start_local >= :cutoff
                         \\ORDER BY a.start_local DESC, a.id DESC
                     ,
-                    [{ name: ":cutoff", value: String(cutoff14) }],
-                    |cols| |stmt| {
+                    bindings: [{ name: ":cutoff", value: String(cutoff14) }],
+                    rows: |cols| |stmt| {
                         id = Sqlite.i64("id")(cols)(stmt)?
                         date = Sqlite.str("date")(cols)(stmt)?
                         sport = Sqlite.str("sport")(cols)(stmt)?
@@ -430,16 +449,17 @@ Report :: [].{
                         avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
                         Ok({ id, date, sport, name, moving_time, tss, intensity, z1_s, z2_s, z3_s, z4_s, z5_s, hard_s, distance_m, np_w, relative_effort, avg_hr })
                     },
-                ))?
-                open_p = Sqlite.query_many!(Sql.rows(
-                    Path.utf8(path),
+                })?
+                open_p = Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query:
                         \\SELECT id AS id, COALESCE(target_date,'') AS target_date, COALESCE(session_type,'') AS session_type,
                         \\       COALESCE(detail,'') AS detail, COALESCE(rationale,'') AS rationale
                         \\FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'
                         \\ORDER BY target_date, id
                     ,
-                    [],
-                    |cols| |stmt| {
+                    bindings: [],
+                    rows: |cols| |stmt| {
                         id = Sqlite.i64("id")(cols)(stmt)?
                         target_date = Sqlite.str("target_date")(cols)(stmt)?
                         session_type = Sqlite.str("session_type")(cols)(stmt)?
@@ -447,7 +467,7 @@ Report :: [].{
                         rationale = Sqlite.str("rationale")(cols)(stmt)?
                         Ok({ id, target_date, session_type, detail, rationale })
                     },
-                ))?
+                })?
                 if Output.json_mode!({}) {
                     Output.emit_ok!({
                         summary: s,
@@ -522,18 +542,18 @@ Report :: [].{
         # error to blow up on — map NoRowsReturned to a tag the callers turn into a
         # friendly message instead of leaking a raw SQLite error to the user.
         latest =
-            match Sqlite.query!(Sql.row(
-                Path.utf8(path),
-                "SELECT day AS day, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
-                [],
-                |cols| |stmt| {
+            match Sqlite.query!({
+                path: Path.utf8(path),
+                query: "SELECT day AS day, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
+                bindings: [],
+                row: |cols| |stmt| {
                     day = Sqlite.str("day")(cols)(stmt)?
                     ctl = Sqlite.f64("ctl")(cols)(stmt)?
                     atl = Sqlite.f64("atl")(cols)(stmt)?
                     tsb = Sqlite.f64("tsb")(cols)(stmt)?
                     Ok({ day, ctl, atl, tsb })
                 },
-            )) {
+            }) {
                 Ok(v) => Ok(v)
                 Err(NoRowsReturned) => Err(NoDataYet)
                 Err(e) => Err(e)
@@ -553,26 +573,28 @@ Report :: [].{
 
         zsum = zone_sum!(path, cutoff28)?
 
-        best20_row = Sqlite.query!(Sql.row(
-            Path.utf8(path),
+        best20_row = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
                 \\SELECT CAST(COALESCE(MAX(m.best_20min_w),0) AS REAL) AS b FROM activity_metrics m
                 \\JOIN activities a ON a.id = m.activity_id
                 \\WHERE a.start_local >= :cutoff
             ,
-            [{ name: ":cutoff", value: String(cutoff60) }],
-            Sqlite.f64("b"),
-        ))?
+            bindings: [{ name: ":cutoff", value: String(cutoff60) }],
+            row: Sqlite.f64("b"),
+        })?
 
-        sports = Sqlite.query_many!(Sql.rows(
-            Path.utf8(path),
+        sports = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
                 \\SELECT a.sport_type AS sport, COUNT(*) AS sessions, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
                 \\       COALESCE(SUM(a.moving_time),0) AS moving_time, CAST(COALESCE(SUM(a.distance),0) AS REAL) AS distance_m
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE a.start_local >= :cutoff
                 \\GROUP BY a.sport_type ORDER BY tss DESC, a.sport_type
             ,
-            [{ name: ":cutoff", value: String(cutoff28) }],
-            |cols| |stmt| {
+            bindings: [{ name: ":cutoff", value: String(cutoff28) }],
+            rows: |cols| |stmt| {
                 sport = Sqlite.str("sport")(cols)(stmt)?
                 sessions = Sqlite.i64("sessions")(cols)(stmt)?
                 tss = Sqlite.f64("tss")(cols)(stmt)?
@@ -580,23 +602,29 @@ Report :: [].{
                 distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
                 Ok({ sport, sessions, tss, moving_time, distance_m })
             },
-        ))?
+        })?
 
         cutoff7 = Metrics.days_to_date_str(anchor - 6)
         zsum7 = zone_sum!(path, cutoff7)?
 
-        pending = Sqlite.query!(Sql.row(Path.utf8(path), "SELECT COUNT(*) AS n FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'", [], Sqlite.i64("n")))?
+        pending = Sqlite.query!({
+            path: Path.utf8(path),
+            query: "SELECT COUNT(*) AS n FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'",
+            bindings: [],
+            row: Sqlite.i64("n"),
+        })?
 
         # most recent day with a real hard stimulus (5+ min in Z4/Z5); '' = never
-        last_hard = Sqlite.query!(Sql.row(
-            Path.utf8(path),
+        last_hard = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
                 \\SELECT COALESCE(MAX(substr(a.start_local, 1, 10)), '') AS d
                 \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
                 \\WHERE m.z4_s + m.z5_s >= 300
             ,
-            [],
-            Sqlite.str("d"),
-        ))?
+            bindings: [],
+            row: Sqlite.str("d"),
+        })?
 
         # polarization is power-aware: easy/moderate/hard come from POWER zones for
         # activities that have power-intensity, HR zones otherwise (zone_sum! per-activity)
@@ -616,7 +644,12 @@ Report :: [].{
         # threshold is two constants (~90 d, ~88% converged), past which the form bands —
         # absolute numbers — start meaning something. COUNT(*) always returns a row, so this
         # query cannot hit the absent-key crash.
-        load_days = Sqlite.query!(Sql.row(Path.utf8(path), "SELECT COUNT(*) AS n FROM daily_load", [], Sqlite.i64("n")))?
+        load_days = Sqlite.query!({
+            path: Path.utf8(path),
+            query: "SELECT COUNT(*) AS n FROM daily_load",
+            bindings: [],
+            row: Sqlite.i64("n"),
+        })?
 
         # #93 ramp: reuses the `anchor` this function already computed, rather than
         # deriving the same day again — two bindings for one day can drift, and then the
@@ -625,11 +658,11 @@ Report :: [].{
         # also bounds days_in_band, which has NO natural upper limit. That is why the streak
         # returns AtLeast when it fills this window rather than a bare number: widening the
         # window moves the truncation point, it does not remove it.
-        ramp_rows = Sqlite.query_many!(Sql.rows(
-            Path.utf8(path),
-            "SELECT day AS day, CAST(ctl AS REAL) AS ctl, CAST(tsb AS REAL) AS tsb FROM daily_load WHERE day >= :cutoff ORDER BY day DESC",
-            [{ name: ":cutoff", value: String(Metrics.days_to_date_str(anchor - 30)) }],
-            |cols| |stmt| {
+        ramp_rows = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "SELECT day AS day, CAST(ctl AS REAL) AS ctl, CAST(tsb AS REAL) AS tsb FROM daily_load WHERE day >= :cutoff ORDER BY day DESC",
+            bindings: [{ name: ":cutoff", value: String(Metrics.days_to_date_str(anchor - 30)) }],
+            rows: |cols| |stmt| {
                 d = Sqlite.str("day")(cols)(stmt)?
                 c = Sqlite.f64("ctl")(cols)(stmt)?
                 # tsb rides along on the ramp query rather than getting its own: the two
@@ -638,7 +671,7 @@ Report :: [].{
                 t = Sqlite.f64("tsb")(cols)(stmt)?
                 Ok({ d, ctl: c, tsb: t })
             },
-        ))?
+        })?
         # Convert OUTSIDE the decoder, whose error union has no room for BadDate, and
         # PROPAGATE rather than defaulting a bad day to epoch-day 0. That default is not
         # harmless: a day-0 row is a valid candidate for any lookback, so where the series
@@ -757,8 +790,9 @@ Report :: [].{
         # Interpolating the filter would splice a compile-time-constant "" into the query
         # (bare `activities` -> Activities(30, "")), which crashes this backend in
         # str_concat — a heap-corruption SIGABRT. Binding sidesteps it. Same class as #32.
-        rows = Sqlite.query_many!(Sql.rows(
-            Path.utf8(path),
+        rows = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
                 \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport, a.name AS name,
                 \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
@@ -774,8 +808,8 @@ Report :: [].{
                 \\WHERE (:sport = '' OR a.sport_type = :sport COLLATE NOCASE)
                 \\ORDER BY a.start_local DESC, a.id DESC LIMIT ${(limit).to_str()}
             ,
-            [{ name: ":sport", value: String(sport_filter) }],
-            |cols| |stmt| {
+            bindings: [{ name: ":sport", value: String(sport_filter) }],
+            rows: |cols| |stmt| {
                 id = Sqlite.i64("id")(cols)(stmt)?
                 date = Sqlite.str("date")(cols)(stmt)?
                 sport = Sqlite.str("sport")(cols)(stmt)?
@@ -795,7 +829,7 @@ Report :: [].{
                 avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
                 Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, z1_s, z2_s, z3_s, z4_s, z5_s, hard_s, relative_effort, avg_hr })
             },
-        ))?
+        })?
         if Output.json_mode!({})
             Output.emit_ok!(rows)
         else {
@@ -847,8 +881,9 @@ Report :: [].{
                     if Str.is_empty(sport_filter) "" else " AND a.sport_type = :sport COLLATE NOCASE"
                 sport_binding =
                     if Str.is_empty(sport_filter) [] else [{ name: ":sport", value: String(sport_filter) }]
-                rows = Sqlite.query_many!(Sql.rows(
-                    Path.utf8(path),
+                rows = Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query:
                         \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport, a.name AS name,
                         \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                         \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
@@ -859,8 +894,8 @@ Report :: [].{
                         \\WHERE ${col} > 0${sport_where}
                         \\ORDER BY ${col} DESC, a.id DESC LIMIT ${(limit).to_str()}
                     ,
-                    sport_binding,
-                    |cols| |stmt| {
+                    bindings: sport_binding,
+                    rows: |cols| |stmt| {
                         id = Sqlite.i64("id")(cols)(stmt)?
                         date = Sqlite.str("date")(cols)(stmt)?
                         sport = Sqlite.str("sport")(cols)(stmt)?
@@ -874,7 +909,7 @@ Report :: [].{
                         output_kj = Sqlite.f64("output_kj")(cols)(stmt)?
                         Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, avg_hr, output_kj })
                     },
-                ))?
+                })?
                 if Output.json_mode!({})
                     Output.emit_ok!(rows)
                 else {
@@ -949,8 +984,9 @@ Report :: [].{
     doctor! : {} => Try({}, _)
     doctor! = |{}| {
         path = Db.open_db!({})?
-        cov = Sqlite.query!(Sql.row(
-            Path.utf8(path),
+        cov = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
                 \\SELECT COUNT(*) AS total,
                 \\       COALESCE(SUM(CASE WHEN a.avg_hr > 0 THEN 1 ELSE 0 END), 0) AS with_hr,
                 \\       COALESCE(SUM(CASE WHEN COALESCE(a.avg_watts, a.weighted_avg_watts, 0) > 0 THEN 1 ELSE 0 END), 0) AS with_power,
@@ -961,8 +997,8 @@ Report :: [].{
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
             ,
-            [],
-            |cols| |stmt| {
+            bindings: [],
+            row: |cols| |stmt| {
                 total = Sqlite.i64("total")(cols)(stmt)?
                 with_hr = Sqlite.i64("with_hr")(cols)(stmt)?
                 with_power = Sqlite.i64("with_power")(cols)(stmt)?
@@ -971,19 +1007,20 @@ Report :: [].{
                 zero_load = Sqlite.i64("zero_load")(cols)(stmt)?
                 Ok({ total, with_hr, with_power, with_streams, unanalyzed, zero_load })
             },
-        ))?
-        models = Sqlite.query_many!(Sql.rows(
-            Path.utf8(path),
-            "SELECT COALESCE(load_model, 'unknown (pre-provenance)') AS model, COUNT(*) AS n FROM activity_metrics GROUP BY load_model ORDER BY n DESC, load_model",
-            [],
-            |cols| |stmt| {
+        })?
+        models = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "SELECT COALESCE(load_model, 'unknown (pre-provenance)') AS model, COUNT(*) AS n FROM activity_metrics GROUP BY load_model ORDER BY n DESC, load_model",
+            bindings: [],
+            rows: |cols| |stmt| {
                 model = Sqlite.str("model")(cols)(stmt)?
                 n = Sqlite.i64("n")(cols)(stmt)?
                 Ok({ model, n })
             },
-        ))?
-        conf = Sqlite.query!(Sql.row(
-            Path.utf8(path),
+        })?
+        conf = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
                 \\-- confidence tiers derived from load_model at read time (not stored): high =
                 \\-- measured power, medium = HR/RPE, low = relative_effort, none = unscored. The
                 \\-- e2e cross-checks the 'high' count against the power-rung provenance counts so
@@ -994,44 +1031,45 @@ Report :: [].{
                 \\       COALESCE(SUM(CASE WHEN load_model IS NULL OR load_model NOT IN ('power_stream','weighted_watts','avg_watts','rtss','hr_zones','hr_avg','session_rpe','relative_effort') THEN 1 ELSE 0 END),0) AS non
                 \\FROM activity_metrics
             ,
-            [],
-            |cols| |stmt| {
+            bindings: [],
+            row: |cols| |stmt| {
                 hi = Sqlite.i64("hi")(cols)(stmt)?
                 med = Sqlite.i64("med")(cols)(stmt)?
                 lo = Sqlite.i64("lo")(cols)(stmt)?
                 non = Sqlite.i64("non")(cols)(stmt)?
                 Ok({ hi, med, lo, non })
             },
-        ))?
+        })?
         pending = Strava.pending_streams!(path)?
-        cfg = Sqlite.query!(Sql.row(
-            Path.utf8(path),
+        cfg = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
                 \\SELECT (SELECT COUNT(DISTINCT a.sport_type) FROM activity_metrics m
                 \\        JOIN activities a ON a.id = m.activity_id WHERE m.ftp_used > 0 AND a.sport_type IS NOT NULL AND a.sport_type <> '') AS derived_ftp_sports,
                 \\       COALESCE(SUM(CASE WHEN key IN ('hr_z1_max','hr_z2_max','hr_z3_max','hr_z4_max') THEN 1 ELSE 0 END),0) AS zones_set,
                 \\       COALESCE(SUM(CASE WHEN key GLOB 'hr_z[1-4]_max_?*' THEN 1 ELSE 0 END),0) AS sport_zone_overrides
                 \\FROM config
             ,
-            [],
-            |cols| |stmt| {
+            bindings: [],
+            row: |cols| |stmt| {
                 derived_ftp_sports = Sqlite.i64("derived_ftp_sports")(cols)(stmt)?
                 zones_set = Sqlite.i64("zones_set")(cols)(stmt)?
                 sport_zone_overrides = Sqlite.i64("sport_zone_overrides")(cols)(stmt)?
                 Ok({ derived_ftp_sports, zones_set, sport_zone_overrides })
             },
-        ))?
+        })?
         # strength-class sessions without a rating: aggregate in Roc so the sport
         # list can't drift from Metrics.sport_class
-        sports = Sqlite.query_many!(Sql.rows(
-            Path.utf8(path),
-            "SELECT COALESCE(a.sport_type, '') AS sport, CASE WHEN r.activity_id IS NULL THEN 0 ELSE 1 END AS rated FROM activities a LEFT JOIN ratings r ON r.activity_id = a.id",
-            [],
-            |cols| |stmt| {
+        sports = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "SELECT COALESCE(a.sport_type, '') AS sport, CASE WHEN r.activity_id IS NULL THEN 0 ELSE 1 END AS rated FROM activities a LEFT JOIN ratings r ON r.activity_id = a.id",
+            bindings: [],
+            rows: |cols| |stmt| {
                 sport = Sqlite.str("sport")(cols)(stmt)?
                 rated = Sqlite.i64("rated")(cols)(stmt)?
                 Ok({ sport, rated })
             },
-        ))?
+        })?
         strength_unrated = List.len(List.keep_if(sports, |r| Metrics.sport_class(r.sport) == StrengthLike and r.rated == 0))
         rated_total = List.len(List.keep_if(sports, |r| r.rated == 1))
         # ── data-quality watchdog (#92): streaks and counts the engine already knows ──
@@ -1040,33 +1078,35 @@ Report :: [].{
         cutoff30 = Metrics.days_to_date_str(Db.local_today_days!(path) - 30)
         # newest-first, and bounded: a streak only needs enough rows to find the session
         # that DID record HR. 200 is far past any plausible strapless run.
-        recent_hr = Sqlite.query_many!(Sql.rows(
-            Path.utf8(path),
+        recent_hr = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
                 \\SELECT COALESCE(sport_type, '') AS sport,
                 \\       CASE WHEN COALESCE(avg_hr, 0) > 0 THEN 1 ELSE 0 END AS has_hr
                 \\FROM activities ORDER BY start_local DESC, id DESC LIMIT 200
             ,
-            [],
-            |cols| |stmt| {
+            bindings: [],
+            rows: |cols| |stmt| {
                 sport = Sqlite.str("sport")(cols)(stmt)?
                 has_hr = Sqlite.i64("has_hr")(cols)(stmt)?
                 Ok({ sport, has_hr: has_hr == 1 })
             },
-        ))?
+        })?
         hr_missing_streak = Metrics.hr_missing_streak(recent_hr)
         # device_watts = 0 is Strava saying the watts were ESTIMATED, not measured. NULL
         # (pre-flag syncs, CSV imports) coalesces to 1: unknown is not evidence of
         # estimation, matching how the scoring ladder reads the same column.
-        est_power_30d = Sqlite.query!(Sql.row(
-            Path.utf8(path),
+        est_power_30d = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
                 \\SELECT COUNT(*) AS n FROM activities
                 \\WHERE start_local >= :cutoff
                 \\  AND COALESCE(device_watts, 1) = 0
                 \\  AND COALESCE(avg_watts, weighted_avg_watts, 0) > 0
             ,
-            [{ name: ":cutoff", value: String(cutoff30) }],
-            Sqlite.i64("n"),
-        ))?
+            bindings: [{ name: ":cutoff", value: String(cutoff30) }],
+            row: Sqlite.i64("n"),
+        })?
         # Pooled share over the window AND the worst single session, because they answer
         # different questions: pooled is the trend ("is my strap degrading"), worst is the
         # incident ("did something break on Tuesday"). A pooled number alone hides one
@@ -1074,8 +1114,9 @@ Report :: [].{
         # every week with a lot of short sessions. Both, or neither is trustworthy.
         # NULLIF guards the divide: an activity with no samples contributes nothing rather
         # than a division by zero.
-        junk = Sqlite.query!(Sql.row(
-            Path.utf8(path),
+        junk = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
                 \\SELECT COALESCE(
                 \\         100.0 * SUM(COALESCE(m.hr_samples_dropped,0) + COALESCE(m.watts_samples_dropped,0))
                 \\         / NULLIF(SUM(COALESCE(m.hr_samples_total,0) + COALESCE(m.watts_samples_total,0)), 0), 0.0) AS pooled,
@@ -1085,13 +1126,13 @@ Report :: [].{
                 \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
                 \\WHERE a.start_local >= :cutoff
             ,
-            [{ name: ":cutoff", value: String(cutoff30) }],
-            |cols| |stmt| {
+            bindings: [{ name: ":cutoff", value: String(cutoff30) }],
+            row: |cols| |stmt| {
                 pooled = Sqlite.f64("pooled")(cols)(stmt)?
                 worst = Sqlite.f64("worst")(cols)(stmt)?
                 Ok({ pooled, worst })
             },
-        ))?
+        })?
         jmode = Db.journal_mode!(path)?
         mode = Db.resolve_time_mode!(path)
         time_desc =
@@ -1236,27 +1277,29 @@ Report :: [].{
             if !(Str.is_empty(date_arg))
                 date_arg
             else {
-                latest = Sqlite.query_many!(Sql.rows(
-                    Path.utf8(path),
+                latest = Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query:
                         \\SELECT substr(a.start_local, 1, 10) AS d, a.name AS name
                         \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
                         \\ORDER BY a.start_local DESC, a.id DESC LIMIT 1
                     ,
-                    [],
-                    |cols| |stmt| {
+                    bindings: [],
+                    rows: |cols| |stmt| {
                         d = Sqlite.str("d")(cols)(stmt)?
                         name = Sqlite.str("name")(cols)(stmt)?
                         Ok({ d, name })
                     },
-                ))?
+                })?
                 match List.first(latest) {
                     Ok(r) => r.d
                     Err(_) => ""
                 }
             }
         prows : List(Metrics.ProgressRow)
-        prows = Sqlite.query_many!(Sql.rows(
-            Path.utf8(path),
+        prows = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
                 \\SELECT a.name AS name, substr(a.start_local, 1, 10) AS date, COALESCE(a.sport_type, '') AS sport,
                 \\       CAST(COALESCE(a.distance,0) AS REAL) AS distance_m, a.moving_time AS moving_time,
                 \\       CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w, CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
@@ -1270,8 +1313,8 @@ Report :: [].{
                 \\WHERE a.name IN (SELECT name FROM activities WHERE substr(start_local, 1, 10) = :date)
                 \\ORDER BY a.name, a.start_local, a.id
             ,
-            [{ name: ":date", value: String(date) }],
-            |cols| |stmt| {
+            bindings: [{ name: ":date", value: String(date) }],
+            rows: |cols| |stmt| {
                 name = Sqlite.str("name")(cols)(stmt)?
                 row_date = Sqlite.str("date")(cols)(stmt)?
                 sport = Sqlite.str("sport")(cols)(stmt)?
@@ -1285,7 +1328,7 @@ Report :: [].{
                 load_model = Sqlite.str("load_model")(cols)(stmt)?
                 Ok({ name, date: row_date, sport, distance_m, moving_time, np_w, avg_hr, rpe, output_kj, tss, load_model })
             },
-        ))?
+        })?
         labeled =
             List.keep_oks(Metrics.group_progress(prows), |g| Metrics.anchor_filter(g, date))
            .map(|g| { name: Render.progress_group_label(g.name, g.kind), rows: g.rows })
@@ -1327,16 +1370,16 @@ Report :: [].{
             if Str.is_empty(date) {
                 Output.err_out!("no_scorable_workouts", "nothing to compare yet — analyze activities first (and `stride rate` your strength sessions)")
             } else {
-                on_date = Sqlite.query_many!(Sql.rows(
-                    Path.utf8(path),
-                    "SELECT name AS name, id AS id FROM activities WHERE substr(start_local, 1, 10) = :date LIMIT 1",
-                    [{ name: ":date", value: String(date) }],
-                    |cols| |stmt| {
+                on_date = Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query: "SELECT name AS name, id AS id FROM activities WHERE substr(start_local, 1, 10) = :date LIMIT 1",
+                    bindings: [{ name: ":date", value: String(date) }],
+                    rows: |cols| |stmt| {
                         name = Sqlite.str("name")(cols)(stmt)?
                         id = Sqlite.i64("id")(cols)(stmt)?
                         Ok({ name, id })
                     },
-                ))?
+                })?
                 match List.first(on_date) {
                     Ok(a) => Output.err_out!("unscorable", "found \"${a.name}\" on ${date}, but it can't be compared — needs power+HR, distance+HR, or a rating (`stride rate <id> <1-10>`)")
                     Err(_) => Output.err_out!("no_workout_on_date", "no workout found on ${date}")
@@ -1384,11 +1427,11 @@ Report :: [].{
     load_series! : U64 => Try({}, _)
     load_series! = |days| {
         path = Db.open_db!({})?
-        rows = Sqlite.query_many!(Sql.rows(
-            Path.utf8(path),
-            "SELECT day AS day, tss AS tss, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT ${(days).to_str()}",
-            [],
-            |cols| |stmt| {
+        rows = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "SELECT day AS day, tss AS tss, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT ${(days).to_str()}",
+            bindings: [],
+            rows: |cols| |stmt| {
                 day = Sqlite.str("day")(cols)(stmt)?
                 tss = Sqlite.f64("tss")(cols)(stmt)?
                 ctl = Sqlite.f64("ctl")(cols)(stmt)?
@@ -1396,7 +1439,7 @@ Report :: [].{
                 tsb = Sqlite.f64("tsb")(cols)(stmt)?
                 Ok({ day, tss, ctl, atl, tsb })
             },
-        ))?
+        })?
         ordered = List.fold(rows, [], |acc, x| List.concat([x], acc))
         Output.out!(ordered, Render.load_screen)
     }
@@ -1409,8 +1452,9 @@ Report :: [].{
     power_curve! = |days, sport| {
         path = Db.open_db!({})?
         cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
-        r = Sqlite.query!(Sql.row(
-            Path.utf8(path),
+        r = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
                 \\SELECT
                 \\  CAST(COALESCE(MAX(m.best_5s_w), 0) AS REAL) AS d5,
                 \\  CAST(COALESCE(MAX(m.best_15s_w), 0) AS REAL) AS d15,
@@ -1423,11 +1467,11 @@ Report :: [].{
                 \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
                 \\WHERE a.start_local >= :cutoff AND (:sport = '' OR a.sport_type = :sport)
             ,
-            [
+            bindings: [
                 { name: ":cutoff", value: String(cutoff) },
                 { name: ":sport", value: String(sport) },
             ],
-            |cols| |stmt| {
+            row: |cols| |stmt| {
                 d5 = Sqlite.f64("d5")(cols)(stmt)?
                 d15 = Sqlite.f64("d15")(cols)(stmt)?
                 d30 = Sqlite.f64("d30")(cols)(stmt)?
@@ -1438,7 +1482,7 @@ Report :: [].{
                 d3600 = Sqlite.f64("d3600")(cols)(stmt)?
                 Ok({ d5, d15, d30, d60, d300, d600, d1200, d3600 })
             },
-        ))?
+        })?
         raw : List({ dur_s : U64, watts : F64 })
         raw = [
             { dur_s: 5, watts: r.d5 },

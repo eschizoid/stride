@@ -28,7 +28,7 @@ just install   # build + symlink to ~/.local/bin/stride
 - A failed build leaves a stale binary that e2e would happily "pass" against; `just
   test` orders steps to prevent this. Don't run `just e2e` after a failed build.
 - Toolchain: the new (Zig) compiler (`~/.local/roc-new/roc`, pinned by exact nightly
-  tag in `.github/workflows/build.yml`) · basic-cli **0.21** · builtin JSON (roc-json
+  tag in `.github/workflows/build.yml`) · basic-cli **0.22** · builtin JSON (roc-json
   dropped). The alpha4 / 0.20 / roc-json 0.13 pin is RETIRED — `~/.local/bin/roc` still
   points at alpha4 and CANNOT parse the current source; never aim the justfile at it.
   `check`, `test`, and a full `roc build` all work (roc#10469 was fixed by #10531).
@@ -135,34 +135,27 @@ Every item here cost a debugging session at least once — they are not style op
 
 ### Platform APIs
 
-- **Verify against the docs before writing** (basic-cli 0.21 docs, or package source in
+- **Verify against the docs before writing** (basic-cli 0.22 docs, or package source in
   `~/.cache/roc/packages/`) — alpha APIs drift; this habit has kept nearly every build at
   0-errors-first-try.
 - **`Sqlite.query!` on a row that may not exist fails the command.** Use `query_many!`
   and match the empty list — this is how config loading must read any possibly-absent
-  key. (Measured on basic-cli 0.21: it returns `Err(NoRowsReturned)`, so an unhandled `?`
+  key. (Measured on basic-cli 0.21/0.22: it returns `Err(NoRowsReturned)`, so an unhandled `?`
   exits 1 rather than aborting. The SIGABRT this note used to claim was the alpha4 / 0.20
   behaviour; the rule is unchanged, only the failure mode is milder than advertised.)
 - **SQLite type affinity bites**: INTEGER columns reject `Sqlite.f64` decoders — `CAST(…
   AS REAL)` in the SELECT when unsure.
-- **Every SQLite call goes through `Sql.stmt`/`Sql.row`/`Sql.rows` (#105, basic-cli#471).**
-  Bug C's ROOT CAUSE, proven 2026-08-14 with a 45-line reproducer under guard-malloc: a
-  heap-allocated `Str` inside a `Sqlite` bindings list is DOUBLE-FREED — the platform's
-  `hosted_sqlite_bind` drops every element after use, and the generated caller drops them
-  again. The second free corrupts whatever allocation recycled the memory, so for weeks it
-  surfaced as unrelated errors (`invalid UTF-8` in HTTP headers, `SqliteErr(TooBig)`,
-  `UnexpectedType(Bytes)`, `malloc: free list damaged`) far from the SQLite call that
-  caused it. Inline (≤ small-string) and literal Strs are immune — decref of a static is a
-  no-op — which made it intermittent and made the short-named e2e mock structurally blind
-  to it. Call sites still write ordinary parameterized SQL (`:name` placeholders, String
-  bindings included); the constructors rewrite each String binding into the query as a
-  `Sql.quote`d literal so the list that reaches the host carries only `Integer`/`Real`/
-  `Null`, which hold no heap (the `query:` argument is consumed exactly once and is proven
-  clean under guard-malloc). NEVER call `Sqlite.execute!`/`query!`/`query_many!` with a
-  raw record, and never splice text by hand — the workaround lives in `Sql.expand` alone,
-  so when a fixed basic-cli release is consumable (upstream fix merged as basic-cli#472,
-  unreleased; also gated on roc#10693 for the nightly bump) the revert is one function
-  becoming the identity, zero call-site changes.
+- **Bug C (#105) is FIXED — bind values normally, and never splice text into SQL.**
+  History, so nobody re-lives it: basic-cli 0.21's host DOUBLE-FREED every heap `Str`
+  in a bindings list (basic-cli#471, root-caused 2026-08-14 with a 45-line reproducer
+  under guard-malloc; fixed same-day in basic-cli#472, shipped in 0.22.0). For weeks it
+  surfaced as unrelated errors far from the SQLite call — corrupt HTTP headers,
+  `SqliteErr(TooBig)`, `UnexpectedType(Bytes)`, malloc aborts — because the second free
+  corrupted whatever recycled the allocation. Inline/literal strings were immune, which
+  made it intermittent and the short-fixture e2e mock structurally blind. For one day
+  stride worked around it by splicing quoted literals; 0.22.0 made bindings safe and the
+  splice was deleted. If a future platform bug ever forces that again, PR #130/#131 hold
+  the complete playbook in both directions.
 - **A crash at a host-boundary symbol names where corruption SURFACED, not where it was
   caused.** The backtrace accused `_hosted_http_send_request` for weeks while the cause
   was the bind path. Bisect by removing one ingredient at a time, and reach for
@@ -279,7 +272,7 @@ on `main`. You never tag or edit the version by hand.
 - **The flow:** commit conventionally → release-please keeps an open "release PR" with the
   pending version + notes → **merge that PR** → it tags `vX.Y.Z`, creates the GitHub
   release, and the build/upload jobs attach the platform binaries. **Windows IS built and
-  shipped** (`stride-windows-x86_64`, since v0.3.0) — basic-cli 0.21 ships an x64win host
+  shipped** (`stride-windows-x86_64`, since v0.3.0) — basic-cli ships an x64win host
   and `OsStr.display` decodes the `WindowsU16s` argv arm. Targets: linux-x86_64,
   macOS arm64 + Intel (macos-15-intel), windows-x86_64. **linux-arm64 currently FAILS**
   (needs an explicit `--target`; it detects arm64v1musl) — `fail-fast: false` plus an
