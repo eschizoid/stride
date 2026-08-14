@@ -97,11 +97,14 @@ and the in-binary sync retry, both noted inline below.
   second-half efficiency within a session. Stored as a NULLABLE `decoupling_pct` with a
   paired `decoupling_known` flag, because 0.0 is a legitimate perfect result here and the
   house "0 = not available" rule cannot carry that distinction on its own.
-  **Still open: the pace variant.** It needs the grade-adjusted stream `rTSS` consumes,
-  which is derived further down the same function; wiring it in place would duplicate that
-  derivation or reorder the function. Deferred deliberately — a wrong drift number on every
-  run is worse than none. `progress` integration also still pending; it feeds `activity`
-  only today.
+  **~~The pace variant~~ — SHIPPED (#134).** The reorder the deferral was waiting for:
+  decoupling now computes below the graded-speed derivation, so pace-routed sports
+  (runs/swims) get grade-adjusted-speed-vs-HR drift from the same arithmetic. Meter-less
+  rides stay Unknown on purpose — terrain speed over HR is not efficiency. `activity`
+  labels the source (Pw:HR vs Pa:HR) and JSON carries `decoupling_signal`.
+  **~~`progress` integration~~ — SHIPPED (#135).** Every progress session row carries
+  `decoupling_pct` + `decoupling_known`, and the Ef/SpeedHr tables grew a drift column
+  ("-" when not computable — 0.0 is a real, perfect result).
   **Reading caveat worth carrying:** decoupling only means "aerobic durability" on a
   STEADY effort. On a structured interval session a high number reflects the workout's
   shape, not the athlete's ceiling.

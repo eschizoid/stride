@@ -313,6 +313,8 @@ Report :: [].{
                         # rule cannot carry the distinction on its own.
                         decoupling_pct: a.decoupling_pct,
                         decoupling_known: a.decoupling_known,
+                        # which signal the drift came from — "" when unknown (additive, #134)
+                        decoupling_signal: if !(a.decoupling_known) "" else if detail.has_watts "power" else "pace",
                         # detected structure (ADR 0008), ADDITIVE. Empty list + "" = none
                         # detected or no stream signal — reporting only, never a judgment.
                         segments: seg_rows,
@@ -359,9 +361,14 @@ Report :: [].{
                     # aerobic decoupling (#94). Printed ONLY when it was computable —
                     # an absent line is honest, a "drift 0%" line on a session with no
                     # power meter would be a fabricated perfect score.
-                    (if a.decoupling_known
-                        Stdout.line!("drift   ${Render.signed(a.decoupling_pct)}% Pw:HR — second-half heartbeats per watt vs first")
-                    else
+                    (if a.decoupling_known {
+                        drift_tail =
+                            if detail.has_watts
+                                "Pw:HR — second-half heartbeats per watt vs first"
+                            else
+                                "Pa:HR — second-half heartbeats per grade-adjusted m/s vs first"
+                        Stdout.line!("drift   ${Render.signed(a.decoupling_pct)}% ${drift_tail}")
+                    } else
                         Ok({}))?
                     if detail.failed
                         Stdout.line!("⚠ stored stream data for this activity is unreadable — zeros above are missing data, not real zeros")
@@ -1354,7 +1361,9 @@ Report :: [].{
                 \\       CAST(COALESCE(rt.rpe,0) AS REAL) AS rpe,
                 \\       CAST(COALESCE(a.avg_watts * a.moving_time / 1000.0, 0) AS REAL) AS output_kj,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss,
-                \\       COALESCE(m.load_model, '') AS load_model
+                \\       COALESCE(m.load_model, '') AS load_model,
+                \\       CAST(COALESCE(m.decoupling_pct, 0) AS REAL) AS decoupling_pct,
+                \\       CASE WHEN m.decoupling_pct IS NULL THEN 0 ELSE 1 END AS decoupling_known
                 \\FROM activities a
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\LEFT JOIN ratings rt ON rt.activity_id = a.id
@@ -1374,7 +1383,9 @@ Report :: [].{
                 output_kj = Sqlite.f64("output_kj")(cols)(stmt)?
                 tss = Sqlite.f64("tss")(cols)(stmt)?
                 load_model = Sqlite.str("load_model")(cols)(stmt)?
-                Ok({ name, date: row_date, sport, distance_m, moving_time, np_w, avg_hr, rpe, output_kj, tss, load_model })
+                dpct = Sqlite.f64("decoupling_pct")(cols)(stmt)?
+                dknown = Sqlite.i64("decoupling_known")(cols)(stmt)?
+                Ok({ name, date: row_date, sport, distance_m, moving_time, np_w, avg_hr, rpe, output_kj, tss, load_model, decoupling_pct: dpct, decoupling_known: dknown == 1 })
             },
         })?
         labeled =
@@ -1457,6 +1468,10 @@ Report :: [].{
                         rpe: r.rpe,
                         output_kj: r.output_kj,
                         tss: r.tss,
+                        # per-session aerobic decoupling (#135), same honesty pair as
+                        # everywhere else — 0.0 is a real perfect result, the flag decides
+                        decoupling_pct: r.decoupling_pct,
+                        decoupling_known: r.decoupling_known,
                     }),
                 }),
             })

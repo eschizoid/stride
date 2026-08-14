@@ -580,11 +580,6 @@ Analyze :: [].{
         # dropped wholesale above (#73), which is what we want: modelled power divided by
         # real heartbeats is not an efficiency measurement.
         #
-        # POWER ONLY for now. The pace variant wants the grade-adjusted stream rTSS
-        # consumes, which is derived further down; wiring it here would either duplicate
-        # that derivation or reorder the function. Tracked as follow-up rather than done
-        # badly — a wrong decoupling number on every run is worse than none.
-        decoupling = Metrics.decoupling_pct(watts_pairs, hr_pairs)
         # held pairs: NP wants values, the bests need real seconds to reject pause-spanning windows
         watts_1s_pairs = Metrics.resample_1s_pairs(watts_pairs, Hold)
         watts_1s = List.map(watts_1s_pairs, |p| p.v)
@@ -625,6 +620,20 @@ Analyze :: [].{
             else
                 graded_triple
         gas_1s_pairs = Metrics.graded_speed_1s(pace_triple.time, pace_triple.dist, pace_triple.alt)
+        # aerobic decoupling (#94/#134) — computed HERE, below the graded-speed
+        # derivation, precisely so the pace variant can reuse it instead of
+        # duplicating it (the reorder the old "POWER ONLY" comment was waiting for).
+        # Power wins when real watts exist; pace-routed sports (runs/swims) fall to
+        # graded speed vs HR — same drift arithmetic, same Known/Unknown honesty.
+        # Everything else (meter-less rides, rows without watts) stays Unknown:
+        # terrain speed over HR is not an efficiency measurement.
+        decoupling =
+            if !(List.is_empty(watts_pairs))
+                Metrics.decoupling_pct(watts_pairs, hr_pairs)
+            else if Metrics.pace_detect_sport(row.sport)
+                Metrics.decoupling_pct(gas_1s_pairs, hr_pairs)
+            else
+                Unknown
         gas_speeds = List.map(gas_1s_pairs, |p| p.v)
         ngp_speed = Metrics.normalized_power(gas_speeds)
         best20_speed = Metrics.best_rolling_mean_1s(gas_1s_pairs, 1200)
@@ -936,5 +945,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 27
+    metrics_rev = 28
 }
