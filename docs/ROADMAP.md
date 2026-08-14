@@ -91,7 +91,8 @@ and the in-binary sync retry, both noted inline below.
   and bug C is fixed (#105 closed — see Risks). Transient network failures are the only
   remaining retry case; whether that earns an in-binary retry at all should be re-argued
   from a clean sheet rather than inherited from the bug-C era. The `just e2e-sync` 5×
-  shell retry can likely be deleted after a few weeks of clean real-world syncs.
+  shell retry is already gone — measured 10/10 clean unretried on 0.22.0, so the crutch
+  was deleted the same day the bug was; a future flake there fails loudly on purpose.
 - **~~Aerobic decoupling (Pw:HR drift)~~ — SHIPPED for POWER (#94/#125).** First-half vs
   second-half efficiency within a session. Stored as a NULLABLE `decoupling_pct` with a
   paired `decoupling_known` flag, because 0.0 is a legitimate perfect result here and the
