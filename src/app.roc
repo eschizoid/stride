@@ -45,7 +45,7 @@ import Report
 import Plan
 import Import
 
-version = "stride 0.5.0" # x-release-please-version
+version = "stride 0.6.0" # x-release-please-version
 
 help_text =
         \\stride — a local-first, deterministic training analytics engine (built in Roc)

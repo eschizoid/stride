@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.6.0](https://github.com/eschizoid/stride/compare/v0.5.0...v0.6.0) (2026-08-14)
+
+
+### Features
+
+* aerobic decoupling (Pw:HR drift) per activity ([#94](https://github.com/eschizoid/stride/issues/94), [#125](https://github.com/eschizoid/stride/issues/125)) ([5860560](https://github.com/eschizoid/stride/commit/58605603072e4f9fc7bd757321b94499cc4f9f9c))
+* aerobic decoupling for pace sports and per-session drift in progress ([#142](https://github.com/eschizoid/stride/issues/142)) ([19eacde](https://github.com/eschizoid/stride/commit/19eacde17e4a85bbe02294ef2f30135e214340f8))
+* complete a planned session from the CLI alone ([#111](https://github.com/eschizoid/stride/issues/111), [#112](https://github.com/eschizoid/stride/issues/112), [#121](https://github.com/eschizoid/stride/issues/121)) ([7527985](https://github.com/eschizoid/stride/commit/752798590b8caafde87051f5d08f7f1a44031826))
+* interval detection v1 — session structure (shape, per-rep HR, drift) on activity ([#95](https://github.com/eschizoid/stride/issues/95), [#132](https://github.com/eschizoid/stride/issues/132)) ([2812466](https://github.com/eschizoid/stride/commit/2812466f7598bc29f19325ed18e3584c931c7e7f))
+* plan all renders upcoming / this week / last week sections ([#98](https://github.com/eschizoid/stride/issues/98)) ([9bbc0a1](https://github.com/eschizoid/stride/commit/9bbc0a1ca154d1e50a5c26d87498be5c745ed192))
+* progress says a lone session is the first, not that it has a comparable ([#96](https://github.com/eschizoid/stride/issues/96), [#126](https://github.com/eschizoid/stride/issues/126), [#128](https://github.com/eschizoid/stride/issues/128)) ([a4804a1](https://github.com/eschizoid/stride/commit/a4804a1514cb9c366d6e5edc6dce6a09b00a016e))
+* show rest days and week dividers in the 14-day table ([#99](https://github.com/eschizoid/stride/issues/99)) ([551f833](https://github.com/eschizoid/stride/commit/551f8330721bfd7e819c8b6296faab6311dbfecc))
+* sync reports how many activities were new or changed ([#91](https://github.com/eschizoid/stride/issues/91), [#120](https://github.com/eschizoid/stride/issues/120)) ([80e75f6](https://github.com/eschizoid/stride/commit/80e75f66c65d8ded57d6c7858fd1725431fadb37))
+* the form verdict names the training state, counts band days honestly, and carries a weekly trend ([#119](https://github.com/eschizoid/stride/issues/119), [#123](https://github.com/eschizoid/stride/issues/123), [#124](https://github.com/eschizoid/stride/issues/124), [#127](https://github.com/eschizoid/stride/issues/127)) ([25e20d5](https://github.com/eschizoid/stride/commit/25e20d58521ec4c3ee59fe15ef44309539f8c2cc))
+
+
+### Bug Fixes
+
+* bug C root-caused and fixed — SQLite bindings double-free, upstream fix shipped in basic-cli 0.22.0 ([#105](https://github.com/eschizoid/stride/issues/105), [#130](https://github.com/eschizoid/stride/issues/130), [#131](https://github.com/eschizoid/stride/issues/131)) ([7f53561](https://github.com/eschizoid/stride/commit/7f5356193c0edbc955144a4dcd68049c31046a43))
+* decoupling honesty — stored signal provenance, coverage and magnitude gates ([#143](https://github.com/eschizoid/stride/issues/143)) ([d7889bc](https://github.com/eschizoid/stride/commit/d7889bc546b3ac5d7ed3b62062c616bab7a6aa92))
+
 ## [0.5.0](https://github.com/eschizoid/stride/compare/v0.4.0...v0.5.0) (2026-08-08)
 
 
