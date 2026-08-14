@@ -87,12 +87,11 @@ and the in-binary sync retry, both noted inline below.
   with `\r`; machine/CI mode gets plain appended lines, because carriage returns are
   garbage in logs and basic-cli exposes no tty check. The existing output-mode switch
   is the selector — same information, dressed for the reader.
-  **The in-binary retry is the part still outstanding, and #105 gates it deliberately:**
-  retrying is only honest once the failure it absorbs is understood, or the counter
-  (`synced 22 (2 retries)`) reports a bug nobody can name. Bug C is now characterised but
-  unfixed, so this is buildable again — capped at 3, loud failure after, counted in the
-  summary so the frequency stays visible. Note `just e2e-sync` already retries 5× at the
-  shell level; that crutch would move inside the binary, where users actually feel it.
+  **The in-binary retry is now moot in its original form:** it existed to absorb bug C,
+  and bug C is fixed (#105 closed — see Risks). Transient network failures are the only
+  remaining retry case; whether that earns an in-binary retry at all should be re-argued
+  from a clean sheet rather than inherited from the bug-C era. The `just e2e-sync` 5×
+  shell retry can likely be deleted after a few weeks of clean real-world syncs.
 - **~~Aerobic decoupling (Pw:HR drift)~~ — SHIPPED for POWER (#94/#125).** First-half vs
   second-half efficiency within a session. Stored as a NULLABLE `decoupling_pct` with a
   paired `decoupling_known` flag, because 0.0 is a legitimate perfect result here and the
@@ -108,7 +107,15 @@ and the in-binary sync retry, both noted inline below.
 
 ## Tier: trust what you already compute
 
-- **Interval detection** — grilled 2026-08-09; the design is settled:
+- **Interval detection — IMPLEMENTED (#95 / ADR 0008, PR #132 in review; release gated
+  on validating against the maintainer's own threshold session).** The engine now reads
+  the stream: `stride activity` renders `shape 9×[2:07 @ 238W / 1:20 easy]` with per-rep
+  HR (peak/avg, 60s recovery drop) and a drift verdict; JSON carries
+  `segments`/`interval_summary`/`hr_drift` additively. `activity_segments` is
+  computed-tier, invalidated exactly like `activity_metrics`, parameters versioned by
+  `metrics_rev`. Real-session behavior so far: steady rides and HR-only sessions
+  honestly detect nothing; a song-driven ride detects its 9 surges with
+  physiologically-correct HR. The settled design it implements:
   - **The detector reports; it never acts.** Output is structure on `activity`
     (`5×[3:01 @ 258W / 3:04 easy]`) — matching it to a prescription stays a coach/human
     act. Auto-completing (or even emitting match candidates) was rejected: prescriptions
@@ -195,20 +202,19 @@ the engine.
   run, which is the worst shape of the bug. Also observed: `roc build` can die with
   SIGILL/SIGSEGV and no diagnostics on code `roc check` rejects cleanly, so **`roc check`
   before `roc build` on any new file**.
-- **Bug C is characterised but NOT fixed (#105).** Heap corruption that surfaces on a
-  LATER host call than the one that caused it — in practice the `Authorization` header
-  arriving corrupt at `_hosted_http_send_request`, which is why it accused HTTP for months.
-  The trigger is a decoded string long enough to be **heap-allocated**: flipping one mock
-  activity's name from 15 to 68 bytes turns a clean run into a crashing one.
-  Consequences the roadmap inherits: `sync` can abort mid-run, and a crashed sync leaves
-  streams unfetched so `analyze` scores those activities off a lower ladder rung — the TSS
-  is quietly wrong rather than obviously missing. `just e2e-sync` retries 5× to absorb it.
-  **The attempted fix made it worse and was reverted (#116/#118)**: copying decoded strings
-  before binding them crashed real sync 12/12 while the e2e mock stayed green, because
-  every fixture string in the mock is short enough to live inline and never touch the heap.
-  The standing rule from that: **the e2e mock cannot reproduce this class of bug, so any
-  change to the sync decode/bind path must be run against real Strava data before it is
-  called working.**
+- **~~Bug C~~ — FIXED end to end (#105, closed 2026-08-14).** The heap corruption that
+  accused HTTP for months was a DOUBLE-FREE in basic-cli 0.21's SQLite host: the platform
+  dropped every element of a bindings list after use and the generated caller dropped
+  them again, so a heap-allocated `Str` in bindings corrupted whatever recycled the
+  memory — surfacing at a LATER host call under rotating masks. Root-caused with a
+  45-line reproducer made deterministic by guard-malloc, reported upstream
+  (basic-cli#471), fixed upstream in ~2 hours (#472), released same day as 0.22.0, and
+  consumed here (#131). The one-day workaround (#130, splice text as quoted literals)
+  was fully reverted — bindings are the right channel again. Lessons the repo keeps
+  (AGENTS.md): a crash at a host boundary names where damage LANDED, not where it came
+  from; guard-malloc early; and the e2e mock's short fixture strings made it
+  structurally blind to this bug class, so **sync decode/bind changes are verified
+  against real Strava data before being called working** — that rule outlives the bug.
 - **Stream storage.** Raw stream JSON already runs ~70 MB at full backfill; FIT's
   full-resolution streams grow it further. Accepted for now; revisit if it hurts.
 
