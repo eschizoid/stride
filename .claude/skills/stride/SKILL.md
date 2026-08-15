@@ -64,7 +64,7 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
 |---|---|
 | `stride plan` | **planning bundle**: `summary` + `recent_activities_14d` + `open_sessions` |
 | `stride summary` | as_of, CTL/ATL/TSB, `last_7d` + `last_28d` zone blocks (seconds + easy/moderate/hard %), `last_hard_session_date` ('' = none on record), `pending_sessions`, FTP (config vs estimated, `stale` + `detraining` flags), HR zone bounds, per-sport 28d breakdown |
-| `stride activities [N] [sport]` | last N activities (default 30), optionally filtered by sport (case-insensitive, e.g. `activities 10 rowing`) — date, sport, tss, np_w, intensity, z1–z5 seconds, relative_effort, avg_hr |
+| `stride activities [N] [sport]` | last N activities (default 30), optionally filtered by sport (sport FAMILY words, case-insensitive: `bike`/`run`/`row`/`swim` widen to their Strava spellings, e-bikes excluded from `bike`; non-family sport_types filter exactly) — date, sport, tss, np_w, intensity, z1–z5 seconds, relative_effort, avg_hr |
 | `stride top <metric> [n] [sport]` | best sessions ranked by `hr`, `tss`, `power`, `intensity`, `distance`, `time`, or `output` (kJ) — the leaderboard to `activities`' timeline |
 | `stride zones` (alias `pz`) | the 7 power zones as watt ranges from configured FTP: `{ ftp, zones: [{ z, name, lo_w, hi_w }] }` (0 = open-ended bound) |
 | `stride activity <id>` | one session in depth: flat z1_s–z5_s + hard_s, hard minutes, power bests (1/3/5/20min) from streams, plus `streams_unreadable` (true = the 0s are corrupt data, NOT a real zero) — use to review whether a planned session hit its targets before `complete`-ing it |

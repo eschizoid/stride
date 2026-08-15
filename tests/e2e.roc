@@ -488,8 +488,8 @@ b_seed_analyze! = |ctx| {
     metric_hint = stride_human!(ctx.bin, ctx.home, ["top", "power", "10", "gravelride"])
     check!("metric-empty hint blames the metric, not the sport", Str.contains(metric_hint, "but none with"))?
     # power-curve rides the same filter machinery — cover it at all (it had zero e2e)
-    check!("power-curve answers bare", strjq!(ctx, ["pc"], ".data | has(\"w60\") or (keys | length > 0)") == "true")?
-    check!("power-curve accepts a family word", strjq!(ctx, ["pc", "90", "bike"], ".data | type") == "object")?
+    check!("power-curve has real points bare", strjq!(ctx, ["pc"], ".data.points | length > 0") == "true")?
+    check!("a family word still reaches the curve's watts", strjq!(ctx, ["pc", "90", "bike"], "[.data.points[].watts] | max > 0") == "true")?
     unknown_top = stride_human!(ctx.bin, ctx.home, ["top", "distance", "10", "kayak"])
     check!("unknown sport names the sports that exist", Str.contains(unknown_top, "sports in your data") and Str.contains(unknown_top, "GravelRide"))?
     check!("activities honors the family too", strjq!(ctx, ["activities", "10", "bike"], "[.data[].sport] | unique | length >= 2") == "true")?

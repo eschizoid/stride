@@ -896,7 +896,7 @@ Report :: [].{
         })?
         if Output.json_mode!({})
             Output.emit_ok!(rows)
-        else if List.is_empty(rows) and !(Str.is_empty(sport_filter)) {
+        else if List.is_empty(rows) and limit > 0 and !(Str.is_empty(sport_filter)) {
             Stdout.line!(empty_hint!(path, sport_filter, "any")?)
         } else {
             Stdout.line!(Render.render_table(
@@ -977,7 +977,8 @@ Report :: [].{
             known = known_sports!(path)?
             Ok("no '${word}' activities — sports in your data: ${Str.join_with(known, ", ")}")
         } else {
-            Ok("${I64.to_str(n)} '${word}' activities, but none with ${what} data")
+            noun = if n == 1 "activity" else "activities"
+            Ok("${I64.to_str(n)} '${word}' ${noun}, but none with ${what} data")
         }
     }
 
@@ -1023,7 +1024,7 @@ Report :: [].{
                 })?
                 if Output.json_mode!({})
                     Output.emit_ok!(rows)
-                else if List.is_empty(rows) and !(Str.is_empty(sport_filter)) {
+                else if List.is_empty(rows) and limit > 0 and !(Str.is_empty(sport_filter)) {
                     Stdout.line!(empty_hint!(path, sport_filter, header)?)
                 } else {
                     val = |r|
