@@ -1858,7 +1858,10 @@ Metrics :: [].{
     sport_family = |word| {
         low = Str.with_ascii_lowercased(word)
         if low == "bike" or low == "cycling" or low == "ride" or low == "rides" {
-            ["Ride", "VirtualRide", "EBikeRide", "GravelRide", "MountainBikeRide"]
+            # NO e-bike arms on purpose: analyze computes best_*_w for anything
+            # with a power stream, so one motor-assisted ride would set the max at
+            # every power-curve duration and drag the CP fit up permanently
+            ["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"]
         } else if low == "run" or low == "running" or low == "runs" {
             ["Run", "VirtualRun", "TrailRun"]
         } else if low == "row" or low == "rowing" {
@@ -3221,8 +3224,8 @@ expect {
 
 # human sport words widen to their Strava family; unknown words pass through
 expect {
-    Metrics.sport_family("bike") == ["Ride", "VirtualRide", "EBikeRide", "GravelRide", "MountainBikeRide"]
-    and Metrics.sport_family("BIKE") == ["Ride", "VirtualRide", "EBikeRide", "GravelRide", "MountainBikeRide"]
+    Metrics.sport_family("bike") == ["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"]
+    and Metrics.sport_family("BIKE") == ["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"]
     and Metrics.sport_family("run") == ["Run", "VirtualRun", "TrailRun"]
     and Metrics.sport_family("Rowing") == ["Rowing", "VirtualRow"]
     and Metrics.sport_family("Yoga") == ["Yoga"]

@@ -848,11 +848,12 @@ Report :: [].{
     activities! = |limit, sport_filter| {
         path = Db.open_db!({})?
         sf = sport_filter_sql(sport_filter)
-        # optional sport filter via a BOUND param, never string interpolation: an empty
-        # sport_filter (the default — all sports) matches the `:sport = ''` branch below.
-        # Interpolating the filter would splice a compile-time-constant "" into the query
-        # (bare `activities` -> Activities(30, "")), which crashes this backend in
-        # str_concat — a heap-corruption SIGABRT. Binding sidesteps it. Same class as #32.
+        # optional sport filter via sport_filter_sql: the FRAGMENT is interpolated
+        # (its placeholders are numbered, values stay real bindings), and the empty
+        # branch is a single space, never "" — interpolating a compile-time-constant
+        # empty string crashes this backend in str_concat (#32 class; fixed upstream
+        # in roc#10595 but our pinned nightly predates it). Non-empty by construction
+        # is the rule the :all-flag comment in Plan.roc states.
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
@@ -895,7 +896,9 @@ Report :: [].{
         })?
         if Output.json_mode!({})
             Output.emit_ok!(rows)
-        else {
+        else if List.is_empty(rows) and !(Str.is_empty(sport_filter)) {
+            Stdout.line!(empty_hint!(path, sport_filter, "any")?)
+        } else {
             Stdout.line!(Render.render_table(
                 ["date", "sport", "name", "time", "load", "intensity (if)", "hard"],
                 List.map(rows, |a| [
@@ -938,7 +941,9 @@ Report :: [].{
     sport_filter_sql : Str -> { frag : Str, binds : List({ name : Str, value : [Null, Real(F64), Integer(I64), String(Str), Bytes(List(U8))] }) }
     sport_filter_sql = |word|
         if Str.is_empty(word) {
-            { frag: "", binds: [] }
+            # a lone SPACE, never "": interpolating a compile-time-constant empty
+            # string is the #32-class str_concat trap, live on the pinned nightly
+            { frag: " ", binds: [] }
         } else {
             fam = Metrics.sport_family(word)
             names = List.map_with_index(fam, |_, i| ":sp${(i).to_str()}")
@@ -950,10 +955,31 @@ Report :: [].{
     known_sports! = |path|
         Sqlite.query_many!({
             path: Path.utf8(path),
-            query: "SELECT DISTINCT COALESCE(sport_type,'') AS s FROM activities ORDER BY s",
+            query: "SELECT DISTINCT sport_type AS s FROM activities WHERE sport_type IS NOT NULL AND sport_type <> '' ORDER BY s",
             bindings: [],
             rows: Sqlite.str("s"),
         })
+
+    # An empty filtered result has TWO honest explanations and the hint must pick
+    # the right one: no such sport at all, or the sport exists but nothing in it
+    # carries the asked-for data. Blaming the sport unconditionally once denied
+    # the existence of runs while listing Run in the same sentence.
+    empty_hint! : Str, Str, Str => Try(Str, _)
+    empty_hint! = |path, word, what| {
+        sf = sport_filter_sql(word)
+        n = Sqlite.query!({
+            path: Path.utf8(path),
+            query: "SELECT COUNT(*) AS n FROM activities a WHERE 1=1${sf.frag}",
+            bindings: sf.binds,
+            row: Sqlite.i64("n"),
+        })?
+        if n == 0 {
+            known = known_sports!(path)?
+            Ok("no '${word}' activities — sports in your data: ${Str.join_with(known, ", ")}")
+        } else {
+            Ok("${I64.to_str(n)} '${word}' activities, but none with ${what} data")
+        }
+    }
 
     top! : Str, U64, Str => Try({}, _)
     top! = |metric, limit, sport_filter| {
@@ -998,10 +1024,7 @@ Report :: [].{
                 if Output.json_mode!({})
                     Output.emit_ok!(rows)
                 else if List.is_empty(rows) and !(Str.is_empty(sport_filter)) {
-                    # a silent empty table reads as "no data"; the true answer is
-                    # usually "no sport spelled like that" — say which ones exist
-                    known = known_sports!(path)?
-                    Stdout.line!("no '${sport_filter}' activities — sports in your data: ${Str.join_with(known, ", ")}")
+                    Stdout.line!(empty_hint!(path, sport_filter, header)?)
                 } else {
                     val = |r|
                         match metric {
