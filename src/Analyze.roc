@@ -5,6 +5,7 @@ import pf.Sqlite
 import pf.Stdout
 import pf.Path
 import Metrics
+import Sports
 import Render
 import Streams
 
@@ -630,7 +631,7 @@ Analyze :: [].{
         decoupling =
             if !(List.is_empty(watts_pairs))
                 Metrics.decoupling_pct(watts_pairs, hr_pairs, row.s_mt)
-            else if Metrics.pace_detect_sport(row.sport)
+            else if Sports.pace_routed(row.sport)
                 Metrics.decoupling_pct(gas_1s_pairs, hr_pairs, row.s_mt)
             else
                 Unknown
@@ -742,7 +743,7 @@ Analyze :: [].{
         _ =
             if !(List.is_empty(watts_1s_pairs)) {
                 insert_segments!(path, row.id, "power", Metrics.detect_segments(watts_1s_pairs, Metrics.detect_power_params), hr_1s_pairs)?
-            } else if Metrics.pace_detect_sport(row.sport) and !(List.is_empty(gas_1s_pairs)) {
+            } else if Sports.pace_routed(row.sport) and !(List.is_empty(gas_1s_pairs)) {
                 insert_segments!(path, row.id, "pace", Metrics.detect_segments(gas_1s_pairs, Metrics.detect_pace_params), hr_1s_pairs)?
             } else {
                 {}

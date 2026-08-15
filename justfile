@@ -25,6 +25,7 @@ build:
 # full suite: pure expects -> fresh build (must succeed!) -> effectful e2e
 test:
     {{roc}} test src/Metrics.roc
+    {{roc}} test src/Sports.roc
     {{roc}} test src/Render.roc
     {{roc}} test src/Backfill.roc
     {{roc}} test src/Csv.roc

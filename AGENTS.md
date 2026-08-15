@@ -47,7 +47,7 @@ just install   # build + symlink to ~/.local/bin/stride
   (their commands); `app.roc` is a thin argv → dispatch shell. (History: under alpha4
   a decoder wider than 2 columns failed to type-check once effects were injected, so
   everything effectful had to sit in app.roc — that wall is gone.)
-  Pure logic goes in `Metrics.roc` / `Render.roc` / `Command.roc` (argv → typed
+  Pure logic goes in `Metrics.roc` / `Sports.roc` (sport vocabulary: families, class, pace routing — a DATA table, not if-chains) / `Render.roc` / `Command.roc` (argv → typed
   `Command` union, `parse` is pure + unit-tested; `main!` is thin parse-then-dispatch)
   / `Config.roc` (`is_secret` secret-key policy) / `Csv.roc` / `Streams.roc` /
   `Backfill.roc` / `Schema.roc`, with `expect` tests. When adding logic: pure
@@ -200,7 +200,7 @@ Every item here cost a debugging session at least once — they are not style op
 - **Session-RPE load is `hours × RPE × 10`** (1h @ RPE 10 = 100, TSS-commensurate
   by construction). Never "simplify" to Foster's raw minutes — ~6× too large,
   corrupts CTL/ATL. Strength-class sports rank the athlete's rating above HR;
-  endurance ranks measured power/HR first (`Metrics.sport_class`).
+  endurance ranks measured power/HR first (`Sports.class`).
 - HR samples outside 35–220 bpm are junk — filtered at analyze.
 - `activity_metrics.ftp_used` drives auto-recompute on FTP change — any new metric
   input must join that invalidation story.
