@@ -937,7 +937,7 @@ Report :: [].{
     # ranked "best sessions": top N activities by a chosen metric (vs `activities`,
     # which is chronological). e.g. `top hr`, `top tss 5 rowing`.
     # sport-word filter shared by top/activities/power-curve: the human word
-    # widens to its Strava family (Metrics.sport_family), matched IN (...) with
+    # widens to its Strava family (Sports.family), matched IN (...) with
     # NOCASE. Placeholders are numbered so the bindings stay real bindings.
     sport_filter_sql : Str -> { frag : Str, binds : List({ name : Str, value : [Null, Real(F64), Integer(I64), String(Str), Bytes(List(U8))] }) }
     sport_filter_sql = |word|
@@ -1174,7 +1174,7 @@ Report :: [].{
             },
         })?
         # strength-class sessions without a rating: aggregate in Roc so the sport
-        # list can't drift from Metrics.sport_class
+        # list can't drift from Sports.class
         sports = Sqlite.query_many!({
             path: Path.utf8(path),
             query: "SELECT COALESCE(a.sport_type, '') AS sport, CASE WHEN r.activity_id IS NULL THEN 0 ELSE 1 END AS rated FROM activities a LEFT JOIN ratings r ON r.activity_id = a.id",

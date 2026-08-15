@@ -200,7 +200,7 @@ Every item here cost a debugging session at least once — they are not style op
 - **Session-RPE load is `hours × RPE × 10`** (1h @ RPE 10 = 100, TSS-commensurate
   by construction). Never "simplify" to Foster's raw minutes — ~6× too large,
   corrupts CTL/ATL. Strength-class sports rank the athlete's rating above HR;
-  endurance ranks measured power/HR first (`Metrics.sport_class`).
+  endurance ranks measured power/HR first (`Sports.class`).
 - HR samples outside 35–220 bpm are junk — filtered at analyze.
 - `activity_metrics.ftp_used` drives auto-recompute on FTP change — any new metric
   input must join that invalidation story.

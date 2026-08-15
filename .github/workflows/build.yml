@@ -70,7 +70,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for m in Config Command Csv Backfill Metrics Render Streams; do
+          for m in Config Command Csv Backfill Metrics Render Sports Streams; do
             echo "--- roc test src/$m.roc ---"
             roc test "src/$m.roc"
           done

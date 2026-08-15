@@ -401,7 +401,7 @@ Metrics :: [].{
         "threshold_pace_${Str.with_ascii_lowercased(sport)}"
 
     # The config key selecting a sport's intensity MODEL (power | pace | css | hr | rpe),
-    # `model_<sport>`. Orthogonal to sport_class (which sets fallback priority) — this picks
+    # `model_<sport>`. Orthogonal to Sports.class (which sets fallback priority) — this picks
     # which ladder rung a sport routes to. Absent -> the safe default (power if watts, else HR).
     model_key : Str -> Str
     model_key = |sport|
@@ -634,7 +634,7 @@ Metrics :: [].{
         # graded pace SPEED was computed (a pace-routed sport with distance+altitude streams)
         # AND a threshold speed exists; otherwise falls through to HR/RPE/RE. rTSS/sTSS is
         # IF^exp * hours * 100 with IF = ngp_speed / threshold_speed; the exponent is
-        # per-sport (running 2, swimming 3 — see pace_tss_exponent).
+        # per-sport (running 2, swimming 3 — see Sports.pace_tss_exponent).
         pace_or_fallback =
             match input.ngp {
                 Ok(ngp_speed) =>
@@ -1545,7 +1545,7 @@ Metrics :: [].{
 
     # rTSS / sTSS: the power formula with speed swapped for watts — IF = ngp_speed /
     # threshold_speed (faster = harder), IF^exp × hours × 100. 1 h at threshold = 100 for
-    # any exponent. The exponent is per-sport (see pace_tss_exponent immediately below):
+    # any exponent. The exponent is per-sport (see Sports.pace_tss_exponent):
     # running is near enough linear in speed so it keeps 2, matching TrainingPeaks rTSS;
     # swimming fights drag, which rises with v³, so it uses 3 like TrainingPeaks sSS. The
     # earlier version squared BOTH and under-scored hard swim sets by ~20%.
