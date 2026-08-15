@@ -1849,6 +1849,34 @@ Metrics :: [].{
         }
     }
 
+    # Human sport words map to the Strava sport_type spellings they mean —
+    # `stride top distance 10 bike` must not return a silent empty table because
+    # Strava spells it "Ride". Unknown words pass through unchanged (exact
+    # NOCASE match downstream), so a literal sport_type keeps working and a typo
+    # produces the no-matches hint rather than a wrong guess.
+    sport_family : Str -> List(Str)
+    sport_family = |word| {
+        low = Str.with_ascii_lowercased(word)
+        if low == "bike" or low == "cycling" or low == "ride" or low == "rides" {
+            # NO e-bike arms on purpose: analyze computes best_*_w for anything
+            # with a power stream, so one motor-assisted ride would set the max at
+            # every power-curve duration and drag the CP fit up permanently
+            ["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"]
+        } else if low == "run" or low == "running" or low == "runs" {
+            ["Run", "VirtualRun", "TrailRun"]
+        } else if low == "row" or low == "rowing" {
+            ["Rowing", "VirtualRow"]
+        } else if low == "swim" or low == "swimming" {
+            ["Swim", "OpenWaterSwim"]
+        } else if low == "walk" or low == "walking" or low == "hike" or low == "hiking" {
+            ["Walk", "Hike"]
+        } else if low == "strength" or low == "weights" or low == "lifting" {
+            ["WeightTraining", "Workout"]
+        } else {
+            [word]
+        }
+    }
+
     # Sports where speed IS the effort signal — runs and swims per ADR 0008.
     # LOAD-BEARING FOR TWO POLICIES: interval detection's pace routing AND
     # aerobic decoupling's pace arm (#134). A meter-less RIDE must not fall
@@ -3192,4 +3220,13 @@ expect {
     above = Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, min_spread: 30.0 })
     below = Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, min_spread: 60.0 })
     List.len(List.keep_if(above, |s| s.kind == Work)) == 4 and List.is_empty(below)
+}
+
+# human sport words widen to their Strava family; unknown words pass through
+expect {
+    Metrics.sport_family("bike") == ["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"]
+    and Metrics.sport_family("BIKE") == ["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"]
+    and Metrics.sport_family("run") == ["Run", "VirtualRun", "TrailRun"]
+    and Metrics.sport_family("Rowing") == ["Rowing", "VirtualRow"]
+    and Metrics.sport_family("Yoga") == ["Yoga"]
 }
