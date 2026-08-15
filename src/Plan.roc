@@ -576,6 +576,9 @@ Plan :: [].{
     # (any completion, or a substitute on a non-superseded row) refuse the claim,
     # naming the blocking session — an error that names the rule without the id
     # leaves the reader nothing but SQLite (see the activity_required note above).
+    # The supersession predicate here is the De Morgan dual of the one in the
+    # unplanned query and the sessions query — the three MUST agree (see the
+    # NOTE above the unplanned query).
     live_claimant! : Str, I64, I64 => Try([CompletedBy(I64), SubstituteOf(I64), Free], _)
     live_claimant! = |path, activity_id, session_id| {
         rows = Sqlite.query_many!({
@@ -671,7 +674,17 @@ Plan :: [].{
                         }
                         Sub("none") => {
                             # the explicit release path — the only way to unlink a
-                            # substitute without lying about what happened
+                            # substitute without lying about what happened. Read the
+                            # link BEFORE clearing so the output reports the released
+                            # id (an integer, mirroring kept_substitute — never a bare
+                            # True tag, which the builtin JSON stringifies) and stays
+                            # silent when there was nothing to release.
+                            had = Sqlite.query_many!({
+                                path: Path.utf8(path),
+                                query: "SELECT substitute_activity_id AS s FROM planned_sessions WHERE id = :pid AND substitute_activity_id IS NOT NULL",
+                                bindings: [{ name: ":pid", value: Integer(session_id) }],
+                                rows: Sqlite.i64("s"),
+                            })?
                             _ = Sqlite.execute!({
                                 path: Path.utf8(path),
                                 query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why, substitute_activity_id = NULL WHERE id = :pid",
@@ -680,7 +693,12 @@ Plan :: [].{
                                     { name: ":pid", value: Integer(session_id) },
                                 ],
                             })?
-                            Output.out!({ skipped_session: session_id, reason, substitute_released: True }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason} (substitute link released)")
+                            match List.first(had) {
+                                Ok(old_sub) =>
+                                    Output.out!({ skipped_session: session_id, reason, released_substitute: old_sub }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason} (released substitute ${I64.to_str(o.released_substitute)})")
+                                Err(_) =>
+                                    Output.out!({ skipped_session: session_id, reason }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason} (no substitute link to release)")
+                            }
                         }
                         Sub(activity_id_str) =>
                             match I64.from_str(activity_id_str) {
@@ -719,7 +737,7 @@ Plan :: [].{
                     }
                 }
             Err(_) =>
-                Output.err_out!("bad_id", "skip needs a numeric id: skip <session_id> \"<reason>\" [activity_id]")
+                Output.err_out!("bad_id", "skip needs a numeric id: skip <session_id> \"<reason>\" [activity_id|none]")
 
         }
     }

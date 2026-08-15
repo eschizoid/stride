@@ -670,7 +670,10 @@ b_plan! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["skip", relsess, "with sub", "305"])
     rel_out = stride!(ctx.bin, ctx.home, ["skip", relsess, "changed my mind", "none"])
     check!("skip none releases the link", Str.trim(sql!(ctx.db, "SELECT COALESCE(substitute_activity_id,0) FROM planned_sessions WHERE id = ${relsess};")) == "0")?
-    check!("...and says so", Str.contains(rel_out, "substitute_released"))?
+    check!("...and reports WHICH id it released, as a number", Str.contains(rel_out, "\"released_substitute\":305"))?
+    # releasing when nothing is linked must not claim otherwise
+    norel = stride!(ctx.bin, ctx.home, ["skip", relsess, "third wording", "none"])
+    check!("none on an unlinked session claims nothing", !(Str.contains(norel, "released_substitute")))?
     # a steal is SURFACED, never silent: re-link 305, supersede, claim it elsewhere
     _ = stride!(ctx.bin, ctx.home, ["skip", relsess, "with sub again", "305"])
     relsup = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "supersedes release probe", "r"], ".data.id"))
