@@ -108,6 +108,7 @@ Plan :: [].{
                 \\       COALESCE(session_type,'') AS session_type, COALESCE(detail,'') AS detail,
                 \\       COALESCE(rationale,'') AS rationale, COALESCE(completed_activity_id,0) AS completed_activity_id,
                 \\       COALESCE(status,'open') AS status, COALESCE(skipped_reason,'') AS skipped_reason,
+                \\       COALESCE(substitute_activity_id,0) AS substitute_activity_id,
                 \\       COALESCE((SELECT substr(a.start_local,1,10) FROM activities a WHERE a.id = planned_sessions.completed_activity_id), '') AS done_date
                 \\FROM planned_sessions
                 \\WHERE (:all = 1 OR (COALESCE(target_date,'') >= '${Metrics.days_to_date_str(mon)}' AND COALESCE(target_date,'') <= '${Metrics.days_to_date_str(mon + 6)}' AND (COALESCE(status,'open') <> 'skipped' OR NOT EXISTS (SELECT 1 FROM planned_sessions p2 WHERE p2.target_date = planned_sessions.target_date AND (COALESCE(p2.status,'open') <> 'skipped' OR p2.id > planned_sessions.id)))))
@@ -124,8 +125,9 @@ Plan :: [].{
                 completed_activity_id = Sqlite.i64("completed_activity_id")(cols)(stmt)?
                 status = Sqlite.str("status")(cols)(stmt)?
                 skipped_reason = Sqlite.str("skipped_reason")(cols)(stmt)?
+                substitute_activity_id = Sqlite.i64("substitute_activity_id")(cols)(stmt)?
                 done_date = Sqlite.str("done_date")(cols)(stmt)?
-                Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, status, skipped_reason, done_date })
+                Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, status, skipped_reason, substitute_activity_id, done_date })
             },
         })?
         # newest-first from SQL, flipped to calendar order for display. `Render.reverse_list`
@@ -151,6 +153,7 @@ Plan :: [].{
             completed_activity_id: p.completed_activity_id,
             status: p.status,
             skipped_reason: p.skipped_reason,
+            substitute_activity_id: p.substitute_activity_id,
             done_date: p.done_date,
             # A session completed by an activity from ANOTHER day used to render exactly
             # like one completed on time — the plan silently implied the work happened on
@@ -165,6 +168,60 @@ Plan :: [].{
                     p.status
                 },
         })
+        # plan-vs-actual (#144): activities this week that no session references —
+        # neither as completion nor as substitute — get their own rows, so the week
+        # stops hiding what actually happened. ThisWeek only: `week all` is the
+        # SESSION log, and a lifetime of unplanned activities would bury it.
+        unplanned = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT a.id AS aid, substr(a.start_local,1,10) AS adate, COALESCE(a.sport_type,'') AS sport,
+                \\       COALESCE(a.name,'') AS aname, COALESCE(a.moving_time,0) AS mt,
+                \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss
+                \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
+                \\WHERE :all = 0
+                \\  AND substr(a.start_local,1,10) >= '${Metrics.days_to_date_str(mon)}'
+                \\  AND substr(a.start_local,1,10) <= '${Metrics.days_to_date_str(mon + 6)}'
+                \\  AND NOT EXISTS (SELECT 1 FROM planned_sessions ps WHERE ps.completed_activity_id = a.id OR ps.substitute_activity_id = a.id)
+                \\ORDER BY a.start_local
+            ,
+            bindings: [{ name: ":all", value: Integer(scope_all) }],
+            rows: |cols| |stmt| {
+                aid = Sqlite.i64("aid")(cols)(stmt)?
+                adate = Sqlite.str("adate")(cols)(stmt)?
+                sport = Sqlite.str("sport")(cols)(stmt)?
+                aname = Sqlite.str("aname")(cols)(stmt)?
+                mt = Sqlite.i64("mt")(cols)(stmt)?
+                tss = Sqlite.f64("tss")(cols)(stmt)?
+                Ok({ aid, adate, sport, aname, mt, tss })
+            },
+        })?
+        unplanned_rows = List.map(unplanned, |u| {
+            id: 0.I64,
+            created_at: "",
+            target_date: u.adate,
+            day: dow(u.adate),
+            session_type: Str.with_ascii_lowercased(u.sport),
+            detail: "${u.aname} — ${Render.mins(u.mt)}${if u.tss >= 1.0 ", ${Render.fmt0(u.tss)} load" else ""}",
+            rationale: "",
+            completed_activity_id: u.aid,
+            status: "unplanned",
+            skipped_reason: "",
+            substitute_activity_id: 0.I64,
+            done_date: u.adate,
+            status_shown: "unplanned",
+        })
+        # merged calendar order: sessions and unplanned actuals interleave by date.
+        # Str has no ordering (the AGENTS gotcha) — sort on the parsed day number,
+        # with unparseable dates keeping their relative position at day 0
+        day_key = |ds|
+            match Metrics.date_str_to_days(ds) {
+                Ok(n) => n
+                Err(_) => 0
+            }
+        with_actuals = List.sort_with(List.concat(enriched, unplanned_rows), |x, y|
+            I64.compare(day_key(x.target_date), day_key(y.target_date)))
+
         # `week all` splits the log into sections: a single slab answers "whatever
         # happened" when the question at hand is usually "what's coming". Partitioned by
         # WEEK rather than by today, so no row can land in two sections — an open session
@@ -182,8 +239,15 @@ Plan :: [].{
             p.session_type,
             p.status_shown,
             p.detail,
-            (p.id).to_str(),
-            if p.completed_activity_id == 0 "-" else (p.completed_activity_id).to_str(),
+            if p.id == 0 "-" else (p.id).to_str(),
+            if p.completed_activity_id != 0 {
+                (p.completed_activity_id).to_str()
+            } else if p.substitute_activity_id != 0 {
+                # a substitution is not a completion — the arrow keeps them distinct
+                "→ ${(p.substitute_activity_id).to_str()}"
+            } else {
+                "-"
+            },
         ]
         # an empty section says so rather than vanishing — an absent heading reads as
         # "there is no such thing", which is a different claim from "nothing there yet"
@@ -193,7 +257,7 @@ Plan :: [].{
             } else {
                 "── ${title} ──\n${Render.render_table(plan_headers, List.map(srows, plan_cells))}"
             }
-        Output.out!(enriched, |rows_enriched|
+        Output.out!(with_actuals, |rows_enriched|
             match scope {
                 ThisWeek => Render.render_table(plan_headers, List.map(rows_enriched, plan_cells))
                 AllTime => {
@@ -440,26 +504,53 @@ Plan :: [].{
                 }
         }
     }
-    skip! : Str, Str => Try({}, _)
-    skip! = |session_id_str, reason| {
+    # sub: an optional activity that REPLACED the plan (#144). A substitution is
+    # not a completion — the plan still wasn't delivered as prescribed — but the
+    # link keeps the week honest: "skipped, did this instead" beats prose.
+    skip! : Str, Str, [NoSub, Sub(Str)] => Try({}, _)
+    skip! = |session_id_str, reason, sub| {
         path = Db.open_db!({})?
         match I64.from_str(session_id_str) {
             Ok(session_id) =>
                 if !(Report.row_exists!(path, "planned_sessions", session_id)?) {
                     session_not_found!(session_id)
                 } else {
-                    Sqlite.execute!({
-                        path: Path.utf8(path),
-                        query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why WHERE id = :pid",
-                        bindings: [
-                            { name: ":why", value: String(reason) },
-                            { name: ":pid", value: Integer(session_id) },
-                        ],
-                    })?
-                    Output.out!({ skipped_session: session_id, reason }, |p| "planned session #${I64.to_str(p.skipped_session)} skipped: ${p.reason}")
+                    match sub {
+                        NoSub => {
+                            _ = Sqlite.execute!({
+                                path: Path.utf8(path),
+                                query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why WHERE id = :pid",
+                                bindings: [
+                                    { name: ":why", value: String(reason) },
+                                    { name: ":pid", value: Integer(session_id) },
+                                ],
+                            })?
+                            Output.out!({ skipped_session: session_id, reason }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason}")
+                        }
+                        Sub(activity_id_str) =>
+                            match I64.from_str(activity_id_str) {
+                                Ok(activity_id) =>
+                                    if !(Report.row_exists!(path, "activities", activity_id)?) {
+                                        Output.err_out!("activity_not_found", "activity ${activity_id_str} not found (run `stride activities` to list ids)")
+                                    } else {
+                                        _ = Sqlite.execute!({
+                                            path: Path.utf8(path),
+                                            query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why, substitute_activity_id = :aid WHERE id = :pid",
+                                            bindings: [
+                                                { name: ":why", value: String(reason) },
+                                                { name: ":aid", value: Integer(activity_id) },
+                                                { name: ":pid", value: Integer(session_id) },
+                                            ],
+                                        })?
+                                        Output.out!({ skipped_session: session_id, reason, substitute_activity: activity_id }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason} (did ${I64.to_str(o.substitute_activity)} instead)")
+                                    }
+                                Err(_) =>
+                                    Output.err_out!("bad_id", "the substitute must be a numeric activity id: skip <session_id> \"<reason>\" [activity_id]")
+                            }
+                    }
                 }
             Err(_) =>
-                Output.err_out!("bad_id", "skip needs a numeric id: skip <session_id> \"<reason>\"")
+                Output.err_out!("bad_id", "skip needs a numeric id: skip <session_id> \"<reason>\" [activity_id]")
 
         }
     }

@@ -29,6 +29,7 @@ Command := [
 	Complete(Str, Str),
 	CompleteRest(Str),
 	Skip(Str, Str),
+	SkipWith(Str, Str, Str),
 	ConfigGet(Str),
 	ConfigSet(Str, Str),
 ].{
@@ -92,6 +93,7 @@ Command := [
 			[_, "week", "add", date, session_type, detail, rationale] => Ok(WeekAdd(date, session_type, detail, rationale))
 			[_, "complete", session_id, activity_id] => Ok(Complete(session_id, activity_id))
 			[_, "complete", session_id] => Ok(CompleteRest(session_id))
+			[_, "skip", session_id, reason, activity_id] => Ok(SkipWith(session_id, reason, activity_id))
 			[_, "skip", session_id, reason] => Ok(Skip(session_id, reason))
 			[_, "config", "get", key] => Ok(ConfigGet(key))
 			[_, "config", "set", key, val] => Ok(ConfigSet(key, val))
@@ -281,6 +283,11 @@ expect
 expect
 	match Command.parse(["stride", "skip", "3", "sick"]) {
 		Ok(Skip("3", "sick")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "skip", "3", "rode outdoors instead", "19755802565"]) {
+		Ok(SkipWith("3", "rode outdoors instead", "19755802565")) => True
 		_ => False
 	}
 expect

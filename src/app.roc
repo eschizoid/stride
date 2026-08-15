@@ -153,7 +153,8 @@ dispatch! = |cmd|
         Command.WeekAdd(date, session_type, detail, rationale) => Plan.plan_add!(date, session_type, detail, rationale)
         Command.Complete(session_id, activity_id) => Plan.complete!(session_id, activity_id)
         Command.CompleteRest(session_id) => Plan.complete_rest!(session_id)
-        Command.Skip(session_id, reason) => Plan.skip!(session_id, reason)
+        Command.Skip(session_id, reason) => Plan.skip!(session_id, reason, NoSub)
+        Command.SkipWith(session_id, reason, activity_id) => Plan.skip!(session_id, reason, Sub(activity_id))
         Command.ConfigGet(key) => config_show!(key)
         Command.ConfigSet(key, val) => config_store!(key, val)
 
