@@ -93,7 +93,7 @@ help_text =
         \\    week all                upcoming + this week + last week (older ones counted)
         \\    week add <date> <type> <detail> <rationale>    add a planned session
         \\    complete <session_id> [activity_id]            mark done (bare = rest day)
-        \\    skip <session_id> <reason>                     mark skipped, with reason
+        \\    skip <session_id> <reason> [activity_id]       mark skipped — optionally naming the activity done instead
         \\    rate <activity_id|latest> <1-10>               session-RPE — scores strength honestly
         \\
         \\REFERENCE

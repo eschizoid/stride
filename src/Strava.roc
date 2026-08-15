@@ -790,6 +790,7 @@ Strava :: [].{
                 \\  AND start_local >= :ws
                 \\  AND id NOT IN (SELECT activity_id FROM ratings)
                 \\  AND id NOT IN (SELECT completed_activity_id FROM planned_sessions WHERE completed_activity_id IS NOT NULL)
+                \\  AND id NOT IN (SELECT substitute_activity_id FROM planned_sessions WHERE substitute_activity_id IS NOT NULL)
             ,
             bindings: [
                 { name: ":stamp", value: Integer(stamp) },

@@ -151,6 +151,8 @@ Plan :: [].{
             detail: p.detail,
             rationale: p.rationale,
             completed_activity_id: p.completed_activity_id,
+            # 0 on session rows — only unplanned rows carry a bare activity_id
+            activity_id: 0.I64,
             status: p.status,
             skipped_reason: p.skipped_reason,
             substitute_activity_id: p.substitute_activity_id,
@@ -180,9 +182,17 @@ Plan :: [].{
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE :all = 0
-                \\  AND substr(a.start_local,1,10) >= '${Metrics.days_to_date_str(mon)}'
-                \\  AND substr(a.start_local,1,10) <= '${Metrics.days_to_date_str(mon + 6)}'
-                \\  AND NOT EXISTS (SELECT 1 FROM planned_sessions ps WHERE ps.completed_activity_id = a.id OR ps.substitute_activity_id = a.id)
+                \\  AND a.start_local >= '${Metrics.days_to_date_str(mon)}'
+                \\  AND a.start_local < '${Metrics.days_to_date_str(mon + 7)}'
+                \\  AND NOT EXISTS (SELECT 1 FROM planned_sessions ps
+                \\       WHERE ps.completed_activity_id = a.id
+                \\          OR (ps.substitute_activity_id = a.id
+                \\              AND ps.target_date >= '${Metrics.days_to_date_str(mon)}'
+                \\              AND ps.target_date <= '${Metrics.days_to_date_str(mon + 6)}'
+                \\              AND (COALESCE(ps.status,'open') <> 'skipped'
+                \\                   OR NOT EXISTS (SELECT 1 FROM planned_sessions p3
+                \\                                  WHERE p3.target_date = ps.target_date
+                \\                                    AND (COALESCE(p3.status,'open') <> 'skipped' OR p3.id > ps.id)))))
                 \\ORDER BY a.start_local
             ,
             bindings: [{ name: ":all", value: Integer(scope_all) }],
@@ -197,30 +207,59 @@ Plan :: [].{
             },
         })?
         unplanned_rows = List.map(unplanned, |u| {
+            # bind first, then interpolate — `${if … else ""}` splices a compile-time
+            # "" into str_concat, the #32-class heap trap (fixed upstream in
+            # roc#10595, but our pinned nightly predates the fix)
+            load_part = if u.tss >= 1.0 ", ${Render.fmt0(u.tss)} load" else " "
+            {
             id: 0.I64,
             created_at: "",
             target_date: u.adate,
             day: dow(u.adate),
             session_type: Str.with_ascii_lowercased(u.sport),
-            detail: "${u.aname} — ${Render.mins(u.mt)}${if u.tss >= 1.0 ", ${Render.fmt0(u.tss)} load" else ""}",
+            detail: Str.trim_end("${u.aname} — ${Render.mins(u.mt)}${load_part}"),
             rationale: "",
-            completed_activity_id: u.aid,
+            completed_activity_id: 0.I64,
+            activity_id: u.aid,
             status: "unplanned",
             skipped_reason: "",
             substitute_activity_id: 0.I64,
-            done_date: u.adate,
+            done_date: "",
             status_shown: "unplanned",
+            }
         })
         # merged calendar order: sessions and unplanned actuals interleave by date.
-        # Str has no ordering (the AGENTS gotcha) — sort on the parsed day number,
-        # with unparseable dates keeping their relative position at day 0
-        day_key = |ds|
-            match Metrics.date_str_to_days(ds) {
-                Ok(n) => n
-                Err(_) => 0
+        # Three traps live here, each measured: Str has no ordering (parse day
+        # numbers); this toolchain's List.sort_with is ANTI-STABLE (ties come out
+        # REVERSED, so the comparator must be a total order — day, then sessions
+        # before unplanned, then id); and sort_with is O(n^2) on already-sorted
+        # input, which `enriched` always is — so when nothing was merged (week all,
+        # or a week with no unplanned activities) we skip the sort entirely.
+        # Keys are computed ONCE per row, never inside the comparator.
+        with_actuals =
+            if List.is_empty(unplanned_rows) {
+                enriched
+            } else {
+                day_key = |ds|
+                    match Metrics.date_str_to_days(ds) {
+                        Ok(n) => n
+                        Err(_) => 0
+                    }
+                keyed = List.map(List.concat(enriched, unplanned_rows), |r| {
+                    row: r,
+                    day: day_key(r.target_date),
+                    rank: if r.status == "unplanned" 1.I64 else 0.I64,
+                    ord: if r.id != 0 r.id else r.activity_id,
+                })
+                sorted = List.sort_with(keyed, |x, y| {
+                    d = I64.compare(x.day, y.day)
+                    if d != EQ d else {
+                        rk = I64.compare(x.rank, y.rank)
+                        if rk != EQ rk else I64.compare(x.ord, y.ord)
+                    }
+                })
+                List.map(sorted, |k| k.row)
             }
-        with_actuals = List.sort_with(List.concat(enriched, unplanned_rows), |x, y|
-            I64.compare(day_key(x.target_date), day_key(y.target_date)))
 
         # `week all` splits the log into sections: a single slab answers "whatever
         # happened" when the question at hand is usually "what's coming". Partitioned by
@@ -240,7 +279,9 @@ Plan :: [].{
             p.status_shown,
             p.detail,
             if p.id == 0 "-" else (p.id).to_str(),
-            if p.completed_activity_id != 0 {
+            if p.activity_id != 0 {
+                (p.activity_id).to_str()
+            } else if p.completed_activity_id != 0 {
                 (p.completed_activity_id).to_str()
             } else if p.substitute_activity_id != 0 {
                 # a substitution is not a completion — the arrow keeps them distinct
@@ -404,10 +445,14 @@ Plan :: [].{
                     session_not_found!(session_id)
                 } else if !(Report.row_exists!(path, "activities", activity_id)?) {
                     Output.err_out!("activity_not_found", "no activity ${I64.to_str(activity_id)} in the db — `stride sync` first?")
+                } else if claimed_elsewhere!(path, activity_id, session_id)? {
+                    Output.err_out!("activity_already_linked", "activity ${I64.to_str(activity_id)} already completes or substitutes another session")
                 } else {
+                    # completing clears any substitute link: the completion IS the
+                    # story now, and a lingering arrow would tell two
                     Sqlite.execute!({
                         path: Path.utf8(path),
-                        query: "UPDATE planned_sessions SET completed_activity_id = :aid, status = 'done' WHERE id = :pid",
+                        query: "UPDATE planned_sessions SET completed_activity_id = :aid, status = 'done', substitute_activity_id = NULL WHERE id = :pid",
                         bindings: [
                             { name: ":aid", value: Integer(activity_id) },
                             { name: ":pid", value: Integer(session_id) },
@@ -504,6 +549,21 @@ Plan :: [].{
                 }
         }
     }
+    # one activity, one story: linked anywhere (completion OR substitute) by any
+    # OTHER session means it cannot be claimed again — the week would tell the
+    # same ride's story twice. The session being modified is excluded so
+    # re-running the same complete/skip stays idempotent.
+    claimed_elsewhere! : Str, I64, I64 => Try(Bool, _)
+    claimed_elsewhere! = |path, activity_id, session_id| {
+        n = Sqlite.query!({
+            path: Path.utf8(path),
+            query: "SELECT COUNT(*) AS n FROM planned_sessions WHERE (completed_activity_id = :aid OR substitute_activity_id = :aid) AND id <> :sid",
+            bindings: [{ name: ":aid", value: Integer(activity_id) }, { name: ":sid", value: Integer(session_id) }],
+            row: Sqlite.i64("n"),
+        })?
+        Ok(n > 0)
+    }
+
     # sub: an optional activity that REPLACED the plan (#144). A substitution is
     # not a completion — the plan still wasn't delivered as prescribed — but the
     # link keeps the week honest: "skipped, did this instead" beats prose.
@@ -519,7 +579,7 @@ Plan :: [].{
                         NoSub => {
                             _ = Sqlite.execute!({
                                 path: Path.utf8(path),
-                                query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why WHERE id = :pid",
+                                query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why, substitute_activity_id = NULL WHERE id = :pid",
                                 bindings: [
                                     { name: ":why", value: String(reason) },
                                     { name: ":pid", value: Integer(session_id) },
@@ -532,6 +592,10 @@ Plan :: [].{
                                 Ok(activity_id) =>
                                     if !(Report.row_exists!(path, "activities", activity_id)?) {
                                         Output.err_out!("activity_not_found", "activity ${activity_id_str} not found (run `stride activities` to list ids)")
+                                    } else if claimed_elsewhere!(path, activity_id, session_id)? {
+                                        # one activity, one story: it cannot complete one
+                                        # session and "substitute" another
+                                        Output.err_out!("activity_already_linked", "activity ${activity_id_str} already completes or substitutes another session")
                                     } else {
                                         _ = Sqlite.execute!({
                                             path: Path.utf8(path),
