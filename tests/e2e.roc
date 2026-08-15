@@ -705,7 +705,7 @@ b_plan! = |ctx| {
     # a DONE session refuses skip (#148): the old flip left a skipped row
     # displaying a completion — falsified adherence, guarded at the mechanism now
     done_skip = stride!(ctx.bin, ctx.home, ["skip", resess, "trying to unskip history"])
-    check!("skipping a done session is refused", Str.contains(done_skip, "session_done") and Str.contains(done_skip, "completions are permanent"))?
+    check!("skipping a done session is refused, naming the activity", Str.contains(done_skip, "session_done") and Str.contains(done_skip, "activity 304"))?
     check!("...and the row is untouched", Str.trim(sql!(ctx.db, "SELECT status || '|' || COALESCE(completed_activity_id,0) FROM planned_sessions WHERE id = ${resess};")) == "done|304")?
     check!("skip none on a done session is refused too", Str.contains(stride!(ctx.bin, ctx.home, ["skip", resess, "x", "none"]), "session_done"))?
 
@@ -714,6 +714,9 @@ b_plan! = |ctx| {
     _ = sql!(ctx.db, "UPDATE planned_sessions SET substitute_activity_id = 303 WHERE id = ${restsess};")
     _ = stride!(ctx.bin, ctx.home, ["complete", restsess])
     check!("bare rest completion clears the substitute link", Str.trim(sql!(ctx.db, "SELECT COALESCE(substitute_activity_id,0) FROM planned_sessions WHERE id = ${restsess};")) == "0")?
+    # the NULL-link arm: a completed rest day refuses skip with its own wording —
+    # this also pins the COALESCE that keeps a NULL from hard-failing the decoder
+    check!("a completed rest day refuses skip in the NULL-link wording", Str.contains(stride!(ctx.bin, ctx.home, ["skip", restsess, "x"]), "completed rest day"))?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${today_sess}, ${extra_sess}, ${replan}, ${resess}, ${restsess}); DELETE FROM activities WHERE id IN (300, 303, 304);")
     check!("complete non-numeric id", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "abc", "101"]), "bad_id"))?
     check!("week add rest id 3", strjq!(ctx, ["week", "add", "2099-01-02", "rest", "planned rest", "recovery"], ".data.id") == "3")?
