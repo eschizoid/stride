@@ -41,11 +41,33 @@ Never do training math yourself: read stride's numbers, add judgment.
    - `complete`/`skip` also REFUSE unknown ids (`{"error":"session_not_found"}`
      / `activity_not_found` / `bad_id`) — a typo can't silently desync the log, so
      check for an error field instead of assuming success.
-   - a session that didn't happen: `stride skip <id> "<reason>"` (keeps adherence
-     history honest — skipped ≠ silently open forever).
+   - a session that didn't happen: `stride skip <id> "<reason>" [activity_id|none]` —
+     the optional link names the activity done INSTEAD (a substitution, not a
+     completion; rendered `→ id` in week); `none` releases a link; a bare re-skip
+     keeps one. Refusals: `activity_already_linked` (that activity already tells
+     another session's story — the error names the blocker and the release path)
+     and `session_done` (completions are permanent; fix a mis-link by re-completing,
+     never by skip). Skipped ≠ silently open forever.
    - a REST day that happened: `stride complete <id>` with no activity id (rest has
      nothing to link; any other type still refuses without its activity —
      `{"error":"activity_required"}`).
+
+## Reading decoupling and detected structure
+
+- **Aerobic decoupling** (`decoupling_pct` + `decoupling_known` on `activity` and every
+  progress session row; `decoupling_signal` = "power", "pace" (grade-adjusted), or
+  "speed" (no altitude stream — terrain NOT normalized, read cautiously on hilly
+  routes)): second-half vs first-half efficiency drift. LOWER is better; ≤ +5% on a
+  steady 1h+ effort = solid durability. Only meaningful on STEADY sessions — on
+  intervals it reflects workout shape (check `segments`: work reps present → don't
+  read drift as durability). Unknown when: no usable signal, the signal covers less
+  than half the session, or |value| > 50% (artifact).
+- **Detected structure** (`stride activity <id>`): `interval_summary` ("3×[12:00 @
+  230W / 4:00 easy]"), `segments` (per-rep kind/duration/avg + HR peak/avg/60s
+  recovery drop), `hr_drift` + `hr_drift_known` (rising across reps = fatigue), and
+  `detection_attempted` (false = couldn't look — no power/pace signal — which is NOT
+  the same as "verified: no structure"). The detector reports; matching structure to
+  a prescription stays YOUR judgment.
 
 ## Output modes
 
@@ -70,7 +92,7 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
 | `stride activity <id>` | one session in depth: flat z1_s–z5_s + hard_s, hard minutes, power bests (1/3/5/20min) from streams, plus `streams_unreadable` (true = the 0s are corrupt data, NOT a real zero) — use to review whether a planned session hit its targets before `complete`-ing it |
 | `stride stats` | career + year-to-date totals per sport (sessions, hours, km) |
 | `stride load [days]` | daily tss/ctl/atl/tsb series, chronological (default 90) |
-| `stride week` | this week (Mon-Sun); `stride week all` = full log. Rows carry `status` (open/done/skipped) + `skipped_reason` |
+| `stride week` | this week (Mon-Sun) PLUS `unplanned` rows for activities no session references — statuses open/done/skipped/unplanned; rows carry `substitute_activity_id` ("did this instead" links, rendered `→ id`); unplanned rows carry their id in `activity_id`, NOT `completed_activity_id` — discriminate on `status`. `stride week all` = full session log, no unplanned rows. |
 | `stride doctor` | dataset health: coverage counts, per-model load provenance (`scored_by`), `strength_unrated` (strength sessions awaiting a rating) |
 | `stride compare [week\|month]` | rolling window vs the prior one: `{period, current, prior}` each with tss/sessions/hard_min/easy_pct/ctl |
 | `stride progress [date] [asc\|desc]` | `{anchor_date, anchor_scored, groups:[{name, lens, sessions}]}` — `lens` is `ef`\|`speed_hr`\|`rpe` (sport-aware); each session carries a `score` in that lens. Bare = latest analyzed workout; `desc` lists newest first without changing the trend. **`anchor_scored: false` means a workout anchored on that date could not be scored by its group's lens, so it is absent from `groups` and the trends exclude it** — do not read the trend as covering the session you asked about. In-band errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts` |
