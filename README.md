@@ -215,7 +215,7 @@ stride plan                                       # everything needed to plan a 
 | --- | --- |
 | `week add <date> <type> <detail> <rationale>` | Records a planned session. `type` is the intensity intent (vo2max, threshold, endurance, recovery, strength, rest); the sport goes in `detail`. Re-planning a date revises its open session in place rather than stacking a second row. Refuses a date that isn't a real calendar day written `YYYY-MM-DD`. |
 | `complete <id> [activity_id]` | Marks a planned session done, linked to the activity that fulfilled it (rest days need no activity). Refuses ids that don't exist. |
-| `skip <id> <reason>` | Marks a planned session skipped, with the reason — so adherence history stays honest. |
+| `skip <id> <reason> [activity_id]` | Marks a planned session skipped, with the reason — optionally linking the activity done instead (rendered `→ id` in `week`). Adherence history stays honest either way; a bare re-skip keeps an existing link; pass a new id to change it or `none` to release it. |
 
 Every query command prints **human tables** in a terminal and **JSON** when
 `STRIDE_FORMAT=json` (agent environments are detected automatically). The JSON is
@@ -261,7 +261,7 @@ commands:
 4. plan: `stride week add` the coming week (re-planning a date revises its open
    session in place — same id, no tombstone; `skip` is for sessions that were
    going to happen and didn't)
-5. sessions that didn't happen get `stride skip <id> "<reason>"` — adherence
+5. sessions that didn't happen get `stride skip <id> "<reason>" [activity_id]` — adherence
    history stays honest
 
 The planned-sessions table is what makes _"next session adapts"_ real: the coach can
