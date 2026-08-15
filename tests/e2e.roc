@@ -629,19 +629,41 @@ b_plan! = |ctx| {
     # once linked, the activity is no longer unplanned — one row, not two
     check!("linked substitute leaves no unplanned row", strjq!(ctx, ["week"], "[.data[] | select(.status == \"unplanned\" and .activity_id == 300)] | length") == "0")?
     # the HUMAN table renders the link as an arrow and unplanned ids as "-"
-    human_week = sh!("HOME='${ctx.home}' STRIDE_FORMAT=human '${ctx.bin}' week 2>/dev/null")
+    human_week = stride_human!(ctx.bin, ctx.home, ["week"])
     check!("human week renders the substitute arrow", Str.contains(human_week, "→ 300"))?
-    # one activity, one story: a linked activity cannot be claimed again
-    extra_sess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.today}", "endurance", "double claim probe", "r"], ".data.id"))
-    check!("double-claiming a linked activity is refused", Str.contains(stride!(ctx.bin, ctx.home, ["skip", extra_sess, "x", "300"]), "activity_already_linked"))?
-    # the refused skip left extra_sess OPEN, and an open session blocks week add
+    # one activity, one story: a LIVE claim (the visible skip on today) refuses a
+    # second claim from another date, and the error names the blocking session
+    extra_sess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "double claim probe", "r"], ".data.id"))
+    dc_out = stride!(ctx.bin, ctx.home, ["skip", extra_sess, "x", "300"])
+    check!("double-claiming a linked activity is refused", Str.contains(dc_out, "activity_already_linked"))?
+    check!("...naming the blocking session", Str.contains(dc_out, "#${today_sess}"))?
     _ = stride!(ctx.bin, ctx.home, ["skip", extra_sess, "cleanup"])
     # re-planning the day must NOT hide the substitute: the superseded tombstone
     # keeps its reference invisible, so the activity RETURNS as an unplanned row
     # rather than vanishing from the week entirely
     replan = Str.trim(strjq!(ctx, ["week", "add", "${ctx.today}", "threshold", "re-planned", "r"], ".data.id"))
     check!("superseded substitute resurfaces as unplanned", strjq!(ctx, ["week"], "[.data[] | select(.status == \"unplanned\" and .activity_id == 300)] | length") == "1")?
-    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${today_sess}, ${extra_sess}, ${replan}); DELETE FROM activities WHERE id = 300;")
+    # ...and acting on the advertised-free activity SUCCEEDS: the claim steals the
+    # display-dead tombstone link instead of refusing what week just offered
+    check!("claiming a tombstone-held activity steals the link", Str.contains(stride!(ctx.bin, ctx.home, ["complete", replan, "300"]), "\"completed_session\""))?
+    check!("the tombstone link was released", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE substitute_activity_id = 300;")) == "0")?
+    # a bare re-skip PRESERVES a substitute link (judgment-tier survives wording fixes)
+    resess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "reskip probe", "r"], ".data.id"))
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (303,'probe spin','Ride','${ctx.d1}T09:00:00Z',1800,9000);")
+    _ = stride!(ctx.bin, ctx.home, ["skip", resess, "first wording", "303"])
+    reskip_out = stride!(ctx.bin, ctx.home, ["skip", resess, "second wording"])
+    check!("bare re-skip keeps the substitute link", Str.trim(sql!(ctx.db, "SELECT COALESCE(substitute_activity_id,0) FROM planned_sessions WHERE id = ${resess};")) == "303")?
+    check!("...and says so in the output", Str.contains(reskip_out, "kept_substitute"))?
+    # completing a substituted session clears the arrow — the completion IS the story
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (304,'real evidence','Ride','${ctx.d1}T18:00:00Z',1800,9000);")
+    _ = stride!(ctx.bin, ctx.home, ["complete", resess, "304"])
+    check!("completion clears the substitute link", Str.trim(sql!(ctx.db, "SELECT COALESCE(substitute_activity_id,0) FROM planned_sessions WHERE id = ${resess};")) == "0")?
+    # a rest day completed bare clears any lingering substitute the same way
+    restsess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "rest", "rest probe", "r"], ".data.id"))
+    _ = sql!(ctx.db, "UPDATE planned_sessions SET substitute_activity_id = 303 WHERE id = ${restsess};")
+    _ = stride!(ctx.bin, ctx.home, ["complete", restsess])
+    check!("bare rest completion clears the substitute link", Str.trim(sql!(ctx.db, "SELECT COALESCE(substitute_activity_id,0) FROM planned_sessions WHERE id = ${restsess};")) == "0")?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${today_sess}, ${extra_sess}, ${replan}, ${resess}, ${restsess}); DELETE FROM activities WHERE id IN (300, 303, 304);")
     check!("complete non-numeric id", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "abc", "101"]), "bad_id"))?
     check!("week add rest id 3", strjq!(ctx, ["week", "add", "2099-01-02", "rest", "planned rest", "recovery"], ".data.id") == "3")?
     check!("week add vo2max id 4", strjq!(ctx, ["week", "add", "2099-01-03", "vo2max", "intervals", "stimulus"], ".data.id") == "4")?

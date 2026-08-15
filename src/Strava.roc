@@ -771,8 +771,8 @@ Strava :: [].{
 
     # remove activities that vanished from Strava. A row is a victim when this sync run
     # did NOT re-stamp it (synced_at stale or null) AND it sits inside the pulled window
-    # (start_local >= window_start; "" = full pull = all rows). Two judgment-tier guards:
-    # never prune an activity that carries a rating or that completed a planned session —
+    # (start_local >= window_start; "" = full pull = all rows). Three judgment-tier guards:
+    # never prune an activity that carries a rating, completed a planned session, or stands in as a substitute for one —
     # those rows can't be re-derived, so we leave the (now-orphaned) activity as a
     # tombstone rather than destroy the human input. Everything else in the mirror tier is
     # re-pullable, so pruning is safe. Cascades to the computed tables and runs in one

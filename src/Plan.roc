@@ -445,9 +445,12 @@ Plan :: [].{
                     session_not_found!(session_id)
                 } else if !(Report.row_exists!(path, "activities", activity_id)?) {
                     Output.err_out!("activity_not_found", "no activity ${I64.to_str(activity_id)} in the db — `stride sync` first?")
-                } else if claimed_elsewhere!(path, activity_id, session_id)? {
-                    Output.err_out!("activity_already_linked", "activity ${I64.to_str(activity_id)} already completes or substitutes another session")
                 } else {
+                    match live_claimant!(path, activity_id, session_id)? {
+                        ClaimedBy(cid) =>
+                            Output.err_out!("activity_already_linked", "activity ${I64.to_str(activity_id)} is already linked to session #${I64.to_str(cid)} — `stride week all` shows it; a bare `skip` re-run there releases it")
+                        Free => {
+                    _ = steal_dead_links!(path, activity_id, session_id)?
                     # completing clears any substitute link: the completion IS the
                     # story now, and a lingering arrow would tell two
                     Sqlite.execute!({
@@ -459,6 +462,8 @@ Plan :: [].{
                         ],
                     })?
                     Output.out!({ completed_session: session_id, activity: activity_id }, |p| "planned session #${I64.to_str(p.completed_session)} completed by activity ${I64.to_str(p.activity)}")
+                        }
+                    }
                 }
             _ =>
                 Output.err_out!("bad_id", "complete needs numeric ids: complete <session_id> <activity_id>")
@@ -539,7 +544,7 @@ Plan :: [].{
                     } else {
                         Sqlite.execute!({
                             path: Path.utf8(path),
-                            query: "UPDATE planned_sessions SET status = 'done' WHERE id = :pid",
+                            query: "UPDATE planned_sessions SET status = 'done', substitute_activity_id = NULL WHERE id = :pid",
                             bindings: [{ name: ":pid", value: Integer(session_id) }],
                         })?
                         # rest must be Bool-TYPED (1 == 1), not a bare `True` tag — the new
@@ -549,20 +554,46 @@ Plan :: [].{
                 }
         }
     }
-    # one activity, one story: linked anywhere (completion OR substitute) by any
-    # OTHER session means it cannot be claimed again — the week would tell the
-    # same ride's story twice. The session being modified is excluded so
-    # re-running the same complete/skip stays idempotent.
-    claimed_elsewhere! : Str, I64, I64 => Try(Bool, _)
-    claimed_elsewhere! = |path, activity_id, session_id| {
-        n = Sqlite.query!({
+    # One activity, one story — but only LIVE claims block a new one. A superseded
+    # skip tombstone's substitute link is display-dead already (the week hides the
+    # row), so a fresh claim STEALS it: the tombstone's link is cleared and the
+    # claim proceeds. Without the steal, `week` advertises the activity as
+    # unplanned and then refuses the very command that acts on it. Live claimants
+    # (any completion, or a substitute on a non-superseded row) refuse the claim,
+    # naming the blocking session — an error that names the rule without the id
+    # leaves the reader nothing but SQLite (see the activity_required note above).
+    live_claimant! : Str, I64, I64 => Try([ClaimedBy(I64), Free], _)
+    live_claimant! = |path, activity_id, session_id| {
+        rows = Sqlite.query_many!({
             path: Path.utf8(path),
-            query: "SELECT COUNT(*) AS n FROM planned_sessions WHERE (completed_activity_id = :aid OR substitute_activity_id = :aid) AND id <> :sid",
+            query:
+                \\SELECT id AS id FROM planned_sessions ps
+                \\WHERE ps.id <> :sid
+                \\  AND (ps.completed_activity_id = :aid
+                \\       OR (ps.substitute_activity_id = :aid
+                \\           AND NOT (COALESCE(ps.status,'open') = 'skipped'
+                \\                    AND EXISTS (SELECT 1 FROM planned_sessions p3
+                \\                                WHERE p3.target_date = ps.target_date
+                \\                                  AND (COALESCE(p3.status,'open') <> 'skipped' OR p3.id > ps.id)))))
+                \\LIMIT 1
+            ,
             bindings: [{ name: ":aid", value: Integer(activity_id) }, { name: ":sid", value: Integer(session_id) }],
-            row: Sqlite.i64("n"),
+            rows: Sqlite.i64("id"),
         })?
-        Ok(n > 0)
+        match List.first(rows) {
+            Ok(claimant) => Ok(ClaimedBy(claimant))
+            Err(_) => Ok(Free)
+        }
     }
+
+    # clear display-dead tombstone links so the new claim is the one story
+    steal_dead_links! : Str, I64, I64 => Try({}, _)
+    steal_dead_links! = |path, activity_id, session_id|
+        Sqlite.execute!({
+            path: Path.utf8(path),
+            query: "UPDATE planned_sessions SET substitute_activity_id = NULL WHERE substitute_activity_id = :aid AND id <> :sid",
+            bindings: [{ name: ":aid", value: Integer(activity_id) }, { name: ":sid", value: Integer(session_id) }],
+        })
 
     # sub: an optional activity that REPLACED the plan (#144). A substitution is
     # not a completion — the plan still wasn't delivered as prescribed — but the
@@ -577,26 +608,42 @@ Plan :: [].{
                 } else {
                     match sub {
                         NoSub => {
+                            # a bare re-skip PRESERVES an existing substitute link —
+                            # judgment-tier data is never silently destroyed by a
+                            # wording fix. The kept link is surfaced, and passing a
+                            # new activity id is the way to change it.
                             _ = Sqlite.execute!({
                                 path: Path.utf8(path),
-                                query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why, substitute_activity_id = NULL WHERE id = :pid",
+                                query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why WHERE id = :pid",
                                 bindings: [
                                     { name: ":why", value: String(reason) },
                                     { name: ":pid", value: Integer(session_id) },
                                 ],
                             })?
-                            Output.out!({ skipped_session: session_id, reason }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason}")
+                            kept = Sqlite.query_many!({
+                                path: Path.utf8(path),
+                                query: "SELECT substitute_activity_id AS s FROM planned_sessions WHERE id = :pid AND substitute_activity_id IS NOT NULL",
+                                bindings: [{ name: ":pid", value: Integer(session_id) }],
+                                rows: Sqlite.i64("s"),
+                            })?
+                            match List.first(kept) {
+                                Ok(sub_id) =>
+                                    Output.out!({ skipped_session: session_id, reason, kept_substitute: sub_id }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason} (kept substitute ${I64.to_str(o.kept_substitute)} — pass an activity id to change it)")
+                                Err(_) =>
+                                    Output.out!({ skipped_session: session_id, reason }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason}")
+                            }
                         }
                         Sub(activity_id_str) =>
                             match I64.from_str(activity_id_str) {
                                 Ok(activity_id) =>
                                     if !(Report.row_exists!(path, "activities", activity_id)?) {
                                         Output.err_out!("activity_not_found", "activity ${activity_id_str} not found (run `stride activities` to list ids)")
-                                    } else if claimed_elsewhere!(path, activity_id, session_id)? {
-                                        # one activity, one story: it cannot complete one
-                                        # session and "substitute" another
-                                        Output.err_out!("activity_already_linked", "activity ${activity_id_str} already completes or substitutes another session")
                                     } else {
+                                        match live_claimant!(path, activity_id, session_id)? {
+                                            ClaimedBy(cid) =>
+                                                Output.err_out!("activity_already_linked", "activity ${activity_id_str} is already linked to session #${I64.to_str(cid)} — `stride week all` shows it; a bare `skip` re-run there releases it")
+                                            Free => {
+                                        _ = steal_dead_links!(path, activity_id, session_id)?
                                         _ = Sqlite.execute!({
                                             path: Path.utf8(path),
                                             query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why, substitute_activity_id = :aid WHERE id = :pid",
@@ -607,6 +654,8 @@ Plan :: [].{
                                             ],
                                         })?
                                         Output.out!({ skipped_session: session_id, reason, substitute_activity: activity_id }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason} (did ${I64.to_str(o.substitute_activity)} instead)")
+                                            }
+                                        }
                                     }
                                 Err(_) =>
                                     Output.err_out!("bad_id", "the substitute must be a numeric activity id: skip <session_id> \"<reason>\" [activity_id]")
