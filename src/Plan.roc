@@ -645,6 +645,27 @@ Plan :: [].{
                 if !(Report.row_exists!(path, "planned_sessions", session_id)?) {
                     session_not_found!(session_id)
                 } else {
+                    # A DONE session cannot be skipped (#148): the old behavior
+                    # flipped status to skipped while KEEPING completed_activity_id,
+                    # leaving a skipped row that displays a completion — falsified
+                    # adherence history, and live_claimant! then contradicts the
+                    # visible status. Completions are permanent evidence; if a
+                    # mis-link ever needs undoing, that will be an explicit retract
+                    # verb clearing status AND link together, never a skip side effect.
+                    done_by = Sqlite.query_many!({
+                        path: Path.utf8(path),
+                        query: "SELECT COALESCE(completed_activity_id, 0) AS a FROM planned_sessions WHERE id = :pid AND COALESCE(status,'open') = 'done'",
+                        bindings: [{ name: ":pid", value: Integer(session_id) }],
+                        rows: Sqlite.i64("a"),
+                    })?
+                    match List.first(done_by) {
+                        Ok(aid) =>
+                            if aid > 0 {
+                                Output.err_out!("session_done", "session #${I64.to_str(session_id)} is done, completed by activity ${I64.to_str(aid)} — completions are permanent evidence and cannot be skipped")
+                            } else {
+                                Output.err_out!("session_done", "session #${I64.to_str(session_id)} is done (a completed rest day) — completions are permanent evidence and cannot be skipped")
+                            }
+                        Err(_) =>
                     match sub {
                         NoSub => {
                             # a bare re-skip PRESERVES an existing substitute link —
@@ -734,6 +755,7 @@ Plan :: [].{
                                 Err(_) =>
                                     Output.err_out!("bad_id", "the substitute must be a numeric activity id or `none` to release: skip <session_id> \"<reason>\" [activity_id|none]")
                             }
+                    }
                     }
                 }
             Err(_) =>

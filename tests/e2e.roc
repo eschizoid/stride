@@ -702,6 +702,13 @@ b_plan! = |ctx| {
     check!("a steal names the session it released", Str.contains(steal_out, "released_substitute_of"))?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${relsess}, ${relsup}, ${dc2sess}); DELETE FROM activities WHERE id = 305;")
 
+    # a DONE session refuses skip (#148): the old flip left a skipped row
+    # displaying a completion — falsified adherence, guarded at the mechanism now
+    done_skip = stride!(ctx.bin, ctx.home, ["skip", resess, "trying to unskip history"])
+    check!("skipping a done session is refused", Str.contains(done_skip, "session_done") and Str.contains(done_skip, "completions are permanent"))?
+    check!("...and the row is untouched", Str.trim(sql!(ctx.db, "SELECT status || '|' || COALESCE(completed_activity_id,0) FROM planned_sessions WHERE id = ${resess};")) == "done|304")?
+    check!("skip none on a done session is refused too", Str.contains(stride!(ctx.bin, ctx.home, ["skip", resess, "x", "none"]), "session_done"))?
+
     # a rest day completed bare clears any lingering substitute the same way
     restsess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "rest", "rest probe", "r"], ".data.id"))
     _ = sql!(ctx.db, "UPDATE planned_sessions SET substitute_activity_id = 303 WHERE id = ${restsess};")
