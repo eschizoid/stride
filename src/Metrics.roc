@@ -1,3 +1,4 @@
+import Sports
 Metrics :: [].{
     # ── pure training-science math. no I/O, fully unit-tested. ──────────
 
@@ -437,12 +438,6 @@ Metrics :: [].{
     # ── sport classification ────────────────────────────────────────────
     # Strength-class sports: HR-based load systematically underestimates them (the
     # aerobic model doesn't see bar weight), so user session-RPE outranks HR there.
-    sport_class : Str -> [Endurance, StrengthLike]
-    sport_class = |sport_type| {
-        strengthish = ["WeightTraining", "Workout", "Crossfit", "HighIntensityIntervalTraining", "Yoga", "Pilates"]
-        if List.contains(strengthish, sport_type) StrengthLike else Endurance
-    }
-
     # ── ramp rate (#93): weekly CTL delta, as a number ───────────────────
     #
     # CTL on the most recent day at or before `target`. Missing is NOT zero: a series that
@@ -535,7 +530,7 @@ Metrics :: [].{
     hr_missing_streak : List({ sport : Str, has_hr : Bool }) -> U64
     hr_missing_streak = |rows|
         List.fold(
-            List.keep_if(rows, |r| sport_class(r.sport) == Endurance),
+            List.keep_if(rows, |r| Sports.class(r.sport) == Endurance),
             { n: 0, stopped: False },
             |acc, r|
                 if acc.stopped {
@@ -624,7 +619,7 @@ Metrics :: [].{
         # strength-like: the athlete's rating beats HR (power still wins if present —
         # a strength session with real watts is measured too).
         ordered =
-            match sport_class(input.sport_type) {
+            match Sports.class(input.sport_type) {
                 Endurance => [hr_scored, rpe_scored, re_scored]
                 StrengthLike => [rpe_scored, hr_scored, re_scored]
             }
@@ -644,7 +639,7 @@ Metrics :: [].{
             match input.ngp {
                 Ok(ngp_speed) =>
                     if input.threshold_speed > 0.0
-                        { t: pace_tss({ ngp_speed, threshold_speed: input.threshold_speed, dur_s: input.dur_s, exponent: pace_tss_exponent(input.sport_type) }), m: "rtss" }
+                        { t: pace_tss({ ngp_speed, threshold_speed: input.threshold_speed, dur_s: input.dur_s, exponent: Sports.pace_tss_exponent(input.sport_type) }), m: "rtss" }
                     else
                         fallback
                 Err(_) => fallback
@@ -1560,10 +1555,6 @@ Metrics :: [].{
     # (identical to tss_from_power). Swimming fights hydrodynamic DRAG, which rises with the
     # CUBE of speed — TrainingPeaks' sSS cubes the speed ratio for exactly this reason.
     # Squaring it under-scores hard swim sets badly: at IF 1.2, 144 vs 173 per hour.
-    pace_tss_exponent : Str -> F64
-    pace_tss_exponent = |sport|
-        if Str.contains(Str.with_ascii_lowercased(sport), "swim") 3.0 else 2.0
-
     pace_tss : { ngp_speed : F64, threshold_speed : F64, dur_s : F64, exponent : F64 } -> F64
     pace_tss = |{ ngp_speed, threshold_speed, dur_s, exponent }|
         if threshold_speed <= 0.0 {
@@ -1849,46 +1840,6 @@ Metrics :: [].{
         }
     }
 
-    # Human sport words map to the Strava sport_type spellings they mean —
-    # `stride top distance 10 bike` must not return a silent empty table because
-    # Strava spells it "Ride". Unknown words pass through unchanged (exact
-    # NOCASE match downstream), so a literal sport_type keeps working and a typo
-    # produces the no-matches hint rather than a wrong guess.
-    sport_family : Str -> List(Str)
-    sport_family = |word| {
-        low = Str.with_ascii_lowercased(word)
-        if low == "bike" or low == "cycling" or low == "ride" or low == "rides" {
-            # NO e-bike arms on purpose: analyze computes best_*_w for anything
-            # with a power stream, so one motor-assisted ride would set the max at
-            # every power-curve duration and drag the CP fit up permanently
-            ["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"]
-        } else if low == "run" or low == "running" or low == "runs" {
-            ["Run", "VirtualRun", "TrailRun"]
-        } else if low == "row" or low == "rowing" {
-            ["Rowing", "VirtualRow"]
-        } else if low == "swim" or low == "swimming" {
-            ["Swim", "OpenWaterSwim"]
-        } else if low == "walk" or low == "walking" or low == "hike" or low == "hiking" {
-            ["Walk", "Hike"]
-        } else if low == "strength" or low == "weights" or low == "lifting" {
-            ["WeightTraining", "Workout"]
-        } else {
-            [word]
-        }
-    }
-
-    # Sports where speed IS the effort signal — runs and swims per ADR 0008.
-    # LOAD-BEARING FOR TWO POLICIES: interval detection's pace routing AND
-    # aerobic decoupling's pace arm (#134). A meter-less RIDE must not fall
-    # through to either: cycling speed varies with terrain, so run-tuned pace
-    # parameters would invent work reps, and speed-over-HR would masquerade as
-    # efficiency. Widening this list widens both features at once — on purpose,
-    # but consciously.
-    pace_detect_sport : Str -> Bool
-    pace_detect_sport = |sport| {
-        low = Str.with_ascii_lowercased(sport)
-        Str.contains(low, "run") or Str.contains(low, "swim")
-    }
 }
 
 # ── tests ───────────────────────────────────────────────────────────
@@ -1916,8 +1867,8 @@ expect {
 # swim TSS cubes the speed ratio (drag), running squares it. At IF 1.2 for one hour that is
 # 173 vs 144 — the square under-scores hard swim sets by ~20%.
 expect {
-    swim = Metrics.pace_tss({ ngp_speed: 1.2, threshold_speed: 1.0, dur_s: 3600.0, exponent: Metrics.pace_tss_exponent("Swim") })
-    run = Metrics.pace_tss({ ngp_speed: 1.2, threshold_speed: 1.0, dur_s: 3600.0, exponent: Metrics.pace_tss_exponent("Run") })
+    swim = Metrics.pace_tss({ ngp_speed: 1.2, threshold_speed: 1.0, dur_s: 3600.0, exponent: Sports.pace_tss_exponent("Swim") })
+    run = Metrics.pace_tss({ ngp_speed: 1.2, threshold_speed: 1.0, dur_s: 3600.0, exponent: Sports.pace_tss_exponent("Run") })
     (swim - 172.8).abs() < 0.01 and (run - 144.0).abs() < 0.01
 }
 
@@ -2292,7 +2243,7 @@ expect {
     r.model == "hr_zones"
 }
 
-expect Metrics.sport_class("Ride") == Endurance and Metrics.sport_class("WeightTraining") == StrengthLike and Metrics.sport_class("Workout") == StrengthLike
+expect Sports.class("Ride") == Endurance and Sports.class("WeightTraining") == StrengthLike and Sports.class("Workout") == StrengthLike
 
 # Sun Jul 26 and Mon Jul 27 2026 land in different Monday-aligned weeks
 expect {
@@ -3125,13 +3076,6 @@ expect {
     r1_ok and guarded and truncated and no_hr
 }
 
-# pace detection is scoped to sports where speed IS the effort signal
-expect {
-    Metrics.pace_detect_sport("Run") and Metrics.pace_detect_sport("VirtualRun")
-    and Metrics.pace_detect_sport("TrailRun") and Metrics.pace_detect_sport("OpenWaterSwim")
-    and !(Metrics.pace_detect_sport("Ride")) and !(Metrics.pace_detect_sport("Walk"))
-    and !(Metrics.pace_detect_sport("Hike")) and !(Metrics.pace_detect_sport("Rowing"))
-}
 
 # POSITIVE pace fixture — the pace path must be able to detect something, or a
 # params swap / units regression silently kills detection for every run and swim
@@ -3222,11 +3166,3 @@ expect {
     List.len(List.keep_if(above, |s| s.kind == Work)) == 4 and List.is_empty(below)
 }
 
-# human sport words widen to their Strava family; unknown words pass through
-expect {
-    Metrics.sport_family("bike") == ["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"]
-    and Metrics.sport_family("BIKE") == ["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"]
-    and Metrics.sport_family("run") == ["Run", "VirtualRun", "TrailRun"]
-    and Metrics.sport_family("Rowing") == ["Rowing", "VirtualRow"]
-    and Metrics.sport_family("Yoga") == ["Yoga"]
-}

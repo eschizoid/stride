@@ -8,6 +8,7 @@ import pf.Sqlite
 import pf.Stdout
 import pf.Path
 import Metrics
+import Sports
 import Render
 
 Report :: [].{
@@ -328,7 +329,7 @@ Report :: [].{
                         # pace on a pace-routed sport). Distinguishes "verified: no
                         # interval structure" from "couldn't look" — an empty segments
                         # list alone conflates the two.
-                        detection_attempted: detail.has_watts or (Metrics.pace_detect_sport(a.sport) and detail.has_dist),
+                        detection_attempted: detail.has_watts or (Sports.pace_routed(a.sport) and detail.has_dist),
                         hr_drift: (seg_drift).ok_or(0.0),
                         hr_drift_known: seg_drift.is_ok(),
                     })
@@ -945,7 +946,7 @@ Report :: [].{
             # string is the #32-class str_concat trap, live on the pinned nightly
             { frag: " ", binds: [] }
         } else {
-            fam = Metrics.sport_family(word)
+            fam = Sports.family(word)
             names = List.map_with_index(fam, |_, i| ":sp${(i).to_str()}")
             { frag: " AND a.sport_type COLLATE NOCASE IN (${Str.join_with(names, ", ")})", binds: List.map_with_index(fam, |s, i| { name: ":sp${(i).to_str()}", value: String(s) }) }
         }
@@ -1184,7 +1185,7 @@ Report :: [].{
                 Ok({ sport, rated })
             },
         })?
-        strength_unrated = List.len(List.keep_if(sports, |r| Metrics.sport_class(r.sport) == StrengthLike and r.rated == 0))
+        strength_unrated = List.len(List.keep_if(sports, |r| Sports.class(r.sport) == StrengthLike and r.rated == 0))
         rated_total = List.len(List.keep_if(sports, |r| r.rated == 1))
         # ── data-quality watchdog (#92): streaks and counts the engine already knows ──
         # Anchored to the LOCAL day like every other window, not SQLite's `now`, so a user

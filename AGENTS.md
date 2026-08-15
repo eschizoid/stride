@@ -47,7 +47,7 @@ just install   # build + symlink to ~/.local/bin/stride
   (their commands); `app.roc` is a thin argv → dispatch shell. (History: under alpha4
   a decoder wider than 2 columns failed to type-check once effects were injected, so
   everything effectful had to sit in app.roc — that wall is gone.)
-  Pure logic goes in `Metrics.roc` / `Render.roc` / `Command.roc` (argv → typed
+  Pure logic goes in `Metrics.roc` / `Sports.roc` (sport vocabulary: families, class, pace routing — a DATA table, not if-chains) / `Render.roc` / `Command.roc` (argv → typed
   `Command` union, `parse` is pure + unit-tested; `main!` is thin parse-then-dispatch)
   / `Config.roc` (`is_secret` secret-key policy) / `Csv.roc` / `Streams.roc` /
   `Backfill.roc` / `Schema.roc`, with `expect` tests. When adding logic: pure
