@@ -658,6 +658,26 @@ b_plan! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (304,'real evidence','Ride','${ctx.d1}T18:00:00Z',1800,9000);")
     _ = stride!(ctx.bin, ctx.home, ["complete", resess, "304"])
     check!("completion clears the substitute link", Str.trim(sql!(ctx.db, "SELECT COALESCE(substitute_activity_id,0) FROM planned_sessions WHERE id = ${resess};")) == "0")?
+    # the COMPLETION arm of the claim guard: an activity that already completed a
+    # session refuses a second claim, naming the session and the permanence
+    dc2sess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d2}", "endurance", "completion claim probe", "r"], ".data.id"))
+    dc2 = stride!(ctx.bin, ctx.home, ["skip", dc2sess, "try to reclaim", "304"])
+    check!("a completing activity refuses a second claim", Str.contains(dc2, "activity_already_linked") and Str.contains(dc2, "completions are permanent"))?
+    _ = stride!(ctx.bin, ctx.home, ["skip", dc2sess, "cleanup"])
+    # `none` is the explicit release path the refusal message points at
+    relsess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "release probe", "r"], ".data.id"))
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (305,'to be released','Ride','${ctx.d1}T06:00:00Z',1800,9000);")
+    _ = stride!(ctx.bin, ctx.home, ["skip", relsess, "with sub", "305"])
+    rel_out = stride!(ctx.bin, ctx.home, ["skip", relsess, "changed my mind", "none"])
+    check!("skip none releases the link", Str.trim(sql!(ctx.db, "SELECT COALESCE(substitute_activity_id,0) FROM planned_sessions WHERE id = ${relsess};")) == "0")?
+    check!("...and says so", Str.contains(rel_out, "substitute_released"))?
+    # a steal is SURFACED, never silent: re-link 305, supersede, claim it elsewhere
+    _ = stride!(ctx.bin, ctx.home, ["skip", relsess, "with sub again", "305"])
+    relsup = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "supersedes release probe", "r"], ".data.id"))
+    steal_out = stride!(ctx.bin, ctx.home, ["skip", relsup, "did 305 instead", "305"])
+    check!("a steal names the session it released", Str.contains(steal_out, "released_substitute_of"))?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${relsess}, ${relsup}, ${dc2sess}); DELETE FROM activities WHERE id = 305;")
+
     # a rest day completed bare clears any lingering substitute the same way
     restsess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "rest", "rest probe", "r"], ".data.id"))
     _ = sql!(ctx.db, "UPDATE planned_sessions SET substitute_activity_id = 303 WHERE id = ${restsess};")

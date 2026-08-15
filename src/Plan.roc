@@ -174,6 +174,12 @@ Plan :: [].{
         # neither as completion nor as substitute — get their own rows, so the week
         # stops hiding what actually happened. ThisWeek only: `week all` is the
         # SESSION log, and a lifetime of unplanned activities would bury it.
+        # NOTE: the substitute arm's supersession predicate below is mirrored in
+        # live_claimant! and (positively) in the sessions query above — the three
+        # MUST agree or week's offers and the claim commands contradict each other.
+        # A week-window clause was once on this arm and caused exactly that
+        # (cross-week substitutes advertised as unplanned but refused); claims are
+        # not week-relative, so neither is this exclusion.
         unplanned = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
@@ -187,8 +193,6 @@ Plan :: [].{
                 \\  AND NOT EXISTS (SELECT 1 FROM planned_sessions ps
                 \\       WHERE ps.completed_activity_id = a.id
                 \\          OR (ps.substitute_activity_id = a.id
-                \\              AND ps.target_date >= '${Metrics.days_to_date_str(mon)}'
-                \\              AND ps.target_date <= '${Metrics.days_to_date_str(mon + 6)}'
                 \\              AND (COALESCE(ps.status,'open') <> 'skipped'
                 \\                   OR NOT EXISTS (SELECT 1 FROM planned_sessions p3
                 \\                                  WHERE p3.target_date = ps.target_date
@@ -447,21 +451,31 @@ Plan :: [].{
                     Output.err_out!("activity_not_found", "no activity ${I64.to_str(activity_id)} in the db — `stride sync` first?")
                 } else {
                     match live_claimant!(path, activity_id, session_id)? {
-                        ClaimedBy(cid) =>
-                            Output.err_out!("activity_already_linked", "activity ${I64.to_str(activity_id)} is already linked to session #${I64.to_str(cid)} — `stride week all` shows it; a bare `skip` re-run there releases it")
+                        CompletedBy(cid) =>
+                            # a completion is permanent evidence — there is no release
+                            # path, and saying otherwise once sent a reader into a
+                            # done→skipped corruption. Name the fact, suggest the fix.
+                            Output.err_out!("activity_already_linked", "activity ${I64.to_str(activity_id)} already completed session #${I64.to_str(cid)} — completions are permanent; pick a different activity")
+                        SubstituteOf(cid) =>
+                            Output.err_out!("activity_already_linked", "activity ${I64.to_str(activity_id)} substitutes session #${I64.to_str(cid)} — release it first: stride skip ${I64.to_str(cid)} \"<reason>\" none")
                         Free => {
-                    _ = steal_dead_links!(path, activity_id, session_id)?
-                    # completing clears any substitute link: the completion IS the
-                    # story now, and a lingering arrow would tell two
-                    Sqlite.execute!({
-                        path: Path.utf8(path),
-                        query: "UPDATE planned_sessions SET completed_activity_id = :aid, status = 'done', substitute_activity_id = NULL WHERE id = :pid",
-                        bindings: [
-                            { name: ":aid", value: Integer(activity_id) },
-                            { name: ":pid", value: Integer(session_id) },
-                        ],
-                    })?
-                    Output.out!({ completed_session: session_id, activity: activity_id }, |p| "planned session #${I64.to_str(p.completed_session)} completed by activity ${I64.to_str(p.activity)}")
+                            # write first, steal second: a failure between the two
+                            # leaves only a dead tombstone link (self-healing), never
+                            # a released link with nothing written in its place
+                            _ = Sqlite.execute!({
+                                path: Path.utf8(path),
+                                query: "UPDATE planned_sessions SET completed_activity_id = :aid, status = 'done', substitute_activity_id = NULL WHERE id = :pid",
+                                bindings: [
+                                    { name: ":aid", value: Integer(activity_id) },
+                                    { name: ":pid", value: Integer(session_id) },
+                                ],
+                            })?
+                            match steal_dead_links!(path, activity_id, session_id)? {
+                                ReleasedFrom(holder) =>
+                                    Output.out!({ completed_session: session_id, activity: activity_id, released_substitute_of: holder }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)} (released its old substitute link on session #${I64.to_str(o.released_substitute_of)})")
+                                NothingReleased =>
+                                    Output.out!({ completed_session: session_id, activity: activity_id }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}")
+                            }
                         }
                     }
                 }
@@ -562,12 +576,13 @@ Plan :: [].{
     # (any completion, or a substitute on a non-superseded row) refuse the claim,
     # naming the blocking session — an error that names the rule without the id
     # leaves the reader nothing but SQLite (see the activity_required note above).
-    live_claimant! : Str, I64, I64 => Try([ClaimedBy(I64), Free], _)
+    live_claimant! : Str, I64, I64 => Try([CompletedBy(I64), SubstituteOf(I64), Free], _)
     live_claimant! = |path, activity_id, session_id| {
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT id AS id FROM planned_sessions ps
+                \\SELECT id AS id, CASE WHEN ps.completed_activity_id = :aid THEN 1 ELSE 0 END AS is_completion
+                \\FROM planned_sessions ps
                 \\WHERE ps.id <> :sid
                 \\  AND (ps.completed_activity_id = :aid
                 \\       OR (ps.substitute_activity_id = :aid
@@ -575,25 +590,46 @@ Plan :: [].{
                 \\                    AND EXISTS (SELECT 1 FROM planned_sessions p3
                 \\                                WHERE p3.target_date = ps.target_date
                 \\                                  AND (COALESCE(p3.status,'open') <> 'skipped' OR p3.id > ps.id)))))
-                \\LIMIT 1
+                \\ORDER BY is_completion DESC LIMIT 1
             ,
             bindings: [{ name: ":aid", value: Integer(activity_id) }, { name: ":sid", value: Integer(session_id) }],
-            rows: Sqlite.i64("id"),
+            rows: |cols| |stmt| {
+                cid = Sqlite.i64("id")(cols)(stmt)?
+                isc = Sqlite.i64("is_completion")(cols)(stmt)?
+                Ok({ cid, isc })
+            },
         })?
         match List.first(rows) {
-            Ok(claimant) => Ok(ClaimedBy(claimant))
+            Ok(r) => if r.isc == 1 Ok(CompletedBy(r.cid)) else Ok(SubstituteOf(r.cid))
             Err(_) => Ok(Free)
         }
     }
 
-    # clear display-dead tombstone links so the new claim is the one story
-    steal_dead_links! : Str, I64, I64 => Try({}, _)
-    steal_dead_links! = |path, activity_id, session_id|
-        Sqlite.execute!({
+    # Clear display-dead tombstone links so the new claim is the one story —
+    # called AFTER the claim's own write, so a failure here leaves exactly the
+    # pre-existing dead-link state (self-healing on the next claim), never a
+    # cleared link with nothing written in its place. Reports what it released
+    # so the steal is never silent.
+    steal_dead_links! : Str, I64, I64 => Try([ReleasedFrom(I64), NothingReleased], _)
+    steal_dead_links! = |path, activity_id, session_id| {
+        holders = Sqlite.query_many!({
             path: Path.utf8(path),
-            query: "UPDATE planned_sessions SET substitute_activity_id = NULL WHERE substitute_activity_id = :aid AND id <> :sid",
+            query: "SELECT id AS id FROM planned_sessions WHERE substitute_activity_id = :aid AND id <> :sid LIMIT 1",
             bindings: [{ name: ":aid", value: Integer(activity_id) }, { name: ":sid", value: Integer(session_id) }],
-        })
+            rows: Sqlite.i64("id"),
+        })?
+        match List.first(holders) {
+            Err(_) => Ok(NothingReleased)
+            Ok(holder) => {
+                _ = Sqlite.execute!({
+                    path: Path.utf8(path),
+                    query: "UPDATE planned_sessions SET substitute_activity_id = NULL WHERE substitute_activity_id = :aid AND id <> :sid",
+                    bindings: [{ name: ":aid", value: Integer(activity_id) }, { name: ":sid", value: Integer(session_id) }],
+                })?
+                Ok(ReleasedFrom(holder))
+            }
+        }
+    }
 
     # sub: an optional activity that REPLACED the plan (#144). A substitution is
     # not a completion — the plan still wasn't delivered as prescribed — but the
@@ -633,6 +669,19 @@ Plan :: [].{
                                     Output.out!({ skipped_session: session_id, reason }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason}")
                             }
                         }
+                        Sub("none") => {
+                            # the explicit release path — the only way to unlink a
+                            # substitute without lying about what happened
+                            _ = Sqlite.execute!({
+                                path: Path.utf8(path),
+                                query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why, substitute_activity_id = NULL WHERE id = :pid",
+                                bindings: [
+                                    { name: ":why", value: String(reason) },
+                                    { name: ":pid", value: Integer(session_id) },
+                                ],
+                            })?
+                            Output.out!({ skipped_session: session_id, reason, substitute_released: True }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason} (substitute link released)")
+                        }
                         Sub(activity_id_str) =>
                             match I64.from_str(activity_id_str) {
                                 Ok(activity_id) =>
@@ -640,25 +689,32 @@ Plan :: [].{
                                         Output.err_out!("activity_not_found", "activity ${activity_id_str} not found (run `stride activities` to list ids)")
                                     } else {
                                         match live_claimant!(path, activity_id, session_id)? {
-                                            ClaimedBy(cid) =>
-                                                Output.err_out!("activity_already_linked", "activity ${activity_id_str} is already linked to session #${I64.to_str(cid)} — `stride week all` shows it; a bare `skip` re-run there releases it")
+                                            CompletedBy(cid) =>
+                                                Output.err_out!("activity_already_linked", "activity ${activity_id_str} already completed session #${I64.to_str(cid)} — completions are permanent; pick a different activity")
+                                            SubstituteOf(cid) =>
+                                                Output.err_out!("activity_already_linked", "activity ${activity_id_str} substitutes session #${I64.to_str(cid)} — release it first: stride skip ${I64.to_str(cid)} \"<reason>\" none")
                                             Free => {
-                                        _ = steal_dead_links!(path, activity_id, session_id)?
-                                        _ = Sqlite.execute!({
-                                            path: Path.utf8(path),
-                                            query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why, substitute_activity_id = :aid WHERE id = :pid",
-                                            bindings: [
-                                                { name: ":why", value: String(reason) },
-                                                { name: ":aid", value: Integer(activity_id) },
-                                                { name: ":pid", value: Integer(session_id) },
-                                            ],
-                                        })?
-                                        Output.out!({ skipped_session: session_id, reason, substitute_activity: activity_id }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason} (did ${I64.to_str(o.substitute_activity)} instead)")
+                                                # write first, steal second (see complete!)
+                                                _ = Sqlite.execute!({
+                                                    path: Path.utf8(path),
+                                                    query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why, substitute_activity_id = :aid WHERE id = :pid",
+                                                    bindings: [
+                                                        { name: ":why", value: String(reason) },
+                                                        { name: ":aid", value: Integer(activity_id) },
+                                                        { name: ":pid", value: Integer(session_id) },
+                                                    ],
+                                                })?
+                                                match steal_dead_links!(path, activity_id, session_id)? {
+                                                    ReleasedFrom(holder) =>
+                                                        Output.out!({ skipped_session: session_id, reason, substitute_activity: activity_id, released_substitute_of: holder }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason} (did ${I64.to_str(o.substitute_activity)} instead; released its old link on session #${I64.to_str(o.released_substitute_of)})")
+                                                    NothingReleased =>
+                                                        Output.out!({ skipped_session: session_id, reason, substitute_activity: activity_id }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason} (did ${I64.to_str(o.substitute_activity)} instead)")
+                                                }
                                             }
                                         }
                                     }
                                 Err(_) =>
-                                    Output.err_out!("bad_id", "the substitute must be a numeric activity id: skip <session_id> \"<reason>\" [activity_id]")
+                                    Output.err_out!("bad_id", "the substitute must be a numeric activity id or `none` to release: skip <session_id> \"<reason>\" [activity_id|none]")
                             }
                     }
                 }
