@@ -474,6 +474,17 @@ b_seed_analyze! = |ctx| {
     check!("the drift run's session is known and positive", strjq!(ctx, ["progress", "${ctx.d2}"], "[.data.groups[] | select(.name | contains(\"drift run\")) | .sessions[] | select(.date == \"${ctx.d2}\")] | .[0] | (.decoupling_known == true and .decoupling_pct > 0)") == "true")?
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (104,105,106); DELETE FROM activity_metrics WHERE activity_id IN (104,105,106); DELETE FROM streams WHERE activity_id IN (104,105,106); DELETE FROM activities WHERE id IN (104,105,106);")
 
+    # ── sport words (#150): human words widen to Strava families, and an empty
+    # result names the sports that exist instead of a silent empty table ──
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (310,'gravel jaunt','GravelRide','${ctx.d1}T10:00:00Z',3600,30000);")
+    check!("'bike' finds Ride AND GravelRide", strjq!(ctx, ["top", "distance", "10", "bike"], "[.data[].sport] | unique | length >= 2") == "true")?
+    check!("'BIKE' matches case-insensitively", strjq!(ctx, ["top", "distance", "10", "BIKE"], ".data | length >= 2") == "true")?
+    check!("a literal sport_type still works", strjq!(ctx, ["top", "distance", "10", "GravelRide"], "[.data[].sport] | unique | join(\",\")") == "GravelRide")?
+    unknown_top = stride_human!(ctx.bin, ctx.home, ["top", "distance", "10", "kayak"])
+    check!("unknown sport names the sports that exist", Str.contains(unknown_top, "sports in your data") and Str.contains(unknown_top, "GravelRide"))?
+    check!("activities honors the family too", strjq!(ctx, ["activities", "10", "bike"], "[.data[].sport] | unique | length >= 2") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 310;")
+
     # keep later fixture-sensitive checks honest: remove the interval ride again
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=103; DELETE FROM activity_metrics WHERE activity_id=103; DELETE FROM streams WHERE activity_id=103; DELETE FROM activities WHERE id=103;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])

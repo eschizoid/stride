@@ -847,6 +847,7 @@ Report :: [].{
     activities! : U64, Str => Try({}, _)
     activities! = |limit, sport_filter| {
         path = Db.open_db!({})?
+        sf = sport_filter_sql(sport_filter)
         # optional sport filter via a BOUND param, never string interpolation: an empty
         # sport_filter (the default — all sports) matches the `:sport = ''` branch below.
         # Interpolating the filter would splice a compile-time-constant "" into the query
@@ -867,10 +868,10 @@ Report :: [].{
                 \\       CAST(COALESCE(a.relative_effort,0) AS REAL) AS relative_effort,
                 \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
-                \\WHERE (:sport = '' OR a.sport_type = :sport COLLATE NOCASE)
+                \\WHERE (1=1${sf.frag})
                 \\ORDER BY a.start_local DESC, a.id DESC LIMIT ${(limit).to_str()}
             ,
-            bindings: [{ name: ":sport", value: String(sport_filter) }],
+            bindings: sf.binds,
             rows: |cols| |stmt| {
                 id = Sqlite.i64("id")(cols)(stmt)?
                 date = Sqlite.str("date")(cols)(stmt)?
@@ -931,6 +932,29 @@ Report :: [].{
         }
     # ranked "best sessions": top N activities by a chosen metric (vs `activities`,
     # which is chronological). e.g. `top hr`, `top tss 5 rowing`.
+    # sport-word filter shared by top/activities/power-curve: the human word
+    # widens to its Strava family (Metrics.sport_family), matched IN (...) with
+    # NOCASE. Placeholders are numbered so the bindings stay real bindings.
+    sport_filter_sql : Str -> { frag : Str, binds : List({ name : Str, value : [Null, Real(F64), Integer(I64), String(Str), Bytes(List(U8))] }) }
+    sport_filter_sql = |word|
+        if Str.is_empty(word) {
+            { frag: "", binds: [] }
+        } else {
+            fam = Metrics.sport_family(word)
+            names = List.map_with_index(fam, |_, i| ":sp${(i).to_str()}")
+            { frag: " AND a.sport_type COLLATE NOCASE IN (${Str.join_with(names, ", ")})", binds: List.map_with_index(fam, |s, i| { name: ":sp${(i).to_str()}", value: String(s) }) }
+        }
+
+    # the no-silent-empty hint: what sports DOES the data hold
+    known_sports! : Str => Try(List(Str), _)
+    known_sports! = |path|
+        Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "SELECT DISTINCT COALESCE(sport_type,'') AS s FROM activities ORDER BY s",
+            bindings: [],
+            rows: Sqlite.str("s"),
+        })
+
     top! : Str, U64, Str => Try({}, _)
     top! = |metric, limit, sport_filter| {
         path = Db.open_db!({})?
@@ -939,10 +963,9 @@ Report :: [].{
                 Output.err_out!("bad_metric", "unknown metric '${metric}' — use: hr, tss, power, intensity, distance, time, output")
 
             Ok({ col, header }) => {
-                sport_where =
-                    if Str.is_empty(sport_filter) "" else " AND a.sport_type = :sport COLLATE NOCASE"
-                sport_binding =
-                    if Str.is_empty(sport_filter) [] else [{ name: ":sport", value: String(sport_filter) }]
+                sf = sport_filter_sql(sport_filter)
+                sport_where = sf.frag
+                sport_binding = sf.binds
                 rows = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
@@ -974,7 +997,12 @@ Report :: [].{
                 })?
                 if Output.json_mode!({})
                     Output.emit_ok!(rows)
-                else {
+                else if List.is_empty(rows) and !(Str.is_empty(sport_filter)) {
+                    # a silent empty table reads as "no data"; the true answer is
+                    # usually "no sport spelled like that" — say which ones exist
+                    known = known_sports!(path)?
+                    Stdout.line!("no '${sport_filter}' activities — sports in your data: ${Str.join_with(known, ", ")}")
+                } else {
                     val = |r|
                         match metric {
                             "hr" => "${Render.fmt0(r.avg_hr)} bpm"
@@ -1521,6 +1549,7 @@ Report :: [].{
     power_curve! : U64, Str => Try({}, _)
     power_curve! = |days, sport| {
         path = Db.open_db!({})?
+        sf = sport_filter_sql(sport)
         cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
         r = Sqlite.query!({
             path: Path.utf8(path),
@@ -1535,12 +1564,9 @@ Report :: [].{
                 \\  CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS d1200,
                 \\  CAST(COALESCE(MAX(m.best_3600s_w), 0) AS REAL) AS d3600
                 \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
-                \\WHERE a.start_local >= :cutoff AND (:sport = '' OR a.sport_type = :sport)
+                \\WHERE a.start_local >= :cutoff${sf.frag}
             ,
-            bindings: [
-                { name: ":cutoff", value: String(cutoff) },
-                { name: ":sport", value: String(sport) },
-            ],
+            bindings: List.concat([{ name: ":cutoff", value: String(cutoff) }], sf.binds),
             row: |cols| |stmt| {
                 d5 = Sqlite.f64("d5")(cols)(stmt)?
                 d15 = Sqlite.f64("d15")(cols)(stmt)?
