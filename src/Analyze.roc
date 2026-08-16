@@ -546,7 +546,14 @@ Analyze :: [].{
             esc = Str.replace_each(pair.0, "'", "''")
             "${acc} WHEN '${esc}' THEN '${pair.1}'"
         })
-        "CASE a.sport_type${whens} ELSE '${zones_sig(g)}' END"
+        # zero sports (fresh db, analyze before first sync): "CASE x ELSE y END"
+        # with no WHEN arms is a SQL syntax error, so emit the ELSE literal bare —
+        # found by the #154 e2e ""-arm check; analyze used to crash right here
+        if Str.is_empty(whens) {
+            "'${zones_sig(g)}'"
+        } else {
+            "CASE a.sport_type${whens} ELSE '${zones_sig(g)}' END"
+        }
     }
     # returns Bool: did the stored stream JSON fail to decode? (surfaced by analyze)
     # (#69 briefly split this into a dispatcher over a wire format; its only producer —

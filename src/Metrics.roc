@@ -1180,7 +1180,11 @@ Metrics :: [].{
     has_coaching_language : Str -> Bool
     has_coaching_language = |s| {
         low = Str.with_ascii_lowercased(s)
-        words = ["should", "consider", "favor", "avoid", "good day", "good time", "ready for", "take it easy", "recommend", "go hard", "back off", "rest day", "easy day", "ease off", "dial back", "hold back", "need to", "must ", "prioritize", "taper", "take a rest", "train hard", "train easy"]
+        # a denylist can only be defense-in-depth (round-3 mutations proved
+        # "take it easier"/"push harder" slipped the round-2 list) — the HARD
+        # guard for every finite producer is closed-set equality on its full
+        # output; this predicate backstops the branches equality can't reach
+        words = ["should", "consider", "favor", "avoid", "good day", "good time", "ready for", "take it eas", "recommend", "go hard", "back off", "rest day", "easy day", "ease off", "dial back", "hold back", "need to", "must ", "prioritize", "taper", "take a rest", "train hard", "train easy", "easier", "harder", "push", "time to", "focus on", "aim for", "try to"]
         List.any(words, |w| Str.contains(low, w))
     }
 

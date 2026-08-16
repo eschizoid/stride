@@ -1190,10 +1190,23 @@ expect {
     compare_verdicts = [
         Render.compare_verdict(958.0, 1181.0, 6.0, "28d"),
         Render.compare_verdict(1181.0, 900.0, -2.0, "28d"),
+        Render.compare_verdict(1000.0, 1030.0, 0.0, "28d"),
         Render.compare_verdict(0.0, 500.0, 3.0, "week"),
         Render.compare_verdict(0.0, 0.0, 0.0, "week"),
     ]
     List.all(compare_verdicts, |v| !(Metrics.has_coaching_language(v)))
+}
+
+# the HARD boundary invariant for compare (#154): the verdict templates are a
+# CLOSED SET, pinned by full-string equality like form_label — a reworded
+# template ("time to push harder") fails HERE even if the denylist misses it.
+# One pin per load template, cycling the three fitness words.
+expect {
+    Render.compare_verdict(1000.0, 1200.0, 6.0, "28d") == "load ramping (20%) · fitness building"
+    and Render.compare_verdict(1200.0, 900.0, -2.0, "28d") == "load backed off (-25%) · fitness slipping"
+    and Render.compare_verdict(1000.0, 1030.0, 0.0, "28d") == "load steady (3%) · fitness holding"
+    and Render.compare_verdict(0.0, 500.0, 3.0, "week") == "load resumed (500 TSS vs none the prior week) · fitness building"
+    and Render.compare_verdict(0.0, 0.0, 0.0, "week") == "no load recorded either week · fitness holding"
 }
 
 expect {
