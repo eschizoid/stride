@@ -385,7 +385,7 @@ b_seed_analyze! = |ctx| {
     # #154: the stable machine id for the form band — one of the five enum values,
     # never prose, never coaching vocabulary
     check!("summary form_state is a stable band id", strjq!(ctx, ["summary"], ".data.form_state | IN(\"high_modeled_fatigue\",\"modeled_fatigue_building\",\"balanced\",\"fresh\",\"very_fresh\")") == "true")?
-    check!("analyze form_state matches the enum or is honestly empty", strjq!(ctx, ["analyze"], ".data.form_state | . == \"\" or IN(\"high_modeled_fatigue\",\"modeled_fatigue_building\",\"balanced\",\"fresh\",\"very_fresh\")") == "true")?
+    check!("analyze form_state matches the enum or is honestly empty", strjq!(ctx, ["analyze"], ".data.form_state | IN(\"high_modeled_fatigue\",\"modeled_fatigue_building\",\"balanced\",\"fresh\",\"very_fresh\")") == "true")?
     # #93: ramp carries BOTH fields, and a short history reports an honest 0 rather than
     # today's whole CTL — which is what treating "no data 7 days back" as a CTL of 0 would
     # produce. The fixture has only a couple of days, so 0 is the correct answer here.

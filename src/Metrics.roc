@@ -1172,6 +1172,18 @@ Metrics :: [].{
     # Stable machine identifier for the form band — the JSON face of form_label.
     # snake_case, enum-stable: clients switch on these, so renaming one is a
     # contract change. The human label may evolve; these must not drift casually.
+    # ONE vocabulary, shared by every boundary guard (Metrics + Render expects) —
+    # a tripwire for coaching language reappearing in any label producer. The
+    # closed-set equality expects on form_label/form_state are the hard invariant
+    # for those two; this predicate is what lets every OTHER verdict producer be
+    # guarded without triplicating the list.
+    has_coaching_language : Str -> Bool
+    has_coaching_language = |s| {
+        low = Str.with_ascii_lowercased(s)
+        words = ["should", "consider", "favor", "avoid", "good day", "good time", "ready for", "take it easy", "recommend", "go hard", "back off", "rest day", "easy day", "ease off", "dial back", "hold back", "need to", "must ", "prioritize", "taper", "take a rest", "train hard", "train easy"]
+        List.any(words, |w| Str.contains(low, w))
+    }
+
     form_state : F64 -> Str
     form_state = |tsb|
         match form_band(tsb) {
@@ -3185,13 +3197,20 @@ expect {
 # band's label and state id and fail if coaching vocabulary ever reappears —
 # the reform that #123/#127 performed, held as an invariant.
 expect {
-    coaching = ["should", "consider", "favor ", "avoid", "good day", "good time", "ready for", "take it easy", "recommend", "go hard", "back off"]
     tsbs = [-25.0, -12.0, -2.0, 8.0, 20.0]
     labels = List.concat(List.map(tsbs, Metrics.form_label), List.map(tsbs, Metrics.form_state))
-    List.all(labels, |l| {
-        low = Str.with_ascii_lowercased(l)
-        List.all(coaching, |w| !(Str.contains(low, w)))
-    })
+    List.all(labels, |l| !(Metrics.has_coaching_language(l)))
+}
+
+# the predicate itself catches ordinary prescriptive phrasing (mutation-tested
+# wording from the review) and passes descriptive state
+expect {
+    Metrics.has_coaching_language("balanced — ease off today and take a rest day")
+    and Metrics.has_coaching_language("you should consider recovery")
+    and Metrics.has_coaching_language("fitness building — avoid hard work")
+    and !(Metrics.has_coaching_language("high modeled fatigue"))
+    and !(Metrics.has_coaching_language("load ramping (23%)"))
+    and !(Metrics.has_coaching_language("fitness building"))
 }
 
 # form_state is a stable enum: exactly these five ids, snake_case, one per band

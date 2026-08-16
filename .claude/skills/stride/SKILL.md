@@ -77,8 +77,7 @@ exports it, so you get JSON automatically) and **human tables otherwise**. Overr
 of JSON, prefix the command with `STRIDE_FORMAT=json`. Known error states are in-band:
 unconfigured → `{"error":"missing_config"}`, no auth → `{"error":"not_authenticated"}`.
 All errors carry a human `message` field alongside the `error` code. `sync` and `analyze`
-emit JSON results too (`{synced, streams_fetched, pending_streams}` / `{computed,
-stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
+emit JSON results too (`{synced, streams_fetched, pending_streams}` / `{computed, stream_errors, form_tsb, form_tsb_known, form_state, form_delta_7d, form_delta_known, converged}`), and `config get` emits `{key, value}` or `not_set`.
 
 ## Query commands (JSON for you, tables for humans)
 
