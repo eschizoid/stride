@@ -495,6 +495,16 @@ b_seed_analyze! = |ctx| {
     check!("activities honors the family too", strjq!(ctx, ["activities", "10", "bike"], "[.data[].sport] | unique | length >= 2") == "true")?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 310;")
 
+    # ── skill contract drift guard (#155): the coach skill is a CLIENT of the
+    # CLI contract, and it once instructed `config set ftp_ride` — a command the
+    # CLI refuses. Retired interfaces must never reappear in the shipped skill.
+    skill_text = sh!("cat .claude/skills/stride/SKILL.md")
+    check!("skill never sets FTP via config", !(Str.contains(skill_text, "config set ftp")))?
+    check!("skill carries no dead ftp.stale flag", !(Str.contains(skill_text, "ftp.stale")) and !(Str.contains(skill_text, "detraining: true")))?
+    check!("skill names the current platform", Str.contains(skill_text, "basic-cli 0.22"))?
+    # ...and the commands it teaches exist: spot-check the ones this guard grew from
+    check!("skill documents the derived-key refusal", Str.contains(skill_text, "derived_key"))?
+
     # keep later fixture-sensitive checks honest: remove the interval ride again
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=103; DELETE FROM activity_metrics WHERE activity_id=103; DELETE FROM streams WHERE activity_id=103; DELETE FROM activities WHERE id=103;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])

@@ -85,10 +85,11 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
 | Command | Returns |
 |---|---|
 | `stride plan` | **planning bundle**: `summary` + `recent_activities_14d` + `open_sessions` |
-| `stride summary` | as_of, CTL/ATL/TSB, `last_7d` + `last_28d` zone blocks (seconds + easy/moderate/hard %), `last_hard_session_date` ('' = none on record), `pending_sessions`, FTP (config vs estimated, `stale` + `detraining` flags), HR zone bounds, per-sport 28d breakdown |
+| `stride summary` | as_of, CTL/ATL/TSB (+`ctl_warming_up`, `ramp_7d`/`ramp_28d_avg`, `form_delta_7d`+`_known`, `form_band_days`+`_capped`), `last_7d` + `last_28d` zone blocks (seconds + easy/moderate/hard %), `last_hard_session_date` ('' = none on record), `pending_sessions`, `ftp: {best_20min_w_60d, estimated_ftp_w}` (DERIVED — see gotchas), `hr_zones`, per-sport 28d breakdown |
 | `stride activities [N] [sport]` | last N activities (default 30), optionally filtered by sport (sport FAMILY words, case-insensitive: `bike`/`run`/`row`/`swim` widen to their Strava spellings, e-bikes excluded from `bike`; non-family sport_types filter exactly) — date, sport, tss, np_w, intensity, z1–z5 seconds, relative_effort, avg_hr |
 | `stride top <metric> [n] [sport]` | best sessions ranked by `hr`, `tss`, `power`, `intensity`, `distance`, `time`, or `output` (kJ) — the leaderboard to `activities`' timeline |
-| `stride zones` (alias `pz`) | the 7 power zones as watt ranges from configured FTP: `{ ftp, zones: [{ z, name, lo_w, hi_w }] }` (0 = open-ended bound) |
+| `stride zones` (alias `pz`) | the 7 power zones as watt ranges from the DERIVED ride FTP: `{ ftp, zones: [{ z, name, lo_w, hi_w }] }` (0 = open-ended bound) |
+| `stride power-curve [days] [sport]` (alias `pc`) | best mean-max power per ladder duration over the window: `{ window_days, sport, points: [{duration_s, watts}], cp, w_prime }` — the CP curve behind FTP |
 | `stride activity <id>` | one session in depth: flat z1_s–z5_s + hard_s, hard minutes, power bests (1/3/5/20min) from streams, plus `streams_unreadable` (true = the 0s are corrupt data, NOT a real zero) — use to review whether a planned session hit its targets before `complete`-ing it |
 | `stride stats` | career + year-to-date totals per sport (sessions, hours, km) |
 | `stride load [days]` | daily tss/ctl/atl/tsb series, chronological (default 90) |
@@ -105,14 +106,16 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
 - **Numeric 0 = "not available"** (no watts → np_w 0; no HR → avg_hr 0). Don't read 0 literally.
 - Zone seconds are **HR-based** (universal across sports). Power feeds TSS/NP only.
 - TSS ladder: stream-NP → Strava weighted watts → avg watts → hrTSS (zone-weighted) → relative_effort.
-- **Metric recompute triggers (the invalidation story):** FTP change (metrics store
-  `ftp_used`), **stream arrival** (backfilled streams invalidate the old metrics row),
-  and **Strava edits** (a re-synced activity invalidates its metrics). So after a sync,
-  always `analyze` to pick up recomputes. `ftp.stale: true` means estimated FTP (20-min
-  best × 0.95) exceeds config by >5% — fix is `stride config set ftp_ride <estimate> &&
-  stride analyze` (the key is per-sport: `ftp_<sport>`, e.g. `ftp_ride`, `ftp_rowing`);
-  `detraining: true` means it's well below config. (`config set ftp_ride` also pushes the
-  new FTP to Strava automatically, so their profile stays in sync — only `ftp_ride` does.)
+- **FTP is DERIVED, never configured.** Per sport, per activity era: best 20-min power
+  × 0.95 over the 60 days up to each activity (`summary.ftp` = `{best_20min_w_60d,
+  estimated_ftp_w}` for rides). the `ftp` / `ftp_<sport>` config keys are REFUSED with
+  `{"error":"derived_key"}` — there is nothing to fix when FTP moves; INTERPRET the
+  trajectory instead (a rising `estimated_ftp_w` is fitness, a falling one is
+  detraining or a power-data gap — check `doctor` coverage before concluding).
+- **Metric recompute triggers (the invalidation story):** derived-FTP change (metrics
+  store `ftp_used`), HR-zone change, **stream arrival**, **rating change**, and
+  activity-input edits (analyze compares each row's stored inputs — sync itself never
+  deletes metrics). So after a sync, always `analyze` to pick up recomputes.
 - CTL/ATL/TSB are **as of today** (daily_load extends through today with 0-TSS rest
   days), so `form_tsb` is current — no mental decay adjustments needed. "Today" is the
   LOCAL day, anchored by config **`timezone`** (IANA, e.g. `America/Chicago` — DST-correct
@@ -120,7 +123,7 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
   precedence is timezone > offset > UTC. Without either, users west of UTC get a phantom
   "tomorrow" row each evening — `doctor` shows which anchor is active.
 - **Session-RPE**: after a strength/HIIT/yoga session, ask the user how hard it felt
-  (1-10) and run `stride rate <activity_id> <n>` — load = hours × RPE × 10
+  (1-10) and run `stride rate <activity_id|latest> <n>` — load = hours × RPE × 10
   (TSS-commensurate). For strength-class sports the rating outranks HR in the load
   ladder; for endurance, measured power/HR outrank it. Rating an activity
   invalidates its metrics (re-`analyze` rescores). Ratings live in their own table
@@ -142,7 +145,7 @@ overrides if set. A locked/corrupt db surfaces as a real error, not a false
 
 First-time on a new machine: create a Strava API app (strava.com/settings/api), then
 `stride init` → `STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth` (browser
-paste flow) → `stride config set ftp_ride/hr_z1_max..hr_z4_max` → `stride sync` →
+paste flow) → `stride config set hr_z1_max..hr_z4_max` (+ `timezone`, IANA) → `stride sync` →
 `stride analyze`. The db self-migrates on any command, so upgrading the binary against
 an existing db is safe.
 
@@ -154,7 +157,7 @@ matters: a failed build leaves a stale binary that the e2e suite would happily "
 against, which is why `just test` builds in between.
 
 Toolchain: Roc's new (Zig) compiler (nightly, pinned by exact tag in
-`.github/workflows/build.yml`) + basic-cli 0.21 + builtin JSON (roc-json dropped). The
+`.github/workflows/build.yml`) + basic-cli 0.22 + builtin JSON (roc-json dropped). The
 full `just test` — expects, build, and e2e — runs green; the roc#10469 perf gate is
 fixed. Build flags take `=` (`--output=`, `--main=`) and always `--opt=dev`, since the
 optimized backend miscompiles (issue #32). Roc gotcha that keeps recurring: floats have
