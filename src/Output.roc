@@ -22,18 +22,31 @@ Output :: [].{
             \\
             \\(find yours at strava.com/settings/heartrate — z5 is everything above z4_max)
     # ── machine interface (JSON output for LLM/tool consumption) ────────
-    # Missing-value contract (#156): literal JSON null is NOT expressible — the
-    # builtin encoder stringifies tags ("None"/"Null"), verified by probe. So the
+    # Missing-value contract (#156, ADR 0009): literal JSON null is NOT expressible —
+    # the builtin encoder stringifies tags ("None"/"Null"), verified by probe. So the
     # contract is per-field, two classes:
-    #   IMPOSSIBLE-ZERO fields (np_w, avg_hr, intensity, ftp_used…): a real 0 cannot
-    #   occur, so 0 unambiguously means "not available" — and the important surfaces
-    #   ALSO carry a _known companion flag (power_known, hr_known) so no client has
-    #   to know which fields are impossible-zero.
-    #   REAL-ZERO fields (z5_s, tss on an unscored row, distance on strength…): 0 is
-    #   an observation. Where a field is BOTH possible-zero and possibly-absent
-    #   (decoupling_pct, form_delta_7d, form_tsb, hr_drift, rec_drop_60s), a _known
-    #   flag is MANDATORY — the flag is the null.
-    # Revisit literal null if the upstream encoder ever learns to emit it.
+    #   IMPOSSIBLE-ZERO fields (np_w, avg_hr, intensity, ftp_used): a real 0 cannot
+    #   occur, so 0 means "not available". The _known companion flags decode the
+    #   STORED NULLs (CASE WHEN … IS NULL), never the coalesced magnitudes — np can
+    #   be present while intensity is NULL (power stream, no FTP yet), which is why
+    #   power_known and intensity_known are separate flags.
+    #   REAL-ZERO fields (z1_s..z5_s when zones_known, distance on strength): 0 is an
+    #   observation. tss is NOT in this class: an unscored row COALESCEs to 0, so
+    #   tss 0 is ambiguous — load_model is the discriminator ("" or "none" =
+    #   unscored; anything else = a scored near-zero effort). An all-zero zone
+    #   vector with zones_known false means "no HR stream", not "0s in every zone"
+    #   (summary avg_hr can exist without one — hr_known does not cover zones).
+    #   Where a field is BOTH possible-zero and possibly-absent (decoupling_pct,
+    #   form_delta_7d, form_tsb, hr_drift, rec_drop_60s), a _known flag is
+    #   MANDATORY — the flag is the null.
+    # Surfaces: activity, activities, plan.recent_activities_14d carry
+    # power_known/intensity_known/hr_known/zones_known + load_model; top carries the
+    # first three. progress sessions carry none on purpose — rows exist only because
+    # the group lens scored them, so the lens signal is present by construction.
+    # Key-OMISSION (encode np_w as Try(F64, [Missing]) — Err drops the key) IS
+    # expressible today and is the JSON-idiomatic alternative; it was rejected
+    # because dropping a key is a REMOVAL (schema_version bump + every jq path
+    # needs has()-guards), while flags are additive. Revisit if a bump happens anyway.
 
     # one payload, two mouths: JSON for machines, a pure Render screen for humans.
     # The pattern for query commands — payload record + Render.<cmd>_screen.

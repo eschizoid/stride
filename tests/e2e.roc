@@ -390,7 +390,18 @@ b_seed_analyze! = |ctx| {
     check!("hr row: power absent is flagged, not zero-faked", strjq!(ctx, ["activity", "102"], "(.data.power_known == false) and (.data.np_w == 0)") == "true")?
     check!("hr row: hr_known true", strjq!(ctx, ["activity", "102"], ".data.hr_known") == "true")?
     check!("the flags are typed booleans", strjq!(ctx, ["activity", "101"], "(.data.power_known | type) == \"boolean\" and (.data.hr_known | type) == \"boolean\"") == "true")?
-    check!("activities rows carry both flags", strjq!(ctx, ["activities", "5"], "[.data[] | has(\"power_known\") and has(\"hr_known\")] | all") == "true")?
+    check!("activities rows carry the flag set", strjq!(ctx, ["activities", "5"], "[.data[] | has(\"power_known\") and has(\"intensity_known\") and has(\"hr_known\") and has(\"zones_known\") and has(\"load_model\")] | all") == "true")?
+    # F3 pin: 102 has a SUMMARY avg_hr but no HR stream — hr_known true while
+    # zones_known false. Its all-zero z-vector is absence, not "0s in every zone".
+    check!("summary-hr row: hr_known true but zones_known false", strjq!(ctx, ["activity", "102"], "(.data.hr_known == true) and (.data.zones_known == false)") == "true")?
+    # F2 pin: tss 0 is read through load_model, and a scored row names its model
+    check!("scored row names its load_model", strjq!(ctx, ["activity", "101"], "(.data.load_model | length) > 0 and .data.load_model != \"none\"") == "true")?
+    # F1 pin: flags decode stored NULLs, so power_known and intensity_known are
+    # SEPARATE — both true here (101 has power AND ftp by this point), both false
+    # on the HR-only row.
+    check!("hr row: intensity absent too", strjq!(ctx, ["activity", "102"], "(.data.intensity_known == false) and (.data.power_known == false)") == "true")?
+    check!("top rows carry the trio", strjq!(ctx, ["top", "tss", "3"], "[.data[] | has(\"power_known\") and has(\"intensity_known\") and has(\"hr_known\")] | all") == "true")?
+    check!("plan recent rows carry the flag set", strjq!(ctx, ["plan"], "[.data.recent_activities_14d[] | has(\"power_known\") and has(\"zones_known\") and has(\"load_model\")] | all") == "true")?
     # #93: ramp carries BOTH fields, and a short history reports an honest 0 rather than
     # today's whole CTL — which is what treating "no data 7 days back" as a CTL of 0 would
     # produce. The fixture has only a couple of days, so 0 is the correct answer here.
@@ -457,6 +468,9 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (105,'meterless ride','Ride','${ctx.d2}T09:00:00Z',1300,9000);")
     _ = seed_pace_hr_stream!(ctx.db, 105, 1300, 7)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # F3 companion (see the flag block above): a row WITH an HR stream reads
+    # zones_known true — 104's pace_hr stream carries in-band HR samples
+    check!("streamed-hr row: zones_known true", strjq!(ctx, ["activity", "104"], ".data.zones_known") == "true")?
     run_drift = Str.trim(sql!(ctx.db, "SELECT ROUND(COALESCE(decoupling_pct, -999), 1) FROM activity_metrics WHERE activity_id=104;"))
     check!("run decoupling is computed and positive", sfloat(run_drift) > 0.0)?
     check!("meter-less ride decoupling stays NULL", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=105 AND decoupling_pct IS NOT NULL;")) == "0")?
