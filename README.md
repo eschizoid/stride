@@ -320,7 +320,7 @@ Human input never lives on a mirror table, because a re-sync would silently wipe
 - **CTL/ATL/TSB** — 42-day and 7-day exponential moving averages of daily load,
   extended through **today** so rest days decay fatigue and `form` is true as-of-now.
 - **Zones are HR-based** (universal across sports); power feeds TSS/NP only.
-- **FTP is derived, never configured** — that sport's own best 20-min power × 0.95 over a
+- **FTP is derived, never configured** — the sport family's best 20-min power × 0.95 over a
   60-day window, and the window is anchored to **the activity's own date**, not today. A
   2021 ride is scored against 2021 fitness, and a new personal best does not rewrite your
   history ([ADR 0005](docs/adr/0005-period-accurate-ftp.md)).
@@ -347,8 +347,10 @@ Two consequences worth knowing:
 - **Strength sessions need a rating to score honestly.** A junk HR strap gives them a
   near-zero load, which is truthful "no data" rather than "no effort" — `stride rate <id> <1-10>`
   is what turns that into real load. `doctor` lists the unrated ones.
-- **Every threshold is per-sport and self-derived.** Add a new sport and it starts scoring
-  as soon as it has the data; there is nothing to configure.
+- **Every threshold is self-derived, per family for power and per sport for pace.** A
+  GravelRide scores against the whole ride family's FTP (same muscles, same meter — #151);
+  pace thresholds stay exact-match because surface changes what a speed means. Add a new
+  sport and it starts scoring as soon as it has the data; there is nothing to configure.
 
 **Self-healing by construction:**
 

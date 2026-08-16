@@ -316,8 +316,9 @@ Analyze :: [].{
     zones_sig = |zb|
         "${Render.fmt0(zb.z1_max)},${Render.fmt0(zb.z2_max)},${Render.fmt0(zb.z3_max)},${Render.fmt0(zb.z4_max)}"
     # The FTP in force WHEN an activity happened (ADR 0005), as a SQL expression correlated
-    # to the outer `a`. Same derivation as Db.sport_ftp! — that sport's best 20-min power ×
-    # 0.95 — but the 60-day window is anchored to the ACTIVITY's date, not to today.
+    # to the outer `a`. Same derivation as Db.sport_ftp! — the sport FAMILY's best 20-min
+    # power × 0.95 (#151, ADR 0002 as amended) — but the 60-day window is anchored to the
+    # ACTIVITY's date, not to today.
     #
     # `a2.start_local <= a.start_local` is the load-bearing half: an activity is never scored
     # by fitness the athlete had not yet demonstrated.
@@ -335,20 +336,22 @@ Analyze :: [].{
     # is lexical — so "2024-03-10T09:00:00Z" sorts AFTER "2024-03-10" and every activity on
     # the cutoff day would drop out of the window. The trailing branch above is safe without
     # it because its comparison runs the other way (>=), where the longer string still
-    # matches. Indexed by idx_activities_sport_start (schema v14).
+    # matches. Population is the sport FAMILY (#151) via the stored sport_family
+    # column, indexed by idx_activities_family_start (schema v23) — the column, not
+    # a CASE over sport_type, so the range seek survives.
     period_ftp_sql : Str
     period_ftp_sql =
         \\COALESCE(
         \\  NULLIF((SELECT MAX(m2.best_20min_w) * 0.95
         \\          FROM activity_metrics m2 JOIN activities a2 ON a2.id = m2.activity_id
-        \\          WHERE a2.sport_type = a.sport_type
+        \\          WHERE a2.sport_family = a.sport_family
         \\            AND a2.start_local <= a.start_local
         \\            AND a2.start_local >= date(a.start_local, '-60 days')), 0),
         \\  NULLIF((SELECT MAX(m3.best_20min_w) * 0.95
         \\          FROM activity_metrics m3 JOIN activities a3 ON a3.id = m3.activity_id
-        \\          WHERE a3.sport_type = a.sport_type
+        \\          WHERE a3.sport_family = a.sport_family
         \\            AND date(a3.start_local) <= date((SELECT MIN(a4.start_local) FROM activities a4
-        \\                                              WHERE a4.sport_type = a.sport_type), '+60 days')), 0),
+        \\                                              WHERE a4.sport_family = a.sport_family), '+60 days')), 0),
         \\  0)
 
     # The pace twin of period_ftp_sql (ADR 0005, as amended): the sport's best 20-minute
@@ -969,5 +972,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 29
+    metrics_rev = 30
 }

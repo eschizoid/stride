@@ -6,6 +6,7 @@ import pf.OsStr
 import pf.Path
 import Schema
 import Metrics
+import Sports
 
 Db :: [].{
     # ── paths ────────────────────────────────────────────────────────────
@@ -150,9 +151,10 @@ Db :: [].{
     }
 
     # the power threshold (FTP) a sport's power is judged against. DERIVED, never
-    # configured: it's that sport's own best 20-min power × 0.95 — the standard FTP
-    # estimate. The engine is sport-agnostic and figures FTP out per sport from the data,
-    # so there's nothing to set. 0 when the sport has no power history, in which case
+    # configured: the sport FAMILY's best 20-min power × 0.95 — the standard FTP
+    # estimate, over one fitness pool per family (#151: a gravel 20-min effort IS
+    # bike fitness). The engine is sport-agnostic and derives it from the data, so
+    # there's nothing to set. 0 when the family has no power history, in which case
     # intensity/TSS fall back to HR.
     sport_ftp! : Str, Str => Try(F64, _)
     sport_ftp! = |path, sport| {
@@ -167,8 +169,11 @@ Db :: [].{
         cutoff = Metrics.days_to_date_str(local_today_days!(path) - 60)
         best = Sqlite.query!({
             path: Path.utf8(path),
-            query: "SELECT CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_type = :sport AND a.start_local >= :cutoff",
-            bindings: [{ name: ":sport", value: String(sport) }, { name: ":cutoff", value: String(cutoff) }],
+            # family population (#151): compare the STORED sport_family column —
+            # the canonical head is computed in Roc and bound, keeping the
+            # predicate sargable (same rule period_ftp_sql uses in Analyze)
+            query: "SELECT CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = :fam AND a.start_local >= :cutoff",
+            bindings: [{ name: ":fam", value: String(Sports.canonical(sport)) }, { name: ":cutoff", value: String(cutoff) }],
             row: Sqlite.f64("b"),
         })?
         Ok(Metrics.ftp_from_best_20min(best))
@@ -178,7 +183,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 22
+    schema_version = 23
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -325,6 +330,29 @@ Db :: [].{
                 \\WHERE mt_used IS NULL
                 \\  AND EXISTS (SELECT 1 FROM activities a WHERE a.id = activity_metrics.activity_id)
             ,
+            bindings: [],
+        })?
+        # v23 (#151): the FTP derivation population is the sport FAMILY, stored as a
+        # column so the period-FTP subqueries stay sargable — wrapping sport_type in
+        # the family CASE inside query predicates was measured 8.5x slower per
+        # analyze (it forgoes every sport index). The backfill rewrites ALL rows
+        # (not only NULLs) so a Sports.families edit ships as: edit the table, bump
+        # schema_version, done — the re-run re-canonicalizes history and the
+        # triggers keep every future INSERT/UPDATE current (e2e fixtures and CSV
+        # imports write activities directly, so sync-side code cannot be the keeper).
+        alter_add_column!(path, "ALTER TABLE activities ADD COLUMN sport_family TEXT")?
+        Sqlite.execute!({ path: Path.utf8(path), query: "UPDATE activities SET sport_family = ${Sports.sql_canonical_case("sport_type")}", bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_family_start ON activities(sport_family, start_local)", bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: "DROP TRIGGER IF EXISTS activities_family_ai", bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: "DROP TRIGGER IF EXISTS activities_family_au", bindings: [] })?
+        Sqlite.execute!({
+            path: Path.utf8(path),
+            query: "CREATE TRIGGER activities_family_ai AFTER INSERT ON activities BEGIN UPDATE activities SET sport_family = ${Sports.sql_canonical_case("NEW.sport_type")} WHERE id = NEW.id; END",
+            bindings: [],
+        })?
+        Sqlite.execute!({
+            path: Path.utf8(path),
+            query: "CREATE TRIGGER activities_family_au AFTER UPDATE OF sport_type ON activities BEGIN UPDATE activities SET sport_family = ${Sports.sql_canonical_case("NEW.sport_type")} WHERE id = NEW.id; END",
             bindings: [],
         })
     }
