@@ -338,14 +338,14 @@ Analyze :: [].{
         \\COALESCE(
         \\  NULLIF((SELECT MAX(m2.best_20min_w) * 0.95
         \\          FROM activity_metrics m2 JOIN activities a2 ON a2.id = m2.activity_id
-        \\          WHERE a2.sport_type = a.sport_type
+        \\          WHERE ${Sports.sql_canonical_case("a2.sport_type")} = ${Sports.sql_canonical_case("a.sport_type")}
         \\            AND a2.start_local <= a.start_local
         \\            AND a2.start_local >= date(a.start_local, '-60 days')), 0),
         \\  NULLIF((SELECT MAX(m3.best_20min_w) * 0.95
         \\          FROM activity_metrics m3 JOIN activities a3 ON a3.id = m3.activity_id
-        \\          WHERE a3.sport_type = a.sport_type
+        \\          WHERE ${Sports.sql_canonical_case("a3.sport_type")} = ${Sports.sql_canonical_case("a.sport_type")}
         \\            AND date(a3.start_local) <= date((SELECT MIN(a4.start_local) FROM activities a4
-        \\                                              WHERE a4.sport_type = a.sport_type), '+60 days')), 0),
+        \\                                              WHERE ${Sports.sql_canonical_case("a4.sport_type")} = ${Sports.sql_canonical_case("a.sport_type")}), '+60 days')), 0),
         \\  0)
 
     # The pace twin of period_ftp_sql (ADR 0005, as amended): the sport's best 20-minute
@@ -959,5 +959,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 29
+    metrics_rev = 30
 }

@@ -55,6 +55,23 @@ Sports :: [].{
         Str.contains(low, "run") or Str.contains(low, "swim")
     }
 
+    # SQL CASE expression collapsing a sport_type column to its family's canonical
+    # spelling (the family row's first sport), for population comparisons: FTP and
+    # threshold-speed derivation treat a family as ONE fitness pool — a gravel
+    # 20-min effort IS bike fitness, and a GravelRide scored against gravel-only
+    # history had a near-empty derivation window (#151). Names are our own literals
+    # (non-empty), so the splice is safe; the CASE wraps BOTH sides of a comparison,
+    # which forgoes the sport/start index — measured acceptable on a full recompute,
+    # and correctness beats the scan (the pending set is small outside rev bumps).
+    sql_canonical_case : Str -> Str
+    sql_canonical_case = |col| {
+        arms = List.join(List.map(families, |f| {
+            canon = (List.first(f.sports)).ok_or("")
+            List.map(List.drop_first(f.sports, 1), |sp| " WHEN '${sp}' THEN '${canon}'")
+        }))
+        "CASE ${col}${Str.join_with(arms, "")} ELSE ${col} END"
+    }
+
     # rTSS/sTSS intensity exponent: running 2, swimming 3 (drag rises faster
     # with speed in water).
     pace_tss_exponent : Str -> F64
@@ -102,4 +119,16 @@ expect {
     and (Sports.pace_tss_exponent("OpenWaterSwim") - 3.0).abs() < 0.001
     and (Sports.pace_tss_exponent("Run") - 2.0).abs() < 0.001
     and (Sports.pace_tss_exponent("Ride") - 2.0).abs() < 0.001
+}
+
+# the canonical CASE maps every non-canonical family member to its head and
+# passes unknown sports through
+expect {
+    c = Sports.sql_canonical_case("x")
+    Str.contains(c, "WHEN 'GravelRide' THEN 'Ride'")
+    and Str.contains(c, "WHEN 'VirtualRun' THEN 'Run'")
+    and Str.contains(c, "WHEN 'VirtualRow' THEN 'Rowing'")
+    and Str.starts_with(c, "CASE x")
+    and Str.ends_with(c, "ELSE x END")
+    and !(Str.contains(c, "WHEN 'Ride' THEN"))
 }

@@ -6,6 +6,7 @@ import pf.OsStr
 import pf.Path
 import Schema
 import Metrics
+import Sports
 
 Db :: [].{
     # ── paths ────────────────────────────────────────────────────────────
@@ -167,7 +168,9 @@ Db :: [].{
         cutoff = Metrics.days_to_date_str(local_today_days!(path) - 60)
         best = Sqlite.query!({
             path: Path.utf8(path),
-            query: "SELECT CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_type = :sport AND a.start_local >= :cutoff",
+            # family-canonical comparison (#151): a gravel 20-min best IS bike
+            # fitness — the same population rule period_ftp_sql uses in Analyze
+            query: "SELECT CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE ${Sports.sql_canonical_case("a.sport_type")} = ${Sports.sql_canonical_case(":sport")} AND a.start_local >= :cutoff",
             bindings: [{ name: ":sport", value: String(sport) }, { name: ":cutoff", value: String(cutoff) }],
             row: Sqlite.f64("b"),
         })?
