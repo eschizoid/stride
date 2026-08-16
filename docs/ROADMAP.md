@@ -28,6 +28,49 @@ now name the state and say how long it has held ("balanced, 16 days in this band
 `+` when the count is truncated by the window rather than ended by a band change). Worth
 re-reading this thesis against anything that emits words rather than numbers.
 
+## ADOPTED 2026-08-16, prioritized ASAP: the engine/coach contract round
+
+The full plan lives in `docs/plans/llm-coach-execution-plan.md`; its thesis is this
+roadmap's own, sharpened into an execution order: **stride knows what happened, the LLM
+decides what it means and what to do next** — and every surface gets held to it. Each
+item is a GitHub issue; this section is the priority ledger.
+
+**Phase 1 — contract and correctness (P0, before anything else):**
+- #154 audit deterministic outputs for coaching language; pin the boundary with tests
+  (most offenders already fixed in #123/#127 — this is the sweep and the guard).
+- #155 repair the coach skill contract — it currently instructs `config set ftp_ride`,
+  a command the CLI refuses — and add drift tests so retired interfaces cannot reappear.
+- #156 missing-value semantics: null = unavailable, 0 = measured zero (schema v3).
+  Retires the "numeric 0 = not available" convention at the machine boundary.
+- #151 power-curve population consistency (elevated: blocks all advanced power work).
+
+**Phase 2 — agent-quality context (P0/P1):**
+- #157 provenance/confidence on the aggregates (coverage on load, CTL, thresholds —
+  reusing the load_model/load_confidence ladder, never a parallel system).
+- #158 plan payload gains plan/adherence history (planned-vs-actual as deterministic
+  memory; raw counts, never an "adherence: poor" verdict).
+- #162 explicit `--json` (tool-neutral machine output).
+- #164 published, validated machine schemas (the JSON contract as a tested artifact).
+- #163 review JSON error exit semantics (decide on evidence, likely rides schema v3).
+
+**Phase 3 — higher-value metrics (P1):**
+- #159 objective judgment features (stimulus history, spacing, window deltas).
+- #160 personal-baseline primitives (current vs own history, deterministic
+  comparability shared with rep progression).
+- #149 rep-level progression across comparable sessions (spec now on the issue).
+
+**Phase 4 — future physiology and data (P2, gated):**
+- #161 the projection-versus-prescription ADR, prerequisite of #138 event targeting.
+- #140 advanced power modeling — only after #151.
+- #137 wellness measurements — boundary spec recorded on the issue; still gated on
+  its homework.
+- #165 documentation drift audit closes the round.
+
+Explicit non-goals, restated because they are the round's whole point: no rule-based
+coaching engine, no deterministic `coach` command, no readiness verdicts, no
+recommendation strings in the metric layer — an LLM may say "take an easy day";
+stride may only ever say what the numbers are.
+
 ## Settled 2026-08-09: both, interleaved — world-class in the foreground
 
 "World-class vs world-scale" got grilled and the answer is both tracks at once:
