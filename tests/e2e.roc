@@ -499,8 +499,19 @@ b_seed_analyze! = |ctx| {
     # CLI contract, and it once instructed `config set ftp_ride` — a command the
     # CLI refuses. Retired interfaces must never reappear in the shipped skill.
     skill_text = sh!("cat .claude/skills/stride/SKILL.md")
+    # sh! swallows errors into "" — assert readability FIRST so a moved/renamed
+    # skill file fails loudly here instead of green-lighting the negative checks
+    check!("skill file is readable", !(Str.is_empty(skill_text)))?
     check!("skill never sets FTP via config", !(Str.contains(skill_text, "config set ftp")))?
-    check!("skill carries no dead ftp.stale flag", !(Str.contains(skill_text, "ftp.stale")) and !(Str.contains(skill_text, "detraining: true")))?
+    # the review proved banning exact spellings misses re-worded drift ("config vs
+    # estimated" carried the same dead flags without any banned string) — ban the
+    # SEMANTIC phrase too, and pin the real key names positively: a positive
+    # assert catches wrong-key drift the denylist can never enumerate
+    check!("skill carries no dead ftp.stale flag", !(Str.contains(skill_text, "ftp.stale")) and !(Str.contains(skill_text, "detraining: true")) and !(Str.contains(skill_text, "config vs estimated")))?
+    check!("skill names the real ftp keys", Str.contains(skill_text, "best_20min_w_60d") and Str.contains(skill_text, "estimated_ftp_w"))?
+    check!("skill names the real pc/summary keys", Str.contains(skill_text, "dur_s") and !(Str.contains(skill_text, "duration_s")) and Str.contains(skill_text, "form_delta_known") and !(Str.contains(skill_text, "form_delta_7d_known")))?
+    check!("skill documents the envelope", Str.contains(skill_text, "schema_version"))?
+    # if this fails after a platform bump: update the skill's toolchain line too
     check!("skill names the current platform", Str.contains(skill_text, "basic-cli 0.22"))?
     # ...and the commands it teaches exist: spot-check the ones this guard grew from
     check!("skill documents the derived-key refusal", Str.contains(skill_text, "derived_key"))?
