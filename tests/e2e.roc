@@ -386,6 +386,26 @@ b_seed_analyze! = |ctx| {
     # never prose, never coaching vocabulary
     check!("summary form_state is a stable band id", strjq!(ctx, ["summary"], ".data.form_state | IN(\"high_modeled_fatigue\",\"modeled_fatigue_building\",\"balanced\",\"fresh\",\"very_fresh\")") == "true")?
     check!("analyze form_state matches the enum or is honestly empty", strjq!(ctx, ["analyze"], ".data.form_state | IN(\"high_modeled_fatigue\",\"modeled_fatigue_building\",\"balanced\",\"fresh\",\"very_fresh\")") == "true")?
+    # ── missing-vs-zero (#156): the flags distinguish what the magnitudes cannot.
+    # Activity 101 has a REAL power stream -> power_known true with np_w > 0;
+    # activity 102 is HR-only -> power_known false AND np_w 0 (absence, not zero
+    # watts); both flags are proper JSON booleans, never "True" strings.
+    check!("power ride: power_known true", strjq!(ctx, ["activity", "101"], ".data.power_known") == "true")?
+    check!("hr row: power absent is flagged, not zero-faked", strjq!(ctx, ["activity", "102"], "(.data.power_known == false) and (.data.np_w == 0)") == "true")?
+    check!("hr row: hr_known true", strjq!(ctx, ["activity", "102"], ".data.hr_known") == "true")?
+    check!("the flags are typed booleans", strjq!(ctx, ["activity", "101"], "(.data.power_known | type) == \"boolean\" and (.data.hr_known | type) == \"boolean\"") == "true")?
+    check!("activities rows carry the flag set", strjq!(ctx, ["activities", "5"], "[.data[] | has(\"power_known\") and has(\"intensity_known\") and has(\"hr_known\") and has(\"zones_known\") and has(\"load_model\")] | all") == "true")?
+    # F3 pin: 102 has a SUMMARY avg_hr but no HR stream — hr_known true while
+    # zones_known false. Its all-zero z-vector is absence, not "0s in every zone".
+    check!("summary-hr row: hr_known true but zones_known false", strjq!(ctx, ["activity", "102"], "(.data.hr_known == true) and (.data.zones_known == false)") == "true")?
+    # F2 pin: tss 0 is read through load_model, and a scored row names its model
+    check!("scored row names its load_model", strjq!(ctx, ["activity", "101"], "(.data.load_model | length) > 0 and .data.load_model != \"none\"") == "true")?
+    # F1 pin: flags decode stored NULLs, so power_known and intensity_known are
+    # SEPARATE — both true here (101 has power AND ftp by this point), both false
+    # on the HR-only row.
+    check!("hr row: intensity absent too", strjq!(ctx, ["activity", "102"], "(.data.intensity_known == false) and (.data.power_known == false)") == "true")?
+    check!("top rows carry the trio", strjq!(ctx, ["top", "tss", "3"], "[.data[] | has(\"power_known\") and has(\"intensity_known\") and has(\"hr_known\")] | all") == "true")?
+    check!("plan recent rows carry the flag set", strjq!(ctx, ["plan"], "[.data.recent_activities_14d[] | has(\"power_known\") and has(\"zones_known\") and has(\"load_model\")] | all") == "true")?
     # #93: ramp carries BOTH fields, and a short history reports an honest 0 rather than
     # today's whole CTL — which is what treating "no data 7 days back" as a CTL of 0 would
     # produce. The fixture has only a couple of days, so 0 is the correct answer here.
@@ -452,6 +472,9 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (105,'meterless ride','Ride','${ctx.d2}T09:00:00Z',1300,9000);")
     _ = seed_pace_hr_stream!(ctx.db, 105, 1300, 7)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # F3 companion (see the flag block above): a row WITH an HR stream reads
+    # zones_known true — 104's pace_hr stream carries in-band HR samples
+    check!("streamed-hr row: zones_known true", strjq!(ctx, ["activity", "104"], ".data.zones_known") == "true")?
     run_drift = Str.trim(sql!(ctx.db, "SELECT ROUND(COALESCE(decoupling_pct, -999), 1) FROM activity_metrics WHERE activity_id=104;"))
     check!("run decoupling is computed and positive", sfloat(run_drift) > 0.0)?
     check!("meter-less ride decoupling stays NULL", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=105 AND decoupling_pct IS NOT NULL;")) == "0")?
@@ -498,6 +521,27 @@ b_seed_analyze! = |ctx| {
     check!("unknown sport names the sports that exist", Str.contains(unknown_top, "sports in your data") and Str.contains(unknown_top, "GravelRide"))?
     check!("activities honors the family too", strjq!(ctx, ["activities", "10", "bike"], "[.data[].sport] | unique | length >= 2") == "true")?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 310;")
+
+    # ── skill contract drift guard (#155): the coach skill is a CLIENT of the
+    # CLI contract, and it once instructed `config set ftp_ride` — a command the
+    # CLI refuses. Retired interfaces must never reappear in the shipped skill.
+    skill_text = sh!("cat .claude/skills/stride/SKILL.md")
+    # sh! swallows errors into "" — assert readability FIRST so a moved/renamed
+    # skill file fails loudly here instead of green-lighting the negative checks
+    check!("skill file is readable", !(Str.is_empty(skill_text)))?
+    check!("skill never sets FTP via config", !(Str.contains(skill_text, "config set ftp")))?
+    # the review proved banning exact spellings misses re-worded drift ("config vs
+    # estimated" carried the same dead flags without any banned string) — ban the
+    # SEMANTIC phrase too, and pin the real key names positively: a positive
+    # assert catches wrong-key drift the denylist can never enumerate
+    check!("skill carries no dead ftp.stale flag", !(Str.contains(skill_text, "ftp.stale")) and !(Str.contains(skill_text, "detraining: true")) and !(Str.contains(skill_text, "config vs estimated")))?
+    check!("skill names the real ftp keys", Str.contains(skill_text, "best_20min_w_60d") and Str.contains(skill_text, "estimated_ftp_w"))?
+    check!("skill names the real pc/summary keys", Str.contains(skill_text, "dur_s") and !(Str.contains(skill_text, "duration_s")) and Str.contains(skill_text, "form_delta_known") and !(Str.contains(skill_text, "form_delta_7d_known")))?
+    check!("skill documents the envelope", Str.contains(skill_text, "schema_version"))?
+    # if this fails after a platform bump: update the skill's toolchain line too
+    check!("skill names the current platform", Str.contains(skill_text, "basic-cli 0.22"))?
+    # ...and the commands it teaches exist: spot-check the ones this guard grew from
+    check!("skill documents the derived-key refusal", Str.contains(skill_text, "derived_key"))?
 
     # keep later fixture-sensitive checks honest: remove the interval ride again
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=103; DELETE FROM activity_metrics WHERE activity_id=103; DELETE FROM streams WHERE activity_id=103; DELETE FROM activities WHERE id=103;")

@@ -183,7 +183,12 @@ Report :: [].{
                 \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
                 \\       CAST(COALESCE(m.decoupling_pct, 0) AS REAL) AS decoupling_pct,
                 \\       CASE WHEN m.decoupling_pct IS NULL THEN 0 ELSE 1 END AS decoupling_known,
-                \\       COALESCE(m.decoupling_signal, '') AS decoupling_signal
+                \\       COALESCE(m.decoupling_signal, '') AS decoupling_signal,
+                \\       CASE WHEN m.normalized_power IS NULL THEN 0 ELSE 1 END AS power_known,
+                \\       CASE WHEN m.intensity_factor IS NULL THEN 0 ELSE 1 END AS intensity_known,
+                \\       CASE WHEN a.avg_hr IS NULL THEN 0 ELSE 1 END AS hr_known,
+                \\       CASE WHEN COALESCE(m.hr_samples_total, 0) > 0 THEN 1 ELSE 0 END AS zones_known,
+                \\       COALESCE(m.load_model, '') AS load_model
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE a.id = :id LIMIT 1
             ,
@@ -211,7 +216,12 @@ Report :: [].{
                 decoupling_pct = Sqlite.f64("decoupling_pct")(cols)(stmt)?
                 decoupling_known = Sqlite.i64("decoupling_known")(cols)(stmt)?
                 decoupling_signal = Sqlite.str("decoupling_signal")(cols)(stmt)?
-                Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr, decoupling_pct, decoupling_known: decoupling_known != 0, decoupling_signal })
+                power_known = Sqlite.i64("power_known")(cols)(stmt)?
+                intensity_known = Sqlite.i64("intensity_known")(cols)(stmt)?
+                hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
+                zones_known = Sqlite.i64("zones_known")(cols)(stmt)?
+                load_model = Sqlite.str("load_model")(cols)(stmt)?
+                Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr, decoupling_pct, decoupling_known: decoupling_known != 0, decoupling_signal, power_known: power_known != 0, intensity_known: intensity_known != 0, hr_known: hr_known != 0, zones_known: zones_known != 0, load_model })
             },
         })?
         match List.first(rows) {
@@ -291,8 +301,18 @@ Report :: [].{
                         moving_time: a.moving_time,
                         distance_m: a.distance_m,
                         tss: a.tss,
+                        # tss 0 is AMBIGUOUS (a real recovery spin scores near-0; an
+                        # unscored row COALESCEs to 0) — load_model is the discriminator:
+                        # "" (no metrics row) or "none" = unscored, anything else = scored
+                        load_model: a.load_model,
                         np_w: a.np_w,
+                        # 0-vs-missing (#156): flags decode the STORED NULLs — deriving
+                        # them from coalesced magnitudes re-loses exactly the information
+                        # the flag exists to carry (np can be present while intensity is
+                        # NULL when no FTP existed; the review proved it on a real state)
+                        power_known: a.power_known,
                         intensity: a.intensity,
+                        intensity_known: a.intensity_known,
                         ftp_used: a.ftp_used,
                         z1_s: a.z1_s,
                         z2_s: a.z2_s,
@@ -307,6 +327,10 @@ Report :: [].{
                         power_bests: { w60: detail.best_60, w180: detail.best_180, w300: detail.best_300, w1200: detail.best_1200 },
                         max_hr: detail.max_hr,
                         avg_hr: a.avg_hr,
+                        hr_known: a.hr_known,
+                        # summary avg_hr can exist while NO zone breakdown does (no HR
+                        # stream): an all-zero z-vector is absence unless zones_known
+                        zones_known: a.zones_known,
                         # true = stored streams exist but wouldn't decode, so the 0s
                         # above are "unreadable", NOT "no power meter / no strap"
                         streams_unreadable: detail.failed,
@@ -483,7 +507,12 @@ Report :: [].{
                         \\       CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                         \\       CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                         \\       CAST(COALESCE(a.relative_effort,0) AS REAL) AS relative_effort,
-                        \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr
+                        \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
+                        \\       CASE WHEN m.normalized_power IS NULL THEN 0 ELSE 1 END AS power_known,
+                        \\       CASE WHEN m.intensity_factor IS NULL THEN 0 ELSE 1 END AS intensity_known,
+                        \\       CASE WHEN a.avg_hr IS NULL THEN 0 ELSE 1 END AS hr_known,
+                        \\       CASE WHEN COALESCE(m.hr_samples_total, 0) > 0 THEN 1 ELSE 0 END AS zones_known,
+                        \\       COALESCE(m.load_model, '') AS load_model
                         \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                         \\WHERE a.start_local >= :cutoff
                         \\ORDER BY a.start_local DESC, a.id DESC
@@ -510,7 +539,12 @@ Report :: [].{
                         relative_effort = Sqlite.f64("relative_effort")(cols)(stmt)?
 
                         avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
-                        Ok({ id, date, sport, name, moving_time, tss, intensity, z1_s, z2_s, z3_s, z4_s, z5_s, hard_s, distance_m, np_w, relative_effort, avg_hr })
+                        power_known = Sqlite.i64("power_known")(cols)(stmt)?
+                        intensity_known = Sqlite.i64("intensity_known")(cols)(stmt)?
+                        hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
+                        zones_known = Sqlite.i64("zones_known")(cols)(stmt)?
+                        load_model = Sqlite.str("load_model")(cols)(stmt)?
+                        Ok({ id, date, sport, name, moving_time, tss, load_model, intensity, intensity_known: intensity_known != 0, z1_s, z2_s, z3_s, z4_s, z5_s, zones_known: zones_known != 0, hard_s, distance_m, np_w, power_known: power_known != 0, relative_effort, avg_hr, hr_known: hr_known != 0 })
                     },
                 })?
                 open_p = Sqlite.query_many!({
@@ -871,7 +905,12 @@ Report :: [].{
                 \\       -- intensity, else HR Z4+Z5. So a power ride's threshold work counts.
                 \\       COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) AS hard_s,
                 \\       CAST(COALESCE(a.relative_effort,0) AS REAL) AS relative_effort,
-                \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr
+                \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
+                \\       CASE WHEN m.normalized_power IS NULL THEN 0 ELSE 1 END AS power_known,
+                \\       CASE WHEN m.intensity_factor IS NULL THEN 0 ELSE 1 END AS intensity_known,
+                \\       CASE WHEN a.avg_hr IS NULL THEN 0 ELSE 1 END AS hr_known,
+                \\       CASE WHEN COALESCE(m.hr_samples_total, 0) > 0 THEN 1 ELSE 0 END AS zones_known,
+                \\       COALESCE(m.load_model, '') AS load_model
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE (1=1${sf.frag})
                 \\ORDER BY a.start_local DESC, a.id DESC LIMIT ${(limit).to_str()}
@@ -895,7 +934,12 @@ Report :: [].{
                 hard_s = Sqlite.i64("hard_s")(cols)(stmt)?
                 relative_effort = Sqlite.f64("relative_effort")(cols)(stmt)?
                 avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
-                Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, z1_s, z2_s, z3_s, z4_s, z5_s, hard_s, relative_effort, avg_hr })
+                power_known = Sqlite.i64("power_known")(cols)(stmt)?
+                intensity_known = Sqlite.i64("intensity_known")(cols)(stmt)?
+                hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
+                zones_known = Sqlite.i64("zones_known")(cols)(stmt)?
+                load_model = Sqlite.str("load_model")(cols)(stmt)?
+                Ok({ id, date, sport, name, moving_time, distance_m, tss, load_model, np_w, power_known: power_known != 0, intensity, intensity_known: intensity_known != 0, z1_s, z2_s, z3_s, z4_s, z5_s, zones_known: zones_known != 0, hard_s, relative_effort, avg_hr, hr_known: hr_known != 0 })
             },
         })?
         if Output.json_mode!({})
@@ -1005,7 +1049,10 @@ Report :: [].{
                         \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                         \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
                         \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
-                        \\       CAST(COALESCE(a.avg_watts * a.moving_time / 1000.0, 0) AS REAL) AS output_kj
+                        \\       CAST(COALESCE(a.avg_watts * a.moving_time / 1000.0, 0) AS REAL) AS output_kj,
+                        \\       CASE WHEN m.normalized_power IS NULL THEN 0 ELSE 1 END AS power_known,
+                        \\       CASE WHEN m.intensity_factor IS NULL THEN 0 ELSE 1 END AS intensity_known,
+                        \\       CASE WHEN a.avg_hr IS NULL THEN 0 ELSE 1 END AS hr_known
                         \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                         \\WHERE ${col} > 0${sport_where}
                         \\ORDER BY ${col} DESC, a.id DESC LIMIT ${(limit).to_str()}
@@ -1023,7 +1070,10 @@ Report :: [].{
                         intensity = Sqlite.f64("intensity")(cols)(stmt)?
                         avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
                         output_kj = Sqlite.f64("output_kj")(cols)(stmt)?
-                        Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, avg_hr, output_kj })
+                        power_known = Sqlite.i64("power_known")(cols)(stmt)?
+                        intensity_known = Sqlite.i64("intensity_known")(cols)(stmt)?
+                        hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
+                        Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, power_known: power_known != 0, intensity, intensity_known: intensity_known != 0, avg_hr, hr_known: hr_known != 0, output_kj })
                     },
                 })?
                 if Output.json_mode!({})
@@ -1520,6 +1570,10 @@ Report :: [].{
                     lens: lens_name(g.lens),
                     # scores/trends upstream are computed on chronological rows; the sort
                     # only changes the ORDER sessions are listed in
+                    # progress sessions carry NO power_known/hr_known: rows exist only
+                    # because the group's LENS scored them, so the lens signal is present
+                    # by construction; np_w/avg_hr here are auxiliary display fields where
+                    # 0 = absent per the global rule (see Output.roc contract).
                     sessions: List.map((match sort { Asc => g.rows Desc => Render.reverse_list(g.rows) }), |r| {
                         date: r.date,
                         sport: r.sport,

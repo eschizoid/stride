@@ -77,7 +77,7 @@ jobs:
           echo "--- roc check src/Schema.roc (DDL-only, no expects) ---"
           roc check src/Schema.roc
 
-  # End-to-end: build the real binary and run the native offline e2e suite (157 checks,
+  # End-to-end: build the real binary and run the native offline e2e suite (
   # sandboxed HOME, no network). Built with --opt=dev: the optimized (--opt=speed) backend
   # has an intermittent SIGABRT on the stream-decode path (issue #32), so RELEASE binaries
   # stay gated on it — but --opt=dev is stable and the suite passes deterministically.
@@ -111,5 +111,5 @@ jobs:
         run: brew install just
       - name: Build stride (dev backend — #32 blocks the optimized one)
         run: roc build src/app.roc --output=stride --opt=dev   # ~6 min; new compiler uses --output=
-      - name: Run offline e2e suite (157 checks)
+      - name: Run offline e2e suite
         run: ROC=roc just e2e
