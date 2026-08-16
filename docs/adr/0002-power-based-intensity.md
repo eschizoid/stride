@@ -70,3 +70,25 @@ derived numbers as fact. The engine may compute; the coach must caveat.
   estimated (HR/RPE), surfaced by `doctor` and as `measured_pct` on the fitness number.
 - Recompute invalidation is per-sport: a change in one sport's derived FTP recomputes only that
   sport's rows (a generated `CASE` maps each sport to its FTP in the analyze filter).
+
+## Amended 2026-08-16 — the power population is the sport FAMILY (#151, PR #169)
+
+Three statements above are superseded. FTP is no longer "that sport's own" best 20-min
+power: the derivation population is the **sport family** (`Sports.families` — Ride +
+VirtualRide + GravelRide + MountainBikeRide as one pool, and so on), because the meter and
+the muscles are the same and a GravelRide judged against gravel-only history scored itself
+against a near-empty window — on the real database, eleven gravel rides carried `ftp_used`
+0 while the athlete's ride FTP was in the 240s. "Intensity judged against that sport's own
+FTP" therefore now reads "against its family's FTP"; "recompute invalidation is per-sport"
+now operates per family member through the same `*_used` value comparison (an edit to the
+family table self-detects on the next analyze).
+
+Pace thresholds deliberately stay **exact-match per sport_type**: surface changes what a
+speed means (trail vs road, pool vs open water), so collapsing them would manufacture
+comparability power actually has and pace does not.
+
+Mechanically the family lives as a stored, trigger-maintained `activities.sport_family`
+column (schema v23) with its own `(sport_family, start_local)` index — a query-time CASE
+over `sport_type` was measured 8.5× slower per analyze because it defeats every sport
+index. ADR 0005's "not doing: changing the derivation itself" is amended by exactly this
+much and no further: the window math, anchoring, and cold-start forward-fill are untouched.

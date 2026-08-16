@@ -636,14 +636,17 @@ Report :: [].{
 
         zsum = zone_sum!(path, cutoff28)?
 
+        # the RIDE family's population, same as pz — this was a global cross-sport
+        # MAX, which happened to equal the ride max only while no other family
+        # out-rowed it (#151 round 2: the exact bug one level up)
         best20_row = Sqlite.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT CAST(COALESCE(MAX(m.best_20min_w),0) AS REAL) AS b FROM activity_metrics m
                 \\JOIN activities a ON a.id = m.activity_id
-                \\WHERE a.start_local >= :cutoff
+                \\WHERE a.sport_family = :fam AND a.start_local >= :cutoff
             ,
-            bindings: [{ name: ":cutoff", value: String(cutoff60) }],
+            bindings: [{ name: ":fam", value: String(Sports.canonical("Ride")) }, { name: ":cutoff", value: String(cutoff60) }],
             row: Sqlite.f64("b"),
         })?
 
@@ -1159,8 +1162,8 @@ Report :: [].{
         cfg = Sqlite.query!({
             path: Path.utf8(path),
             query:
-                \\SELECT (SELECT COUNT(DISTINCT a.sport_type) FROM activity_metrics m
-                \\        JOIN activities a ON a.id = m.activity_id WHERE m.ftp_used > 0 AND a.sport_type IS NOT NULL AND a.sport_type <> '') AS derived_ftp_sports,
+                \\SELECT (SELECT COUNT(DISTINCT a.sport_family) FROM activity_metrics m
+                \\        JOIN activities a ON a.id = m.activity_id WHERE m.ftp_used > 0 AND a.sport_family IS NOT NULL AND a.sport_family <> '') AS derived_ftp_sports,
                 \\       COALESCE(SUM(CASE WHEN key IN ('hr_z1_max','hr_z2_max','hr_z3_max','hr_z4_max') THEN 1 ELSE 0 END),0) AS zones_set,
                 \\       COALESCE(SUM(CASE WHEN key GLOB 'hr_z[1-4]_max_?*' THEN 1 ELSE 0 END),0) AS sport_zone_overrides
                 \\FROM config

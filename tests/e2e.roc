@@ -500,14 +500,22 @@ b_seed_analyze! = |ctx| {
     # (activity 101's 200W stream -> FTP 190) instead of scoring against an empty
     # window — the curve and the FTP it explains now read the same population.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,device_watts) VALUES (320,'gravel loop','GravelRide','${ctx.d2}T15:00:00Z',3600,25000,180,180,1);")
+    # the INSERT trigger canonicalized the family — the query population is the
+    # stored COLUMN (sargable), never a CASE at query time
+    check!("insert trigger stores the canonical family", Str.trim(sql!(ctx.db, "SELECT COALESCE(sport_family,'?') FROM activities WHERE id=320;")) == "Ride")?
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("a family sport inherits the family FTP", Str.trim(sql!(ctx.db, "SELECT CAST(ftp_used AS INTEGER) FROM activity_metrics WHERE activity_id=320;")) == "190")?
-    # ...and an out-of-family sport still derives from nothing but itself
+    # ...and an out-of-family sport still derives from nothing but itself — the
+    # guard against OVER-collapsing (this passes before #151 too, on purpose:
+    # it pins that the fix did not widen any population it shouldn't have)
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,device_watts) VALUES (321,'ski erg','Ski','${ctx.d2}T16:00:00Z',1800,0,150,150,1);")
+    check!("non-family sport passes through as its own family", Str.trim(sql!(ctx.db, "SELECT COALESCE(sport_family,'?') FROM activities WHERE id=321;")) == "Ski")?
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("an out-of-family sport keeps its own empty window", Str.trim(sql!(ctx.db, "SELECT CAST(COALESCE(ftp_used,0) AS INTEGER) FROM activity_metrics WHERE activity_id=321;")) == "0")?
+    # a sport_type EDIT re-canonicalizes through the UPDATE trigger
+    _ = sql!(ctx.db, "UPDATE activities SET sport_type='TrailRun' WHERE id=321;")
+    check!("update trigger re-canonicalizes the family", Str.trim(sql!(ctx.db, "SELECT COALESCE(sport_family,'?') FROM activities WHERE id=321;")) == "Run")?
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (320,321); DELETE FROM activity_metrics WHERE activity_id IN (320,321); DELETE FROM activities WHERE id IN (320,321);")
-    _ = stride!(ctx.bin, ctx.home, ["analyze"])
 
     # keep later fixture-sensitive checks honest: remove the interval ride again
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=103; DELETE FROM activity_metrics WHERE activity_id=103; DELETE FROM streams WHERE activity_id=103; DELETE FROM activities WHERE id=103;")

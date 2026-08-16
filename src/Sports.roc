@@ -11,7 +11,12 @@ Sports :: [].{
     # Human words and the Strava sport_type spellings they mean. NO e-bike arms
     # in the ride family on purpose: analyze computes best_*_w for anything with
     # a power stream, so one motor-assisted ride would set the power-curve max
-    # at every duration and drag the CP fit up permanently.
+    # at every duration and drag the CP fit up permanently — and since #151 the
+    # family is also the FTP DERIVATION POPULATION (activities.sport_family),
+    # which makes that warning doubly load-bearing. Editing a row here changes
+    # scoring, not just display: it needs a schema_version bump in Db.roc so the
+    # sport_family backfill and triggers regenerate, and historical ftp_used
+    # self-detects the change on the next analyze.
     families : List({ words : List(Str), sports : List(Str) })
     families = [
         { words: ["bike", "cycling", "ride", "rides"], sports: ["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"] },
@@ -55,14 +60,25 @@ Sports :: [].{
         Str.contains(low, "run") or Str.contains(low, "swim")
     }
 
-    # SQL CASE expression collapsing a sport_type column to its family's canonical
-    # spelling (the family row's first sport), for population comparisons: FTP and
-    # threshold-speed derivation treat a family as ONE fitness pool — a gravel
-    # 20-min effort IS bike fitness, and a GravelRide scored against gravel-only
-    # history had a near-empty derivation window (#151). Names are our own literals
-    # (non-empty), so the splice is safe; the CASE wraps BOTH sides of a comparison,
-    # which forgoes the sport/start index — measured acceptable on a full recompute,
-    # and correctness beats the scan (the pending set is small outside rev bumps).
+    # The family head a sport scores against: FTP derivation treats a family as
+    # ONE fitness pool — a gravel 20-min effort IS bike fitness, and a GravelRide
+    # scored against gravel-only history had a near-empty derivation window
+    # (#151). Exact sport_type spelling in, canonical head out; non-members pass
+    # through unchanged (a Yoga population is Yoga alone).
+    canonical : Str -> Str
+    canonical = |sport|
+        match List.first(List.keep_if(families, |f| List.contains(f.sports, sport))) {
+            Ok(f) => (List.first(f.sports)).ok_or(sport)
+            Err(_) => sport
+        }
+
+    # SQL CASE expression collapsing a sport_type expression to canonical() —
+    # used ONLY in DDL: the migration backfill and the activities triggers that
+    # keep the stored sport_family column current. Queries compare the COLUMN
+    # (sargable via idx_activities_family_start); wrapping query predicates in
+    # this CASE instead was measured 8.5x slower per analyze on the real db
+    # (non-sargable — the round-1 approach, reverted). Names are our own
+    # literals (no quotes — the expect below pins that), so the splice is safe.
     sql_canonical_case : Str -> Str
     sql_canonical_case = |col| {
         arms = List.join(List.map(families, |f| {
@@ -111,6 +127,21 @@ expect {
     and Sports.pace_routed("TrailRun") and Sports.pace_routed("OpenWaterSwim")
     and !(Sports.pace_routed("Ride")) and !(Sports.pace_routed("Walk"))
     and !(Sports.pace_routed("Hike")) and !(Sports.pace_routed("Rowing"))
+}
+
+# canonical: family members collapse to the head, non-members pass through
+expect {
+    Sports.canonical("GravelRide") == "Ride"
+    and Sports.canonical("VirtualRide") == "Ride"
+    and Sports.canonical("Ride") == "Ride"
+    and Sports.canonical("TrailRun") == "Run"
+    and Sports.canonical("Yoga") == "Yoga"
+}
+
+# the DDL splice stays safe: no family string may ever carry a quote
+expect {
+    all_strs = List.join(List.map(Sports.families, |f| List.concat(f.words, f.sports)))
+    List.all(all_strs, |s| !(Str.contains(s, "'")))
 }
 
 # the exponent: water is cubic, land is quadratic
