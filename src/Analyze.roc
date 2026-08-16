@@ -115,6 +115,9 @@ Analyze :: [].{
                         computed: res.computed,
                         stream_errors: res.stream_errors,
                         form_tsb,
+                        # stable band id (#154); "" when TSB itself is unknown — an id
+                        # derived from a placeholder 0.0 would claim a band nobody measured
+                        form_state: if tsb_known Metrics.form_state(form_tsb) else "",
                         form_delta_7d: match form_delta { Known(d) => d  Unknown => 0.0 },
                         form_delta_known: delta_known,
                         form_tsb_known: tsb_known,

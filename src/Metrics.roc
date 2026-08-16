@@ -1169,6 +1169,19 @@ Metrics :: [].{
 
     # Rendering, and ONLY rendering. Two labels reading alike would now be a cosmetic bug
     # rather than a correctness one.
+    # Stable machine identifier for the form band — the JSON face of form_label.
+    # snake_case, enum-stable: clients switch on these, so renaming one is a
+    # contract change. The human label may evolve; these must not drift casually.
+    form_state : F64 -> Str
+    form_state = |tsb|
+        match form_band(tsb) {
+            HighFatigue => "high_modeled_fatigue"
+            FatigueBuilding => "modeled_fatigue_building"
+            Balanced => "balanced"
+            Fresh => "fresh"
+            VeryFresh => "very_fresh"
+        }
+
     form_label : F64 -> Str
     form_label = |tsb|
         match form_band(tsb) {
@@ -3166,3 +3179,23 @@ expect {
     List.len(List.keep_if(above, |s| s.kind == Work)) == 4 and List.is_empty(below)
 }
 
+
+# ── the engine/coach boundary, pinned (#154) ────────────────────────
+# Stride describes state; it never prescribes. These expects iterate every
+# band's label and state id and fail if coaching vocabulary ever reappears —
+# the reform that #123/#127 performed, held as an invariant.
+expect {
+    coaching = ["should", "consider", "favor ", "avoid", "good day", "good time", "ready for", "take it easy", "recommend", "go hard", "back off"]
+    tsbs = [-25.0, -12.0, -2.0, 8.0, 20.0]
+    labels = List.concat(List.map(tsbs, Metrics.form_label), List.map(tsbs, Metrics.form_state))
+    List.all(labels, |l| {
+        low = Str.with_ascii_lowercased(l)
+        List.all(coaching, |w| !(Str.contains(low, w)))
+    })
+}
+
+# form_state is a stable enum: exactly these five ids, snake_case, one per band
+expect {
+    ids = List.map([-25.0, -12.0, -2.0, 8.0, 20.0], Metrics.form_state)
+    ids == ["high_modeled_fatigue", "modeled_fatigue_building", "balanced", "fresh", "very_fresh"]
+}
