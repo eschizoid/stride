@@ -102,7 +102,14 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
 - **Training weeks run Monday–Sunday by default.** Plan and present weeks Mon-first;
   when computing day-of-week from dates, verify against a known anchor
   (2026-07-27 was a Monday).
-- **Numeric 0 = "not available"** (no watts → np_w 0; no HR → avg_hr 0). Don't read 0 literally.
+- **Missing-value contract:** JSON null is not expressible (encoder stringifies tags),
+  so absence is flagged, not nulled. Impossible-zero fields (`np_w`, `avg_hr`,
+  `intensity`, `ftp_used`): 0 = not available, and `power_known`/`hr_known` companion
+  flags say so explicitly on `activity` and `activities`. Possible-zero fields
+  (`z5_s`, `distance_m`) mean their 0 literally. Fields that are BOTH possible-zero
+  and possibly-absent always carry a `_known` flag (`decoupling_known`,
+  `form_delta_known`, `form_tsb_known`, `hr_drift_known`, `rec_drop_known`) — trust
+  the flag, never the magnitude.
 - Zone seconds are **HR-based** (universal across sports). Power feeds TSS/NP only.
 - TSS ladder: stream-NP → Strava weighted watts → avg watts → hrTSS (zone-weighted) → relative_effort.
 - **Metric recompute triggers (the invalidation story):** FTP change (metrics store

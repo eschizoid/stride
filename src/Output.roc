@@ -22,7 +22,18 @@ Output :: [].{
             \\
             \\(find yours at strava.com/settings/heartrate — z5 is everything above z4_max)
     # ── machine interface (JSON output for LLM/tool consumption) ────────
-    # Convention: numeric fields COALESCE to 0 when unknown (0 = "not available").
+    # Missing-value contract (#156): literal JSON null is NOT expressible — the
+    # builtin encoder stringifies tags ("None"/"Null"), verified by probe. So the
+    # contract is per-field, two classes:
+    #   IMPOSSIBLE-ZERO fields (np_w, avg_hr, intensity, ftp_used…): a real 0 cannot
+    #   occur, so 0 unambiguously means "not available" — and the important surfaces
+    #   ALSO carry a _known companion flag (power_known, hr_known) so no client has
+    #   to know which fields are impossible-zero.
+    #   REAL-ZERO fields (z5_s, tss on an unscored row, distance on strength…): 0 is
+    #   an observation. Where a field is BOTH possible-zero and possibly-absent
+    #   (decoupling_pct, form_delta_7d, form_tsb, hr_drift, rec_drop_60s), a _known
+    #   flag is MANDATORY — the flag is the null.
+    # Revisit literal null if the upstream encoder ever learns to emit it.
 
     # one payload, two mouths: JSON for machines, a pure Render screen for humans.
     # The pattern for query commands — payload record + Render.<cmd>_screen.

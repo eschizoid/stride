@@ -382,6 +382,15 @@ b_seed_analyze! = |ctx| {
     check!("analyze form_delta_known is a boolean, not a string", strjq!(ctx, ["analyze"], ".data.form_delta_known | type") == "boolean")?
     check!("analyze form_tsb_known is a boolean too", strjq!(ctx, ["analyze"], ".data.form_tsb_known | type") == "boolean")?
     check!("summary as_of is today", strjq!(ctx, ["summary"], ".data.as_of") == ctx.today)?
+    # ── missing-vs-zero (#156): the flags distinguish what the magnitudes cannot.
+    # Activity 101 has a REAL power stream -> power_known true with np_w > 0;
+    # activity 102 is HR-only -> power_known false AND np_w 0 (absence, not zero
+    # watts); both flags are proper JSON booleans, never "True" strings.
+    check!("power ride: power_known true", strjq!(ctx, ["activity", "101"], ".data.power_known") == "true")?
+    check!("hr row: power absent is flagged, not zero-faked", strjq!(ctx, ["activity", "102"], "(.data.power_known == false) and (.data.np_w == 0)") == "true")?
+    check!("hr row: hr_known true", strjq!(ctx, ["activity", "102"], ".data.hr_known") == "true")?
+    check!("the flags are typed booleans", strjq!(ctx, ["activity", "101"], "(.data.power_known | type) == \"boolean\" and (.data.hr_known | type) == \"boolean\"") == "true")?
+    check!("activities rows carry both flags", strjq!(ctx, ["activities", "5"], "[.data[] | has(\"power_known\") and has(\"hr_known\")] | all") == "true")?
     # #93: ramp carries BOTH fields, and a short history reports an honest 0 rather than
     # today's whole CTL — which is what treating "no data 7 days back" as a CTL of 0 would
     # produce. The fixture has only a couple of days, so 0 is the correct answer here.

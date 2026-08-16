@@ -292,6 +292,12 @@ Report :: [].{
                         distance_m: a.distance_m,
                         tss: a.tss,
                         np_w: a.np_w,
+                        # 0-vs-missing disambiguation (#156): np/intensity/ftp_used are a
+                        # power-derived trio — power_known says whether ANY of them is a
+                        # measurement. Literal JSON null is not expressible by the builtin
+                        # encoder (tags stringify), so the _known companion-flag pattern
+                        # IS the missing-value contract, standardized here.
+                        power_known: a.np_w > 0.0,
                         intensity: a.intensity,
                         ftp_used: a.ftp_used,
                         z1_s: a.z1_s,
@@ -307,6 +313,8 @@ Report :: [].{
                         power_bests: { w60: detail.best_60, w180: detail.best_180, w300: detail.best_300, w1200: detail.best_1200 },
                         max_hr: detail.max_hr,
                         avg_hr: a.avg_hr,
+                        # a real average of 0 bpm is impossible — 0 means no HR source
+                        hr_known: a.avg_hr > 0.0,
                         # true = stored streams exist but wouldn't decode, so the 0s
                         # above are "unreadable", NOT "no power meter / no strap"
                         streams_unreadable: detail.failed,
@@ -892,7 +900,7 @@ Report :: [].{
                 hard_s = Sqlite.i64("hard_s")(cols)(stmt)?
                 relative_effort = Sqlite.f64("relative_effort")(cols)(stmt)?
                 avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
-                Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, z1_s, z2_s, z3_s, z4_s, z5_s, hard_s, relative_effort, avg_hr })
+                Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, power_known: np_w > 0.0, intensity, z1_s, z2_s, z3_s, z4_s, z5_s, hard_s, relative_effort, avg_hr, hr_known: avg_hr > 0.0 })
             },
         })?
         if Output.json_mode!({})
