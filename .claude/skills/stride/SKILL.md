@@ -38,7 +38,7 @@ Never do training math yourself: read stride's numbers, add judgment.
      id) — a plan edit is not a skip, so you can just `week add` again to change a day and
      it never leaves skipped tombstones. Reserve `skip` for a session that was going to
      happen and didn't (a real adherence miss).
-   - `complete`/`skip` also REFUSE unknown ids (`{"error":"session_not_found"}`
+   - `complete`/`skip` also REFUSE unknown ids (error code `session_not_found`
      / `activity_not_found` / `bad_id`) — a typo can't silently desync the log, so
      check for an error field instead of assuming success.
    - a session that didn't happen: `stride skip <id> "<reason>" [activity_id|none]` —
@@ -50,7 +50,7 @@ Never do training math yourself: read stride's numbers, add judgment.
      never by skip). Skipped ≠ silently open forever.
    - a REST day that happened: `stride complete <id>` with no activity id (rest has
      nothing to link; any other type still refuses without its activity —
-     `{"error":"activity_required"}`).
+     error code `activity_required`).
 
 ## Reading decoupling and detected structure
 
@@ -74,27 +74,32 @@ Never do training math yourself: read stride's numbers, add judgment.
 Query commands emit **JSON when `CLAUDECODE` is set to a non-empty value** (Claude Code
 exports it, so you get JSON automatically) and **human tables otherwise**. Override with
 `STRIDE_FORMAT=json|human` (case-insensitive). If output ever looks like a table instead
-of JSON, prefix the command with `STRIDE_FORMAT=json`. Known error states are in-band:
-unconfigured → `{"error":"missing_config"}`, no auth → `{"error":"not_authenticated"}`.
-All errors carry a human `message` field alongside the `error` code. `sync` and `analyze`
-emit JSON results too (`{synced, streams_fetched, pending_streams}` / `{computed,
-stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
+of JSON, prefix the command with `STRIDE_FORMAT=json`. EVERY machine response is a
+versioned envelope: success → `{"schema_version":2,"data":{…}}`, error →
+`{"schema_version":2,"error":{"code":"…","message":"…"}}`. The payloads described in
+the table below all live under `.data`; `error` is an OBJECT whose `code` carries the
+in-band error names used throughout this file (`missing_config`, `not_authenticated`,
+`derived_key`, …), with the human text nested in `error.message`. `sync` and `analyze`
+emit JSON results too (`{synced, new_activities, updated_activities, streams_fetched,
+pending_streams}` / `{computed, stream_errors, form_tsb, form_tsb_known, form_state,
+form_delta_7d, form_delta_known, converged}`), and `config get` emits `{key, value}` or `not_set`.
 
 ## Query commands (JSON for you, tables for humans)
 
 | Command | Returns |
 |---|---|
 | `stride plan` | **planning bundle**: `summary` + `recent_activities_14d` + `open_sessions` |
-| `stride summary` | as_of, CTL/ATL/TSB, `last_7d` + `last_28d` zone blocks (seconds + easy/moderate/hard %), `last_hard_session_date` ('' = none on record), `pending_sessions`, FTP (config vs estimated, `stale` + `detraining` flags), HR zone bounds, per-sport 28d breakdown |
+| `stride summary` | as_of, CTL/ATL/TSB (+`ctl_warming_up`, `ramp_7d`/`ramp_28d_avg`, `form_delta_7d` + `form_delta_known` (spelled exactly so — no _7d_ in the flag), `form_band_days`+`_capped`, `form_state` — the stable band id to switch on: `high_modeled_fatigue`|`modeled_fatigue_building`|`balanced`|`fresh`|`very_fresh`), `last_7d` + `last_28d` zone blocks (seconds + easy/moderate/hard %), `last_hard_session_date` ('' = none on record), `pending_sessions`, `ftp: {best_20min_w_60d, estimated_ftp_w}` (DERIVED — see gotchas), `hr_zones`, `load_days`, per-sport 28d breakdown |
 | `stride activities [N] [sport]` | last N activities (default 30), optionally filtered by sport (sport FAMILY words, case-insensitive: `bike`/`run`/`row`/`swim` widen to their Strava spellings, e-bikes excluded from `bike`; non-family sport_types filter exactly) — date, sport, tss, np_w, intensity, z1–z5 seconds, relative_effort, avg_hr |
 | `stride top <metric> [n] [sport]` | best sessions ranked by `hr`, `tss`, `power`, `intensity`, `distance`, `time`, or `output` (kJ) — the leaderboard to `activities`' timeline |
-| `stride zones` (alias `pz`) | the 7 power zones as watt ranges from configured FTP: `{ ftp, zones: [{ z, name, lo_w, hi_w }] }` (0 = open-ended bound) |
+| `stride zones` (alias `pz`) | the 7 power zones as watt ranges from the DERIVED ride FTP: `{ ftp, zones: [{ z, name, lo_w, hi_w }] }` (0 = open-ended bound) |
+| `stride power-curve [days] [sport]` (alias `pc`) | best mean-max power per ladder duration over the window (default 90 days): `{ window_days, sport, points: [{dur_s, watts}], cp, w_prime }` — the CP curve behind FTP |
 | `stride activity <id>` | one session in depth: flat z1_s–z5_s + hard_s, hard minutes, power bests (1/3/5/20min) from streams, plus `streams_unreadable` (true = the 0s are corrupt data, NOT a real zero) — use to review whether a planned session hit its targets before `complete`-ing it |
 | `stride stats` | career + year-to-date totals per sport (sessions, hours, km) |
 | `stride load [days]` | daily tss/ctl/atl/tsb series, chronological (default 90) |
 | `stride week` | this week (Mon-Sun) PLUS `unplanned` rows for activities no session references — statuses open/done/skipped/unplanned; rows carry `substitute_activity_id` ("did this instead" links, rendered `→ id`); unplanned rows carry their id in `activity_id`, NOT `completed_activity_id` — discriminate on `status`. `stride week all` = full session log, no unplanned rows. |
 | `stride doctor` | dataset health: coverage counts, per-model load provenance (`scored_by`), `strength_unrated` (strength sessions awaiting a rating) |
-| `stride compare [week\|month]` | rolling window vs the prior one: `{period, current, prior}` each with tss/sessions/hard_min/easy_pct/ctl |
+| `stride compare [week\|month]` | rolling window vs the prior one: `{period, window_label, current, prior}`, each side with tss/sessions/hard_min/easy_pct/ctl + `has_data` — `has_data: false` is the discriminator for an empty window (do not read its 0s as training) |
 | `stride progress [date] [asc\|desc]` | `{anchor_date, anchor_scored, groups:[{name, lens, sessions}]}` — `lens` is `ef`\|`speed_hr`\|`rpe` (sport-aware); each session carries a `score` in that lens. Bare = latest analyzed workout; `desc` lists newest first without changing the trend. **`anchor_scored: false` means a workout anchored on that date could not be scored by its group's lens, so it is absent from `groups` and the trends exclude it** — do not read the trend as covering the session you asked about. In-band errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts` |
 
 ## Conventions & gotchas
@@ -102,17 +107,34 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
 - **Training weeks run Monday–Sunday by default.** Plan and present weeks Mon-first;
   when computing day-of-week from dates, verify against a known anchor
   (2026-07-27 was a Monday).
-- **Numeric 0 = "not available"** (no watts → np_w 0; no HR → avg_hr 0). Don't read 0 literally.
+- **Missing-value contract (ADR 0009):** JSON null is not expressible (encoder
+  stringifies tags), so absence is flagged, not nulled. Impossible-zero fields
+  (`np_w`, `avg_hr`, `intensity`, `ftp_used`): 0 = not available. `activity`,
+  `activities`, and `plan.recent_activities_14d` rows carry
+  `power_known`/`intensity_known`/`hr_known`/`zones_known` + `load_model`; `top`
+  rows carry the first three (they are separate flags because np can exist while
+  intensity does not — power stream, no FTP yet). `tss: 0` is AMBIGUOUS — read
+  `load_model`: `""`/`"none"` = unscored, anything else = a scored near-zero
+  effort. Zone seconds `z1_s..z5_s` mean their 0 literally ONLY when
+  `zones_known: true`; all-zero with `zones_known: false` = no HR stream (summary
+  `avg_hr` can exist without one — `hr_known` does not cover zones). `distance_m`
+  0 is always literal. Fields that are BOTH possible-zero and possibly-absent
+  always carry a `_known` flag (`decoupling_known`, `form_delta_known`,
+  `form_tsb_known`, `hr_drift_known`, `rec_drop_known`) — trust the flag, never
+  the magnitude. `progress` sessions carry no flags on purpose: rows exist only
+  because the group lens scored them.
 - Zone seconds are **HR-based** (universal across sports). Power feeds TSS/NP only.
 - TSS ladder: stream-NP → Strava weighted watts → avg watts → hrTSS (zone-weighted) → relative_effort.
-- **Metric recompute triggers (the invalidation story):** FTP change (metrics store
-  `ftp_used`), **stream arrival** (backfilled streams invalidate the old metrics row),
-  and **Strava edits** (a re-synced activity invalidates its metrics). So after a sync,
-  always `analyze` to pick up recomputes. `ftp.stale: true` means estimated FTP (20-min
-  best × 0.95) exceeds config by >5% — fix is `stride config set ftp_ride <estimate> &&
-  stride analyze` (the key is per-sport: `ftp_<sport>`, e.g. `ftp_ride`, `ftp_rowing`);
-  `detraining: true` means it's well below config. (`config set ftp_ride` also pushes the
-  new FTP to Strava automatically, so their profile stays in sync — only `ftp_ride` does.)
+- **FTP is DERIVED, never configured.** Per sport, per activity era: best 20-min power
+  × 0.95 over the 60 days up to each activity (`summary.ftp` = `{best_20min_w_60d,
+  estimated_ftp_w}` for rides). the `ftp` / `ftp_<sport>` config keys are REFUSED with
+  error code `derived_key` — there is nothing to fix when FTP moves; INTERPRET the
+  trajectory instead (a rising `estimated_ftp_w` is fitness, a falling one is
+  detraining or a power-data gap — check `doctor` coverage before concluding).
+- **Metric recompute triggers (the invalidation story):** derived-FTP change (metrics
+  store `ftp_used`), HR-zone change, **stream arrival**, **rating change**, and
+  activity-input edits (analyze compares each row's stored inputs — sync itself never
+  deletes metrics). So after a sync, always `analyze` to pick up recomputes.
 - CTL/ATL/TSB are **as of today** (daily_load extends through today with 0-TSS rest
   days), so `form_tsb` is current — no mental decay adjustments needed. "Today" is the
   LOCAL day, anchored by config **`timezone`** (IANA, e.g. `America/Chicago` — DST-correct
@@ -120,7 +142,7 @@ stream_errors, form_tsb}`), and `config get` emits `{key, value}` or `not_set`.
   precedence is timezone > offset > UTC. Without either, users west of UTC get a phantom
   "tomorrow" row each evening — `doctor` shows which anchor is active.
 - **Session-RPE**: after a strength/HIIT/yoga session, ask the user how hard it felt
-  (1-10) and run `stride rate <activity_id> <n>` — load = hours × RPE × 10
+  (1-10) and run `stride rate <activity_id|latest> <n>` — load = hours × RPE × 10
   (TSS-commensurate). For strength-class sports the rating outranks HR in the load
   ladder; for endurance, measured power/HR outrank it. Rating an activity
   invalidates its metrics (re-`analyze` rescores). Ratings live in their own table
@@ -142,7 +164,7 @@ overrides if set. A locked/corrupt db surfaces as a real error, not a false
 
 First-time on a new machine: create a Strava API app (strava.com/settings/api), then
 `stride init` → `STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth` (browser
-paste flow) → `stride config set ftp_ride/hr_z1_max..hr_z4_max` → `stride sync` →
+paste flow) → `stride config set hr_z1_max..hr_z4_max` (+ `timezone`, IANA) → `stride sync` →
 `stride analyze`. The db self-migrates on any command, so upgrading the binary against
 an existing db is safe.
 
@@ -154,7 +176,7 @@ matters: a failed build leaves a stale binary that the e2e suite would happily "
 against, which is why `just test` builds in between.
 
 Toolchain: Roc's new (Zig) compiler (nightly, pinned by exact tag in
-`.github/workflows/build.yml`) + basic-cli 0.21 + builtin JSON (roc-json dropped). The
+`.github/workflows/build.yml`) + basic-cli 0.22 + builtin JSON (roc-json dropped). The
 full `just test` — expects, build, and e2e — runs green; the roc#10469 perf gate is
 fixed. Build flags take `=` (`--output=`, `--main=`) and always `--opt=dev`, since the
 optimized backend miscompiles (issue #32). Roc gotcha that keeps recurring: floats have

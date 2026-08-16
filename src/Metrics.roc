@@ -1169,6 +1169,35 @@ Metrics :: [].{
 
     # Rendering, and ONLY rendering. Two labels reading alike would now be a cosmetic bug
     # rather than a correctness one.
+    # Stable machine identifier for the form band — the JSON face of form_label.
+    # snake_case, enum-stable: clients switch on these, so renaming one is a
+    # contract change. The human label may evolve; these must not drift casually.
+    # ONE vocabulary, shared by every boundary guard (Metrics + Render expects) —
+    # a tripwire for coaching language reappearing in any label producer. The
+    # closed-set equality expects on form_label/form_state are the hard invariant
+    # for those two; this predicate is what lets every OTHER verdict producer be
+    # guarded without triplicating the list.
+    has_coaching_language : Str -> Bool
+    has_coaching_language = |s| {
+        low = Str.with_ascii_lowercased(s)
+        # a denylist can only be defense-in-depth (round-3 mutations proved
+        # "take it easier"/"push harder" slipped the round-2 list) — the HARD
+        # guard for every finite producer is closed-set equality on its full
+        # output; this predicate backstops the branches equality can't reach
+        words = ["should", "consider", "favor", "avoid", "good day", "good time", "ready for", "take it eas", "recommend", "go hard", "back off", "rest day", "easy day", "ease off", "dial back", "hold back", "need to", "must ", "prioritize", "taper", "take a rest", "train hard", "train easy", "easier", "harder", "push", "time to", "focus on", "aim for", "try to"]
+        List.any(words, |w| Str.contains(low, w))
+    }
+
+    form_state : F64 -> Str
+    form_state = |tsb|
+        match form_band(tsb) {
+            HighFatigue => "high_modeled_fatigue"
+            FatigueBuilding => "modeled_fatigue_building"
+            Balanced => "balanced"
+            Fresh => "fresh"
+            VeryFresh => "very_fresh"
+        }
+
     form_label : F64 -> Str
     form_label = |tsb|
         match form_band(tsb) {
@@ -3166,3 +3195,30 @@ expect {
     List.len(List.keep_if(above, |s| s.kind == Work)) == 4 and List.is_empty(below)
 }
 
+
+# ── the engine/coach boundary, pinned (#154) ────────────────────────
+# Stride describes state; it never prescribes. These expects iterate every
+# band's label and state id and fail if coaching vocabulary ever reappears —
+# the reform that #123/#127 performed, held as an invariant.
+expect {
+    tsbs = [-25.0, -12.0, -2.0, 8.0, 20.0]
+    labels = List.concat(List.map(tsbs, Metrics.form_label), List.map(tsbs, Metrics.form_state))
+    List.all(labels, |l| !(Metrics.has_coaching_language(l)))
+}
+
+# the predicate itself catches ordinary prescriptive phrasing (mutation-tested
+# wording from the review) and passes descriptive state
+expect {
+    Metrics.has_coaching_language("balanced — ease off today and take a rest day")
+    and Metrics.has_coaching_language("you should consider recovery")
+    and Metrics.has_coaching_language("fitness building — avoid hard work")
+    and !(Metrics.has_coaching_language("high modeled fatigue"))
+    and !(Metrics.has_coaching_language("load ramping (23%)"))
+    and !(Metrics.has_coaching_language("fitness building"))
+}
+
+# form_state is a stable enum: exactly these five ids, snake_case, one per band
+expect {
+    ids = List.map([-25.0, -12.0, -2.0, 8.0, 20.0], Metrics.form_state)
+    ids == ["high_modeled_fatigue", "modeled_fatigue_building", "balanced", "fresh", "very_fresh"]
+}

@@ -40,7 +40,7 @@ item is a GitHub issue; this section is the priority ledger.
   (most offenders already fixed in #123/#127 — this is the sweep and the guard).
 - #155 repair the coach skill contract — it currently instructs `config set ftp_ride`,
   a command the CLI refuses — and add drift tests so retired interfaces cannot reappear.
-- #156 missing-value semantics: null = unavailable, 0 = measured zero (schema v3).
+- #156 missing-value semantics: absence is flagged, not nulled (`_known` companion flags + `load_model`/`zones_known` discriminators; ADR 0009). Literal JSON null proved inexpressible by encoder probe, so no schema v3 — flags are additive and `schema_version` stays 2.
   Retires the "numeric 0 = not available" convention at the machine boundary.
 - #151 power-curve population consistency (elevated: blocks all advanced power work).
 
@@ -51,7 +51,7 @@ item is a GitHub issue; this section is the priority ledger.
   memory; raw counts, never an "adherence: poor" verdict).
 - #162 explicit `--json` (tool-neutral machine output).
 - #164 published, validated machine schemas (the JSON contract as a tested artifact).
-- #163 review JSON error exit semantics (decide on evidence, likely rides schema v3).
+- #163 review JSON error exit semantics (decide on evidence; #156 resolved without a schema bump, so this needs its own justification).
 
 **Phase 3 — higher-value metrics (P1):**
 - #159 objective judgment features (stimulus history, spacing, window deltas).
