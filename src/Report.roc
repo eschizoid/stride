@@ -815,6 +815,9 @@ Report :: [].{
             ramp_28d_avg: ramps.ramp_28d_avg,
             fatigue_atl: latest.atl,
             form_tsb: latest.tsb,
+            # stable machine identifier for the form band (#154) — ADDITIVE; clients
+            # switch on this instead of re-deriving band boundaries from raw TSB
+            form_state: Metrics.form_state(latest.tsb),
             # ADDITIVE field, so the envelope version stays (same precedent as `converged`
             # and the ramp fields). Unknown flattens to 0.0 here, which is the house
             # meaning of a numeric 0 — "not available", not "form did not move". The human

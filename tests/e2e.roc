@@ -276,6 +276,9 @@ b_init_config! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max", "153"])
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z3_max", "168"])
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z4_max", "183"])
+    # #154 ""-arm: no activities yet, so TSB is unknown and analyze must say so
+    # honestly — form_state "" (absent), never a fabricated band id
+    check!("analyze form_state is honestly empty pre-data", strjq!(ctx, ["analyze"], ".data.form_state == \"\" and .data.form_tsb_known == false") == "true")?
     Ok({})
 }
 
@@ -382,6 +385,12 @@ b_seed_analyze! = |ctx| {
     check!("analyze form_delta_known is a boolean, not a string", strjq!(ctx, ["analyze"], ".data.form_delta_known | type") == "boolean")?
     check!("analyze form_tsb_known is a boolean too", strjq!(ctx, ["analyze"], ".data.form_tsb_known | type") == "boolean")?
     check!("summary as_of is today", strjq!(ctx, ["summary"], ".data.as_of") == ctx.today)?
+    # #154: the stable machine id for the form band — one of the five enum values,
+    # never prose, never coaching vocabulary
+    check!("summary form_state is a stable band id", strjq!(ctx, ["summary"], ".data.form_state | IN(\"high_modeled_fatigue\",\"modeled_fatigue_building\",\"balanced\",\"fresh\",\"very_fresh\")") == "true")?
+    # with fixtures loaded TSB is known, so the enum arm is required here; the
+    # ""-unknown arm is pinned separately on the pre-fixture empty db
+    check!("analyze form_state is a stable band id once scored", strjq!(ctx, ["analyze"], ".data.form_state | IN(\"high_modeled_fatigue\",\"modeled_fatigue_building\",\"balanced\",\"fresh\",\"very_fresh\")") == "true")?
     # ── missing-vs-zero (#156): the flags distinguish what the magnitudes cannot.
     # Activity 101 has a REAL power stream -> power_known true with np_w > 0;
     # activity 102 is HR-only -> power_known false AND np_w 0 (absence, not zero

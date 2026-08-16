@@ -801,6 +801,34 @@ Render :: [].{
 
     # ── compare command screen ──────────────────────────────────────────
     # this rolling window vs the prior one, metric by metric, with a signed delta
+    # The compare verdict as a PURE producer, extracted so the boundary guard can
+    # sweep it (#154) — state words only, never advice.
+    compare_verdict : F64, F64, F64, Str -> Str
+    compare_verdict = |prior_tss, cur_tss, ctl_d, lab| {
+        load_word =
+            match Metrics.pct_change(prior_tss, cur_tss) {
+                Err(NoBaseline) =>
+                    if cur_tss > 0.0 {
+                        "load resumed (${fmt0(cur_tss)} TSS vs none the prior ${lab})"
+                    } else {
+                        "no load recorded either ${lab}"
+                    }
+                Ok(pct) =>
+                    if pct > 10.0 {
+                        "load ramping (${fmt0(pct)}%)"
+                    } else if pct < -10.0 {
+                        "load backed off (${fmt0(pct)}%)"
+                    } else {
+                        "load steady (${fmt0(pct)}%)"
+                    }
+            }
+        fit_word =
+            if ctl_d > 0.5 "fitness building"
+            else if ctl_d < -0.5 "fitness slipping"
+            else "fitness holding"
+        "${load_word} · ${fit_word}"
+    }
+
     compare_screen = |p| {
         c = p.current
         pr = p.prior
@@ -822,29 +850,7 @@ Render :: [].{
         # after nothing is "resumed", nothing after nothing is not a change at all. An
         # earlier version defaulted to 0.0 here and reported the second case as
         # "load steady (0%)", which claims a measurement that was never taken.
-        load_word =
-            match Metrics.pct_change(pr.tss, c.tss) {
-                Err(NoBaseline) =>
-                    if c.tss > 0.0 {
-                        "load resumed (${fmt0(c.tss)} TSS vs none the prior ${lab})"
-                    } else {
-                        "no load recorded either ${lab}"
-                    }
-                Ok(pct) =>
-                    if pct > 10.0 {
-                        "load ramping (${fmt0(pct)}%)"
-                    } else if pct < -10.0 {
-                        "load backed off (${fmt0(pct)}%)"
-                    } else {
-                        "load steady (${fmt0(pct)}%)"
-                    }
-            }
-        ctl_d = c.ctl - pr.ctl
-        fit_word =
-            if ctl_d > 0.5 "fitness building"
-            else if ctl_d < -0.5 "fitness slipping"
-            else "fitness holding"
-        "${table}\n\n→ ${load_word} · ${fit_word}"
+        "${table}\n\n→ ${compare_verdict(pr.tss, c.tss, c.ctl - pr.ctl, lab)}"
     }
 }
 
@@ -1175,3 +1181,47 @@ expect {
     # flat-drift verdict on every single-rep session
     and Render.seg_hr_drift([seg(150.0, True)]) == Err(NotEnough)
 }
+
+# ── the engine/coach boundary across ALL verdict producers (#154) ────
+# Every human verdict line stride renders is state, never advice. Each producer
+# is exercised at representative inputs and swept with the shared predicate —
+# mutation-tested wording ("you should consider a rest day") fails here.
+expect {
+    compare_verdicts = [
+        Render.compare_verdict(958.0, 1181.0, 6.0, "28d"),
+        Render.compare_verdict(1181.0, 900.0, -2.0, "28d"),
+        Render.compare_verdict(1000.0, 1030.0, 0.0, "28d"),
+        Render.compare_verdict(0.0, 500.0, 3.0, "week"),
+        Render.compare_verdict(0.0, 0.0, 0.0, "week"),
+    ]
+    List.all(compare_verdicts, |v| !(Metrics.has_coaching_language(v)))
+}
+
+# the HARD boundary invariant for compare (#154): the verdict templates are a
+# CLOSED SET, pinned by full-string equality like form_label — a reworded
+# template ("time to push harder") fails HERE even if the denylist misses it.
+# One pin per load template, cycling the three fitness words.
+expect {
+    Render.compare_verdict(1000.0, 1200.0, 6.0, "28d") == "load ramping (20%) · fitness building"
+    and Render.compare_verdict(1200.0, 900.0, -2.0, "28d") == "load backed off (-25%) · fitness slipping"
+    and Render.compare_verdict(1000.0, 1030.0, 0.0, "28d") == "load steady (3%) · fitness holding"
+    and Render.compare_verdict(0.0, 500.0, 3.0, "week") == "load resumed (500 TSS vs none the prior week) · fitness building"
+    and Render.compare_verdict(0.0, 0.0, 0.0, "week") == "no load recorded either week · fitness holding"
+}
+
+expect {
+    trend_phrases = [
+        Render.form_trend_phrase(Known(4.2)),
+        Render.form_trend_phrase(Known(-8.0)),
+        Render.form_trend_phrase(Known(0.0)),
+        Render.form_trend_phrase(Unknown),
+    ]
+    band_phrases = [
+        Render.band_days_phrase(Known(3)),
+        Render.band_days_phrase(AtLeast(31)),
+        Render.band_days_phrase(Unknown),
+    ]
+    List.all(List.concat(trend_phrases, band_phrases), |p| !(Metrics.has_coaching_language(p)))
+}
+
+expect !(Metrics.has_coaching_language(Render.warming_up_note(True, 12))) and !(Metrics.has_coaching_language(Render.warming_up_note(False, 90)))
