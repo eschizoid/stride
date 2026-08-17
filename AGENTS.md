@@ -29,8 +29,10 @@ just install   # build + symlink to ~/.local/bin/stride
   test` orders steps to prevent this. Don't run `just e2e` after a failed build.
 - Toolchain: the new (Zig) compiler (`~/.local/roc-new/roc`, pinned by exact nightly
   tag in `.github/workflows/build.yml`) · basic-cli **0.22** · builtin JSON (roc-json
-  dropped). The alpha4 / 0.20 / roc-json 0.13 pin is RETIRED — `~/.local/bin/roc` still
-  points at alpha4 and CANNOT parse the current source; never aim the justfile at it.
+  dropped). The alpha4 / 0.20 / roc-json 0.13 pin is RETIRED. `~/.local/bin/roc` is now a
+  SYMLINK to `~/.local/roc-new/roc` (identical binary), which is why a bare `roc`
+  in the justfile works; it is no longer the alpha4 trap this line used to warn
+  about, but pin the explicit path in anything that must not depend on that link.
   `check`, `test`, and a full `roc build` all work (roc#10469 was fixed by #10531).
 - **Build with `--opt=dev`.** The compiler defaults to `--opt=speed`, whose LLVM backend
   miscompiles this codebase (issue #32's intermittent SIGABRT; it also silently drops the

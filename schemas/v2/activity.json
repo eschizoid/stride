@@ -38,7 +38,8 @@
     "segments",
     "hr_drift",
     "hr_drift_known",
-    "baselines"
+    "baselines",
+    "w_prime_balance"
   ],
   "properties": {
     "id": {
@@ -366,6 +367,51 @@
           }
         }
       }
+    },
+    "w_prime_balance": {
+      "type": "object",
+      "additionalKeys": false,
+      "required": [
+        "min_j",
+        "end_j",
+        "known",
+        "cp_used",
+        "w_prime_used",
+        "fit_points",
+        "fit_family",
+        "model_exceeded",
+        "fit_r2"
+      ],
+      "properties": {
+        "min_j": {
+          "type": "number"
+        },
+        "end_j": {
+          "type": "number"
+        },
+        "known": {
+          "type": "boolean"
+        },
+        "cp_used": {
+          "type": "number"
+        },
+        "w_prime_used": {
+          "type": "number"
+        },
+        "fit_points": {
+          "type": "integer"
+        },
+        "fit_family": {
+          "type": "string"
+        },
+        "model_exceeded": {
+          "type": "boolean"
+        },
+        "fit_r2": {
+          "type": "number"
+        }
+      },
+      "description": " `fit_family` names whose model this is (the session's own sport family, fitted on the 90 days STRICTLY BEFORE it, so a session is never inside its own fit). A NEGATIVE `min_j` is the model failing, not depth achieved \u2014 it means more above-CP work was done than the fitted tank holds, so the fit is stale or degenerate; `model_exceeded` flags exactly that. Normalize with `min_j / w_prime_used` before comparing sessions, since `w_prime_used` moves between dates. When `model_exceeded` is true, ONLY `min_j` is meaningful: the recovery term drives on the deficit against the CURRENT balance, so a balance far below zero reconstitutes faster than the model's own ceiling allows and `end_j` is arithmetic on a broken premise. `fit_r2` is how well the CP line fit its own points (1 by construction at `fit_points` 2). CP jumps at window edges as rides enter and leave the 90 days, so treat these as WITHIN-session measures rather than a comparable series."
     }
   }
 }

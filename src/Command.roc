@@ -22,6 +22,10 @@ Command := [
 	Import(Str),
 	Rate(Str, Str),
 	Progress(Str, [Asc, Desc]),
+	## time to exhaustion at a power the CALLER names (#187). ADR 0010: the
+	## caller states the input and stride does the arithmetic — choosing a
+	## target power for the athlete would be prescription.
+	Tte(Str),
 	## rep-level comparison: the anchor session's detected blocks against the
 	## same-shaped blocks of earlier comparable sessions (#149)
 	Reps(Str),
@@ -98,6 +102,8 @@ Command := [
 			[_, "import", src] => Ok(Import(src))
 			[_, "rate", target, rpe_str] => Ok(Rate(target, rpe_str))
 			[_, "doctor"] => Ok(Doctor)
+			[_, "tte", watts] => Ok(Tte(watts))
+			[_, "tte", ..] => Err(Usage("tte <watts> — time to exhaustion at a power you name"))
 			[_, "reps"] => Ok(Reps(""))
 			[_, "reps", date] =>
 				if Metrics.is_canonical_date(date) {
@@ -181,7 +187,7 @@ Command := [
 		"init", "auth", "sync", "backfill", "analyze", "summary", "stats", "doctor",
 		"zones", "pz", "compare", "activities", "activity", "top", "import", "rate",
 		"load", "power-curve", "pc", "progress", "week", "plan", "complete", "skip",
-		"config", "reps", "--version", "--help", "-h", "help",
+		"config", "tte", "reps", "--version", "--help", "-h", "help",
 	]
 
 	count : Str, (U64 -> Command) -> Try(Command, ParseErr)

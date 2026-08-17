@@ -375,6 +375,23 @@ Render :: [].{
         "${I64.to_str(m)}:${pad}${I64.to_str(sec)}"
     }
 
+    # h:mm:ss for durations that can exceed an hour. mmss is for intervals and
+    # renders 222 days as "320807:09"; tte is the first screen where a query a
+    # couple of watts off CP produces that, so it needs the wider format.
+    hms : I64 -> Str
+    hms = |secs|
+        if secs < 3600 {
+            mmss(secs)
+        } else {
+            h = secs // 3600
+            rest = secs - h * 3600
+            m = rest // 60
+            sec = rest - m * 60
+            mpad = if m < 10 "0" else ""
+            spad = if sec < 10 "0" else ""
+            "${I64.to_str(h)}:${mpad}${I64.to_str(m)}:${spad}${I64.to_str(sec)}"
+        }
+
     SegRow : { ordinal : I64, kind : Str, start_s : I64, dur_s : I64, avg_signal : F64, signal : Str, peak_hr : F64, avg_hr : F64, rec_drop : F64, rec_drop_known : Bool }
 
     seg_unit : Str -> Str
@@ -688,7 +705,7 @@ Render :: [].{
     }
 
     # ── power-duration curve screen ─────────────────────────────────────
-    power_curve_screen : { window_days : U64, sport : Str, points : List({ dur_s : U64, watts : F64 }), cp : F64, w_prime : F64 } -> Str
+    power_curve_screen : { window_days : U64, sport : Str, points : List({ dur_s : U64, watts : F64 }), cp : F64, w_prime : F64, fit_r2 : F64, fit_points : I64 } -> Str
     power_curve_screen = |pc| {
         dur_label = |s|
             if s < 60 "${U64.to_str(s)}s"
@@ -703,11 +720,22 @@ Render :: [].{
                 ["duration", "best power (W)"],
                 List.map(pc.points, |p| [dur_label(p.dur_s), fmt0(p.watts)]),
             )
+            # the fit's own quality, on the command that PUBLISHES the fit --
+            # without it a 0.72 fit and a perfect one read identically, while
+            # the skill tells the coach to weigh the fit first. At exactly two
+            # points a line is exact, so r2 is 1 by construction and would be
+            # false reassurance; below that there is no fit and it is 0.
+            quality =
+                if pc.fit_points >= 3.I64 {
+                    " · fit r2 ${fmt2(pc.fit_r2)} from ${I64.to_str(pc.fit_points)} bests"
+                } else {
+                    " · from ${I64.to_str(pc.fit_points)} bests (r2 needs 3)"
+                }
             cp_line =
                 # both must be positive: power_curve! already zeroes a non-positive fit, but
                 # gate here too so a stray negative W′ can never print as a real fit
                 if pc.cp > 0.0 and pc.w_prime > 0.0
-                    "→ Critical Power ${fmt0(pc.cp)} W · W′ ${fmt0(pc.w_prime)} J"
+                    "→ Critical Power ${fmt0(pc.cp)} W · W′ ${fmt1(pc.w_prime / 1000.0)} kJ${quality}"
                 else
                     "→ Critical Power: not enough long-duration (≥5 min) data to fit"
             legend =
@@ -819,6 +847,35 @@ Render :: [].{
             "",
             "  FTP (60d): ~${fmt0(ftp.estimated_ftp_w)}W — derived from your best 20-min power ${fmt0(ftp.best_20min_w_60d)}W",
         ]
+
+    # time to exhaustion: the number, and what the model thinks of it
+    tte_screen = |p| {
+        # r2 is 1 by construction at two points, where the COUNT is the signal
+        # and this number would be false reassurance.
+        quality = if p.fit_points >= 3.I64 ", r2 ${fmt2(p.fit_r2)}" else ""
+        head = "at ${fmt0(p.watts)}W against CP ${fmt0(p.cp)} (${p.sport_family} fit, W' ${fmt1(p.w_prime / 1000.0)} kJ from ${I64.to_str(p.fit_points)} of the 5/10/20-min bests over ${I64.to_str(p.window_days)}d${quality})"
+        # The athlete's own record at or above this power, when it is on file.
+        # A model that predicts less than what is already recorded is refuted by
+        # its own inputs, and the coach should see that on the same screen as
+        # the prediction rather than having to go find it.
+        record =
+            if p.demonstrated_known {
+                on = " · on record: ${fmt0(p.demonstrated_w)}W for ${hms((p.demonstrated_s).round_to_i64_try().ok_or(0))} in this window"
+                if p.contradicts_model  "${on} — LONGER than the model predicts, so the fit understates this rider"
+                else on
+            } else {
+                ""
+            }
+        body =
+            if p.status == "below_cp" {
+                "  at or below CP the model has no limit — it says indefinitely, which is the model's answer and not your body's${record}"
+            } else if p.status == "outside_model" {
+                "  ~${hms((p.seconds).round_to_i64_try().ok_or(0))} — OUTSIDE the 2-20min band the model holds in, so read it as a direction rather than a number${record}"
+            } else {
+                "  ~${hms((p.seconds).round_to_i64_try().ok_or(0))}${record}"
+            }
+        "${head}\n${body}"
+    }
 
     # ── rep-level comparison screen (#149) ──────────────────────────────
     # One row per session, newest first, with the per-rep watts spelled out so
@@ -1145,11 +1202,28 @@ expect {
         points: [{ dur_s: 5, watts: 800.0 }, { dur_s: 60, watts: 400.0 }, { dur_s: 1200, watts: 260.0 }],
         cp: 250.0,
         w_prime: 20000.0,
+        fit_r2: 0.72,
+        fit_points: 3.I64,
+    })
+    # a degenerate fit and a perfect one rendered identically here, on the
+    # command that PUBLISHES the fit -- so the quality travels with it
+    thin = Render.power_curve_screen({
+        window_days: 90,
+        sport: "Ride",
+        points: [{ dur_s: 5, watts: 800.0 }],
+        cp: 250.0,
+        w_prime: 20000.0,
+        fit_r2: 1.0,
+        fit_points: 2.I64,
     })
     Str.contains(s, "5s") and Str.contains(s, "20m") and Str.contains(s, "Critical Power 250") and Str.contains(s, "Ride")
+    and Str.contains(s, "fit r2 0.72")
+    # at two points a line is exact, so r2 is 1 by construction and must NOT be
+    # shown as if it were a quality signal
+    and !(Str.contains(thin, "r2 1.00")) and Str.contains(thin, "r2 needs 3")
 }
 expect {
-    s = Render.power_curve_screen({ window_days: 30, sport: "", points: [], cp: 0.0, w_prime: 0.0 })
+    s = Render.power_curve_screen({ window_days: 30, sport: "", points: [], cp: 0.0, w_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
     Str.contains(s, "no power data") and Str.contains(s, "all power sports")
 }
 
@@ -1398,6 +1472,52 @@ expect {
         Render.compare_verdict(0.0, 0.0, 0.0, "week"),
     ]
     List.all(compare_verdicts, |v| !(Metrics.has_coaching_language(v)))
+}
+
+# tte_screen renders the most opinionated prose in stride ("the model's answer
+# and not your body's"), and joined the codebase outside this sweep. All three
+# statuses plus both demonstrated-effort branches are state, never advice.
+expect {
+    tte = |status, dem, contra| Render.tte_screen({
+        watts: 265.0,
+        seconds: 596.0,
+        known: True,
+        status,
+        cp: 254.0,
+        w_prime: 6416.0,
+        fit_points: 3.I64,
+        fit_r2: 0.72,
+        window_days: 90.I64,
+        sport_family: "Ride",
+        demonstrated_s: 600.0,
+        demonstrated_w: 271.0,
+        demonstrated_known: dem,
+        contradicts_model: contra,
+    })
+    tte_phrases = [
+        tte("in_model", False, False),
+        tte("in_model", True, True),
+        tte("outside_model", True, False),
+        tte("below_cp", False, False),
+    ]
+    List.all(tte_phrases, |p| !(Metrics.has_coaching_language(p)))
+    # the query-independent fit-quality number reaches the human screen -- a
+    # coach reading only the terminal must see what the payload sees
+    and Str.contains(tte("in_model", False, False), "r2 0.72")
+    # ...and is SUPPRESSED at two points, where it is 1 by construction. Only
+    # the presence direction was asserted, so mutating the gate to always-show
+    # left the suite green.
+    and !(Str.contains(Render.tte_screen({
+        watts: 265.0, seconds: 596.0, known: True, status: "in_model",
+        cp: 254.0, w_prime: 6416.0, fit_points: 2.I64, fit_r2: 1.0,
+        window_days: 90.I64, sport_family: "Ride", demonstrated_s: 0.0,
+        demonstrated_w: 0.0, demonstrated_known: False, contradicts_model: False,
+    }), "r2"))
+    # the hour rollover is what keeps a near-CP query from rendering 222 days
+    # as "320807:09" — pinned because mmss is the tempting reuse
+    and Render.hms(596.I64) == "9:56"
+    and Render.hms(3600.I64) == "1:00:00"
+    and Render.hms(8405.I64) == "2:20:05"
 }
 
 # the HARD boundary invariant for compare (#154): the verdict templates are a
