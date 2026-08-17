@@ -846,8 +846,16 @@ Metrics :: [].{
             over = p.v - fit.cp
             next =
                 if over > 0.0 {
-                    b = acc.bal - over * dtf
-                    if b < 0.0 0.0 else b
+                    # NOT floored at zero. A balance that goes negative is the
+                    # model telling you it does not fit this rider — clamping
+                    # converts "the CP fit is wrong" into the entirely plausible
+                    # "you emptied the tank and got some back", and because
+                    # clamping resets the deficit, everything AFTER the first
+                    # clamp is wrong too, not just the minimum. Review measured
+                    # -8074 J on a real ride (126% of the fitted tank) reported
+                    # as 0. GoldenCheetah and the Skiba/Froncioni literature
+                    # both let it go negative for exactly this reason.
+                    acc.bal - over * dtf
                 } else {
                     # DCP is how far below CP this sample sits; deeper recovery
                     # refills faster, which is what the exponent encodes
@@ -3638,8 +3646,8 @@ expect {
     at300 and at_cp and below and sprint and long
 }
 
-# W' balance: drains above CP, reconstitutes below it, never negative, and a
-# recording gap is bridged rather than credited as recovery
+# W' balance: drains above CP, reconstitutes below it, is ALLOWED to go
+# negative, and a recording gap is bridged rather than credited as recovery
 expect {
     fit = { cp: 250.0, w_prime: 20000.0 }
     hard = Iter.fold(0.I64..<100, [], |acc, i| List.append(acc, { t: i, v: 350.0 }))
@@ -3649,10 +3657,22 @@ expect {
     # then easy riding puts some back
     rest = List.concat(hard, Iter.fold(0.I64..<300, [], |acc, i| List.append(acc, { t: 100 + i, v: 150.0 })))
     recovered = match List.last(Metrics.w_prime_balance(rest, fit)) { Ok(b) => b > 10000.0 and b <= 20000.0  Err(_) => False }
-    # a very long effort empties the tank but never goes below zero
+    # An effort past the tank's capacity goes NEGATIVE, and must: clamping at
+    # zero would reset the accumulated deficit, so every sample after the first
+    # clamp is scored against a tank that silently refilled. The negative is
+    # also the only signal that the FIT does not describe this rider, which is
+    # information the caller needs (Report flags it as `model_exceeded`).
     epic = Iter.fold(0.I64..<1000, [], |acc, i| List.append(acc, { t: i, v: 400.0 }))
-    floored = List.all(Metrics.w_prime_balance(epic, fit), |b| b >= 0.0)
-    spent and recovered and floored
+    epic_bal = Metrics.w_prime_balance(epic, fit)
+    # 1000s at 150W over CP = 150 kJ against a 20 kJ tank: 130 kJ past empty.
+    # A floor here reports 0 and hides a 7.5x model failure as "emptied".
+    overdrawn = match List.last(epic_bal) { Ok(b) => (b + 130000.0).abs() < 500.0  Err(_) => False }
+    # monotone down throughout, since the power never drops back below CP
+    never_refills = match (List.first(epic_bal), List.last(epic_bal)) {
+        (Ok(f), Ok(l)) => l < f
+        _ => False
+    }
+    spent and recovered and overdrawn and never_refills
 }
 
 # ── the engine/coach boundary, pinned (#154) ────────────────────────

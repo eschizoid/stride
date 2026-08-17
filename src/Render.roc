@@ -366,6 +366,23 @@ Render :: [].{
         "${I64.to_str(m)}:${pad}${I64.to_str(sec)}"
     }
 
+    # h:mm:ss for durations that can exceed an hour. mmss is for intervals and
+    # renders 222 days as "320807:09"; tte is the first screen where a query a
+    # couple of watts off CP produces that, so it needs the wider format.
+    hms : I64 -> Str
+    hms = |secs|
+        if secs < 3600 {
+            mmss(secs)
+        } else {
+            h = secs // 3600
+            rest = secs - h * 3600
+            m = rest // 60
+            sec = rest - m * 60
+            mpad = if m < 10 "0" else ""
+            spad = if sec < 10 "0" else ""
+            "${I64.to_str(h)}:${mpad}${I64.to_str(m)}:${spad}${I64.to_str(sec)}"
+        }
+
     SegRow : { ordinal : I64, kind : Str, start_s : I64, dur_s : I64, avg_signal : F64, signal : Str, peak_hr : F64, avg_hr : F64, rec_drop : F64, rec_drop_known : Bool }
 
     seg_unit : Str -> Str
@@ -698,7 +715,7 @@ Render :: [].{
                 # both must be positive: power_curve! already zeroes a non-positive fit, but
                 # gate here too so a stray negative W′ can never print as a real fit
                 if pc.cp > 0.0 and pc.w_prime > 0.0
-                    "→ Critical Power ${fmt0(pc.cp)} W · W′ ${fmt0(pc.w_prime)} J"
+                    "→ Critical Power ${fmt0(pc.cp)} W · W′ ${fmt1(pc.w_prime / 1000.0)} kJ"
                 else
                     "→ Critical Power: not enough long-duration (≥5 min) data to fit"
             legend =
@@ -813,14 +830,26 @@ Render :: [].{
 
     # time to exhaustion: the number, and what the model thinks of it
     tte_screen = |p| {
-        head = "at ${fmt0(p.watts)}W against CP ${fmt0(p.cp)} (W' ${fmt1(p.w_prime / 1000.0)} kJ from ${I64.to_str(p.fit_points)} points over ${I64.to_str(p.window_days)}d)"
+        head = "at ${fmt0(p.watts)}W against CP ${fmt0(p.cp)} (${p.sport_family} fit, W' ${fmt1(p.w_prime / 1000.0)} kJ from ${I64.to_str(p.fit_points)} of the 5/10/20-min bests over ${I64.to_str(p.window_days)}d)"
+        # The athlete's own record at or above this power, when it is on file.
+        # A model that predicts less than what is already recorded is refuted by
+        # its own inputs, and the coach should see that on the same screen as
+        # the prediction rather than having to go find it.
+        record =
+            if p.demonstrated_known {
+                on = " · on record: ${fmt0(p.demonstrated_w)}W for ${hms((p.demonstrated_s).round_to_i64_try().ok_or(0))} in this window"
+                if p.contradicts_model  "${on} — LONGER than the model predicts, so the fit understates this rider"
+                else on
+            } else {
+                ""
+            }
         body =
             if p.status == "below_cp" {
-                "  at or below CP the model has no limit — it says indefinitely, which is the model's answer and not your body's"
+                "  at or below CP the model has no limit — it says indefinitely, which is the model's answer and not your body's${record}"
             } else if p.status == "outside_model" {
-                "  ~${mmss((p.seconds).round_to_i64_try().ok_or(0))} — OUTSIDE the 2-20min band the model holds in, so read it as a direction rather than a number"
+                "  ~${hms((p.seconds).round_to_i64_try().ok_or(0))} — OUTSIDE the 2-20min band the model holds in, so read it as a direction rather than a number${record}"
             } else {
-                "  ~${mmss((p.seconds).round_to_i64_try().ok_or(0))}"
+                "  ~${hms((p.seconds).round_to_i64_try().ok_or(0))}${record}"
             }
         "${head}\n${body}"
     }
@@ -1223,6 +1252,39 @@ expect {
         Render.compare_verdict(0.0, 0.0, 0.0, "week"),
     ]
     List.all(compare_verdicts, |v| !(Metrics.has_coaching_language(v)))
+}
+
+# tte_screen renders the most opinionated prose in stride ("the model's answer
+# and not your body's"), and joined the codebase outside this sweep. All three
+# statuses plus both demonstrated-effort branches are state, never advice.
+expect {
+    tte = |status, dem, contra| Render.tte_screen({
+        watts: 265.0,
+        seconds: 596.0,
+        known: True,
+        status,
+        cp: 254.0,
+        w_prime: 6416.0,
+        fit_points: 3.I64,
+        window_days: 90.I64,
+        sport_family: "Ride",
+        demonstrated_s: 600.0,
+        demonstrated_w: 271.0,
+        demonstrated_known: dem,
+        contradicts_model: contra,
+    })
+    tte_phrases = [
+        tte("in_model", False, False),
+        tte("in_model", True, True),
+        tte("outside_model", True, False),
+        tte("below_cp", False, False),
+    ]
+    List.all(tte_phrases, |p| !(Metrics.has_coaching_language(p)))
+    # the hour rollover is what keeps a near-CP query from rendering 222 days
+    # as "320807:09" — pinned because mmss is the tempting reuse
+    and Render.hms(596.I64) == "9:56"
+    and Render.hms(3600.I64) == "1:00:00"
+    and Render.hms(8405.I64) == "2:20:05"
 }
 
 # the HARD boundary invariant for compare (#154): the verdict templates are a

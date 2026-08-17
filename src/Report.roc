@@ -203,7 +203,8 @@ Report :: [].{
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport, a.name AS name,
+                \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport,
+                \\       COALESCE(a.sport_family, a.sport_type) AS family, a.name AS name,
                 \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                 \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
@@ -227,6 +228,7 @@ Report :: [].{
                 id = Sqlite.i64("id")(cols)(stmt)?
                 date = Sqlite.str("date")(cols)(stmt)?
                 sport = Sqlite.str("sport")(cols)(stmt)?
+                family = Sqlite.str("family")(cols)(stmt)?
                 name = Sqlite.str("name")(cols)(stmt)?
                 moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
                 distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
@@ -251,7 +253,7 @@ Report :: [].{
                 hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
                 zones_known = Sqlite.i64("zones_known")(cols)(stmt)?
                 load_model = Sqlite.str("load_model")(cols)(stmt)?
-                Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr, decoupling_pct, decoupling_known: decoupling_known != 0, decoupling_signal, power_known: power_known != 0, intensity_known: intensity_known != 0, hr_known: hr_known != 0, zones_known: zones_known != 0, load_model })
+                Ok({ id, date, sport, family, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr, decoupling_pct, decoupling_known: decoupling_known != 0, decoupling_signal, power_known: power_known != 0, intensity_known: intensity_known != 0, hr_known: hr_known != 0, zones_known: zones_known != 0, load_model })
             },
         })?
         match List.first(rows) {
@@ -324,7 +326,7 @@ Report :: [].{
                 # rather than the series — a per-second array in every activity
                 # payload would dwarf everything else, and min/end answer the
                 # question ("how close to empty, and did it come back?").
-                cpfit = cp_fit_as_of!(path, a.date, 90)?
+                cpfit = cp_fit_as_of!(path, a.family, a.date, 90)?
                 # ANNOTATED: this payload is encode-only, and an unconstrained
                 # tag serializes as the STRING "True" (the trap this repo keeps
                 # rediscovering — pinned in e2e for the other flags)
@@ -484,9 +486,16 @@ Report :: [].{
                             min_j: wbal.min_j,
                             end_j: wbal.end_j,
                             known: wbal_ok,
+                            # A balance below zero is the MODEL failing, not the
+                            # athlete succeeding: it means the fitted W' is too
+                            # small to explain what was ridden. Reported as its
+                            # own flag because a bare negative number reads as a
+                            # measurement, and this one is a diagnosis of the fit.
+                            model_exceeded: wbal_ok and wbal.min_j < 0.0,
                             cp_used: cpfit.cp,
                             w_prime_used: cpfit.w_prime,
                             fit_points: cpfit.points,
+                            fit_family: cpfit.family,
                         },
                         interval_summary,
                         # TRUE = the detector actually ran with a signal (power, or
@@ -2021,13 +2030,22 @@ Report :: [].{
     # taken as the MAX across a window (per sport), plus a Critical Power / W' fit over the
     # aerobic points. Reads the stored best_<dur>_w columns — no stream re-read. 0-power
     # durations (no ride long enough) are dropped, so the curve only shows real data.
-    # The athlete's CP/W' fit as of a DATE, over the same points and the same
+    # The athlete's CP/W' fit for ONE SPORT FAMILY as of a DATE, over the same
     # 2-20 minute band power-curve fits (#186/#187 spend this model, so they
-    # must not fit a second, differently-shaped one). Anchored rather than
-    # today-relative: a ride is judged against the fitness demonstrated before
-    # it, the no-future-leak rule #160 established.
-    cp_fit_as_of! : Str, Str, U64 => Try({ cp : F64, w_prime : F64, points : I64 }, _)
-    cp_fit_as_of! = |path, on_date, days| {
+    # must not fit a second, differently-shaped one).
+    #
+    # Strictly BEFORE the date, not on-or-before: a ride inside its own fit
+    # window raises the very W' it is then measured against. Review measured
+    # the swing on this athlete's breakthrough 3x12 — W' 2490 J excluding the
+    # ride, 6416 J including it, a 2.58x change in the denominator that scales
+    # every W' number for that ride, and it fires precisely on the rides where
+    # the athlete did something new.
+    #
+    # The family is the CALLER's, never a hardcoded Ride: a rowing session was
+    # being scored against a cyclist's CP and flagged known, which is worse than
+    # having no number at all.
+    cp_fit_as_of! : Str, Str, Str, U64 => Try({ cp : F64, w_prime : F64, points : I64, family : Str, pts : List({ dur_s : F64, watts : F64 }) }, _)
+    cp_fit_as_of! = |path, family, on_date, days| {
         row = Sqlite.query!({
             path: Path.utf8(path),
             query:
@@ -2036,11 +2054,11 @@ Report :: [].{
                 \\       CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS d1200
                 \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
                 \\WHERE a.sport_family = :fam
-                \\  AND substr(a.start_local, 1, 10) <= :on
+                \\  AND substr(a.start_local, 1, 10) < :on
                 \\  AND a.start_local >= date(:on, '-' || :days || ' days')
             ,
             bindings: [
-                { name: ":fam", value: String(Sports.canonical("Ride")) },
+                { name: ":fam", value: String(family) },
                 { name: ":on", value: String(on_date) },
                 { name: ":days", value: String((days).to_str()) },
             ],
@@ -2056,8 +2074,8 @@ Report :: [].{
             |p| p.watts > 0.0,
         )
         match Metrics.critical_power(pts) {
-            Ok(c) => Ok({ cp: c.cp, w_prime: c.w_prime, points: (List.len(pts)).to_i64_wrap() })
-            Err(_) => Ok({ cp: 0.0, w_prime: 0.0, points: (List.len(pts)).to_i64_wrap() })
+            Ok(c) => Ok({ cp: c.cp, w_prime: c.w_prime, points: (List.len(pts)).to_i64_wrap(), family, pts })
+            Err(_) => Ok({ cp: 0.0, w_prime: 0.0, points: (List.len(pts)).to_i64_wrap(), family, pts })
         }
     }
 
@@ -2071,22 +2089,60 @@ Report :: [].{
         match F64.from_str(Str.trim(watts_arg)) {
             Err(_) => Output.err_out!("bad_watts", "tte needs a power in watts — got '${watts_arg}'")
             Ok(w) =>
-                if w <= 0.0 {
-                    Output.err_out!("bad_watts", "power must be positive — got '${watts_arg}'")
+                # `w <= 0.0` is FALSE for NaN, so a NaN sailed straight through
+                # to the payload and broke the envelope (#183 class). Negate a
+                # POSITIVE test instead: !(w > 0.0) catches NaN, zero, and
+                # negatives together. The ceiling catches +inf and typos.
+                if !(w > 0.0) or w > 3000.0 {
+                    Output.err_out!("bad_watts", "power must be a positive number of watts under 3000 — got '${watts_arg}'")
                 } else {
                     path = Db.open_db!({})?
                     today = Metrics.days_to_date_str(Db.local_today_days!(path))
-                    fit = cp_fit_as_of!(path, today, 90)?
+                    # tte fits the RIDE family: the CP model needs a power meter
+                    # and this athlete's other families have none. Named in the
+                    # payload so a caller never has to guess whose model it is.
+                    fit = cp_fit_as_of!(path, Sports.canonical("Ride"), today, 90)?
                     if fit.cp <= 0.0 {
-                        Output.err_out!("no_cp_fit", "not enough distinct 5/10/20-minute power bests in the last 90 days to fit a CP model — `stride power-curve` shows what is on record")
+                        # Two different causes, one branch: too few bests, or
+                        # bests that are inconsistent (a longer one above a
+                        # shorter one). Saying only "not enough" sends a coach
+                        # to prescribe a test the athlete has already done.
+                        Output.err_out!("no_cp_fit", "could not fit a CP model from the 5/10/20-minute bests on record in the last 90 days — there may be too few, or they may be inconsistent (a longer best above a shorter one); `stride power-curve` shows what is on record")
                     } else {
                         res = Metrics.time_to_exhaustion({ cp: fit.cp, w_prime: fit.w_prime }, w)
                         seconds = match res { Seconds(t) => t  OutsideModel(t) => t  BelowCp => 0.0 }
                         status = match res { Seconds(_) => "in_model"  OutsideModel(_) => "outside_model"  BelowCp => "below_cp" }
                         known : Bool
                         known = match res { BelowCp => False  _ => True }
+                        # The longest effort at or above this power that the
+                        # athlete has ON RECORD in the same window the fit was
+                        # built from. These are the fit's own inputs, so a
+                        # prediction shorter than one of them is refuted by the
+                        # data it came from — the single cheapest fit-quality
+                        # signal available, and it is a measurement, not a
+                        # verdict (ADR 0010).
+                        held = List.keep_if(fit.pts, |p| p.watts >= w)
+                        best = List.fold(held, { dur_s: 0.0, watts: 0.0 }, |acc, p| if p.dur_s > acc.dur_s p else acc)
+                        dem_known : Bool
+                        dem_known = best.dur_s > 0.0
+                        contradicts : Bool
+                        contradicts = dem_known and known and best.dur_s > seconds
                         Output.out!(
-                            { watts: w, seconds, known, status, cp: fit.cp, w_prime: fit.w_prime, fit_points: fit.points, window_days: 90 },
+                            {
+                                watts: w,
+                                seconds,
+                                known,
+                                status,
+                                cp: fit.cp,
+                                w_prime: fit.w_prime,
+                                fit_points: fit.points,
+                                window_days: 90,
+                                sport_family: fit.family,
+                                demonstrated_s: best.dur_s,
+                                demonstrated_w: best.watts,
+                                demonstrated_known: dem_known,
+                                contradicts_model: contradicts,
+                            },
                             Render.tte_screen,
                         )
                     }

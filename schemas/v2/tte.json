@@ -1,9 +1,9 @@
 {
   "title": "tte",
-  "description": "Time to exhaustion at a power the CALLER names (#187), from the same CP model `power-curve` publishes. `status` is the honest qualifier: `in_model` (2-20 minutes, where the two-parameter model holds), `outside_model` (the number is real arithmetic but the model overshoots there — read it as a direction), or `below_cp` (at or under CP the model says indefinitely, which is the model's answer and not the athlete's). `cp`, `w_prime`, `fit_points` and `window_days` travel with it because a fit from three close-together bests is a different claim from one fitted on a wide curve.",
+  "description": "Time to exhaustion at a power the CALLER names (#187), from the same CP model `power-curve` publishes. `status` is the honest qualifier: `in_model` (2-20 minutes, where the two-parameter model holds), `outside_model` (the number is real arithmetic but the model overshoots there — read it as a direction), or `below_cp` (at or under CP the model says indefinitely, which is the model's answer and not the athlete's). `known` here means only that the arithmetic ran — it is NOT the usual licence to trust the magnitude; `status` is what qualifies the number. Weigh the fit with `demonstrated_*` before anything else: it is the longest effort at or above `watts` the athlete has ON RECORD in the same window the fit was built from, so `contradicts_model: true` means the model predicts less than its own inputs already prove and understates this rider. `fit_points` counts how many of the 5/10/20-minute bests were available (max 3) and cannot detect a degenerate fit on its own.",
   "type": "object",
   "additionalKeys": false,
-  "required": ["watts", "seconds", "known", "status", "cp", "w_prime", "fit_points", "window_days"],
+  "required": ["watts", "seconds", "known", "status", "cp", "w_prime", "fit_points", "window_days", "sport_family", "demonstrated_s", "demonstrated_w", "demonstrated_known", "contradicts_model"],
   "properties": {
     "watts": { "type": "number" },
     "seconds": { "type": "number" },
@@ -12,6 +12,11 @@
     "cp": { "type": "number" },
     "w_prime": { "type": "number" },
     "fit_points": { "type": "integer" },
-    "window_days": { "type": "integer" }
+    "window_days": { "type": "integer" },
+    "sport_family": { "type": "string" },
+    "demonstrated_s": { "type": "number" },
+    "demonstrated_w": { "type": "number" },
+    "demonstrated_known": { "type": "boolean" },
+    "contradicts_model": { "type": "boolean" }
   }
 }

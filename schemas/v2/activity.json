@@ -377,7 +377,9 @@
         "known",
         "cp_used",
         "w_prime_used",
-        "fit_points"
+        "fit_points",
+        "fit_family",
+        "model_exceeded"
       ],
       "properties": {
         "min_j": {
@@ -397,8 +399,15 @@
         },
         "fit_points": {
           "type": "integer"
+        },
+        "fit_family": {
+          "type": "string"
+        },
+        "model_exceeded": {
+          "type": "boolean"
         }
-      }
+      },
+      "description": " `fit_family` names whose model this is (the session's own sport family, fitted on the 90 days STRICTLY BEFORE it, so a session is never inside its own fit). A NEGATIVE `min_j` is the model failing, not depth achieved \u2014 it means more above-CP work was done than the fitted tank holds, so the fit is stale or degenerate; `model_exceeded` flags exactly that. Normalize with `min_j / w_prime_used` before comparing sessions, since `w_prime_used` moves between dates."
     }
   }
 }
