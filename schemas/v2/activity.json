@@ -1,0 +1,366 @@
+{
+  "title": "activity",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "id",
+    "date",
+    "sport",
+    "name",
+    "moving_time",
+    "distance_m",
+    "tss",
+    "load_model",
+    "np_w",
+    "power_known",
+    "intensity",
+    "intensity_known",
+    "ftp_used",
+    "z1_s",
+    "z2_s",
+    "z3_s",
+    "z4_s",
+    "z5_s",
+    "zones_known",
+    "hard_s",
+    "avg_hr",
+    "hr_known",
+    "max_hr",
+    "power_bests",
+    "power_intensity",
+    "hard_by_power_s",
+    "streams_unreadable",
+    "decoupling_pct",
+    "decoupling_known",
+    "decoupling_signal",
+    "interval_summary",
+    "detection_attempted",
+    "segments",
+    "hr_drift",
+    "hr_drift_known",
+    "baselines"
+  ],
+  "properties": {
+    "id": {
+      "type": "integer"
+    },
+    "date": {
+      "type": "string"
+    },
+    "sport": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "moving_time": {
+      "type": "integer"
+    },
+    "distance_m": {
+      "type": "number"
+    },
+    "tss": {
+      "type": "number"
+    },
+    "load_model": {
+      "type": "string"
+    },
+    "np_w": {
+      "type": "number"
+    },
+    "power_known": {
+      "type": "boolean"
+    },
+    "intensity": {
+      "type": "number"
+    },
+    "intensity_known": {
+      "type": "boolean"
+    },
+    "ftp_used": {
+      "type": "number"
+    },
+    "z1_s": {
+      "type": "integer"
+    },
+    "z2_s": {
+      "type": "integer"
+    },
+    "z3_s": {
+      "type": "integer"
+    },
+    "z4_s": {
+      "type": "integer"
+    },
+    "z5_s": {
+      "type": "integer"
+    },
+    "zones_known": {
+      "type": "boolean"
+    },
+    "hard_s": {
+      "type": "integer"
+    },
+    "avg_hr": {
+      "type": "number"
+    },
+    "hr_known": {
+      "type": "boolean"
+    },
+    "max_hr": {
+      "type": "number"
+    },
+    "power_bests": {
+      "type": "object",
+      "required": [
+        "w60",
+        "w180",
+        "w300",
+        "w1200"
+      ],
+      "additionalKeys": false,
+      "properties": {
+        "w60": {
+          "type": "number"
+        },
+        "w180": {
+          "type": "number"
+        },
+        "w300": {
+          "type": "number"
+        },
+        "w1200": {
+          "type": "number"
+        }
+      }
+    },
+    "power_intensity": {
+      "type": "object",
+      "additionalKeys": false,
+      "properties": {
+        "easy_s": {
+          "type": "integer"
+        },
+        "moderate_s": {
+          "type": "integer"
+        },
+        "hard_s": {
+          "type": "integer"
+        }
+      }
+    },
+    "hard_by_power_s": {
+      "type": "integer"
+    },
+    "streams_unreadable": {
+      "type": "boolean"
+    },
+    "decoupling_pct": {
+      "type": "number"
+    },
+    "decoupling_known": {
+      "type": "boolean"
+    },
+    "decoupling_signal": {
+      "type": "string",
+      "enum": [
+        "power",
+        "pace",
+        "speed",
+        ""
+      ]
+    },
+    "interval_summary": {
+      "type": "string"
+    },
+    "detection_attempted": {
+      "type": "boolean"
+    },
+    "hr_drift": {
+      "type": "number"
+    },
+    "hr_drift_known": {
+      "type": "boolean"
+    },
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "ordinal",
+          "kind",
+          "start_s",
+          "dur_s",
+          "avg_signal",
+          "signal",
+          "peak_hr",
+          "avg_hr",
+          "rec_drop",
+          "rec_drop_known"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "ordinal": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "work",
+              "recovery",
+              "warmup",
+              "cooldown"
+            ]
+          },
+          "start_s": {
+            "type": "integer"
+          },
+          "dur_s": {
+            "type": "integer"
+          },
+          "avg_signal": {
+            "type": "number"
+          },
+          "signal": {
+            "type": "string",
+            "enum": [
+              "power",
+              "pace"
+            ]
+          },
+          "peak_hr": {
+            "type": "number"
+          },
+          "avg_hr": {
+            "type": "number"
+          },
+          "rec_drop": {
+            "type": "number"
+          },
+          "rec_drop_known": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "baselines": {
+      "type": "object",
+      "required": [
+        "window_days",
+        "band_lo_s",
+        "band_hi_s",
+        "ef",
+        "np",
+        "decoupling"
+      ],
+      "additionalKeys": false,
+      "properties": {
+        "window_days": {
+          "type": "integer"
+        },
+        "band_lo_s": {
+          "type": "integer"
+        },
+        "band_hi_s": {
+          "type": "integer"
+        },
+        "ef": {
+          "type": "object",
+          "required": [
+            "current",
+            "baseline_median",
+            "percentile",
+            "delta_pct",
+            "sample_count",
+            "known"
+          ],
+          "additionalKeys": false,
+          "properties": {
+            "current": {
+              "type": "number"
+            },
+            "baseline_median": {
+              "type": "number"
+            },
+            "percentile": {
+              "type": "integer"
+            },
+            "delta_pct": {
+              "type": "number"
+            },
+            "sample_count": {
+              "type": "integer"
+            },
+            "known": {
+              "type": "boolean"
+            }
+          }
+        },
+        "np": {
+          "type": "object",
+          "required": [
+            "current",
+            "baseline_median",
+            "percentile",
+            "delta_pct",
+            "sample_count",
+            "known"
+          ],
+          "additionalKeys": false,
+          "properties": {
+            "current": {
+              "type": "number"
+            },
+            "baseline_median": {
+              "type": "number"
+            },
+            "percentile": {
+              "type": "integer"
+            },
+            "delta_pct": {
+              "type": "number"
+            },
+            "sample_count": {
+              "type": "integer"
+            },
+            "known": {
+              "type": "boolean"
+            }
+          }
+        },
+        "decoupling": {
+          "type": "object",
+          "required": [
+            "current",
+            "baseline_median",
+            "percentile",
+            "delta_pct",
+            "sample_count",
+            "known"
+          ],
+          "additionalKeys": false,
+          "properties": {
+            "current": {
+              "type": "number"
+            },
+            "baseline_median": {
+              "type": "number"
+            },
+            "percentile": {
+              "type": "integer"
+            },
+            "delta_pct": {
+              "type": "number"
+            },
+            "sample_count": {
+              "type": "integer"
+            },
+            "known": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    }
+  }
+}

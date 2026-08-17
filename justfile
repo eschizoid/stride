@@ -101,6 +101,15 @@ summary: build
 up: sync analyze summary
 
 # ── e2e test suite (native Roc: tests/e2e.roc — sandboxed HOME, no network) ──
+# validate this machine's real payloads against the published contract
+# (schemas/v2/*.json). e2e runs the same validator against fixtures; this is the
+# "does MY data conform" check, useful after a schema or payload change.
+schema-check:
+    @for c in summary plan; do \
+        errs=$(STRIDE_FORMAT=json ./stride $c | jq '.data' | jq -r --slurpfile schema schemas/v2/$c.json -f tools/validate.jq); \
+        if [ -n "$errs" ]; then echo "$c:"; echo "$errs"; else echo "$c: conforms"; fi; \
+    done
+
 e2e:
     {{roc}} build tests/e2e.roc --output=e2e --opt=dev
     test -x ./stride || {  echo "e2e needs a ./stride binary — run \`just build\` first"; exit 1; }

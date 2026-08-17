@@ -617,6 +617,29 @@ b_seed_analyze! = |ctx| {
     # ...and the commands it teaches exist: spot-check the ones this guard grew from
     check!("skill documents the derived-key refusal", Str.contains(skill_text, "derived_key"))?
 
+    # ── the JSON contract as a tested artifact (#164) ────────────────────
+    # schemas/v2/*.json is the ONE source of truth for the machine interface;
+    # tools/validate.jq checks a payload against it and prints one line per
+    # violation. Run from the repo root (same CWD assumption as the skill guard
+    # above). additionalKeys:false is the drift catcher — a payload that GAINS a
+    # field without a schema update fails here, which is the whole point.
+    validate! = |cmd, schema| Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${cmd} | jq '.data' | jq -r --slurpfile schema schemas/v2/${schema}.json -f tools/validate.jq 2>&1"))
+    check!("summary conforms to its schema", validate!("summary", "summary") == "")?
+    check!("plan conforms to its schema", validate!("plan", "plan") == "")?
+    check!("activity conforms to its schema", validate!("activity 101", "activity") == "")?
+    check!("the envelope itself conforms", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' summary | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1")) == "")?
+    # ...and the validator is not a rubber stamp: each mutation MUST be caught,
+    # or "conforms" above would mean nothing (a validator that passes everything
+    # passes everything).
+    mutate! = |filter| Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' summary | jq '.data | ${filter}' | jq -r --slurpfile schema schemas/v2/summary.json -f tools/validate.jq 2>&1"))
+    check!("validator catches a MISSING required key", Str.contains(mutate!("del(.as_of)"), "missing required key"))?
+    check!("validator catches a WRONG type", Str.contains(mutate!(".form_tsb = \"x\""), "expected number"))?
+    check!("validator catches an UNDECLARED key (payload drift)", Str.contains(mutate!(".surprise = 1"), "absent from the schema"))?
+    check!("validator catches a bad ENUM value", Str.contains(mutate!(".form_state = \"vibing\""), "not in enum"))?
+    # the validator supports a documented SUBSET; a schema reaching for anything
+    # else would be silently ignored rather than enforced, so ban those keywords
+    check!("schemas stay inside the validator's subset", Str.trim(sh!("grep -l '\"\\$ref\"\\|\"allOf\"\\|\"anyOf\"\\|\"oneOf\"\\|\"pattern\"\\|\"minimum\"\\|\"maximum\"' schemas/v2/*.json 2>/dev/null | head -1")) == "")?
+
     # keep later fixture-sensitive checks honest: remove the interval ride again
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=103; DELETE FROM activity_metrics WHERE activity_id=103; DELETE FROM streams WHERE activity_id=103; DELETE FROM activities WHERE id=103;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])

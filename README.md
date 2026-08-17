@@ -224,6 +224,14 @@ error is `{"schema_version":2,"error":{"code":"…","message":"…"}}` (exit sta
 read the JSON, not `$?`). Malformed invocations print a targeted `usage:` line;
 `stride --help` is the full one-screen manual.
 
+The contract is a checked-in artifact, not prose: `schemas/v2/*.json` describes
+every published payload (required keys, types, enum values, and — via
+`additionalKeys: false` — the keys that are NOT part of the contract), and
+`tools/validate.jq` checks a payload against one. `just schema-check` runs it
+against your own database; the e2e suite runs it against fixtures in CI, together
+with mutation checks proving the validator rejects a missing key, a wrong type, an
+undeclared key, and a bad enum value.
+
 The tables are built to surface the all-moderate trap — a `0.98`-intensity ride with
 `0m` of actual hard time:
 

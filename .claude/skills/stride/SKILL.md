@@ -77,7 +77,9 @@ exports it, so you get JSON automatically) and **human tables otherwise**. Overr
 of JSON, prefix the command with `STRIDE_FORMAT=json`. EVERY machine response is a
 versioned envelope: success → `{"schema_version":2,"data":{…}}`, error →
 `{"schema_version":2,"error":{"code":"…","message":"…"}}`. The payloads described in
-the table below all live under `.data`; `error` is an OBJECT whose `code` carries the
+the table below all live under `.data` and are described formally in
+`schemas/v2/*.json` in the repo (required keys, types, enums; CI validates real
+payloads against them, so the schema and the binary cannot disagree for long); `error` is an OBJECT whose `code` carries the
 in-band error names used throughout this file (`missing_config`, `not_authenticated`,
 `derived_key`, …), with the human text nested in `error.message`. `sync` and `analyze`
 emit JSON results too (`{synced, new_activities, updated_activities, streams_fetched,
