@@ -3457,6 +3457,8 @@ expect {
     and Metrics.median_gap_days([100]) == Unknown
     and Metrics.median_gap_days([]) == Unknown
     and Metrics.median_gap_days([100, 101]) == Known(1)
+}
+
 # ── coverage split (#157): sums to exactly 100 under every rounding shape —
 # thirds, halves, tiny slivers, single-tier, and the all-zero honest case
 expect {
