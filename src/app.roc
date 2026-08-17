@@ -80,6 +80,7 @@ help_text =
         \\
         \\AM I IMPROVING?
         \\    tte <watts>        how long the CP model says you could hold a power
+        \\    reps [date]             the same workout shape across sessions, rep by rep
         \\    progress [date] [asc|desc]
         \\                            trend on a repeated workout, sport-aware lens
         \\                            (power→EF, distance→speed/HR, rated→RPE); latest by default,
@@ -309,6 +310,7 @@ dispatch! = |cmd|
         Command.Rate(target, rpe_str) => Plan.rate!(target, rpe_str)
         Command.Progress(name, sort) => Report.progress!(name, sort)
         Command.Tte(watts) => Report.tte!(watts)
+        Command.Reps(date) => Report.reps!(date)
         Command.Activity(id_str) => Report.activity!(id_str)
         Command.Load(days) => Report.load_series!(days)
         Command.PowerCurve(days, sport) => Report.power_curve!(days, sport)

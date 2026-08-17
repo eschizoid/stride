@@ -771,6 +771,112 @@ b_seed_analyze! = |ctx| {
     check!("a plausible power is NOT refused by the ceiling", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "3000"]), "no_cp_fit"))?
     check!("without a fit, W' balance is flagged unknown rather than zeroed", strjq!(ctx, ["activity", "101"], ".data.w_prime_balance | (.known == false) and ((.known | type) == \"boolean\")") == "true")?
     check!("...and the fit it would have used travels with it", strjq!(ctx, ["activity", "101"], ".data.w_prime_balance | has(\"cp_used\") and has(\"fit_points\")") == "true")?
+    # ── rep-level comparison (#149) ──────────────────────────────────────
+    # 103 is the fixture's interval ride, so it anchors `reps`. The shape block
+    # is the comparability rule made visible; a session whose rep COUNT or
+    # rep-duration BAND differs must not appear beside it.
+    check!("reps anchors on the interval ride", strjq!(ctx, ["reps"], ".data.anchor_activity_id") == "103")?
+    check!("reps states the shape it compared on", strjq!(ctx, ["reps"], ".data.shape | (.rep_count > 0) and (.band_hi_s > .band_lo_s)") == "true")?
+    check!("every session shares the anchor's rep count", strjq!(ctx, ["reps"], "[.data.sessions[].rep_count] | unique | length == 1") == "true")?
+    check!("...and every rep duration sits inside the stated band", strjq!(ctx, ["reps"], ".data as $d | [$d.sessions[].mean_dur_s | (. >= $d.shape.band_lo_s and . < $d.shape.band_hi_s)] | all") == "true")?
+    # a second genuinely comparable session, so the rep-count and band
+    # assertions above stop being trivially true on a one-row result — review
+    # showed three mutations (count filter, rep ordering, fade sign) surviving
+    # against a single-session fixture
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,distance,weighted_avg_watts,avg_watts,device_watts,avg_hr) VALUES (331,'earlier comparable','Ride','Ride',date('${ctx.d1}','-20 days')||'T06:00:00Z',1800,15000,200,200,1,150);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal,avg_hr) VALUES (331,0,'work',0,300,200.0,'power',140.0),(331,1,'work',400,300,190.0,'power',150.0),(331,2,'work',800,300,180.0,'power',160.0);")
+    check!("a second comparable session appears", strjq!(ctx, ["reps"], ".data.sessions | length >= 2") == "true")?
+    # fade SIGN: 331 descends 200->180, so its fade must be NEGATIVE. Flipping
+    # the subtraction in Report.roc must fail here.
+    check!("fade is last minus first, signed", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 331) | .fade_signal] | .[0] < 0") == "true")?
+    # rep ORDER: reps must be in ordinal order, so the first is the 200W one
+    check!("reps are in ordinal order", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 331) | .reps[0].avg_signal] | .[0] == 200") == "true")?
+    check!("hr rise spans first to last rep", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 331) | .hr_rise_bpm] | .[0] == 20") == "true")?
+    check!("each session reports its own dispersion", strjq!(ctx, ["reps"], "[.data.sessions[] | has(\"uniformity\") and has(\"min_dur_s\") and has(\"max_dur_s\")] | all") == "true")?
+    check!("the payload discloses how many matched", strjq!(ctx, ["reps"], ".data.matched_total >= (.data.sessions | length)") == "true")?
+    # ── each round-2 guarantee gets a mutation-killing probe ────────────
+    # count: a 4-rep session whose mean duration sits in the SAME band must be
+    # excluded, or `HAVING COUNT(*) = :reps` is untested (it was)
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,weighted_avg_watts,avg_watts,device_watts) VALUES (332,'four reps','Ride','Ride',date('${ctx.d1}','-19 days')||'T06:00:00Z',1800,200,200,1);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (332,0,'work',0,300,200.0,'power'),(332,1,'work',400,300,200.0,'power'),(332,2,'work',800,300,200.0,'power'),(332,3,'work',1200,300,200.0,'power');")
+    check!("a different rep COUNT is not comparable", strjq!(ctx, ["reps"], "[.data.sessions[].id] | index(332) == null") == "true")?
+    # signal: watts and m/s must never share a column
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,weighted_avg_watts,avg_watts,device_watts) VALUES (333,'pace signal','Ride','Ride',date('${ctx.d1}','-18 days')||'T06:00:00Z',1800,200,200,1);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (333,0,'work',0,300,4.0,'pace'),(333,1,'work',400,300,4.0,'pace'),(333,2,'work',800,300,4.0,'pace');")
+    check!("a different SIGNAL is not comparable", strjq!(ctx, ["reps"], "[.data.sessions[].id] | index(333) == null") == "true")?
+    # hr span: HR on the MIDDLE rep only must read unknown, not a narrowed span
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,weighted_avg_watts,avg_watts,device_watts) VALUES (334,'middle hr','Ride','Ride',date('${ctx.d1}','-17 days')||'T06:00:00Z',1800,200,200,1);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal,avg_hr) VALUES (334,0,'work',0,300,200.0,'power',140.0),(334,1,'work',400,300,200.0,'power',150.0),(334,2,'work',800,300,200.0,'power',NULL);")
+    # HR on reps 1 and 2 but NOT the last: the old semantics reported a
+    # "first-to-last" rise that actually spanned reps 1-2. Two HR-bearing reps
+    # is what makes this discriminate — a single one reads unknown either way.
+    check!("hr rise is unknown unless BOTH end reps carry it", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 334) | .hr_rise_known] | .[0] == false") == "true")?
+    # ── the ranking itself, pinned ───────────────────────────────────────
+    # A dedicated anchor (reps 700/800/950 — uniformity 1.36, inside the 1.6x
+    # gate but NOT the most uniform session), twelve candidates whose uniformity
+    # IMPROVES with age, and six clearly uneven ones. That shape makes rank
+    # order the reverse of date order and puts the anchor mid-pack, so each of
+    # ranking-by-uniformity, the anchor pin, and the display re-sort can fail
+    # independently. Round 3's probes were all uniformity 1.0 with the anchor
+    # newest and most uniform, so every ordering picked the same rows.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,weighted_avg_watts,avg_watts,device_watts) VALUES (336,'ranking anchor','Ride','Ride','2099-06-01T06:00:00Z',3000,200,200,1),(340,'rank uniform 0','Ride','Ride','2099-01-02T06:00:00Z',3000,200,200,1),(341,'rank uniform 1','Ride','Ride','2099-01-03T06:00:00Z',3000,200,200,1),(342,'rank uniform 2','Ride','Ride','2099-01-04T06:00:00Z',3000,200,200,1),(343,'rank uniform 3','Ride','Ride','2099-01-05T06:00:00Z',3000,200,200,1),(344,'rank uniform 4','Ride','Ride','2099-01-06T06:00:00Z',3000,200,200,1),(345,'rank uniform 5','Ride','Ride','2099-01-07T06:00:00Z',3000,200,200,1),(346,'rank uniform 6','Ride','Ride','2099-01-08T06:00:00Z',3000,200,200,1),(347,'rank uniform 7','Ride','Ride','2099-01-09T06:00:00Z',3000,200,200,1),(348,'rank uniform 8','Ride','Ride','2099-01-10T06:00:00Z',3000,200,200,1),(349,'rank uniform 9','Ride','Ride','2099-02-02T06:00:00Z',3000,200,200,1),(360,'rank uneven 0','Ride','Ride','2099-05-20T06:00:00Z',3000,200,200,1),(361,'rank uneven 1','Ride','Ride','2099-05-21T06:00:00Z',3000,200,200,1),(362,'rank uneven 2','Ride','Ride','2099-05-22T06:00:00Z',3000,200,200,1),(363,'rank uneven 3','Ride','Ride','2099-05-23T06:00:00Z',3000,200,200,1),(364,'rank uneven 4','Ride','Ride','2099-05-24T06:00:00Z',3000,200,200,1),(365,'rank uneven 5','Ride','Ride','2099-05-25T06:00:00Z',3000,200,200,1);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (336,0,'work',0,700,260.0,'power'),(336,1,'work',900,800,255.0,'power'),(336,2,'work',1900,950,250.0,'power'),(340,0,'work',0,800,200.0,'power'),(340,1,'work',1000,800,200.0,'power'),(340,2,'work',2000,800,200.0,'power'),(341,0,'work',0,800,200.0,'power'),(341,1,'work',1000,800,200.0,'power'),(341,2,'work',2000,807,200.0,'power'),(342,0,'work',0,800,200.0,'power'),(342,1,'work',1000,800,200.0,'power'),(342,2,'work',2000,814,200.0,'power'),(343,0,'work',0,800,200.0,'power'),(343,1,'work',1000,800,200.0,'power'),(343,2,'work',2000,821,200.0,'power'),(344,0,'work',0,800,200.0,'power'),(344,1,'work',1000,800,200.0,'power'),(344,2,'work',2000,828,200.0,'power'),(345,0,'work',0,800,200.0,'power'),(345,1,'work',1000,800,200.0,'power'),(345,2,'work',2000,835,200.0,'power'),(346,0,'work',0,800,200.0,'power'),(346,1,'work',1000,800,200.0,'power'),(346,2,'work',2000,842,200.0,'power'),(347,0,'work',0,800,200.0,'power'),(347,1,'work',1000,800,200.0,'power'),(347,2,'work',2000,849,200.0,'power'),(348,0,'work',0,800,200.0,'power'),(348,1,'work',1000,800,200.0,'power'),(348,2,'work',2000,856,200.0,'power'),(349,0,'work',0,800,200.0,'power'),(349,1,'work',1000,800,200.0,'power'),(349,2,'work',2000,863,200.0,'power'),(360,0,'work',0,500,200.0,'power'),(360,1,'work',1200,800,200.0,'power'),(360,2,'work',2400,1100,200.0,'power'),(361,0,'work',0,500,200.0,'power'),(361,1,'work',1200,800,200.0,'power'),(361,2,'work',2400,1100,200.0,'power'),(362,0,'work',0,500,200.0,'power'),(362,1,'work',1200,800,200.0,'power'),(362,2,'work',2400,1100,200.0,'power'),(363,0,'work',0,500,200.0,'power'),(363,1,'work',1200,800,200.0,'power'),(363,2,'work',2400,1100,200.0,'power'),(364,0,'work',0,500,200.0,'power'),(364,1,'work',1200,800,200.0,'power'),(364,2,'work',2400,1100,200.0,'power'),(365,0,'work',0,500,200.0,'power'),(365,1,'work',1200,800,200.0,'power'),(365,2,'work',2400,1100,200.0,'power');")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,weighted_avg_watts,avg_watts,device_watts) VALUES (370,'ratio worse spread better','Ride','Ride','2099-04-01T06:00:00Z',3000,200,200,1),(371,'ratio better spread worse','Ride','Ride','2099-04-02T06:00:00Z',3000,200,200,1);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (370,0,'work',0,600,200.0,'power'),(370,1,'work',900,600,200.0,'power'),(370,2,'work',1900,680,200.0,'power'),(371,0,'work',0,800,200.0,'power'),(371,1,'work',900,800,200.0,'power'),(371,2,'work',1900,890,200.0,'power');")
+    check!("the window caps at 12 rows", strjq!(ctx, ["reps", "2099-06-01"], ".data.sessions | length == 12") == "true")?
+    check!("...and matched_total exceeds them, so truncation is visible", strjq!(ctx, ["reps", "2099-06-01"], ".data.matched_total > (.data.sessions | length)") == "true")?
+    check!("the window keeps the most uniform, not the most recent", strjq!(ctx, ["reps", "2099-06-01"], "[.data.sessions[].id | select(. >= 360 and . <= 365)] | length == 0") == "true")?
+    # WHICH dispersion metric ranks, not merely that one does. These two
+    # disagree by construction: 600/600/680 has ratio 1.133 but spread 80 and
+    # max 680, while 800/800/890 has ratio 1.1125 but spread 90 and max 890.
+    # The RATIO prefers 371; absolute spread and max-duration both prefer 370.
+    # Ten candidates strictly more uniform than either sit above them, so the
+    # window's last slot goes to exactly one of the pair — whichever the key
+    # picks. Swapping the key silently readmits sessions at 6.9x uniformity
+    # (review constructed that), and nothing else in the suite would notice.
+    # Without this the key could be swapped silently and readmit sessions at
+    # uniformity 6.9 — review constructed exactly that.
+    check!("ranking uses the RATIO, not absolute spread or max duration", strjq!(ctx, ["reps", "2099-06-01"], ".data as $d | ([$d.sessions[].id] | index(371) != null) and ([$d.sessions[].id] | index(370) == null)") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (370,371); DELETE FROM activities WHERE id IN (370,371);")
+    check!("the anchor keeps its row even when others are more uniform", strjq!(ctx, ["reps", "2099-06-01"], "[.data.sessions[].id] | index(336) != null") == "true")?
+    check!("rows are displayed newest first, whatever the ranking", strjq!(ctx, ["reps", "2099-06-01"], "[.data.sessions[].date] == ([.data.sessions[].date] | sort | reverse)") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id BETWEEN 336 AND 365; DELETE FROM activity_metrics WHERE activity_id BETWEEN 336 AND 365; DELETE FROM activities WHERE id BETWEEN 336 AND 365;")
+    # the anchor gate: a session whose blocks are NOT one repeated shape cannot
+    # be an anchor, and being the most recent must not change that
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,weighted_avg_watts,avg_watts,device_watts) VALUES (335,'irregular','Ride','Ride','2099-01-01T06:00:00Z',3000,200,200,1);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (335,0,'work',0,60,200.0,'power'),(335,1,'work',200,1800,200.0,'power'),(335,2,'work',2100,120,200.0,'power');")
+    check!("an irregular session is refused as an anchor", Str.contains(stride!(ctx.bin, ctx.home, ["reps"]), "irregular_anchor"))?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=335; DELETE FROM activities WHERE id=335;")
+    # ...and the gate sits exactly where the constant says. Without a probe ON
+    # THE BOUNDARY the literal in this effectful path could move from 1.6x to
+    # 9.9x with the whole suite green -- it did, for one round, while a pure
+    # expect asserted a constant the gate was not actually using. Reuses id 335
+    # because that insert is proven to land above; a fresh id silently did not,
+    # and the "accepted" assertion passed on `no_intervals_on_date` instead.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,weighted_avg_watts,avg_watts,device_watts) VALUES (335,'gate probe','Ride','Ride','2099-01-01T06:00:00Z',3000,200,200,1);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (335,0,'work',0,100,200.0,'power'),(335,1,'work',300,160,200.0,'power');")
+    # asserted POSITIVELY: the anchor must actually render at the boundary, not
+    # merely avoid one error string
+    check!("a spread of exactly the gate is accepted as an anchor", strjq!(ctx, ["reps", "2099-01-01"], ".data.anchor_activity_id") == "335")?
+    _ = sql!(ctx.db, "UPDATE activity_segments SET dur_s = 161 WHERE activity_id = 335 AND ordinal = 1;")
+    check!("one second past the gate is refused", Str.contains(stride!(ctx.bin, ctx.home, ["reps", "2099-01-01"]), "irregular_anchor"))?
+    # the refusal quotes the gate it enforced rather than a literal that could
+    # drift away from the number actually applied
+    check!("the refusal quotes the gate it enforced", Str.contains(stride!(ctx.bin, ctx.home, ["reps", "2099-01-01"]), "1.6x"))?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=335; DELETE FROM activities WHERE id=335;")
+    check!("reps conforms to its schema", validate!("reps", "reps") == "")?
+    check!("a date with no detected structure says so in band", Str.contains(stride!(ctx.bin, ctx.home, ["reps", "1999-01-01"]), "no_intervals_on_date"))?
+    # comparability is not just the count: a same-count session whose reps sit
+    # in a DIFFERENT duration band must be excluded, which is the whole reason
+    # rep-scale bands exist rather than the session-scale ones
+    before_n = Str.trim(strjq!(ctx, ["reps"], ".data.sessions | length"))
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,distance,weighted_avg_watts,avg_watts,device_watts) VALUES (330,'short vo2','Ride','Ride','${ctx.d1}T05:00:00Z',1200,8000,240,240,1);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (330,0,'work',0,90,300.0,'power'),(330,1,'work',200,90,300.0,'power'),(330,2,'work',400,90,300.0,'power');")
+    check!("a same-count session in another rep band is not comparable", Str.trim(strjq!(ctx, ["reps"], ".data.sessions | length")) == before_n)?
+    # every probe activity leaves before the block ends — a later analyze would
+    # otherwise score them and move CTL, which surfaced as an unrelated form
+    # check failing 90 lines further down
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (330,331,332,333,334); DELETE FROM activity_metrics WHERE activity_id IN (330,331,332,333,334); DELETE FROM activities WHERE id IN (330,331,332,333,334);")
     # --help rather than a bare call: interpolating a compile-time empty string
     # into the command slot is the #32-class crash, and --help returns the
     # identical discovery payload
