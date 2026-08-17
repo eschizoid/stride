@@ -892,7 +892,8 @@ Report :: [].{
             path: Path.utf8(path),
             query:
                 \\SELECT a.sport_type AS sport, COUNT(*) AS sessions, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
-                \\       COALESCE(SUM(a.moving_time),0) AS moving_time, CAST(COALESCE(SUM(a.distance),0) AS REAL) AS distance_m
+                \\       COALESCE(SUM(a.moving_time),0) AS moving_time, CAST(COALESCE(SUM(a.distance),0) AS REAL) AS distance_m,
+                \\       COALESCE(MAX(substr(a.start_local, 1, 10)), '') AS last_date
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE a.start_local >= :cutoff
                 \\GROUP BY a.sport_type ORDER BY tss DESC, a.sport_type
@@ -904,7 +905,10 @@ Report :: [].{
                 tss = Sqlite.f64("tss")(cols)(stmt)?
                 moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
                 distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
-                Ok({ sport, sessions, tss, moving_time, distance_m })
+                # when this sport was last seen (#159) — '' can't happen inside the
+                # window filter, but COALESCE keeps the decoder total
+                last_date = Sqlite.str("last_date")(cols)(stmt)?
+                Ok({ sport, sessions, tss, moving_time, distance_m, last_date })
             },
         })?
 
@@ -937,16 +941,103 @@ Report :: [].{
         })?
 
         # most recent day with a real hard stimulus (5+ min in Z4/Z5); '' = never
+        # ONE hard-session predicate (#159): power-aware like every other hard
+        # surface (week's hard column, polarization) — pi_hard when the activity
+        # has a power-intensity split, HR Z4+Z5 otherwise, 5+ min either way.
+        # last_hard previously used HR zones alone, which missed power-only rides
+        # with junk HR straps; consolidated rather than grown a second definition.
+        hard_expr = "COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) >= 300"
         last_hard = Sqlite.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(MAX(substr(a.start_local, 1, 10)), '') AS d
                 \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
-                \\WHERE m.z4_s + m.z5_s >= 300
+                \\WHERE ${hard_expr}
             ,
             bindings: [],
             row: Sqlite.str("d"),
         })?
+        # stimulus features (#159): counts, spacing, and windowed loads the coach
+        # would otherwise re-derive from raw lists — measurements only, never
+        # judgments (hard_sessions.d14 is a count; whether 4 is "too many" is
+        # the coach's call, per the #154 boundary)
+        hard_days = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT DISTINCT substr(a.start_local, 1, 10) AS d
+                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                \\WHERE ${hard_expr} AND a.start_local >= :cutoff
+            ,
+            bindings: [{ name: ":cutoff", value: String(cutoff28) }],
+            rows: Sqlite.str("d"),
+        })?
+        hard_day_nums = List.keep_oks(hard_days, |d| Metrics.date_str_to_days(d))
+        # Str has no ordering — count on parsed day numbers, same anchor math
+        hard_d14 = List.len(List.keep_if(hard_day_nums, |d| d >= anchor - 13))
+        spacing = Metrics.median_gap_days(hard_day_nums)
+        days_since_hard =
+            match List.sort_with(hard_day_nums, |a, b| if a > b LT else if a < b GT else EQ) {
+                [newest_hard, ..] => Known(anchor - newest_hard)
+                [] => Unknown
+            }
+        # ANNOTATED Bools: this payload is encode-only, and a bare tag would
+        # serialize as the STRING "True" (the #32-class flag bug, pinned in e2e)
+        spacing_known_b : Bool
+        spacing_known_b = match spacing { Known(_) => True  Unknown => False }
+        days_since_known_b : Bool
+        days_since_known_b = match days_since_hard { Known(_) => True  Unknown => False }
+        # windowed loads + prior windows of the SAME length, deltas raw. The
+        # prior-7d window is [-13..-7] and prior-28d is [-55..-28]: adjacent,
+        # non-overlapping, same width — the delta compares like with like.
+        loadw = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT CAST(COALESCE(SUM(CASE WHEN a.start_local >= :c90 THEN m.tss ELSE 0 END),0) AS REAL) AS d90,
+                \\       CAST(COALESCE(SUM(CASE WHEN a.start_local >= :p7lo AND a.start_local < :c7 THEN m.tss ELSE 0 END),0) AS REAL) AS p7,
+                \\       CAST(COALESCE(SUM(CASE WHEN a.start_local >= :p28lo AND a.start_local < :c28 THEN m.tss ELSE 0 END),0) AS REAL) AS p28
+                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+            ,
+            bindings: [
+                { name: ":c90", value: String(Metrics.days_to_date_str(anchor - 89)) },
+                { name: ":p7lo", value: String(Metrics.days_to_date_str(anchor - 13)) },
+                { name: ":c7", value: String(cutoff7) },
+                { name: ":p28lo", value: String(Metrics.days_to_date_str(anchor - 55)) },
+                { name: ":c28", value: String(cutoff28) },
+            ],
+            row: |cols| |stmt| {
+                d90 = Sqlite.f64("d90")(cols)(stmt)?
+                p7 = Sqlite.f64("p7")(cols)(stmt)?
+                p28 = Sqlite.f64("p28")(cols)(stmt)?
+                Ok({ d90, p7, p28 })
+            },
+        })?
+        # threshold trajectory: the ride-family best-20-min of the PRIOR 60-day
+        # window ([-119..-60]) beside the current one — the delta says which way
+        # the demonstrated ceiling moved; known=false when the prior window has
+        # no power (a delta against nothing is not 0, ADR 0009)
+        prior_best20 = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT CAST(COALESCE(MAX(m.best_20min_w),0) AS REAL) AS b,
+                \\       CASE WHEN MAX(m.best_20min_w) IS NULL THEN 0 ELSE 1 END AS bk
+                \\FROM activity_metrics m
+                \\JOIN activities a ON a.id = m.activity_id
+                \\WHERE a.sport_family = :fam AND a.start_local >= :lo AND a.start_local < :hi
+            ,
+            bindings: [
+                { name: ":fam", value: String(Sports.canonical("Ride")) },
+                { name: ":lo", value: String(Metrics.days_to_date_str(anchor - 119)) },
+                { name: ":hi", value: String(cutoff60) },
+            ],
+            row: |cols| |stmt| {
+                b = Sqlite.f64("b")(cols)(stmt)?
+                bk = Sqlite.i64("bk")(cols)(stmt)?
+                Ok({ b, bk })
+            },
+        })?
+        # flag decodes the stored NULL, never the magnitude (ADR 0009)
+        prior_b20_known_b : Bool
+        prior_b20_known_b = prior_best20.bk != 0
 
         # polarization is power-aware: easy/moderate/hard come from POWER zones for
         # activities that have power-intensity, HR zones otherwise (zone_sum! per-activity)
@@ -1065,6 +1156,26 @@ Report :: [].{
             load_days: load_days,
             ctl_warming_up: load_days < 90,
             last_hard_session_date: last_hard,
+            # stimulus features (#159) — counts and spacing are MEASUREMENTS; the
+            # spacing/days-since flags are the ADR 0009 null (0 with known false)
+            hard_days: {
+                d14: (hard_d14).to_i64_wrap(),
+                d28: (List.len(hard_day_nums)).to_i64_wrap(),
+                spacing_median_days_28d: match spacing { Known(g) => g  Unknown => 0 },
+                spacing_known: spacing_known_b,
+                days_since_last: match days_since_hard { Known(d) => d  Unknown => 0 },
+                days_since_known: days_since_known_b,
+            },
+            # windowed loads with same-width adjacent prior windows; deltas raw
+            load_windows: {
+                d7: zsum7.tss,
+                d28: zsum.tss,
+                d90: loadw.d90,
+                prior_d7: loadw.p7,
+                prior_d28: loadw.p28,
+                delta_7d: zsum7.tss - loadw.p7,
+                delta_28d: zsum.tss - loadw.p28,
+            },
             pending_sessions: pending,
             last_7d: {
                 tss: zsum7.tss,
@@ -1108,6 +1219,11 @@ Report :: [].{
             ftp: {
                 best_20min_w_60d: best20_row,
                 estimated_ftp_w: Metrics.ftp_from_best_20min(best20_row),
+                # trajectory (#159): the PRIOR 60d window's best beside the current —
+                # which way the demonstrated ceiling moved; known=false = no power
+                # in that window (a delta against nothing is not 0)
+                prior_60d_best_20min_w: prior_best20.b,
+                prior_60d_known: prior_b20_known_b,
             },
             hr_zones: { z1_max: zb.z1_max, z2_max: zb.z2_max, z3_max: zb.z3_max, z4_max: zb.z4_max },
             sports_28d: sports,
