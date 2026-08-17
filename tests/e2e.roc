@@ -388,6 +388,13 @@ b_seed_analyze! = |ctx| {
     # #154: the stable machine id for the form band — one of the five enum values,
     # never prose, never coaching vocabulary
     check!("summary form_state is a stable band id", strjq!(ctx, ["summary"], ".data.form_state | IN(\"high_modeled_fatigue\",\"modeled_fatigue_building\",\"balanced\",\"fresh\",\"very_fresh\")") == "true")?
+    # ── load coverage (#157): TSS-weighted confidence tiers on the aggregates.
+    # The invariant is EXACT-100 (largest-remainder rounding, pure-pinned in
+    # Metrics); the fixture mixes power_stream and HR/RPE-scored rows so both
+    # high and medium tiers are live, and known is a typed boolean (ADR 0009).
+    check!("28d load coverage sums to exactly 100", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct + .medium_pct + .low_pct == 100) and .known == true") == "true")?
+    check!("coverage tiers discriminate (high and medium both live)", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct > 0) and (.medium_pct > 0)") == "true")?
+    check!("form coverage carries the 90d window", strjq!(ctx, ["summary"], ".data.form_coverage_90d | (.high_pct + .medium_pct + .low_pct == 100) and ((.known | type) == \"boolean\")") == "true")?
     # with fixtures loaded TSB is known, so the enum arm is required here; the
     # ""-unknown arm is pinned separately on the pre-fixture empty db
     check!("analyze form_state is a stable band id once scored", strjq!(ctx, ["analyze"], ".data.form_state | IN(\"high_modeled_fatigue\",\"modeled_fatigue_building\",\"balanced\",\"fresh\",\"very_fresh\")") == "true")?
