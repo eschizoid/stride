@@ -47,8 +47,7 @@
         "modeled_fatigue_building",
         "balanced",
         "fresh",
-        "very_fresh",
-        ""
+        "very_fresh"
       ]
     },
     "form_delta_7d": {
@@ -174,7 +173,8 @@
         "hard_pct",
         "hr_streams",
         "intensity_streams",
-        "load_coverage"
+        "load_coverage",
+        "measured_pct"
       ],
       "additionalKeys": false,
       "properties": {

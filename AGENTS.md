@@ -56,7 +56,12 @@ just install   # build + symlink to ~/.local/bin/stride
 - **Query-command output goes through `out!`** (payload + render fn): JSON is wrapped
   in the versioned envelope by `emit_ok!`/`emit_err!` (`{schema_version, data}` /
   `{schema_version, error:{code,message}}`), humans get a pure `Render.<cmd>_screen`
-  (or inline closure). Errors are in-band on stdout AND exit 1 (#163: the
+  (or inline closure). A payload field you ADD must also be added to
+  `schemas/v2/<command>.json` — `additionalKeys: false` means CI fails on an
+  undeclared key, which is the point (`just schema-check` runs the same
+  validator against your own database; `tools/schema-lint.jq` keeps schemas
+  inside the subset `tools/validate.jq` actually reads).
+  Errors are in-band on stdout AND exit 1 (#163: the
   envelope is the payload, the status is the signal; a bare invocation prints
   help and exits 0, an unknown command is an error). New commands are born on this
   pattern; older ones migrate as touched.

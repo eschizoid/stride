@@ -228,10 +228,11 @@ see failures while JSON consumers keep reading the same envelope. A bare `stride
 prints help and exits 0; an unknown command is an error. Malformed invocations print a targeted `usage:` line;
 `stride --help` is the full one-screen manual.
 
-The contract is a checked-in artifact, not prose: `schemas/v2/*.json` describes
-every published payload (required keys, types, enum values, and — via
-`additionalKeys: false` — the keys that are NOT part of the contract), and
-`tools/validate.jq` checks a payload against one. `just schema-check` runs it
+The contract is a checked-in artifact, not prose: `schemas/v2/*.json` describes the
+`summary`, `activity` and `plan` payloads plus the envelope (required keys, types,
+enum values, and — via `additionalKeys: false` — the keys that are NOT part of the
+contract), and `tools/validate.jq` checks a payload against one. The remaining
+commands are not schema'd yet; the mechanism is in place for them. `just schema-check` runs it
 against your own database; the e2e suite runs it against fixtures in CI, together
 with mutation checks proving the validator rejects a missing key, a wrong type, an
 undeclared key, and a bad enum value.

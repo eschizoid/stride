@@ -35,6 +35,32 @@ test:
     just build
     just e2e
 
+# validate this machine's real payloads against the published contract
+# (schemas/v2/*.json). e2e runs the same validator against fixtures; this is the
+# "does MY data conform" pass, for after a schema or payload change. Depends on
+# build so it can never report "conforms" because ./stride was missing, and it
+# EXITS NON-ZERO on a violation — a checker that always succeeds is decoration.
+schema-check: build
+    #!/usr/bin/env sh
+    set -e
+    rc=0
+    for c in summary plan; do
+        errs=$(STRIDE_FORMAT=json ./stride $c 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/$c.json -f tools/validate.jq 2>&1)
+        if [ -n "$errs" ]; then echo "$c:"; echo "$errs"; rc=1; else echo "$c: conforms"; fi
+    done
+    act=$(STRIDE_FORMAT=json ./stride activities 1 2>&1 | jq -r '.data[0].id // empty' 2>&1)
+    if [ -n "$act" ]; then
+        errs=$(STRIDE_FORMAT=json ./stride activity "$act" 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/activity.json -f tools/validate.jq 2>&1)
+        if [ -n "$errs" ]; then echo "activity $act:"; echo "$errs"; rc=1; else echo "activity $act: conforms"; fi
+    fi
+    errs=$(STRIDE_FORMAT=json ./stride summary 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1)
+    if [ -n "$errs" ]; then echo "envelope:"; echo "$errs"; rc=1; else echo "envelope: conforms"; fi
+    for f in schemas/v2/*.json; do
+        lint=$(jq -r -f tools/schema-lint.jq "$f" 2>&1)
+        if [ -n "$lint" ]; then echo "$lint"; rc=1; fi
+    done
+    exit $rc
+
 # sync integration: ONE binary in two roles — a mock Strava server (E2E_MODE=mock)
 # and a sync driver (E2E_MODE=sync) that runs real sync + token-refresh against it.
 # Binds a port, so it's separate from `just test`. Runs against the ./stride binary.
@@ -101,15 +127,6 @@ summary: build
 up: sync analyze summary
 
 # ── e2e test suite (native Roc: tests/e2e.roc — sandboxed HOME, no network) ──
-# validate this machine's real payloads against the published contract
-# (schemas/v2/*.json). e2e runs the same validator against fixtures; this is the
-# "does MY data conform" check, useful after a schema or payload change.
-schema-check:
-    @for c in summary plan; do \
-        errs=$(STRIDE_FORMAT=json ./stride $c | jq '.data' | jq -r --slurpfile schema schemas/v2/$c.json -f tools/validate.jq); \
-        if [ -n "$errs" ]; then echo "$c:"; echo "$errs"; else echo "$c: conforms"; fi; \
-    done
-
 e2e:
     {{roc}} build tests/e2e.roc --output=e2e --opt=dev
     test -x ./stride || {  echo "e2e needs a ./stride binary — run \`just build\` first"; exit 1; }

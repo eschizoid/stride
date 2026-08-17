@@ -147,7 +147,12 @@
         "hard_s": {
           "type": "integer"
         }
-      }
+      },
+      "required": [
+        "easy_s",
+        "moderate_s",
+        "hard_s"
+      ]
     },
     "hard_by_power_s": {
       "type": "integer"
