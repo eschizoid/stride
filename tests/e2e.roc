@@ -285,6 +285,19 @@ b_init_config! = |ctx| {
     # a REAL command with wrong arguments must not claim the command is unknown
     argerr = stride!(ctx.bin, ctx.home, ["sync", "extra"])
     check!("wrong arity on a real command is a usage error, not 'unknown'", Str.contains(argerr, "sync") and !(Str.contains(argerr, "unknown_command")))?
+    # ── every machine response is an envelope (#180) ─────────────────────
+    # These were the last two paths that handed a tool caller bare prose: a
+    # usage error printed `usage: stride ...` as text, and a bare invocation
+    # printed the whole human help screen.
+    check!("a usage error is an envelope for machines", Str.contains(stride!(ctx.bin, ctx.home, ["config"]), "\"code\":\"usage\""))?
+    check!("...and stays a plain line for humans", Str.contains(stride_human!(ctx.bin, ctx.home, ["config"]), "usage: stride config") and !(Str.contains(stride_human!(ctx.bin, ctx.home, ["config"]), "schema_version")))?
+    # asking what stride can do is a QUESTION, not a failure: same exit 0 in
+    # both modes, answered as data for machines and as the help screen for
+    # humans — and `--help` is the same request, so it gets the same answer
+    check!("a bare call answers with the command list, as data", strjq!(ctx, [], ".data.commands | index(\"summary\") != null") == "true")?
+    check!("--help answers identically for machines", strjq!(ctx, ["--help"], ".data.commands | index(\"plan\") != null") == "true")?
+    check!("...and both stay exit 0", stride_status!(ctx.bin, ctx.home, []) == 0 and stride_status!(ctx.bin, ctx.home, ["--help"]) == 0)?
+    check!("humans still get the help screen", Str.contains(stride_human!(ctx.bin, ctx.home, []), "USAGE") and !(Str.contains(stride_human!(ctx.bin, ctx.home, []), "schema_version")))?
     check!("...and still exits non-zero", stride_status!(ctx.bin, ctx.home, ["sync", "extra"]) == 1)?
     # the FLAG path owns the exit code too (#162's re-exec wrapper): without
     # Err(Exit(child_code)) the parent collapses every child status to 1 and

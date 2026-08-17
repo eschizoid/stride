@@ -15,9 +15,16 @@ Output :: [].{
     error_status : I32
     error_status = 1
 
+    # A malformed invocation is a failure a machine must be able to READ (#180):
+    # under json_mode! it gets the same envelope every other error uses, with the
+    # usage line as the message. Humans keep the bare `usage:` line — it is what
+    # a terminal wants, and it is the shape the help text advertises.
     usage! : Str => Try({}, _)
     usage! = |u| {
-        Stdout.line!("usage: stride ${u}")?
+        (if json_mode!({})
+            emit_err!("usage", "usage: stride ${u}")
+        else
+            Stdout.line!("usage: stride ${u}"))?
         Err(Exit(error_status))
     }
 

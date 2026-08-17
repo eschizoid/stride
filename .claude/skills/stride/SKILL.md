@@ -79,7 +79,9 @@ flag works in any argv position and the last one wins; `--human` forces tables e
 parsing, so `stride skip 5 -- --json` stores the literal string as the reason and
 still honors the requested format. If output ever looks like a table when you
 wanted data, you left `--json` off. EVERY machine response is a
-versioned envelope: success → `{"schema_version":2,"data":{…}}`, error →
+versioned envelope — including usage errors (`{"error":{"code":"usage",…}}`) and a
+bare `stride --json`, which answers with `{"data":{"commands":[…]}}` rather than the
+human help screen (#180): success → `{"schema_version":2,"data":{…}}`, error →
 `{"schema_version":2,"error":{"code":"…","message":"…"}}`. The payloads described in
 the table below all live under `.data`; `error` is an OBJECT whose `code` carries the
 in-band error names used throughout this file (`unknown_command`, `missing_config`, `not_authenticated`,

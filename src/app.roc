@@ -140,7 +140,18 @@ main! = |raw_args| {
     match split.mode {
         Auto =>
             match Command.parse(split.rest) {
-                Err(ShowHelp) => Stdout.line!(help_text)
+                # Asking what stride can do — bare, or `--help` — is a question,
+                # not a failure, so it stays exit 0 in both modes (#163). A
+                # machine asking it got a screen of prose it could not parse
+                # (#180); it now gets the same question answered as DATA: the
+                # command list. `--help` and a bare call are the same request,
+                # so they get the same answer rather than one becoming an error.
+                Err(ShowHelp) =>
+                    if Output.json_mode!({}) {
+                        Output.emit_ok!({ commands: List.keep_if(Command.command_names, |c| !(Str.starts_with(c, "-")) and c != "help") })
+                    } else {
+                        Stdout.line!(help_text)
+                    }
                 # an unknown command is an invocation error (#163): machines get
                 # an envelope, humans still get the help text, both exit non-zero
                 Err(UnknownCmd(name)) =>
