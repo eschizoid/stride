@@ -125,7 +125,7 @@ main! = |raw_args| {
     # impossible. (Argv is re-encoded via OsStr.display for the child; non-UTF8
     # argv bytes would be lossy — only when a flag is used, and stride args are
     # ids/dates/words in practice.)
-    split = Output.split_format_args(args)
+    split = Command.split_format_args(args)
     match split.mode {
         Auto =>
             match Command.parse(args) {

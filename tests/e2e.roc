@@ -337,6 +337,11 @@ b_config_ftp! = |ctx| {
     check!("flag position is free (before the subcommand)", Str.contains(stride_env!(ctx.bin, ctx.home, ["--json", "config", "get", "timezone"], [("STRIDE_FORMAT", "human")]), "schema_version"))?
     check!("last flag wins", Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--human", "--json"], [("STRIDE_FORMAT", "human")]), "schema_version"))?
     check!("args survive the strip (value intact)", Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--json"], [("STRIDE_FORMAT", "human")]), "America/Chicago"))?
+    # `--` ends flag parsing: the literal "--json" reaches the command parser
+    # (which rejects it) instead of being eaten as a format flag — so output is
+    # neither JSON nor the successful config read
+    term_out = stride_env!(ctx.bin, ctx.home, ["--", "--json", "config", "get", "timezone"], [("STRIDE_FORMAT", "human")])
+    check!("`--` ends flag parsing", !(Str.contains(term_out, "schema_version")) and !(Str.contains(term_out, "America/Chicago")))?
     check!("config get json value", strjq!(ctx, ["config", "get", "timezone"], ".data.value") == "America/Chicago")?
     check!("config get not_set error", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "nope"]), "not_set"))?
     # delete the row rather than storing "" — an empty value is a stored-but-invalid

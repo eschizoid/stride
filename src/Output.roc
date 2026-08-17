@@ -86,24 +86,6 @@ Output :: [].{
         Stdout.line!(Json.to_str({ schema_version: json_schema_version, error: { code, message: msg } }))
     # output mode: humans get tables by default; LLM callers set STRIDE_FORMAT=json
     # (CLAUDECODE env also flips to json for harnesses that set it)
-    # ── explicit format flags (#162) ────────────────────────────────────
-    # Pure: pull --json / --human out of argv (any position; the LAST flag wins,
-    # so `--json --human` is deterministic) and return the cleaned args. The
-    # flags beat STRIDE_FORMAT which beats CLAUDECODE; precedence is enforced in
-    # main! by re-exec with STRIDE_FORMAT set for the child — the platform has
-    # no setenv, and threading a mode through every err_out!/say!/narrate! call
-    # site would touch every error path in the codebase for one flag.
-    split_format_args : List(Str) -> { mode : [ForceJson, ForceHuman, Auto], rest : List(Str) }
-    split_format_args = |args|
-        List.fold(args, { mode: Auto, rest: [] }, |acc, a|
-            if a == "--json" {
-                { ..acc, mode: ForceJson }
-            } else if a == "--human" {
-                { ..acc, mode: ForceHuman }
-            } else {
-                { ..acc, rest: List.append(acc.rest, a) }
-            })
-
     json_mode! : {} => Bool
     json_mode! = |{}|
         match Env.var_str!(OsStr.from_str("STRIDE_FORMAT")) {
