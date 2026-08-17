@@ -5,9 +5,21 @@ import pf.OsStr
 import Render
 
 Output :: [].{
+    # ── exit status (#163) ───────────────────────────────────────────────
+    # Every error surface prints its envelope (or human text) to stdout and then
+    # returns Err(Exit(1)), which the platform turns into a non-zero process
+    # status WITHOUT printing anything of its own. The ENVELOPE is unchanged —
+    # this adds information to a channel that previously carried none, so JSON
+    # consumers are unaffected while `set -e`, `&&` chains, CI steps, and
+    # supervisors stop reading failures as success. Success paths still exit 0.
+    error_status : I32
+    error_status = 1
+
     usage! : Str => Try({}, _)
-    usage! = |u|
-        Stdout.line!("usage: stride ${u}")
+    usage! = |u| {
+        Stdout.line!("usage: stride ${u}")?
+        Err(Exit(error_status))
+    }
 
     # ── analyze ──────────────────────────────────────────────────────────
 
@@ -134,17 +146,21 @@ Output :: [].{
     # line for humans. Exit stays 0 (in-band errors are the codebase convention —
     # same as plan-add's dedup guard); the payload carries the failure.
     err_out! : Str, Str => Try({}, _)
-    err_out! = |code, msg|
-        if json_mode!({})
+    err_out! = |code, msg| {
+        (if json_mode!({})
             emit_err!(code, msg)
         else
-            Stdout.line!(msg)
+            Stdout.line!(msg))?
+        Err(Exit(error_status))
+    }
 
     # unconfigured zones/FTP: JSON error for tools, the setup help for humans
     missing_config! : {} => Try({}, _)
-    missing_config! = |{}|
-        if json_mode!({})
+    missing_config! = |{}| {
+        (if json_mode!({})
             emit_err!("missing_config", "set your HR zone bounds first — see `stride config` (FTP is derived automatically)")
         else
-            Stdout.line!(zone_config_help)
+            Stdout.line!(zone_config_help))?
+        Err(Exit(error_status))
+    }
 }

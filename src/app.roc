@@ -119,6 +119,15 @@ main! = |raw_args| {
     args = List.map(raw_args, |a| OsStr.display(a))
     match Command.parse(args) {
         Err(ShowHelp) => Stdout.line!(help_text)
+        # an unknown command is an invocation error (#163): machines get an
+        # envelope, humans still get the help text, both get a non-zero status
+        Err(UnknownCmd(name)) =>
+            if Output.json_mode!({}) {
+                Output.err_out!("unknown_command", "no such command '${name}' — run `stride` for the list")
+            } else {
+                Stdout.line!(help_text)?
+                Err(Exit(1))
+            }
         Err(Usage(u)) => Output.usage!(u)
         Err(BadCount(s)) => Output.err_out!("bad_count", "expected a number, got '${s}'")
         Ok(cmd) => dispatch!(cmd)

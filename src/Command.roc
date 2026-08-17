@@ -35,10 +35,13 @@ Command := [
 ].{
 
 	## Why parsing failed, mapped by the caller to output:
-	##   ShowHelp     -> the full help text (unknown / empty command)
+	##   ShowHelp     -> the full help text (bare invocation — not an error)
+	##   UnknownCmd   -> a command name stride does not have (#163: an invocation
+	##                   error, so it exits non-zero and, in JSON mode, emits an
+	##                   envelope rather than help text a machine cannot parse)
 	##   Usage(Str)   -> a targeted one-line hint (right command, wrong arity)
 	##   BadCount(Str) -> a count argument that wasn't a number
-	ParseErr : [ShowHelp, Usage(Str), BadCount(Str)]
+	ParseErr : [ShowHelp, UnknownCmd(Str), Usage(Str), BadCount(Str)]
 
 	## argv (including the program name at index 0) -> a typed command. Mirrors the
 	## historical `main!` dispatch exactly; behavior-preserving by construction.
@@ -109,7 +112,11 @@ Command := [
 			[_, "skip", ..] => Err(Usage("skip <session_id> \"<reason>\" [activity_id|none]"))
 			[_, "activity", ..] => Err(Usage("activity <activity_id>"))
 			[_, "config", ..] => Err(Usage("config get <key>  |  config set <key> <value>"))
-			_ => Err(ShowHelp)
+			# a bare invocation asks for help; anything else with a leading token
+			# is a command stride does not have
+			[_] => Err(ShowHelp)
+			[] => Err(ShowHelp)
+			[_, name, ..] => Err(UnknownCmd(name))
 		}
 
 	count : Str, (U64 -> Command) -> Try(Command, ParseErr)
@@ -330,7 +337,7 @@ expect
 	}
 expect
 	match Command.parse(["stride", "wat"]) {
-		Err(ShowHelp) => True
+		Err(UnknownCmd("wat")) => True
 		_ => False
 	}
 expect
