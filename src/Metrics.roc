@@ -690,9 +690,13 @@ Metrics :: [].{
     # did not deliver the 42 and 7 it claimed, and transients ran 1–7% fast against
     # TrainingPeaks. Steady state is identical either way, which is why it went unnoticed.
     #
-    # Written as literals because `.exp()` returns NaN on the pinned compiler (probed: every
-    # bracket around e^1 fails, including mutually exclusive ones). The formula is here so
-    # the numbers are checkable by hand:
+    # Written as literals because there is no `.exp()` on this compiler — the method does
+    # not exist on F64 at all. (An earlier note here said it "returns NaN"; probing the
+    # current pin showed the call is a MISSING METHOD error, so there was never a value
+    # to be wrong.) They stay literals rather than becoming `exp_neg` calls because these
+    # are compile-time constants and recomputing them per row buys nothing — but the
+    # comment below is no longer the only thing tying them to the formula: an expect
+    # checks each against `exp_neg`, so the two cannot drift apart silently.
     #   ctl_alpha = 1 − e^(−1/42) = 0.0235283133
     #   atl_alpha = 1 − e^(−1/7)  = 0.1331221000
     ctl_alpha : F64
@@ -3776,6 +3780,28 @@ expect {
     # let a mutation of the guard survive.
     zero_not_uniform = !(Metrics.is_uniform_reps(0, 600)) and !(Metrics.is_uniform_reps(0, 0))
     same and inside and outside and zero_not_uniform
+}
+
+# The EWMA constants are hardcoded, and this is what keeps the hardcoding honest
+# (#191). They were written as literals when no exponential was available; one now
+# is, so the formula in the comment beside them is checkable by machine instead of
+# by eye. The tolerance is 1e-9, which is what the literals' own truncation allows:
+# it catches a mistyped digit or a reversion to the 1/tau form that this comment
+# block exists about, but NOT shaving one more digit off the last place. Tightening
+# it further would require extending the literals, which changes the math for a
+# difference no output can express.
+expect {
+    ctl_true = 1.0 - Metrics.exp_neg(1.0 / 42.0)
+    atl_true = 1.0 - Metrics.exp_neg(1.0 / 7.0)
+    # the literals are the true values truncated at ~1e-10, which is far below
+    # anything CTL can express (it renders as a whole number), so they stay as
+    # they are -- deriving them live would change no output and cost a
+    # metrics_rev bump for a difference nobody can observe
+    (Metrics.ctl_alpha - ctl_true).abs() < 0.000000001
+    and (Metrics.atl_alpha - atl_true).abs() < 0.000000001
+    # and the tolerance is tight enough to catch a real slip: 1/42 rather than
+    # 1 - e^(-1/42) is the mistake this whole comment block exists about
+    and (Metrics.ctl_alpha - 1.0 / 42.0).abs() > 0.000000001
 }
 
 # ── the engine/coach boundary, pinned (#154) ────────────────────────
