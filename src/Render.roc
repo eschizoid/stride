@@ -811,6 +811,21 @@ Render :: [].{
             "  FTP (60d): ~${fmt0(ftp.estimated_ftp_w)}W — derived from your best 20-min power ${fmt0(ftp.best_20min_w_60d)}W",
         ]
 
+    # ── rep-level comparison screen (#149) ──────────────────────────────
+    # One row per session, newest first, with the per-rep watts spelled out so
+    # the shape of a session is visible at a glance rather than summarized away.
+    # Numbers only — a fade is reported, never judged (#154).
+    reps_screen = |p| {
+        header = "── ${I64.to_str(p.shape_reps)}×${mmss(p.shape_dur)} blocks · anchored ${p.anchor_date} ──"
+        rows = List.map(p.sessions, |s| {
+            watts = Str.join_with(List.map(s.reps, |r| fmt0(r.avg_signal)), " · ")
+            hr = if s.hr_rise_known " · hr +${fmt0(s.hr_rise_bpm)}" else ""
+            "${s.date}  ${watts}  (mean ${fmt0(s.mean_w)}, fade ${signed(s.fade_w)}${hr})"
+        })
+        legend = "reps left to right within each session · fade = last rep minus first · hr = first-to-last rise across reps"
+        Str.join_with(List.join([[header, ""], rows, ["", legend]]), "\n")
+    }
+
     # ── compare command screen ──────────────────────────────────────────
     # this rolling window vs the prior one, metric by metric, with a signed delta
     # The compare verdict as a PURE producer, extracted so the boundary guard can

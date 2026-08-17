@@ -1264,6 +1264,23 @@ Metrics :: [].{
         # ceiling would orphan ultra-length activities from ever being comparable)
         else { lo: 7200, hi: 8640000 }
 
+    # The rep-scale twin of duration_band (#149). Session bands are 20/45/75/120
+    # minutes wide, which at rep scale is useless: a 3x2min VO2 set and a 3x17min
+    # tempo block both land in "under 20 minutes" and would be compared as the
+    # same workout. These edges follow how intervals are actually prescribed —
+    # sprints, short VO2, classic 3-6min VO2, 6-10min, threshold 10-15, sweet
+    # spot 15-30, and long. Fixed edges for the same reason duration_band uses
+    # them: comparability must be symmetric, which a +/-% window is not.
+    rep_duration_band : I64 -> { lo : I64, hi : I64 }
+    rep_duration_band = |dur_s|
+        if dur_s < 60 { lo: 0, hi: 60 }
+        else if dur_s < 180 { lo: 60, hi: 180 }
+        else if dur_s < 360 { lo: 180, hi: 360 }
+        else if dur_s < 600 { lo: 360, hi: 600 }
+        else if dur_s < 900 { lo: 600, hi: 900 }
+        else if dur_s < 1800 { lo: 900, hi: 1800 }
+        else { lo: 1800, hi: 86400 }
+
     # percentile of `current` within `samples`: the share of samples <= current,
     # 0-100. DIRECTION-FREE — for EF/NP higher is better, for decoupling lower
     # is better; stride reports the rank, the coach applies the direction.
@@ -3525,6 +3542,20 @@ expect {
     and Metrics.percentile_of([1.0, 2.0, 3.0, 4.0], 2.5) == 50
     and Metrics.percentile_of([5.0], 5.0) == 100
     and Metrics.percentile_of([], 1.0) == 0
+}
+
+# rep bands separate workouts that session bands would merge (#149): a 3x2min
+# VO2 set and a 3x12min threshold block are not the same session shape
+expect {
+    Metrics.rep_duration_band(120) != Metrics.rep_duration_band(720)
+    and Metrics.rep_duration_band(720) == { lo: 600, hi: 900 }
+    and Metrics.rep_duration_band(180) == { lo: 180, hi: 360 }
+    and Metrics.rep_duration_band(59) == { lo: 0, hi: 60 }
+    and Metrics.rep_duration_band(3600) == { lo: 1800, hi: 86400 }
+    # symmetric: two durations in one band agree about each other
+    and Metrics.rep_duration_band(610) == Metrics.rep_duration_band(890)
+    # and the session-scale rule really would have merged them
+    and Metrics.duration_band(120) == Metrics.duration_band(720)
 }
 
 # ── the engine/coach boundary, pinned (#154) ────────────────────────

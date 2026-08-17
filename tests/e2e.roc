@@ -718,6 +718,24 @@ b_seed_analyze! = |ctx| {
     # interval ride and carries every segment kind, so it is what actually
     # exercises those declarations. It is deleted a few lines below.
     check!("interval activity conforms (non-empty segments)", validate!("activity 103", "activity") == "")?
+    # ── rep-level comparison (#149) ──────────────────────────────────────
+    # 103 is the fixture's interval ride, so it anchors `reps`. The shape block
+    # is the comparability rule made visible; a session whose rep COUNT or
+    # rep-duration BAND differs must not appear beside it.
+    check!("reps anchors on the interval ride", strjq!(ctx, ["reps"], ".data.anchor_activity_id") == "103")?
+    check!("reps states the shape it compared on", strjq!(ctx, ["reps"], ".data.shape | (.rep_count > 0) and (.band_hi_s > .band_lo_s)") == "true")?
+    check!("every session shares the anchor's rep count", strjq!(ctx, ["reps"], "[.data.sessions[].rep_count] | unique | length == 1") == "true")?
+    check!("...and every rep duration sits inside the stated band", strjq!(ctx, ["reps"], ".data as $d | [$d.sessions[].mean_dur_s | (. >= $d.shape.band_lo_s and . < $d.shape.band_hi_s)] | all") == "true")?
+    check!("reps conforms to its schema", validate!("reps", "reps") == "")?
+    check!("a date with no detected structure says so in band", Str.contains(stride!(ctx.bin, ctx.home, ["reps", "1999-01-01"]), "no_intervals_on_date"))?
+    # comparability is not just the count: a same-count session whose reps sit
+    # in a DIFFERENT duration band must be excluded, which is the whole reason
+    # rep-scale bands exist rather than the session-scale ones
+    before_n = Str.trim(strjq!(ctx, ["reps"], ".data.sessions | length"))
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,distance,weighted_avg_watts,avg_watts,device_watts) VALUES (330,'short vo2','Ride','Ride','${ctx.d1}T05:00:00Z',1200,8000,240,240,1);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (330,0,'work',0,90,300.0,'power'),(330,1,'work',200,90,300.0,'power'),(330,2,'work',400,90,300.0,'power');")
+    check!("a same-count session in another rep band is not comparable", Str.trim(strjq!(ctx, ["reps"], ".data.sessions | length")) == before_n)?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=330; DELETE FROM activities WHERE id=330;")
     # --help rather than a bare call: interpolating a compile-time empty string
     # into the command slot is the #32-class crash, and --help returns the
     # identical discovery payload

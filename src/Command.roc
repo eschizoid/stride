@@ -20,6 +20,9 @@ Command := [
 	Import(Str),
 	Rate(Str, Str),
 	Progress(Str, [Asc, Desc]),
+	## rep-level comparison: the anchor session's detected blocks against the
+	## same-shaped blocks of earlier comparable sessions (#149)
+	Reps(Str),
 	Activity(Str),
 	Load(U64),
 	PowerCurve(U64, Str),
@@ -93,6 +96,8 @@ Command := [
 			[_, "import", src] => Ok(Import(src))
 			[_, "rate", target, rpe_str] => Ok(Rate(target, rpe_str))
 			[_, "doctor"] => Ok(Doctor)
+			[_, "reps"] => Ok(Reps(""))
+			[_, "reps", date] => Ok(Reps(date))
 			[_, "zones"] => Ok(Zones)
 			[_, "pz"] => Ok(Zones)
 			# a bare asc/desc is a sort on the latest anchor, not a date named "desc"
@@ -166,7 +171,7 @@ Command := [
 		"init", "auth", "sync", "backfill", "analyze", "summary", "stats", "doctor",
 		"zones", "pz", "compare", "activities", "activity", "top", "import", "rate",
 		"load", "power-curve", "pc", "progress", "week", "plan", "complete", "skip",
-		"config", "--version", "--help", "-h", "help",
+		"config", "reps", "--version", "--help", "-h", "help",
 	]
 
 	count : Str, (U64 -> Command) -> Try(Command, ParseErr)

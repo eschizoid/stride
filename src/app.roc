@@ -228,6 +228,7 @@ dispatch! = |cmd|
         Command.Import(src) => Import.import_archive!(src)
         Command.Rate(target, rpe_str) => Plan.rate!(target, rpe_str)
         Command.Progress(name, sort) => Report.progress!(name, sort)
+        Command.Reps(date) => Report.reps!(date)
         Command.Activity(id_str) => Report.activity!(id_str)
         Command.Load(days) => Report.load_series!(days)
         Command.PowerCurve(days, sport) => Report.power_curve!(days, sport)

@@ -1,0 +1,60 @@
+{
+  "title": "reps",
+  "description": "Rep-level comparison (#149): the anchor session's detected work blocks beside the same-shaped blocks of earlier comparable sessions. `shape` states the comparability rule that selected them — same sport family, same rep count, same rep-duration band (Metrics.rep_duration_band), never later than the anchor.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": ["anchor_date", "anchor_activity_id", "shape", "sport_family", "sessions"],
+  "properties": {
+    "anchor_date": { "type": "string" },
+    "anchor_activity_id": { "type": "integer" },
+    "sport_family": { "type": "string" },
+    "shape": {
+      "type": "object",
+      "additionalKeys": false,
+      "required": ["rep_count", "mean_dur_s", "band_lo_s", "band_hi_s"],
+      "properties": {
+        "rep_count": { "type": "integer" },
+        "mean_dur_s": { "type": "integer" },
+        "band_lo_s": { "type": "integer" },
+        "band_hi_s": { "type": "integer" }
+      }
+    },
+    "sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": ["id", "date", "name", "rep_count", "mean_w", "mean_dur_s", "fade_w", "hr_rise_bpm", "hr_rise_known", "reps"],
+        "properties": {
+          "id": { "type": "integer" },
+          "date": { "type": "string" },
+          "name": { "type": "string" },
+          "rep_count": { "type": "integer" },
+          "mean_w": { "type": "number" },
+          "mean_dur_s": { "type": "integer" },
+          "fade_w": { "type": "number" },
+          "hr_rise_bpm": { "type": "number" },
+          "hr_rise_known": { "type": "boolean" },
+          "reps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalKeys": false,
+              "required": ["ordinal", "dur_s", "avg_signal", "signal", "avg_hr", "hr_known", "rec_drop", "rec_drop_known"],
+              "properties": {
+                "ordinal": { "type": "integer" },
+                "dur_s": { "type": "integer" },
+                "avg_signal": { "type": "number" },
+                "signal": { "type": "string", "enum": ["power", "pace"] },
+                "avg_hr": { "type": "number" },
+                "hr_known": { "type": "boolean" },
+                "rec_drop": { "type": "number" },
+                "rec_drop_known": { "type": "boolean" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

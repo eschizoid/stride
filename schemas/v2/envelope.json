@@ -37,6 +37,8 @@
             "no_activities",
             "no_activities_csv",
             "no_data",
+            "no_detected_intervals",
+            "no_intervals_on_date",
             "no_power_data",
             "no_scorable_workouts",
             "no_workout_on_date",

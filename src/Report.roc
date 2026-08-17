@@ -1792,6 +1792,162 @@ Report :: [].{
     # "am I improving on THIS workout?" — anchored on a date, rendered through the
     # sport-aware lens each repeated workout supports (power->EF, distance->speed/HR,
     # rated strength->RPE). Bare `progress` uses your latest analyzed workout.
+    # ── rep-level comparison (#149) ──────────────────────────────────────
+    #
+    # `progress` compares whole SESSIONS; this compares the reps inside them.
+    # The anchor is a session with detected work blocks (#95/#171); comparables
+    # are earlier sessions of the same sport family whose block structure has
+    # the SAME SHAPE — same rep count, same duration band — because "3x12min"
+    # and "5x3min" are different workouts even on the same bike, and averaging
+    # them together would answer no question anyone asked.
+    #
+    # Comparability follows #160's rule — fixed bands, so it stays symmetric —
+    # at REP scale: Metrics.rep_duration_band, because the session bands are
+    # 20-to-120 minutes wide and would call a 3x2min VO2 set and a 3x17min tempo
+    # block the same workout.
+    #
+    # Everything emitted is a measurement (#154): per-rep watts and HR, the
+    # first-to-last fade within a session, and the rep count. Whether a fade is
+    # "too much" is the coach's call.
+    reps! : Str => Try({}, _)
+    reps! = |date_arg| {
+        path = Db.open_db!({})?
+        # the anchor: the named date's session with work blocks, else the most
+        # recent one that has any. A date with no detected structure is an
+        # honest in-band error rather than an empty comparison.
+        anchor = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.name AS name,
+                \\       COALESCE(a.sport_family, a.sport_type) AS fam,
+                \\       COUNT(*) AS reps, CAST(AVG(s.dur_s) AS INTEGER) AS mean_dur
+                \\FROM activity_segments s JOIN activities a ON a.id = s.activity_id
+                \\WHERE s.kind = 'work' AND (:d = '' OR substr(a.start_local, 1, 10) = :d)
+                \\GROUP BY s.activity_id
+                \\ORDER BY a.start_local DESC, a.id DESC LIMIT 1
+            ,
+            bindings: [{ name: ":d", value: String(date_arg) }],
+            rows: |cols| |stmt| {
+                id = Sqlite.i64("id")(cols)(stmt)?
+                date = Sqlite.str("date")(cols)(stmt)?
+                name = Sqlite.str("name")(cols)(stmt)?
+                fam = Sqlite.str("fam")(cols)(stmt)?
+                reps = Sqlite.i64("reps")(cols)(stmt)?
+                mean_dur = Sqlite.i64("mean_dur")(cols)(stmt)?
+                Ok({ id, date, name, fam, reps, mean_dur })
+            },
+        })?
+        match List.first(anchor) {
+            Err(_) =>
+                if Str.is_empty(date_arg)
+                    Output.err_out!("no_detected_intervals", "no session on record has detected interval structure yet — `stride activity <id>` shows what a ride's blocks look like")
+                else
+                    Output.err_out!("no_intervals_on_date", "no detected interval structure on ${date_arg} — the ride may have been continuous, or its streams are missing")
+            Ok(a) => {
+                band = Metrics.rep_duration_band(a.mean_dur)
+                # same family, same rep count, same rep-duration band, and never
+                # later than the anchor — the same no-future-leak rule as #160,
+                # so re-running this on an old session reproduces its answer.
+                sessions = Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query:
+                        \\SELECT a2.id AS id, substr(a2.start_local, 1, 10) AS date, a2.name AS name,
+                        \\       COUNT(*) AS reps,
+                        \\       CAST(AVG(s.avg_signal) AS REAL) AS mean_w,
+                        \\       CAST(AVG(s.dur_s) AS INTEGER) AS mean_dur
+                        \\FROM activity_segments s JOIN activities a2 ON a2.id = s.activity_id
+                        \\JOIN activities self ON self.id = :id
+                        \\WHERE s.kind = 'work'
+                        \\  AND COALESCE(a2.sport_family, a2.sport_type) = COALESCE(self.sport_family, self.sport_type)
+                        \\  AND a2.start_local <= self.start_local
+                        \\GROUP BY s.activity_id
+                        \\HAVING COUNT(*) = :reps
+                        \\   AND CAST(AVG(s.dur_s) AS INTEGER) >= :blo
+                        \\   AND CAST(AVG(s.dur_s) AS INTEGER) < :bhi
+                        \\ORDER BY a2.start_local DESC, a2.id DESC LIMIT 12
+                    ,
+                    bindings: [
+                        { name: ":id", value: Integer(a.id) },
+                        { name: ":reps", value: Integer(a.reps) },
+                        { name: ":blo", value: Integer(band.lo) },
+                        { name: ":bhi", value: Integer(band.hi) },
+                    ],
+                    rows: |cols| |stmt| {
+                        id = Sqlite.i64("id")(cols)(stmt)?
+                        date = Sqlite.str("date")(cols)(stmt)?
+                        name = Sqlite.str("name")(cols)(stmt)?
+                        reps = Sqlite.i64("reps")(cols)(stmt)?
+                        mean_w = Sqlite.f64("mean_w")(cols)(stmt)?
+                        mean_dur = Sqlite.i64("mean_dur")(cols)(stmt)?
+                        Ok({ id, date, name, reps, mean_w, mean_dur })
+                    },
+                })?
+                rows_for! = |aid| Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query:
+                        \\SELECT ordinal AS ordinal, dur_s AS dur_s, CAST(avg_signal AS REAL) AS avg_signal,
+                        \\       COALESCE(signal, '') AS signal,
+                        \\       CAST(COALESCE(avg_hr, 0) AS REAL) AS avg_hr,
+                        \\       CASE WHEN avg_hr IS NULL THEN 0 ELSE 1 END AS hr_known,
+                        \\       CAST(COALESCE(rec_drop_60s, 0) AS REAL) AS rec_drop,
+                        \\       CASE WHEN rec_drop_60s IS NULL THEN 0 ELSE 1 END AS rec_drop_known
+                        \\FROM activity_segments WHERE activity_id = :aid AND kind = 'work'
+                        \\ORDER BY ordinal
+                    ,
+                    bindings: [{ name: ":aid", value: Integer(aid) }],
+                    rows: |cols| |stmt| {
+                        ordinal = Sqlite.i64("ordinal")(cols)(stmt)?
+                        dur_s = Sqlite.i64("dur_s")(cols)(stmt)?
+                        avg_signal = Sqlite.f64("avg_signal")(cols)(stmt)?
+                        signal = Sqlite.str("signal")(cols)(stmt)?
+                        avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
+                        hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
+                        rec_drop = Sqlite.f64("rec_drop")(cols)(stmt)?
+                        rec_drop_known = Sqlite.i64("rec_drop_known")(cols)(stmt)?
+                        Ok({ ordinal, dur_s, avg_signal, signal, avg_hr, hr_known: hr_known != 0, rec_drop, rec_drop_known: rec_drop_known != 0 })
+                    },
+                })
+                built = List.map_try!(sessions, |sn| {
+                    rs = rows_for!(sn.id)?
+                    first_w = (List.first(rs)).map_ok(|r| r.avg_signal).ok_or(0.0)
+                    last_w = (List.last(rs)).map_ok(|r| r.avg_signal).ok_or(0.0)
+                    hr_rs = List.keep_if(rs, |r| r.hr_known)
+                    first_hr = (List.first(hr_rs)).map_ok(|r| r.avg_hr).ok_or(0.0)
+                    last_hr = (List.last(hr_rs)).map_ok(|r| r.avg_hr).ok_or(0.0)
+                    hr_span_known : Bool
+                    hr_span_known = List.len(hr_rs) >= 2
+                    Ok({
+                        id: sn.id,
+                        date: sn.date,
+                        name: sn.name,
+                        rep_count: sn.reps,
+                        mean_w: sn.mean_w,
+                        mean_dur_s: sn.mean_dur,
+                        # fade WITHIN the session: last rep minus first. Signed,
+                        # because holding or building is as real as fading.
+                        fade_w: last_w - first_w,
+                        # what the same work cost in heartbeats by the last rep
+                        hr_rise_bpm: if hr_span_known last_hr - first_hr else 0.0,
+                        hr_rise_known: hr_span_known,
+                        reps: rs,
+                    })
+                })?
+                if Output.json_mode!({})
+                    Output.emit_ok!({
+                        anchor_date: a.date,
+                        anchor_activity_id: a.id,
+                        # the shape every session here shares — the comparability
+                        # rule, stated rather than implied
+                        shape: { rep_count: a.reps, mean_dur_s: a.mean_dur, band_lo_s: band.lo, band_hi_s: band.hi },
+                        sport_family: a.fam,
+                        sessions: built,
+                    })
+                else
+                    Stdout.line!(Render.reps_screen({ anchor_date: a.date, shape_reps: a.reps, shape_dur: a.mean_dur, sessions: built }))
+            }
+        }
+    }
+
     progress! : Str, [Asc, Desc] => Try({}, _)
     progress! = |date_arg, sort| {
         path = Db.open_db!({})?
