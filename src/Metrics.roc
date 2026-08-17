@@ -690,9 +690,11 @@ Metrics :: [].{
     # did not deliver the 42 and 7 it claimed, and transients ran 1–7% fast against
     # TrainingPeaks. Steady state is identical either way, which is why it went unnoticed.
     #
-    # Written as literals because `.exp()` returns NaN on the pinned compiler (probed: every
-    # bracket around e^1 fails, including mutually exclusive ones). The formula is here so
-    # the numbers are checkable by hand:
+    # Written as literals because there is no `.exp()` on this compiler — the
+    # method does not exist on F64 at all. They stay literals; an expect pins
+    # each against `exp_neg`, so the LITERAL cannot drift from the formula.
+    # (It does not pin the decimals transcribed below — those are a reader's
+    # aid and can still go stale; the expect is the thing that cannot.)
     #   ctl_alpha = 1 − e^(−1/42) = 0.0235283133
     #   atl_alpha = 1 − e^(−1/7)  = 0.1331221000
     ctl_alpha : F64
@@ -3776,6 +3778,18 @@ expect {
     # let a mutation of the guard survive.
     zero_not_uniform = !(Metrics.is_uniform_reps(0, 600)) and !(Metrics.is_uniform_reps(0, 0))
     same and inside and outside and zero_not_uniform
+}
+
+# The literals beside `ctl_alpha` are 1 - e^(-1/tau) truncated at ~1e-10. The
+# tolerance is atl_alpha's own truncation error (2.498e-10) plus 20%. The 42-day
+# convergence expect (search `63.21`) already catches a reversion to the 1/tau
+# form; this catches a fat-fingered digit, which that expect does not see until
+# about the third decimal of atl_alpha.
+expect {
+    ctl_true = 1.0 - Metrics.exp_neg(1.0 / 42.0)
+    atl_true = 1.0 - Metrics.exp_neg(1.0 / 7.0)
+    (Metrics.ctl_alpha - ctl_true).abs() < 0.0000000003
+    and (Metrics.atl_alpha - atl_true).abs() < 0.0000000003
 }
 
 # ── the engine/coach boundary, pinned (#154) ────────────────────────
