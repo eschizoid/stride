@@ -1,0 +1,169 @@
+{
+  "title": "reps",
+  "description": "Rep-level comparison (#149): the anchor session's detected work blocks beside the same-shaped blocks of earlier comparable sessions. `shape` states the selection rule \u2014 same sport family, same rep count, same rep-duration band (Metrics.rep_duration_band), same signal, never later than the anchor. The anchor must itself be a repeated shape (reps within 1.6x) or the command refuses with irregular_anchor; candidate sessions are NOT filtered on uniformity, they report their own via min_dur_s/max_dur_s/uniformity, because whether an uneven session is 'the same workout' is the coach's judgment. `matched_total` counts everything the rule matched; `sessions` is the twelve most uniform of them, displayed newest first.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "anchor_date",
+    "anchor_activity_id",
+    "shape",
+    "sport_family",
+    "sessions",
+    "matched_total"
+  ],
+  "properties": {
+    "anchor_date": {
+      "type": "string"
+    },
+    "anchor_activity_id": {
+      "type": "integer"
+    },
+    "sport_family": {
+      "type": "string"
+    },
+    "shape": {
+      "type": "object",
+      "additionalKeys": false,
+      "required": [
+        "rep_count",
+        "mean_dur_s",
+        "band_lo_s",
+        "band_hi_s",
+        "signal"
+      ],
+      "properties": {
+        "rep_count": {
+          "type": "integer"
+        },
+        "mean_dur_s": {
+          "type": "integer"
+        },
+        "band_lo_s": {
+          "type": "integer"
+        },
+        "band_hi_s": {
+          "type": "integer"
+        },
+        "signal": {
+          "type": "string",
+          "enum": [
+            "power",
+            "pace",
+            ""
+          ]
+        }
+      }
+    },
+    "sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": [
+          "id",
+          "date",
+          "name",
+          "rep_count",
+          "mean_signal",
+          "mean_dur_s",
+          "fade_signal",
+          "hr_rise_bpm",
+          "hr_rise_known",
+          "reps",
+          "min_dur_s",
+          "max_dur_s",
+          "uniformity"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "date": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "rep_count": {
+            "type": "integer"
+          },
+          "mean_signal": {
+            "type": "number"
+          },
+          "mean_dur_s": {
+            "type": "integer"
+          },
+          "fade_signal": {
+            "type": "number"
+          },
+          "hr_rise_bpm": {
+            "type": "number"
+          },
+          "hr_rise_known": {
+            "type": "boolean"
+          },
+          "reps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalKeys": false,
+              "required": [
+                "ordinal",
+                "dur_s",
+                "avg_signal",
+                "signal",
+                "avg_hr",
+                "hr_known",
+                "rec_drop",
+                "rec_drop_known"
+              ],
+              "properties": {
+                "ordinal": {
+                  "type": "integer"
+                },
+                "dur_s": {
+                  "type": "integer"
+                },
+                "avg_signal": {
+                  "type": "number"
+                },
+                "signal": {
+                  "type": "string",
+                  "enum": [
+                    "power",
+                    "pace",
+                    ""
+                  ]
+                },
+                "avg_hr": {
+                  "type": "number"
+                },
+                "hr_known": {
+                  "type": "boolean"
+                },
+                "rec_drop": {
+                  "type": "number"
+                },
+                "rec_drop_known": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "min_dur_s": {
+            "type": "integer"
+          },
+          "max_dur_s": {
+            "type": "integer"
+          },
+          "uniformity": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "matched_total": {
+      "type": "integer"
+    }
+  }
+}

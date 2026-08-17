@@ -184,6 +184,15 @@ Render :: [].{
         if x >= 0.0 "+${mag}" else "-${mag}"
     }
 
+    # signed(), at the precision the signal is displayed in. A pace delta of
+    # -0.04 m/s is the difference between 4:00/km and 4:03/km; through fmt0 it
+    # renders as "0" and the column reports no change at all.
+    signed_value : F64, Str -> Str
+    signed_value = |x, signal| {
+        mag = seg_value((x).abs(), signal)
+        if x >= 0.0 "+${mag}" else "-${mag}"
+    }
+
     # How long the band has held, appended to the state (#123).
     #
     # Takes the TAG, not a flattened number: the caller must not decide what Unknown means
@@ -811,6 +820,80 @@ Render :: [].{
             "  FTP (60d): ~${fmt0(ftp.estimated_ftp_w)}W — derived from your best 20-min power ${fmt0(ftp.best_20min_w_60d)}W",
         ]
 
+    # ── rep-level comparison screen (#149) ──────────────────────────────
+    # One row per session, newest first, with the per-rep watts spelled out so
+    # the shape of a session is visible at a glance rather than summarized away.
+    # Numbers only — a fade is reported, never judged (#154).
+    reps_screen = |p| {
+        shown = (List.len(p.sessions)).to_i64_wrap()
+        # seg_unit carries a leading space for " m/s" so it can suffix a
+        # number directly; the legend needs it bare.
+        unit = Str.trim(seg_unit(p.signal))
+        # Rows are RANKED by uniformity and then capped, so saying only "12 of
+        # 21" invites the reading that the other 9 are older, when they are in
+        # fact the least regular. On this athlete the dropped rows included
+        # five sessions from the current year, under a newest-first table.
+        more = if p.matched_total > shown " · showing the ${I64.to_str(shown)} most uniform of ${I64.to_str(p.matched_total)}" else ""
+        # How much of the evidence is itself the shape named in the header.
+        # Because the rows are ranked by uniformity, a conforming session can
+        # never rank below a non-conforming one: so when this count is under
+        # the number shown, it is exact over the WHOLE matched set, not just
+        # the visible rows. When every visible row conforms there may be more
+        # below the cap, hence the "≥".
+        conforming = (List.len(List.keep_if(p.sessions, |s| Metrics.is_uniform_reps(s.min_dur_s, s.max_dur_s)))).to_i64_wrap()
+        atleast = if conforming == shown and p.matched_total > shown "≥" else ""
+        # the NOUN follows how many were matched, the VERB how many conform:
+        # "1 of 8 matched sessions is itself" -- pluralizing both produced
+        # "1 of 8 matched session is itself" on 7 of 15 real anchors
+        noun = if p.matched_total == 1.I64 "matched session" else "matched sessions"
+        verb = if conforming == 1.I64 "is itself" else "are themselves"
+        # The trailing clause described rows that may not exist: on a first
+        # structured session it read "1 of 1 ... the rest are listed", naming a
+        # rest of zero. It also implied the un-annotated rows were the
+        # conforming ones, but the annotation fires at a spread of 1.15 and the
+        # census counts at 1.6, so on real data that mapping gives 1 where the
+        # census says 3.
+        rest = p.matched_total - conforming
+        # When the window caps and every visible row conforms, `conforming` is a
+        # LOWER bound (hidden rows rank worse but may still conform), so the
+        # remainder is an UPPER bound. Naming it exactly said "at least 12 of 35"
+        # and "the other 23 are not like-for-like" in one breath, while two of
+        # those 23 were identical in shape to the anchor.
+        tail =
+            if rest <= 0 {
+                ""
+            } else if atleast != "" and rest == 1.I64 {
+                " — up to one other matches its rep count and duration band without being this shape"
+            } else if atleast != "" {
+                " — up to ${I64.to_str(rest)} others match its rep count and duration band without being this shape"
+            } else if rest == 1.I64 {
+                " — the other one matches its rep count and duration band without being this shape"
+            } else {
+                " — the other ${I64.to_str(rest)} match its rep count and duration band without being this shape"
+            }
+        # A caveat that fires on 11 of 12 rows has stopped being a caveat, so
+        # the count of like-for-like evidence leads instead of hiding in a
+        # per-row parenthetical.
+        census = "${atleast}${I64.to_str(conforming)} of ${I64.to_str(p.matched_total)} ${noun} ${verb} this repeated shape${tail}"
+        # "anchor" is load-bearing: the shape describes the anchor session, and
+        # each row states its own spread. Claiming it for the table would be the
+        # header/rows contradiction review found in round 1.
+        header = "── anchor ${I64.to_str(p.shape_reps)}×${mmss(p.shape_dur)} · ${p.anchor_date}${more} ──"
+        rows = List.map(p.sessions, |s| {
+            # seg_value/seg_unit, not fmt0: on a run avg_signal is metres per
+            # second, and fmt0 rendered every rep of a 4:00/km and a 4:13/km
+            # session as an identical "4".
+            vals = Str.join_with(List.map(s.reps, |r| seg_value(r.avg_signal, p.signal)), " · ")
+            # signed(), not a hardcoded "+": a HR DROP across reps is a real
+            # signal and rendered as "hr +-8" three times on real data.
+            hr = if s.hr_rise_known " · hr ${signed(s.hr_rise_bpm)}" else ""
+            spread = if s.uniformity >= 1.15 " · reps ${mmss(s.min_dur_s)}-${mmss(s.max_dur_s)}" else ""
+            "${s.date}  ${vals}  (mean ${seg_value(s.mean_signal, p.signal)}, fade ${signed_value(s.fade_signal, p.signal)}${hr}${spread})"
+        })
+        legend = "reps left to right within each session, in ${unit} · fade = last rep minus first · hr = first-to-last change across reps"
+        Str.join_with(List.join([[header, "", census, ""], rows, ["", legend]]), "\n")
+    }
+
     # ── compare command screen ──────────────────────────────────────────
     # this rolling window vs the prior one, metric by metric, with a signed delta
     # The compare verdict as a PURE producer, extracted so the boundary guard can
@@ -1195,6 +1278,112 @@ expect {
     # flat-drift verdict on every single-rep session
     and Render.seg_hr_drift([seg(150.0, True)]) == Err(NotEnough)
 }
+
+# reps_screen: units, sign, caption and census. Every assertion here failed on
+# real data before this round.
+expect {
+    rep = |v| { avg_signal: v, ordinal: 0.I64, dur_s: 240.I64 }
+    sess = |date, unif, hr_rise, mean, fade, vals| {
+        date,
+        uniformity: unif,
+        min_dur_s: 240.I64,
+        max_dur_s: 241.I64,
+        mean_signal: mean,
+        fade_signal: fade,
+        hr_rise_bpm: hr_rise,
+        hr_rise_known: True,
+        reps: List.map(vals, rep),
+    }
+    power = Render.reps_screen({
+        anchor_date: "2026-08-16",
+        shape_reps: 3.I64,
+        shape_dur: 718.I64,
+        matched_total: 21.I64,
+        signal: "power",
+        sessions: [sess("2026-08-16", 1.01, 11.0, 262.0, -16.0, [268.0, 265.0, 252.0])],
+    })
+    pace = Render.reps_screen({
+        anchor_date: "2026-08-10",
+        shape_reps: 5.I64,
+        shape_dur: 241.I64,
+        matched_total: 2.I64,
+        signal: "pace",
+        sessions: [
+            sess("2026-08-10", 1.01, 12.0, 4.15, -0.04, [4.1667, 4.13]),
+            sess("2026-05-10", 1.01, 12.0, 3.94, -0.03, [3.9526, 3.92]),
+        ],
+    })
+    # some shown rows do NOT conform, so the count is exact and the remainder
+    # is named rather than hedged -- and "the other one" agrees in number
+    mixed = Render.reps_screen({
+        anchor_date: "2026-08-16",
+        shape_reps: 3.I64,
+        shape_dur: 718.I64,
+        matched_total: 3.I64,
+        signal: "power",
+        sessions: [
+            sess("2026-08-16", 1.01, 11.0, 262.0, -16.0, [268.0, 252.0]),
+            { date: "2025-10-15", uniformity: 4.3, min_dur_s: 264.I64, max_dur_s: 1144.I64, mean_signal: 236.0, fade_signal: -5.0, hr_rise_bpm: 13.0, hr_rise_known: True, reps: List.map([231.0, 227.0], rep) },
+        ],
+    })
+    dropped = Render.reps_screen({
+        anchor_date: "2023-02-11",
+        shape_reps: 7.I64,
+        shape_dur: 63.I64,
+        matched_total: 16.I64,
+        signal: "power",
+        sessions: [sess("2023-02-11", 1.02, -8.0, 248.0, -11.0, [248.0, 236.0])],
+    })
+    # pace is metres per second: through fmt0 a 4:00/km and a 4:13/km session
+    # both rendered every rep as "4", making the whole screen useless for runs
+    Str.contains(pace, "4.17") and Str.contains(pace, "in m/s")
+    # and a sub-1 m/s fade is a real difference, not "0"
+    and Str.contains(pace, "fade -0.04")
+    # a HR DROP across reps rendered as "hr +-8" -- the + was hardcoded
+    and Str.contains(dropped, "hr -8") and !(Str.contains(dropped, "+-"))
+    # rows are ranked by uniformity then capped, so "showing 12 of 21" read as
+    # "the other 9 are older" when they were the least regular
+    and Str.contains(power, "most uniform of 21")
+    # and the count of like-for-like evidence leads, rather than hiding in a
+    # per-row caveat that fired on 11 of 12 rows
+    # `Str.contains(power, "1 of 21 …")` matched whether or not the ≥ was
+    # there, so deleting the branch left the suite green. Pin the ≥ itself,
+    # and pin a case where it must be ABSENT.
+    # capped AND every shown row conforms: the count is a LOWER bound, so the
+    # remainder must be hedged rather than named exactly -- asserting "≥1 of 21"
+    # and "the other 20" together is a contradiction the old test enshrined
+    and Str.contains(power, "≥1 of 21 matched sessions is itself")
+    and Str.contains(power, "up to 20 others")
+    # ...and the HEDGED branch needs the singular too. Fixing number agreement
+    # on the exact branch and not this one left "up to 1 others match", which
+    # is the very defect the round was opened to close.
+    and Str.contains(Render.reps_screen({
+        anchor_date: "2026-08-16",
+        shape_reps: 3.I64,
+        shape_dur: 718.I64,
+        matched_total: 2.I64,
+        signal: "power",
+        sessions: [sess("2026-08-16", 1.01, 11.0, 262.0, -16.0, [268.0, 252.0])],
+    }), "up to one other matches")
+    and !(Str.contains(power, "the other 20"))
+    # the NOUN stays plural even when one row conforms
+    and !(Str.contains(power, "matched session is"))
+    # nothing capped and everything conforms: no ≥, and no clause naming a
+    # remainder of zero (it read "1 of 1 ... the rest are listed")
+    and Str.contains(pace, "2 of 2 matched sessions are themselves")
+    and !(Str.contains(pace, "≥"))
+    and !(Str.contains(pace, "the other"))
+    and !(Str.contains(pace, "up to"))
+    and Str.contains(mixed, "1 of 3 matched sessions is itself")
+    and Str.contains(mixed, "the other 2 match its rep count")
+    and !(Str.contains(mixed, "≥")) and !(Str.contains(mixed, "up to"))
+    and Str.contains(power, "W ·") and !(Str.contains(power, "m/s"))
+}
+
+# signed_value differs from signed ONLY in precision -- it inherits the
+# rounds-away-but-still-a-direction contract pinned above, which is why a pace
+# fade keeps its sign instead of collapsing to a bare zero.
+expect Render.signed_value(-0.04, "pace") == "-0.04" and Render.signed_value(-16.0, "power") == "-16" and Render.signed_value(-0.27, "power") == "-0"
 
 # ── the engine/coach boundary across ALL verdict producers (#154) ────
 # Every human verdict line stride renders is state, never advice. Each producer
