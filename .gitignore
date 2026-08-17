@@ -1,7 +1,6 @@
 /stride
 .DS_Store
 .idea/
-.claude/CLAUDE.md
 .claude/PLAN.md
 
 # test binary (built on demand from tests/e2e.roc)
@@ -15,3 +14,4 @@
 
 # local Strava account exports contain private activity data
 /export_*.zip
+.claude/CLAUDE.md

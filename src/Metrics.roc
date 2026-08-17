@@ -3784,24 +3784,38 @@ expect {
 
 # The EWMA constants are hardcoded, and this is what keeps the hardcoding honest
 # (#191). They were written as literals when no exponential was available; one now
-# is, so the formula in the comment beside them is checkable by machine instead of
-# by eye. The tolerance is 1e-9, which is what the literals' own truncation allows:
-# it catches a mistyped digit or a reversion to the 1/tau form that this comment
-# block exists about, but NOT shaving one more digit off the last place. Tightening
-# it further would require extending the literals, which changes the math for a
-# difference no output can express.
+# is, so the formula in the comment beside them is checkable by machine rather than
+# by eye.
+#
+# What this actually adds, measured: the 1/tau reversion is ALREADY caught by the
+# 42-day ramp expect below, whose comment records it. But that expect pins the
+# constants only through their effect on a rounded CTL/ATL, and the sensitivities
+# (dCTL/da ~ 1579, dATL/da ~ 12) mean the whole pre-existing suite constrains
+# atl_alpha to only about +-4e-3 — three decimal places. So a digit fat-fingered
+# while editing the comment beside it passes everything on main. That 1e-5 to
+# 1e-10 band is this expect's real contribution.
+#
+# The tolerance is 3e-10, set by atl_alpha's own truncation error (2.498e-10) with
+# ~20% headroom, and it needs no change to the literals. At the 1e-9 this first
+# shipped with the guard was ONE-SIDED — the literals sit BELOW true, so a +1e-9
+# typo landed inside the budget while -1e-9 was caught.
 expect {
     ctl_true = 1.0 - Metrics.exp_neg(1.0 / 42.0)
     atl_true = 1.0 - Metrics.exp_neg(1.0 / 7.0)
-    # the literals are the true values truncated at ~1e-10, which is far below
-    # anything CTL can express (it renders as a whole number), so they stay as
-    # they are -- deriving them live would change no output and cost a
-    # metrics_rev bump for a difference nobody can observe
-    (Metrics.ctl_alpha - ctl_true).abs() < 0.000000001
-    and (Metrics.atl_alpha - atl_true).abs() < 0.000000001
-    # and the tolerance is tight enough to catch a real slip: 1/42 rather than
-    # 1 - e^(-1/42) is the mistake this whole comment block exists about
-    and (Metrics.ctl_alpha - 1.0 / 42.0).abs() > 0.000000001
+    # the literals are the true values truncated at ~1e-10, far below anything CTL
+    # renders (a whole number). They stay as they are: extending them to full
+    # precision is safe -- daily_load is DELETE-and-rebuilt on every analyze, so
+    # no metrics_rev bump is involved -- but it would shift published JSON floats
+    # by ~1e-8 to buy nothing.
+    (Metrics.ctl_alpha - ctl_true).abs() < 0.0000000003
+    and (Metrics.atl_alpha - atl_true).abs() < 0.0000000003
+    # ...and the FORMULA is what must stay distinct from the linear approximation.
+    # Asserting that about the literal instead is unfalsifiable: the clause above
+    # already confines it to within 3e-10 of true, and true is 2.8e-4 from 1/42,
+    # so the intervals are disjoint by five orders of magnitude and the assertion
+    # can never be the reason for a failure. Pointed at ctl_true it CAN fail --
+    # if exp_neg ever regressed toward 1/tau, this is what would notice.
+    and (ctl_true - 1.0 / 42.0).abs() > 0.0001
 }
 
 # ── the engine/coach boundary, pinned (#154) ────────────────────────
