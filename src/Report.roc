@@ -203,7 +203,8 @@ Report :: [].{
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport, a.name AS name,
+                \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport,
+                \\       COALESCE(a.sport_family, a.sport_type) AS family, a.name AS name,
                 \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                 \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
@@ -227,6 +228,7 @@ Report :: [].{
                 id = Sqlite.i64("id")(cols)(stmt)?
                 date = Sqlite.str("date")(cols)(stmt)?
                 sport = Sqlite.str("sport")(cols)(stmt)?
+                family = Sqlite.str("family")(cols)(stmt)?
                 name = Sqlite.str("name")(cols)(stmt)?
                 moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
                 distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
@@ -251,7 +253,7 @@ Report :: [].{
                 hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
                 zones_known = Sqlite.i64("zones_known")(cols)(stmt)?
                 load_model = Sqlite.str("load_model")(cols)(stmt)?
-                Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr, decoupling_pct, decoupling_known: decoupling_known != 0, decoupling_signal, power_known: power_known != 0, intensity_known: intensity_known != 0, hr_known: hr_known != 0, zones_known: zones_known != 0, load_model })
+                Ok({ id, date, sport, family, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr, decoupling_pct, decoupling_known: decoupling_known != 0, decoupling_signal, power_known: power_known != 0, intensity_known: intensity_known != 0, hr_known: hr_known != 0, zones_known: zones_known != 0, load_model })
             },
         })?
         match List.first(rows) {
@@ -319,6 +321,34 @@ Report :: [].{
                             }
                         Null => { max_hr: 0.0, best_60: 0.0, best_180: 0.0, best_300: 0.0, best_1200: 0.0, easy_s: 0, moderate_s: 0, hard_s: 0, failed: False, has_watts: False, has_dist: False }
                     }
+                # W' balance (#186): what the ride did to the anaerobic tank,
+                # against the fit as it stood on the ride's own date. Summary
+                # rather than the series — a per-second array in every activity
+                # payload would dwarf everything else, and min/end answer the
+                # question ("how close to empty, and did it come back?").
+                cpfit = cp_fit_as_of!(path, a.family, a.date, 90)?
+                # ANNOTATED: this payload is encode-only, and an unconstrained
+                # tag serializes as the STRING "True" (the trap this repo keeps
+                # rediscovering — pinned in e2e for the other flags)
+                wbal_known : Bool
+                wbal_known = cpfit.cp > 0.0 and (match raw_opt { NotNull(_) => True  Null => False })
+                wbal =
+                    match raw_opt {
+                        NotNull(_) if cpfit.cp > 0.0 => {
+                            decoded2 = Streams.decode_streams(raw_opt)
+                            wp = List.keep_if(Streams.stream_pairs(decoded2.streams.time, decoded2.streams.watts), |p| Metrics.valid_watts(p.v))
+                            series = Metrics.w_prime_balance(Metrics.resample_1s_pairs(wp, Hold), { cp: cpfit.cp, w_prime: cpfit.w_prime })
+                            if List.is_empty(series) {
+                                { min_j: 0.0, end_j: 0.0, computed: False }
+                            } else {
+                                lowest = List.fold(series, cpfit.w_prime, |acc, b| if b < acc b else acc)
+                                { min_j: lowest, end_j: (List.last(series)).ok_or(0.0), computed: True }
+                            }
+                        }
+                        _ => { min_j: 0.0, end_j: 0.0, computed: False }
+                    }
+                wbal_ok : Bool
+                wbal_ok = wbal_known and wbal.computed
                 pintensity = { easy_s: detail.easy_s, moderate_s: detail.moderate_s, hard_s: detail.hard_s }
                 has_power_intensity = (pintensity.easy_s + pintensity.moderate_s + pintensity.hard_s) > 0
 
@@ -449,6 +479,25 @@ Report :: [].{
                         # detected structure (ADR 0008), ADDITIVE. Empty list + "" = none
                         # detected or no stream signal — reporting only, never a judgment.
                         segments: seg_rows,
+                        # the tank: how low it went and where it ended, plus the
+                        # fit it was measured against (a CP from a thin window is
+                        # a different claim from one fitted on a rich one)
+                        w_prime_balance: {
+                            min_j: wbal.min_j,
+                            end_j: wbal.end_j,
+                            known: wbal_ok,
+                            # A balance below zero is the MODEL failing, not the
+                            # athlete succeeding: it means the fitted W' is too
+                            # small to explain what was ridden. Reported as its
+                            # own flag because a bare negative number reads as a
+                            # measurement, and this one is a diagnosis of the fit.
+                            model_exceeded: wbal_ok and wbal.min_j < 0.0,
+                            cp_used: cpfit.cp,
+                            w_prime_used: cpfit.w_prime,
+                            fit_points: cpfit.points,
+                            fit_r2: cpfit.r2,
+                            fit_family: cpfit.family,
+                        },
                         interval_summary,
                         # TRUE = the detector actually ran with a signal (power, or
                         # pace on a pace-routed sport). Distinguishes "verified: no
@@ -1792,6 +1841,269 @@ Report :: [].{
     # "am I improving on THIS workout?" — anchored on a date, rendered through the
     # sport-aware lens each repeated workout supports (power->EF, distance->speed/HR,
     # rated strength->RPE). Bare `progress` uses your latest analyzed workout.
+    # ── rep-level comparison (#149) ──────────────────────────────────────
+    #
+    # `progress` compares whole SESSIONS; this compares the reps inside them.
+    # The anchor is a session with detected work blocks (#95/#171); comparables
+    # are earlier sessions of the same sport family whose block structure has
+    # the SAME SHAPE — same rep count, same duration band — because "3x12min"
+    # and "5x3min" are different workouts even on the same bike, and averaging
+    # them together would answer no question anyone asked.
+    #
+    # Comparability follows #160's rule — fixed bands, so it stays symmetric —
+    # at REP scale: Metrics.rep_duration_band, because the session bands are
+    # 20-to-120 minutes wide and would call a 3x2min VO2 set and a 3x17min tempo
+    # block the same workout.
+    #
+    # Everything emitted is a measurement (#154): per-rep watts and HR, the
+    # first-to-last fade within a session, and the rep count. Whether a fade is
+    # "too much" is the coach's call.
+    reps! : Str => Try({}, _)
+    reps! = |date_arg| {
+        path = Db.open_db!({})?
+        # the anchor: the named date's session with work blocks, else the most
+        # recent one that has any. A date with no detected structure is an
+        # honest in-band error rather than an empty comparison.
+        anchor = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.name AS name,
+                \\       COALESCE(a.sport_family, a.sport_type) AS fam,
+                \\       COUNT(*) AS reps, CAST(AVG(s.dur_s) AS INTEGER) AS mean_dur,
+                \\       MIN(s.dur_s) AS min_dur, MAX(s.dur_s) AS max_dur,
+                \\       COALESCE(MIN(s.signal), '') AS signal
+                \\FROM activity_segments s JOIN activities a ON a.id = s.activity_id
+                \\WHERE s.kind = 'work' AND (:d = '' OR substr(a.start_local, 1, 10) = :d)
+                \\GROUP BY s.activity_id
+                \\ORDER BY a.start_local DESC, a.id DESC LIMIT 1
+            ,
+            bindings: [{ name: ":d", value: String(date_arg) }],
+            rows: |cols| |stmt| {
+                id = Sqlite.i64("id")(cols)(stmt)?
+                date = Sqlite.str("date")(cols)(stmt)?
+                name = Sqlite.str("name")(cols)(stmt)?
+                fam = Sqlite.str("fam")(cols)(stmt)?
+                reps = Sqlite.i64("reps")(cols)(stmt)?
+                mean_dur = Sqlite.i64("mean_dur")(cols)(stmt)?
+                min_dur = Sqlite.i64("min_dur")(cols)(stmt)?
+                max_dur = Sqlite.i64("max_dur")(cols)(stmt)?
+                signal = Sqlite.str("signal")(cols)(stmt)?
+                Ok({ id, date, name, fam, reps, mean_dur, min_dur, max_dur, signal })
+            },
+        })?
+        match List.first(anchor) {
+            Err(_) =>
+                if Str.is_empty(date_arg)
+                    Output.err_out!("no_detected_intervals", "no session on record has detected interval structure yet — `stride activity <id>` shows what a ride's blocks look like")
+                else
+                    Output.err_out!("no_intervals_on_date", "no detected interval structure on ${date_arg} — the ride may have been continuous, or its streams are missing")
+            Ok(a) => {
+                # The anchor must itself BE a repeated shape before anything can
+                # share it. The old rule printed "3x11:58" over sessions whose
+                # reps ran 2187/67/250s: banding the MEAN says nothing about the
+                # spread, and with rep count already fixed, a mean band is
+                # arithmetically just a total-work-time band.
+                band = Metrics.rep_duration_band(a.mean_dur)
+                # The ANCHOR must be a repeated shape or there is nothing to
+                # compare against: a session whose blocks run 2187/67/250s has
+                # the same mean as a real 3x12 and is not a repeated set at all.
+                # Candidates are NOT filtered on this — each reports its own
+                # spread and the coach judges (#154). 1.6x is the one judgment
+                # the engine makes, and only about the question it was asked. It
+                # was 1.4x, which refused a session (9:43-13:42) that this very
+                # ranking placed second-most-comparable in the whole history —
+                # the engine calling one ride "comparable enough to show you"
+                # and "not repeated enough to be a workout" in the same breath.
+                # 1.6x still excludes everything from 2.1x up.
+                anchor_uniform = Metrics.is_uniform_reps(a.min_dur, a.max_dur)
+                if !(anchor_uniform) {
+                    Output.err_out!("irregular_anchor", "the blocks detected in this session vary too much to be one repeated shape (${(a.min_dur).to_str()}s to ${(a.max_dur).to_str()}s, and an anchor's blocks must sit within ${Render.fmt1(Metrics.anchor_uniformity_max)}x of each other) — nothing to compare it against as a repeated workout")
+                } else {
+                # same family, same rep count, same rep-duration band, and never
+                # later than the anchor — the same no-future-leak rule as #160,
+                # so re-running this on an old session reproduces its answer.
+                sessions = Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query:
+                        \\SELECT a2.id AS id, substr(a2.start_local, 1, 10) AS date, a2.name AS name,
+                        \\       COUNT(*) AS reps,
+                        \\       CAST(AVG(s.avg_signal) AS REAL) AS mean_w,
+                        \\       CAST(AVG(s.dur_s) AS INTEGER) AS mean_dur,
+                        \\       MIN(s.dur_s) AS min_dur, MAX(s.dur_s) AS max_dur
+                        \\FROM activity_segments s JOIN activities a2 ON a2.id = s.activity_id
+                        \\JOIN activities self ON self.id = :id
+                        \\WHERE s.kind = 'work'
+                        \\  AND COALESCE(a2.sport_family, a2.sport_type) = COALESCE(self.sport_family, self.sport_type)
+                        \\  AND a2.start_local <= self.start_local
+                        \\  AND COALESCE(s.signal, '') = :sig
+                        \\GROUP BY s.activity_id
+                        \\HAVING COUNT(*) = :reps
+                        \\   AND CAST(AVG(s.dur_s) AS INTEGER) >= :blo
+                        \\   AND CAST(AVG(s.dur_s) AS INTEGER) < :bhi
+                        \\-- keep the MOST COMPARABLE twelve, not the most recent.
+                        \\-- Declining to filter on uniformity and then letting a
+                        \\-- recency cap discard the two most uniform sessions in
+                        \\-- the history (review measured exactly that) defers the
+                        \\-- judgment and withholds the data for it. Ties break by
+                        \\-- recency; the rows are re-sorted by date for display.
+                        \\-- the ANCHOR always keeps its row: ranking decides which
+                        \\-- twelve are shown, and a table that answers "am I
+                        \\-- riding this harder?" without the session being asked
+                        \\-- about answers nothing. Round 2 got this for free from
+                        \\-- recency (the anchor is newest by construction);
+                        \\-- ranking by uniformity removed that guarantee.
+                        \\ORDER BY (a2.id = :id) DESC,
+                        \\         (CAST(MAX(s.dur_s) AS REAL) / MAX(MIN(s.dur_s), 1)) ASC,
+                        \\         a2.start_local DESC, a2.id DESC
+                        \\LIMIT 12
+                    ,
+                    bindings: [
+                        { name: ":id", value: Integer(a.id) },
+                        { name: ":reps", value: Integer(a.reps) },
+                        { name: ":blo", value: Integer(band.lo) },
+                        { name: ":bhi", value: Integer(band.hi) },
+                        { name: ":sig", value: String(a.signal) },
+                    ],
+                    rows: |cols| |stmt| {
+                        id = Sqlite.i64("id")(cols)(stmt)?
+                        date = Sqlite.str("date")(cols)(stmt)?
+                        name = Sqlite.str("name")(cols)(stmt)?
+                        reps = Sqlite.i64("reps")(cols)(stmt)?
+                        mean_w = Sqlite.f64("mean_w")(cols)(stmt)?
+                        mean_dur = Sqlite.i64("mean_dur")(cols)(stmt)?
+                        min_dur = Sqlite.i64("min_dur")(cols)(stmt)?
+                        max_dur = Sqlite.i64("max_dur")(cols)(stmt)?
+                        Ok({ id, date, name, reps, mean_w, mean_dur, min_dur, max_dur })
+                    },
+                })?
+                # how many sessions the rule matched, before the window. The
+                # repo does not ship silent caps (form_band_days_capped is the
+                # precedent), and review found the cap evicting the only two
+                # genuinely comparable sessions in the history while keeping
+                # eleven unrelated ones.
+                matched = Sqlite.query!({
+                    path: Path.utf8(path),
+                    query:
+                        \\SELECT COUNT(*) AS n FROM (
+                        \\  SELECT s.activity_id
+                        \\  FROM activity_segments s JOIN activities a2 ON a2.id = s.activity_id
+                        \\  JOIN activities self ON self.id = :id
+                        \\  WHERE s.kind = 'work'
+                        \\    AND COALESCE(a2.sport_family, a2.sport_type) = COALESCE(self.sport_family, self.sport_type)
+                        \\    AND a2.start_local <= self.start_local
+                        \\    AND COALESCE(s.signal, '') = :sig
+                        \\  GROUP BY s.activity_id
+                        \\  HAVING COUNT(*) = :reps
+                        \\     AND CAST(AVG(s.dur_s) AS INTEGER) >= :blo
+                        \\     AND CAST(AVG(s.dur_s) AS INTEGER) < :bhi
+                        \\)
+                    ,
+                    bindings: [
+                        { name: ":id", value: Integer(a.id) },
+                        { name: ":reps", value: Integer(a.reps) },
+                        { name: ":blo", value: Integer(band.lo) },
+                        { name: ":bhi", value: Integer(band.hi) },
+                        { name: ":sig", value: String(a.signal) },
+                    ],
+                    row: Sqlite.i64("n"),
+                })?
+                rows_for! = |aid| Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query:
+                        \\SELECT ordinal AS ordinal, dur_s AS dur_s, CAST(avg_signal AS REAL) AS avg_signal,
+                        \\       -- the writer never leaves this NULL (Analyze binds
+                        \\       -- 'power' or 'pace'); COALESCE keeps the decoder
+                        \\       -- total, and '' is declared in the schema rather
+                        \\       -- than manufactured outside it
+                        \\       COALESCE(signal, '') AS signal,
+                        \\       CAST(COALESCE(avg_hr, 0) AS REAL) AS avg_hr,
+                        \\       CASE WHEN avg_hr IS NULL THEN 0 ELSE 1 END AS hr_known,
+                        \\       CAST(COALESCE(rec_drop_60s, 0) AS REAL) AS rec_drop,
+                        \\       CASE WHEN rec_drop_60s IS NULL THEN 0 ELSE 1 END AS rec_drop_known
+                        \\FROM activity_segments WHERE activity_id = :aid AND kind = 'work'
+                        \\ORDER BY ordinal
+                    ,
+                    bindings: [{ name: ":aid", value: Integer(aid) }],
+                    rows: |cols| |stmt| {
+                        ordinal = Sqlite.i64("ordinal")(cols)(stmt)?
+                        dur_s = Sqlite.i64("dur_s")(cols)(stmt)?
+                        avg_signal = Sqlite.f64("avg_signal")(cols)(stmt)?
+                        signal = Sqlite.str("signal")(cols)(stmt)?
+                        avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
+                        hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
+                        rec_drop = Sqlite.f64("rec_drop")(cols)(stmt)?
+                        rec_drop_known = Sqlite.i64("rec_drop_known")(cols)(stmt)?
+                        Ok({ ordinal, dur_s, avg_signal, signal, avg_hr, hr_known: hr_known != 0, rec_drop, rec_drop_known: rec_drop_known != 0 })
+                    },
+                })
+                # selection ranked by uniformity, DISPLAY by date — the coach
+                # reads a trend down the page, not a ranking
+                # Str has no ordering in this Roc — sort on parsed day numbers
+                keyed = List.map(sessions, |sn| { d: (Metrics.date_str_to_days(sn.date)).ok_or(0), sn })
+                by_date = List.map(List.sort_with(keyed, |x, y| if x.d > y.d LT else if x.d < y.d GT else EQ), |k| k.sn)
+                built = List.map_try!(by_date, |sn| {
+                    rs = rows_for!(sn.id)?
+                    first_w = (List.first(rs)).map_ok(|r| r.avg_signal).ok_or(0.0)
+                    last_w = (List.last(rs)).map_ok(|r| r.avg_signal).ok_or(0.0)
+                    # first-to-last means the FIRST and LAST reps, not the first
+                    # and last reps that happen to carry HR — review found a
+                    # session with HR on reps 1 and 2 reporting a "first-to-last"
+                    # rise that spanned reps 1 to 2 while the legend claimed
+                    # otherwise. If either end is missing, the span is unknown.
+                    first_r = List.first(rs)
+                    last_r = List.last(rs)
+                    ends_have_hr : Bool
+                    ends_have_hr = (first_r.map_ok(|r| r.hr_known) ?? False) and (last_r.map_ok(|r| r.hr_known) ?? False)
+                    first_hr = (first_r).map_ok(|r| r.avg_hr).ok_or(0.0)
+                    last_hr = (last_r).map_ok(|r| r.avg_hr).ok_or(0.0)
+                    hr_span_known : Bool
+                    hr_span_known = ends_have_hr and List.len(rs) >= 2
+                    Ok({
+                        id: sn.id,
+                        date: sn.date,
+                        name: sn.name,
+                        rep_count: sn.reps,
+                        mean_signal: sn.mean_w,
+                        mean_dur_s: sn.mean_dur,
+                        # the spread of THIS session's reps. The filter finds
+                        # candidates by count and scale; whether a session whose
+                        # reps run 588s to 1232s is "the same workout" as an even
+                        # 3x12 is judgment, so stride reports the dispersion and
+                        # the coach decides (#154). The anchor is gated on it —
+                        # a session with no consistent shape has nothing to be
+                        # compared AS — but a candidate is only described.
+                        min_dur_s: sn.min_dur,
+                        max_dur_s: sn.max_dur,
+                        uniformity: if sn.min_dur > 0 (sn.max_dur).to_f64() / (sn.min_dur).to_f64() else 0.0,
+                        # fade WITHIN the session: last rep minus first. Signed,
+                        # because holding or building is as real as fading.
+                        fade_signal: last_w - first_w,
+                        # what the same work cost in heartbeats by the last rep
+                        hr_rise_bpm: if hr_span_known last_hr - first_hr else 0.0,
+                        hr_rise_known: hr_span_known,
+                        reps: rs,
+                    })
+                })?
+                if Output.json_mode!({})
+                    Output.emit_ok!({
+                        anchor_date: a.date,
+                        anchor_activity_id: a.id,
+                        # the shape every session here shares — the comparability
+                        # rule, stated rather than implied
+                        shape: { rep_count: a.reps, mean_dur_s: a.mean_dur, band_lo_s: band.lo, band_hi_s: band.hi, signal: a.signal },
+                        sport_family: a.fam,
+                        # matched BEFORE the window; sessions is capped at 12,
+                        # newest first, so a caller can see what it is not seeing
+                        matched_total: matched,
+                        sessions: built,
+                    })
+                else
+                    Stdout.line!(Render.reps_screen({ anchor_date: a.date, shape_reps: a.reps, shape_dur: a.mean_dur, matched_total: matched, signal: a.signal, sessions: built }))
+                }
+            }
+        }
+    }
+
     progress! : Str, [Asc, Desc] => Try({}, _)
     progress! = |date_arg, sort| {
         path = Db.open_db!({})?
@@ -2185,6 +2497,127 @@ Report :: [].{
             )
         }
     }
+    # The athlete's CP/W' fit for ONE SPORT FAMILY as of a DATE, over the same
+    # 2-20 minute band power-curve fits (#186/#187 spend this model, so they
+    # must not fit a second, differently-shaped one).
+    #
+    # Strictly BEFORE the date, not on-or-before: a ride inside its own fit
+    # window raises the very W' it is then measured against. Review measured
+    # the swing on this athlete's breakthrough 3x12 — W' 2490 J excluding the
+    # ride, 6416 J including it, a 2.58x change in the denominator that scales
+    # every W' number for that ride, and it fires precisely on the rides where
+    # the athlete did something new.
+    #
+    # The family is the CALLER's, never a hardcoded Ride: a rowing session was
+    # being scored against a cyclist's CP and flagged known, which is worse than
+    # having no number at all.
+    cp_fit_as_of! : Str, Str, Str, U64 => Try({ cp : F64, w_prime : F64, points : I64, family : Str, r2 : F64, pts : List({ dur_s : F64, watts : F64 }) }, _)
+    cp_fit_as_of! = |path, family, on_date, days| {
+        row = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT CAST(COALESCE(MAX(m.best_300s_w), 0) AS REAL) AS d300,
+                \\       CAST(COALESCE(MAX(m.best_600s_w), 0) AS REAL) AS d600,
+                \\       CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS d1200
+                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                \\WHERE a.sport_family = :fam
+                \\  AND substr(a.start_local, 1, 10) < :on
+                \\  AND a.start_local >= date(:on, '-' || :days || ' days')
+            ,
+            bindings: [
+                { name: ":fam", value: String(family) },
+                { name: ":on", value: String(on_date) },
+                { name: ":days", value: String((days).to_str()) },
+            ],
+            row: |cols| |stmt| {
+                d300 = Sqlite.f64("d300")(cols)(stmt)?
+                d600 = Sqlite.f64("d600")(cols)(stmt)?
+                d1200 = Sqlite.f64("d1200")(cols)(stmt)?
+                Ok({ d300, d600, d1200 })
+            },
+        })?
+        pts = List.keep_if(
+            [{ dur_s: 300.0, watts: row.d300 }, { dur_s: 600.0, watts: row.d600 }, { dur_s: 1200.0, watts: row.d1200 }],
+            |p| p.watts > 0.0,
+        )
+        match Metrics.critical_power(pts) {
+            Ok(c) => Ok({ cp: c.cp, w_prime: c.w_prime, points: (List.len(pts)).to_i64_wrap(), family, r2: c.r2, pts })
+            Err(_) => Ok({ cp: 0.0, w_prime: 0.0, points: (List.len(pts)).to_i64_wrap(), family, r2: 0.0, pts })
+        }
+    }
+
+    # Time to exhaustion at a caller-named power (#187). NOT the same fit
+    # power-curve publishes: that one spans every power sport and includes
+    # today, this one is per-family and excludes its anchor date. They agree
+    # on an athlete whose rides dominate the curve, and only then. Every refusal is explicit:
+    # no fit, at-or-below CP, or a result outside the 2-20 minute band where the
+    # 2-parameter model holds — that last still returns the number, LABELLED,
+    # rather than hiding it or pretending it is trustworthy.
+    tte! : Str => Try({}, _)
+    tte! = |watts_arg|
+        match F64.from_str(Str.trim(watts_arg)) {
+            Err(_) => Output.err_out!("bad_watts", "tte needs a power in watts — got '${watts_arg}'")
+            Ok(w) =>
+                # `w <= 0.0` is FALSE for NaN, so a NaN sailed straight through
+                # to the payload and broke the envelope (#183 class). Negate a
+                # POSITIVE test instead: !(w > 0.0) catches NaN, zero, and
+                # negatives together. The ceiling catches +inf and typos.
+                if !(w > 0.0) or w > 3000.0 {
+                    Output.err_out!("bad_watts", "power must be a positive number of watts under 3000 — got '${watts_arg}'")
+                } else {
+                    path = Db.open_db!({})?
+                    today = Metrics.days_to_date_str(Db.local_today_days!(path))
+                    # tte fits the RIDE family: the CP model needs a power meter
+                    # and this athlete's other families have none. Named in the
+                    # payload so a caller never has to guess whose model it is.
+                    fit = cp_fit_as_of!(path, Sports.canonical("Ride"), today, 90)?
+                    if fit.cp <= 0.0 {
+                        # Two different causes, one branch: too few bests, or
+                        # bests that are inconsistent (a longer one above a
+                        # shorter one). Saying only "not enough" sends a coach
+                        # to prescribe a test the athlete has already done.
+                        Output.err_out!("no_cp_fit", "could not fit a CP model from the 5/10/20-minute bests on record in the last 90 days — there may be too few, or they may be inconsistent (a longer best above a shorter one); `stride power-curve` shows what is on record")
+                    } else {
+                        res = Metrics.time_to_exhaustion({ cp: fit.cp, w_prime: fit.w_prime }, w)
+                        seconds = match res { Seconds(t) => t  OutsideModel(t) => t  BelowCp => 0.0 }
+                        status = match res { Seconds(_) => "in_model"  OutsideModel(_) => "outside_model"  BelowCp => "below_cp" }
+                        known : Bool
+                        known = match res { BelowCp => False  _ => True }
+                        # The longest effort at or above this power that the
+                        # athlete has ON RECORD in the same window the fit was
+                        # built from. These are the fit's own inputs, so a
+                        # prediction shorter than one of them is refuted by the
+                        # data it came from — the single cheapest fit-quality
+                        # signal available, and it is a measurement, not a
+                        # verdict (ADR 0010).
+                        held = List.keep_if(fit.pts, |p| p.watts >= w)
+                        best = List.fold(held, { dur_s: 0.0, watts: 0.0 }, |acc, p| if p.dur_s > acc.dur_s p else acc)
+                        dem_known : Bool
+                        dem_known = best.dur_s > 0.0
+                        contradicts : Bool
+                        contradicts = dem_known and known and best.dur_s > seconds
+                        Output.out!(
+                            {
+                                watts: w,
+                                seconds,
+                                known,
+                                status,
+                                cp: fit.cp,
+                                w_prime: fit.w_prime,
+                                fit_points: fit.points,
+                                fit_r2: fit.r2,
+                                window_days: 90,
+                                sport_family: fit.family,
+                                demonstrated_s: best.dur_s,
+                                demonstrated_w: best.watts,
+                                demonstrated_known: dem_known,
+                                contradicts_model: contradicts,
+                            },
+                            Render.tte_screen,
+                        )
+                    }
+                }
+        }
 
     power_curve! : U64, Str => Try({}, _)
     power_curve! = |days, sport| {
@@ -2243,11 +2676,15 @@ Report :: [].{
             match Metrics.critical_power(fit_points) {
                 # a fit is only meaningful when BOTH are positive; inconsistent bests (no true
                 # 5-10 min efforts) can yield a non-positive CP or W' — treat that as no fit
-                Ok(c) => (if c.cp > 0.0 and c.w_prime > 0.0 { cp: c.cp, w_prime: c.w_prime } else { cp: 0.0, w_prime: 0.0 })
-                Err(_) => { cp: 0.0, w_prime: 0.0 }
+                # fit_points counts the bests AVAILABLE to the fit, the same
+                # meaning tte and activity publish. Zeroing it on a refused fit
+                # made the same key mean two different things across commands;
+                # `cp` of 0 is the refusal signal.
+                Ok(c) => (if c.cp > 0.0 and c.w_prime > 0.0 { cp: c.cp, w_prime: c.w_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cp: 0.0, w_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() })
+                Err(_) => { cp: 0.0, w_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() }
             }
         Output.out!(
-            { window_days: days, sport, points, cp: cpfit.cp, w_prime: cpfit.w_prime },
+            { window_days: days, sport, points, cp: cpfit.cp, w_prime: cpfit.w_prime, fit_r2: cpfit.r2, fit_points: cpfit.points },
             Render.power_curve_screen,
         )
     }

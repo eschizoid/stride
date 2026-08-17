@@ -184,6 +184,15 @@ Render :: [].{
         if x >= 0.0 "+${mag}" else "-${mag}"
     }
 
+    # signed(), at the precision the signal is displayed in. A pace delta of
+    # -0.04 m/s is the difference between 4:00/km and 4:03/km; through fmt0 it
+    # renders as "0" and the column reports no change at all.
+    signed_value : F64, Str -> Str
+    signed_value = |x, signal| {
+        mag = seg_value((x).abs(), signal)
+        if x >= 0.0 "+${mag}" else "-${mag}"
+    }
+
     # How long the band has held, appended to the state (#123).
     #
     # Takes the TAG, not a flattened number: the caller must not decide what Unknown means
@@ -365,6 +374,23 @@ Render :: [].{
         pad = if sec < 10 "0" else ""
         "${I64.to_str(m)}:${pad}${I64.to_str(sec)}"
     }
+
+    # h:mm:ss for durations that can exceed an hour. mmss is for intervals and
+    # renders 222 days as "320807:09"; tte is the first screen where a query a
+    # couple of watts off CP produces that, so it needs the wider format.
+    hms : I64 -> Str
+    hms = |secs|
+        if secs < 3600 {
+            mmss(secs)
+        } else {
+            h = secs // 3600
+            rest = secs - h * 3600
+            m = rest // 60
+            sec = rest - m * 60
+            mpad = if m < 10 "0" else ""
+            spad = if sec < 10 "0" else ""
+            "${I64.to_str(h)}:${mpad}${I64.to_str(m)}:${spad}${I64.to_str(sec)}"
+        }
 
     SegRow : { ordinal : I64, kind : Str, start_s : I64, dur_s : I64, avg_signal : F64, signal : Str, peak_hr : F64, avg_hr : F64, rec_drop : F64, rec_drop_known : Bool }
 
@@ -679,7 +705,7 @@ Render :: [].{
     }
 
     # ── power-duration curve screen ─────────────────────────────────────
-    power_curve_screen : { window_days : U64, sport : Str, points : List({ dur_s : U64, watts : F64 }), cp : F64, w_prime : F64 } -> Str
+    power_curve_screen : { window_days : U64, sport : Str, points : List({ dur_s : U64, watts : F64 }), cp : F64, w_prime : F64, fit_r2 : F64, fit_points : I64 } -> Str
     power_curve_screen = |pc| {
         dur_label = |s|
             if s < 60 "${U64.to_str(s)}s"
@@ -694,11 +720,22 @@ Render :: [].{
                 ["duration", "best power (W)"],
                 List.map(pc.points, |p| [dur_label(p.dur_s), fmt0(p.watts)]),
             )
+            # the fit's own quality, on the command that PUBLISHES the fit --
+            # without it a 0.72 fit and a perfect one read identically, while
+            # the skill tells the coach to weigh the fit first. At exactly two
+            # points a line is exact, so r2 is 1 by construction and would be
+            # false reassurance; below that there is no fit and it is 0.
+            quality =
+                if pc.fit_points >= 3.I64 {
+                    " · fit r2 ${fmt2(pc.fit_r2)} from ${I64.to_str(pc.fit_points)} bests"
+                } else {
+                    " · from ${I64.to_str(pc.fit_points)} bests (r2 needs 3)"
+                }
             cp_line =
                 # both must be positive: power_curve! already zeroes a non-positive fit, but
                 # gate here too so a stray negative W′ can never print as a real fit
                 if pc.cp > 0.0 and pc.w_prime > 0.0
-                    "→ Critical Power ${fmt0(pc.cp)} W · W′ ${fmt0(pc.w_prime)} J"
+                    "→ Critical Power ${fmt0(pc.cp)} W · W′ ${fmt1(pc.w_prime / 1000.0)} kJ${quality}"
                 else
                     "→ Critical Power: not enough long-duration (≥5 min) data to fit"
             legend =
@@ -856,6 +893,109 @@ Render :: [].{
         months_note = if List.len(p.months) > List.len(recent) " · the month table shows the last ${I64.to_str((List.len(recent)).to_i64_wrap())} of ${I64.to_str((List.len(p.months)).to_i64_wrap())} months on record" else ""
         legend = "a block is a run of training weeks closed by ${I64.to_str(p.gap_weeks)}+ weeks with no load; a * marks a block no absence has closed yet · trained/span wk = weeks with training out of calendar weeks covered, and load/wk divides by the span · trend = TSS/week slope across the block, r2 = how much of the week-to-week movement it explains · e/m/h = easy/moderate/hard time % · blocks are described, not named · a threshold belongs to a sport, so each range names whose it is${months_note}"
         Str.join_with(["── blocks ──", "", block_tbl, "── by month ──", "", month_tbl, "", legend], "\n")
+    }
+
+    # time to exhaustion: the number, and what the model thinks of it
+    tte_screen = |p| {
+        # r2 is 1 by construction at two points, where the COUNT is the signal
+        # and this number would be false reassurance.
+        quality = if p.fit_points >= 3.I64 ", r2 ${fmt2(p.fit_r2)}" else ""
+        head = "at ${fmt0(p.watts)}W against CP ${fmt0(p.cp)} (${p.sport_family} fit, W' ${fmt1(p.w_prime / 1000.0)} kJ from ${I64.to_str(p.fit_points)} of the 5/10/20-min bests over ${I64.to_str(p.window_days)}d${quality})"
+        # The athlete's own record at or above this power, when it is on file.
+        # A model that predicts less than what is already recorded is refuted by
+        # its own inputs, and the coach should see that on the same screen as
+        # the prediction rather than having to go find it.
+        record =
+            if p.demonstrated_known {
+                on = " · on record: ${fmt0(p.demonstrated_w)}W for ${hms((p.demonstrated_s).round_to_i64_try().ok_or(0))} in this window"
+                if p.contradicts_model  "${on} — LONGER than the model predicts, so the fit understates this rider"
+                else on
+            } else {
+                ""
+            }
+        body =
+            if p.status == "below_cp" {
+                "  at or below CP the model has no limit — it says indefinitely, which is the model's answer and not your body's${record}"
+            } else if p.status == "outside_model" {
+                "  ~${hms((p.seconds).round_to_i64_try().ok_or(0))} — OUTSIDE the 2-20min band the model holds in, so read it as a direction rather than a number${record}"
+            } else {
+                "  ~${hms((p.seconds).round_to_i64_try().ok_or(0))}${record}"
+            }
+        "${head}\n${body}"
+    }
+
+    # ── rep-level comparison screen (#149) ──────────────────────────────
+    # One row per session, newest first, with the per-rep watts spelled out so
+    # the shape of a session is visible at a glance rather than summarized away.
+    # Numbers only — a fade is reported, never judged (#154).
+    reps_screen = |p| {
+        shown = (List.len(p.sessions)).to_i64_wrap()
+        # seg_unit carries a leading space for " m/s" so it can suffix a
+        # number directly; the legend needs it bare.
+        unit = Str.trim(seg_unit(p.signal))
+        # Rows are RANKED by uniformity and then capped, so saying only "12 of
+        # 21" invites the reading that the other 9 are older, when they are in
+        # fact the least regular. On this athlete the dropped rows included
+        # five sessions from the current year, under a newest-first table.
+        more = if p.matched_total > shown " · showing the ${I64.to_str(shown)} most uniform of ${I64.to_str(p.matched_total)}" else ""
+        # How much of the evidence is itself the shape named in the header.
+        # Because the rows are ranked by uniformity, a conforming session can
+        # never rank below a non-conforming one: so when this count is under
+        # the number shown, it is exact over the WHOLE matched set, not just
+        # the visible rows. When every visible row conforms there may be more
+        # below the cap, hence the "≥".
+        conforming = (List.len(List.keep_if(p.sessions, |s| Metrics.is_uniform_reps(s.min_dur_s, s.max_dur_s)))).to_i64_wrap()
+        atleast = if conforming == shown and p.matched_total > shown "≥" else ""
+        # the NOUN follows how many were matched, the VERB how many conform:
+        # "1 of 8 matched sessions is itself" -- pluralizing both produced
+        # "1 of 8 matched session is itself" on 7 of 15 real anchors
+        noun = if p.matched_total == 1.I64 "matched session" else "matched sessions"
+        verb = if conforming == 1.I64 "is itself" else "are themselves"
+        # The trailing clause described rows that may not exist: on a first
+        # structured session it read "1 of 1 ... the rest are listed", naming a
+        # rest of zero. It also implied the un-annotated rows were the
+        # conforming ones, but the annotation fires at a spread of 1.15 and the
+        # census counts at 1.6, so on real data that mapping gives 1 where the
+        # census says 3.
+        rest = p.matched_total - conforming
+        # When the window caps and every visible row conforms, `conforming` is a
+        # LOWER bound (hidden rows rank worse but may still conform), so the
+        # remainder is an UPPER bound. Naming it exactly said "at least 12 of 35"
+        # and "the other 23 are not like-for-like" in one breath, while two of
+        # those 23 were identical in shape to the anchor.
+        tail =
+            if rest <= 0 {
+                ""
+            } else if atleast != "" and rest == 1.I64 {
+                " — up to one other matches its rep count and duration band without being this shape"
+            } else if atleast != "" {
+                " — up to ${I64.to_str(rest)} others match its rep count and duration band without being this shape"
+            } else if rest == 1.I64 {
+                " — the other one matches its rep count and duration band without being this shape"
+            } else {
+                " — the other ${I64.to_str(rest)} match its rep count and duration band without being this shape"
+            }
+        # A caveat that fires on 11 of 12 rows has stopped being a caveat, so
+        # the count of like-for-like evidence leads instead of hiding in a
+        # per-row parenthetical.
+        census = "${atleast}${I64.to_str(conforming)} of ${I64.to_str(p.matched_total)} ${noun} ${verb} this repeated shape${tail}"
+        # "anchor" is load-bearing: the shape describes the anchor session, and
+        # each row states its own spread. Claiming it for the table would be the
+        # header/rows contradiction review found in round 1.
+        header = "── anchor ${I64.to_str(p.shape_reps)}×${mmss(p.shape_dur)} · ${p.anchor_date}${more} ──"
+        rows = List.map(p.sessions, |s| {
+            # seg_value/seg_unit, not fmt0: on a run avg_signal is metres per
+            # second, and fmt0 rendered every rep of a 4:00/km and a 4:13/km
+            # session as an identical "4".
+            vals = Str.join_with(List.map(s.reps, |r| seg_value(r.avg_signal, p.signal)), " · ")
+            # signed(), not a hardcoded "+": a HR DROP across reps is a real
+            # signal and rendered as "hr +-8" three times on real data.
+            hr = if s.hr_rise_known " · hr ${signed(s.hr_rise_bpm)}" else ""
+            spread = if s.uniformity >= 1.15 " · reps ${mmss(s.min_dur_s)}-${mmss(s.max_dur_s)}" else ""
+            "${s.date}  ${vals}  (mean ${seg_value(s.mean_signal, p.signal)}, fade ${signed_value(s.fade_signal, p.signal)}${hr}${spread})"
+        })
+        legend = "reps left to right within each session, in ${unit} · fade = last rep minus first · hr = first-to-last change across reps"
+        Str.join_with(List.join([[header, "", census, ""], rows, ["", legend]]), "\n")
     }
 
     # ── compare command screen ──────────────────────────────────────────
@@ -1109,11 +1249,28 @@ expect {
         points: [{ dur_s: 5, watts: 800.0 }, { dur_s: 60, watts: 400.0 }, { dur_s: 1200, watts: 260.0 }],
         cp: 250.0,
         w_prime: 20000.0,
+        fit_r2: 0.72,
+        fit_points: 3.I64,
+    })
+    # a degenerate fit and a perfect one rendered identically here, on the
+    # command that PUBLISHES the fit -- so the quality travels with it
+    thin = Render.power_curve_screen({
+        window_days: 90,
+        sport: "Ride",
+        points: [{ dur_s: 5, watts: 800.0 }],
+        cp: 250.0,
+        w_prime: 20000.0,
+        fit_r2: 1.0,
+        fit_points: 2.I64,
     })
     Str.contains(s, "5s") and Str.contains(s, "20m") and Str.contains(s, "Critical Power 250") and Str.contains(s, "Ride")
+    and Str.contains(s, "fit r2 0.72")
+    # at two points a line is exact, so r2 is 1 by construction and must NOT be
+    # shown as if it were a quality signal
+    and !(Str.contains(thin, "r2 1.00")) and Str.contains(thin, "r2 needs 3")
 }
 expect {
-    s = Render.power_curve_screen({ window_days: 30, sport: "", points: [], cp: 0.0, w_prime: 0.0 })
+    s = Render.power_curve_screen({ window_days: 30, sport: "", points: [], cp: 0.0, w_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
     Str.contains(s, "no power data") and Str.contains(s, "all power sports")
 }
 
@@ -1243,6 +1400,112 @@ expect {
     and Render.seg_hr_drift([seg(150.0, True)]) == Err(NotEnough)
 }
 
+# reps_screen: units, sign, caption and census. Every assertion here failed on
+# real data before this round.
+expect {
+    rep = |v| { avg_signal: v, ordinal: 0.I64, dur_s: 240.I64 }
+    sess = |date, unif, hr_rise, mean, fade, vals| {
+        date,
+        uniformity: unif,
+        min_dur_s: 240.I64,
+        max_dur_s: 241.I64,
+        mean_signal: mean,
+        fade_signal: fade,
+        hr_rise_bpm: hr_rise,
+        hr_rise_known: True,
+        reps: List.map(vals, rep),
+    }
+    power = Render.reps_screen({
+        anchor_date: "2026-08-16",
+        shape_reps: 3.I64,
+        shape_dur: 718.I64,
+        matched_total: 21.I64,
+        signal: "power",
+        sessions: [sess("2026-08-16", 1.01, 11.0, 262.0, -16.0, [268.0, 265.0, 252.0])],
+    })
+    pace = Render.reps_screen({
+        anchor_date: "2026-08-10",
+        shape_reps: 5.I64,
+        shape_dur: 241.I64,
+        matched_total: 2.I64,
+        signal: "pace",
+        sessions: [
+            sess("2026-08-10", 1.01, 12.0, 4.15, -0.04, [4.1667, 4.13]),
+            sess("2026-05-10", 1.01, 12.0, 3.94, -0.03, [3.9526, 3.92]),
+        ],
+    })
+    # some shown rows do NOT conform, so the count is exact and the remainder
+    # is named rather than hedged -- and "the other one" agrees in number
+    mixed = Render.reps_screen({
+        anchor_date: "2026-08-16",
+        shape_reps: 3.I64,
+        shape_dur: 718.I64,
+        matched_total: 3.I64,
+        signal: "power",
+        sessions: [
+            sess("2026-08-16", 1.01, 11.0, 262.0, -16.0, [268.0, 252.0]),
+            { date: "2025-10-15", uniformity: 4.3, min_dur_s: 264.I64, max_dur_s: 1144.I64, mean_signal: 236.0, fade_signal: -5.0, hr_rise_bpm: 13.0, hr_rise_known: True, reps: List.map([231.0, 227.0], rep) },
+        ],
+    })
+    dropped = Render.reps_screen({
+        anchor_date: "2023-02-11",
+        shape_reps: 7.I64,
+        shape_dur: 63.I64,
+        matched_total: 16.I64,
+        signal: "power",
+        sessions: [sess("2023-02-11", 1.02, -8.0, 248.0, -11.0, [248.0, 236.0])],
+    })
+    # pace is metres per second: through fmt0 a 4:00/km and a 4:13/km session
+    # both rendered every rep as "4", making the whole screen useless for runs
+    Str.contains(pace, "4.17") and Str.contains(pace, "in m/s")
+    # and a sub-1 m/s fade is a real difference, not "0"
+    and Str.contains(pace, "fade -0.04")
+    # a HR DROP across reps rendered as "hr +-8" -- the + was hardcoded
+    and Str.contains(dropped, "hr -8") and !(Str.contains(dropped, "+-"))
+    # rows are ranked by uniformity then capped, so "showing 12 of 21" read as
+    # "the other 9 are older" when they were the least regular
+    and Str.contains(power, "most uniform of 21")
+    # and the count of like-for-like evidence leads, rather than hiding in a
+    # per-row caveat that fired on 11 of 12 rows
+    # `Str.contains(power, "1 of 21 …")` matched whether or not the ≥ was
+    # there, so deleting the branch left the suite green. Pin the ≥ itself,
+    # and pin a case where it must be ABSENT.
+    # capped AND every shown row conforms: the count is a LOWER bound, so the
+    # remainder must be hedged rather than named exactly -- asserting "≥1 of 21"
+    # and "the other 20" together is a contradiction the old test enshrined
+    and Str.contains(power, "≥1 of 21 matched sessions is itself")
+    and Str.contains(power, "up to 20 others")
+    # ...and the HEDGED branch needs the singular too. Fixing number agreement
+    # on the exact branch and not this one left "up to 1 others match", which
+    # is the very defect the round was opened to close.
+    and Str.contains(Render.reps_screen({
+        anchor_date: "2026-08-16",
+        shape_reps: 3.I64,
+        shape_dur: 718.I64,
+        matched_total: 2.I64,
+        signal: "power",
+        sessions: [sess("2026-08-16", 1.01, 11.0, 262.0, -16.0, [268.0, 252.0])],
+    }), "up to one other matches")
+    and !(Str.contains(power, "the other 20"))
+    # the NOUN stays plural even when one row conforms
+    and !(Str.contains(power, "matched session is"))
+    # nothing capped and everything conforms: no ≥, and no clause naming a
+    # remainder of zero (it read "1 of 1 ... the rest are listed")
+    and Str.contains(pace, "2 of 2 matched sessions are themselves")
+    and !(Str.contains(pace, "≥"))
+    and !(Str.contains(pace, "the other"))
+    and !(Str.contains(pace, "up to"))
+    and Str.contains(mixed, "1 of 3 matched sessions is itself")
+    and Str.contains(mixed, "the other 2 match its rep count")
+    and !(Str.contains(mixed, "≥")) and !(Str.contains(mixed, "up to"))
+    and Str.contains(power, "W ·") and !(Str.contains(power, "m/s"))
+}
+
+# signed_value differs from signed ONLY in precision -- it inherits the
+# rounds-away-but-still-a-direction contract pinned above, which is why a pace
+# fade keeps its sign instead of collapsing to a bare zero.
+expect Render.signed_value(-0.04, "pace") == "-0.04" and Render.signed_value(-16.0, "power") == "-16" and Render.signed_value(-0.27, "power") == "-0"
+
 # ── the engine/coach boundary across ALL verdict producers (#154) ────
 # Every human verdict line stride renders is state, never advice. Each producer
 # is exercised at representative inputs and swept with the shared predicate —
@@ -1256,6 +1519,52 @@ expect {
         Render.compare_verdict(0.0, 0.0, 0.0, "week"),
     ]
     List.all(compare_verdicts, |v| !(Metrics.has_coaching_language(v)))
+}
+
+# tte_screen renders the most opinionated prose in stride ("the model's answer
+# and not your body's"), and joined the codebase outside this sweep. All three
+# statuses plus both demonstrated-effort branches are state, never advice.
+expect {
+    tte = |status, dem, contra| Render.tte_screen({
+        watts: 265.0,
+        seconds: 596.0,
+        known: True,
+        status,
+        cp: 254.0,
+        w_prime: 6416.0,
+        fit_points: 3.I64,
+        fit_r2: 0.72,
+        window_days: 90.I64,
+        sport_family: "Ride",
+        demonstrated_s: 600.0,
+        demonstrated_w: 271.0,
+        demonstrated_known: dem,
+        contradicts_model: contra,
+    })
+    tte_phrases = [
+        tte("in_model", False, False),
+        tte("in_model", True, True),
+        tte("outside_model", True, False),
+        tte("below_cp", False, False),
+    ]
+    List.all(tte_phrases, |p| !(Metrics.has_coaching_language(p)))
+    # the query-independent fit-quality number reaches the human screen -- a
+    # coach reading only the terminal must see what the payload sees
+    and Str.contains(tte("in_model", False, False), "r2 0.72")
+    # ...and is SUPPRESSED at two points, where it is 1 by construction. Only
+    # the presence direction was asserted, so mutating the gate to always-show
+    # left the suite green.
+    and !(Str.contains(Render.tte_screen({
+        watts: 265.0, seconds: 596.0, known: True, status: "in_model",
+        cp: 254.0, w_prime: 6416.0, fit_points: 2.I64, fit_r2: 1.0,
+        window_days: 90.I64, sport_family: "Ride", demonstrated_s: 0.0,
+        demonstrated_w: 0.0, demonstrated_known: False, contradicts_model: False,
+    }), "r2"))
+    # the hour rollover is what keeps a near-CP query from rendering 222 days
+    # as "320807:09" — pinned because mmss is the tempting reuse
+    and Render.hms(596.I64) == "9:56"
+    and Render.hms(3600.I64) == "1:00:00"
+    and Render.hms(8405.I64) == "2:20:05"
 }
 
 # the HARD boundary invariant for compare (#154): the verdict templates are a

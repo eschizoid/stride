@@ -199,6 +199,7 @@ stride plan                                       # everything needed to plan a 
 | `top <metric> [n] [sport]` | *What were my best sessions?* Ranks activities (default top 10) by a metric — `hr`, `tss`, `power`, `intensity`, `distance`, `time`, or `output` (kJ) — optionally filtered by sport (`top tss 5 ride`). The leaderboard to `activities`' timeline. |
 | `doctor` | *Can I trust my data?* Coverage (HR/power/streams/ratings), how each activity was scored and the **measured-vs-estimated confidence split**, config gaps (HR zones), pending backfill, and the active time anchor. Every gap says what, why, and the fix. |
 | `zones` (alias `pz`) | *What watts is each power zone for me?* The 7 Coggan/Peloton power zones as watt ranges derived from your FTP (they shift when FTP changes). The targets you'd set on a Power Zone ride. |
+| `reps [date]` | *Am I riding the same workout harder?* One level below `progress`: the anchor session's detected interval blocks beside the same-shaped blocks of earlier sessions — per-rep watts, the within-session fade, and the first-to-last HR rise. Comparability is stated in the payload rather than assumed: same sport family, same rep count, same rep-duration band, same signal, never later than the anchor. Each row also reports its OWN rep spread, because whether an uneven session counts as "the same workout" is a judgment stride leaves to you. A session whose blocks vary too much to be one repeated shape is refused as an anchor rather than compared against. |
 | `progress [date] [asc\|desc]` | *Am I improving on this workout?* Every past instance of a workout, compared with a **sport-aware lens** — Efficiency Factor (NP ÷ HR) for power rides, speed ÷ HR for distance sports, RPE for rated strength/HIIT — with a trend verdict and last-vs-best. Bare `progress` uses your latest session; `stride --help` has the exact matching rules. Sessions list oldest-first (`asc`, the default) so the trend reads left to right; `desc` puts the newest first when you only want the last few. The verdict is computed chronologically either way. |
 | `load [days]` | *Is my training working over time?* Daily fitness/fatigue/form rows for windows ≤14 days; Monday-aligned **weekly rollups** (sessions, load, fitness trend) for longer windows (default 90). Ends with today's form verdict. |
 | `compare [week\|month]` | *Is this period better than the last?* The last rolling window (7 or 28 days) beside the one before it — load, sessions, hard minutes, easy %, and end-of-window fitness — with signed deltas and a ramp/fitness verdict. |
@@ -207,6 +208,7 @@ stride plan                                       # everything needed to plan a 
 | `activity <id>` | *How did one session actually go?* Deep view of a single activity: load, intensity, zone minutes, hard time, and power bests (1/3/5/20 min) computed from its streams. The session-review tool. |
 | `power-curve [days] [sport]` (alias `pc`) | *What's my power at every duration?* The power-duration curve — best watts held for 5 s through 60 min across a window (default 90 days), per sport — with a **Critical Power / W′** fit: your sustainable aerobic ceiling and the finite battery above it. Reads the stored per-activity bests; the shape behind FTP. |
 | `season` | *What has this year actually looked like?* Training blocks, monthly load, polarization and FTP over time. A block is a run of training weeks closed by two or more weeks off — the only boundary in the data that is not a judgment call — and each one is described by its measured load trend rather than labelled a phase. See ADR 0011. |
+| `tte <watts>` | *How long could I hold this?* Time to exhaustion at a power you name, from a Critical Power model fitted on that sport family over the trailing 90 days. (Not identical to `power-curve`'s fit: that one spans every power sport and includes today, this one is per-family and excludes its anchor date.) Every answer carries what qualifies it: which band of the model it falls in, and the longest effort at or above that power you already have on record — when the model predicts less than your own file proves, it says so. |
 | `stats` | *What have I done, ever and this year?* Career and year-to-date totals per sport: sessions, hours, distance. |
 
 **Coaching log** (the adaptation loop)
@@ -420,7 +422,7 @@ Intentionally small — things get built when dogfooding demands them:
 
 - Terminal UI for browsing the database
 - `.zwo` workout export for smart-trainer owners
-- Session-over-session progression views for repeated interval workouts
+- Deeper interval analytics (W′ balance, time-to-exhaustion) on top of the detected blocks
 
 Personal daily-driver, built for one athlete and open to adopters who bring
 their own Strava app credentials.

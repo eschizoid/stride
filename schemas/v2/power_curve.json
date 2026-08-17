@@ -1,13 +1,15 @@
 {
   "title": "power_curve",
-  "description": "Payload of `stride power-curve`.",
+  "description": "Payload of `stride power-curve`. `fit_r2` is how well the CP line fits its own 5-20 minute bests, and is the query-independent way to weigh the fit. The regression is power against 1/duration, so a LOW value means those bests do not fall on a line at all: CP and W' are then drawn through scatter, and small changes in the inputs swing them a long way. A high value says the line is a good description, NOT that the model describes the athlete \u2014 bests taken from steady efforts rather than maximal ones sit on a near-flat line that fits well and yields an implausibly small W'. `fit_r2` is 1 by construction at exactly two points (a line through two points is exact), and 0 when no fit was made at all \u2014 `cp` of 0 is what says there is no fit. It is only a quality signal when `fit_points` is 3.",
   "type": "object",
   "required": [
     "cp",
     "points",
     "sport",
     "w_prime",
-    "window_days"
+    "window_days",
+    "fit_r2",
+    "fit_points"
   ],
   "additionalKeys": false,
   "properties": {
@@ -40,6 +42,12 @@
       "type": "number"
     },
     "window_days": {
+      "type": "integer"
+    },
+    "fit_r2": {
+      "type": "number"
+    },
+    "fit_points": {
       "type": "integer"
     }
   }

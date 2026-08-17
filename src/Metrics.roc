@@ -743,7 +743,7 @@ Metrics :: [].{
     # against 1/duration (x) — slope = W' (the finite anaerobic work capacity, joules),
     # intercept = CP (the sustainable aerobic ceiling, watts). Pass the mid-range bests
     # (~2-20 min) where the 2-parameter model holds; needs >= 2 points at distinct durations.
-    critical_power : List({ dur_s : F64, watts : F64 }) -> Try({ cp : F64, w_prime : F64 }, [TooFew])
+    critical_power : List({ dur_s : F64, watts : F64 }) -> Try({ cp : F64, w_prime : F64, r2 : F64 }, [TooFew])
     critical_power = |points| {
         pts = List.keep_if(points, |p| p.dur_s > 0.0 and p.watts > 0.0)
         n = List.len(pts)
@@ -762,6 +762,10 @@ Metrics :: [].{
                 dy = p.watts - my
                 a + dx * dy
             })
+            syy = List.fold(pts, 0.0, |a, p| {
+                dy = p.watts - my
+                a + dy * dy
+            })
             # sxx == 0 means every point is at the same duration — can't fit a line
             if sxx < 0.0000001
                 Err(TooFew)
@@ -771,10 +775,113 @@ Metrics :: [].{
                 # A fit can land on a negative CP or W' (noisy or near-collinear points).
                 # Neither is physically meaningful, so refuse rather than hand back a
                 # nonsense number the caller has to remember to check.
-                if cp <= 0.0 or w_prime <= 0.0 Err(TooFew) else Ok({ cp, w_prime })
+                # How well the line actually fits, so a caller has ONE number
+                # that does not depend on what it is later asked to predict.
+                # Without it the only quality signal is the point COUNT, which
+                # is 3 for a good fit and 3 for a degenerate one. Note r2 is 1
+                # by construction at two points -- there the count is the
+                # signal and this carries no information.
+                r2 = if syy < 0.0000001 0.0 else (sxy * sxy) / (sxx * syy)
+                if cp <= 0.0 or w_prime <= 0.0 Err(TooFew) else Ok({ cp, w_prime, r2 })
             }
         }
     }
+
+    # e^(-x) for x >= 0. There is no `.exp()` on this compiler — the method
+    # does not exist on F64 at all, so the CTL/ATL constants above are literals
+    # — but `.pow()` does exist and is correct to full double precision, which
+    # is what W' balance needs (tau varies with how far below CP each sample
+    # sits, so no lookup table covers the range). This replaced a hand-rolled
+    # range-reduction-plus-Taylor series that was ~0.6% off by x = 700 and
+    # returned +INFINITY past x ~ 11000, the exact inverse of its meaning.
+    # Negative input would be e^(+x); callers pass magnitudes, and the guard
+    # keeps a sign slip from silently returning a plausible number.
+    exp_neg : F64 -> F64
+    exp_neg = |x|
+        if x < 0.0 1.0 else e_const.pow(0.0 - x)
+
+    e_const : F64
+    e_const = 2.718281828459045
+
+    # ── spending the CP model (#186, #187) ──────────────────────────────
+    #
+    # Time to exhaustion at a power ABOVE CP: the model says the finite capacity
+    # W' drains at (P - CP) watts, so it lasts W'/(P - CP) seconds. Two honest
+    # refusals rather than a number:
+    #   - at or below CP the model divides by zero or goes negative, which reads
+    #     as "forever". The model believes that; bodies do not. BelowCp says so.
+    #   - the 2-parameter model is only meaningful over roughly 2-20 minutes.
+    #     Outside that it overshoots badly (anaerobic capacity dominates below,
+    #     unmodelled fatigue above), so a result outside the window is returned
+    #     as OutsideModel WITH the number, letting a caller show it labelled
+    #     rather than silently trusting it.
+    time_to_exhaustion : { cp : F64, w_prime : F64 }, F64 -> [Seconds(F64), OutsideModel(F64), BelowCp]
+    time_to_exhaustion = |fit, watts| {
+        over = watts - fit.cp
+        if over <= 0.0 {
+            BelowCp
+        } else {
+            t = fit.w_prime / over
+            if t < 120.0 or t > 1200.0 OutsideModel(t) else Seconds(t)
+        }
+    }
+
+    # W' balance through a ride: what is left of the anaerobic capacity at each
+    # moment. Above CP it drains at (P - CP); below CP it reconstitutes toward
+    # full, exponentially, with a time constant that depends on HOW far below CP
+    # the athlete is — recovery at 100 W under CP is much faster than at 10 W
+    # under it. This is the Skiba 2012 INTEGRAL form, evaluated as an
+    # exponential recurrence. It is NOT the Froncioni/Skiba differential form,
+    # which carries no tau and reconstitutes nothing at exactly CP — the two
+    # land 41% of W' apart on a real session here, so the name is load-bearing.
+    # Tau follows Skiba's fit, 546*e^(-0.01*DCP) + 316, computed from the
+    # INSTANTANEOUS sub-CP deficit per sample rather than Skiba's ride-mean;
+    # that is a deliberate variant worth ~3% of W' on real data.
+    #
+    # Returns the balance AFTER each sample, so the minimum over the list is the
+    # deepest the athlete went. Pauses are bridged at max_sample_gap_s like
+    # everywhere else — an unrecorded hour is not an hour of recovery.
+    w_prime_balance : List({ t : I64, v : F64 }), { cp : F64, w_prime : F64 } -> List(F64)
+    w_prime_balance = |pairs, fit|
+        (List.fold(pairs, { bal: fit.w_prime, prev_t: Err({}), out: [] }, |acc, p| {
+            dt =
+                match acc.prev_t {
+                    Ok(pt) => {
+                        raw = p.t - pt
+                        if raw > max_sample_gap_s max_sample_gap_s else if raw < 0 0 else raw
+                    }
+                    Err(_) => 0
+                }
+            dtf = (dt).to_f64()
+            over = p.v - fit.cp
+            next =
+                if over > 0.0 {
+                    # NOT floored at zero. A balance that goes negative is the
+                    # model telling you it does not fit this rider — clamping
+                    # converts "the CP fit is wrong" into the entirely plausible
+                    # "you emptied the tank and got some back", and because
+                    # clamping resets the deficit, everything AFTER the first
+                    # clamp is wrong too, not just the minimum. Review measured
+                    # -8074 J on a real ride (126% of the fitted tank) reported
+                    # as 0. GoldenCheetah and the Skiba/Froncioni literature
+                    # both let it go negative for exactly this reason.
+                    acc.bal - over * dtf
+                } else {
+                    # DCP is how far below CP this sample sits; deeper recovery
+                    # refills faster, which is what the exponent encodes
+                    dcp = fit.cp - p.v
+                    tau = 546.0 * exp_neg(0.01 * dcp) + 316.0
+                    deficit = fit.w_prime - acc.bal
+                    acc.bal + deficit * (1.0 - exp_neg(dtf / tau))
+                }
+            # The clock never runs backwards. A stamp EARLIER than the last
+            # one charges dt = 0 above, but advancing prev_t to it would then
+            # re-charge the span up to the next stamp — t = 0,10,5,20 billed
+            # 25s of drain across a 20s window. Callers resample sorted, so
+            # this is the function's own guard, not a live bug.
+            latest = match acc.prev_t { Ok(pt) => if p.t > pt p.t else pt  Err(_) => p.t }
+            { bal: next, prev_t: Ok(latest), out: List.append(acc.out, next) }
+        })).out
 
     # ── power zones (Coggan / Peloton 7-zone model, watt ranges from FTP) ─
     # lo_w = 0 means the zone starts at 0 (Z1); hi_w = 0 means it is open above (Z7).
@@ -1263,6 +1370,45 @@ Metrics :: [].{
         # the catch-all is OPEN ABOVE (the SQL band filter is `< hi`, so a finite
         # ceiling would orphan ultra-length activities from ever being comparable)
         else { lo: 7200, hi: 8640000 }
+
+    # The rep-scale twin of duration_band (#149). Session band EDGES sit at
+    # 20/45/75/120 minutes, which at rep scale is useless: a 3x2min VO2 set and a 3x17min
+    # tempo block both land in "under 20 minutes" and would be compared as the
+    # same workout. These edges follow how intervals are actually prescribed —
+    # sprints, short VO2, classic 3-6min VO2, 6-10min, threshold 10-15, sweet
+    # spot 15-30, and long. Fixed edges for the same reason duration_band uses
+    # them: comparability must be symmetric, which a +/-% window is not.
+    # The one judgment in the reps comparison: how far rep durations may spread
+    # and still be "the same repeated shape". It lives here because THREE things
+    # depend on them agreeing — the anchor gate, the census count on the screen,
+    # and the refusal message — and they sat in two files in two forms (a float
+    # and an integer ratio) with nothing tying them together. This gate already
+    # moved once (1.4 -> 1.6); the next move must move all three at once.
+    anchor_uniformity_max : F64
+    anchor_uniformity_max = 1.6
+
+    # the same bound as an exact integer ratio, for I64 durations and SQL
+    anchor_uniformity_num : I64
+    anchor_uniformity_num = 16
+
+    anchor_uniformity_den : I64
+    anchor_uniformity_den = 10
+
+    # a session is the repeated shape when its longest rep is within the gate
+    # of its shortest. A zero shortest is not uniform, it is unmeasured.
+    is_uniform_reps : I64, I64 -> Bool
+    is_uniform_reps = |min_dur, max_dur|
+        min_dur > 0 and max_dur * anchor_uniformity_den <= min_dur * anchor_uniformity_num
+
+    rep_duration_band : I64 -> { lo : I64, hi : I64 }
+    rep_duration_band = |dur_s|
+        if dur_s < 60 { lo: 0, hi: 60 }
+        else if dur_s < 180 { lo: 60, hi: 180 }
+        else if dur_s < 360 { lo: 180, hi: 360 }
+        else if dur_s < 600 { lo: 360, hi: 600 }
+        else if dur_s < 900 { lo: 600, hi: 900 }
+        else if dur_s < 1800 { lo: 900, hi: 1800 }
+        else { lo: 1800, hi: 86400 }
 
     # percentile of `current` within `samples`: the share of samples <= current,
     # 0-100. DIRECTION-FREE — for EF/NP higher is better, for decoupling lower
@@ -3665,6 +3811,111 @@ expect {
     # and a continuous run is ONE block however long, never subdivided to look
     # more useful (ADR 0011: splitting fabricates the boundary)
     and List.len(Metrics.season_blocks(Iter.fold(0.I64..<47, [], |acc, i| List.append(acc, w(i, 200.0))), 2)) == 1
+}
+
+# exp_neg against known values — there is no `.exp()` method on F64 at all on
+# this compiler, so this is the only exponential in the codebase that is
+# computed rather than tabulated
+expect {
+    near = |a, b| (a - b).abs() < 0.000001
+    near(Metrics.exp_neg(0.0), 1.0)
+    and near(Metrics.exp_neg(1.0), 0.3678794412)
+    and near(Metrics.exp_neg(0.5), 0.6065306597)
+    and near(Metrics.exp_neg(3.0), 0.0497870684)
+    and near(Metrics.exp_neg(0.001), 0.9990004998)
+    # a sign slip must not read as a plausible decay
+    and near(Metrics.exp_neg(-1.0), 1.0)
+}
+
+# TTE: the model's own arithmetic, and its two honest refusals
+expect {
+    fit = { cp: 250.0, w_prime: 20000.0 }
+    # 300W is 50 over CP: 20000/50 = 400s, inside the 2-20min window
+    at300 = match Metrics.time_to_exhaustion(fit, 300.0) { Seconds(t) => (t - 400.0).abs() < 0.001  _ => False }
+    # at CP the model says forever; below it, worse than forever
+    at_cp = Metrics.time_to_exhaustion(fit, 250.0) == BelowCp
+    below = Metrics.time_to_exhaustion(fit, 200.0) == BelowCp
+    # 600W is 350 over: 57s — real, but far outside where the model holds
+    sprint = match Metrics.time_to_exhaustion(fit, 600.0) { OutsideModel(t) => (t - 57.142857).abs() < 0.001  _ => False }
+    # 265W is 15 over: 1333s, past twenty minutes
+    long = match Metrics.time_to_exhaustion(fit, 265.0) { OutsideModel(_) => True  _ => False }
+    at300 and at_cp and below and sprint and long
+}
+
+# W' balance: drains above CP, reconstitutes below it, is ALLOWED to go
+# negative, and a recording gap is bridged rather than credited as recovery
+expect {
+    fit = { cp: 250.0, w_prime: 20000.0 }
+    hard = Iter.fold(0.I64..<100, [], |acc, i| List.append(acc, { t: i, v: 350.0 }))
+    bal = Metrics.w_prime_balance(hard, fit)
+    # 100 samples at 100W over CP = 10 kJ spent, half the tank
+    spent = match List.last(bal) { Ok(b) => (b - 10000.0).abs() < 200.0  Err(_) => False }
+    # then easy riding puts some back
+    rest = List.concat(hard, Iter.fold(0.I64..<300, [], |acc, i| List.append(acc, { t: 100 + i, v: 150.0 })))
+    recovered = match List.last(Metrics.w_prime_balance(rest, fit)) { Ok(b) => b > 10000.0 and b <= 20000.0  Err(_) => False }
+    # An effort past the tank's capacity goes NEGATIVE, and must: clamping at
+    # zero would reset the accumulated deficit, so every sample after the first
+    # clamp is scored against a tank that silently refilled. The negative is
+    # also the only signal that the FIT does not describe this rider, which is
+    # information the caller needs (Report flags it as `model_exceeded`).
+    epic = Iter.fold(0.I64..<1000, [], |acc, i| List.append(acc, { t: i, v: 400.0 }))
+    epic_bal = Metrics.w_prime_balance(epic, fit)
+    # 1000s at 150W over CP = 150 kJ against a 20 kJ tank: 130 kJ past empty.
+    # A floor here reports 0 and hides a 7.5x model failure as "emptied".
+    overdrawn = match List.last(epic_bal) { Ok(b) => (b + 130000.0).abs() < 500.0  Err(_) => False }
+    # monotone down throughout, since the power never drops back below CP
+    never_refills = match (List.first(epic_bal), List.last(epic_bal)) {
+        (Ok(f), Ok(l)) => l < f
+        _ => False
+    }
+    spent and recovered and overdrawn and never_refills
+}
+
+# the clock never runs backwards: a stamp EARLIER than the last charges no
+# time AND does not let the next stamp re-bill the span it already covered
+expect {
+    fit = { cp: 250.0, w_prime: 20000.0 }
+    p = |t, v| { t, v }
+    # 0,10,5,20 spans 20s at 100W over CP = 2000 J spent, not 2500
+    jumbled = Metrics.w_prime_balance([p(0, 350.0), p(10, 350.0), p(5, 350.0), p(20, 350.0)], fit)
+    correct = match List.last(jumbled) { Ok(b) => (b - 18000.0).abs() < 0.001  Err(_) => False }
+    # and sorted input is completely unaffected -- the guard is defensive, and
+    # a guard that changed the normal path would be a regression
+    sorted = Metrics.w_prime_balance([p(0, 350.0), p(5, 350.0), p(10, 350.0), p(20, 350.0)], fit)
+    unchanged = match List.last(sorted) { Ok(b) => (b - 18000.0).abs() < 0.001  Err(_) => False }
+    correct and unchanged
+}
+
+# rep bands separate workouts that session bands would merge (#149): a 3x2min
+# VO2 set and a 3x12min threshold block are not the same session shape
+expect {
+    Metrics.rep_duration_band(120) != Metrics.rep_duration_band(720)
+    and Metrics.rep_duration_band(720) == { lo: 600, hi: 900 }
+    and Metrics.rep_duration_band(180) == { lo: 180, hi: 360 }
+    and Metrics.rep_duration_band(59) == { lo: 0, hi: 60 }
+    and Metrics.rep_duration_band(3600) == { lo: 1800, hi: 86400 }
+    # symmetric: two durations in one band agree about each other
+    and Metrics.rep_duration_band(610) == Metrics.rep_duration_band(890)
+    # and the session-scale rule really would have merged them
+    and Metrics.duration_band(120) == Metrics.duration_band(720)
+}
+
+# the float gate and the integer gate are the SAME gate. Mutating either alone
+# fails here, which is what the census's exactness claim rests on.
+expect {
+    num = Metrics.anchor_uniformity_num
+    den = Metrics.anchor_uniformity_den
+    ratio = (num).to_f64() / (den).to_f64()
+    same = (ratio - Metrics.anchor_uniformity_max).abs() < 0.0001
+    # exercised at the boundary in both directions
+    inside = Metrics.is_uniform_reps(100, 160)
+    outside = !(Metrics.is_uniform_reps(100, 161))
+    # A zero shortest rep is UNMEASURED, not perfectly uniform. The (0, 600)
+    # case is already False from the arithmetic alone, so it does NOT exercise
+    # the guard -- (0, 0) is the one that does, and asserting only the former
+    # let a mutation of the guard survive.
+    zero_not_uniform = !(Metrics.is_uniform_reps(0, 600)) and !(Metrics.is_uniform_reps(0, 0))
+    same and inside and outside and zero_not_uniform
 }
 
 # ── the engine/coach boundary, pinned (#154) ────────────────────────
