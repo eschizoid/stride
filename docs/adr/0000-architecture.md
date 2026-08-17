@@ -192,7 +192,9 @@ Specialization phase for minutes — an upstream compiler-perf bug (roc-lang/roc
 SpecConstr blowup), fixed upstream by roc-lang/roc#10531 (merged 2026-08-02). A *separate*
 backend bug then kept the optimized build unusable: an intermittent heap-corruption SIGABRT
 in `--opt=speed` (issue #32), measured at 40 aborts per 1400 invocations on the old pin and
-isolated to `season` and `power-curve`. Both are resolved — the 2026-08-17 compiler pin
+concentrated in `season` (~8%) and `power-curve` (~7%) but NOT confined to them —
+`activity` aborts at ~0.8%, found only by replicating; a single 200-run sample had read
+as zero. Both are resolved — the 2026-08-17 compiler pin
 gives 0 per 1400 with output byte-identical to `--opt=dev`. Builds still pin `--opt=dev`,
 now purely for build time. `roc build` on the old alpha4 toolchain is gone with the
 migration.

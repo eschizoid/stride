@@ -242,7 +242,8 @@ the engine.
 - **The compiler.** Pinned to `nightly-2026-08-17-b9ca140` as of 2026-08-17, moved up from
   `nightly-2026-August-04-1cb06bc`. The blocker that held the pin for two weeks
   (roc-lang/roc#10693 — `roc test` SIGSEGV, root-caused to closures stored in tuples inside
-  a list) is fixed upstream: it was still failing on the 2026-08-10 nightly and passes on
+  a list) no longer reproduces (the upstream issue is still open, so this is an observation,
+  not a provenance): it was still failing on the 2026-08-10 nightly and passes on
   08-17. All 1,569 expects and the full e2e suite are green on the new pin. Roc is pre-1.0
   and moving; small, well-tested increments remain the mitigation.
   The bump also resolved #32 — `--opt=speed` no longer SIGABRTs (0 in 1400 runs against 40

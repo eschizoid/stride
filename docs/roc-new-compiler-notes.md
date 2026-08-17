@@ -1,6 +1,6 @@
 # Roc new-compiler notes (syntax, stdlib, platform)
 
-Working reference for the new (Zig) compiler + basic-cli 0.21, learned empirically
+Working reference for the new (Zig) compiler + basic-cli 0.22, learned empirically
 against the compiler and roc-lang/roc source during the migration (completed
 2026-08-02). The migration's progress log is gone — this is the part worth keeping.
 
@@ -25,7 +25,7 @@ The history below is kept because the traps in it are real and will apply to the
 Every nightly from **2026-08-05 onward segfaulted the compiler** on this codebase.
 Verified on 2026-08-08: the 2026-08-05, 2026-08-06, 2026-08-07 and 2026-08-08 nightlies
 all crash; 2026-08-04
-(the current pin) passes: `roc test src/Render.roc`. Nightlies live in `roc-lang/nightlies`, not
+(the pin at the time) passes: `roc test src/Render.roc`. Nightlies live in `roc-lang/nightlies`, not
 `roc-lang/roc`; note the tag format changed mid-window (`2026-August-05` → `2026-08-06`).
 
 What breaks, precisely:
@@ -72,10 +72,16 @@ nothing folds at compile time) builds clean and dies with `[ROC CRASHED]` when r
 building stride itself with the 2026-08-08 nightly succeeds and the binary then exits 139
 with NO output at all on `progress <date>`. A green build proves nothing on these nightlies.
 
-Filed upstream as [roc-lang/roc#10693](https://github.com/roc-lang/roc/issues/10693).
-When it closes, re-run the repros from that issue first. The tag is pinned in THREE
-workflows — `build.yml` (twice), `manual-release.yml` and `release-please.yml` — so
-`grep -rn nightly-tag .github/workflows` before declaring the bump done.
+Filed upstream as [roc-lang/roc#10693](https://github.com/roc-lang/roc/issues/10693),
+which is **still open** — the 2026-08-17 nightly no longer reproduces it, but nobody has
+closed it, so "fixed upstream" is an observation and not a provenance.
+
+**Checklist for the next bump** (this part is live, not history): the tag is pinned
+**NINE times across FOUR files** — `build.yml` ×4, `manual-release.yml` ×2,
+`release-please.yml` ×2, `verify-arm64.yml` ×1. An earlier version of this line said
+three files and omitted `verify-arm64.yml` entirely, which would have shipped a stale pin
+in the arm64 verification job. Always `grep -rln nightly-tag .github/workflows` and count,
+rather than trusting this sentence.
 
 ## CLI flags: `=`, never a space
 
@@ -85,7 +91,7 @@ build once and a `roc test --main` invocation another time.
 
 **Build with `--opt=dev`** — for build time (~14s against ~2.5min), not correctness: the
 miscompile below was fixed by the 2026-08-17 pin. Historically the default `--opt=speed`
-miscompiles this codebase (issue #32's intermittent SIGABRT; it also silently drops the
+MISCOMPILED this codebase (issue #32's intermittent SIGABRT; it also silently dropped the
 `progress` pace column, which e2e catches).
 
 ## Syntax
@@ -142,7 +148,7 @@ miscompiles this codebase (issue #32's intermittent SIGABRT; it also silently dr
   contains/find_first/keep_if/take_first/take_last`, `Str.trim/split_on/with_ascii_lowercased`,
   `${}` interpolation.
 
-## Platform (basic-cli 0.21)
+## Platform (basic-cli 0.22)
 
 - Header: `app [main!] { pf: platform "…/0.21.0/….tar.zst" }`. HTTP data types
   (Method/Request/Response) come from the `http` package, not `pf`.

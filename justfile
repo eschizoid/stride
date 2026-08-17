@@ -15,10 +15,10 @@ default: test
 check:
     {{roc}} check src/app.roc
 
-# build the binary. --opt=dev on purpose: the optimized (--opt=speed) LLVM backend is
-# the default, but it miscompiles (issue #32's intermittent SIGABRT, and it drops the
-# progress pace column) — so CI and the release workflow both pin dev. Match them here,
-# or `just test` tests a binary nobody ships.
+# build the binary. --opt=dev on purpose, but for BUILD TIME (~14s against ~2m11s), not
+# correctness: the optimized backend's miscompile (#32) was fixed by the 2026-08-17 pin.
+# CI and the release workflow both pin dev, so match them here or `just test` tests a
+# binary nobody ships.
 build:
     {{roc}} build src/app.roc --output=stride --opt=dev {{linker}}
 
