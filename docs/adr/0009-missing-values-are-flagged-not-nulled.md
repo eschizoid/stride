@@ -25,4 +25,4 @@ Key omission via `Try(F64, [Missing])` was considered and rejected: dropping a k
 
 - Consumers (the coach skill first among them) read flags, never magnitudes. The contract lives as the comment block in `src/Output.roc` and the gotcha in `.claude/skills/stride/SKILL.md`; e2e pins both flag presence and flag discrimination (a power ride vs an HR-only row).
 - Surfaces: `activity`, `activities`, `plan.recent_activities_14d` carry all four flags + `load_model`; `top` carries the power/intensity/hr trio. `progress` sessions carry none on purpose — rows exist only because the group lens scored them, so the lens signal is present by construction.
-- The issue's original "schema v3 + null" instruction is superseded by this ADR; the roadmap ledger records the same.
+- The issue's original "schema v3 + null" instruction is superseded by this ADR. (It was also recorded in the roadmap's priority ledger, which has since been deleted — the roadmap no longer tracks status.)

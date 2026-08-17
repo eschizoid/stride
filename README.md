@@ -453,10 +453,14 @@ just install   # build + symlink into ~/.local/bin
 
 ## Roadmap
 
-Intentionally small — things get built when dogfooding demands them:
+Intentionally small. What is next lives in [GitHub issues](https://github.com/eschizoid/stride/issues);
+what stride is *for*, and the list of things it will never do, lives in
+[`docs/ROADMAP.md`](docs/ROADMAP.md).
 
-- Terminal UI for browsing the database
-- `.zwo` workout export for smart-trainer owners
+Two ideas sit outside both, deliberately parked rather than planned — a terminal UI for
+browsing the database, and `.zwo` workout export for smart-trainer owners. ADR 0000 §10
+lists the first under "deliberately out of scope"; both get revisited only if dogfooding
+actually demands them.
 
 Personal daily-driver, built for one athlete and open to adopters who bring
 their own Strava app credentials.
