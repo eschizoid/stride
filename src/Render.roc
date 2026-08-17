@@ -777,6 +777,15 @@ Render :: [].{
                     "    ${I64.to_str(z.sessions)} sessions · ${fmt1(z.moving_time.to_f64() / 3600.0)}h · ${fmt1(z.distance_m / 1000.0)} km",
                     "    training load: ${fmt0(z.tss)} (${I64.to_str(z.measured_pct)}% measured — rest estimated from HR/RPE; see doctor)",
                 ],
+                # tier line (#157): descriptive provenance for the load number above
+                # it — high = measured power, medium = HR/RPE, low = Strava
+                # relative-effort. States the mix, prescribes nothing; absent when
+                # the window is empty rather than claiming 0/0/0.
+                if z.load_coverage.known {
+                    ["    confidence: ${I64.to_str(z.load_coverage.high_pct)}% high · ${I64.to_str(z.load_coverage.medium_pct)}% medium · ${I64.to_str(z.load_coverage.low_pct)}% low"]
+                } else {
+                    []
+                },
                 zone_lines,
                 polarization_lines,
                 zone_gap,
@@ -1076,7 +1085,7 @@ expect {
         ramp_28d_avg: -1.0,
         load_days: 400,
         ctl_warming_up: False,
-        last_28d: { tss: 100.0, z1_s: 600.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 100.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 4.I64, intensity_streams: 4.I64 },
+        last_28d: { tss: 100.0, z1_s: 600.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 100.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 4.I64, intensity_streams: 4.I64, load_coverage: { high_pct: 100.I64, medium_pct: 0.I64, low_pct: 0.I64, known: True } },
         last_7d: { tss: 50.0, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 2.I64, intensity_streams: 2.I64 },
         ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
         last_hard_session_date: "",
@@ -1114,7 +1123,7 @@ expect {
         ramp_28d_avg: -1.0,
         load_days: 400,
         ctl_warming_up: False,
-        last_28d: { tss: 100.0, z1_s: 600.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 100.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 4.I64, intensity_streams: 4.I64 },
+        last_28d: { tss: 100.0, z1_s: 600.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 100.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 4.I64, intensity_streams: 4.I64, load_coverage: { high_pct: 100.I64, medium_pct: 0.I64, low_pct: 0.I64, known: True } },
         last_7d: { tss: 50.0, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 2.I64, intensity_streams: 2.I64 },
         ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
         last_hard_session_date: "",
@@ -1133,7 +1142,7 @@ expect {
         form_delta_7d: 0.0, form_delta_known: False, form_band_days: 0, form_band_days_capped: False,
         ramp_7d: 0.0, ramp_28d_avg: 0.0,
         load_days: 400, ctl_warming_up: False,
-        last_28d: { tss: 100.0, z1_s: 0.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 0.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 0.I64, intensity_streams: 0.I64 },
+        last_28d: { tss: 100.0, z1_s: 0.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 0.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 0.I64, intensity_streams: 0.I64, load_coverage: { high_pct: 0.I64, medium_pct: 0.I64, low_pct: 0.I64, known: False } },
         last_7d: { tss: 50.0, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 0.I64, intensity_streams: 0.I64 },
         ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
         last_hard_session_date: "", hard_sessions: { d14: 0.I64, d28: 0.I64, spacing_median_days_28d: 0.I64, spacing_known: False, days_since_last: 0.I64, days_since_known: False }, pending_sessions: 0.I64,

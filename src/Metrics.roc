@@ -1207,6 +1207,40 @@ Metrics :: [].{
             })).out
             gs = List.sort_with(gaps, |a, b| if a < b LT else if a > b GT else EQ)
             Known(List.get(gs, List.len(gs) // 2) ?? 0)
+    # three-way percentage split that ALWAYS sums to exactly 100 (largest-
+    # remainder rounding) — the #157 coverage invariant. All-zero inputs return
+    # zeros; callers carry a _known flag for that case per ADR 0009.
+    coverage_pcts : F64, F64, F64 -> { high_pct : I64, medium_pct : I64, low_pct : I64 }
+    coverage_pcts = |hi, med, lo| {
+        total = hi + med + lo
+        if total <= 0.0 {
+            { high_pct: 0, medium_pct: 0, low_pct: 0 }
+        } else {
+            exact = [hi / total * 100.0, med / total * 100.0, lo / total * 100.0]
+            # F64 has no floor method on this nightly, and round(x - 0.5) mis-floors
+            # exact integers under half-to-even — correct the rounded value instead,
+            # which is exact floor under ANY rounding mode
+            floors = List.map(exact, |x| {
+                r = (x).round_to_i64_try().ok_or(0)
+                if (r).to_f64() > x r - 1 else r
+            })
+            floor_sum = List.fold(floors, 0.I64, |acc, f| acc + f)
+            remainder = 100 - floor_sum
+            rema = List.map2(exact, floors, |x, f| x - (f).to_f64())
+            # hand the leftover points to the largest fractional parts, ties by
+            # position (high before medium before low) — deterministic
+            order = List.sort_with([0.U64, 1, 2], |a, b| {
+                ra = List.get(rema, a) ?? 0.0
+                rb = List.get(rema, b) ?? 0.0
+                if ra > rb LT else if ra < rb GT else if a < b LT else GT
+            })
+            bump = List.take_first(order, (remainder).to_u64_wrap())
+            out = List.map_with_index(floors, |f, i| f + (if List.contains(bump, i) 1 else 0))
+            {
+                high_pct: List.get(out, 0) ?? 0,
+                medium_pct: List.get(out, 1) ?? 0,
+                low_pct: List.get(out, 2) ?? 0,
+            }
         }
     }
 
@@ -3420,6 +3454,20 @@ expect {
     and Metrics.median_gap_days([100]) == Unknown
     and Metrics.median_gap_days([]) == Unknown
     and Metrics.median_gap_days([100, 101]) == Known(1)
+# ── coverage split (#157): sums to exactly 100 under every rounding shape —
+# thirds, halves, tiny slivers, single-tier, and the all-zero honest case
+expect {
+    sum_of = |c| c.high_pct + c.medium_pct + c.low_pct
+    thirds = Metrics.coverage_pcts(1.0, 1.0, 1.0)
+    halves = Metrics.coverage_pcts(50.0, 50.0, 0.0)
+    sliver = Metrics.coverage_pcts(99.9, 0.05, 0.05)
+    lone = Metrics.coverage_pcts(0.0, 0.0, 42.0)
+    zero = Metrics.coverage_pcts(0.0, 0.0, 0.0)
+    sum_of(thirds) == 100 and sum_of(halves) == 100 and sum_of(sliver) == 100
+    and thirds.high_pct == 34 and thirds.medium_pct == 33 and thirds.low_pct == 33
+    and halves.high_pct == 50 and halves.medium_pct == 50
+    and lone.low_pct == 100 and sum_of(lone) == 100
+    and sum_of(zero) == 0
 }
 
 # ── the engine/coach boundary, pinned (#154) ────────────────────────

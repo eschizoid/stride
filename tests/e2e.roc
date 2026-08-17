@@ -397,6 +397,13 @@ b_seed_analyze! = |ctx| {
     check!("load windows carry raw deltas (identity, not judgment)", strjq!(ctx, ["summary"], ".data.load_windows | (.delta_7d == .d7 - .prior_d7) and (.delta_28d == .d28 - .prior_d28) and (.d90 >= .d28)") == "true")?
     check!("sports rows carry last_date", strjq!(ctx, ["summary"], "[.data.sports_28d[] | .last_date | length == 10] | all") == "true")?
     check!("ftp trajectory prior window is flagged honestly", strjq!(ctx, ["summary"], ".data.ftp | (.prior_60d_known | type) == \"boolean\" and ((.prior_60d_known == false) or (.prior_60d_best_20min_w > 0))") == "true")?
+    # ── load coverage (#157): TSS-weighted confidence tiers on the aggregates.
+    # The invariant is EXACT-100 (largest-remainder rounding, pure-pinned in
+    # Metrics); the fixture mixes power_stream and HR/RPE-scored rows so both
+    # high and medium tiers are live, and known is a typed boolean (ADR 0009).
+    check!("28d load coverage sums to exactly 100", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct + .medium_pct + .low_pct == 100) and .known == true") == "true")?
+    check!("coverage tiers discriminate (high and medium both live)", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct > 0) and (.medium_pct > 0)") == "true")?
+    check!("form coverage carries the 90d window", strjq!(ctx, ["summary"], ".data.form_coverage_90d | (.high_pct + .medium_pct + .low_pct == 100) and ((.known | type) == \"boolean\")") == "true")?
     # with fixtures loaded TSB is known, so the enum arm is required here; the
     # ""-unknown arm is pinned separately on the pre-fixture empty db
     check!("analyze form_state is a stable band id once scored", strjq!(ctx, ["analyze"], ".data.form_state | IN(\"high_modeled_fatigue\",\"modeled_fatigue_building\",\"balanced\",\"fresh\",\"very_fresh\")") == "true")?
