@@ -787,34 +787,21 @@ Metrics :: [].{
         }
     }
 
-    # e^(-x) for x >= 0. The builtin `.exp()` returns NaN on the pinned
-    # compiler — the CTL/ATL constants above are literals for exactly that
-    # reason — but W' balance needs a live exponential over a range no table
-    # covers (tau varies with how far below CP each sample sits). Range
-    # reduction rather than a bare series: halve twelve times, take five Taylor
-    # terms, then square back up twelve times. The halving puts the argument
-    # under ~0.012 only for x < 49; by x = 700 it is 0.171 and the result is
-    # ~0.6% off, which is why large x short-circuits instead of computing.
-    # Past x ~ 11000 the polynomial exceeds 1 in magnitude and twelve squarings
-    # send it to +INFINITY — the exact inverse of what this function means — so
-    # the upper guard matters as much as the lower one. Negative input would be
-    # e^(+x); callers pass magnitudes, and the guard keeps a sign slip from
-    # silently returning a plausible number.
+    # e^(-x) for x >= 0. There is no `.exp()` on this compiler — the method
+    # does not exist on F64 at all, so the CTL/ATL constants above are literals
+    # — but `.pow()` does exist and is correct to full double precision, which
+    # is what W' balance needs (tau varies with how far below CP each sample
+    # sits, so no lookup table covers the range). This replaced a hand-rolled
+    # range-reduction-plus-Taylor series that was ~0.6% off by x = 700 and
+    # returned +INFINITY past x ~ 11000, the exact inverse of its meaning.
+    # Negative input would be e^(+x); callers pass magnitudes, and the guard
+    # keeps a sign slip from silently returning a plausible number.
     exp_neg : F64 -> F64
-    exp_neg = |x| {
-        if x < 0.0 {
-            1.0
-        } else if x > 700.0 {
-            # e^-700 is already 1e-304; everything past here is zero to any
-            # precision a caller can use, and computing it returns +inf.
-            0.0
-        } else {
-            r = x / 4096.0
-            r2 = r * r
-            t = 1.0 - r + r2 / 2.0 - r2 * r / 6.0 + r2 * r2 / 24.0
-            Iter.fold(0..<12, t, |acc, _| acc * acc)
-        }
-    }
+    exp_neg = |x|
+        if x < 0.0 1.0 else e_const.pow(0.0 - x)
+
+    e_const : F64
+    e_const = 2.718281828459045
 
     # ── spending the CP model (#186, #187) ──────────────────────────────
     #
