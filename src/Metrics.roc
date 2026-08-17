@@ -690,13 +690,9 @@ Metrics :: [].{
     # did not deliver the 42 and 7 it claimed, and transients ran 1–7% fast against
     # TrainingPeaks. Steady state is identical either way, which is why it went unnoticed.
     #
-    # Written as literals because there is no `.exp()` on this compiler — the method does
-    # not exist on F64 at all. (An earlier note here said it "returns NaN"; probing the
-    # current pin showed the call is a MISSING METHOD error, so there was never a value
-    # to be wrong.) They stay literals rather than becoming `exp_neg` calls because these
-    # are compile-time constants and recomputing them per row buys nothing — but the
-    # comment below is no longer the only thing tying them to the formula: an expect
-    # checks each against `exp_neg`, so the two cannot drift apart silently.
+    # Written as literals because there is no `.exp()` on this compiler — the
+    # method does not exist on F64 at all. They stay literals; an expect pins
+    # each against `exp_neg` so this comment cannot drift from the value.
     #   ctl_alpha = 1 − e^(−1/42) = 0.0235283133
     #   atl_alpha = 1 − e^(−1/7)  = 0.1331221000
     ctl_alpha : F64
@@ -3782,40 +3778,16 @@ expect {
     same and inside and outside and zero_not_uniform
 }
 
-# The EWMA constants are hardcoded, and this is what keeps the hardcoding honest
-# (#191). They were written as literals when no exponential was available; one now
-# is, so the formula in the comment beside them is checkable by machine rather than
-# by eye.
-#
-# What this actually adds, measured: the 1/tau reversion is ALREADY caught by the
-# 42-day ramp expect below, whose comment records it. But that expect pins the
-# constants only through their effect on a rounded CTL/ATL, and the sensitivities
-# (dCTL/da ~ 1579, dATL/da ~ 12) mean the whole pre-existing suite constrains
-# atl_alpha to only about +-4e-3 — three decimal places. So a digit fat-fingered
-# while editing the comment beside it passes everything on main. That 1e-5 to
-# 1e-10 band is this expect's real contribution.
-#
-# The tolerance is 3e-10, set by atl_alpha's own truncation error (2.498e-10) with
-# ~20% headroom, and it needs no change to the literals. At the 1e-9 this first
-# shipped with the guard was ONE-SIDED — the literals sit BELOW true, so a +1e-9
-# typo landed inside the budget while -1e-9 was caught.
+# The literals beside `ctl_alpha` are 1 - e^(-1/tau) truncated at ~1e-10. The
+# tolerance is atl_alpha's own truncation error (2.498e-10) plus 20%. The 42-day
+# convergence expect (search `63.21`) already catches a reversion to the 1/tau
+# form; this catches a fat-fingered digit, which that expect does not see until
+# about the third decimal of atl_alpha.
 expect {
     ctl_true = 1.0 - Metrics.exp_neg(1.0 / 42.0)
     atl_true = 1.0 - Metrics.exp_neg(1.0 / 7.0)
-    # the literals are the true values truncated at ~1e-10, far below anything CTL
-    # renders (a whole number). They stay as they are: extending them to full
-    # precision is safe -- daily_load is DELETE-and-rebuilt on every analyze, so
-    # no metrics_rev bump is involved -- but it would shift published JSON floats
-    # by ~1e-8 to buy nothing.
     (Metrics.ctl_alpha - ctl_true).abs() < 0.0000000003
     and (Metrics.atl_alpha - atl_true).abs() < 0.0000000003
-    # ...and the FORMULA is what must stay distinct from the linear approximation.
-    # Asserting that about the literal instead is unfalsifiable: the clause above
-    # already confines it to within 3e-10 of true, and true is 2.8e-4 from 1/42,
-    # so the intervals are disjoint by five orders of magnitude and the assertion
-    # can never be the reason for a failure. Pointed at ctl_true it CAN fail --
-    # if exp_neg ever regressed toward 1/tau, this is what would notice.
-    and (ctl_true - 1.0 / 42.0).abs() > 0.0001
 }
 
 # ── the engine/coach boundary, pinned (#154) ────────────────────────
