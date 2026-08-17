@@ -436,7 +436,7 @@ b_seed_analyze! = |ctx| {
     # a stream with 3 clean 180s@250W reps over a 120s@100W floor must detect
     # EXACTLY 3 work segments; the constant-200W ride (101) must detect NONE —
     # a steady effort has no interval structure, and inventing reps there is the
-    # failure mode the min_spread gate exists to prevent.
+    # failure mode the structure gates exist to prevent.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,weighted_avg_watts,avg_watts,device_watts) VALUES (103,'interval ride','Ride','${ctx.d2}T18:00:00Z',1500,15000,50,180,180,1)")
     _ = seed_interval_stream!(ctx.db, 103)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
