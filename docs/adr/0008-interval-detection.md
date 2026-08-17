@@ -70,3 +70,11 @@ maintainer's own workout erodes exactly the trust it exists to build.
 - No per-sport bespoke detectors — one algorithm, per-signal parameters.
 - No natural-language workout summaries in the engine ("great 5×3!") — structure is
   numbers; prose is the coach's.
+
+## Amended 2026-08-16 — structure gates replace the distribution gate (#170, PR pending)
+
+The v1 `min_spread` IQR gate judged the ride's GLOBAL value distribution and failed in both directions on real rides: a textbook 3×12 threshold session (the maintainer's, 2026-08-16) is ~80% work samples, so its IQR sat inside the work band and the gate reported ZERO segments, while a progressive endurance ride's ramp inflated IQR past the gate and its hot back half was sliced into seven back-to-back pseudo-reps. The v1 work/recovery labeling threshold (quantile midpoint) had the same disease — on the 3×12 it landed ABOVE the reps and labeled everything recovery.
+
+Detection is now judged on STRUCTURE, after segmentation: the edge threshold keeps its adaptive `shift_frac × IQR` term but gains a `min_shift` floor (30 W power, 0.3 m/s pace) so steady rides produce no edges; the work/recovery threshold is the largest gap between sorted segment level means (never a global quantile); adjacent work pieces merge into one effort so a sliced continuous block cannot read as reps; and a contrast gate requires the easy parts to be easy — median(non-work)/median(work) ≤ 0.80 for multi-rep structure, ≤ 0.65 for a single sustained effort (a weaker structural claim needs stronger separation). Measured anchors: the 3×12 separates at 0.53, a real surge ride at 0.75, and the false-positive repro's "recoveries" sit at 0.83.
+
+The three rides are frozen as golden fixtures in Metrics.roc at 15 s resolution (behavior verified identical to full resolution): the 3×12 MUST detect three ~12-minute reps, the progressive ride MUST report nothing, and the surge ride MUST stay detected. `metrics_rev` 31 rescores history under the new gates.

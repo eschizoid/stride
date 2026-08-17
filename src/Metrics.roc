@@ -1606,16 +1606,23 @@ Metrics :: [].{
     # maintainer's own VO2/threshold sessions — every change bumps metrics_rev
     # (Analyze), because a tuning change recomputes history.
     #
-    # min_spread is the no-invented-intervals gate: a session whose smoothed IQR
-    # never exceeds it (steady endurance ride, GPS-wobble run) has no structure to
-    # find, and the detector returns NOTHING rather than dressing noise as reps.
-    DetectParams : { smooth_w : U64, hold : U64, shift_frac : F64, min_spread : F64 }
+    # min_shift is the no-invented-intervals FLOOR on the edge threshold: an edge
+    # requires at least this much level change, so steady rides and GPS wobble
+    # produce no edges at all. It replaced the v1 min_spread IQR *gate* (#170),
+    # which judged the GLOBAL value distribution and failed both ways on real
+    # rides: a genuine 3x12 with short recoveries is ~80% work samples, so its
+    # IQR sat inside the work band and the gate declared "no structure" (false
+    # negative on the maintainer's cleanest session), while a progressive ride's
+    # ramp inflated IQR past the gate and got sliced into pseudo-reps (false
+    # positive). Structure is now judged AFTER segmentation — see the level-gap
+    # threshold, adjacent-work merge, and contrast gate in detect_segments.
+    DetectParams : { smooth_w : U64, hold : U64, shift_frac : F64, min_shift : F64 }
 
     detect_power_params : DetectParams
-    detect_power_params = { smooth_w: 15, hold: 60, shift_frac: 0.20, min_spread: 40.0 }
+    detect_power_params = { smooth_w: 15, hold: 60, shift_frac: 0.20, min_shift: 30.0 }
 
     detect_pace_params : DetectParams
-    detect_pace_params = { smooth_w: 30, hold: 90, shift_frac: 0.20, min_spread: 0.4 }
+    detect_pace_params = { smooth_w: 30, hold: 90, shift_frac: 0.20, min_shift: 0.3 }
 
     SegmentKind : [Work, Recovery, Warmup, Cooldown]
 
@@ -1662,6 +1669,14 @@ Metrics :: [].{
             } else {
                 { ok: x >= acc.prev, prev: x, started: True }
             })).ok
+
+    # upper median of an unsorted list (0.0 when empty) — used only for the
+    # contrast gate, where nearest-rank precision is plenty
+    median_f64 : List(F64) -> F64
+    median_f64 = |xs| {
+        sorted = List.sort_with(xs, |a, b| if a < b LT else if a > b GT else EQ)
+        List.get(sorted, List.len(sorted) // 2) ?? 0.0
+    }
 
     # value at the given fraction of a SORTED list (nearest-rank)
     sorted_quantile : List(F64), F64 -> F64
@@ -1754,10 +1769,12 @@ Metrics :: [].{
             q25 = sorted_quantile(sorted, 0.25)
             q75 = sorted_quantile(sorted, 0.75)
             iqr = q75 - q25
-            if iqr < p.min_spread {
-                []
-            } else {
-                delta = p.shift_frac * iqr
+            {
+                # floored, not gated: shift_frac*iqr adapts to noisy signals, and the
+                # min_shift floor is what keeps steady rides edge-free — detection no
+                # longer depends on how much of the ride the work occupies (#170)
+                adaptive = p.shift_frac * iqr
+                delta = if adaptive > p.min_shift adaptive else p.min_shift
                 # the trailing smoother lags the signal by (w-1)/2 samples, so raw edge
                 # positions land that late — shift them back or every work rep starts
                 # late and averages in recovery samples (measured: 250 W reps read ~242)
@@ -1787,32 +1804,97 @@ Metrics :: [].{
                         Err(_) => List.append(acc, seg)
                     })
                 kept = List.keep_if(absorbed, |s| s.hi - s.lo >= p.hold)
-                if List.is_empty(kept) {
+                # one level is a steady ride, not structure — and the work/recovery
+                # threshold comes from the LEVELS THEMSELVES (largest gap between
+                # sorted segment means), never from the global distribution: v1's
+                # quantile-midpoint threshold sat ABOVE the reps on a work-dominated
+                # ride and labeled 3x12 all-recovery (#170)
+                if List.len(kept) < 2 {
                     []
                 } else {
-                    work_thr = (q25 + q75) / 2.0 + delta / 2.0
-                    labeled = List.map(kept, |s| {
-                        # in-range by construction (bounds within [0, n), hi > lo) — the
-                        # fallback can't fire; it exists so an editing mistake fails a
-                        # duration expect instead of crashing
-                        start_t = (List.get(pairs, s.lo)).map_ok(|x| x.t).ok_or(0)
-                        end_t = (List.get(pairs, s.hi - 1)).map_ok(|x| x.t).ok_or(0)
-                        capped = Iter.fold((s.lo + 1)..<s.hi, 1.I64, |acc, i| {
-                            prev_t = (List.get(pairs, i - 1)).map_ok(|x| x.t).ok_or(0)
-                            cur_t = (List.get(pairs, i)).map_ok(|x| x.t).ok_or(0)
-                            dt = cur_t - prev_t
-                            acc + (if dt > max_sample_gap_s max_sample_gap_s else dt)
-                        })
-                        kind : SegmentKind
-                        kind = if s.mean >= work_thr Work else Recovery
-                        { kind, start_s: start_t, end_s: end_t, dur_s: capped, avg_signal: s.mean }
+                    sorted_means = List.sort_with(List.map(kept, |s| s.mean), |a, b| if a < b LT else if a > b GT else EQ)
+                    # two-cluster split maximizing between-class variance (Otsu in 1D),
+                    # gated on CLUSTER-MEAN separation. Largest-adjacent-gap was tried
+                    # first and failed on real rowing intervals: ten work and ten
+                    # recovery levels make the sorted means quasi-continuous (max gap
+                    # 10 W) while the clusters sit 46 W apart.
+                    m_prefix = prefix_sums(sorted_means)
+                    nm = List.len(sorted_means)
+                    split = Iter.fold(1..<nm, { score: 0.0.F64, gap: 0.0.F64, thr: 0.0.F64 }, |acc, i| {
+                        lo_mean = range_mean(m_prefix, 0, i)
+                        hi_mean = range_mean(m_prefix, i, nm)
+                        w0 = (i).to_f64()
+                        w1 = ((nm - i)).to_f64()
+                        score = w0 * w1 * (hi_mean - lo_mean) * (hi_mean - lo_mean)
+                        if score > acc.score {
+                            lo_edge = List.get(sorted_means, i - 1) ?? 0.0
+                            hi_edge = List.get(sorted_means, i) ?? 0.0
+                            { score, gap: hi_mean - lo_mean, thr: (lo_edge + hi_edge) / 2.0 }
+                        } else {
+                            acc
+                        }
                     })
-                    has_work = List.any(labeled, |s| s.kind == Work)
-                    if !has_work {
-                        # structure without work is not structure — a drifting ride's
-                        # levels are all easy; report nothing rather than fake reps
+                    labeled0 = List.map(kept, |s| { work: s.mean >= split.thr, lo: s.lo, hi: s.hi, mean: s.mean })
+                    # adjacent work pieces are ONE effort: a sliced continuous block
+                    # must not read as reps (the #170 false-positive repro was seven
+                    # back-to-back "reps" carved out of a 25-minute steady push)
+                    merged = List.fold(labeled0, [], |acc, s|
+                        match List.last(acc) {
+                            Ok(prev) =>
+                                if prev.work and s.work {
+                                    List.append(drop_last(acc), { work: True, lo: prev.lo, hi: s.hi, mean: range_mean(prefix, prev.lo, s.hi) })
+                                } else {
+                                    List.append(acc, s)
+                                }
+                            Err(_) => List.append(acc, s)
+                        })
+                    work_means = List.map(List.keep_if(merged, |s| s.work), |s| s.mean)
+                    rest_means = List.map(List.keep_if(merged, |s| !(s.work)), |s| s.mean)
+                    work_med = median_f64(work_means)
+                    rest_med = median_f64(rest_means)
+                    # the contrast gate: intervals require the easy parts to be EASY.
+                    # A progressive ride splits into levels whose "recoveries" sit near
+                    # the work (measured 0.83 on the false-positive repro) while real
+                    # structure separates hard (3x12: 0.53, surge ride: 0.75, so the
+                    # multi-rep limit is 0.80). A SINGLE sustained effort (20-min test,
+                    # a 40/20 block read as one) is a weaker structural claim and needs
+                    # the stronger 0.65 separation.
+                    contrast_ok =
+                        if List.is_empty(work_means) or List.is_empty(rest_means) or work_med <= 0.0 {
+                            False
+                        } else {
+                            limit = if List.len(work_means) >= 2 0.80 else 0.65
+                            rest_med / work_med <= limit
+                        }
+                    # work filling nearly the whole timeline is a continuous ride with a
+                    # warmup, not intervals: rescoring history surfaced dozens of
+                    # steady rides reporting one 44-minute "rep" (0.98 of the ride).
+                    # Real dense structure stays well under: 3x12 = 0.80, a 5x8min
+                    # with short recoveries = 0.89 — the ceiling is 0.93.
+                    work_samples = List.fold(List.keep_if(merged, |s| s.work), 0.U64, |acc, s| acc + (s.hi - s.lo))
+                    total_samples = List.fold(merged, 0.U64, |acc, s| acc + (s.hi - s.lo))
+                    work_frac_ok = total_samples > 0 and (work_samples).to_f64() / (total_samples).to_f64() <= 0.93
+                    if split.gap < p.min_shift or !contrast_ok or !work_frac_ok {
+                        # levels not meaningfully apart, or the "easy" is not easy —
+                        # continuous effort, honestly reported as no structure
                         []
                     } else {
+                        labeled = List.map(merged, |s| {
+                            # in-range by construction (bounds within [0, n), hi > lo) — the
+                            # fallback can't fire; it exists so an editing mistake fails a
+                            # duration expect instead of crashing
+                            start_t = (List.get(pairs, s.lo)).map_ok(|x| x.t).ok_or(0)
+                            end_t = (List.get(pairs, s.hi - 1)).map_ok(|x| x.t).ok_or(0)
+                            capped = Iter.fold((s.lo + 1)..<s.hi, 1.I64, |acc, i| {
+                                prev_t = (List.get(pairs, i - 1)).map_ok(|x| x.t).ok_or(0)
+                                cur_t = (List.get(pairs, i)).map_ok(|x| x.t).ok_or(0)
+                                dt = cur_t - prev_t
+                                acc + (if dt > max_sample_gap_s max_sample_gap_s else dt)
+                            })
+                            kind : SegmentKind
+                            kind = if s.work Work else Recovery
+                            { kind, start_s: start_t, end_s: end_t, dur_s: capped, avg_signal: s.mean }
+                        })
                         with_warm = match List.first(labeled) {
                             Ok(f) => if f.kind == Recovery (List.set(labeled, 0, { ..f, kind: Warmup })).ok_or(labeled) else labeled
                             Err(_) => labeled
@@ -3017,7 +3099,7 @@ expect {
         List.concat(mk(300.I64, 120.0, 0.I64), List.join([rep(0.I64), rep(1.I64), rep(2.I64), rep(3.I64)])),
         mk(300.I64, 110.0, 1500.I64),
     )
-    gated = Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, min_spread: 1000.0 })
+    gated = Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, min_shift: 1000.0 })
     long_hold = Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, hold: 200 })
     List.is_empty(gated) and List.is_empty(List.keep_if(long_hold, |s| s.kind == Work and s.dur_s < 200))
 }
@@ -3176,9 +3258,8 @@ expect {
     List.is_empty(Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, shift_frac: 5.0 }))
 }
 
-# the min_spread gate, straddled from both sides with the same low-contrast shape:
-# work/recovery 40 W apart passes a 30 W gate and is silenced by a 60 W gate —
-# these are the tripwires that make future gate tuning a conscious act
+# the contrast gate's tripwire (#170): near-flat alternation is NOT structure —
+# this and the floor expect below are what make future gate tuning a conscious act
 expect {
     mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
     rep = |k| {
@@ -3190,9 +3271,102 @@ expect {
         List.concat(mk(300.I64, 170.0, 0.I64), List.join([rep(0.I64), rep(1.I64), rep(2.I64), rep(3.I64)])),
         mk(300.I64, 168.0, 1500.I64),
     )
-    above = Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, min_spread: 30.0 })
-    below = Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, min_spread: 60.0 })
+    # 205 W "reps" over 165 W "recovery" is near-flat riding, not intervals: the
+    # easy parts sit at 0.82 of the work — above the multi-rep contrast limit —
+    # so the detector reports no structure even though the 40 W steps clear the
+    # min_shift floor. This is the #170 false-positive class, pinned.
+    near_flat = Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, min_shift: 30.0 })
+    List.is_empty(near_flat)
+}
+
+# min_shift is a FLOOR on the edge threshold: steps below it produce no edges at
+# all. Real 250/100 structure detects with the floor under the step size and
+# vanishes when the floor is raised above it.
+expect {
+    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    rep = |k| {
+        base : I64
+        base = 300 + k * 300
+        List.concat(mk(180.I64, 250.0, base), mk(120.I64, 100.0, base + 180))
+    }
+    fixture = List.concat(
+        List.concat(mk(300.I64, 120.0, 0.I64), List.join([rep(0.I64), rep(1.I64), rep(2.I64), rep(3.I64)])),
+        mk(300.I64, 110.0, 1500.I64),
+    )
+    above = Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, min_shift: 30.0 })
+    below = Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, min_shift: 200.0 })
     List.len(List.keep_if(above, |s| s.kind == Work)) == 4 and List.is_empty(below)
+}
+
+# ── the #170 pins ───────────────────────────────────────────────────
+# One REAL ride and two synthetics. The real one is the bug itself: no synthetic
+# reproduced the false negative until the mechanism was understood, so the actual
+# stream stays as the regression anchor. The other two failure modes reduce to
+# clean synthetic shapes (plus the near-flat and floor expects above).
+
+# Mariano's 2026-08-16 "45 min Metallica Ride with Kendall Toole" (activity
+# 19773062126): a textbook 3x12 min @ ~250-268 W with 3 min recoveries — the
+# prescribed threshold session, ~80% work samples. v1's distribution gates
+# reported ZERO segments on it. Mean watts per 15 s bucket, from the stored
+# stream; regenerate only from the activity, never by hand.
+expect {
+    profile : List(I64)
+    profile = [
+        111, 197, 185, 206, 206, 204, 204, 192, 197, 194, 198, 201, 248, 254, 255, 258, 261, 255, 259, 266,
+        263, 266, 264, 268, 262, 269, 267, 271, 264, 263, 267, 264, 269, 269, 270, 275, 269, 268, 272, 273,
+        273, 273, 272, 277, 281, 277, 274, 274, 265, 270, 274, 270, 268, 269, 268, 282, 273, 273, 279, 280,
+        111, 148, 158, 171, 171, 164, 157, 153, 148, 157, 154, 148, 263, 266, 270, 275, 268, 263, 267, 264,
+        267, 274, 274, 272, 266, 266, 264, 267, 272, 268, 261, 266, 269, 267, 266, 265, 269, 269, 263, 260,
+        257, 266, 264, 263, 262, 255, 266, 265, 271, 271, 267, 267, 262, 265, 268, 262, 259, 256, 256, 241,
+        116, 124, 122, 118, 139, 138, 125, 131, 134, 137, 133, 131, 249, 258, 257, 251, 249, 249, 254, 247,
+        244, 249, 253, 251, 248, 254, 251, 250, 250, 247, 254, 253, 255, 246, 249, 251, 249, 253, 256, 257,
+        266, 271, 267, 259, 251, 279, 261, 248, 248, 252, 245, 257, 246, 247, 252, 245, 245, 251, 242, 244,
+        95,
+    ]
+    fixture = Iter.fold(0..<(List.len(profile) * 15), [], |acc, i| {
+        w = List.get(profile, i // 15) ?? 0
+        List.append(acc, { t: (i).to_i64_wrap(), v: (w).to_f64() })
+    })
+    works = List.keep_if(Metrics.detect_segments(fixture, Metrics.detect_power_params), |s| s.kind == Work)
+    List.len(works) == 3 and List.all(works, |s| s.dur_s >= 650 and s.dur_s <= 800 and s.avg_signal >= 240.0 and s.avg_signal <= 280.0)
+}
+
+# the false-positive shape (#170): a progressive ride — levels stepping up
+# back-to-back with no recoveries between — is ONE continuous effort, not reps.
+# The adjacent-work merge collapses the steps and the lone block flunks the
+# single-effort contrast limit against its warm "easy" parts.
+expect {
+    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    fixture = List.join([
+        mk(420.I64, 185.0, 0.I64),
+        mk(400.I64, 215.0, 420.I64),
+        mk(400.I64, 235.0, 820.I64),
+        mk(500.I64, 250.0, 1220.I64),
+        mk(500.I64, 262.0, 1720.I64),
+        mk(300.I64, 240.0, 2220.I64),
+        mk(180.I64, 170.0, 2520.I64),
+    ])
+    List.is_empty(Metrics.detect_segments(fixture, Metrics.detect_power_params))
+}
+
+# true surge structure with IRREGULAR rep lengths (a music ride, not a workout
+# card) survives: what separates it from the ramp above is real recoveries
+# between the pushes, not uniform durations.
+expect {
+    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    fixture = List.join([
+        mk(300.I64, 150.0, 0.I64),
+        mk(120.I64, 245.0, 300.I64),
+        mk(200.I64, 175.0, 420.I64),
+        mk(400.I64, 240.0, 620.I64),
+        mk(90.I64, 160.0, 1020.I64),
+        mk(70.I64, 250.0, 1110.I64),
+        mk(240.I64, 170.0, 1180.I64),
+        mk(300.I64, 235.0, 1420.I64),
+        mk(280.I64, 155.0, 1720.I64),
+    ])
+    works = List.keep_if(Metrics.detect_segments(fixture, Metrics.detect_power_params), |s| s.kind == Work)
+    List.len(works) >= 3 and List.all(works, |s| s.avg_signal >= 230.0 and s.avg_signal <= 255.0)
 }
 
 
