@@ -1,0 +1,30 @@
+{
+  "title": "skip",
+  "description": "Result of `stride skip <id> \"<reason>\" [activity|none]`. The substitute keys appear only when a link was made, released or stolen.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "skipped_session",
+    "reason"
+  ],
+  "properties": {
+    "skipped_session": {
+      "type": "integer"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "substitute_activity_id": {
+      "type": "integer"
+    },
+    "released_substitute": {
+      "type": "integer"
+    },
+    "released_substitute_of": {
+      "type": "integer"
+    },
+    "kept_substitute": {
+      "type": "integer"
+    }
+  }
+}

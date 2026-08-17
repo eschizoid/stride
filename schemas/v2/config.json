@@ -1,0 +1,18 @@
+{
+  "title": "config",
+  "description": "Result of `stride config get|set <key> [value]` \u2014 the key and its stored value. An unset key is the `not_set` error envelope, not this payload.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "key",
+    "value"
+  ],
+  "properties": {
+    "key": {
+      "type": "string"
+    },
+    "value": {
+      "type": "string"
+    }
+  }
+}

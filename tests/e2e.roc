@@ -703,11 +703,13 @@ b_seed_analyze! = |ctx| {
     # violation. Run from the repo root (same CWD assumption as the skill guard
     # above). additionalKeys:false is the drift catcher — a payload that GAINS a
     # field without a schema update fails here, which is the whole point.
-    # 2>&1 on EVERY stage, not just the last: a redirect binds to one command,
-    # so a crashing binary or truncated JSON upstream left jq with nothing to
-    # read, printed its parse error to the SUITE's stderr, and returned an empty
-    # capture — which read as "conforms". Review measured both shapes.
-    validate! = |cmd, schema| Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${cmd} 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/${schema}.json -f tools/validate.jq 2>&1"))
+    # An empty capture used to read as "conforms" — a crashing binary or
+    # truncated JSON left jq with nothing and its parse error went to the
+    # SUITE's stderr. The first fix merged 2>&1 into every stage, which then
+    # corrupted the JSON of the commands that NARRATE to stderr by design
+    # (analyze, sync — ADR 0007). So: keep stderr out of the pipe, and fail
+    # explicitly on an empty payload instead of inferring conformance from it.
+    validate! = |cmd, schema| Str.trim(sh!("out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${cmd} 2>/dev/null); if [ -z \"$out\" ]; then echo \"no output from `${cmd}` — nothing was validated\"; else printf '%s' \"$out\" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/${schema}.json -f tools/validate.jq 2>&1; fi"))
     check!("summary conforms to its schema", validate!("summary", "summary") == "")?
     check!("plan conforms to its schema", validate!("plan", "plan") == "")?
     check!("activity conforms to its schema", validate!("activity 101", "activity") == "")?
@@ -731,12 +733,46 @@ b_seed_analyze! = |ctx| {
     check!("power-curve conforms", validate!("power-curve", "power_curve") == "")?
     check!("compare conforms", validate!("compare week", "compare") == "")?
     check!("progress conforms", validate!("progress", "progress") == "")?
-    check!("week conforms (planned + unplanned rows)", validate!("week", "week") == "")?
-    check!("week all conforms", validate!("week all", "week") == "")?
+    # `week` is the CURRENT Mon-Sun window, and the fixture's sessions are dated
+    # relative to today — d1/d2 can both land in the PREVIOUS week, leaving the
+    # payload empty and the item schema (14 required keys + the status enum)
+    # evaluated against nothing. Seed a session dated TODAY and assert the array
+    # is non-empty before trusting the validation. Third instance of this trap
+    # in this PR; the assertion is the cheap half.
+    wk_sess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.today}", "endurance", "week schema probe", "r"], ".data.id"))
+    check!("the week payload has rows to validate", strjq!(ctx, ["week"], ".data | length > 0") == "true")?
+    check!("week conforms (with rows)", validate!("week", "week") == "")?
+    check!("week all conforms (with rows)", validate!("week all", "week") == "")?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${wk_sess};")
+    check!("version conforms", validate!("--version", "version") == "")?
+    # the action payloads the coach consumes — week add's id is parsed back out,
+    # complete/skip results are branched on, analyze's converged flag drives a
+    # re-run. analyze NARRATES to stderr, which is exactly why validate! keeps
+    # stderr out of the pipe.
+    check!("analyze conforms", validate!("analyze", "analyze") == "")?
+    # config SET rather than get: set always returns the payload, while get on a
+    # key the fixture has not written is the not_set ERROR envelope (a different
+    # shape). Re-setting the value the suite already configured is idempotent.
+    check!("config conforms", validate!("config set timezone America/Chicago", "config") == "")?
+    act_sess = Str.trim(strjq!(ctx, ["week", "add", "2099-11-11", "endurance", "schema action probe", "r"], ".data.id"))
+    check!("week add conforms", validate!("week add 2099-11-12 endurance d r", "week_add") == "")?
+    check!("skip conforms", validate!("skip ${act_sess} \"probe reason\"", "skip") == "")?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date LIKE '2099-11-%';")
+    # ...and an empty capture must FAIL rather than read as conformance, which
+    # is what it did before (a crashed binary validated clean)
+    check!("an empty payload is not conformance", Str.contains(Str.trim(sh!("out=$(false 2>/dev/null); if [ -z \"$out\" ]; then echo 'no output from `x` — nothing was validated'; fi")), "nothing was validated"))?
     # the error arm of the envelope, with its code vocabulary enumerated: an
     # error code that is not in the schema fails here, which is the same drift
     # bargain additionalKeys makes for payload keys
     check!("an error envelope conforms, code included", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' activity 99999999 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1")) == "")?
+    # The enum is hand-maintained beside 27 emit sites, and this PR proved twice
+    # in one file that it drifts: a fabricated code (bad_args, left over from a
+    # rewritten branch) and a missing one (activity_required, a routine
+    # response). Set equality in BOTH directions, extracted multi-line-aware
+    # because err_out! calls wrap. A count check would have passed — the sets
+    # were both 27.
+    code_diff = Str.trim(sh!("cat src/*.roc | tr '\\n' ' ' | grep -oE '(err_out!|emit_err!)\\( *\"[a-z_]+\"' | grep -oE '\"[a-z_]+\"' | tr -d '\"' | sort -u > /tmp/stride_src_codes.$$; jq -r '.properties.error.properties.code.enum[]' schemas/v2/envelope.json | sort > /tmp/stride_enum_codes.$$; diff /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$; rm -f /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$"))
+    check!("every error code the source emits is in the contract, and vice versa", code_diff == "")?
     check!("...and an unknown code would be caught", Str.contains(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' activity 99999999 2>&1 | jq '.error.code = \"not_a_real_code\"' 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1"), "not in enum"))?
     check!("the envelope itself conforms", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1")) == "")?
     # the summary EMBEDDED in the plan bundle is the same shape as the standalone

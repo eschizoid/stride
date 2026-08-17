@@ -81,24 +81,32 @@ of your Bash calls is a FRESH shell, so exporting it does not carry between call
 parsing, so `stride skip 5 --json -- --json` stores the literal string as the
 reason and still returns JSON — note the flag is present BEFORE the terminator,
 because `--` stops flag parsing for everything after it. If output ever looks like a table when you
-wanted data, you left `--json` off. EVERY machine response is a
-versioned envelope — including usage errors (`{"error":{"code":"usage",…}}`) and a
+wanted data, you left `--json` off. Every machine response you will
+consume is a versioned envelope — including usage errors (`{"error":{"code":"usage",…}}`) and a
 bare `stride --json`, which answers with `{"data":{"commands":[…]}}` rather than the
-human help screen (#180): success → `{"schema_version":2,"data":{…}}`, error →
+human help screen (#180). Two things are NOT enveloped and never will be: `stride
+auth`, which is an interactive browser flow you run by hand, and an uncaught
+platform failure (a missing database, an unreachable Strava API), which prints a
+raw runtime line to stderr with empty stdout — tracked in #183. Success →
+`{"schema_version":2,"data":{…}}`, error →
 `{"schema_version":2,"error":{"code":"…","message":"…"}}`. The payloads described in
-the table below all live under `.data`; every published payload is
-described formally in `schemas/v2/*.json` in the repo (required keys, types,
-enums — including the error-code vocabulary; CI validates real payloads against
-them, so the schema and the binary cannot disagree for long).
+the table below all live under `.data`; every payload here — the
+thirteen queries, the actions you branch on (`sync`, `analyze`, `rate`, `week add`,
+`complete`, `skip`, `config`, `init`), the command list and the envelope itself —
+is described formally in `schemas/v2/*.json` in the repo (required keys, types,
+enums, and the error-code vocabulary, which is diffed against the source in CI so
+a code stride can emit cannot be missing from the contract).
 `error` is an OBJECT whose `code` carries the
 in-band error names used throughout this file (`unknown_command`, `missing_config`, `not_authenticated`,
 `derived_key`, …), with the human text nested in `error.message`. An error
 envelope is ALSO an exit status: stride exits 1 whenever it emits one (0 on
 success; a bare `stride` prints help and exits 0) — read either channel, they
 never disagree. `sync` and `analyze`
-emit JSON results too (`{synced, new_activities, updated_activities, streams_fetched,
+emit JSON results too (`{synced, new_activities, updated_activities, pruned, streams_fetched,
 pending_streams}` / `{computed, stream_errors, form_tsb, form_tsb_known, form_state,
-form_delta_7d, form_delta_known, converged}`), and `config get` emits `{key, value}` or `not_set`.
+form_delta_7d, form_delta_known, converged}`), and `stride config get <key> --json` emits `{key, value}` (or the `not_set`
+error envelope) — that is how you read `timezone` back, which governs what "today"
+means for every date below.
 
 ## Query commands (add `--json` to every one of these)
 
@@ -113,7 +121,7 @@ form_delta_7d, form_delta_known, converged}`), and `config get` emits `{key, val
 | `stride activity <id> --json` | one session in depth: flat z1_s–z5_s + hard_s, hard minutes, power bests (1/3/5/20min) from streams, plus `streams_unreadable` (true = the 0s are corrupt data, NOT a real zero) — use to review whether a planned session hit its targets before `complete`-ing it; `baselines` — this ride vs the athlete's OWN prior comparables (90d before the activity, same sport family + duration band via ONE shared rule): per metric (`ef`, `np`, `decoupling`) `{current, baseline_median, percentile, delta_pct, sample_count, known}`; `percentile` is direction-free rank (higher is better for ef/np, lower for decoupling), weigh it by `sample_count` |
 | `stride stats --json` | career + year-to-date totals per sport (sessions, hours, km) |
 | `stride load [days] --json` | daily tss/ctl/atl/tsb series, chronological (default 90) |
-| `stride week --json` | this week (Mon-Sun) PLUS `unplanned` rows for activities no session references — statuses open/done/skipped/unplanned; rows carry `substitute_activity_id` ("did this instead" links, rendered `→ id`); unplanned rows carry their id in `activity_id`, NOT `completed_activity_id` — discriminate on `status`. `stride week all` = full session log, no unplanned rows. |
+| `stride week --json` | this week (Mon-Sun) PLUS `unplanned` rows for activities no session references — statuses open/done/skipped/unplanned; rows carry `substitute_activity_id` ("did this instead" links, rendered `→ id`); unplanned rows carry their id in `activity_id`, NOT `completed_activity_id` — discriminate on `status`. `stride week all --json` = full session log, no unplanned rows. |
 | `stride doctor --json` | dataset health: coverage counts, per-model load provenance (`scored_by`), `strength_unrated` (strength sessions awaiting a rating) |
 | `stride compare [week\|month] --json` | rolling window vs the prior one: `{period, window_label, current, prior}`, each side with tss/sessions/hard_min/easy_pct/ctl + `has_data` — `has_data: false` is the discriminator for an empty window (do not read its 0s as training) |
 | `stride progress [date] [asc\|desc] --json` | `{anchor_date, anchor_scored, groups:[{name, lens, sessions}]}` — `lens` is `ef`\|`speed_hr`\|`rpe` (sport-aware); each session carries a `score` in that lens. Bare = latest analyzed workout; `desc` lists newest first without changing the trend. **`anchor_scored: false` means a workout anchored on that date could not be scored by its group's lens, so it is absent from `groups` and the trends exclude it** — do not read the trend as covering the session you asked about. In-band errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts` |
@@ -179,9 +187,12 @@ overrides if set. A locked/corrupt db surfaces as a real error, not a false
 "not authenticated".
 
 First-time on a new machine: create a Strava API app (strava.com/settings/api), then
-`stride init` → `STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth` (browser
-paste flow) → `stride config set hr_z1_max..hr_z4_max` (+ `timezone`, IANA) → `stride sync` →
-`stride analyze`. The db self-migrates on any command, so upgrading the binary against
+`stride init --json` → `STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth`
+(browser paste flow, interactive — the one command you run WITHOUT `--json`) →
+`stride config set hr_z1_max..hr_z4_max --json` (+ `timezone`, IANA) →
+`stride sync --json` → `stride analyze --json`. Each step's failure is an envelope
+you can branch on (`not_authenticated`, `missing_config`), which is the point of
+flagging a setup chain. The db self-migrates on any command, so upgrading the binary against
 an existing db is safe.
 
 ## Development

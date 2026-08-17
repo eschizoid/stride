@@ -12,7 +12,8 @@ app [main!] {
 # math), Render (tables/formatting), Schema (DDL).
 #
 # Two consumers, one contract: humans get tables (with legends and a verdict),
-# LLM coaches get JSON (STRIDE_FORMAT=json or an agent env var). The engine
+# LLM coaches get JSON by ASKING for it (--json, else STRIDE_FORMAT=json —
+# nothing is inferred from the environment). The engine
 # computes deterministically; the coach reasons and writes the plan back
 # through the coaching-log commands. Neither does the other's job.
 
@@ -45,6 +46,7 @@ import Report
 import Plan
 import Import
 
+version : Str
 version = "stride 0.6.0" # x-release-please-version
 
 help_text =
@@ -149,7 +151,14 @@ main! = |raw_args| {
                 # so they get the same answer rather than one becoming an error.
                 Err(ShowHelp) =>
                     if Output.json_mode!({}) {
-                        Output.emit_ok!({ commands: List.keep_if(Command.command_names, |c| !(Str.starts_with(c, "-")) and c != "help") })
+                        # subcommands and flags separately: the unknown-command
+                        # envelope tells a machine to "run `stride` for the
+                        # list", so that list must lead to everything runnable —
+                        # --version included (review found it unreachable)
+                        Output.emit_ok!({
+                            commands: List.keep_if(Command.command_names, |c| !(Str.starts_with(c, "-")) and c != "help"),
+                            flags: ["--json", "--human", "--help", "--version"],
+                        })
                     } else {
                         Stdout.line!(help_text)
                     }
@@ -210,7 +219,9 @@ dispatch! = |cmd|
         Command.Plan => Report.plan_bundle!({})
         Command.Doctor => Report.doctor!({})
         Command.Zones => Report.pz!({})
-        Command.Version => Stdout.line!(version)
+        # a machine calls this alongside schema_version to negotiate, so it
+        # answers in the envelope like every other query (#182)
+        Command.Version => Output.out!({ version: version }, |p| p.version)
         Command.Compare(period) => Report.compare!(period)
         Command.Activities(c, sport) => Report.activities!(c, sport)
         Command.Top(metric, c, sport) => Report.top!(metric, c, sport)

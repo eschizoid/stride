@@ -1,0 +1,18 @@
+{
+  "title": "rate",
+  "description": "Result of `stride rate <activity|latest> <1-10>`.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "rated",
+    "rpe"
+  ],
+  "properties": {
+    "rated": {
+      "type": "integer"
+    },
+    "rpe": {
+      "type": "integer"
+    }
+  }
+}

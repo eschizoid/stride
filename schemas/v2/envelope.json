@@ -23,7 +23,7 @@
           "enum": [
             "activity_already_linked",
             "activity_not_found",
-            "bad_args",
+            "activity_required",
             "bad_count",
             "bad_date",
             "bad_id",
