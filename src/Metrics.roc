@@ -1225,6 +1225,36 @@ Metrics :: [].{
         }
     }
 
+    # ── personal-baseline primitives (#160) ─────────────────────────────
+    # THE comparability rule, in one place: two activities compare iff same
+    # sport family AND same duration band AND the metric exists on both sides.
+    # Bands are FIXED edges, not ±% of the current ride — fixed edges make
+    # comparability symmetric and deterministic (a is comparable to b exactly
+    # when b is comparable to a), which ±% is not. #149's rep-level progression
+    # must consume THIS function rather than grow a second definition.
+    duration_band : I64 -> { lo : I64, hi : I64 }
+    duration_band = |moving_time|
+        if moving_time < 1200 { lo: 0, hi: 1200 }
+        else if moving_time < 2700 { lo: 1200, hi: 2700 }
+        else if moving_time < 4500 { lo: 2700, hi: 4500 }
+        else if moving_time < 7200 { lo: 4500, hi: 7200 }
+        else { lo: 7200, hi: 86400 }
+
+    # percentile of `current` within `samples`: the share of samples <= current,
+    # 0-100. DIRECTION-FREE — for EF/NP higher is better, for decoupling lower
+    # is better; stride reports the rank, the coach applies the direction.
+    # Requires a non-empty sample list (callers gate on sample_count).
+    percentile_of : List(F64), F64 -> I64
+    percentile_of = |samples, current| {
+        n = List.len(samples)
+        if n == 0 {
+            0
+        } else {
+            at_or_below = List.len(List.keep_if(samples, |s| s <= current))
+            (((at_or_below).to_f64() / (n).to_f64()) * 100.0).round_to_i64_try().ok_or(0)
+        }
+    }
+
     form_state : F64 -> Str
     form_state = |tsb|
         match form_band(tsb) {
@@ -3440,6 +3470,25 @@ expect {
     and halves.high_pct == 50 and halves.medium_pct == 50
     and lone.low_pct == 100 and sum_of(lone) == 100
     and sum_of(zero) == 0
+}
+
+# ── baseline primitives (#160): fixed band edges are symmetric and total;
+# percentile is direction-free rank, exact at the edges
+expect {
+    Metrics.duration_band(2699) == { lo: 1200, hi: 2700 }
+    and Metrics.duration_band(2700) == { lo: 2700, hi: 4500 }
+    and Metrics.duration_band(0) == { lo: 0, hi: 1200 }
+    and Metrics.duration_band(90000) == { lo: 7200, hi: 86400 }
+    and Metrics.duration_band(2650) == Metrics.duration_band(1250)
+}
+
+expect {
+    Metrics.percentile_of([1.0, 2.0, 3.0, 4.0], 4.0) == 100
+    and Metrics.percentile_of([1.0, 2.0, 3.0, 4.0], 1.0) == 25
+    and Metrics.percentile_of([1.0, 2.0, 3.0, 4.0], 0.5) == 0
+    and Metrics.percentile_of([1.0, 2.0, 3.0, 4.0], 2.5) == 50
+    and Metrics.percentile_of([5.0], 5.0) == 100
+    and Metrics.percentile_of([], 1.0) == 0
 }
 
 # ── the engine/coach boundary, pinned (#154) ────────────────────────

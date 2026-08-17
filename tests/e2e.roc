@@ -418,6 +418,30 @@ b_seed_analyze! = |ctx| {
     check!("hr row: intensity absent too", strjq!(ctx, ["activity", "102"], "(.data.intensity_known == false) and (.data.power_known == false)") == "true")?
     check!("top rows carry the trio", strjq!(ctx, ["top", "tss", "3"], "[.data[] | has(\"power_known\") and has(\"intensity_known\") and has(\"hr_known\")] | all") == "true")?
     check!("plan recent rows carry the flag set", strjq!(ctx, ["plan"], "[.data.recent_activities_14d[] | has(\"power_known\") and has(\"zones_known\") and has(\"load_model\")] | all") == "true")?
+
+    # ── personal baselines (#160): 101 vs its own prior comparables. Probe 99
+    # sits 5 days earlier, same family (Ride) and duration band (3600s), with
+    # summary watts + HR so it scores an np and an EF — one comparable.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr,device_watts) SELECT 99,'baseline probe','Ride',date(start_local,'-5 days')||'T09:00:00Z',3500,28000,180,180,140,1 FROM activities WHERE id=101;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("baseline: np compares against the prior comparable", strjq!(ctx, ["activity", "101"], ".data.baselines.np | .known == true and .sample_count >= 1 and (.percentile | type) == \"number\"") == "true")?
+    # 101 has power but NO avg_hr, while probe 99 carries both — so the ef
+    # baseline EXISTS (sample_count 1) yet 101 cannot rank in it: known false
+    # with a live sample_count is the honest split, not a fake p0
+    check!("baseline: ef needs both signals on the CURRENT side too", strjq!(ctx, ["activity", "101"], ".data.baselines.ef | .known == false and .sample_count >= 1") == "true")?
+    check!("baseline: comparability rule is visible", strjq!(ctx, ["activity", "101"], ".data.baselines | .window_days == 90 and .band_lo_s == 2700 and .band_hi_s == 4500") == "true")?
+    check!("baseline: hr-only row has honest unknowns", strjq!(ctx, ["activity", "102"], ".data.baselines | .np.known == false and .ef.known == false") == "true")?
+    # NO FUTURE LEAK: a monster ride AFTER 101 must not move 101's baseline
+    before_n = Str.trim(strjq!(ctx, ["activity", "101"], ".data.baselines.np.sample_count"))
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr,device_watts) SELECT 98,'future probe','Ride',date(start_local,'+5 days')||'T09:00:00Z',3600,30000,400,400,150,1 FROM activities WHERE id=101;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("baselines never include future activities", Str.trim(strjq!(ctx, ["activity", "101"], ".data.baselines.np.sample_count")) == before_n)?
+    # family exclusion: a same-band Ski before 101 is not comparable
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr,device_watts) SELECT 97,'ski probe','Ski',date(start_local,'-4 days')||'T09:00:00Z',3600,0,300,300,150,1 FROM activities WHERE id=101;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("comparability excludes other families", Str.trim(strjq!(ctx, ["activity", "101"], ".data.baselines.np.sample_count")) == before_n)?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (97,98,99); DELETE FROM activity_metrics WHERE activity_id IN (97,98,99); DELETE FROM activities WHERE id IN (97,98,99);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # #93: ramp carries BOTH fields, and a short history reports an honest 0 rather than
     # today's whole CTL — which is what treating "no data 7 days back" as a CTL of 0 would
     # produce. The fixture has only a couple of days, so 0 is the correct answer here.
