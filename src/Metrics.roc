@@ -1207,6 +1207,9 @@ Metrics :: [].{
             })).out
             gs = List.sort_with(gaps, |a, b| if a < b LT else if a > b GT else EQ)
             Known(List.get(gs, List.len(gs) // 2) ?? 0)
+        }
+    }
+
     # three-way percentage split that ALWAYS sums to exactly 100 (largest-
     # remainder rounding) — the #157 coverage invariant. All-zero inputs return
     # zeros; callers carry a _known flag for that case per ADR 0009.
