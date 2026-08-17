@@ -1811,6 +1811,9 @@ Report :: [].{
     # "too much" is the coach's call.
     reps! : Str => Try({}, _)
     reps! = |date_arg| {
+        if !(Str.is_empty(date_arg)) and !(Metrics.is_canonical_date(date_arg)) {
+            Output.err_out!("usage", "usage: stride reps [YYYY-MM-DD] — '${date_arg}' is not a date")
+        } else {
         path = Db.open_db!({})?
         # the anchor: the named date's session with work blocks, else the most
         # recent one that has any. A date with no detected structure is an
@@ -2014,7 +2017,7 @@ Report :: [].{
                         date: sn.date,
                         name: sn.name,
                         rep_count: sn.reps,
-                        mean_w: sn.mean_w,
+                        mean_signal: sn.mean_w,
                         mean_dur_s: sn.mean_dur,
                         # the spread of THIS session's reps. The filter finds
                         # candidates by count and scale; whether a session whose
@@ -2028,7 +2031,7 @@ Report :: [].{
                         uniformity: if sn.min_dur > 0 (sn.max_dur).to_f64() / (sn.min_dur).to_f64() else 0.0,
                         # fade WITHIN the session: last rep minus first. Signed,
                         # because holding or building is as real as fading.
-                        fade_w: last_w - first_w,
+                        fade_signal: last_w - first_w,
                         # what the same work cost in heartbeats by the last rep
                         hr_rise_bpm: if hr_span_known last_hr - first_hr else 0.0,
                         hr_rise_known: hr_span_known,
@@ -2049,9 +2052,10 @@ Report :: [].{
                         sessions: built,
                     })
                 else
-                    Stdout.line!(Render.reps_screen({ anchor_date: a.date, shape_reps: a.reps, shape_dur: a.mean_dur, matched_total: matched, sessions: built }))
+                    Stdout.line!(Render.reps_screen({ anchor_date: a.date, shape_reps: a.reps, shape_dur: a.mean_dur, matched_total: matched, signal: a.signal, sessions: built }))
                 }
             }
+        }
         }
     }
 

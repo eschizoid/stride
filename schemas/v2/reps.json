@@ -64,9 +64,9 @@
           "date",
           "name",
           "rep_count",
-          "mean_w",
+          "mean_signal",
           "mean_dur_s",
-          "fade_w",
+          "fade_signal",
           "hr_rise_bpm",
           "hr_rise_known",
           "reps",
@@ -87,13 +87,13 @@
           "rep_count": {
             "type": "integer"
           },
-          "mean_w": {
+          "mean_signal": {
             "type": "number"
           },
           "mean_dur_s": {
             "type": "integer"
           },
-          "fade_w": {
+          "fade_signal": {
             "type": "number"
           },
           "hr_rise_bpm": {

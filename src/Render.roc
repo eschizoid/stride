@@ -184,6 +184,15 @@ Render :: [].{
         if x >= 0.0 "+${mag}" else "-${mag}"
     }
 
+    # signed(), at the precision the signal is displayed in. A pace delta of
+    # -0.04 m/s is the difference between 4:00/km and 4:03/km; through fmt0 it
+    # renders as "0" and the column reports no change at all.
+    signed_value : F64, Str -> Str
+    signed_value = |x, signal| {
+        mag = seg_value((x).abs(), signal)
+        if x >= 0.0 "+${mag}" else "-${mag}"
+    }
+
     # How long the band has held, appended to the state (#123).
     #
     # Takes the TAG, not a flattened number: the caller must not decide what Unknown means
@@ -817,19 +826,43 @@ Render :: [].{
     # Numbers only — a fade is reported, never judged (#154).
     reps_screen = |p| {
         shown = (List.len(p.sessions)).to_i64_wrap()
-        more = if p.matched_total > shown " · showing ${I64.to_str(shown)} of ${I64.to_str(p.matched_total)}" else ""
+        # seg_unit carries a leading space for " m/s" so it can suffix a
+        # number directly; the legend needs it bare.
+        unit = Str.trim(seg_unit(p.signal))
+        # Rows are RANKED by uniformity and then capped, so saying only "12 of
+        # 21" invites the reading that the other 9 are older, when they are in
+        # fact the least regular. On this athlete the dropped rows included
+        # five sessions from the current year, under a newest-first table.
+        more = if p.matched_total > shown " · showing the ${I64.to_str(shown)} most uniform of ${I64.to_str(p.matched_total)}" else ""
+        # How much of the evidence is itself the shape named in the header.
+        # Because the rows are ranked by uniformity, a conforming session can
+        # never rank below a non-conforming one: so when this count is under
+        # the number shown, it is exact over the WHOLE matched set, not just
+        # the visible rows. When every visible row conforms there may be more
+        # below the cap, hence the "≥".
+        conforming = (List.len(List.keep_if(p.sessions, |s| s.uniformity <= 1.6))).to_i64_wrap()
+        atleast = if conforming == shown and p.matched_total > shown "≥" else ""
+        # A caveat that fires on 11 of 12 rows has stopped being a caveat, so
+        # the count of like-for-like evidence leads instead of hiding in a
+        # per-row parenthetical.
+        census = "${atleast}${I64.to_str(conforming)} of ${I64.to_str(p.matched_total)} matched sessions are themselves this repeated shape — the rest are listed with their own rep spread, and are not like-for-like"
         # "anchor" is load-bearing: the shape describes the anchor session, and
         # each row states its own spread. Claiming it for the table would be the
         # header/rows contradiction review found in round 1.
         header = "── anchor ${I64.to_str(p.shape_reps)}×${mmss(p.shape_dur)} · ${p.anchor_date}${more} ──"
         rows = List.map(p.sessions, |s| {
-            watts = Str.join_with(List.map(s.reps, |r| fmt0(r.avg_signal)), " · ")
-            hr = if s.hr_rise_known " · hr +${fmt0(s.hr_rise_bpm)}" else ""
+            # seg_value/seg_unit, not fmt0: on a run avg_signal is metres per
+            # second, and fmt0 rendered every rep of a 4:00/km and a 4:13/km
+            # session as an identical "4".
+            vals = Str.join_with(List.map(s.reps, |r| seg_value(r.avg_signal, p.signal)), " · ")
+            # signed(), not a hardcoded "+": a HR DROP across reps is a real
+            # signal and rendered as "hr +-8" three times on real data.
+            hr = if s.hr_rise_known " · hr ${signed(s.hr_rise_bpm)}" else ""
             spread = if s.uniformity >= 1.15 " · reps ${mmss(s.min_dur_s)}-${mmss(s.max_dur_s)}" else ""
-            "${s.date}  ${watts}  (mean ${fmt0(s.mean_w)}, fade ${signed(s.fade_w)}${hr}${spread})"
+            "${s.date}  ${vals}  (mean ${seg_value(s.mean_signal, p.signal)}, fade ${signed_value(s.fade_signal, p.signal)}${hr}${spread})"
         })
-        legend = "reps left to right within each session · fade = last rep minus first · hr = first-to-last rise across reps"
-        Str.join_with(List.join([[header, ""], rows, ["", legend]]), "\n")
+        legend = "reps left to right within each session, in ${unit} · fade = last rep minus first · hr = first-to-last change across reps"
+        Str.join_with(List.join([[header, "", census, ""], rows, ["", legend]]), "\n")
     }
 
     # ── compare command screen ──────────────────────────────────────────
@@ -1216,6 +1249,66 @@ expect {
     # flat-drift verdict on every single-rep session
     and Render.seg_hr_drift([seg(150.0, True)]) == Err(NotEnough)
 }
+
+# reps_screen: units, sign, caption and census. Every assertion here failed on
+# real data before this round.
+expect {
+    rep = |v| { avg_signal: v, ordinal: 0.I64, dur_s: 240.I64 }
+    sess = |date, unif, hr_rise, mean, fade, vals| {
+        date,
+        uniformity: unif,
+        min_dur_s: 240.I64,
+        max_dur_s: 241.I64,
+        mean_signal: mean,
+        fade_signal: fade,
+        hr_rise_bpm: hr_rise,
+        hr_rise_known: True,
+        reps: List.map(vals, rep),
+    }
+    power = Render.reps_screen({
+        anchor_date: "2026-08-16",
+        shape_reps: 3.I64,
+        shape_dur: 718.I64,
+        matched_total: 21.I64,
+        signal: "power",
+        sessions: [sess("2026-08-16", 1.01, 11.0, 262.0, -16.0, [268.0, 265.0, 252.0])],
+    })
+    pace = Render.reps_screen({
+        anchor_date: "2026-08-10",
+        shape_reps: 5.I64,
+        shape_dur: 241.I64,
+        matched_total: 2.I64,
+        signal: "pace",
+        sessions: [sess("2026-08-10", 1.01, 12.0, 4.15, -0.04, [4.1667, 4.13])],
+    })
+    dropped = Render.reps_screen({
+        anchor_date: "2023-02-11",
+        shape_reps: 7.I64,
+        shape_dur: 63.I64,
+        matched_total: 16.I64,
+        signal: "power",
+        sessions: [sess("2023-02-11", 1.02, -8.0, 248.0, -11.0, [248.0, 236.0])],
+    })
+    # pace is metres per second: through fmt0 a 4:00/km and a 4:13/km session
+    # both rendered every rep as "4", making the whole screen useless for runs
+    Str.contains(pace, "4.17") and Str.contains(pace, "in m/s")
+    # and a sub-1 m/s fade is a real difference, not "0"
+    and Str.contains(pace, "fade -0.04")
+    # a HR DROP across reps rendered as "hr +-8" -- the + was hardcoded
+    and Str.contains(dropped, "hr -8") and !(Str.contains(dropped, "+-"))
+    # rows are ranked by uniformity then capped, so "showing 12 of 21" read as
+    # "the other 9 are older" when they were the least regular
+    and Str.contains(power, "most uniform of 21")
+    # and the count of like-for-like evidence leads, rather than hiding in a
+    # per-row caveat that fired on 11 of 12 rows
+    and Str.contains(power, "1 of 21 matched sessions")
+    and Str.contains(power, "W ·") and !(Str.contains(power, "m/s"))
+}
+
+# signed_value differs from signed ONLY in precision -- it inherits the
+# rounds-away-but-still-a-direction contract pinned above, which is why a pace
+# fade keeps its sign instead of collapsing to a bare zero.
+expect Render.signed_value(-0.04, "pace") == "-0.04" and Render.signed_value(-16.0, "power") == "-16" and Render.signed_value(-0.27, "power") == "-0"
 
 # ── the engine/coach boundary across ALL verdict producers (#154) ────
 # Every human verdict line stride renders is state, never advice. Each producer

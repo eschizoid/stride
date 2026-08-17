@@ -763,7 +763,7 @@ b_seed_analyze! = |ctx| {
     check!("a second comparable session appears", strjq!(ctx, ["reps"], ".data.sessions | length >= 2") == "true")?
     # fade SIGN: 331 descends 200->180, so its fade must be NEGATIVE. Flipping
     # the subtraction in Report.roc must fail here.
-    check!("fade is last minus first, signed", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 331) | .fade_w] | .[0] < 0") == "true")?
+    check!("fade is last minus first, signed", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 331) | .fade_signal] | .[0] < 0") == "true")?
     # rep ORDER: reps must be in ordinal order, so the first is the 200W one
     check!("reps are in ordinal order", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 331) | .reps[0].avg_signal] | .[0] == 200") == "true")?
     check!("hr rise spans first to last rep", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 331) | .hr_rise_bpm] | .[0] == 20") == "true")?
