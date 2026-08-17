@@ -1866,9 +1866,9 @@ Report :: [].{
                 # the engine calling one ride "comparable enough to show you"
                 # and "not repeated enough to be a workout" in the same breath.
                 # 1.6x still excludes everything from 2.1x up.
-                anchor_uniform = a.max_dur * 10 <= a.min_dur * 16
+                anchor_uniform = Metrics.is_uniform_reps(a.min_dur, a.max_dur)
                 if !(anchor_uniform) {
-                    Output.err_out!("irregular_anchor", "the blocks detected in this session vary too much to be one repeated shape (${(a.min_dur).to_str()}s to ${(a.max_dur).to_str()}s, and an anchor's blocks must sit within 1.6x of each other) — nothing to compare it against as a repeated workout")
+                    Output.err_out!("irregular_anchor", "the blocks detected in this session vary too much to be one repeated shape (${(a.min_dur).to_str()}s to ${(a.max_dur).to_str()}s, and an anchor's blocks must sit within ${Render.fmt1(Metrics.anchor_uniformity_max)}x of each other) — nothing to compare it against as a repeated workout")
                 } else {
                 # same family, same rep count, same rep-duration band, and never
                 # later than the anchor — the same no-future-leak rule as #160,

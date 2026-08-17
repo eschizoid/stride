@@ -1,6 +1,6 @@
 {
   "title": "reps",
-  "description": "Rep-level comparison (#149): the anchor session's detected work blocks beside the same-shaped blocks of earlier comparable sessions. `shape` states the selection rule \u2014 same sport family, same rep count, same rep-duration band (Metrics.rep_duration_band), same signal, never later than the anchor. The anchor must itself be a repeated shape (reps within 1.4x) or the command refuses with irregular_anchor; candidate sessions are NOT filtered on uniformity, they report their own via min_dur_s/max_dur_s/uniformity, because whether an uneven session is 'the same workout' is the coach's judgment. `matched_total` counts everything the rule matched; `sessions` is the twelve most uniform of them, displayed newest first.",
+  "description": "Rep-level comparison (#149): the anchor session's detected work blocks beside the same-shaped blocks of earlier comparable sessions. `shape` states the selection rule \u2014 same sport family, same rep count, same rep-duration band (Metrics.rep_duration_band), same signal, never later than the anchor. The anchor must itself be a repeated shape (reps within 1.6x) or the command refuses with irregular_anchor; candidate sessions are NOT filtered on uniformity, they report their own via min_dur_s/max_dur_s/uniformity, because whether an uneven session is 'the same workout' is the coach's judgment. `matched_total` counts everything the rule matched; `sessions` is the twelve most uniform of them, displayed newest first.",
   "type": "object",
   "additionalKeys": false,
   "required": [

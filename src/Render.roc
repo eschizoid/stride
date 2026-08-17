@@ -842,7 +842,11 @@ Render :: [].{
         # below the cap, hence the "≥".
         conforming = (List.len(List.keep_if(p.sessions, |s| Metrics.is_uniform_reps(s.min_dur_s, s.max_dur_s)))).to_i64_wrap()
         atleast = if conforming == shown and p.matched_total > shown "≥" else ""
-        subj = if conforming == 1.I64 "session is itself" else "sessions are themselves"
+        # the NOUN follows how many were matched, the VERB how many conform:
+        # "1 of 8 matched sessions is itself" -- pluralizing both produced
+        # "1 of 8 matched session is itself" on 7 of 15 real anchors
+        noun = if p.matched_total == 1.I64 "matched session" else "matched sessions"
+        verb = if conforming == 1.I64 "is itself" else "are themselves"
         # The trailing clause described rows that may not exist: on a first
         # structured session it read "1 of 1 ... the rest are listed", naming a
         # rest of zero. It also implied the un-annotated rows were the
@@ -850,11 +854,25 @@ Render :: [].{
         # census counts at 1.6, so on real data that mapping gives 1 where the
         # census says 3.
         rest = p.matched_total - conforming
-        tail = if rest > 0 " — the other ${I64.to_str(rest)} share the rep COUNT but not the shape, and are not like-for-like" else ""
+        # When the window caps and every visible row conforms, `conforming` is a
+        # LOWER bound (hidden rows rank worse but may still conform), so the
+        # remainder is an UPPER bound. Naming it exactly said "at least 12 of 35"
+        # and "the other 23 are not like-for-like" in one breath, while two of
+        # those 23 were identical in shape to the anchor.
+        tail =
+            if rest <= 0 {
+                ""
+            } else if atleast != "" {
+                " — up to ${I64.to_str(rest)} others match its rep count and duration band without being this shape"
+            } else if rest == 1.I64 {
+                " — the other one matches its rep count and duration band without being this shape"
+            } else {
+                " — the other ${I64.to_str(rest)} match its rep count and duration band without being this shape"
+            }
         # A caveat that fires on 11 of 12 rows has stopped being a caveat, so
         # the count of like-for-like evidence leads instead of hiding in a
         # per-row parenthetical.
-        census = "${atleast}${I64.to_str(conforming)} of ${I64.to_str(p.matched_total)} matched ${subj} this repeated shape${tail}"
+        census = "${atleast}${I64.to_str(conforming)} of ${I64.to_str(p.matched_total)} ${noun} ${verb} this repeated shape${tail}"
         # "anchor" is load-bearing: the shape describes the anchor session, and
         # each row states its own spread. Claiming it for the table would be the
         # header/rows contradiction review found in round 1.
@@ -1293,6 +1311,19 @@ expect {
             sess("2026-05-10", 1.01, 12.0, 3.94, -0.03, [3.9526, 3.92]),
         ],
     })
+    # some shown rows do NOT conform, so the count is exact and the remainder
+    # is named rather than hedged -- and "the other one" agrees in number
+    mixed = Render.reps_screen({
+        anchor_date: "2026-08-16",
+        shape_reps: 3.I64,
+        shape_dur: 718.I64,
+        matched_total: 3.I64,
+        signal: "power",
+        sessions: [
+            sess("2026-08-16", 1.01, 11.0, 262.0, -16.0, [268.0, 252.0]),
+            { date: "2025-10-15", uniformity: 4.3, min_dur_s: 264.I64, max_dur_s: 1144.I64, mean_signal: 236.0, fade_signal: -5.0, hr_rise_bpm: 13.0, hr_rise_known: True, reps: List.map([231.0, 227.0], rep) },
+        ],
+    })
     dropped = Render.reps_screen({
         anchor_date: "2023-02-11",
         shape_reps: 7.I64,
@@ -1316,13 +1347,23 @@ expect {
     # `Str.contains(power, "1 of 21 …")` matched whether or not the ≥ was
     # there, so deleting the branch left the suite green. Pin the ≥ itself,
     # and pin a case where it must be ABSENT.
-    and Str.contains(power, "≥1 of 21 matched session is itself")
-    # every shown row conforms and nothing is capped: no ≥, and no trailing
-    # clause naming a "rest" of zero (it read "1 of 1 ... the rest are listed")
+    # capped AND every shown row conforms: the count is a LOWER bound, so the
+    # remainder must be hedged rather than named exactly -- asserting "≥1 of 21"
+    # and "the other 20" together is a contradiction the old test enshrined
+    and Str.contains(power, "≥1 of 21 matched sessions is itself")
+    and Str.contains(power, "up to 20 others")
+    and !(Str.contains(power, "the other 20"))
+    # the NOUN stays plural even when one row conforms
+    and !(Str.contains(power, "matched session is"))
+    # nothing capped and everything conforms: no ≥, and no clause naming a
+    # remainder of zero (it read "1 of 1 ... the rest are listed")
     and Str.contains(pace, "2 of 2 matched sessions are themselves")
     and !(Str.contains(pace, "≥"))
     and !(Str.contains(pace, "the other"))
-    and Str.contains(power, "the other 20 share the rep COUNT")
+    and !(Str.contains(pace, "up to"))
+    and Str.contains(mixed, "1 of 3 matched sessions is itself")
+    and Str.contains(mixed, "the other 2 match its rep count")
+    and !(Str.contains(mixed, "≥")) and !(Str.contains(mixed, "up to"))
     and Str.contains(power, "W ·") and !(Str.contains(power, "m/s"))
 }
 

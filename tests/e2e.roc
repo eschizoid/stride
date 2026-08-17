@@ -787,7 +787,7 @@ b_seed_analyze! = |ctx| {
     # is what makes this discriminate — a single one reads unknown either way.
     check!("hr rise is unknown unless BOTH end reps carry it", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 334) | .hr_rise_known] | .[0] == false") == "true")?
     # ── the ranking itself, pinned ───────────────────────────────────────
-    # A dedicated anchor (reps 700/800/950 — uniformity 1.36, inside the 1.4x
+    # A dedicated anchor (reps 700/800/950 — uniformity 1.36, inside the 1.6x
     # gate but NOT the most uniform session), twelve candidates whose uniformity
     # IMPROVES with age, and six clearly uneven ones. That shape makes rank
     # order the reverse of date order and puts the anchor mid-pack, so each of
@@ -821,6 +821,23 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,weighted_avg_watts,avg_watts,device_watts) VALUES (335,'irregular','Ride','Ride','2099-01-01T06:00:00Z',3000,200,200,1);")
     _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (335,0,'work',0,60,200.0,'power'),(335,1,'work',200,1800,200.0,'power'),(335,2,'work',2100,120,200.0,'power');")
     check!("an irregular session is refused as an anchor", Str.contains(stride!(ctx.bin, ctx.home, ["reps"]), "irregular_anchor"))?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=335; DELETE FROM activities WHERE id=335;")
+    # ...and the gate sits exactly where the constant says. Without a probe ON
+    # THE BOUNDARY the literal in this effectful path could move from 1.6x to
+    # 9.9x with the whole suite green -- it did, for one round, while a pure
+    # expect asserted a constant the gate was not actually using. Reuses id 335
+    # because that insert is proven to land above; a fresh id silently did not,
+    # and the "accepted" assertion passed on `no_intervals_on_date` instead.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,weighted_avg_watts,avg_watts,device_watts) VALUES (335,'gate probe','Ride','Ride','2099-01-01T06:00:00Z',3000,200,200,1);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (335,0,'work',0,100,200.0,'power'),(335,1,'work',300,160,200.0,'power');")
+    # asserted POSITIVELY: the anchor must actually render at the boundary, not
+    # merely avoid one error string
+    check!("a spread of exactly the gate is accepted as an anchor", strjq!(ctx, ["reps", "2099-01-01"], ".data.anchor_activity_id") == "335")?
+    _ = sql!(ctx.db, "UPDATE activity_segments SET dur_s = 161 WHERE activity_id = 335 AND ordinal = 1;")
+    check!("one second past the gate is refused", Str.contains(stride!(ctx.bin, ctx.home, ["reps", "2099-01-01"]), "irregular_anchor"))?
+    # the refusal quotes the gate it enforced rather than a literal that could
+    # drift away from the number actually applied
+    check!("the refusal quotes the gate it enforced", Str.contains(stride!(ctx.bin, ctx.home, ["reps", "2099-01-01"]), "1.6x"))?
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=335; DELETE FROM activities WHERE id=335;")
     check!("reps conforms to its schema", validate!("reps", "reps") == "")?
     check!("a date with no detected structure says so in band", Str.contains(stride!(ctx.bin, ctx.home, ["reps", "1999-01-01"]), "no_intervals_on_date"))?
