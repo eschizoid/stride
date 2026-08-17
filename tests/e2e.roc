@@ -1008,6 +1008,13 @@ b_seed_analyze! = |ctx| {
     # The secret arm of `config get` is a DIFFERENT payload shape from the arm
     # already covered — it adds `redacted` — and nothing validated it, which is
     # how an undeclared key shipped under additionalKeys:false.
+    # The 2026-08-17 compiler widened I64.from_str to accept exponent notation:
+    # "1e1" was a parse error on the previous pin and is 10 now. That reaches
+    # MUTATING commands -- `skip 1e1` addresses planned session 10 -- and no
+    # test could see it, because nothing exercised an exponent argument. Pinned
+    # so the next compiler bump that moves it is visible rather than silent.
+    check!("a numeric arg accepts exponent notation (compiler-driven, pinned)", Str.contains(stride!(ctx.bin, ctx.home, ["activities", "1e1"]), "schema_version"))?
+    check!("...and a non-numeric arg is still refused", Str.contains(stride!(ctx.bin, ctx.home, ["activities", "ten"]), "bad_count"))?
     check!("config get on a secret conforms", validate!("config get strava_client_secret", "config") == "")?
     check!("...and it really is the redacting arm", Str.contains(strjq!(ctx, ["config", "get", "strava_client_secret"], ".data.redacted"), "true"))?
     check!("season conforms", validate!("season", "season") == "")?

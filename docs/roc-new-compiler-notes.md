@@ -83,6 +83,23 @@ three files and omitted `verify-arm64.yml` entirely, which would have shipped a 
 in the arm64 verification job. Always `grep -rln nightly-tag .github/workflows` and count,
 rather than trusting this sentence.
 
+## Behaviour that changed silently across a bump
+
+`I64.from_str` / `U64.from_str` accept **exponent notation** on the 2026-08-17 pin and did
+not on 2026-08-04: `"1e3"` was an error and is now 1000. Nothing in the suite could see it,
+because no test passed an exponent as an argument — found only by differential-probing the
+two compilers over a battery of parse inputs.
+
+It reaches judgment-tier MUTATING commands: `skip 1e1 "<reason>"` was "skip needs a numeric
+id" and now skips planned session 10. Dates are unaffected — `is_canonical_date`
+round-trips through `days_to_date_str`, so `week add 1e3-08-17 …` still refuses.
+
+Pinned in `tests/e2e.roc` so the next bump that moves it is visible. The lesson generalises:
+a green suite proves the behaviour you TESTED is unchanged, and a compiler bump can move
+behaviour you never thought to test. Differential-probe the primitives (float formatting,
+integer parsing and wrapping, sort stability, division and modulo on negatives) against the
+old compiler before trusting a bump.
+
 ## CLI flags: `=`, never a space
 
 `--output=stride`, `--main=src/app.roc`, `--opt=dev`, `--target=x64musl`. A

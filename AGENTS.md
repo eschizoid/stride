@@ -158,6 +158,9 @@ Every item here cost a debugging session at least once — they are not style op
   modules; everything effectful goes through the e2e harness.
 - **`roc test` caches.** A run can report `(cached)` while your new expects never
   executed. Prove they run by breaking one and watching the count drop.
+- **`roc test`'s summary line can lie about the outcome.** When an expect fails to
+  COMPILE, it prints `All (N) tests passed` with a silently smaller N and exits **1**. The
+  exit code is the truth; the text is not. Read the code, and watch the count.
 - **`roc test --main=src/app.roc <module>` runs every expect reachable from the app**, not
   just that module's — so the number it prints is not that file's test count.
 - **The e2e harness aborts at the first failing `check!`.** A negative control that
