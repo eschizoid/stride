@@ -951,6 +951,15 @@ b_seed_analyze! = |ctx| {
     # boundary rule rather than a rich history: what matters is that a gap
     # OPENS a block, that a one-week gap does NOT, and that the count is a
     # measured consequence of the dates rather than a constant.
+    # The human screens have a 100-column table budget (render_table's
+    # max_total). Nothing anywhere asserted it, which is how season shipped a
+    # 126-column table -- the only violator in the CLI -- that wrapped rows
+    # mid-number into unreadable fragments on any narrower terminal. Applied
+    # CLI-wide because a guard on one command is a guard nobody generalises.
+    # awk's length() counts BYTES on macOS whatever the locale, and every box
+    # glyph is three of them, so `wc -m` is what actually measures a column.
+    wide = Str.trim(sh!("for c in season summary activities plan week compare progress load stats doctor zones 'power-curve' reps; do HOME='${ctx.home}' '${ctx.bin}' $c 2>/dev/null; done | grep -E '[│╭├╰]' | while IFS= read -r l; do printf '%s' \"$l\" | LC_ALL=en_US.UTF-8 wc -m; done | tr -d ' ' | awk '$1 > 100' | sort -rn | head -1"))
+    check!("no human table exceeds the 100-column budget", wide == "")?
     check!("season conforms", validate!("season", "season") == "")?
     check!("season reports at least one block", strjq!(ctx, ["season"], ".data.blocks | length > 0") == "true")?
     check!("the gap threshold travels with the payload", strjq!(ctx, ["season"], ".data.gap_weeks") == "2")?
@@ -982,8 +991,9 @@ b_seed_analyze! = |ctx| {
     check!("no block ends after the last day it contains", strjq!(ctx, ["season"], "[.data.blocks[] | select(.end_date > (now | strftime(\"%Y-%m-%d\")))] | length == 0") == "true")?
     # trained weeks can never exceed the calendar weeks spanned
     check!("trained weeks never exceed the span", strjq!(ctx, ["season"], "[.data.blocks[] | select(.weeks > .span_weeks)] | length == 0") == "true")?
-    # sessions counts ACTIVITIES, so the block totals must agree with the month
-    # totals in the same payload -- they disagreed by 9 when one counted days
+    # sessions counts ACTIVITIES. On THIS fixture the totals happen to agree,
+    # which pins the join fix -- but equality is not an invariant in general
+    # (see the absence case below), so this is a fixture pin, not a contract.
     check!("block and month session counts agree", strjq!(ctx, ["season"], "([.data.blocks[].sessions] | add) == ([.data.months[].sessions] | add)") == "true")?
     # ...including in the ordinary post-sync, pre-analyze state, where an
     # activity exists with no metrics row. Blocks used an inner join and months
@@ -1040,6 +1050,20 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (933,40.0,300.0,3600,1);")
     bad_act = stride!(ctx.bin, ctx.home, ["season"])
     check!("a malformed activity date is refused, not absorbed", Str.contains(bad_act, "error") and !(Str.contains(bad_act, "blocks")))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 933; DELETE FROM activities WHERE id = 933;")
+    # ...and PARSEABLE is not enough. "2026-3-01" parses fine and sorts after
+    # every 2026-1x date, so it became ftp_end for its month AND its block and
+    # published the threshold running backwards -- at exit 0, which is the
+    # exact failure this round exists to prevent, arriving through the guard.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (934,'unpadded','Ride','Ride','2026-3-01T06:00:00Z',3600);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (934,40.0,111.0,3600,1);")
+    unpadded = stride!(ctx.bin, ctx.home, ["season"])
+    check!("a non-canonical activity date is refused too", Str.contains(unpadded, "error") and !(Str.contains(unpadded, "blocks")))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 934; DELETE FROM activities WHERE id = 934;")
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day,tss,ctl,atl,tsb) VALUES ('2026-3-05', 30.0, 5.0, 5.0, 0.0);")
+    unpadded_day = stride!(ctx.bin, ctx.home, ["season"])
+    check!("a non-canonical daily_load day is refused too", Str.contains(unpadded_day, "error") and !(Str.contains(unpadded_day, "span_weeks")))?
+    _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = '2026-3-05';")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 933; DELETE FROM activities WHERE id = 933;")
     # A CONTROLLED block, because the fixture's own data does not discriminate:
     # asserting "end_date is not in the future" and "ftp_family is non-empty"

@@ -2376,8 +2376,15 @@ Report :: [].{
                 tsb = Sqlite.f64("tsb")(cols)(stmt)?
                 # NOT ok_or(0): an unparseable day became epoch 0 and produced a
                 # block with span_weeks -2937 and zero load at exit 0. `summary`
-                # refuses the same row loudly, and so should this.
-                days = (Metrics.date_str_to_days(d)).map_err(|_| BadDailyLoadDay(d))?
+                # refuses the same row loudly, and so should this. Parseable is
+                # not enough either -- date_str_to_days accepts "2026-3-05",
+                # which sorts after every 2026-1x day and yielded span_weeks -6.
+                days =
+                    if Metrics.is_canonical_date(d) {
+                        (Metrics.date_str_to_days(d)).map_err(|_| BadDailyLoadDay(d))?
+                    } else {
+                        Err(BadDailyLoadDay(d))?
+                    }
                 Ok({ days, tss, ctl, atl, tsb })
             },
         })?
@@ -2415,10 +2422,18 @@ Report :: [].{
                     hard_s = Sqlite.f64("hard_s")(cols)(stmt)?
                     ftp_lo = Sqlite.f64("ftp_lo")(cols)(stmt)?
                     ftp_hi = Sqlite.f64("ftp_hi")(cols)(stmt)?
-                    # same rule as daily_load.day: absorbing this silently drops
+                    # Same rule as daily_load.day: absorbing this silently drops
                     # the activity from sessions, polarization AND the threshold
-                    # range with no trace at exit 0
-                    days = (Metrics.date_str_to_days(d)).map_err(|_| BadActivityDate(d))?
+                    # range with no trace at exit 0. And a merely-PARSEABLE date
+                    # is not enough: "2026-3-01" sorts last, so it became
+                    # ftp_end for its month and its block and published the
+                    # threshold running backwards.
+                    days =
+                        if Metrics.is_canonical_date(d) {
+                            (Metrics.date_str_to_days(d)).map_err(|_| BadActivityDate(d))?
+                        } else {
+                            Err(BadActivityDate(d))?
+                        }
                     Ok({ days, fam, n, easy_s, mod_s, hard_s, ftp_lo, ftp_hi })
                 },
             })?
@@ -2487,10 +2502,12 @@ Report :: [].{
                     closed,
                     total_load: b.total_load,
                     mean_weekly_load: if span_weeks > 0 b.total_load / (span_weeks).to_f64() else 0.0,
-                    # activities, not days-with-load. weekly_rollup counts a day
+                    # Activities, not days-with-load: weekly_rollup counts a day
                     # as one session because daily_load carries load and not a
-                    # count, which lost 9 of 731 sessions and made this field
-                    # disagree with months[].sessions in the same payload.
+                    # count, which lost 9 of 731. It is NOT required to equal
+                    # months[].sessions -- an activity that scored no load
+                    # inside an absence belongs to a month and to no block, and
+                    # one dated before any daily_load row belongs to neither.
                     sessions: List.fold(inside, 0, |acc, r| acc + r.n),
                     slope_tss_per_week: b.slope,
                     trend_r2: b.r2,

@@ -1610,9 +1610,11 @@ Metrics :: [].{
         # misread as "no trend" — but r2 measures SCATTER, not whether the
         # slope differs from zero, and a 71-week block at r2 0.10 still fell
         # from 316 to 214 TSS/week. "316 → 214" cannot be mis-told that way.
-        # seeded from the first element, not 0.0: seeding at zero computes
-        # min(0, xs), which is right only while complete weeks are a prefix of
-        # the block -- true today, but nothing guarantees it
+        # Seeded from the first element, not 0.0: seeding at zero computes
+        # min(0, xs), which is right only while complete weeks are a PREFIX.
+        # They are, and the reason is `complete = week_start + 6 < today` is
+        # monotone in week_start over an ascending week list -- so this is a
+        # no-op today and stops being one the moment week order breaks.
         x0 = match List.first(xs) { Ok(v) => v  Err(_) => 0.0 }
         x_lo = List.fold(xs, x0, |a, x| if x < a x else a)
         x_hi = List.fold(xs, x0, |a, x| if x > a x else a)
