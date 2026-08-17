@@ -1264,8 +1264,8 @@ Metrics :: [].{
         # ceiling would orphan ultra-length activities from ever being comparable)
         else { lo: 7200, hi: 8640000 }
 
-    # The rep-scale twin of duration_band (#149). Session bands are 20/45/75/120
-    # minutes wide, which at rep scale is useless: a 3x2min VO2 set and a 3x17min
+    # The rep-scale twin of duration_band (#149). Session band EDGES sit at
+    # 20/45/75/120 minutes, which at rep scale is useless: a 3x2min VO2 set and a 3x17min
     # tempo block both land in "under 20 minutes" and would be compared as the
     # same workout. These edges follow how intervals are actually prescribed —
     # sprints, short VO2, classic 3-6min VO2, 6-10min, threshold 10-15, sweet

@@ -32,6 +32,7 @@
             "bad_rpe",
             "derived_key",
             "empty_csv",
+            "irregular_anchor",
             "missing_client_creds",
             "missing_config",
             "no_activities",

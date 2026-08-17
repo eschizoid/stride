@@ -79,6 +79,7 @@ help_text =
         \\    doctor      dataset health: coverage + how each activity was scored
         \\
         \\AM I IMPROVING?
+        \\    reps [date]        the same workout shape across sessions, rep by rep
         \\    progress [date] [asc|desc]
         \\                            trend on a repeated workout, sport-aware lens
         \\                            (power→EF, distance→speed/HR, rated→RPE); latest by default,

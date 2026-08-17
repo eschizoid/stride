@@ -726,6 +726,21 @@ b_seed_analyze! = |ctx| {
     check!("reps states the shape it compared on", strjq!(ctx, ["reps"], ".data.shape | (.rep_count > 0) and (.band_hi_s > .band_lo_s)") == "true")?
     check!("every session shares the anchor's rep count", strjq!(ctx, ["reps"], "[.data.sessions[].rep_count] | unique | length == 1") == "true")?
     check!("...and every rep duration sits inside the stated band", strjq!(ctx, ["reps"], ".data as $d | [$d.sessions[].mean_dur_s | (. >= $d.shape.band_lo_s and . < $d.shape.band_hi_s)] | all") == "true")?
+    # a second genuinely comparable session, so the rep-count and band
+    # assertions above stop being trivially true on a one-row result — review
+    # showed three mutations (count filter, rep ordering, fade sign) surviving
+    # against a single-session fixture
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,distance,weighted_avg_watts,avg_watts,device_watts,avg_hr) VALUES (331,'earlier comparable','Ride','Ride',date('${ctx.d1}','-20 days')||'T06:00:00Z',1800,15000,200,200,1,150);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal,avg_hr) VALUES (331,0,'work',0,300,200.0,'power',140.0),(331,1,'work',400,300,190.0,'power',150.0),(331,2,'work',800,300,180.0,'power',160.0);")
+    check!("a second comparable session appears", strjq!(ctx, ["reps"], ".data.sessions | length >= 2") == "true")?
+    # fade SIGN: 331 descends 200->180, so its fade must be NEGATIVE. Flipping
+    # the subtraction in Report.roc must fail here.
+    check!("fade is last minus first, signed", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 331) | .fade_w] | .[0] < 0") == "true")?
+    # rep ORDER: reps must be in ordinal order, so the first is the 200W one
+    check!("reps are in ordinal order", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 331) | .reps[0].avg_signal] | .[0] == 200") == "true")?
+    check!("hr rise spans first to last rep", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 331) | .hr_rise_bpm] | .[0] == 20") == "true")?
+    check!("each session reports its own dispersion", strjq!(ctx, ["reps"], "[.data.sessions[] | has(\"uniformity\") and has(\"min_dur_s\") and has(\"max_dur_s\")] | all") == "true")?
+    check!("the payload discloses how many matched", strjq!(ctx, ["reps"], ".data.matched_total >= (.data.sessions | length)") == "true")?
     check!("reps conforms to its schema", validate!("reps", "reps") == "")?
     check!("a date with no detected structure says so in band", Str.contains(stride!(ctx.bin, ctx.home, ["reps", "1999-01-01"]), "no_intervals_on_date"))?
     # comparability is not just the count: a same-count session whose reps sit
@@ -735,7 +750,7 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,distance,weighted_avg_watts,avg_watts,device_watts) VALUES (330,'short vo2','Ride','Ride','${ctx.d1}T05:00:00Z',1200,8000,240,240,1);")
     _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (330,0,'work',0,90,300.0,'power'),(330,1,'work',200,90,300.0,'power'),(330,2,'work',400,90,300.0,'power');")
     check!("a same-count session in another rep band is not comparable", Str.trim(strjq!(ctx, ["reps"], ".data.sessions | length")) == before_n)?
-    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=330; DELETE FROM activities WHERE id=330;")
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (330,331); DELETE FROM activities WHERE id IN (330,331);")
     # --help rather than a bare call: interpolating a compile-time empty string
     # into the command slot is the #32-class crash, and --help returns the
     # identical discovery payload

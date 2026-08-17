@@ -816,11 +816,14 @@ Render :: [].{
     # the shape of a session is visible at a glance rather than summarized away.
     # Numbers only — a fade is reported, never judged (#154).
     reps_screen = |p| {
-        header = "── ${I64.to_str(p.shape_reps)}×${mmss(p.shape_dur)} blocks · anchored ${p.anchor_date} ──"
+        shown = (List.len(p.sessions)).to_i64_wrap()
+        more = if p.matched_total > shown " · showing ${I64.to_str(shown)} of ${I64.to_str(p.matched_total)}" else ""
+        header = "── ${I64.to_str(p.shape_reps)}×${mmss(p.shape_dur)} blocks · anchored ${p.anchor_date}${more} ──"
         rows = List.map(p.sessions, |s| {
             watts = Str.join_with(List.map(s.reps, |r| fmt0(r.avg_signal)), " · ")
             hr = if s.hr_rise_known " · hr +${fmt0(s.hr_rise_bpm)}" else ""
-            "${s.date}  ${watts}  (mean ${fmt0(s.mean_w)}, fade ${signed(s.fade_w)}${hr})"
+            spread = if s.uniformity >= 1.15 " · reps ${mmss(s.min_dur_s)}-${mmss(s.max_dur_s)}" else ""
+            "${s.date}  ${watts}  (mean ${fmt0(s.mean_w)}, fade ${signed(s.fade_w)}${hr}${spread})"
         })
         legend = "reps left to right within each session · fade = last rep minus first · hr = first-to-last rise across reps"
         Str.join_with(List.join([[header, ""], rows, ["", legend]]), "\n")
