@@ -388,6 +388,15 @@ b_seed_analyze! = |ctx| {
     # #154: the stable machine id for the form band — one of the five enum values,
     # never prose, never coaching vocabulary
     check!("summary form_state is a stable band id", strjq!(ctx, ["summary"], ".data.form_state | IN(\"high_modeled_fatigue\",\"modeled_fatigue_building\",\"balanced\",\"fresh\",\"very_fresh\")") == "true")?
+    # ── stimulus features (#159): measurements only. Fixture 101 (power ride,
+    # threshold-plus for an hour) is hard by the POWER-AWARE predicate; the flags
+    # are typed booleans (the "True"-string trap), and window identities hold.
+    check!("hard-session counts are live and d14 <= d28", strjq!(ctx, ["summary"], ".data.hard_sessions | (.d28 >= 1) and (.d14 <= .d28)") == "true")?
+    check!("spacing flags are typed booleans", strjq!(ctx, ["summary"], ".data.hard_sessions | ((.spacing_known | type) == \"boolean\") and ((.days_since_known | type) == \"boolean\")") == "true")?
+    check!("days-since-hard is known with a hard fixture", strjq!(ctx, ["summary"], ".data.hard_sessions | .days_since_known == true and .days_since_last >= 0") == "true")?
+    check!("load windows carry raw deltas (identity, not judgment)", strjq!(ctx, ["summary"], ".data.load_windows | (.delta_7d == .d7 - .prior_d7) and (.delta_28d == .d28 - .prior_d28) and (.d90 >= .d28)") == "true")?
+    check!("sports rows carry last_date", strjq!(ctx, ["summary"], "[.data.sports_28d[] | .last_date | length == 10] | all") == "true")?
+    check!("ftp trajectory prior window is flagged honestly", strjq!(ctx, ["summary"], ".data.ftp | (.prior_60d_known | type) == \"boolean\" and ((.prior_60d_known == false) or (.prior_60d_best_20min_w > 0))") == "true")?
     # with fixtures loaded TSB is known, so the enum arm is required here; the
     # ""-unknown arm is pinned separately on the pre-fixture empty db
     check!("analyze form_state is a stable band id once scored", strjq!(ctx, ["analyze"], ".data.form_state | IN(\"high_modeled_fatigue\",\"modeled_fatigue_building\",\"balanced\",\"fresh\",\"very_fresh\")") == "true")?

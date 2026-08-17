@@ -786,6 +786,9 @@ Render :: [].{
                     "",
                     last7_line,
                     "  last hard session (5+ min Z4/Z5): ${last_hard_str}",
+                    # stimulus spacing (#159): counts and a median gap — measurements,
+                    # not verdicts; the gap renders only when there is one to state
+                    "  hard sessions: ${I64.to_str(s.hard_sessions.d14)} in 14d · ${I64.to_str(s.hard_sessions.d28)} in 28d${if s.hard_sessions.spacing_known " · median gap ${I64.to_str(s.hard_sessions.spacing_median_days_28d)}d" else ""}",
                     "  open planned sessions: ${I64.to_str(s.pending_sessions)}",
                 ],
             ]),
@@ -1077,6 +1080,7 @@ expect {
         last_7d: { tss: 50.0, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 2.I64, intensity_streams: 2.I64 },
         ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
         last_hard_session_date: "",
+        hard_sessions: { d14: 1.I64, d28: 2.I64, spacing_median_days_28d: 3.I64, spacing_known: True, days_since_last: 0.I64, days_since_known: True },
         pending_sessions: 2.I64,
         sports_28d: [{ sport: "Run", sessions: 4.I64, tss: 100.0, moving_time: 7200.I64, distance_m: 30000.0 }],
     }
@@ -1114,6 +1118,7 @@ expect {
         last_7d: { tss: 50.0, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 2.I64, intensity_streams: 2.I64 },
         ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
         last_hard_session_date: "",
+        hard_sessions: { d14: 1.I64, d28: 2.I64, spacing_median_days_28d: 3.I64, spacing_known: True, days_since_last: 0.I64, days_since_known: True },
         pending_sessions: 2.I64,
         sports_28d: [{ sport: "Run", sessions: 4.I64, tss: 100.0, moving_time: 7200.I64, distance_m: 30000.0 }],
     }
@@ -1131,7 +1136,7 @@ expect {
         last_28d: { tss: 100.0, z1_s: 0.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 0.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 0.I64, intensity_streams: 0.I64 },
         last_7d: { tss: 50.0, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 0.I64, intensity_streams: 0.I64 },
         ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
-        last_hard_session_date: "", pending_sessions: 0.I64,
+        last_hard_session_date: "", hard_sessions: { d14: 0.I64, d28: 0.I64, spacing_median_days_28d: 0.I64, spacing_known: False, days_since_last: 0.I64, days_since_known: False }, pending_sessions: 0.I64,
         sports_28d: [{ sport: "Run", sessions: 4.I64, tss: 100.0, moving_time: 7200.I64, distance_m: 30000.0 }],
     }
     out = Render.summary_screen(s)
