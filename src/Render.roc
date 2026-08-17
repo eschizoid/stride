@@ -840,12 +840,21 @@ Render :: [].{
         # the number shown, it is exact over the WHOLE matched set, not just
         # the visible rows. When every visible row conforms there may be more
         # below the cap, hence the "≥".
-        conforming = (List.len(List.keep_if(p.sessions, |s| s.uniformity <= 1.6))).to_i64_wrap()
+        conforming = (List.len(List.keep_if(p.sessions, |s| Metrics.is_uniform_reps(s.min_dur_s, s.max_dur_s)))).to_i64_wrap()
         atleast = if conforming == shown and p.matched_total > shown "≥" else ""
+        subj = if conforming == 1.I64 "session is itself" else "sessions are themselves"
+        # The trailing clause described rows that may not exist: on a first
+        # structured session it read "1 of 1 ... the rest are listed", naming a
+        # rest of zero. It also implied the un-annotated rows were the
+        # conforming ones, but the annotation fires at a spread of 1.15 and the
+        # census counts at 1.6, so on real data that mapping gives 1 where the
+        # census says 3.
+        rest = p.matched_total - conforming
+        tail = if rest > 0 " — the other ${I64.to_str(rest)} share the rep COUNT but not the shape, and are not like-for-like" else ""
         # A caveat that fires on 11 of 12 rows has stopped being a caveat, so
         # the count of like-for-like evidence leads instead of hiding in a
         # per-row parenthetical.
-        census = "${atleast}${I64.to_str(conforming)} of ${I64.to_str(p.matched_total)} matched sessions are themselves this repeated shape — the rest are listed with their own rep spread, and are not like-for-like"
+        census = "${atleast}${I64.to_str(conforming)} of ${I64.to_str(p.matched_total)} matched ${subj} this repeated shape${tail}"
         # "anchor" is load-bearing: the shape describes the anchor session, and
         # each row states its own spread. Claiming it for the table would be the
         # header/rows contradiction review found in round 1.
@@ -1279,7 +1288,10 @@ expect {
         shape_dur: 241.I64,
         matched_total: 2.I64,
         signal: "pace",
-        sessions: [sess("2026-08-10", 1.01, 12.0, 4.15, -0.04, [4.1667, 4.13])],
+        sessions: [
+            sess("2026-08-10", 1.01, 12.0, 4.15, -0.04, [4.1667, 4.13]),
+            sess("2026-05-10", 1.01, 12.0, 3.94, -0.03, [3.9526, 3.92]),
+        ],
     })
     dropped = Render.reps_screen({
         anchor_date: "2023-02-11",
@@ -1301,7 +1313,16 @@ expect {
     and Str.contains(power, "most uniform of 21")
     # and the count of like-for-like evidence leads, rather than hiding in a
     # per-row caveat that fired on 11 of 12 rows
-    and Str.contains(power, "1 of 21 matched sessions")
+    # `Str.contains(power, "1 of 21 …")` matched whether or not the ≥ was
+    # there, so deleting the branch left the suite green. Pin the ≥ itself,
+    # and pin a case where it must be ABSENT.
+    and Str.contains(power, "≥1 of 21 matched session is itself")
+    # every shown row conforms and nothing is capped: no ≥, and no trailing
+    # clause naming a "rest" of zero (it read "1 of 1 ... the rest are listed")
+    and Str.contains(pace, "2 of 2 matched sessions are themselves")
+    and !(Str.contains(pace, "≥"))
+    and !(Str.contains(pace, "the other"))
+    and Str.contains(power, "the other 20 share the rep COUNT")
     and Str.contains(power, "W ·") and !(Str.contains(power, "m/s"))
 }
 

@@ -1271,6 +1271,28 @@ Metrics :: [].{
     # sprints, short VO2, classic 3-6min VO2, 6-10min, threshold 10-15, sweet
     # spot 15-30, and long. Fixed edges for the same reason duration_band uses
     # them: comparability must be symmetric, which a +/-% window is not.
+    # The one judgment in the reps comparison: how far rep durations may spread
+    # and still be "the same repeated shape". It lives here because THREE things
+    # depend on them agreeing — the anchor gate, the census count on the screen,
+    # and the refusal message — and they sat in two files in two forms (a float
+    # and an integer ratio) with nothing tying them together. This gate already
+    # moved once (1.4 -> 1.6); the next move must move all three at once.
+    anchor_uniformity_max : F64
+    anchor_uniformity_max = 1.6
+
+    # the same bound as an exact integer ratio, for I64 durations and SQL
+    anchor_uniformity_num : I64
+    anchor_uniformity_num = 16
+
+    anchor_uniformity_den : I64
+    anchor_uniformity_den = 10
+
+    # a session is the repeated shape when its longest rep is within the gate
+    # of its shortest. A zero shortest is not uniform, it is unmeasured.
+    is_uniform_reps : I64, I64 -> Bool
+    is_uniform_reps = |min_dur, max_dur|
+        min_dur > 0 and max_dur * anchor_uniformity_den <= min_dur * anchor_uniformity_num
+
     rep_duration_band : I64 -> { lo : I64, hi : I64 }
     rep_duration_band = |dur_s|
         if dur_s < 60 { lo: 0, hi: 60 }
@@ -3556,6 +3578,24 @@ expect {
     and Metrics.rep_duration_band(610) == Metrics.rep_duration_band(890)
     # and the session-scale rule really would have merged them
     and Metrics.duration_band(120) == Metrics.duration_band(720)
+}
+
+# the float gate and the integer gate are the SAME gate. Mutating either alone
+# fails here, which is what the census's exactness claim rests on.
+expect {
+    num = Metrics.anchor_uniformity_num
+    den = Metrics.anchor_uniformity_den
+    ratio = (num).to_f64() / (den).to_f64()
+    same = (ratio - Metrics.anchor_uniformity_max).abs() < 0.0001
+    # exercised at the boundary in both directions
+    inside = Metrics.is_uniform_reps(100, 160)
+    outside = !(Metrics.is_uniform_reps(100, 161))
+    # A zero shortest rep is UNMEASURED, not perfectly uniform. The (0, 600)
+    # case is already False from the arithmetic alone, so it does NOT exercise
+    # the guard -- (0, 0) is the one that does, and asserting only the former
+    # let a mutation of the guard survive.
+    zero_not_uniform = !(Metrics.is_uniform_reps(0, 600)) and !(Metrics.is_uniform_reps(0, 0))
+    same and inside and outside and zero_not_uniform
 }
 
 # ── the engine/coach boundary, pinned (#154) ────────────────────────

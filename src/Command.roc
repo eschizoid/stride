@@ -2,6 +2,8 @@
 ## HERE (the pure layer), so the effectful `main!` never re-parses argv — it just
 ## dispatches on the tag. Keeping parsing pure makes every arg form unit-testable
 ## without a database or a process.
+import Metrics
+
 Command := [
 	Init,
 	Auth,
@@ -97,7 +99,15 @@ Command := [
 			[_, "rate", target, rpe_str] => Ok(Rate(target, rpe_str))
 			[_, "doctor"] => Ok(Doctor)
 			[_, "reps"] => Ok(Reps(""))
-			[_, "reps", date] => Ok(Reps(date))
+			[_, "reps", date] =>
+				if Metrics.is_canonical_date(date) {
+					Ok(Reps(date))
+				} else {
+					# without this, `reps asc` answered "no detected interval
+					# structure on asc" -- a data fact about a date that does
+					# not exist
+					Err(Usage("reps [YYYY-MM-DD] — '${date}' is not a date"))
+				}
 			[_, "zones"] => Ok(Zones)
 			[_, "pz"] => Ok(Zones)
 			# a bare asc/desc is a sort on the latest anchor, not a date named "desc"
@@ -300,6 +310,38 @@ expect
 		_ => False
 	}
 # a third arg that isn't asc/desc gets the targeted usage hint
+# reps takes a DATE or nothing. `reps asc` used to reach the database and come
+# back "no detected interval structure on asc" -- a data fact about a date that
+# does not exist. This validation had no test at all until it moved here.
+expect
+	match Command.parse(["stride", "reps", "asc"]) {
+		Err(Usage(u)) => Str.contains(u, "not a date")
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "reps", "notadate"]) {
+		Err(Usage(u)) => Str.contains(u, "not a date")
+		_ => False
+	}
+# a well-formed date and the bare form still parse (Command is opaque, so the
+# assertion has to match rather than compare)
+expect
+	match Command.parse(["stride", "reps", "2026-08-16"]) {
+		Ok(Reps(d)) => d == "2026-08-16"
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "reps"]) {
+		Ok(Reps(d)) => d == ""
+		_ => False
+	}
+# a date-SHAPED string that is not a real day is still refused
+expect
+	match Command.parse(["stride", "reps", "2026-13-45"]) {
+		Err(Usage(u)) => Str.contains(u, "not a date")
+		_ => False
+	}
+
 expect
 	match Command.parse(["stride", "progress", "2026-01-01", "sideways"]) {
 		Err(Usage(u)) => Str.contains(u, "asc|desc")
