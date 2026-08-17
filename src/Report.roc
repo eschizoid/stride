@@ -361,11 +361,13 @@ Report :: [].{
                 ef_samples = List.map(List.keep_if(comps, |c| c.np_known and c.hr > 0.0), |c| c.np / c.hr)
                 np_samples = List.map(List.keep_if(comps, |c| c.np_known), |c| c.np)
                 dec_samples = List.map(List.keep_if(comps, |c| c.dec_known), |c| c.dec_pct)
-                cur_ef = if a.power_known and a.avg_hr > 0.0 a.np_w / a.avg_hr else 0.0
+                # flags first (ADR 0009), magnitude second (division guard)
+                cur_ef = if a.power_known and a.hr_known and a.avg_hr > 0.0 a.np_w / a.avg_hr else 0.0
                 # one metric block: current + own-history median + rank + change.
-                # percentile is direction-free (documented at Metrics.percentile_of);
-                # delta_pct against a zero median is not a number, so known covers
-                # current-side presence AND a non-degenerate baseline (ADR 0009)
+                # percentile is direction-free (documented at Metrics.percentile_of).
+                # known = current-side presence AND a non-empty sample set; a
+                # near-zero MEDIAN only zeroes delta_pct (a ratio against ~0 is not
+                # a number) while known stays true — the percentile still ranks
                 metric_block = |samples, current, cur_known| {
                     n = List.len(samples)
                     med = Metrics.median_f64(samples)
@@ -382,10 +384,10 @@ Report :: [].{
                 }
                 baselines = {
                     # the comparability rule, made visible so the coach can weigh it
-                    window_days: 90,
+                    window_days: 90.I64,
                     band_lo_s: band.lo,
                     band_hi_s: band.hi,
-                    ef: metric_block(ef_samples, cur_ef, a.power_known and a.avg_hr > 0.0),
+                    ef: metric_block(ef_samples, cur_ef, a.power_known and a.hr_known and a.avg_hr > 0.0),
                     np: metric_block(np_samples, a.np_w, a.power_known),
                     decoupling: metric_block(dec_samples, a.decoupling_pct, a.decoupling_known),
                 }
@@ -505,10 +507,15 @@ Report :: [].{
                     # history — percentile is direction-free rank; absent entirely
                     # when no metric has a baseline (no fake p0s)
                     (if baselines.ef.known or baselines.np.known or baselines.decoupling.known {
-                        ef_part = if baselines.ef.known " ef p${I64.to_str(baselines.ef.percentile)}/${I64.to_str(baselines.ef.sample_count)}" else ""
-                        np_part = if baselines.np.known " · np p${I64.to_str(baselines.np.percentile)}/${I64.to_str(baselines.np.sample_count)}" else ""
-                        dec_part = if baselines.decoupling.known " · drift p${I64.to_str(baselines.decoupling.percentile)}/${I64.to_str(baselines.decoupling.sample_count)}" else ""
-                        Stdout.line!("vs self (90d, same family+band):${ef_part}${np_part}${dec_part}")
+                        parts = List.keep_if(
+                            [
+                                if baselines.ef.known "ef p${I64.to_str(baselines.ef.percentile)}/${I64.to_str(baselines.ef.sample_count)}" else "",
+                                if baselines.np.known "np p${I64.to_str(baselines.np.percentile)}/${I64.to_str(baselines.np.sample_count)}" else "",
+                                if baselines.decoupling.known "drift p${I64.to_str(baselines.decoupling.percentile)}/${I64.to_str(baselines.decoupling.sample_count)}" else "",
+                            ],
+                            |p| !(Str.is_empty(p)),
+                        )
+                        Stdout.line!("vs self (90d, same family+band): ${Str.join_with(parts, " · ")}")
                     } else
                         Ok({}))?
                     if detail.failed

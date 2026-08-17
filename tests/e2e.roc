@@ -444,14 +444,18 @@ b_seed_analyze! = |ctx| {
     check!("baseline: comparability rule is visible", strjq!(ctx, ["activity", "101"], ".data.baselines | .window_days == 90 and .band_lo_s == 2700 and .band_hi_s == 4500") == "true")?
     check!("baseline: hr-only row has honest unknowns", strjq!(ctx, ["activity", "102"], ".data.baselines | .np.known == false and .ef.known == false") == "true")?
     # NO FUTURE LEAK: a monster ride AFTER 101 must not move 101's baseline
-    before_n = Str.trim(strjq!(ctx, ["activity", "101"], ".data.baselines.np.sample_count"))
-    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr,device_watts) SELECT 98,'future probe','Ride',date(start_local,'+5 days')||'T09:00:00Z',3600,30000,400,400,150,1 FROM activities WHERE id=101;")
+    check!("baseline sample count is exactly the one probe", strjq!(ctx, ["activity", "101"], ".data.baselines.np.sample_count") == "1")?
+    # the probe lands BETWEEN 101's date and today, so a window anchored to
+    # "now" would swallow it while the activity-anchored window must not — this
+    # discriminates the two anchorings, not just far-future leakage; == 1 also
+    # catches a <= upper bound (self-inclusion would read 2)
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr,device_watts) SELECT 98,'future probe','Ride',date(start_local,'+1 days')||'T09:00:00Z',3600,30000,400,400,150,1 FROM activities WHERE id=101;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    check!("baselines never include future activities", Str.trim(strjq!(ctx, ["activity", "101"], ".data.baselines.np.sample_count")) == before_n)?
+    check!("baselines never include later activities (activity-anchored, not today-anchored)", strjq!(ctx, ["activity", "101"], ".data.baselines.np.sample_count") == "1")?
     # family exclusion: a same-band Ski before 101 is not comparable
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr,device_watts) SELECT 97,'ski probe','Ski',date(start_local,'-4 days')||'T09:00:00Z',3600,0,300,300,150,1 FROM activities WHERE id=101;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    check!("comparability excludes other families", Str.trim(strjq!(ctx, ["activity", "101"], ".data.baselines.np.sample_count")) == before_n)?
+    check!("comparability excludes other families", strjq!(ctx, ["activity", "101"], ".data.baselines.np.sample_count") == "1")?
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (97,98,99); DELETE FROM activity_metrics WHERE activity_id IN (97,98,99); DELETE FROM activities WHERE id IN (97,98,99);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # #93: ramp carries BOTH fields, and a short history reports an honest 0 rather than

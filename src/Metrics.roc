@@ -1260,7 +1260,9 @@ Metrics :: [].{
         else if moving_time < 2700 { lo: 1200, hi: 2700 }
         else if moving_time < 4500 { lo: 2700, hi: 4500 }
         else if moving_time < 7200 { lo: 4500, hi: 7200 }
-        else { lo: 7200, hi: 86400 }
+        # the catch-all is OPEN ABOVE (the SQL band filter is `< hi`, so a finite
+        # ceiling would orphan ultra-length activities from ever being comparable)
+        else { lo: 7200, hi: 8640000 }
 
     # percentile of `current` within `samples`: the share of samples <= current,
     # 0-100. DIRECTION-FREE — for EF/NP higher is better, for decoupling lower
@@ -3511,7 +3513,8 @@ expect {
     Metrics.duration_band(2699) == { lo: 1200, hi: 2700 }
     and Metrics.duration_band(2700) == { lo: 2700, hi: 4500 }
     and Metrics.duration_band(0) == { lo: 0, hi: 1200 }
-    and Metrics.duration_band(90000) == { lo: 7200, hi: 86400 }
+    and Metrics.duration_band(90000) == { lo: 7200, hi: 8640000 }
+    and Metrics.duration_band(90000) == Metrics.duration_band(2000000)
     and Metrics.duration_band(2650) == Metrics.duration_band(1250)
 }
 
