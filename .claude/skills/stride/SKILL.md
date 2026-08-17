@@ -72,10 +72,9 @@ Never do training math yourself: read stride's numbers, add judgment.
 ## Output modes
 
 **PASS `--json` ON EVERY QUERY YOU RUN.** Stride prints human tables by default and
-machine JSON only when asked; nothing infers the mode from your environment (#181
-removed the `CLAUDECODE` detection, because an interface that depends on ambient
-state is one no command can document). The flag works in any argv position and the
-last one wins; `--human` forces tables even for you. `STRIDE_FORMAT=json|human`
+machine JSON only when asked — nothing infers the mode from your environment, so a
+command without the flag gives you a table no matter what your harness exports. The
+flag works in any argv position and the last one wins; `--human` forces tables even for you. `STRIDE_FORMAT=json|human`
 (case-insensitive) sets a session default and the flag beats it. `--` ends flag
 parsing, so `stride skip 5 -- --json` stores the literal string as the reason and
 still honors the requested format. If output ever looks like a table when you

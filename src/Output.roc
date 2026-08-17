@@ -100,12 +100,11 @@ Output :: [].{
     # command (which re-execs with STRIDE_FORMAT set for the child, see app.roc)
     # or by STRIDE_FORMAT=json for a whole session.
     #
-    # There used to be a third channel: a non-empty CLAUDECODE meant JSON, so one
-    # vendor's tool got machine output without asking (#181 removed it). It made
-    # the interface depend on ambient state no documented command mentioned, and
-    # it produced a genuinely bad test hazard — a suite that passed on the
-    # maintainer's shell and failed on CI purely because the variable was
-    # exported there. Every caller now says what it wants.
+    # STRIDE_FORMAT is the ONLY environment input to this decision (#181). Stride
+    # does not sniff the environment for the caller's identity: a mode inferred
+    # from ambient state is one no documented command can describe, and it makes
+    # the same invocation return a table here and an envelope there depending on
+    # whose shell it ran in. Callers ask.
     json_mode! : {} => Bool
     json_mode! = |{}|
         match Env.var_str!(OsStr.from_str("STRIDE_FORMAT")) {

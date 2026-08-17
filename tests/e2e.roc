@@ -355,10 +355,13 @@ b_config_ftp! = |ctx| {
     # ── explicit format flags (#162): the flag beats the environment, works in
     # any argv position, and the last flag wins. stride_env! pins STRIDE_FORMAT
     # so each check is a real precedence fight, not an ambient default.
-    # #181: a non-empty CLAUDECODE must NOT flip the mode any more — the whole
-    # point of removing it is that ambient state no longer decides the contract
-    check!("CLAUDECODE alone does not produce JSON", !(Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone"], [("CLAUDECODE", "1"), ("STRIDE_FORMAT", "")]), "schema_version")))?
-    check!("...but --json still does, with CLAUDECODE unset", Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--json"], [("STRIDE_FORMAT", "")]), "schema_version"))?
+    # #181: STRIDE_FORMAT is the ONLY environment input to the mode. Stride used
+    # to sniff a tool-specific variable as well; the invariant that replaced it
+    # is stronger and vendor-neutral — no other environment variable, whatever a
+    # harness happens to export, may produce machine output.
+    ambient = [("AGENT", "1"), ("CI", "true"), ("TERM", "dumb"), ("STRIDE_FORMAT", "")]
+    check!("no ambient variable selects JSON", !(Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone"], ambient), "schema_version")))?
+    check!("...only the flag does, with the environment saying nothing", Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--json"], ambient), "schema_version"))?
     check!("--json beats STRIDE_FORMAT=human", Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--json"], [("STRIDE_FORMAT", "human")]), "schema_version"))?
     check!("--human beats STRIDE_FORMAT=json", !(Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--human"], [("STRIDE_FORMAT", "json")]), "schema_version")))?
     check!("flag position is free (before the subcommand)", Str.contains(stride_env!(ctx.bin, ctx.home, ["--json", "config", "get", "timezone"], [("STRIDE_FORMAT", "human")]), "schema_version"))?
@@ -664,7 +667,9 @@ b_seed_analyze! = |ctx| {
     # #181: the skill must TELL the coach to pass --json, and must not teach the
     # retired environment detection as a way to get machine output
     check!("skill instructs passing --json", Str.contains(skill_text, "PASS `--json` ON EVERY QUERY"))?
-    check!("skill no longer teaches CLAUDECODE as a mode switch", !(Str.contains(skill_text, "CLAUDECODE` is set")))?
+    # the skill must not teach ANY environment sniffing as a way to get machine
+    # output — STRIDE_FORMAT is a session default, the flag is the instruction
+    check!("skill teaches no environment detection", !(Str.contains(skill_text, "is set to a non-empty value")) and !(Str.contains(skill_text, "detected automatically")))?
 
     # keep later fixture-sensitive checks honest: remove the interval ride again
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=103; DELETE FROM activity_metrics WHERE activity_id=103; DELETE FROM streams WHERE activity_id=103; DELETE FROM activities WHERE id=103;")
@@ -1605,10 +1610,11 @@ b_concurrency! = |ctx| {
     # and the fifo cleanup, leaving sqlite3 alive holding the transaction and hanging every
     # check after this one — the regression would present as a stuck suite instead of a
     # failed assertion, and held.out would be lost.
-    # STRIDE_FORMAT is pinned because this bypasses the stride! helper, which sets it.
-    # (Before #181 the mode ALSO depended on CLAUDECODE being exported in the
-    # developer's shell, so this passed locally and failed on CI — that class of
-    # hazard is gone now that nothing infers the mode from ambient state.)
+    # STRIDE_FORMAT is pinned because this bypasses the stride! helper, which sets
+    # it. This check once depended on an environment variable that happened to be
+    # exported in the developer's shell and not on CI, so it passed locally and
+    # failed there; since #181 nothing infers the mode from ambient state, and
+    # pinning it explicitly is the whole story.
     held = Str.trim(sh!("f='${ctx.home}/hold.fifo'; rm -f \"$f\"; mkfifo \"$f\"; sqlite3 '${ctx.db}' < \"$f\" > /dev/null 2>&1 & holder=$!; exec 3> \"$f\"; printf 'BEGIN;\\nSELECT COUNT(*) FROM activities;\\n' >&3; sleep 1; HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' analyze > '${ctx.home}/held.out' 2>&1; exec 3>&-; wait $holder 2>/dev/null; rm -f \"$f\"; cat '${ctx.home}/held.out'"))
     # NOT schema_version: the ERROR envelope carries that too, so matching it would accept
     # the very failure this scenario exists to catch. `converged` appears only in analyze's

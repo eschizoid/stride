@@ -27,8 +27,8 @@ never see it; golden fixtures never change. basic-cli 0.21 exposes `Stderr.line!
 **2. Human mode gets a live bar; machine mode gets plain lines.** A `\r`-redrawn bar —
 `rescoring [██████████░░░░]  358/723` — reuses the table bar's `█` glyph. Carriage
 returns are garbage in logs and CI, and basic-cli exposes no tty check, so the existing
-output-mode switch (`--json`/`--human`, else STRIDE_FORMAT — #181 dropped the
-CLAUDECODE detection) selects the dress: bar for humans,
+output-mode switch (`--json`/`--human`, else STRIDE_FORMAT — the only
+environment input since #181) selects the dress: bar for humans,
 appended lines for machines. Same information, dressed for the reader.
 
 **3. Bug C retries — DEFERRED, premise not verified.** The original decision was that
