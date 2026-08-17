@@ -606,8 +606,12 @@ Report :: [].{
                 # counts the coach should not re-derive: raw integers only (#154 —
                 # completion_pct: 75 is data; any word about it is the coach's job).
                 # substituted counts skipped sessions carrying a substitute link, so
-                # skipped is the SUPERSET; unplanned = window activities no session
-                # references (same rule as week's unplanned rows).
+                # skipped is the SUPERSET; unplanned = window activities NO session
+                # references by EITHER link, live or tombstoned — deliberately
+                # STRICTER than week's display rule, which re-classifies a ride
+                # whose skip tombstone was superseded as unplanned: for adherence
+                # that would double-count one ride as both substituted and
+                # unplanned. Counted once here, as the substitution it was.
                 adh = Sqlite.query!({
                     path: Path.utf8(path),
                     query:
