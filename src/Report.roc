@@ -2210,8 +2210,12 @@ Report :: [].{
             match Metrics.critical_power(fit_points) {
                 # a fit is only meaningful when BOTH are positive; inconsistent bests (no true
                 # 5-10 min efforts) can yield a non-positive CP or W' — treat that as no fit
-                Ok(c) => (if c.cp > 0.0 and c.w_prime > 0.0 { cp: c.cp, w_prime: c.w_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0 })
-                Err(_) => { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0 }
+                # fit_points counts the bests AVAILABLE to the fit, the same
+                # meaning tte and activity publish. Zeroing it on a refused fit
+                # made the same key mean two different things across commands;
+                # `cp` of 0 is the refusal signal.
+                Ok(c) => (if c.cp > 0.0 and c.w_prime > 0.0 { cp: c.cp, w_prime: c.w_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cp: 0.0, w_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() })
+                Err(_) => { cp: 0.0, w_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() }
             }
         Output.out!(
             { window_days: days, sport, points, cp: cpfit.cp, w_prime: cpfit.w_prime, fit_r2: cpfit.r2, fit_points: cpfit.points },
