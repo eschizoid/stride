@@ -752,6 +752,11 @@ b_seed_analyze! = |ctx| {
     # the behaviour that matters most, since a fabricated CP would silently
     # mis-scale every W' number downstream.
     check!("no CP fit is an in-band refusal, not a number", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "300"]), "no_cp_fit"))?
+    # fit_points counts the bests AVAILABLE, on every command that publishes it.
+    # power-curve used to zero it on a refused fit, making one key mean two
+    # different things; `cp` of 0 is the refusal signal. This fixture refuses a
+    # fit while having bests, so it distinguishes the two meanings.
+    check!("a refused fit still counts the bests it had", strjq!(ctx, ["pc"], ".data | (.cp == 0) and (.fit_points > 0)") == "true")?
     check!("a non-numeric power is refused", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "abc"]), "bad_watts"))?
     check!("a negative power is refused", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "-50"]), "bad_watts"))?
     # F64.from_str accepts nan/inf, and `w <= 0.0` is FALSE for NaN, so these

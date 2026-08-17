@@ -713,8 +713,9 @@ Render :: [].{
             )
             # the fit's own quality, on the command that PUBLISHES the fit --
             # without it a 0.72 fit and a perfect one read identically, while
-            # the skill tells the coach to weigh the fit first. Below three
-            # points r2 is 1 by construction and would be false reassurance.
+            # the skill tells the coach to weigh the fit first. At exactly two
+            # points a line is exact, so r2 is 1 by construction and would be
+            # false reassurance; below that there is no fit and it is 0.
             quality =
                 if pc.fit_points >= 3.I64 {
                     " · fit r2 ${fmt2(pc.fit_r2)} from ${I64.to_str(pc.fit_points)} bests"
@@ -1134,8 +1135,8 @@ expect {
     })
     Str.contains(s, "5s") and Str.contains(s, "20m") and Str.contains(s, "Critical Power 250") and Str.contains(s, "Ride")
     and Str.contains(s, "fit r2 0.72")
-    # under three points r2 is 1 by construction, so it must NOT be shown as
-    # if it were a quality signal
+    # at two points a line is exact, so r2 is 1 by construction and must NOT be
+    # shown as if it were a quality signal
     and !(Str.contains(thin, "r2 1.00")) and Str.contains(thin, "r2 needs 3")
 }
 expect {
