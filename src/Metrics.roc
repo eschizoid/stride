@@ -1545,7 +1545,8 @@ Metrics :: [].{
     # absence of `gap_weeks` or more calendar weeks carrying no load. That is
     # the only boundary in this data that is not a judgment call. The textbook
     # alternative — build weeks followed by a recovery week — was measured
-    # against real history and fits 9 of 96 weeks, so a detector built on it
+    # against real history and fits 8-10 of 96 weeks depending on how adjacency
+    # is read, so a detector built on it
     # segments noise; any changepoint rule instead lets its own sensitivity
     # parameter choose the answer. Blocks are DESCRIBED (span, load, measured
     # trend) and never named: "base"/"build"/"peak" are claims about intent,
@@ -1609,11 +1610,24 @@ Metrics :: [].{
         # misread as "no trend" — but r2 measures SCATTER, not whether the
         # slope differs from zero, and a 71-week block at r2 0.10 still fell
         # from 316 to 214 TSS/week. "316 → 214" cannot be mis-told that way.
-        x_lo = List.fold(xs, 0.0, |a, x| if x < a x else a)
-        x_hi = List.fold(xs, 0.0, |a, x| if x > a x else a)
+        # seeded from the first element, not 0.0: seeding at zero computes
+        # min(0, xs), which is right only while complete weeks are a prefix of
+        # the block -- true today, but nothing guarantees it
+        x0 = match List.first(xs) { Ok(v) => v  Err(_) => 0.0 }
+        x_lo = List.fold(xs, x0, |a, x| if x < a x else a)
+        x_hi = List.fold(xs, x0, |a, x| if x > a x else a)
         fitted_start = if trend_known my + slope * (x_lo - mx) else 0.0
         fitted_end = if trend_known my + slope * (x_hi - mx) else 0.0
         { first_week: first, last_week: last, weeks: (n).to_i64_wrap(), total_load: total, sessions: sess, slope, r2, trend_known, fitted_start, fitted_end }
+    }
+
+    # "YYYY-MM" for a day number — the same key shape SQL's substr(day,1,7)
+    # produces, so a Roc-side grouping and a SQL-side one agree.
+    month_key : I64 -> Str
+    month_key = |days| {
+        c = civil_from_days(days)
+        pad = if c.m < 10 "0" else ""
+        "${I64.to_str(c.y)}-${pad}${I64.to_str(c.m)}"
     }
 
     # ── civil-date arithmetic (Howard Hinnant's algorithms) ─────────────

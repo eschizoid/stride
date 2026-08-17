@@ -850,8 +850,9 @@ Render :: [].{
 
     # ── season screen (#139, ADR 0011) ──────────────────────────────────
     # Blocks bounded by absence, described by measurement. No phase names: the
-    # trend is a slope with an r2, and a low r2 means the block had no trend,
-    # which is an answer rather than a gap.
+    # trend is a fitted line reported by its ENDPOINTS, because a slope plus a
+    # low r2 gets read as "no trend" and r2 is scatter, not evidence the slope
+    # is zero.
     season_screen = |p| {
         block_rows = List.map(p.blocks, |b| {
             # signed() rounds to whole TSS/week, which turned a slope of 1.60

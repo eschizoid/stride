@@ -970,11 +970,13 @@ b_seed_analyze! = |ctx| {
     # blocks START and STOP.
     # easy/moderate/hard must land in that order, not transposed: the call site
     # reads `easy_pct: pcts.high_pct`, which looks inverted and is not.
-    pi_before = Str.trim(sql!(ctx.db, "SELECT COALESCE(pi_easy_s,0) || ',' || COALESCE(pi_moderate_s,0) || ',' || COALESCE(pi_hard_s,0) FROM activity_metrics WHERE activity_id = 101;"))
+    # snapshot the ROW, not a joined string -- the first version restored only
+    # pi_easy_s and left the other two mutated for the rest of the suite
+    _ = sql!(ctx.db, "CREATE TABLE pi_bak AS SELECT activity_id, pi_easy_s, pi_moderate_s, pi_hard_s FROM activity_metrics WHERE activity_id = 101;")
     _ = sql!(ctx.db, "UPDATE activity_metrics SET pi_easy_s = 3600, pi_moderate_s = 600, pi_hard_s = 0 WHERE activity_id = 101;")
     check!("easy time is reported as easy, not transposed onto hard", strjq!(ctx, ["season"], "[.data.blocks[] | select(.polarization_known and .easy_pct > .hard_pct)] | length > 0") == "true")?
-    # restore, or every check below this one runs on mutated fixture state
-    _ = sql!(ctx.db, "UPDATE activity_metrics SET pi_easy_s = CAST(substr('${pi_before}', 1, instr('${pi_before}', ',') - 1) AS INTEGER) WHERE activity_id = 101;")
+    # restore ALL THREE, or every check below this one runs on mutated state
+    _ = sql!(ctx.db, "UPDATE activity_metrics SET pi_easy_s = (SELECT pi_easy_s FROM pi_bak), pi_moderate_s = (SELECT pi_moderate_s FROM pi_bak), pi_hard_s = (SELECT pi_hard_s FROM pi_bak) WHERE activity_id = 101; DROP TABLE pi_bak;")
     # the block must END on a training day, never later -- it used to end on the
     # Sunday closing the last training week, dating an open block into the future
     check!("no block ends after the last day it contains", strjq!(ctx, ["season"], "[.data.blocks[] | select(.end_date > (now | strftime(\"%Y-%m-%d\")))] | length == 0") == "true")?
@@ -990,6 +992,17 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES ('2010-01-05', 30.0, 5.0, 5.0, 0.0);")
     check!("...and still agree when an activity has no metrics row yet", strjq!(ctx, ["season"], "([.data.blocks[].sessions] | add) == ([.data.months[].sessions] | add)") == "true")?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 921; DELETE FROM daily_load WHERE day = '2010-01-05';")
+    # An activity that scored NO load inside an absence belongs to a month and
+    # to no block -- correct, and the reason equality is not an invariant. The
+    # earlier guard inserted a daily_load row alongside the activity, which put
+    # it inside a block and guaranteed the answer it was checking.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (922,'unloaded in a gap','WeightTraining','WeightTraining','2010-06-15T06:00:00Z',3600);")
+    # the month row itself comes from daily_load, so the month must EXIST for
+    # the activity to be visible to it -- a zero-load day is exactly that:
+    # present on the calendar, absent from training
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES ('2010-06-15', 0.0, 1.0, 1.0, 0.0);")
+    check!("an activity inside an absence counts for its month, not a block", strjq!(ctx, ["season"], "([.data.months[].sessions] | add) > ([.data.blocks[].sessions] | add)") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 922; DELETE FROM daily_load WHERE day = '2010-06-15';")
     # `closed` must be decided on the same axis the blocks were cut on. A
     # day-aligned test declared a block closed up to 7 days before a session
     # today would actually have opened a new one, and nothing covered it.
@@ -1020,6 +1033,14 @@ b_seed_analyze! = |ctx| {
     bad_day = stride!(ctx.bin, ctx.home, ["season"])
     check!("a malformed daily_load day is refused, not absorbed", !(Str.contains(bad_day, "span_weeks")) and Str.contains(bad_day, "error"))?
     _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = 'not-a-date';")
+    # ...and the SAME rule on the other date-parsing site. Absorbing this one
+    # dropped the activity from sessions, polarization AND the threshold range
+    # with no trace at exit 0 -- a silent wrong answer rather than a loud refusal.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (933,'bad date','Ride','Ride','garbage-date',3600);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (933,40.0,300.0,3600,1);")
+    bad_act = stride!(ctx.bin, ctx.home, ["season"])
+    check!("a malformed activity date is refused, not absorbed", Str.contains(bad_act, "error") and !(Str.contains(bad_act, "blocks")))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 933; DELETE FROM activities WHERE id = 933;")
     # A CONTROLLED block, because the fixture's own data does not discriminate:
     # asserting "end_date is not in the future" and "ftp_family is non-empty"
     # both passed with the end date reverted to the week end and the family
@@ -1036,6 +1057,19 @@ b_seed_analyze! = |ctx| {
     check!("and reports that family's own range", Str.trim(strjq!(ctx, ["season"], "[.data.blocks[] | select(.start_date == \"2010-01-04\")] | .[0].ftp_hi")) == "210")?
     check!("the probe block counts activities, not days", Str.trim(strjq!(ctx, ["season"], "[.data.blocks[] | select(.start_date == \"2010-01-04\")] | .[0].sessions")) == "3")?
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (911,912,913); DELETE FROM activities WHERE id IN (911,912,913); DELETE FROM daily_load WHERE day IN ('2010-01-04','2010-01-07');")
+    # The month FTP had no coverage at all, which is why it shipped as a min/max
+    # aliased to chronological names: every month was non-decreasing BY
+    # CONSTRUCTION, so a falling threshold rendered as a rise. The probe forces
+    # a fall, which is impossible to produce from a min/max.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (931,'ftp high','Ride','Ride','2010-03-02T06:00:00Z',3600),(932,'ftp low','Ride','Ride','2010-03-20T06:00:00Z',3600);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (931,40.0,300.0,3600,1),(932,40.0,250.0,3600,1);")
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day,tss,ctl,atl,tsb) VALUES ('2010-03-02',40.0,5.0,5.0,0.0),('2010-03-20',40.0,5.0,5.0,0.0);")
+    check!("a month whose threshold FELL reports start > end", strjq!(ctx, ["season"], "[.data.months[] | select(.month == \"2010-03\")] | .[0] | (.ftp_start == 300 and .ftp_end == 250)") == "true")?
+    # ...and the unordered range still reports the same two numbers the other way
+    check!("...while lo/hi stay unordered", strjq!(ctx, ["season"], "[.data.months[] | select(.month == \"2010-03\")] | .[0] | (.ftp_lo == 250 and .ftp_hi == 300)") == "true")?
+    # blocks were already correct; pin them so the two paths cannot diverge again
+    check!("the block covering it agrees", strjq!(ctx, ["season"], "[.data.blocks[] | select(.start_date <= \"2010-03-02\" and .end_date >= \"2010-03-20\")] | .[0] | (.ftp_start == 300 and .ftp_end == 250)") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (931,932); DELETE FROM activities WHERE id IN (931,932); DELETE FROM daily_load WHERE day IN ('2010-03-02','2010-03-20');")
     check!("a known FTP range names its sport family", strjq!(ctx, ["season"], "[.data.blocks[] | select(.ftp_known and (.ftp_family | length == 0))] | length == 0") == "true")?
     # the boundary rule, end to end: insert a training day two clear weeks after
     # the last one and the block COUNT must rise by exactly one

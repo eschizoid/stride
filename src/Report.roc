@@ -2328,6 +2328,33 @@ Report :: [].{
         }
     }
 
+    # ONE fold for blocks and months. They diverged the first time months got
+    # their own query: it aliased ftp_first/ftp_last to MIN/MAX, so every month
+    # was non-decreasing by construction and a falling threshold rendered as a
+    # rise. pol_rows arrives ORDER BY date, so folding it in order is what makes
+    # first/last chronological.
+    FamRow : { fam : Str, n : I64, ftp_lo : F64, ftp_hi : F64, ftp_first : F64, ftp_last : F64 }
+
+    fold_families : List({ days : I64, fam : Str, n : I64, easy_s : F64, mod_s : F64, hard_s : F64, ftp_lo : F64, ftp_hi : F64 }) -> List(FamRow)
+    fold_families = |rows|
+        List.fold(rows, [], |acc, r|
+            match List.find_first_index(acc, |f| f.fam == r.fam) {
+                Ok(i) =>
+                    match List.get(acc, i) {
+                        Ok(f) =>
+                            List.set(acc, i, {
+                                fam: f.fam,
+                                n: f.n + r.n,
+                                ftp_lo: if f.ftp_lo == 0.0 or (r.ftp_lo > 0.0 and r.ftp_lo < f.ftp_lo) r.ftp_lo else f.ftp_lo,
+                                ftp_hi: if r.ftp_hi > f.ftp_hi r.ftp_hi else f.ftp_hi,
+                                ftp_first: if f.ftp_first == 0.0 r.ftp_hi else f.ftp_first,
+                                ftp_last: if r.ftp_hi > 0.0 r.ftp_hi else f.ftp_last,
+                            }).ok_or(acc)
+                        Err(_) => acc
+                    }
+                Err(_) => List.append(acc, { fam: r.fam, n: r.n, ftp_lo: r.ftp_lo, ftp_hi: r.ftp_hi, ftp_first: r.ftp_hi, ftp_last: r.ftp_hi })
+            })
+
     season! : {} => Try({}, _)
     season! = |_| {
         path = Db.open_db!({})?
@@ -2388,7 +2415,11 @@ Report :: [].{
                     hard_s = Sqlite.f64("hard_s")(cols)(stmt)?
                     ftp_lo = Sqlite.f64("ftp_lo")(cols)(stmt)?
                     ftp_hi = Sqlite.f64("ftp_hi")(cols)(stmt)?
-                    Ok({ days: (Metrics.date_str_to_days(d)).ok_or(0), fam, n, easy_s, mod_s, hard_s, ftp_lo, ftp_hi })
+                    # same rule as daily_load.day: absorbing this silently drops
+                    # the activity from sessions, polarization AND the threshold
+                    # range with no trace at exit 0
+                    days = (Metrics.date_str_to_days(d)).map_err(|_| BadActivityDate(d))?
+                    Ok({ days, fam, n, easy_s, mod_s, hard_s, ftp_lo, ftp_hi })
                 },
             })?
             month_load = Sqlite.query_many!({
@@ -2404,31 +2435,10 @@ Report :: [].{
                     Ok({ month, load })
                 },
             })?
-            month_fam = Sqlite.query_many!({
-                path: Path.utf8(path),
-                query:
-                    \\SELECT substr(a.start_local, 1, 7) AS month,
-                    \\       COALESCE(a.sport_family, a.sport_type) AS fam,
-                    \\       COUNT(*) AS n,
-                    \\       CAST(COALESCE(MIN(NULLIF(m.ftp_used, 0)), 0) AS REAL) AS ftp_lo,
-                    \\       CAST(COALESCE(MAX(m.ftp_used), 0) AS REAL) AS ftp_hi
-                    \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
-                    \\GROUP BY month, fam ORDER BY month
-                ,
-                bindings: [],
-                rows: |cols| |stmt| {
-                    month = Sqlite.str("month")(cols)(stmt)?
-                    fam = Sqlite.str("fam")(cols)(stmt)?
-                    n = Sqlite.i64("n")(cols)(stmt)?
-                    ftp_lo = Sqlite.f64("ftp_lo")(cols)(stmt)?
-                    ftp_hi = Sqlite.f64("ftp_hi")(cols)(stmt)?
-                    Ok({ month, fam, n, ftp_lo, ftp_hi })
-                },
-            })?
-            today = Db.local_today_days!(path)
             weeks = Metrics.weekly_rollup(day_rows)
             # a week whose Sunday has not passed is still accumulating, so its
             # load is a partial sum and cannot be regressed against full weeks
+            today = Db.local_today_days!(path)
             blocks = Metrics.season_blocks(
                 List.map(weeks, |w| { week_start: w.week_start, tss: w.tss, sessions: w.sessions, complete: w.week_start + 6 < today }),
                 season_gap_weeks,
@@ -2452,25 +2462,7 @@ Report :: [].{
                 pcts = Metrics.coverage_pcts(easy, moderate, hard)
                 # collapse the per-date rows to one row per family before
                 # picking the dominant one
-                # pol_rows arrives ORDER BY date, so folding in order makes
-                # ftp_first/ftp_last chronological rather than min/max
-                fams = List.fold(inside, [], |acc, r|
-                    match List.find_first_index(acc, |f| f.fam == r.fam) {
-                        Ok(i) =>
-                            match List.get(acc, i) {
-                                Ok(f) =>
-                                    List.set(acc, i, {
-                                        fam: f.fam,
-                                        n: f.n + r.n,
-                                        ftp_lo: if f.ftp_lo == 0.0 or (r.ftp_lo > 0.0 and r.ftp_lo < f.ftp_lo) r.ftp_lo else f.ftp_lo,
-                                        ftp_hi: if r.ftp_hi > f.ftp_hi r.ftp_hi else f.ftp_hi,
-                                        ftp_first: if f.ftp_first == 0.0 r.ftp_hi else f.ftp_first,
-                                        ftp_last: if r.ftp_hi > 0.0 r.ftp_hi else f.ftp_last,
-                                    }).ok_or(acc)
-                                Err(_) => acc
-                            }
-                        Err(_) => List.append(acc, { fam: r.fam, n: r.n, ftp_lo: r.ftp_lo, ftp_hi: r.ftp_hi, ftp_first: r.ftp_hi, ftp_last: r.ftp_hi })
-                    })
+                fams = fold_families(inside)
                 ftp = dominant_ftp(fams)
                 # `weeks` counts weeks WITH training; `span_weeks` counts the
                 # calendar weeks the block covers. They differ wherever a rest
@@ -2524,13 +2516,9 @@ Report :: [].{
                     ftp_known: ftp.ftp_known,
                 }
             })
-            # the same key shape SQL produced (substr(day,1,7)); Roc has no
-            # string slice in scope here, so rebuild it from the civil date
-            tc = Metrics.civil_from_days(today)
-            mpad = if tc.m < 10 "0" else ""
-            this_month = "${I64.to_str(tc.y)}-${mpad}${I64.to_str(tc.m)}"
+            this_month = Metrics.month_key(today)
             months = List.map(month_load, |m| {
-                fams = List.map(List.keep_if(month_fam, |f| f.month == m.month), |f| { fam: f.fam, n: f.n, ftp_lo: f.ftp_lo, ftp_hi: f.ftp_hi, ftp_first: f.ftp_lo, ftp_last: f.ftp_hi })
+                fams = fold_families(List.keep_if(pol_rows, |r| Metrics.month_key(r.days) == m.month))
                 ftp = dominant_ftp(fams)
                 sessions = List.fold(fams, 0, |a, f| a + f.n)
                 {
