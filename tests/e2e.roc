@@ -286,6 +286,15 @@ b_init_config! = |ctx| {
     argerr = stride!(ctx.bin, ctx.home, ["sync", "extra"])
     check!("wrong arity on a real command is a usage error, not 'unknown'", Str.contains(argerr, "sync") and !(Str.contains(argerr, "unknown_command")))?
     check!("...and still exits non-zero", stride_status!(ctx.bin, ctx.home, ["sync", "extra"]) == 1)?
+    # the FLAG path owns the exit code too (#162's re-exec wrapper): without
+    # Err(Exit(child_code)) the parent collapses every child status to 1 and
+    # stacks a platform banner on the child's own message. Deleting that arm
+    # passed the entire suite before this check existed.
+    check!("an error through --json propagates the child's status", stride_status!(ctx.bin, ctx.home, ["--json", "activity", "99999999"]) == 1)?
+    # (a db-free success: at this point in the fixture almost every query is
+    # legitimately an error, and --version exercises the same re-exec path)
+    check!("...and success through --json still exits 0", stride_status!(ctx.bin, ctx.home, ["--json", "--version"]) == 0)?
+    check!("...with no platform banner stacked on the envelope", Str.contains(stride!(ctx.bin, ctx.home, ["--json", "activity", "99999999"]), "activity_not_found"))?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", "123"])
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max", "153"])
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z3_max", "168"])
@@ -343,6 +352,24 @@ b_config_ftp! = |ctx| {
     check!("config set emits the JSON envelope", strjq!(ctx, ["config", "set", "timezone", "America/Chicago"], ".data.value") == "America/Chicago")?
     check!("config set human line", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "set", "timezone", "America/Chicago"]), "timezone = America/Chicago"))?
     check!("value stored + read back (human)", Str.trim(stride_human!(ctx.bin, ctx.home, ["config", "get", "timezone"])) == "America/Chicago")?
+    # ── explicit format flags (#162): the flag beats the environment, works in
+    # any argv position, and the last flag wins. stride_env! pins STRIDE_FORMAT
+    # so each check is a real precedence fight, not an ambient default.
+    check!("--json beats STRIDE_FORMAT=human", Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--json"], [("STRIDE_FORMAT", "human")]), "schema_version"))?
+    check!("--human beats STRIDE_FORMAT=json", !(Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--human"], [("STRIDE_FORMAT", "json")]), "schema_version")))?
+    check!("flag position is free (before the subcommand)", Str.contains(stride_env!(ctx.bin, ctx.home, ["--json", "config", "get", "timezone"], [("STRIDE_FORMAT", "human")]), "schema_version"))?
+    check!("last flag wins", Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--human", "--json"], [("STRIDE_FORMAT", "human")]), "schema_version"))?
+    check!("args survive the strip (value intact)", Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--json"], [("STRIDE_FORMAT", "human")]), "America/Chicago"))?
+    # `--` ends flag parsing, proven by ROUND TRIP rather than by absence: the
+    # literal "--json" must land in the database as the skip reason, and the
+    # requested format must survive the escape (the first version of this check
+    # asserted only that the output was neither JSON nor the config value — it
+    # passed against help text, and would have passed with `--` unimplemented).
+    term_sess = Str.trim(strjq!(ctx, ["week", "add", "2099-06-06", "endurance", "terminator probe", "r"], ".data.id"))
+    term_out = stride_env!(ctx.bin, ctx.home, ["--json", "skip", term_sess, "--", "--json"], [("STRIDE_FORMAT", "human")])
+    check!("`--` protects a literal flag argument", Str.trim(sql!(ctx.db, "SELECT COALESCE(skipped_reason,'') FROM planned_sessions WHERE id = ${term_sess};")) == "--json")?
+    check!("...and the requested format still wins", Str.contains(term_out, "schema_version"))?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${term_sess};")
     check!("config get json value", strjq!(ctx, ["config", "get", "timezone"], ".data.value") == "America/Chicago")?
     check!("config get not_set error", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "nope"]), "not_set"))?
     # delete the row rather than storing "" — an empty value is a stored-but-invalid

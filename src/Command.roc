@@ -43,6 +43,32 @@ Command := [
 	##   BadCount(Str) -> a count argument that wasn't a number
 	ParseErr : [ShowHelp, UnknownCmd(Str), Usage(Str), BadCount(Str)]
 
+	## Output-format flags (#162), pulled out of argv before command parsing:
+	## `--json` / `--human` in ANY position, last one wins, and `--` ends flag
+	## parsing POSIX-style so an argument whose literal value is `--json` (a skip
+	## reason, a session detail) survives as `stride skip 5 -- --json`. Without
+	## the terminator the strip would silently eat the value and hand the command
+	## one argument too few. Lives HERE, with the rest of argv parsing, so it is
+	## unit-tested by the same suite as `parse`.
+	FormatMode : [ForceJson, ForceHuman, Auto]
+
+	split_format_args : List(Str) -> { mode : FormatMode, rest : List(Str) }
+	split_format_args = |args| {
+		walked = List.fold(args, { mode: Auto, rest: [], literal: False }, |acc, a|
+			if acc.literal {
+				{ ..acc, rest: List.append(acc.rest, a) }
+			} else if a == "--" {
+				{ ..acc, literal: True }
+			} else if a == "--json" {
+				{ ..acc, mode: ForceJson }
+			} else if a == "--human" {
+				{ ..acc, mode: ForceHuman }
+			} else {
+				{ ..acc, rest: List.append(acc.rest, a) }
+			})
+		{ mode: walked.mode, rest: walked.rest }
+	}
+
 	## argv (including the program name at index 0) -> a typed command. Mirrors the
 	## historical `main!` dispatch exactly; behavior-preserving by construction.
 	parse : List(Str) -> Try(Command, ParseErr)
@@ -426,4 +452,36 @@ expect {
         Err(Usage(u)) => Str.contains(u, "--help")
         _ => False
     }
+}
+
+# format flags (#162): stripped from any position, last wins, args preserved
+expect {
+    r = Command.split_format_args(["stride", "summary", "--json"])
+    r.mode == ForceJson and r.rest == ["stride", "summary"]
+}
+expect {
+    r = Command.split_format_args(["stride", "--json", "activities", "5"])
+    r.mode == ForceJson and r.rest == ["stride", "activities", "5"]
+}
+expect {
+    r = Command.split_format_args(["stride", "--human", "--json", "summary"])
+    r.mode == ForceJson and r.rest == ["stride", "summary"]
+}
+expect {
+    r = Command.split_format_args(["stride", "--json", "--human", "summary"])
+    r.mode == ForceHuman and r.rest == ["stride", "summary"]
+}
+expect {
+    r = Command.split_format_args(["stride", "summary"])
+    r.mode == Auto and r.rest == ["stride", "summary"]
+}
+# `--` ends flag parsing: a literal "--json" argument survives intact, and the
+# terminator itself never reaches the command parser
+expect {
+    r = Command.split_format_args(["stride", "skip", "5", "--", "--json"])
+    r.mode == Auto and r.rest == ["stride", "skip", "5", "--json"]
+}
+expect {
+    r = Command.split_format_args(["stride", "--json", "skip", "5", "--", "--human"])
+    r.mode == ForceJson and r.rest == ["stride", "skip", "5", "--human"]
 }
