@@ -62,6 +62,10 @@ Never do training math yourself: read stride's numbers, add judgment.
   intervals it reflects workout shape (check `segments`: work reps present → don't
   read drift as durability). Unknown when: no usable signal, the signal covers less
   than half the session, or |value| > 50% (artifact).
+- **Rep-level progression** (`stride reps --json`): whether the SAME workout shape is
+  being ridden harder than it used to be — per-rep watts across sessions and the
+  within-session fade. Use it when a structured session repeats; `progress` when
+  comparing whole sessions.
 - **Detected structure** (`stride activity <id> --json`): `interval_summary` ("3×[12:00 @
   230W / 4:00 easy]"), `segments` (per-rep kind/duration/avg + HR peak/avg/60s
   recovery drop), `hr_drift` + `hr_drift_known` (rising across reps = fatigue), and
@@ -124,6 +128,7 @@ means for every date below.
 | `stride week --json` | this week (Mon-Sun) PLUS `unplanned` rows for activities no session references — statuses open/done/skipped/unplanned; rows carry `substitute_activity_id` ("did this instead" links, rendered `→ id`); unplanned rows carry their id in `activity_id`, NOT `completed_activity_id` — discriminate on `status`. `stride week all --json` = full session log, no unplanned rows. |
 | `stride doctor --json` | dataset health: coverage counts, per-model load provenance (`scored_by`), `strength_unrated` (strength sessions awaiting a rating) |
 | `stride compare [week\|month] --json` | rolling window vs the prior one: `{period, window_label, current, prior}`, each side with tss/sessions/hard_min/easy_pct/ctl + `has_data` — `has_data: false` is the discriminator for an empty window (do not read its 0s as training) |
+| `stride reps [date] --json` | rep-level comparison: the anchor session's detected work blocks beside the same-shaped blocks of earlier sessions — `{anchor_date, anchor_activity_id, shape, sport_family, sessions}`. `shape` `{rep_count, mean_dur_s, band_lo_s, band_hi_s}` IS the comparability rule (same sport family, same rep count, same rep-duration band, never later than the anchor), so a 3×3min VO2 set never sits beside a 3×12min threshold block. Sessions carry per-rep `avg_signal`/`avg_hr`, `mean_w`, `fade_w` (last rep minus first, signed) and `hr_rise_bpm`+`_known`. In-band errors: `no_detected_intervals`, `no_intervals_on_date` |
 | `stride progress [date] [asc\|desc] --json` | `{anchor_date, anchor_scored, groups:[{name, lens, sessions}]}` — `lens` is `ef`\|`speed_hr`\|`rpe` (sport-aware); each session carries a `score` in that lens. Bare = latest analyzed workout; `desc` lists newest first without changing the trend. **`anchor_scored: false` means a workout anchored on that date could not be scored by its group's lens, so it is absent from `groups` and the trends exclude it** — do not read the trend as covering the session you asked about. In-band errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts` |
 
 ## Conventions & gotchas
