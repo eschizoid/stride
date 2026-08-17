@@ -1542,6 +1542,98 @@ Metrics :: [].{
             }
         })
 
+    # ── season blocks (ADR 0011) ────────────────────────────────────────
+    # A block is a maximal run of consecutive TRAINING weeks, closed by an
+    # absence of `gap_weeks` or more calendar weeks carrying no load. That is
+    # the only boundary in this data that is not a judgment call. The textbook
+    # alternative — build weeks followed by a recovery week — was measured
+    # against real history and fits 8-10 of 96 weeks depending on how adjacency
+    # is read, so a detector built on it
+    # segments noise; any changepoint rule instead lets its own sensitivity
+    # parameter choose the answer. Blocks are DESCRIBED (span, load, measured
+    # trend) and never named: "base"/"build"/"peak" are claims about intent,
+    # and load does not observe intent (#154).
+    SeasonBlock : { first_week : I64, last_week : I64, weeks : I64, total_load : F64, sessions : I64, slope : F64, r2 : F64, trend_known : Bool, fitted_start : F64, fitted_end : F64 }
+
+    season_blocks : List({ week_start : I64, tss : F64, sessions : I64, complete : Bool }), I64 -> List(SeasonBlock)
+    season_blocks = |weeks, gap_weeks| {
+        # A week present with zero load is absence, not a light week — the
+        # daily_load table carries rest days so CTL can decay through them.
+        trained = List.keep_if(weeks, |w| w.tss > 0.0)
+        # gap_weeks EMPTY weeks between two trained weeks means their starts
+        # are (gap_weeks + 1) weeks apart or more.
+        gap_days = (gap_weeks + 1) * 7
+        folded = List.fold(trained, { cur: [], done: [] }, |acc, w|
+            match List.last(acc.cur) {
+                Err(_) => { cur: [w], done: acc.done }
+                Ok(prev) =>
+                    if w.week_start - prev.week_start >= gap_days {
+                        { cur: [w], done: List.append(acc.done, acc.cur) }
+                    } else {
+                        { cur: List.append(acc.cur, w), done: acc.done }
+                    }
+            })
+        groups = if List.is_empty(folded.cur) folded.done else List.append(folded.done, folded.cur)
+        List.map(groups, block_of)
+    }
+
+    block_of : List({ week_start : I64, tss : F64, sessions : I64, complete : Bool }) -> SeasonBlock
+    block_of = |g| {
+        n = List.len(g)
+        first = match List.first(g) { Ok(w) => w.week_start  Err(_) => 0 }
+        last = match List.last(g) { Ok(w) => w.week_start  Err(_) => 0 }
+        total = List.fold(g, 0.0, |a, w| a + w.tss)
+        sess = List.fold(g, 0, |a, w| a + w.sessions)
+        # A week still in progress is a PARTIAL sum, not a low week. Left in the
+        # regression it plants a large negative outlier at the right edge: on
+        # real data one Monday ride took the current block from +11.0/wk at
+        # r2 0.56 to +5.8/wk at r2 0.13 — i.e. training MORE made "building"
+        # look weaker, and the number swung back every Sunday. It still counts
+        # toward load, weeks and sessions, because the training happened.
+        fit_weeks = List.keep_if(g, |w| w.complete)
+        fn = List.len(fit_weeks)
+        fnf = fn.to_f64()
+        # x is the week's ordinal inside the block, y its load
+        xs = List.map(fit_weeks, |w| ((w.week_start - first) // 7).to_f64())
+        ys = List.map(fit_weeks, |w| w.tss)
+        mx = if fnf > 0.0 List.fold(xs, 0.0, |a, x| a + x) / fnf else 0.0
+        my = if fnf > 0.0 List.fold(ys, 0.0, |a, y| a + y) / fnf else 0.0
+        pairs = List.map2(xs, ys, |x, y| { x, y })
+        sxx = List.fold(pairs, 0.0, |a, p| a + (p.x - mx) * (p.x - mx))
+        sxy = List.fold(pairs, 0.0, |a, p| a + (p.x - mx) * (p.y - my))
+        syy = List.fold(pairs, 0.0, |a, p| a + (p.y - my) * (p.y - my))
+        # Under three weeks r2 is 1 by construction and the "trend" is just the
+        # difference between two numbers — the same rule the CP fit uses, and
+        # for the same reason: a quality signal that cannot be bad is not one.
+        trend_known = fn >= 3 and sxx > 0.0000001
+        slope = if trend_known sxy / sxx else 0.0
+        r2 = if trend_known and syy > 0.0000001 (sxy * sxy) / (sxx * syy) else 0.0
+        # The fitted line's own endpoints. A slope with a low r2 is routinely
+        # misread as "no trend" — but r2 measures SCATTER, not whether the
+        # slope differs from zero, and a 71-week block at r2 0.10 still fell
+        # from 316 to 214 TSS/week. "316 → 214" cannot be mis-told that way.
+        # Seeded from the first element, not 0.0: seeding at zero computes
+        # min(0, xs), which is right only while complete weeks are a PREFIX.
+        # They are, and the reason is `complete = week_start + 6 < today` is
+        # monotone in week_start over an ascending week list -- so this is a
+        # no-op today and stops being one the moment week order breaks.
+        x0 = match List.first(xs) { Ok(v) => v  Err(_) => 0.0 }
+        x_lo = List.fold(xs, x0, |a, x| if x < a x else a)
+        x_hi = List.fold(xs, x0, |a, x| if x > a x else a)
+        fitted_start = if trend_known my + slope * (x_lo - mx) else 0.0
+        fitted_end = if trend_known my + slope * (x_hi - mx) else 0.0
+        { first_week: first, last_week: last, weeks: (n).to_i64_wrap(), total_load: total, sessions: sess, slope, r2, trend_known, fitted_start, fitted_end }
+    }
+
+    # "YYYY-MM" for a day number — the same key shape SQL's substr(day,1,7)
+    # produces, so a Roc-side grouping and a SQL-side one agree.
+    month_key : I64 -> Str
+    month_key = |days| {
+        c = civil_from_days(days)
+        pad = if c.m < 10 "0" else ""
+        "${I64.to_str(c.y)}-${pad}${I64.to_str(c.m)}"
+    }
+
     # ── civil-date arithmetic (Howard Hinnant's algorithms) ─────────────
 
     days_from_civil : I64, I64, I64 -> I64
@@ -3673,6 +3765,137 @@ expect {
     and Metrics.percentile_of([1.0, 2.0, 3.0, 4.0], 2.5) == 50
     and Metrics.percentile_of([5.0], 5.0) == 100
     and Metrics.percentile_of([], 1.0) == 0
+}
+
+# ── season blocks (ADR 0011) ────────────────────────────────────────
+# A block is bounded by ABSENCE. These pin the boundary rule itself, because
+# every wrong definition considered still produces plausible-looking output.
+expect {
+    w = |wk, tss| { week_start: wk * 7, tss, sessions: 3.I64, complete: True }
+    # three trained weeks, two weeks off, two more: exactly one gap at the
+    # default threshold, so two blocks
+    bs = Metrics.season_blocks([w(0, 100.0), w(1, 120.0), w(2, 140.0), w(5, 90.0), w(6, 95.0)], 2)
+    two = List.len(bs) == 2
+    sizes = List.map(bs, |b| b.weeks) == [3, 2]
+    loads = match List.first(bs) { Ok(b) => (b.total_load - 360.0).abs() < 0.001  Err(_) => False }
+    # ONE week off is training through, not a boundary -- a rest week is part
+    # of a block, which is the whole reason the threshold is two
+    one_off = List.len(Metrics.season_blocks([w(0, 100.0), w(2, 120.0)], 2)) == 1
+    # a week PRESENT with zero load is absence: daily_load carries rest days
+    # so CTL can decay, and counting them as training would erase every gap
+    zero_is_absence = List.len(Metrics.season_blocks([w(0, 100.0), w(1, 0.0), w(2, 0.0), w(3, 120.0)], 2)) == 2
+    two and sizes and loads and one_off and zero_is_absence
+}
+
+# a block's trend is a measured slope, and is withheld where it cannot mean anything
+expect {
+    w = |wk, tss| { week_start: wk * 7, tss, sessions: 1.I64, complete: True }
+    rising = Metrics.season_blocks([w(0, 100.0), w(1, 200.0), w(2, 300.0), w(3, 400.0)], 2)
+    up = match List.first(rising) {
+        # +100 TSS/week, perfectly linear
+        Ok(b) => b.trend_known and (b.slope - 100.0).abs() < 0.001 and (b.r2 - 1.0).abs() < 0.001
+        Err(_) => False
+    }
+    falling = Metrics.season_blocks([w(0, 400.0), w(1, 300.0), w(2, 200.0)], 2)
+    down = match List.first(falling) { Ok(b) => (b.slope + 100.0).abs() < 0.001  Err(_) => False }
+    # a flat block has a real zero slope, NOT an unknown one -- "no trend" is
+    # an answer, and r2 is 0 because there is no variance to explain
+    flat = Metrics.season_blocks([w(0, 200.0), w(1, 200.0), w(2, 200.0)], 2)
+    level = match List.first(flat) { Ok(b) => b.trend_known and (b.slope).abs() < 0.001 and (b.r2).abs() < 0.001  Err(_) => False }
+    # two weeks: r2 would be 1 by construction and the slope is just the
+    # difference, so neither is published (the CP-fit lesson, #190)
+    pair = Metrics.season_blocks([w(0, 100.0), w(1, 300.0)], 2)
+    withheld = match List.first(pair) { Ok(b) => !(b.trend_known) and (b.slope).abs() < 0.001  Err(_) => False }
+    # a noisy block still reports its slope, with a low r2 saying so
+    noisy = Metrics.season_blocks([w(0, 100.0), w(1, 400.0), w(2, 150.0), w(3, 380.0)], 2)
+    graded = match List.first(noisy) { Ok(b) => b.trend_known and b.r2 < 0.5  Err(_) => False }
+    up and down and level and withheld and graded
+}
+
+# The regression's x is the CALENDAR-week ordinal, not the position in the list.
+# They are identical for contiguous weeks -- which is every other expect here --
+# so the distinction that ADR 0011 is built on (a rest week is trained through,
+# not a boundary) was never exercised, and swapping them changed real slopes
+# while the whole suite stayed green.
+expect {
+    w = |wk, tss| { week_start: wk * 7, tss, sessions: 1.I64, complete: True }
+    # weeks 0,1,3,4 -- week 2 is an interior rest week. Loads chosen so the two
+    # x-axes disagree: by calendar ordinal the slope is +100/wk exactly.
+    gapped = Metrics.season_blocks([w(0, 100.0), w(1, 200.0), w(3, 400.0), w(4, 500.0)], 2)
+    match List.first(gapped) {
+        Ok(b) =>
+            # one block (a single week off trains through), four trained weeks
+            # across a five-week span, and the slope reads the calendar
+            b.weeks == 4 and b.trend_known
+            and (b.slope - 100.0).abs() < 0.001
+            and (b.r2 - 1.0).abs() < 0.001
+            # by list index the same points would fit 133.33/wk at r2 0.9926
+            and (b.slope - 133.333).abs() > 1.0
+        Err(_) => False
+    }
+}
+
+# A week still in progress is a PARTIAL sum, not a low week. Left in the
+# regression it is a large negative outlier at the right edge: on real data one
+# Monday ride took the current block from +11.0/wk at r2 0.56 to +5.8/wk at
+# r2 0.13, so training MORE made "building" look weaker and the number swung
+# back every Sunday. It still counts toward load, weeks and sessions.
+expect {
+    w = |wk, tss, c| { week_start: wk * 7, tss, sessions: 1.I64, complete: c }
+    full = [w(0, 100.0, True), w(1, 200.0, True), w(2, 300.0, True), w(3, 400.0, True)]
+    closed_b = Metrics.season_blocks(full, 2)
+    open_b = Metrics.season_blocks(List.append(full, w(4, 30.0, False)), 2)
+    same_trend = match (List.first(closed_b), List.first(open_b)) {
+        (Ok(c), Ok(o)) => (c.slope - o.slope).abs() < 0.001 and (c.r2 - o.r2).abs() < 0.001
+        _ => False
+    }
+    # ...and the partial week is still counted everywhere else
+    counted = match List.first(open_b) {
+        Ok(o) => o.weeks == 5 and (o.total_load - 1030.0).abs() < 0.001
+        Err(_) => False
+    }
+    # with the partial week IN the fit the slope would collapse, which is the
+    # regression this guards -- pinned so the exclusion cannot be quietly undone
+    would_collapse = match List.first(Metrics.season_blocks(List.append(full, w(4, 30.0, True)), 2)) {
+        Ok(x) => x.slope < 60.0
+        Err(_) => False
+    }
+    same_trend and counted and would_collapse
+}
+
+# The fitted line's ENDPOINTS, because a slope plus a low r2 is routinely read
+# as "no trend" -- r2 is scatter, not evidence the slope is zero.
+expect {
+    w = |wk, tss| { week_start: wk * 7, tss, sessions: 1.I64, complete: True }
+    # perfectly linear 100..400 over four weeks: the line runs exactly 100 to 400
+    clean = Metrics.season_blocks([w(0, 100.0), w(1, 200.0), w(2, 300.0), w(3, 400.0)], 2)
+    exact = match List.first(clean) {
+        Ok(b) => (b.fitted_start - 100.0).abs() < 0.001 and (b.fitted_end - 400.0).abs() < 0.001
+        Err(_) => False
+    }
+    # a NOISY block with a low r2 still has endpoints far apart -- this is the
+    # case the old "low r2 means no trend" wording got wrong
+    noisy = Metrics.season_blocks([w(0, 300.0), w(1, 120.0), w(2, 260.0), w(3, 80.0), w(4, 200.0), w(5, 40.0)], 2)
+    declined = match List.first(noisy) {
+        Ok(b) => b.r2 < 0.6 and b.fitted_start - b.fitted_end > 100.0
+        Err(_) => False
+    }
+    # and a block with no trend has endpoints that agree
+    flat = Metrics.season_blocks([w(0, 200.0), w(1, 200.0), w(2, 200.0)], 2)
+    level = match List.first(flat) { Ok(b) => (b.fitted_start - b.fitted_end).abs() < 0.001  Err(_) => False }
+    exact and declined and level
+}
+
+# degenerate inputs produce no blocks rather than a fabricated one
+expect {
+    w = |wk, tss| { week_start: wk * 7, tss, sessions: 1.I64, complete: True }
+    Metrics.season_blocks([], 2) == []
+    and Metrics.season_blocks([w(0, 0.0), w(1, 0.0)], 2) == []
+    # a single trained week IS a block -- one week of training happened
+    and List.len(Metrics.season_blocks([w(0, 100.0)], 2)) == 1
+    # and a continuous run is ONE block however long, never subdivided to look
+    # more useful (ADR 0011: splitting fabricates the boundary)
+    and List.len(Metrics.season_blocks(Iter.fold(0.I64..<47, [], |acc, i| List.append(acc, w(i, 200.0))), 2)) == 1
 }
 
 # exp_neg against known values — there is no `.exp()` method on F64 at all on

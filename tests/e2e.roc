@@ -945,6 +945,180 @@ b_seed_analyze! = |ctx| {
     sch_open = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d2}", "threshold", "schema probe open", "r"], ".data.id"))
     check!("plan arrays are populated for this check", strjq!(ctx, ["plan"], "(.data.open_sessions | length > 0) and (.data.plan_history_28d | length > 0)") == "true")?
     check!("plan with populated arrays conforms", validate!("plan", "plan") == "")?
+
+    # ── season: blocks bounded by absence (#139, ADR 0011) ──────────────
+    # The fixture's activities sit in a handful of dates, so this exercises the
+    # boundary rule rather than a rich history: what matters is that a gap
+    # OPENS a block, that a one-week gap does NOT, and that the count is a
+    # measured consequence of the dates rather than a constant.
+    # The human screens have a 100-column table budget (render_table's
+    # max_total). Nothing anywhere asserted it, which is how season shipped a
+    # 126-column table -- the only violator in the CLI -- that wrapped rows
+    # mid-number into unreadable fragments on any narrower terminal. Applied
+    # CLI-wide because a guard on one command is a guard nobody generalises.
+    # awk's length() counts BYTES on macOS whatever the locale, and every box
+    # glyph is three of them, so `wc -m` is what actually measures a column.
+    # The list is every command that DRAWS a table -- summary, doctor and reps
+    # emit none, so listing them added three vacuous passes and hid that `top`
+    # and `week all` were missing (the latter sits at exactly 100 on real data).
+    wide = Str.trim(sh!("for c in season activities plan week 'week all' compare progress load stats zones 'power-curve' 'top tss'; do HOME='${ctx.home}' '${ctx.bin}' $c 2>/dev/null; done | grep -E '[│╭├╰]' | while IFS= read -r l; do printf '%s' \"$l\" | LC_ALL=en_US.UTF-8 wc -m; done | tr -d ' ' | awk '$1 > 100' | sort -rn | head -1"))
+    check!("no human table exceeds the 100-column budget", wide == "")?
+    check!("season conforms", validate!("season", "season") == "")?
+    check!("season reports at least one block", strjq!(ctx, ["season"], ".data.blocks | length > 0") == "true")?
+    check!("the gap threshold travels with the payload", strjq!(ctx, ["season"], ".data.gap_weeks") == "2")?
+    # every block must have a start no later than its end, and a positive week
+    # count -- a fabricated boundary usually shows up as one of these inverting
+    # phrased as "no block violates" rather than "count of good == total":
+    # after a pipe, jq's `.data.blocks` resolves against the piped array rather
+    # than the root, so the comparison silently read `1 == 0`
+    check!("blocks are well-formed spans", strjq!(ctx, ["season"], "[.data.blocks[] | select((.start_date <= .end_date | not) or .weeks <= 0)] | length == 0") == "true")?
+    # under three weeks the trend is WITHHELD, not zero-with-confidence
+    check!("short blocks withhold their trend", strjq!(ctx, ["season"], "[.data.blocks[] | select(.weeks < 3 and .trend_known)] | length == 0") == "true")?
+    # a threshold range must name the family it belongs to, or a rowing
+    # threshold and a cycling FTP get averaged into a number describing nobody
+    # The DESCRIPTION layer, not just the boundary. Review mutated the easy/hard
+    # orientation, the dominant-family rule and the block end date, and all
+    # three survived the whole suite -- the e2e checks only ever guarded where
+    # blocks START and STOP.
+    # easy/moderate/hard must land in that order, not transposed: the call site
+    # reads `easy_pct: pcts.high_pct`, which looks inverted and is not.
+    # snapshot the ROW, not a joined string -- the first version restored only
+    # pi_easy_s and left the other two mutated for the rest of the suite
+    _ = sql!(ctx.db, "CREATE TABLE pi_bak AS SELECT activity_id, pi_easy_s, pi_moderate_s, pi_hard_s FROM activity_metrics WHERE activity_id = 101;")
+    _ = sql!(ctx.db, "UPDATE activity_metrics SET pi_easy_s = 3600, pi_moderate_s = 600, pi_hard_s = 0 WHERE activity_id = 101;")
+    check!("easy time is reported as easy, not transposed onto hard", strjq!(ctx, ["season"], "[.data.blocks[] | select(.polarization_known and .easy_pct > .hard_pct)] | length > 0") == "true")?
+    # restore ALL THREE, or every check below this one runs on mutated state
+    _ = sql!(ctx.db, "UPDATE activity_metrics SET pi_easy_s = (SELECT pi_easy_s FROM pi_bak), pi_moderate_s = (SELECT pi_moderate_s FROM pi_bak), pi_hard_s = (SELECT pi_hard_s FROM pi_bak) WHERE activity_id = 101; DROP TABLE pi_bak;")
+    # the block must END on a training day, never later -- it used to end on the
+    # Sunday closing the last training week, dating an open block into the future
+    check!("no block ends after the last day it contains", strjq!(ctx, ["season"], "[.data.blocks[] | select(.end_date > (now | strftime(\"%Y-%m-%d\")))] | length == 0") == "true")?
+    # trained weeks can never exceed the calendar weeks spanned
+    check!("trained weeks never exceed the span", strjq!(ctx, ["season"], "[.data.blocks[] | select(.weeks > .span_weeks)] | length == 0") == "true")?
+    # sessions counts ACTIVITIES. On THIS fixture the totals happen to agree,
+    # which pins the join fix -- but equality is not an invariant in general
+    # (see the absence case below), so this is a fixture pin, not a contract.
+    check!("block and month session counts agree", strjq!(ctx, ["season"], "([.data.blocks[].sessions] | add) == ([.data.months[].sessions] | add)") == "true")?
+    # ...including in the ordinary post-sync, pre-analyze state, where an
+    # activity exists with no metrics row. Blocks used an inner join and months
+    # a left join, so the two disagreed exactly there.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (921,'unscored probe','Ride','Ride','2010-01-05T06:00:00Z',3600);")
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES ('2010-01-05', 30.0, 5.0, 5.0, 0.0);")
+    check!("...and still agree when an activity has no metrics row yet", strjq!(ctx, ["season"], "([.data.blocks[].sessions] | add) == ([.data.months[].sessions] | add)") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 921; DELETE FROM daily_load WHERE day = '2010-01-05';")
+    # An activity that scored NO load inside an absence belongs to a month and
+    # to no block -- correct, and the reason equality is not an invariant. The
+    # earlier guard inserted a daily_load row alongside the activity, which put
+    # it inside a block and guaranteed the answer it was checking.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (922,'unloaded in a gap','WeightTraining','WeightTraining','2010-06-15T06:00:00Z',3600);")
+    # the month row itself comes from daily_load, so the month must EXIST for
+    # the activity to be visible to it -- a zero-load day is exactly that:
+    # present on the calendar, absent from training
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES ('2010-06-15', 0.0, 1.0, 1.0, 0.0);")
+    check!("an activity inside an absence counts for its month, not a block", strjq!(ctx, ["season"], "([.data.months[].sessions] | add) > ([.data.blocks[].sessions] | add)") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 922; DELETE FROM daily_load WHERE day = '2010-06-15';")
+    # `closed` must be decided on the same axis the blocks were cut on. A
+    # day-aligned test declared a block closed up to 7 days before a session
+    # today would actually have opened a new one, and nothing covered it.
+    # `closed` must be decided on the same axis the blocks were cut on. A
+    # day-aligned test declared a block closed up to 7 days before a session
+    # today would actually have opened a new one. Asserting "all but the last
+    # are closed" against this fixture proves nothing -- every block in it is
+    # historical, so it passes under any rule, including `closed = True`. The
+    # discriminating probe replaces daily_load with ONE row on each side of the
+    # boundary and restores it afterwards.
+    dl_rows_before = Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM daily_load;"))
+    _ = sql!(ctx.db, "CREATE TABLE dl_bak AS SELECT * FROM daily_load; DELETE FROM daily_load;")
+    mon = "date('now', '-' || ((CAST(strftime('%w','now') AS INTEGER) + 6) % 7) || ' days')"
+    # two clear weeks short of the gap: a session today would EXTEND this block
+    _ = sql!(ctx.db, "INSERT INTO daily_load (day,tss,ctl,atl,tsb) VALUES (date(${mon}, '-14 days'), 50.0, 5.0, 5.0, 0.0);")
+    check!("a block the gap has not yet closed reports open", strjq!(ctx, ["season"], ".data.blocks | last | .closed") == "false")?
+    # exactly the gap: a session today would OPEN a new block, so this one is closed
+    _ = sql!(ctx.db, "DELETE FROM daily_load; INSERT INTO daily_load (day,tss,ctl,atl,tsb) VALUES (date(${mon}, '-21 days'), 50.0, 5.0, 5.0, 0.0);")
+    check!("a block the gap HAS closed reports closed", strjq!(ctx, ["season"], ".data.blocks | last | .closed") == "true")?
+    # and training in the current week is unambiguously open
+    _ = sql!(ctx.db, "DELETE FROM daily_load; INSERT INTO daily_load (day,tss,ctl,atl,tsb) VALUES (date('now'), 50.0, 5.0, 5.0, 0.0);")
+    check!("training this week is never reported closed", strjq!(ctx, ["season"], ".data.blocks | last | .closed") == "false")?
+    _ = sql!(ctx.db, "DELETE FROM daily_load; INSERT INTO daily_load SELECT * FROM dl_bak; DROP TABLE dl_bak;")
+    check!("daily_load is restored after the closed probe", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM daily_load;")) == dl_rows_before)?
+    # a malformed day used to become epoch 0 and publish span_weeks -2937 at
+    # exit 0; it must refuse loudly, the way summary already does
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES ('not-a-date', 30.0, 5.0, 5.0, 0.0);")
+    bad_day = stride!(ctx.bin, ctx.home, ["season"])
+    check!("a malformed daily_load day is refused, not absorbed", !(Str.contains(bad_day, "span_weeks")) and Str.contains(bad_day, "error"))?
+    _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = 'not-a-date';")
+    # ...and the SAME rule on the other date-parsing site. Absorbing this one
+    # dropped the activity from sessions, polarization AND the threshold range
+    # with no trace at exit 0 -- a silent wrong answer rather than a loud refusal.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (933,'bad date','Ride','Ride','garbage-date',3600);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (933,40.0,300.0,3600,1);")
+    bad_act = stride!(ctx.bin, ctx.home, ["season"])
+    check!("a malformed activity date is refused, not absorbed", Str.contains(bad_act, "error") and !(Str.contains(bad_act, "blocks")))?
+    # ...and PARSEABLE is not enough. "2026-3-01" parses fine and sorts after
+    # every 2026-1x date, so it became ftp_end for its month AND its block and
+    # published the threshold running backwards -- at exit 0, which is the
+    # exact failure this round exists to prevent, arriving through the guard.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (934,'unpadded','Ride','Ride','2026-3-01T06:00:00Z',3600);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (934,40.0,111.0,3600,1);")
+    unpadded = stride!(ctx.bin, ctx.home, ["season"])
+    check!("a non-canonical activity date is refused too", Str.contains(unpadded, "error") and !(Str.contains(unpadded, "blocks")))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 934; DELETE FROM activities WHERE id = 934;")
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day,tss,ctl,atl,tsb) VALUES ('2026-3-05', 30.0, 5.0, 5.0, 0.0);")
+    unpadded_day = stride!(ctx.bin, ctx.home, ["season"])
+    check!("a non-canonical daily_load day is refused too", Str.contains(unpadded_day, "error") and !(Str.contains(unpadded_day, "span_weeks")))?
+    _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = '2026-3-05';")
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 933; DELETE FROM activities WHERE id = 933;")
+    # A CONTROLLED block, because the fixture's own data does not discriminate:
+    # asserting "end_date is not in the future" and "ftp_family is non-empty"
+    # both passed with the end date reverted to the week end and the family
+    # picked by highest threshold instead of most sessions.
+    # 2010-01-04 is a Monday; the last training day is Thursday the 7th, so a
+    # block ending on its calendar week would report the 10th.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES ('2010-01-04', 50.0, 5.0, 5.0, 0.0), ('2010-01-07', 50.0, 5.0, 5.0, 0.0);")
+    # two Rides and one Rowing in that week; Rowing carries the HIGHER threshold,
+    # so picking by threshold rather than by session count names the wrong sport
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (911,'probe ride a','Ride','Ride','2010-01-04T06:00:00Z',3600),(912,'probe ride b','Ride','Ride','2010-01-07T06:00:00Z',3600),(913,'probe row','Rowing','Rowing','2010-01-07T09:00:00Z',3600);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,pi_moderate_s,pi_hard_s,z1_s,z2_s,z3_s,z4_s,z5_s,metrics_rev) VALUES (911,25.0,200.0,3000,400,200,0,0,0,0,0,1),(912,25.0,210.0,3000,400,200,0,0,0,0,0,1),(913,25.0,400.0,3000,400,200,0,0,0,0,0,1);")
+    check!("a block ends on its last TRAINING day, not its last calendar week", Str.trim(strjq!(ctx, ["season"], "[.data.blocks[] | select(.start_date == \"2010-01-04\")] | .[0].end_date")) == "2010-01-07")?
+    check!("the threshold names the family with the most sessions, not the highest number", Str.trim(strjq!(ctx, ["season"], "[.data.blocks[] | select(.start_date == \"2010-01-04\")] | .[0].ftp_family")) == "Ride")?
+    check!("and reports that family's own range", Str.trim(strjq!(ctx, ["season"], "[.data.blocks[] | select(.start_date == \"2010-01-04\")] | .[0].ftp_hi")) == "210")?
+    check!("the probe block counts activities, not days", Str.trim(strjq!(ctx, ["season"], "[.data.blocks[] | select(.start_date == \"2010-01-04\")] | .[0].sessions")) == "3")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (911,912,913); DELETE FROM activities WHERE id IN (911,912,913); DELETE FROM daily_load WHERE day IN ('2010-01-04','2010-01-07');")
+    # The month FTP had no coverage at all, which is why it shipped as a min/max
+    # aliased to chronological names: every month was non-decreasing BY
+    # CONSTRUCTION, so a falling threshold rendered as a rise. The probe forces
+    # a fall, which is impossible to produce from a min/max.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (931,'ftp high','Ride','Ride','2010-03-02T06:00:00Z',3600),(932,'ftp low','Ride','Ride','2010-03-20T06:00:00Z',3600);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (931,40.0,300.0,3600,1),(932,40.0,250.0,3600,1);")
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day,tss,ctl,atl,tsb) VALUES ('2010-03-02',40.0,5.0,5.0,0.0),('2010-03-20',40.0,5.0,5.0,0.0);")
+    check!("a month whose threshold FELL reports start > end", strjq!(ctx, ["season"], "[.data.months[] | select(.month == \"2010-03\")] | .[0] | (.ftp_start == 300 and .ftp_end == 250)") == "true")?
+    # ...and the unordered range still reports the same two numbers the other way
+    check!("...while lo/hi stay unordered", strjq!(ctx, ["season"], "[.data.months[] | select(.month == \"2010-03\")] | .[0] | (.ftp_lo == 250 and .ftp_hi == 300)") == "true")?
+    # blocks were already correct; pin them so the two paths cannot diverge again
+    check!("the block covering it agrees", strjq!(ctx, ["season"], "[.data.blocks[] | select(.start_date <= \"2010-03-02\" and .end_date >= \"2010-03-20\")] | .[0] | (.ftp_start == 300 and .ftp_end == 250)") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (931,932); DELETE FROM activities WHERE id IN (931,932); DELETE FROM daily_load WHERE day IN ('2010-03-02','2010-03-20');")
+    check!("a known FTP range names its sport family", strjq!(ctx, ["season"], "[.data.blocks[] | select(.ftp_known and (.ftp_family | length == 0))] | length == 0") == "true")?
+    # the boundary rule, end to end: insert a training day two clear weeks after
+    # the last one and the block COUNT must rise by exactly one
+    season_before = Str.trim(strjq!(ctx, ["season"], ".data.blocks | length"))
+    last_day = Str.trim(strjq!(ctx, ["season"], ".data.blocks | last | .end_date"))
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES (date('${last_day}', '+21 days'), 55.0, 10.0, 10.0, 0.0);")
+    check!("a gap of two clear weeks opens a new block", Str.trim(strjq!(ctx, ["season"], ".data.blocks | length")) != season_before)?
+    # ...and a day only ONE week later joins the block instead of opening one
+    _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = date('${last_day}', '+21 days');")
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES (date('${last_day}', '+7 days'), 55.0, 10.0, 10.0, 0.0);")
+    check!("a single week off does NOT open a block", Str.trim(strjq!(ctx, ["season"], ".data.blocks | length")) == season_before)?
+    _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = date('${last_day}', '+7 days');")
+    # A zero-load day is ABSENCE, not a light week -- daily_load carries rest
+    # days so CTL can decay, and counting them as training would erase every
+    # gap. Asserting "the count did not change" after inserting a lone zero day
+    # proves nothing: it does not change under either rule. The discriminating
+    # shape puts the zero week INSIDE what is otherwise a two-week gap --
+    # absence keeps the split, training bridges it into one block.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES (date('${last_day}', '+7 days'), 0.0, 10.0, 10.0, 0.0);")
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES (date('${last_day}', '+21 days'), 55.0, 10.0, 10.0, 0.0);")
+    check!("a zero-load week does not bridge a gap", Str.trim(strjq!(ctx, ["season"], ".data.blocks | length")) != season_before)?
+    _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day IN (date('${last_day}', '+7 days'), date('${last_day}', '+21 days'));")
+    check!("season is back to its original block count", Str.trim(strjq!(ctx, ["season"], ".data.blocks | length")) == season_before)?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${sch_done}, ${sch_open});")
     # ...and the validator is not a rubber stamp: each mutation MUST be caught,
     # or "conforms" above would mean nothing (a validator that passes everything

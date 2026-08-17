@@ -32,6 +32,7 @@ Command := [
 	Activity(Str),
 	Load(U64),
 	PowerCurve(U64, Str),
+	Season,
 	WeekView,
 	WeekViewAll,
 	WeekAdd(Str, Str, Str, Str),
@@ -132,6 +133,7 @@ Command := [
 			[_, "activity", id_str] => Ok(Activity(id_str))
 			[_, "load"] => Ok(Load(90))
 			[_, "load", n] => count(n, |c| Load(c))
+			[_, "season"] => Ok(Season)
 			[_, "power-curve"] => Ok(PowerCurve(90, ""))
 			[_, "pc"] => Ok(PowerCurve(90, ""))
 			[_, "power-curve", n] => count(n, |c| PowerCurve(c, ""))
@@ -187,7 +189,7 @@ Command := [
 		"init", "auth", "sync", "backfill", "analyze", "summary", "stats", "doctor",
 		"zones", "pz", "compare", "activities", "activity", "top", "import", "rate",
 		"load", "power-curve", "pc", "progress", "week", "plan", "complete", "skip",
-		"config", "tte", "reps", "--version", "--help", "-h", "help",
+		"config", "tte", "reps", "season", "--version", "--help", "-h", "help",
 	]
 
 	count : Str, (U64 -> Command) -> Try(Command, ParseErr)

@@ -847,6 +847,100 @@ Render :: [].{
             "",
             "  FTP (60d): ~${fmt0(ftp.estimated_ftp_w)}W — derived from your best 20-min power ${fmt0(ftp.best_20min_w_60d)}W",
         ]
+    # ── season screen (#139, ADR 0011) ──────────────────────────────────
+    # Blocks bounded by absence, described by measurement. No phase names: the
+    # trend is a fitted line reported by its ENDPOINTS, because a slope plus a
+    # low r2 gets read as "no trend" and r2 is scatter, not evidence the slope
+    # is zero.
+    #
+    # Held under the repo's 100-column table budget. It shipped at 126 -- the
+    # only violator in the CLI -- because fit_caps can squeeze only the widest
+    # column, and a block span is one space-free token, so wrap_cell emits it
+    # whole and the width snaps back. Under 126 columns the rows wrapped
+    # mid-number into unreadable fragments. The block TOTAL and the SLOPE both
+    # went, and the session count that was JSON-only took the space. The total
+    # is recoverable from the row (/wk x span, within 0.2%); the SLOPE is NOT --
+    # its divisor is the ordinal distance between the fitted endpoints, which
+    # equals span_weeks - 1 only while the last training week is complete, so
+    # dividing by either visible cell is off by 6-17%. It stays in the payload;
+    # the endpoints are the number a reader should be using anyway.
+    season_screen = |p| {
+        block_rows = List.map(p.blocks, |b| {
+            trend = if b.trend_known "${fmt0(b.fitted_start_load)}→${fmt0(b.fitted_end_load)}" else "-"
+            r2c = if b.trend_known fmt2(b.trend_r2) else "-"
+            pol = if b.polarization_known "${I64.to_str(b.easy_pct)}/${I64.to_str(b.moderate_pct)}/${I64.to_str(b.hard_pct)}" else "-"
+            # the share is named when the "dominant" family is close to a coin
+            # flip, because 52% and 95% published identically
+            share = if b.ftp_known and b.ftp_family_pct < 65.I64 " ${I64.to_str(b.ftp_family_pct)}%" else ""
+            ftp = if b.ftp_known "${b.ftp_family}${share} ${ftp_path(b.ftp_start, b.ftp_end, b.ftp_lo, b.ftp_hi)}" else "-"
+            # the * marks the WEEK COUNT, not the end date -- glued to the date
+            # it read as "approximately 08-16", not "this block is still open"
+            wks = "${I64.to_str(b.weeks)}/${I64.to_str(b.span_weeks)}"
+            wk = if b.closed wks else "${wks}*"
+            ["${b.start_date}..${b.end_date}", wk, I64.to_str(b.sessions), fmt0(b.mean_weekly_load), trend, r2c, pol, ftp]
+        })
+        block_body =
+            if List.is_empty(p.blocks) {
+                # an empty table frame plus a legend explaining what a block is,
+                # on a screen with no blocks, is what this replaces
+                "no training blocks yet — there are scored days on record but none carry load; `stride analyze` rebuilds them"
+            } else {
+                render_table(["block", "wk", "sess", "/wk", "trend", "r2", "e/m/h", "ftp"], block_rows)
+            }
+        # 13, not 12: twelve is the one count that hides the same month a year
+        # ago, which is the obvious question to ask of a month table
+        recent = if List.len(p.months) > 13 List.drop_first(p.months, List.len(p.months) - 13) else p.months
+        month_hdr =
+            if List.len(p.months) > List.len(recent) {
+                "── by month · last ${I64.to_str((List.len(recent)).to_i64_wrap())} of ${I64.to_str((List.len(p.months)).to_i64_wrap())} ──"
+            } else {
+                "── by month ──"
+            }
+        month_rows = List.map(recent, |m| {
+            mshare = if m.ftp_known and m.ftp_family_pct < 65.I64 " ${I64.to_str(m.ftp_family_pct)}%" else ""
+            [
+                if m.partial "${m.month}*" else m.month,
+                fmt0(m.load),
+                I64.to_str(m.sessions),
+                if m.ftp_known "${m.ftp_family}${mshare} ${ftp_path(m.ftp_start, m.ftp_end, m.ftp_lo, m.ftp_hi)}" else "-",
+            ]
+        })
+        month_tbl = render_table(["month", "load", "sessions", "ftp"], month_rows)
+        # Topic lines, not one 690-character paragraph: at that length the
+        # definitions a reader needs are exactly the ones they skip. The old
+        # line also claimed a starred block's trailing week is "partial and
+        # excluded from the trend" -- false whenever today is a Monday, which
+        # it was on the day that was written.
+        legend = Str.join_with(
+            [
+                "a block is a run of training weeks closed by ${I64.to_str(p.gap_weeks)}+ weeks with no load — described by measurement, never named as a phase",
+                "wk = weeks trained / calendar weeks spanned · sess = activities · /wk = load over the span",
+                "trend = where the fitted line starts and ends · r2 = how much of the week-to-week scatter it explains",
+                "a LOW r2 means the weeks were SCATTERED, not that there was no trend · e/m/h = easy/moderate/hard time %",
+                "ftp = the period's FIRST and LAST recorded threshold, with its peak or trough between them when it went outside both",
+                "the ftp cell names the sport it belongs to · NN% = that sport's share when it is close to a coin flip",
+                "* = still open: no absence has closed this block, or the month is still running · - = not available",
+            ],
+            "\n",
+        )
+        Str.join_with(["── blocks ──", "", block_body, "", month_hdr, "", month_tbl, "", legend], "\n")
+    }
+
+    # start→end, with the peak or trough spliced in when the path went outside
+    # its own endpoints. "Ride 234→239" read as a flat block that actually ran
+    # 234→271→239; three of six real blocks were misread that way.
+    ftp_path : F64, F64, F64, F64 -> Str
+    ftp_path = |start, end, lo, hi| {
+        top = if start > end start else end
+        bot = if start < end start else end
+        if hi > top + 0.5 {
+            "${fmt0(start)}→${fmt0(hi)}→${fmt0(end)}"
+        } else if lo > 0.0 and lo < bot - 0.5 {
+            "${fmt0(start)}→${fmt0(lo)}→${fmt0(end)}"
+        } else {
+            "${fmt0(start)}→${fmt0(end)}"
+        }
+    }
 
     # time to exhaustion: the number, and what the model thinks of it
     tte_screen = |p| {
@@ -1458,6 +1552,26 @@ expect {
 # rounds-away-but-still-a-direction contract pinned above, which is why a pace
 # fade keeps its sign instead of collapsing to a bare zero.
 expect Render.signed_value(-0.04, "pace") == "-0.04" and Render.signed_value(-16.0, "power") == "-16" and Render.signed_value(-0.27, "power") == "-0"
+
+# ftp_path splices the peak or trough in when the threshold left its own
+# endpoints. "Ride 234→239" read as a flat block that actually ran 234→271→239,
+# and three of six real blocks were misread that way.
+expect {
+    # rose then fell: the peak is above both ends
+    peaked = Render.ftp_path(234.0, 239.0, 234.0, 271.0)
+    # fell then rose: the trough is below both ends
+    dipped = Render.ftp_path(300.0, 310.0, 250.0, 310.0)
+    # monotone: nothing to splice, either direction
+    up = Render.ftp_path(165.0, 212.0, 165.0, 212.0)
+    down = Render.ftp_path(271.0, 243.0, 243.0, 271.0)
+    # a lo of 0 is "no lower value recorded", not a trough at zero
+    nolo = Render.ftp_path(200.0, 220.0, 0.0, 220.0)
+    peaked == "234→271→239"
+    and dipped == "300→250→310"
+    and up == "165→212"
+    and down == "271→243"
+    and nolo == "200→220"
+}
 
 # ── the engine/coach boundary across ALL verdict producers (#154) ────
 # Every human verdict line stride renders is state, never advice. Each producer
