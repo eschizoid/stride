@@ -117,14 +117,42 @@ main! = |raw_args| {
     # three, including Windows UTF-16, best-effort (invalid text -> U+FFFD). This is why macOS +
     # Linux + Windows all Just Work here: the platform owns the decoding, not us.
     args = List.map(raw_args, |a| OsStr.display(a))
-    match Command.parse(args) {
-        Err(ShowHelp) => Stdout.line!(help_text)
-        Err(Usage(u)) => Output.usage!(u)
-        Err(BadCount(s)) => Output.err_out!("bad_count", "expected a number, got '${s}'")
-        Ok(cmd) => dispatch!(cmd)
+    # explicit format flags (#162): --json / --human anywhere in argv beat the
+    # environment. The platform has no setenv and json_mode! is consulted from
+    # every error path, so the flag re-execs the SAME binary with STRIDE_FORMAT
+    # set for the child — one mechanism, the existing precedence chain does the
+    # rest. The child argv carries no flag, so recursion is structurally
+    # impossible. (Argv is re-encoded via OsStr.display for the child; non-UTF8
+    # argv bytes would be lossy — only when a flag is used, and stride args are
+    # ids/dates/words in practice.)
+    split = Output.split_format_args(args)
+    match split.mode {
+        Auto =>
+            match Command.parse(args) {
+                Err(ShowHelp) => Stdout.line!(help_text)
+                Err(Usage(u)) => Output.usage!(u)
+                Err(BadCount(s)) => Output.err_out!("bad_count", "expected a number, got '${s}'")
+                Ok(cmd) => dispatch!(cmd)
 
+            }
+        ForceJson => reexec_with_format!(split.rest, "json")
+        ForceHuman => reexec_with_format!(split.rest, "human")
     }
 }
+
+# re-run the same binary (argv0) with STRIDE_FORMAT pinned for the child; stdio
+# is inherited, so output streams exactly as if the child were the process
+reexec_with_format! : List(Str), Str => Try({}, _)
+reexec_with_format! = |cleaned, fmt|
+    match cleaned {
+        [argv0, .. as rest] =>
+            match Cmd.new(OsStr.from_str(argv0)).args(List.map(rest, OsStr.from_str)).env(OsStr.from_str("STRIDE_FORMAT"), OsStr.from_str(fmt)).exec_cmd!() {
+                Ok(_) => Ok({})
+                # the child already printed its own error surface; carry the failure
+                Err(e) => Err(ReexecFailed(e))
+            }
+        [] => Output.err_out!("bad_args", "no program name in argv — cannot apply --${fmt}")
+    }
 dispatch! : Command.Command => Try({}, _)
 dispatch! = |cmd|
     match cmd {

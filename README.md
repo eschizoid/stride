@@ -218,7 +218,7 @@ stride plan                                       # everything needed to plan a 
 | `skip <id> <reason> [activity_id]` | Marks a planned session skipped, with the reason — optionally linking the activity done instead (rendered `→ id` in `week`). Adherence history stays honest either way; a bare re-skip keeps an existing link; pass a new id to change it or `none` to release it. A done session refuses skip — re-complete to fix a mis-link. |
 
 Every query command prints **human tables** in a terminal and **JSON** when
-`STRIDE_FORMAT=json` (agent environments are detected automatically). The JSON is
+`--json` on any command (or `STRIDE_FORMAT=json`; agent environments are detected automatically — the flag beats the environment). The JSON is
 a versioned envelope: success is `{"schema_version":2,"data":{…}}`, an in-band
 error is `{"schema_version":2,"error":{"code":"…","message":"…"}}` (exit stays 0 —
 read the JSON, not `$?`). Malformed invocations print a targeted `usage:` line;

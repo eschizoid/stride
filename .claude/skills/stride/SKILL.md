@@ -72,8 +72,10 @@ Never do training math yourself: read stride's numbers, add judgment.
 ## Output modes
 
 Query commands emit **JSON when `CLAUDECODE` is set to a non-empty value** (Claude Code
-exports it, so you get JSON automatically) and **human tables otherwise**. Override with
-`STRIDE_FORMAT=json|human` (case-insensitive). If output ever looks like a table instead
+exports it, so you get JSON automatically) and **human tables otherwise**. Precedence:
+**`--json`/`--human` flag** (any argv position, last one wins) beats `STRIDE_FORMAT=json|human`
+(case-insensitive) beats the `CLAUDECODE` detection — the flag is the tool-neutral way for
+non-Claude callers (scripts, other agents) to request machine output. If output ever looks like a table instead
 of JSON, prefix the command with `STRIDE_FORMAT=json`. EVERY machine response is a
 versioned envelope: success → `{"schema_version":2,"data":{…}}`, error →
 `{"schema_version":2,"error":{"code":"…","message":"…"}}`. The payloads described in
