@@ -239,14 +239,16 @@ the engine.
 
 ## Known risks the roadmap inherits
 
-- **The compiler.** Pinned to `nightly-2026-August-04-1cb06bc`; every later nightly
-  miscompiles (roc-lang/roc#10693). Roc is pre-1.0 and moving. Small, well-tested
-  increments are the mitigation.
-  **Re-tested 2026-08-13 against `nightly-2026-08-11-56acb9b`: still broken**, so the pin
-  stands. One thing did change — the `match`-wrapped case no longer takes the compiler
-  down with SIGSEGV, it now compiles and fails at runtime instead. The miscompile itself
-  is untouched: a program still builds with `0 errors and 0 warnings` and crashes when
-  run, which is the worst shape of the bug. Also observed: `roc build` can die with
+- **The compiler.** Pinned to `nightly-2026-08-17-b9ca140` as of 2026-08-17, moved up from
+  `nightly-2026-August-04-1cb06bc`. The blocker that held the pin for two weeks
+  (roc-lang/roc#10693 — `roc test` SIGSEGV, root-caused to closures stored in tuples inside
+  a list) is fixed upstream: it was still failing on the 2026-08-10 nightly and passes on
+  08-17. All 1,569 expects and the full e2e suite are green on the new pin. Roc is pre-1.0
+  and moving; small, well-tested increments remain the mitigation.
+  The bump also resolved #32 — `--opt=speed` no longer SIGABRTs (0 in 1400 runs against 40
+  on the old pin) and its output is byte-identical to `--opt=dev` across 11 commands.
+  Migration cost: `Range` no longer coerces to `Iter`, so 41 `Iter.fold(0..<n, …)` call
+  sites became `Iter.fold((0..<n).iter(), …)`. Also observed: `roc build` can die with
   SIGILL/SIGSEGV and no diagnostics on code `roc check` rejects cleanly, so **`roc check`
   before `roc build` on any new file**.
 - **~~Bug C~~ — FIXED end to end (#105, closed 2026-08-14).** The heap corruption that

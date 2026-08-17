@@ -34,10 +34,13 @@ just install   # build + symlink to ~/.local/bin/stride
   in the justfile works; it is no longer the alpha4 trap this line used to warn
   about, but pin the explicit path in anything that must not depend on that link.
   `check`, `test`, and a full `roc build` all work (roc#10469 was fixed by #10531).
-- **Build with `--opt=dev`.** The compiler defaults to `--opt=speed`, whose LLVM backend
-  miscompiles this codebase (issue #32's intermittent SIGABRT; it also silently drops the
-  progress pace column, caught by e2e). `just build`, CI, and the release workflow all
-  pin `--opt=dev`. Don't ship or test a `--opt=speed` binary.
+- **Build with `--opt=dev`.** This used to be a correctness requirement: `--opt=speed`
+  miscompiled the codebase (#32's intermittent SIGABRT, plus a silently dropped progress
+  column). Both are FIXED as of the `nightly-2026-08-17` pin — measured 0 SIGABRT in 1400
+  runs where the old pin gave 40, and byte-identical output across 11 commands. It stays
+  the default because a speed build takes ~2.5 minutes against ~14 seconds, which is the
+  dev loop, not because the binary is wrong. `just build`, CI, and the release workflow
+  all pin it.
 - **New-compiler flag gotcha: `=`, not a space.** `--output=x`, `--main=x`, `--opt=dev`.
   A space-separated `--output x` fails with a confusing error (it broke a release once).
 
@@ -129,7 +132,8 @@ Every item here cost a debugging session at least once — they are not style op
 - **Interpolating a compile-time-constant `""` can crash the backend** in `str_concat`
   (heap-corruption SIGABRT, same class as #32). Bind values rather than splicing optional
   fragments into SQL; a bound `:flag = 0/1` in the WHERE beats a conditional string.
-- **`--opt=speed` miscompiles this codebase** (#32) — always `--opt=dev`. Flags take `=`,
+- **`--opt=speed` used to miscompile this codebase** (#32, fixed on the 2026-08-17 pin);
+  `--opt=dev` remains the default for build speed. Flags take `=`,
   not a space: `--output=x`, not `--output x`.
 
 ### Testing

@@ -91,8 +91,8 @@ Metrics :: [].{
             Hold => 0.0.F64
             Interpolate => (next_v - prev_v) / (gap).to_f64()
         }
-        Iter.fold(
-            1.U64..<(gap).to_u64_wrap(),
+        Iter.fold((
+            1.U64..<(gap).to_u64_wrap()).iter(),
             out,
             |o, k| List.append(o, { t: prev_t + (k).to_i64_wrap(), v: prev_v + step * (k).to_f64() }),
         )
@@ -130,8 +130,8 @@ Metrics :: [].{
         } else {
             prefix = List.fold(watts_1s, [0.0.F64], |acc, w| List.append(acc, last_or_zero(acc) + w))
             window_count = n - np_window + 1
-            sum4 = Iter.fold(
-                0.U64..<window_count,
+            sum4 = Iter.fold((
+                0.U64..<window_count).iter(),
                 0.0.F64,
                 |acc, i| {
                     hi = get_or_zero(prefix, i + np_window)
@@ -161,8 +161,8 @@ Metrics :: [].{
             Err(TooShort)
         } else {
             prefix = List.fold(xs_1s, [0.0.F64], |acc, w| List.append(acc, last_or_zero(acc) + w))
-            best = Iter.fold(
-                0.U64..<(n - window + 1),
+            best = Iter.fold((
+                0.U64..<(n - window + 1)).iter(),
                 0.0.F64,
                 |acc, i| {
                     window_avg = (get_or_zero(prefix, i + window) - get_or_zero(prefix, i)) / window.to_f64()
@@ -191,7 +191,7 @@ Metrics :: [].{
         } else {
             vals = List.map(pairs, |p| p.v)
             prefix = List.fold(vals, [0.0.F64], |acc, w| List.append(acc, last_or_zero(acc) + w))
-            best = Iter.fold(0.U64..<(n - window + 1), Err(NoWindow), |acc, i|
+            best = Iter.fold((0.U64..<(n - window + 1)).iter(), Err(NoWindow), |acc, i|
                 if contiguous(pairs, i, window) {
                     mean = (get_or_zero(prefix, i + window) - get_or_zero(prefix, i)) / window.to_f64()
                     match acc {
@@ -2033,8 +2033,8 @@ Metrics :: [].{
             []
         } else {
             prefix = prefix_sums(sm)
-            walk = Iter.fold(
-                h..<(n - h),
+            walk = Iter.fold((
+                h..<(n - h)).iter(),
                 { edges: [], run_best: 0.0.F64, run_at: 0, in_run: False },
                 |acc, i| {
                     d = (range_mean(prefix, i, i + h) - range_mean(prefix, i - h, i)).abs()
@@ -2153,7 +2153,7 @@ Metrics :: [].{
                     # 10 W) while the clusters sit 46 W apart.
                     m_prefix = prefix_sums(sorted_means)
                     nm = List.len(sorted_means)
-                    split = Iter.fold(1..<nm, { score: 0.0.F64, gap: 0.0.F64, thr: 0.0.F64 }, |acc, i| {
+                    split = Iter.fold((1..<nm).iter(), { score: 0.0.F64, gap: 0.0.F64, thr: 0.0.F64 }, |acc, i| {
                         lo_mean = range_mean(m_prefix, 0, i)
                         hi_mean = range_mean(m_prefix, i, nm)
                         w0 = (i).to_f64()
@@ -2218,7 +2218,7 @@ Metrics :: [].{
                             # duration expect instead of crashing
                             start_t = (List.get(pairs, s.lo)).map_ok(|x| x.t).ok_or(0)
                             end_t = (List.get(pairs, s.hi - 1)).map_ok(|x| x.t).ok_or(0)
-                            capped = Iter.fold((s.lo + 1)..<s.hi, 1.I64, |acc, i| {
+                            capped = Iter.fold(((s.lo + 1)..<s.hi).iter(), 1.I64, |acc, i| {
                                 prev_t = (List.get(pairs, i - 1)).map_ok(|x| x.t).ok_or(0)
                                 cur_t = (List.get(pairs, i)).map_ok(|x| x.t).ok_or(0)
                                 dt = cur_t - prev_t
@@ -2409,7 +2409,7 @@ expect {
 # and 99.85, which is how the wrong constant hid — close enough to look right.
 # TSB is deeply negative because fatigue has caught up and fitness has not.
 expect {
-    final = Iter.fold(0.U64..<42, { ctl: 0.0.F64, atl: 0.0.F64, tsb: 0.0.F64 }, |acc, _|
+    final = Iter.fold((0.U64..<42).iter(), { ctl: 0.0.F64, atl: 0.0.F64, tsb: 0.0.F64 }, |acc, _|
         Metrics.load_step({ ctl_prev: acc.ctl, atl_prev: acc.atl, tss: 100.0 })
     )
     (final.ctl - 63.21).abs() < 0.05
@@ -2421,7 +2421,7 @@ expect {
 # a rest day decays both: no TSS means CTL and ATL both fall, and ATL falls faster (7 vs 42),
 # so form RISES on rest — the whole point of the model
 expect {
-    trained = Iter.fold(0.U64..<42, { ctl: 0.0.F64, atl: 0.0.F64, tsb: 0.0.F64 }, |acc, _|
+    trained = Iter.fold((0.U64..<42).iter(), { ctl: 0.0.F64, atl: 0.0.F64, tsb: 0.0.F64 }, |acc, _|
         Metrics.load_step({ ctl_prev: acc.ctl, atl_prev: acc.atl, tss: 100.0 })
     )
     rested = Metrics.load_step({ ctl_prev: trained.ctl, atl_prev: trained.atl, tss: 0.0 })
@@ -2529,8 +2529,8 @@ expect {
 # time_in_zones: 1 Hz samples, 10s in z1 then 10s in z5
 expect {
     zb = { z1_max: 123.0, z2_max: 153.0, z3_max: 168.0, z4_max: 183.0 }
-    low = Iter.fold(1.U64..=10.U64, [], |acc, i| List.append(acc, { t: i.to_i64_wrap(), v: 100.0 }))
-    high = Iter.fold(11.U64..=20.U64, [], |acc, i| List.append(acc, { t: i.to_i64_wrap(), v: 190.0 }))
+    low = Iter.fold((1.U64..=10.U64).iter(), [], |acc, i| List.append(acc, { t: i.to_i64_wrap(), v: 100.0 }))
+    high = Iter.fold((11.U64..=20.U64).iter(), [], |acc, i| List.append(acc, { t: i.to_i64_wrap(), v: 190.0 }))
     zs = Metrics.time_in_zones(List.concat(low, high), zb)
     zs.z1 == 9 and zs.z5 == 10 and zs.z2 == 0
 }
@@ -2740,8 +2740,8 @@ expect {
 # so the drift is (2.0 - 1.818) / 2.0 = 9.09% — the same output costing more heartbeats.
 # 20 minutes, not 20 samples: each half must clear the 5-minute coverage gate.
 expect {
-    power = Iter.fold(0.I64..<1200, [], |acc, t| List.append(acc, { t, v: 200.0 }))
-    hr = Iter.fold(0.I64..<1200, [], |acc, t| List.append(acc, { t, v: if t < 599 100.0 else 110.0 }))
+    power = Iter.fold((0.I64..<1200).iter(), [], |acc, t| List.append(acc, { t, v: 200.0 }))
+    hr = Iter.fold((0.I64..<1200).iter(), [], |acc, t| List.append(acc, { t, v: if t < 599 100.0 else 110.0 }))
     match Metrics.decoupling_pct(power, hr, 1200) {
         Known(d) => (d - 9.0909).abs() < 0.01
         Unknown => False
@@ -2751,8 +2751,8 @@ expect {
 # a perfectly steady session drifts 0 — and that 0 is a REAL answer, which is exactly why
 # the Known/Unknown pair exists instead of a 0-sentinel
 expect {
-    power = Iter.fold(0.I64..<1200, [], |acc, t| List.append(acc, { t, v: 200.0 }))
-    hr = Iter.fold(0.I64..<1200, [], |acc, t| List.append(acc, { t, v: 100.0 }))
+    power = Iter.fold((0.I64..<1200).iter(), [], |acc, t| List.append(acc, { t, v: 200.0 }))
+    hr = Iter.fold((0.I64..<1200).iter(), [], |acc, t| List.append(acc, { t, v: 100.0 }))
     match Metrics.decoupling_pct(power, hr, 1200) {
         Known(d) => (d).abs() < 0.001
         Unknown => False
@@ -2771,8 +2771,8 @@ expect {
 # a signal that only spans a FRAGMENT of the session (foot pod died at minute 10 of 60)
 # must not have that fragment sold as the session's drift — under 5 min per half is Unknown
 expect {
-    power = Iter.fold(0.I64..<400, [], |acc, t| List.append(acc, { t, v: 200.0 }))
-    hr = Iter.fold(0.I64..<400, [], |acc, t| List.append(acc, { t, v: 120.0 }))
+    power = Iter.fold((0.I64..<400).iter(), [], |acc, t| List.append(acc, { t, v: 200.0 }))
+    hr = Iter.fold((0.I64..<400).iter(), [], |acc, t| List.append(acc, { t, v: 120.0 }))
     match Metrics.decoupling_pct(power, hr, 1200) {
         Known(_) => False
         Unknown => True
@@ -2782,8 +2782,8 @@ expect {
 # GPS creep: standing 10 min (jitter speeds ~0.05 m/s) then running 10 min computes a
 # four-digit "drift" — an artifact, not physiology. Beyond ±50% is Unknown, never Known
 expect {
-    speed = Iter.fold(0.I64..<1200, [], |acc, t| List.append(acc, { t, v: if t < 600 0.05 else 3.0 }))
-    hr = Iter.fold(0.I64..<1200, [], |acc, t| List.append(acc, { t, v: if t < 600 80.0 else 150.0 }))
+    speed = Iter.fold((0.I64..<1200).iter(), [], |acc, t| List.append(acc, { t, v: if t < 600 0.05 else 3.0 }))
+    hr = Iter.fold((0.I64..<1200).iter(), [], |acc, t| List.append(acc, { t, v: if t < 600 80.0 else 150.0 }))
     match Metrics.decoupling_pct(speed, hr, 1200) {
         Known(_) => False
         Unknown => True
@@ -3391,7 +3391,7 @@ expect {
 # clean steps: warmup 300s@120, 4×(180s@250 / 120s@100), cooldown 300s@110.
 # Expect exactly 4 work segments at ~250W, first segment Warmup, last Cooldown.
 expect {
-    mk = |dur, w, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v: w }))
+    mk = |dur, w, t0| Iter.fold((0.I64..<dur).iter(), [], |acc, i| List.append(acc, { t: t0 + i, v: w }))
     rep = |k| {
         base : I64
         base = 300 + k * 300
@@ -3422,7 +3422,7 @@ expect {
 # negative control on the same fixture: an impossible spread gate detects nothing —
 # proves the gate is live and the expect above cannot pass vacuously
 expect {
-    mk = |dur, w, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v: w }))
+    mk = |dur, w, t0| Iter.fold((0.I64..<dur).iter(), [], |acc, i| List.append(acc, { t: t0 + i, v: w }))
     rep = |k| {
         base : I64
         base = 300 + k * 300
@@ -3440,7 +3440,7 @@ expect {
 # noisy steps: same structure under deterministic ±10W noise — count must hold at 4
 expect {
     noise = |i| (((i * 7919) % 21)).to_f64() - 10.0
-    mk = |dur, w, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v: w + noise(t0 + i) }))
+    mk = |dur, w, t0| Iter.fold((0.I64..<dur).iter(), [], |acc, i| List.append(acc, { t: t0 + i, v: w + noise(t0 + i) }))
     rep = |k| {
         base : I64
         base = 300 + k * 300
@@ -3457,7 +3457,7 @@ expect {
 # smooth endurance ride: an hour at ~140W with slow drift has NO structure —
 # the detector must return nothing, not dress noise up as reps
 expect {
-    fixture = Iter.fold(0.I64..<3600, [], |acc, i| List.append(acc, { t: i, v: 140.0 + ((i).to_f64()) / 360.0 }))
+    fixture = Iter.fold((0.I64..<3600).iter(), [], |acc, i| List.append(acc, { t: i, v: 140.0 + ((i).to_f64()) / 360.0 }))
     List.is_empty(Metrics.detect_segments(fixture, Metrics.detect_power_params))
 }
 
@@ -3465,14 +3465,14 @@ expect {
 # segments under PACE parameters (wobble must not invent efforts)
 expect {
     wobble = |i| ((((i * 31) % 7)).to_f64() - 3.0) * 0.1
-    fixture = Iter.fold(0.I64..<2400, [], |acc, i| List.append(acc, { t: i, v: 3.3 + wobble(i) }))
+    fixture = Iter.fold((0.I64..<2400).iter(), [], |acc, i| List.append(acc, { t: i, v: 3.3 + wobble(i) }))
     List.is_empty(Metrics.detect_segments(fixture, Metrics.detect_pace_params))
 }
 
 # traffic stop mid-rep: a 60 s recording pause inside the first work rep must be
 # BRIDGED — still exactly 2 work segments, and the paused rep's span covers the gap
 expect {
-    mk = |dur, w, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v: w }))
+    mk = |dur, w, t0| Iter.fold((0.I64..<dur).iter(), [], |acc, i| List.append(acc, { t: t0 + i, v: w }))
     fixture = List.join([
         mk(300.I64, 120.0, 0.I64),           # warmup
         mk(90.I64, 250.0, 300.I64),          # rep 1 first half...
@@ -3494,7 +3494,7 @@ expect {
 # next work rep starts inside the measurement window
 expect {
     seg = |s2, e| { kind: Work, start_s: s2, end_s: e, dur_s: e - s2 + 1, avg_signal: 250.0 }
-    hr_to = |n| Iter.fold(0.I64..<n, [], |acc, t| {
+    hr_to = |n| Iter.fold((0.I64..<n).iter(), [], |acc, t| {
         v = if t >= 300 and t < 480 150.0 else if t >= 600 and t < 780 160.0 else 110.0
         List.append(acc, { t, v })
     })
@@ -3525,7 +3525,7 @@ expect {
 # params swap / units regression silently kills detection for every run and swim
 # while all the negative pace tests stay green. 4×(180 s @ 4.5 m/s / 120 s @ 2.0).
 expect {
-    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    mk = |dur, v, t0| Iter.fold((0.I64..<dur).iter(), [], |acc, i| List.append(acc, { t: t0 + i, v }))
     rep = |k| {
         base : I64
         base = 300 + k * 300
@@ -3542,7 +3542,7 @@ expect {
 # reps AT the hold boundary: 60 s on / 60 s off is a real VO2 format sitting
 # exactly on the parameter — 6 reps must all survive
 expect {
-    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    mk = |dur, v, t0| Iter.fold((0.I64..<dur).iter(), [], |acc, i| List.append(acc, { t: t0 + i, v }))
     rep = |k| {
         base : I64
         base = 300 + k * 120
@@ -3561,7 +3561,7 @@ expect {
 # is the honest v1 semantic (a 40/20 block IS ~continuous sweet-spot effort).
 # Tuning hold downward must consciously break this expect, not slip through.
 expect {
-    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    mk = |dur, v, t0| Iter.fold((0.I64..<dur).iter(), [], |acc, i| List.append(acc, { t: t0 + i, v }))
     rep = |k| {
         base : I64
         base = 300 + k * 60
@@ -3578,7 +3578,7 @@ expect {
 
 # third knob's negative control: an absurd shift_frac finds no edges at all
 expect {
-    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    mk = |dur, v, t0| Iter.fold((0.I64..<dur).iter(), [], |acc, i| List.append(acc, { t: t0 + i, v }))
     rep = |k| {
         base : I64
         base = 300 + k * 300
@@ -3594,7 +3594,7 @@ expect {
 # the contrast gate's tripwire (#170): near-flat alternation is NOT structure —
 # this and the floor expect below are what make future gate tuning a conscious act
 expect {
-    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    mk = |dur, v, t0| Iter.fold((0.I64..<dur).iter(), [], |acc, i| List.append(acc, { t: t0 + i, v }))
     rep = |k| {
         base : I64
         base = 300 + k * 300
@@ -3616,7 +3616,7 @@ expect {
 # all. Real 250/100 structure detects with the floor under the step size and
 # vanishes when the floor is raised above it.
 expect {
-    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    mk = |dur, v, t0| Iter.fold((0.I64..<dur).iter(), [], |acc, i| List.append(acc, { t: t0 + i, v }))
     rep = |k| {
         base : I64
         base = 300 + k * 300
@@ -3656,7 +3656,7 @@ expect {
         266, 271, 267, 259, 251, 279, 261, 248, 248, 252, 245, 257, 246, 247, 252, 245, 245, 251, 242, 244,
         95,
     ]
-    fixture = Iter.fold(0..<(List.len(profile) * 15), [], |acc, i| {
+    fixture = Iter.fold((0..<(List.len(profile) * 15)).iter(), [], |acc, i| {
         w = List.get(profile, i // 15) ?? 0
         List.append(acc, { t: (i).to_i64_wrap(), v: (w).to_f64() })
     })
@@ -3670,7 +3670,7 @@ expect {
 # single-effort contrast limit against its warm "easy" parts; the merge has its
 # own fixture below.)
 expect {
-    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    mk = |dur, v, t0| Iter.fold((0.I64..<dur).iter(), [], |acc, i| List.append(acc, { t: t0 + i, v }))
     fixture = List.join([
         mk(420.I64, 185.0, 0.I64),
         mk(400.I64, 215.0, 420.I64),
@@ -3687,7 +3687,7 @@ expect {
 # 245/290 W step hard enough to segment separately, and MUST come out as ONE
 # work effort at the blended mean — a sliced continuous push is not reps.
 expect {
-    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    mk = |dur, v, t0| Iter.fold((0.I64..<dur).iter(), [], |acc, i| List.append(acc, { t: t0 + i, v }))
     fixture = List.join([
         mk(420.I64, 130.0, 0.I64),
         mk(400.I64, 200.0, 420.I64),
@@ -3703,7 +3703,7 @@ expect {
 # card) survives: what separates it from the ramp above is real recoveries
 # between the pushes, not uniform durations.
 expect {
-    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    mk = |dur, v, t0| Iter.fold((0.I64..<dur).iter(), [], |acc, i| List.append(acc, { t: t0 + i, v }))
     fixture = List.join([
         mk(300.I64, 150.0, 0.I64),
         mk(120.I64, 245.0, 300.I64),
@@ -3895,7 +3895,7 @@ expect {
     and List.len(Metrics.season_blocks([w(0, 100.0)], 2)) == 1
     # and a continuous run is ONE block however long, never subdivided to look
     # more useful (ADR 0011: splitting fabricates the boundary)
-    and List.len(Metrics.season_blocks(Iter.fold(0.I64..<47, [], |acc, i| List.append(acc, w(i, 200.0))), 2)) == 1
+    and List.len(Metrics.season_blocks(Iter.fold((0.I64..<47).iter(), [], |acc, i| List.append(acc, w(i, 200.0))), 2)) == 1
 }
 
 # exp_neg against known values — there is no `.exp()` method on F64 at all on
@@ -3931,19 +3931,19 @@ expect {
 # negative, and a recording gap is bridged rather than credited as recovery
 expect {
     fit = { cp: 250.0, w_prime: 20000.0 }
-    hard = Iter.fold(0.I64..<100, [], |acc, i| List.append(acc, { t: i, v: 350.0 }))
+    hard = Iter.fold((0.I64..<100).iter(), [], |acc, i| List.append(acc, { t: i, v: 350.0 }))
     bal = Metrics.w_prime_balance(hard, fit)
     # 100 samples at 100W over CP = 10 kJ spent, half the tank
     spent = match List.last(bal) { Ok(b) => (b - 10000.0).abs() < 200.0  Err(_) => False }
     # then easy riding puts some back
-    rest = List.concat(hard, Iter.fold(0.I64..<300, [], |acc, i| List.append(acc, { t: 100 + i, v: 150.0 })))
+    rest = List.concat(hard, Iter.fold((0.I64..<300).iter(), [], |acc, i| List.append(acc, { t: 100 + i, v: 150.0 })))
     recovered = match List.last(Metrics.w_prime_balance(rest, fit)) { Ok(b) => b > 10000.0 and b <= 20000.0  Err(_) => False }
     # An effort past the tank's capacity goes NEGATIVE, and must: clamping at
     # zero would reset the accumulated deficit, so every sample after the first
     # clamp is scored against a tank that silently refilled. The negative is
     # also the only signal that the FIT does not describe this rider, which is
     # information the caller needs (Report flags it as `model_exceeded`).
-    epic = Iter.fold(0.I64..<1000, [], |acc, i| List.append(acc, { t: i, v: 400.0 }))
+    epic = Iter.fold((0.I64..<1000).iter(), [], |acc, i| List.append(acc, { t: i, v: 400.0 }))
     epic_bal = Metrics.w_prime_balance(epic, fit)
     # 1000s at 150W over CP = 150 kJ against a 20 kJ tank: 130 kJ past empty.
     # A floor here reports 0 and hides a 7.5x model failure as "emptied".

@@ -4,9 +4,25 @@ Working reference for the new (Zig) compiler + basic-cli 0.21, learned empirical
 against the compiler and roc-lang/roc source during the migration (completed
 2026-08-02). The migration's progress log is gone — this is the part worth keeping.
 
-## Toolchain pin: do not bump past `nightly-2026-August-04-1cb06bc` yet
+## Toolchain pin: `nightly-2026-08-17-b9ca140` (the hold below is LIFTED)
 
-Every nightly from **2026-08-05 onward segfaults the compiler** on this codebase.
+**Resolved 2026-08-17.** The segfault described in this section is fixed upstream, and
+the pin has moved from `nightly-2026-August-04-1cb06bc` to `nightly-2026-08-17-b9ca140`.
+Verified on the new pin: `roc test src/Render.roc` → All (313) tests passed; all eight
+modules green (1,569 expects); `just e2e` → ALL E2E CHECKS PASS. It was still broken on
+2026-08-10 (`roc test` SIGSEGV on both `Render` and `Streams`), so the fix landed between
+08-10 and 08-17.
+
+Bumping cost one migration: `Range` no longer coerces to `Iter`, so every
+`Iter.fold(0..<n, …)` needs `Iter.fold((0..<n).iter(), …)` — 41 call sites. The 16
+`.abs()`-on-an-unresolved-type-variable errors that appeared alongside were downstream of
+the range typing and vanished with it.
+
+The history below is kept because the traps in it are real and will apply to the next bump.
+
+### What the hold was about (historical)
+
+Every nightly from **2026-08-05 onward segfaulted the compiler** on this codebase.
 Verified on 2026-08-08: the 2026-08-05, 2026-08-06, 2026-08-07 and 2026-08-08 nightlies
 all crash; 2026-08-04
 (the current pin) passes: `roc test src/Render.roc`. Nightlies live in `roc-lang/nightlies`, not
