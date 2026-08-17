@@ -658,6 +658,54 @@ b_seed_analyze! = |ctx| {
     # ...and the commands it teaches exist: spot-check the ones this guard grew from
     check!("skill documents the derived-key refusal", Str.contains(skill_text, "derived_key"))?
 
+    # ── the JSON contract as a tested artifact (#164) ────────────────────
+    # schemas/v2/*.json is the ONE source of truth for the machine interface;
+    # tools/validate.jq checks a payload against it and prints one line per
+    # violation. Run from the repo root (same CWD assumption as the skill guard
+    # above). additionalKeys:false is the drift catcher — a payload that GAINS a
+    # field without a schema update fails here, which is the whole point.
+    # 2>&1 on EVERY stage, not just the last: a redirect binds to one command,
+    # so a crashing binary or truncated JSON upstream left jq with nothing to
+    # read, printed its parse error to the SUITE's stderr, and returned an empty
+    # capture — which read as "conforms". Review measured both shapes.
+    validate! = |cmd, schema| Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${cmd} 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/${schema}.json -f tools/validate.jq 2>&1"))
+    check!("summary conforms to its schema", validate!("summary", "summary") == "")?
+    check!("plan conforms to its schema", validate!("plan", "plan") == "")?
+    check!("activity conforms to its schema", validate!("activity 101", "activity") == "")?
+    # 101 is the STEADY ride — zero segments, so its `segments` item schema (ten
+    # required keys and two enums) passes vacuously on an empty array. 103 is the
+    # interval ride and carries every segment kind, so it is what actually
+    # exercises those declarations. It is deleted a few lines below.
+    check!("interval activity conforms (non-empty segments)", validate!("activity 103", "activity") == "")?
+    check!("the envelope itself conforms", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1")) == "")?
+    # the summary EMBEDDED in the plan bundle is the same shape as the standalone
+    # one — asserted, not assumed (plan.json types it loosely because the
+    # validator has no $ref)
+    check!("plan's embedded summary conforms to the summary schema", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' plan 2>&1 | jq '.data.summary' 2>&1 | jq -r --slurpfile schema schemas/v2/summary.json -f tools/validate.jq 2>&1")) == "")?
+    # ...and the plan ARRAYS need rows, or their item schemas (5 and 9 required
+    # keys, plus the status enum) pass on empty arrays exactly like segments did
+    sch_done = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "schema probe done", "r"], ".data.id"))
+    _ = stride!(ctx.bin, ctx.home, ["complete", sch_done, "101"])
+    sch_open = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d2}", "threshold", "schema probe open", "r"], ".data.id"))
+    check!("plan arrays are populated for this check", strjq!(ctx, ["plan"], "(.data.open_sessions | length > 0) and (.data.plan_history_28d | length > 0)") == "true")?
+    check!("plan with populated arrays conforms", validate!("plan", "plan") == "")?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${sch_done}, ${sch_open});")
+    # ...and the validator is not a rubber stamp: each mutation MUST be caught,
+    # or "conforms" above would mean nothing (a validator that passes everything
+    # passes everything).
+    mutate! = |filter| Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' summary | jq '.data | ${filter}' | jq -r --slurpfile schema schemas/v2/summary.json -f tools/validate.jq 2>&1"))
+    check!("validator catches a MISSING required key", Str.contains(mutate!("del(.as_of)"), "missing required key"))?
+    check!("validator catches a WRONG type", Str.contains(mutate!(".form_tsb = \"x\""), "expected number"))?
+    check!("validator catches an UNDECLARED key (payload drift)", Str.contains(mutate!(".surprise = 1"), "absent from the schema"))?
+    check!("validator catches a bad ENUM value", Str.contains(mutate!(".form_state = \"vibing\""), "not in enum"))?
+    # the validator reads a documented SUBSET, and anything outside it is
+    # silently ignored — so this is a WHITELIST over schema positions, not a
+    # denylist of keywords. The case that matters: `additionalProperties: false`
+    # is what a JSON-Schema-literate contributor writes instead of the house
+    # `additionalKeys: false`; it looks right and would turn drift detection off.
+    check!("schemas stay inside the validator's subset", Str.trim(sh!("for f in schemas/v2/*.json; do jq -r -f tools/schema-lint.jq \"$f\" 2>&1; done")) == "")?
+    check!("...and the linter catches the dangerous look-alike", Str.contains(sh!("echo '{\"type\":\"object\",\"additionalProperties\":false}' | jq -r -f tools/schema-lint.jq 2>&1"), "additionalProperties"))?
+
     # keep later fixture-sensitive checks honest: remove the interval ride again
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=103; DELETE FROM activity_metrics WHERE activity_id=103; DELETE FROM streams WHERE activity_id=103; DELETE FROM activities WHERE id=103;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])

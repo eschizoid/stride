@@ -79,7 +79,11 @@ non-Claude callers (scripts, other agents) to request machine output. If output 
 of JSON, prefix the command with `STRIDE_FORMAT=json`. EVERY machine response is a
 versioned envelope: success → `{"schema_version":2,"data":{…}}`, error →
 `{"schema_version":2,"error":{"code":"…","message":"…"}}`. The payloads described in
-the table below all live under `.data`; `error` is an OBJECT whose `code` carries the
+the table below all live under `.data`; the `summary`, `activity` and `plan`
+payloads are described formally in `schemas/v2/*.json` in the repo (required
+keys, types, enums; CI validates real payloads against them, so the schema and
+the binary cannot disagree for long — the other commands are not schema'd yet).
+`error` is an OBJECT whose `code` carries the
 in-band error names used throughout this file (`unknown_command`, `missing_config`, `not_authenticated`,
 `derived_key`, …), with the human text nested in `error.message`. An error
 envelope is ALSO an exit status: stride exits 1 whenever it emits one (0 on
