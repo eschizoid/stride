@@ -858,9 +858,12 @@ Render :: [].{
     # column, and a block span is one space-free token, so wrap_cell emits it
     # whole and the width snaps back. Under 126 columns the rows wrapped
     # mid-number into unreadable fragments. The block TOTAL and the SLOPE both
-    # went: each is derivable from two other cells on the same row (load = /wk
-    # x span, slope = the trend endpoints over the week count), and the session
-    # count that was JSON-only took the space.
+    # went, and the session count that was JSON-only took the space. The total
+    # is recoverable from the row (/wk x span, within 0.2%); the SLOPE is NOT --
+    # its divisor is the ordinal distance between the fitted endpoints, which
+    # equals span_weeks - 1 only while the last training week is complete, so
+    # dividing by either visible cell is off by 6-17%. It stays in the payload;
+    # the endpoints are the number a reader should be using anyway.
     season_screen = |p| {
         block_rows = List.map(p.blocks, |b| {
             trend = if b.trend_known "${fmt0(b.fitted_start_load)}→${fmt0(b.fitted_end_load)}" else "-"
@@ -903,7 +906,7 @@ Render :: [].{
             ]
         })
         month_tbl = render_table(["month", "load", "sessions", "ftp"], month_rows)
-        # Four topic lines, not one 690-character paragraph: at that length the
+        # Topic lines, not one 690-character paragraph: at that length the
         # definitions a reader needs are exactly the ones they skip. The old
         # line also claimed a starred block's trailing week is "partial and
         # excluded from the trend" -- false whenever today is a Monday, which

@@ -958,7 +958,10 @@ b_seed_analyze! = |ctx| {
     # CLI-wide because a guard on one command is a guard nobody generalises.
     # awk's length() counts BYTES on macOS whatever the locale, and every box
     # glyph is three of them, so `wc -m` is what actually measures a column.
-    wide = Str.trim(sh!("for c in season summary activities plan week compare progress load stats doctor zones 'power-curve' reps; do HOME='${ctx.home}' '${ctx.bin}' $c 2>/dev/null; done | grep -E '[│╭├╰]' | while IFS= read -r l; do printf '%s' \"$l\" | LC_ALL=en_US.UTF-8 wc -m; done | tr -d ' ' | awk '$1 > 100' | sort -rn | head -1"))
+    # The list is every command that DRAWS a table -- summary, doctor and reps
+    # emit none, so listing them added three vacuous passes and hid that `top`
+    # and `week all` were missing (the latter sits at exactly 100 on real data).
+    wide = Str.trim(sh!("for c in season activities plan week 'week all' compare progress load stats zones 'power-curve' 'top tss'; do HOME='${ctx.home}' '${ctx.bin}' $c 2>/dev/null; done | grep -E '[│╭├╰]' | while IFS= read -r l; do printf '%s' \"$l\" | LC_ALL=en_US.UTF-8 wc -m; done | tr -d ' ' | awk '$1 > 100' | sort -rn | head -1"))
     check!("no human table exceeds the 100-column budget", wide == "")?
     check!("season conforms", validate!("season", "season") == "")?
     check!("season reports at least one block", strjq!(ctx, ["season"], ".data.blocks | length > 0") == "true")?
@@ -1050,7 +1053,6 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (933,40.0,300.0,3600,1);")
     bad_act = stride!(ctx.bin, ctx.home, ["season"])
     check!("a malformed activity date is refused, not absorbed", Str.contains(bad_act, "error") and !(Str.contains(bad_act, "blocks")))?
-    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 933; DELETE FROM activities WHERE id = 933;")
     # ...and PARSEABLE is not enough. "2026-3-01" parses fine and sorts after
     # every 2026-1x date, so it became ftp_end for its month AND its block and
     # published the threshold running backwards -- at exit 0, which is the
