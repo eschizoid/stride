@@ -322,12 +322,83 @@ Report :: [].{
                 pintensity = { easy_s: detail.easy_s, moderate_s: detail.moderate_s, hard_s: detail.hard_s }
                 has_power_intensity = (pintensity.easy_s + pintensity.moderate_s + pintensity.hard_s) > 0
 
+                # ── personal baselines (#160): THIS ride vs the athlete's own prior
+                # comparables. Comparability is Metrics.duration_band + sport_family
+                # + per-metric signal presence — the ONE rule (#149 must reuse it).
+                # The window is 90 days anchored to THE ACTIVITY's own start (not
+                # today) and strictly BEFORE it: recomputing an old ride months
+                # later yields the same baseline, and future data cannot leak in.
+                band = Metrics.duration_band(a.moving_time)
+                comps = Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query:
+                        \\SELECT CAST(COALESCE(m.normalized_power, 0) AS REAL) AS np,
+                        \\       CASE WHEN m.normalized_power IS NULL THEN 0 ELSE 1 END AS np_known,
+                        \\       CAST(COALESCE(a2.avg_hr, 0) AS REAL) AS hr,
+                        \\       CAST(COALESCE(m.decoupling_pct, 0) AS REAL) AS dec_pct,
+                        \\       CASE WHEN m.decoupling_pct IS NULL THEN 0 ELSE 1 END AS dec_known
+                        \\FROM activities a2 JOIN activity_metrics m ON m.activity_id = a2.id
+                        \\JOIN activities self ON self.id = :id
+                        \\WHERE a2.sport_family = self.sport_family
+                        \\  AND a2.moving_time >= :blo AND a2.moving_time < :bhi
+                        \\  AND a2.start_local < self.start_local
+                        \\  AND a2.start_local >= date(self.start_local, '-90 days')
+                    ,
+                    bindings: [
+                        { name: ":id", value: Integer(a.id) },
+                        { name: ":blo", value: Integer(band.lo) },
+                        { name: ":bhi", value: Integer(band.hi) },
+                    ],
+                    rows: |cols| |stmt| {
+                        np = Sqlite.f64("np")(cols)(stmt)?
+                        np_known = Sqlite.i64("np_known")(cols)(stmt)?
+                        hr = Sqlite.f64("hr")(cols)(stmt)?
+                        dec_pct = Sqlite.f64("dec_pct")(cols)(stmt)?
+                        dec_known = Sqlite.i64("dec_known")(cols)(stmt)?
+                        Ok({ np, np_known: np_known != 0, hr, dec_pct, dec_known: dec_known != 0 })
+                    },
+                })?
+                ef_samples = List.map(List.keep_if(comps, |c| c.np_known and c.hr > 0.0), |c| c.np / c.hr)
+                np_samples = List.map(List.keep_if(comps, |c| c.np_known), |c| c.np)
+                dec_samples = List.map(List.keep_if(comps, |c| c.dec_known), |c| c.dec_pct)
+                # flags first (ADR 0009), magnitude second (division guard)
+                cur_ef = if a.power_known and a.hr_known and a.avg_hr > 0.0 a.np_w / a.avg_hr else 0.0
+                # one metric block: current + own-history median + rank + change.
+                # percentile is direction-free (documented at Metrics.percentile_of).
+                # known = current-side presence AND a non-empty sample set; a
+                # near-zero MEDIAN only zeroes delta_pct (a ratio against ~0 is not
+                # a number) while known stays true — the percentile still ranks
+                metric_block = |samples, current, cur_known| {
+                    n = List.len(samples)
+                    med = Metrics.median_f64(samples)
+                    known : Bool
+                    known = cur_known and n > 0
+                    {
+                        current,
+                        baseline_median: med,
+                        percentile: if known Metrics.percentile_of(samples, current) else 0,
+                        delta_pct: if known and (med).abs() > 0.001 ((current - med) / (med).abs() * 100.0) else 0.0,
+                        sample_count: (n).to_i64_wrap(),
+                        known,
+                    }
+                }
+                baselines = {
+                    # the comparability rule, made visible so the coach can weigh it
+                    window_days: 90.I64,
+                    band_lo_s: band.lo,
+                    band_hi_s: band.hi,
+                    ef: metric_block(ef_samples, cur_ef, a.power_known and a.hr_known and a.avg_hr > 0.0),
+                    np: metric_block(np_samples, a.np_w, a.power_known),
+                    decoupling: metric_block(dec_samples, a.decoupling_pct, a.decoupling_known),
+                }
+
                 if Output.json_mode!({})
                     Output.emit_ok!({
                         id: a.id,
                         date: a.date,
                         sport: a.sport,
                         name: a.name,
+                        baselines,
                         moving_time: a.moving_time,
                         distance_m: a.distance_m,
                         tss: a.tss,
@@ -430,6 +501,21 @@ Report :: [].{
                             else
                                 "Spd:HR — per raw m/s (no altitude stream, terrain not normalized)"
                         Stdout.line!("drift   ${Render.signed(a.decoupling_pct)}% ${drift_tail}")
+                    } else
+                        Ok({}))?
+                    # vs-self line (#160): rank within the athlete's OWN comparable
+                    # history — percentile is direction-free rank; absent entirely
+                    # when no metric has a baseline (no fake p0s)
+                    (if baselines.ef.known or baselines.np.known or baselines.decoupling.known {
+                        parts = List.keep_if(
+                            [
+                                if baselines.ef.known "ef p${I64.to_str(baselines.ef.percentile)}/${I64.to_str(baselines.ef.sample_count)}" else "",
+                                if baselines.np.known "np p${I64.to_str(baselines.np.percentile)}/${I64.to_str(baselines.np.sample_count)}" else "",
+                                if baselines.decoupling.known "drift p${I64.to_str(baselines.decoupling.percentile)}/${I64.to_str(baselines.decoupling.sample_count)}" else "",
+                            ],
+                            |p| !(Str.is_empty(p)),
+                        )
+                        Stdout.line!("vs self (90d, same family+band): ${Str.join_with(parts, " · ")}")
                     } else
                         Ok({}))?
                     if detail.failed
