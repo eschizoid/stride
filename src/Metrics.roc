@@ -692,7 +692,9 @@ Metrics :: [].{
     #
     # Written as literals because there is no `.exp()` on this compiler — the
     # method does not exist on F64 at all. They stay literals; an expect pins
-    # each against `exp_neg` so this comment cannot drift from the value.
+    # each against `exp_neg`, so the LITERAL cannot drift from the formula.
+    # (It does not pin the decimals transcribed below — those are a reader's
+    # aid and can still go stale; the expect is the thing that cannot.)
     #   ctl_alpha = 1 − e^(−1/42) = 0.0235283133
     #   atl_alpha = 1 − e^(−1/7)  = 0.1331221000
     ctl_alpha : F64
