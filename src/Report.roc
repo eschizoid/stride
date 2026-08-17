@@ -1892,7 +1892,14 @@ Report :: [].{
                         \\-- the history (review measured exactly that) defers the
                         \\-- judgment and withholds the data for it. Ties break by
                         \\-- recency; the rows are re-sorted by date for display.
-                        \\ORDER BY (CAST(MAX(s.dur_s) AS REAL) / MAX(MIN(s.dur_s), 1)) ASC,
+                        \\-- the ANCHOR always keeps its row: ranking decides which
+                        \\-- twelve are shown, and a table that answers "am I
+                        \\-- riding this harder?" without the session being asked
+                        \\-- about answers nothing. Round 2 got this for free from
+                        \\-- recency (the anchor is newest by construction);
+                        \\-- ranking by uniformity removed that guarantee.
+                        \\ORDER BY (a2.id = :id) DESC,
+                        \\         (CAST(MAX(s.dur_s) AS REAL) / MAX(MIN(s.dur_s), 1)) ASC,
                         \\         a2.start_local DESC, a2.id DESC
                         \\LIMIT 12
                     ,
