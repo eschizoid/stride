@@ -817,9 +817,12 @@ Render :: [].{
     # which is an answer rather than a gap.
     season_screen = |p| {
         block_rows = List.map(p.blocks, |b| {
+            # signed() rounds to whole TSS/week, which turned a slope of 1.60
+            # into "+2/wk" and would render anything in (-1, 0) as "-0/wk"
             trend =
                 if b.trend_known {
-                    "${signed(b.slope_tss_per_week)}/wk (r2 ${fmt2(b.trend_r2)})"
+                    sign = if b.slope_tss_per_week >= 0.0 "+" else "-"
+                    "${sign}${fmt1((b.slope_tss_per_week).abs())}/wk (r2 ${fmt2(b.trend_r2)})"
                 } else {
                     "-"
                 }
@@ -827,9 +830,12 @@ Render :: [].{
             # named, because a rowing threshold and a cycling FTP are not the
             # same quantity and this athlete has both
             ftp = if b.ftp_known "${b.ftp_family} ${fmt0(b.ftp_lo)}-${fmt0(b.ftp_hi)}" else "-"
+            # an open block has not been closed by an absence -- records just
+            # stop -- so its numbers are still moving
+            span = if b.closed "${b.start_date}..${b.end_date}" else "${b.start_date}..${b.end_date}*"
             [
-                "${b.start_date}..${b.end_date}",
-                I64.to_str(b.weeks),
+                span,
+                "${I64.to_str(b.weeks)}/${I64.to_str(b.span_weeks)}",
                 fmt0(b.total_load),
                 fmt0(b.mean_weekly_load),
                 trend,
@@ -837,7 +843,7 @@ Render :: [].{
                 ftp,
             ]
         })
-        block_tbl = render_table(["block", "wks", "load", "load/wk", "trend", "e/m/h", "ftp"], block_rows)
+        block_tbl = render_table(["block", "trained/span wk", "load", "load/wk", "trend", "e/m/h", "ftp"], block_rows)
         # the last 12 months, newest last so the series reads left to right in time
         recent = if List.len(p.months) > 12 List.drop_first(p.months, List.len(p.months) - 12) else p.months
         month_rows = List.map(recent, |m| [
@@ -847,7 +853,8 @@ Render :: [].{
             if m.ftp_known "${m.ftp_family} ${fmt0(m.ftp_lo)}-${fmt0(m.ftp_hi)}" else "-",
         ])
         month_tbl = render_table(["month", "load", "sessions", "ftp"], month_rows)
-        legend = "a block is a run of training weeks closed by ${I64.to_str(p.gap_weeks)}+ weeks with no load · trend = TSS/week slope across the block, r2 = how much of the week-to-week movement it explains · e/m/h = easy/moderate/hard time % · blocks are described, not named · a threshold belongs to a sport, so each range names whose it is"
+        months_note = if List.len(p.months) > List.len(recent) " · the month table shows the last ${I64.to_str((List.len(recent)).to_i64_wrap())} of ${I64.to_str((List.len(p.months)).to_i64_wrap())} months on record" else ""
+        legend = "a block is a run of training weeks closed by ${I64.to_str(p.gap_weeks)}+ weeks with no load; a * marks a block no absence has closed yet · trained/span wk = weeks with training out of calendar weeks covered, and load/wk divides by the span · trend = TSS/week slope across the block, r2 = how much of the week-to-week movement it explains · e/m/h = easy/moderate/hard time % · blocks are described, not named · a threshold belongs to a sport, so each range names whose it is${months_note}"
         Str.join_with(["── blocks ──", "", block_tbl, "── by month ──", "", month_tbl, "", legend], "\n")
     }
 

@@ -3632,6 +3632,29 @@ expect {
     up and down and level and withheld and graded
 }
 
+# The regression's x is the CALENDAR-week ordinal, not the position in the list.
+# They are identical for contiguous weeks -- which is every other expect here --
+# so the distinction that ADR 0011 is built on (a rest week is trained through,
+# not a boundary) was never exercised, and swapping them changed real slopes
+# while the whole suite stayed green.
+expect {
+    w = |wk, tss| { week_start: wk * 7, tss, sessions: 1.I64 }
+    # weeks 0,1,3,4 -- week 2 is an interior rest week. Loads chosen so the two
+    # x-axes disagree: by calendar ordinal the slope is +100/wk exactly.
+    gapped = Metrics.season_blocks([w(0, 100.0), w(1, 200.0), w(3, 400.0), w(4, 500.0)], 2)
+    match List.first(gapped) {
+        Ok(b) =>
+            # one block (a single week off trains through), four trained weeks
+            # across a five-week span, and the slope reads the calendar
+            b.weeks == 4 and b.trend_known
+            and (b.slope - 100.0).abs() < 0.001
+            and (b.r2 - 1.0).abs() < 0.001
+            # by list index the same points would fit 133.33/wk at r2 0.9926
+            and (b.slope - 133.333).abs() > 1.0
+        Err(_) => False
+    }
+}
+
 # degenerate inputs produce no blocks rather than a fabricated one
 expect {
     w = |wk, tss| { week_start: wk * 7, tss, sessions: 1.I64 }

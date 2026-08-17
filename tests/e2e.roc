@@ -833,6 +833,38 @@ b_seed_analyze! = |ctx| {
     check!("short blocks withhold their trend", strjq!(ctx, ["season"], "[.data.blocks[] | select(.weeks < 3 and .trend_known)] | length == 0") == "true")?
     # a threshold range must name the family it belongs to, or a rowing
     # threshold and a cycling FTP get averaged into a number describing nobody
+    # The DESCRIPTION layer, not just the boundary. Review mutated the easy/hard
+    # orientation, the dominant-family rule and the block end date, and all
+    # three survived the whole suite -- the e2e checks only ever guarded where
+    # blocks START and STOP.
+    # easy/moderate/hard must land in that order, not transposed: the call site
+    # reads `easy_pct: pcts.high_pct`, which looks inverted and is not.
+    _ = sql!(ctx.db, "UPDATE activity_metrics SET pi_easy_s = 3600, pi_moderate_s = 600, pi_hard_s = 0 WHERE activity_id = 101;")
+    check!("easy time is reported as easy, not transposed onto hard", strjq!(ctx, ["season"], "[.data.blocks[] | select(.polarization_known and .easy_pct > .hard_pct)] | length > 0") == "true")?
+    # the block must END on a training day, never later -- it used to end on the
+    # Sunday closing the last training week, dating an open block into the future
+    check!("no block ends after the last day it contains", strjq!(ctx, ["season"], "[.data.blocks[] | select(.end_date > (now | strftime(\"%Y-%m-%d\")))] | length == 0") == "true")?
+    # trained weeks can never exceed the calendar weeks spanned
+    check!("trained weeks never exceed the span", strjq!(ctx, ["season"], "[.data.blocks[] | select(.weeks > .span_weeks)] | length == 0") == "true")?
+    # sessions counts ACTIVITIES, so the block totals must agree with the month
+    # totals in the same payload -- they disagreed by 9 when one counted days
+    check!("block and month session counts agree", strjq!(ctx, ["season"], "([.data.blocks[].sessions] | add) == ([.data.months[].sessions] | add)") == "true")?
+    # A CONTROLLED block, because the fixture's own data does not discriminate:
+    # asserting "end_date is not in the future" and "ftp_family is non-empty"
+    # both passed with the end date reverted to the week end and the family
+    # picked by highest threshold instead of most sessions.
+    # 2010-01-04 is a Monday; the last training day is Thursday the 7th, so a
+    # block ending on its calendar week would report the 10th.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES ('2010-01-04', 50.0, 5.0, 5.0, 0.0), ('2010-01-07', 50.0, 5.0, 5.0, 0.0);")
+    # two Rides and one Rowing in that week; Rowing carries the HIGHER threshold,
+    # so picking by threshold rather than by session count names the wrong sport
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (911,'probe ride a','Ride','Ride','2010-01-04T06:00:00Z',3600),(912,'probe ride b','Ride','Ride','2010-01-07T06:00:00Z',3600),(913,'probe row','Rowing','Rowing','2010-01-07T09:00:00Z',3600);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,pi_moderate_s,pi_hard_s,z1_s,z2_s,z3_s,z4_s,z5_s,metrics_rev) VALUES (911,25.0,200.0,3000,400,200,0,0,0,0,0,1),(912,25.0,210.0,3000,400,200,0,0,0,0,0,1),(913,25.0,400.0,3000,400,200,0,0,0,0,0,1);")
+    check!("a block ends on its last TRAINING day, not its last calendar week", Str.trim(strjq!(ctx, ["season"], "[.data.blocks[] | select(.start_date == \"2010-01-04\")] | .[0].end_date")) == "2010-01-07")?
+    check!("the threshold names the family with the most sessions, not the highest number", Str.trim(strjq!(ctx, ["season"], "[.data.blocks[] | select(.start_date == \"2010-01-04\")] | .[0].ftp_family")) == "Ride")?
+    check!("and reports that family's own range", Str.trim(strjq!(ctx, ["season"], "[.data.blocks[] | select(.start_date == \"2010-01-04\")] | .[0].ftp_hi")) == "210")?
+    check!("the probe block counts activities, not days", Str.trim(strjq!(ctx, ["season"], "[.data.blocks[] | select(.start_date == \"2010-01-04\")] | .[0].sessions")) == "3")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (911,912,913); DELETE FROM activities WHERE id IN (911,912,913); DELETE FROM daily_load WHERE day IN ('2010-01-04','2010-01-07');")
     check!("a known FTP range names its sport family", strjq!(ctx, ["season"], "[.data.blocks[] | select(.ftp_known and (.ftp_family | length == 0))] | length == 0") == "true")?
     # the boundary rule, end to end: insert a training day two clear weeks after
     # the last one and the block COUNT must rise by exactly one

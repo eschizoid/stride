@@ -2034,9 +2034,14 @@ Report :: [].{
                     \\SELECT substr(a.start_local, 1, 10) AS date,
                     \\       COALESCE(a.sport_family, a.sport_type) AS fam,
                     \\       COUNT(*) AS n,
-                    \\       CAST(COALESCE(SUM(m.pi_easy_s), 0) AS REAL) AS easy_s,
-                    \\       CAST(COALESCE(SUM(m.pi_moderate_s), 0) AS REAL) AS mod_s,
-                    \\       CAST(COALESCE(SUM(m.pi_hard_s), 0) AS REAL) AS hard_s,
+                    \\       -- the house fallback (see zone_sum!): POWER split when the activity
+                    \\       -- has power-intensity time, else the HR zones. Summing the pi_ columns
+                    \\       -- raw drops every session without a split -- 50 of 731 here, 46 of which
+                    \\       -- DO have zone seconds, and overwhelmingly easy ones, so the raw sum
+                    \\       -- understates easy time and disagrees with what `summary` publishes.
+                    \\       CAST(COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_easy_s ELSE m.z1_s + m.z2_s END), 0) AS REAL) AS easy_s,
+                    \\       CAST(COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_moderate_s ELSE m.z3_s END), 0) AS REAL) AS mod_s,
+                    \\       CAST(COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END), 0) AS REAL) AS hard_s,
                     \\       CAST(COALESCE(MIN(NULLIF(m.ftp_used, 0)), 0) AS REAL) AS ftp_lo,
                     \\       CAST(COALESCE(MAX(m.ftp_used), 0) AS REAL) AS ftp_hi
                     \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
@@ -2058,7 +2063,7 @@ Report :: [].{
             month_load = Sqlite.query_many!({
                 path: Path.utf8(path),
                 query:
-                    \\SELECT substr(day, 1, 7) AS month, CAST(SUM(tss) AS REAL) AS load
+                    \\SELECT substr(day, 1, 7) AS month, CAST(COALESCE(SUM(tss), 0) AS REAL) AS load
                     \\FROM daily_load GROUP BY month ORDER BY month
                 ,
                 bindings: [],
@@ -2091,11 +2096,17 @@ Report :: [].{
             })?
             weeks = Metrics.weekly_rollup(day_rows)
             blocks = Metrics.season_blocks(List.map(weeks, |w| { week_start: w.week_start, tss: w.tss, sessions: w.sessions }), season_gap_weeks)
-            built = List.map(blocks, |b| {
-                # a block spans its first Monday through the Sunday closing its
-                # last training week
-                last_day = b.last_week + 6
-                inside = List.keep_if(pol_rows, |r| r.days >= b.first_week and r.days <= last_day)
+            today = Db.local_today_days!(path)
+            nblocks = (List.len(blocks)).to_i64_wrap()
+            built = List.map_with_index(blocks, |b, idx| {
+                block_idx = (idx).to_i64_wrap()
+                # The block ends on its last TRAINING day, not the Sunday that
+                # closes its last training week -- the latter dated the current
+                # block up to six days into the future.
+                week_end = b.last_week + 6
+                trained_days = List.keep_if(day_rows, |r| r.tss > 0.0 and r.days >= b.first_week and r.days <= week_end)
+                last_day = List.fold(trained_days, b.first_week, |acc, r| if r.days > acc r.days else acc)
+                inside = List.keep_if(pol_rows, |r| r.days >= b.first_week and r.days <= week_end)
                 easy = List.fold(inside, 0.0, |a, r| a + r.easy_s)
                 moderate = List.fold(inside, 0.0, |a, r| a + r.mod_s)
                 hard = List.fold(inside, 0.0, |a, r| a + r.hard_s)
@@ -2118,13 +2129,29 @@ Report :: [].{
                         Err(_) => List.append(acc, { fam: r.fam, n: r.n, ftp_lo: r.ftp_lo, ftp_hi: r.ftp_hi })
                     })
                 ftp = dominant_ftp(fams)
+                # `weeks` counts weeks WITH training; `span_weeks` counts the
+                # calendar weeks the block covers. They differ wherever a rest
+                # week sits inside a block, and dividing the load by the former
+                # while printing the latter's dates overstated the mean by 8%
+                # on the longest block here.
+                span_weeks = (week_end - b.first_week) // 7 + 1
+                # a block is CLOSED when an absence ended it. The most recent
+                # one usually has not been: records simply stop.
+                closed : Bool
+                closed = block_idx + 1 < nblocks or today - last_day >= season_gap_weeks * 7
                 {
                     start_date: Metrics.days_to_date_str(b.first_week),
                     end_date: Metrics.days_to_date_str(last_day),
                     weeks: b.weeks,
+                    span_weeks,
+                    closed,
                     total_load: b.total_load,
-                    mean_weekly_load: if b.weeks > 0 b.total_load / (b.weeks).to_f64() else 0.0,
-                    sessions: b.sessions,
+                    mean_weekly_load: if span_weeks > 0 b.total_load / (span_weeks).to_f64() else 0.0,
+                    # activities, not days-with-load. weekly_rollup counts a day
+                    # as one session because daily_load carries load and not a
+                    # count, which lost 9 of 731 sessions and made this field
+                    # disagree with months[].sessions in the same payload.
+                    sessions: List.fold(inside, 0, |acc, r| acc + r.n),
                     slope_tss_per_week: b.slope,
                     trend_r2: b.r2,
                     trend_known: b.trend_known,
