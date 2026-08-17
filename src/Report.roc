@@ -939,7 +939,9 @@ Report :: [].{
         prior_best20 = Sqlite.query!({
             path: Path.utf8(path),
             query:
-                \\SELECT CAST(COALESCE(MAX(m.best_20min_w),0) AS REAL) AS b FROM activity_metrics m
+                \\SELECT CAST(COALESCE(MAX(m.best_20min_w),0) AS REAL) AS b,
+                \\       CASE WHEN MAX(m.best_20min_w) IS NULL THEN 0 ELSE 1 END AS bk
+                \\FROM activity_metrics m
                 \\JOIN activities a ON a.id = m.activity_id
                 \\WHERE a.sport_family = :fam AND a.start_local >= :lo AND a.start_local < :hi
             ,
@@ -948,10 +950,15 @@ Report :: [].{
                 { name: ":lo", value: String(Metrics.days_to_date_str(anchor - 119)) },
                 { name: ":hi", value: String(cutoff60) },
             ],
-            row: Sqlite.f64("b"),
+            row: |cols| |stmt| {
+                b = Sqlite.f64("b")(cols)(stmt)?
+                bk = Sqlite.i64("bk")(cols)(stmt)?
+                Ok({ b, bk })
+            },
         })?
+        # flag decodes the stored NULL, never the magnitude (ADR 0009)
         prior_b20_known_b : Bool
-        prior_b20_known_b = prior_best20 > 0.0
+        prior_b20_known_b = prior_best20.bk != 0
 
         # polarization is power-aware: easy/moderate/hard come from POWER zones for
         # activities that have power-intensity, HR zones otherwise (zone_sum! per-activity)
@@ -1072,7 +1079,7 @@ Report :: [].{
             last_hard_session_date: last_hard,
             # stimulus features (#159) — counts and spacing are MEASUREMENTS; the
             # spacing/days-since flags are the ADR 0009 null (0 with known false)
-            hard_sessions: {
+            hard_days: {
                 d14: (hard_d14).to_i64_wrap(),
                 d28: (List.len(hard_day_nums)).to_i64_wrap(),
                 spacing_median_days_28d: match spacing { Known(g) => g  Unknown => 0 },
@@ -1136,7 +1143,7 @@ Report :: [].{
                 # trajectory (#159): the PRIOR 60d window's best beside the current —
                 # which way the demonstrated ceiling moved; known=false = no power
                 # in that window (a delta against nothing is not 0)
-                prior_60d_best_20min_w: prior_best20,
+                prior_60d_best_20min_w: prior_best20.b,
                 prior_60d_known: prior_b20_known_b,
             },
             hr_zones: { z1_max: zb.z1_max, z2_max: zb.z2_max, z3_max: zb.z3_max, z4_max: zb.z4_max },
