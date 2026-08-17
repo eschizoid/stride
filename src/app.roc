@@ -128,7 +128,8 @@ main! = |raw_args| {
     # layer, the flag re-execs THIS binary with STRIDE_FORMAT set for the child.
     # It is a shim, and an honest one: it costs ~10 ms and one extra process,
     # and it now OWNS the exit code of every flagged invocation, which is why
-    # reexec_with_format! propagates the child's status verbatim.
+    # reexec_with_format! propagates the child's status verbatim (#163 made
+    # those codes carry meaning, so the propagation is load-bearing, not tidy).
     #
     # The child's args are prefixed with `--` so its own parse treats every
     # token as literal: that is what makes recursion impossible AND what keeps
@@ -141,6 +142,15 @@ main! = |raw_args| {
         Auto =>
             match Command.parse(split.rest) {
                 Err(ShowHelp) => Stdout.line!(help_text)
+                # an unknown command is an invocation error (#163): machines get
+                # an envelope, humans still get the help text, both exit non-zero
+                Err(UnknownCmd(name)) =>
+                    if Output.json_mode!({}) {
+                        Output.err_out!("unknown_command", "no such command '${name}' — run `stride` for the list")
+                    } else {
+                        Stdout.line!(help_text)?
+                        Err(Exit(1))
+                    }
                 Err(Usage(u)) => Output.usage!(u)
                 Err(BadCount(s)) => Output.err_out!("bad_count", "expected a number, got '${s}'")
                 Ok(cmd) => dispatch!(cmd)

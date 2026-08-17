@@ -80,8 +80,11 @@ of JSON, prefix the command with `STRIDE_FORMAT=json`. EVERY machine response is
 versioned envelope: success → `{"schema_version":2,"data":{…}}`, error →
 `{"schema_version":2,"error":{"code":"…","message":"…"}}`. The payloads described in
 the table below all live under `.data`; `error` is an OBJECT whose `code` carries the
-in-band error names used throughout this file (`missing_config`, `not_authenticated`,
-`derived_key`, …), with the human text nested in `error.message`. `sync` and `analyze`
+in-band error names used throughout this file (`unknown_command`, `missing_config`, `not_authenticated`,
+`derived_key`, …), with the human text nested in `error.message`. An error
+envelope is ALSO an exit status: stride exits 1 whenever it emits one (0 on
+success; a bare `stride` prints help and exits 0) — read either channel, they
+never disagree. `sync` and `analyze`
 emit JSON results too (`{synced, new_activities, updated_activities, streams_fetched,
 pending_streams}` / `{computed, stream_errors, form_tsb, form_tsb_known, form_state,
 form_delta_7d, form_delta_known, converged}`), and `config get` emits `{key, value}` or `not_set`.

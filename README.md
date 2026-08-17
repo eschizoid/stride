@@ -222,8 +222,10 @@ Every query command prints **human tables** in a terminal and **JSON** when
 detection also work; the flag beats both, and `--` ends flag parsing for an argument
 whose literal value is `--json`). The JSON is
 a versioned envelope: success is `{"schema_version":2,"data":{…}}`, an in-band
-error is `{"schema_version":2,"error":{"code":"…","message":"…"}}` (exit stays 0 —
-read the JSON, not `$?`). Malformed invocations print a targeted `usage:` line;
+error is `{"schema_version":2,"error":{"code":"…","message":"…"}}` — printed on
+stdout AND accompanied by exit status 1, so `set -e`, `&&` chains and CI steps
+see failures while JSON consumers keep reading the same envelope. A bare `stride`
+prints help and exits 0; an unknown command is an error. Malformed invocations print a targeted `usage:` line;
 `stride --help` is the full one-screen manual.
 
 The tables are built to surface the all-moderate trap — a `0.98`-intensity ride with

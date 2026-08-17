@@ -56,7 +56,9 @@ just install   # build + symlink to ~/.local/bin/stride
 - **Query-command output goes through `out!`** (payload + render fn): JSON is wrapped
   in the versioned envelope by `emit_ok!`/`emit_err!` (`{schema_version, data}` /
   `{schema_version, error:{code,message}}`), humans get a pure `Render.<cmd>_screen`
-  (or inline closure). Errors are in-band (exit 0). New commands are born on this
+  (or inline closure). Errors are in-band on stdout AND exit 1 (#163: the
+  envelope is the payload, the status is the signal; a bare invocation prints
+  help and exits 0, an unknown command is an error). New commands are born on this
   pattern; older ones migrate as touched.
 - `tests/e2e.roc` is ONE binary in two roles: a mock Strava server (`E2E_MODE=mock`) and
   the offline e2e driver (`E2E_MODE=sync` runs real sync + token refresh against it).

@@ -272,6 +272,29 @@ b_init_config! = |ctx| {
     # IS a shape change, and the envelope version is how a caller detects one
     check!("summary envelope is versioned", strjq!(ctx, ["summary"], ".schema_version") == "2")?
     check!("missing-config error code", Str.contains(stride!(ctx.bin, ctx.home, ["summary"]), "missing_config"))?
+    # ── exit status (#163): the envelope is unchanged, the STATUS now carries
+    # success/failure so shell callers stop reading errors as success.
+    check!("an error envelope exits non-zero", stride_status!(ctx.bin, ctx.home, ["summary"]) == 1)?
+    check!("an unknown command is an invocation error", stride_status!(ctx.bin, ctx.home, ["wat"]) == 1)?
+    check!("...and machines get an envelope, not help text", Str.contains(stride!(ctx.bin, ctx.home, ["wat"]), "unknown_command"))?
+    check!("a bare invocation asks for help, which is not an error", stride_status!(ctx.bin, ctx.home, []) == 0)?
+    # ...and neither is asking for it by name — the catch-all this change
+    # replaced was silently serving --help, and deleting it made help an error
+    check!("--help is not an error", stride_status!(ctx.bin, ctx.home, ["--help"]) == 0)?
+    check!("-h and bare help are not errors either", stride_status!(ctx.bin, ctx.home, ["-h"]) == 0 and stride_status!(ctx.bin, ctx.home, ["help"]) == 0)?
+    # a REAL command with wrong arguments must not claim the command is unknown
+    argerr = stride!(ctx.bin, ctx.home, ["sync", "extra"])
+    check!("wrong arity on a real command is a usage error, not 'unknown'", Str.contains(argerr, "sync") and !(Str.contains(argerr, "unknown_command")))?
+    check!("...and still exits non-zero", stride_status!(ctx.bin, ctx.home, ["sync", "extra"]) == 1)?
+    # the FLAG path owns the exit code too (#162's re-exec wrapper): without
+    # Err(Exit(child_code)) the parent collapses every child status to 1 and
+    # stacks a platform banner on the child's own message. Deleting that arm
+    # passed the entire suite before this check existed.
+    check!("an error through --json propagates the child's status", stride_status!(ctx.bin, ctx.home, ["--json", "activity", "99999999"]) == 1)?
+    # (a db-free success: at this point in the fixture almost every query is
+    # legitimately an error, and --version exercises the same re-exec path)
+    check!("...and success through --json still exits 0", stride_status!(ctx.bin, ctx.home, ["--json", "--version"]) == 0)?
+    check!("...with no platform banner stacked on the envelope", Str.contains(stride!(ctx.bin, ctx.home, ["--json", "activity", "99999999"]), "activity_not_found"))?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", "123"])
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max", "153"])
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z3_max", "168"])
@@ -1633,10 +1656,14 @@ env_or! = |name, dflt|
 need : Str, Str -> Try(Str, [SetupFailed(Str), ..])
 need = |what, v| if Str.is_empty(v) Err(SetupFailed(what)) else Ok(v)
 
+# stdout of a shell one-liner. The script's own exit status is NOT the assertion
+# here — since #163 a stride error exits non-zero, and the interesting output is
+# the envelope it printed on the way out, which the Err payload carries.
 sh! : Str => Str
 sh! = |script|
     match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", script], OsStr.from_str)).exec_output!() {
         Ok(o) => o.stdout_utf8
+        Err(NonZeroExitCode(e)) => e.stdout_utf8_lossy
         Err(_) => ""
     }
 
@@ -1736,9 +1763,29 @@ stride_env! = |bin, home, sargs, extra| {
         .args(List.map(sargs, OsStr.from_str))
         .env(OsStr.from_str("HOME"), OsStr.from_str(home))
     cmd = List.fold(extra, base, |c, pair| c.env(OsStr.from_str(pair.0), OsStr.from_str(pair.1)))
+    # errors now exit non-zero (#163) and the platform surfaces that as
+    # Err(NonZeroExitCode) — whose payload CARRIES the stdout we assert on. A
+    # bare Err(_) => "" would blind every error-code check in this suite.
     match cmd.exec_output!() {
         Ok(o) => o.stdout_utf8
+        Err(NonZeroExitCode(e)) => e.stdout_utf8_lossy
         Err(_) => ""
+    }
+}
+
+# exit STATUS of a stride invocation (#163): 0 on success, 1 on any error
+# envelope. Separate from the output helpers so a check can assert the process
+# contract without re-deriving it from text.
+stride_status! : Str, Str, List(Str) => I32
+stride_status! = |bin, home, sargs| {
+    cmd = Cmd.new(OsStr.from_str(bin))
+        .args(List.map(sargs, OsStr.from_str))
+        .env(OsStr.from_str("HOME"), OsStr.from_str(home))
+        .env(OsStr.from_str("STRIDE_FORMAT"), OsStr.from_str("json"))
+    match cmd.exec_output!() {
+        Ok(_) => 0
+        Err(NonZeroExitCode(e)) => e.exit_code
+        Err(_) => -1
     }
 }
 
