@@ -96,19 +96,21 @@ Output :: [].{
     emit_err! : Str, Str => Try({}, _)
     emit_err! = |code, msg|
         Stdout.line!(Json.to_str({ schema_version: json_schema_version, error: { code, message: msg } }))
-    # output mode: humans get tables by default; LLM callers set STRIDE_FORMAT=json
-    # (CLAUDECODE env also flips to json for harnesses that set it)
+    # Output mode: humans get tables, machines ask for JSON — by `--json` on the
+    # command (which re-execs with STRIDE_FORMAT set for the child, see app.roc)
+    # or by STRIDE_FORMAT=json for a whole session.
+    #
+    # There used to be a third channel: a non-empty CLAUDECODE meant JSON, so one
+    # vendor's tool got machine output without asking (#181 removed it). It made
+    # the interface depend on ambient state no documented command mentioned, and
+    # it produced a genuinely bad test hazard — a suite that passed on the
+    # maintainer's shell and failed on CI purely because the variable was
+    # exported there. Every caller now says what it wants.
     json_mode! : {} => Bool
     json_mode! = |{}|
         match Env.var_str!(OsStr.from_str("STRIDE_FORMAT")) {
             Ok(v) => Str.with_ascii_lowercased(Str.trim(v)) == "json"
-            Err(_) =>
-                match Env.var_str!(OsStr.from_str("CLAUDECODE")) {
-                    # set-but-empty is not "on" — require a non-empty value
-                    Ok(v) => !(Str.is_empty(v))
-                    Err(_) => False
-
-                }
+            Err(_) => False
         }
     # ── progress narration (ADR 0007) ────────────────────────────────────
     #

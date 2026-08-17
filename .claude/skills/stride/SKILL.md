@@ -12,7 +12,7 @@ Never do training math yourself: read stride's numbers, add judgment.
 
 ## Coaching workflow
 
-1. `stride sync` — pull new activities + backfill streams (creds live in the db after
+1. `stride sync --json` — pull new activities + backfill streams (creds live in the db after
    `auth`). Re-pulls a rolling 30-day window so recent Strava edits self-heal. Streams
    backfill is capped at 60/run; sync reports how many activities still need streams.
    **First-time import or deep reconcile** (bulk edits older than 30 days): use
@@ -21,15 +21,15 @@ Never do training math yourself: read stride's numbers, add judgment.
    **No API credentials** (Strava requires a subscription for API access since
    June 2026): `stride import <export.zip|dir>` loads a Strava account export —
    summary-level activities (no streams), idempotent, English exports only.
-2. `stride analyze` — compute metrics for new/invalidated activities (idempotent;
+2. `stride analyze --json` — compute metrics for new/invalidated activities (idempotent;
    prints count + form verdict — the full report lives in `summary`). If any stored
    streams won't decode it says "N had unreadable stream data" (they retry next sync).
-3. **`stride plan`** — THE weekly-planning payload: summary + the open sessions +
-   last-14d activities in one call. Use `stride summary` alone for quick check-ins.
+3. **`stride plan --json`** — THE weekly-planning payload: summary + the open sessions +
+   last-14d activities in one call. Use `stride summary --json` alone for quick check-ins.
 4. Reason: polarization, zone gaps, form (TSB), FTP staleness, sport balance —
    AND reconcile the open plan against recent activities (match by date/type,
-   then `stride complete <session_id> <activity_id>` for each match).
-5. Plan the coming week: `stride week add <YYYY-MM-DD> <type> "<detail>" "<rationale>"`
+   then `stride complete <session_id> <activity_id> --json` for each match).
+5. Plan the coming week: `stride week add <YYYY-MM-DD> <type> "<detail>" "<rationale>" --json`
    - `type` is the INTENSITY INTENT, not the sport: vo2max | threshold | endurance |
      recovery | strength | rest (free-form ok). The sport/modality goes in `detail`
      ("easy row...", "outdoor ride..."): type answers *why/how hard*, detail answers
@@ -41,7 +41,7 @@ Never do training math yourself: read stride's numbers, add judgment.
    - `complete`/`skip` also REFUSE unknown ids (error code `session_not_found`
      / `activity_not_found` / `bad_id`) — a typo can't silently desync the log, so
      check for an error field instead of assuming success.
-   - a session that didn't happen: `stride skip <id> "<reason>" [activity_id|none]` —
+   - a session that didn't happen: `stride skip <id> "<reason>" [activity_id|none] --json` —
      the optional link names the activity done INSTEAD (a substitution, not a
      completion; rendered `→ id` in week); `none` releases a link; a bare re-skip
      keeps one. Refusals: `activity_already_linked` (that activity already tells
@@ -62,7 +62,7 @@ Never do training math yourself: read stride's numbers, add judgment.
   intervals it reflects workout shape (check `segments`: work reps present → don't
   read drift as durability). Unknown when: no usable signal, the signal covers less
   than half the session, or |value| > 50% (artifact).
-- **Detected structure** (`stride activity <id>`): `interval_summary` ("3×[12:00 @
+- **Detected structure** (`stride activity <id> --json`): `interval_summary` ("3×[12:00 @
   230W / 4:00 easy]"), `segments` (per-rep kind/duration/avg + HR peak/avg/60s
   recovery drop), `hr_drift` + `hr_drift_known` (rising across reps = fatigue), and
   `detection_attempted` (false = couldn't look — no power/pace signal — which is NOT
@@ -71,12 +71,15 @@ Never do training math yourself: read stride's numbers, add judgment.
 
 ## Output modes
 
-Query commands emit **JSON when `CLAUDECODE` is set to a non-empty value** (Claude Code
-exports it, so you get JSON automatically) and **human tables otherwise**. Precedence:
-**`--json`/`--human` flag** (any argv position, last one wins; `--` ends flag parsing, so `stride skip 5 -- --json` stores the literal string as the reason and still honors the requested format) beats `STRIDE_FORMAT=json|human`
-(case-insensitive) beats the `CLAUDECODE` detection — the flag is the tool-neutral way for
-non-Claude callers (scripts, other agents) to request machine output. If output ever looks like a table instead
-of JSON, prefix the command with `STRIDE_FORMAT=json`. EVERY machine response is a
+**PASS `--json` ON EVERY QUERY YOU RUN.** Stride prints human tables by default and
+machine JSON only when asked; nothing infers the mode from your environment (#181
+removed the `CLAUDECODE` detection, because an interface that depends on ambient
+state is one no command can document). The flag works in any argv position and the
+last one wins; `--human` forces tables even for you. `STRIDE_FORMAT=json|human`
+(case-insensitive) sets a session default and the flag beats it. `--` ends flag
+parsing, so `stride skip 5 -- --json` stores the literal string as the reason and
+still honors the requested format. If output ever looks like a table when you
+wanted data, you left `--json` off. EVERY machine response is a
 versioned envelope: success → `{"schema_version":2,"data":{…}}`, error →
 `{"schema_version":2,"error":{"code":"…","message":"…"}}`. The payloads described in
 the table below all live under `.data`; `error` is an OBJECT whose `code` carries the
@@ -89,7 +92,7 @@ emit JSON results too (`{synced, new_activities, updated_activities, streams_fet
 pending_streams}` / `{computed, stream_errors, form_tsb, form_tsb_known, form_state,
 form_delta_7d, form_delta_known, converged}`), and `config get` emits `{key, value}` or `not_set`.
 
-## Query commands (JSON for you, tables for humans)
+## Query commands (add `--json` to every one of these)
 
 | Command | Returns |
 |---|---|

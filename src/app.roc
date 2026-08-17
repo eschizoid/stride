@@ -55,10 +55,9 @@ help_text =
         \\    stride <command>
         \\
         \\Query commands print human tables in a terminal and JSON for tools. Pass
-        \\--json (or --human) on any command to choose explicitly; STRIDE_FORMAT=json
-        \\and the CLAUDECODE environment detection still work, in that order of
-        \\precedence. Use -- to end flag parsing when an argument is literally
-        \\"--json": stride skip 5 -- --json
+        \\--json (or --human) on any command to choose explicitly, or set
+        \\STRIDE_FORMAT=json for a whole session; the flag wins. Use -- to end flag
+        \\parsing when an argument is literally "--json": stride skip 5 -- --json
         \\
         \\SETUP (once)
         \\    init        create ~/.stride and migrate the SQLite db
@@ -103,7 +102,7 @@ help_text =
         \\    zones       power-zone watt ranges (7) from your FTP (alias: pz)
         \\
         \\FLAGS
-        \\    --json      machine output (beats STRIDE_FORMAT and CLAUDECODE)
+        \\    --json      machine output (beats STRIDE_FORMAT)
         \\    --human     human tables, even for tool callers
         \\    --help      show this help
         \\    --version   show version
