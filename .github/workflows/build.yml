@@ -22,8 +22,8 @@ jobs:
   # OSes INCLUDING Windows. This is the new (Zig) compiler — both `roc check` and
   # `roc test` stop before native codegen, so they are fast and deterministic and
   # make a good first gate. (The `e2e` job below does build the real binary, with
-  # --opt=dev; only the OPTIMIZED --opt=speed backend stays gated on the intermittent
-  # SIGABRT in issue #32.)
+  # --opt=dev, which is now a BUILD-TIME choice: #32's SIGABRT was fixed by the
+  # 2026-08-17 compiler pin, and --opt=speed costs ~2.5min against ~14s.)
   check-and-test:
     strategy:
       fail-fast: false
@@ -58,7 +58,7 @@ jobs:
           nightly-tag: nightly-2026-08-17-b9ca140
 
       # One check covers the whole codebase: `roc check` follows every import, so
-      # this type-checks app.roc plus all 8 modules against basic-cli 0.21 + http.
+      # this type-checks app.roc plus all 8 modules against basic-cli 0.22 + http.
       - name: Type-check (app + all modules)
         shell: bash
         run: roc check src/app.roc
@@ -78,9 +78,9 @@ jobs:
           roc check src/Schema.roc
 
   # End-to-end: build the real binary and run the native offline e2e suite (
-  # sandboxed HOME, no network). Built with --opt=dev: the optimized (--opt=speed) backend
-  # has an intermittent SIGABRT on the stream-decode path (issue #32), so RELEASE binaries
-  # stay gated on it — but --opt=dev is stable and the suite passes deterministically.
+  # sandboxed HOME, no network). Built with --opt=dev for build time; #32's SIGABRT in the
+  # optimized backend was fixed by the 2026-08-17 pin, so RELEASE binaries
+  # are built with it too — the suite passes deterministically either way.
   #
   # Runs on macOS, NOT linux: the compiler has a memory-layout-dependent codegen bug (a
   # constant "" used in a str op corrupts the heap — reported upstream) that manifests on
@@ -109,7 +109,7 @@ jobs:
       # sqlite3/jq/awk/curl ship on the macOS runner; just does not
       - name: Install just
         run: brew install just
-      - name: Build stride (dev backend — #32 blocks the optimized one)
+      - name: Build stride (dev backend — chosen for build time, not correctness)
         run: roc build src/app.roc --output=stride --opt=dev   # ~6 min; new compiler uses --output=
       - name: Run offline e2e suite
         run: ROC=roc just e2e

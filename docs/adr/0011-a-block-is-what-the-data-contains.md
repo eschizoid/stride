@@ -1,6 +1,6 @@
 # ADR 0011 — A training block is bounded by absence, described by measurement
 
-Date: 2026-08-17. Status: proposed. Issue: #139. Depends on ADR 0005 (period-accurate FTP), ADR 0010 (projection vs prescription), #154 (engine emits measurements, never verdicts).
+Date: 2026-08-17. Status: accepted. Issue: #139. Depends on ADR 0005 (period-accurate FTP), ADR 0010 (projection vs prescription), #154 (engine emits measurements, never verdicts).
 
 ## Context
 

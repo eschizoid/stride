@@ -35,8 +35,9 @@ earlier alpha4 / basic-cli 0.20 / roc-json 0.13 pin is retired; §9 records the
 migration and why the original "blocked on roc-json" conclusion was wrong. CI
 type-checks (`roc check`) and runs the pure tests (`roc test`) on this compiler across
 linux/macOS/Windows, then builds the real binary and runs the e2e suite on macOS. The
-`roc build` perf gate is gone (roc#10469, fixed by #10531); builds pin `--opt=dev`
-because the optimized backend still miscompiles (issue #32). Day-to-day compiler
+`roc build` perf gate is gone (roc#10469, fixed by #10531); builds pin `--opt=dev` for
+build time (~14s against ~2.5min), not correctness — the optimized backend's miscompile
+(issue #32) was fixed by the 2026-08-17 compiler pin. Day-to-day compiler
 syntax/stdlib/platform notes live in `docs/roc-new-compiler-notes.md`.
 
 ### Effects live in modules, organized by concern
@@ -181,22 +182,24 @@ civil date, so only the today boundary needs this.
 
 The migration to Roc's new (Zig) compiler is **merged to `main`**: the whole codebase
 is in the new type-module dialect (`Name :: [].{}`, `List(X)`, `Result`→`Try`,
-`True`/`False`), on basic-cli 0.21 with builtin JSON, and `build.yml` pins the new
+`True`/`False`), on basic-cli 0.22 with builtin JSON, and `build.yml` pins the new
 compiler by exact nightly tag. CI runs `roc check` + `roc test` (pure expects) green
 on every push.
 
-**Build unblocked; release binaries gated on the optimized backend.** `roc build
-src/app.roc` *used to* peg the Specialization phase for minutes — an upstream compiler-perf
-bug (roc-lang/roc#10469, SpecConstr blowup), fixed upstream by roc-lang/roc#10531 (merged
-2026-08-02). stride is re-pinned to the first nightly carrying the fix, and `roc build` now
-completes. What remains is a *separate* backend bug: an intermittent heap-corruption SIGABRT
-in the optimized (`--opt=speed`) codegen (issue #32), so the four platform release binaries
-stay gated on it while the `--opt=dev` build is stable meanwhile. `roc build` on the old
-alpha4 toolchain is gone with the migration.
+**Build unblocked, and no longer gated.** `roc build src/app.roc` *used to* peg the
+Specialization phase for minutes — an upstream compiler-perf bug (roc-lang/roc#10469,
+SpecConstr blowup), fixed upstream by roc-lang/roc#10531 (merged 2026-08-02). A *separate*
+backend bug then kept the optimized build unusable: an intermittent heap-corruption SIGABRT
+in `--opt=speed` (issue #32), measured at 40 aborts per 1400 invocations on the old pin and
+isolated to `season` and `power-curve`. Both are resolved — the 2026-08-17 compiler pin
+gives 0 per 1400 with output byte-identical to `--opt=dev`. Builds still pin `--opt=dev`,
+now purely for build time. `roc build` on the old alpha4 toolchain is gone with the
+migration.
 
-**Windows** unblocks with the working full build: the new compiler + basic-cli 0.21's
-x64win host can target it (no build yet only because the full `roc build` is gated
-above), so Windows is a follow-up, not a Roc limitation.
+**Windows ships** (`stride-windows-x86_64`, since v0.3.0): the new compiler plus
+basic-cli's x64win host target it, and `OsStr.display` decodes the `WindowsU16s` argv arm.
+The open platform gap is linux-arm64, which needs an explicit `--target` (it detects
+arm64v1musl).
 
 **CORRECTION kept for the record (2026-08-01):** the earlier "hard-blocked on
 roc-json" conclusion was wrong — it assumed all JSON had to go through a roc-json

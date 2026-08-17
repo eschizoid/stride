@@ -12,8 +12,10 @@ back. **Never do training math yourself — read stride's numbers, add judgment.
 
 Settled architecture + rationale live in `docs/adr/0000-architecture.md` (committed) —
 read it before proposing architectural changes; don't relitigate what it settles.
-`.claude/PLAN.md` (local, untracked) is disposable working scratch: live watch-items
-only, not decisions.
+Open work lives in GitHub issues, workflow lessons in auto-memory, shipped work in git
+history. There is deliberately no scratch plan file: `.claude/PLAN.md` was one, every
+section of it rotted, and a watch-item it was tracking (ADR 0001's split trigger, #196)
+fired unnoticed because nothing read it.
 
 ## Build & test
 
@@ -95,6 +97,20 @@ just install   # build + symlink to ~/.local/bin/stride
   monospace-single-width; no varying-height unicode blocks (they render as mush).
 - In bash test code: `grep -q` + `pipefail` = SIGPIPE trap; capture output first,
   then grep the variable.
+- **Never test against the live `~/.stride/db.sqlite`** — snapshot it first
+  (`sqlite3 ~/.stride/db.sqlite ".backup /tmp/x/.stride/db.sqlite"`) and run with an
+  explicit `HOME`. A stray `stride init` against the real HOME has happened.
+- **e2e id assertions are positional.** Inserting a `planned_sessions` row mid-scenario
+  shifts the auto-increment and breaks later fixed-id checks (22 of them today). Add new
+  fixtures at the END of a scenario, and delete what you insert.
+- **A bare `True`/`False` serializes as the STRING `"True"`** in an encode-only payload.
+  Annotate the field `: Bool` — the annotations scattered through `Report.roc` are there
+  for this, not for documentation.
+- **The compiler pin lives in FOUR workflow files** (`build`, `manual-release`,
+  `release-please`, `verify-arm64`) — `grep -rln nightly-tag .github/workflows` before
+  calling a bump done. It was documented as three, and that was already wrong.
+- **Mermaid diagrams in the README**: `<br>` and commas only; other punctuation breaks
+  the render.
 
 ## Idiomatic Roc (and the traps that actually bit us)
 
@@ -195,7 +211,12 @@ Every item here cost a debugging session at least once — they are not style op
 
 ## Product invariants (enforced by code and/or e2e — keep them true)
 
-- Machine JSON: numeric **0 = "not available"**, never invent numbers; `-` in human tables.
+- Machine JSON: **absence is FLAGGED, not zeroed** (ADR 0009). Every numeric field that
+  can legitimately be absent ships an additive `_known` companion decoded from the STORED
+  NULL (`CASE WHEN … IS NULL`), never a coalesced magnitude — a bare 0 cannot distinguish
+  "no data" from "measured zero". The engine never invents a value to fill a gap; human
+  tables still render `-`. (The old "numeric 0 = not available" convention was retired at
+  the machine boundary by #156/PR #168 and survives only in pre-ADR-0009 payload fields.)
 - Machine JSON is a **versioned envelope** — success `{schema_version, data}`, error
   `{schema_version, error:{code, message}}`. Bump `json_schema_version` when the WRAPPER
   changes, or when a payload field is REMOVED or retyped. **Adding** a field does not bump

@@ -83,7 +83,8 @@ workflows — `build.yml` (twice), `manual-release.yml` and `release-please.yml`
 space-separated `--output stride` fails with a confusing error — it broke a release
 build once and a `roc test --main` invocation another time.
 
-**Always build with `--opt=dev`.** The default is `--opt=speed`, whose LLVM backend
+**Build with `--opt=dev`** — for build time (~14s against ~2.5min), not correctness: the
+miscompile below was fixed by the 2026-08-17 pin. Historically the default `--opt=speed`
 miscompiles this codebase (issue #32's intermittent SIGABRT; it also silently drops the
 `progress` pace column, which e2e catches).
 
