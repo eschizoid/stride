@@ -61,6 +61,9 @@ just install   # build + symlink to ~/.local/bin/stride
   undeclared key, which is the point (`just schema-check` runs the same
   validator against your own database; `tools/schema-lint.jq` keeps schemas
   inside the subset `tools/validate.jq` actually reads).
+  Platform failures are converted to envelopes at ONE boundary (`run_command!`
+  in app.roc) rather than at each call site, so a caller never meets a raw
+  runtime banner; a new failure shape means a new arm there, not a new habit.
   Errors are in-band on stdout AND exit 1 (#163: the
   envelope is the payload, the status is the signal; a bare invocation is not a
   failure and exits 0 — humans get the help screen, machines get the command list —
