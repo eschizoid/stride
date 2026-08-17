@@ -2080,8 +2080,10 @@ Report :: [].{
         }
     }
 
-    # Time to exhaustion at a caller-named power (#187). The model is the one
-    # power-curve publishes; this only spends it. Every refusal is explicit:
+    # Time to exhaustion at a caller-named power (#187). NOT the same fit
+    # power-curve publishes: that one spans every power sport and includes
+    # today, this one is per-family and excludes its anchor date. They agree
+    # on an athlete whose rides dominate the curve, and only then. Every refusal is explicit:
     # no fit, at-or-below CP, or a result outside the 2-20 minute band where the
     # 2-parameter model holds — that last still returns the number, LABELLED,
     # rather than hiding it or pretending it is trustworthy.
@@ -2208,11 +2210,11 @@ Report :: [].{
             match Metrics.critical_power(fit_points) {
                 # a fit is only meaningful when BOTH are positive; inconsistent bests (no true
                 # 5-10 min efforts) can yield a non-positive CP or W' — treat that as no fit
-                Ok(c) => (if c.cp > 0.0 and c.w_prime > 0.0 { cp: c.cp, w_prime: c.w_prime } else { cp: 0.0, w_prime: 0.0 })
-                Err(_) => { cp: 0.0, w_prime: 0.0 }
+                Ok(c) => (if c.cp > 0.0 and c.w_prime > 0.0 { cp: c.cp, w_prime: c.w_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0 })
+                Err(_) => { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0 }
             }
         Output.out!(
-            { window_days: days, sport, points, cp: cpfit.cp, w_prime: cpfit.w_prime },
+            { window_days: days, sport, points, cp: cpfit.cp, w_prime: cpfit.w_prime, fit_r2: cpfit.r2, fit_points: cpfit.points },
             Render.power_curve_screen,
         )
     }

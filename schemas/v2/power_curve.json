@@ -1,13 +1,15 @@
 {
   "title": "power_curve",
-  "description": "Payload of `stride power-curve`.",
+  "description": "Payload of `stride power-curve`. `fit_r2` is how well the CP line fits its own 5-20 minute bests and is the query-independent way to weigh the fit: a low value means the bests are near-collinear (an athlete who never does short maximal efforts) and CP/W' are describing noise. It is 1 by construction below three points, so it is only meaningful when `fit_points` is 3.",
   "type": "object",
   "required": [
     "cp",
     "points",
     "sport",
     "w_prime",
-    "window_days"
+    "window_days",
+    "fit_r2",
+    "fit_points"
   ],
   "additionalKeys": false,
   "properties": {
@@ -40,6 +42,12 @@
       "type": "number"
     },
     "window_days": {
+      "type": "integer"
+    },
+    "fit_r2": {
+      "type": "number"
+    },
+    "fit_points": {
       "type": "integer"
     }
   }

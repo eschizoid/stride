@@ -696,7 +696,7 @@ Render :: [].{
     }
 
     # ── power-duration curve screen ─────────────────────────────────────
-    power_curve_screen : { window_days : U64, sport : Str, points : List({ dur_s : U64, watts : F64 }), cp : F64, w_prime : F64 } -> Str
+    power_curve_screen : { window_days : U64, sport : Str, points : List({ dur_s : U64, watts : F64 }), cp : F64, w_prime : F64, fit_r2 : F64, fit_points : I64 } -> Str
     power_curve_screen = |pc| {
         dur_label = |s|
             if s < 60 "${U64.to_str(s)}s"
@@ -711,11 +711,21 @@ Render :: [].{
                 ["duration", "best power (W)"],
                 List.map(pc.points, |p| [dur_label(p.dur_s), fmt0(p.watts)]),
             )
+            # the fit's own quality, on the command that PUBLISHES the fit --
+            # without it a 0.72 fit and a perfect one read identically, while
+            # the skill tells the coach to weigh the fit first. Below three
+            # points r2 is 1 by construction and would be false reassurance.
+            quality =
+                if pc.fit_points >= 3.I64 {
+                    " · fit r2 ${fmt2(pc.fit_r2)} from ${I64.to_str(pc.fit_points)} bests"
+                } else {
+                    " · from ${I64.to_str(pc.fit_points)} bests (r2 needs 3)"
+                }
             cp_line =
                 # both must be positive: power_curve! already zeroes a non-positive fit, but
                 # gate here too so a stray negative W′ can never print as a real fit
                 if pc.cp > 0.0 and pc.w_prime > 0.0
-                    "→ Critical Power ${fmt0(pc.cp)} W · W′ ${fmt1(pc.w_prime / 1000.0)} kJ"
+                    "→ Critical Power ${fmt0(pc.cp)} W · W′ ${fmt1(pc.w_prime / 1000.0)} kJ${quality}"
                 else
                     "→ Critical Power: not enough long-duration (≥5 min) data to fit"
             legend =
@@ -1108,11 +1118,28 @@ expect {
         points: [{ dur_s: 5, watts: 800.0 }, { dur_s: 60, watts: 400.0 }, { dur_s: 1200, watts: 260.0 }],
         cp: 250.0,
         w_prime: 20000.0,
+        fit_r2: 0.72,
+        fit_points: 3.I64,
+    })
+    # a degenerate fit and a perfect one rendered identically here, on the
+    # command that PUBLISHES the fit -- so the quality travels with it
+    thin = Render.power_curve_screen({
+        window_days: 90,
+        sport: "Ride",
+        points: [{ dur_s: 5, watts: 800.0 }],
+        cp: 250.0,
+        w_prime: 20000.0,
+        fit_r2: 1.0,
+        fit_points: 2.I64,
     })
     Str.contains(s, "5s") and Str.contains(s, "20m") and Str.contains(s, "Critical Power 250") and Str.contains(s, "Ride")
+    and Str.contains(s, "fit r2 0.72")
+    # under three points r2 is 1 by construction, so it must NOT be shown as
+    # if it were a quality signal
+    and !(Str.contains(thin, "r2 1.00")) and Str.contains(thin, "r2 needs 3")
 }
 expect {
-    s = Render.power_curve_screen({ window_days: 30, sport: "", points: [], cp: 0.0, w_prime: 0.0 })
+    s = Render.power_curve_screen({ window_days: 30, sport: "", points: [], cp: 0.0, w_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
     Str.contains(s, "no power data") and Str.contains(s, "all power sports")
 }
 
@@ -1287,6 +1314,15 @@ expect {
     # the query-independent fit-quality number reaches the human screen -- a
     # coach reading only the terminal must see what the payload sees
     and Str.contains(tte("in_model", False, False), "r2 0.72")
+    # ...and is SUPPRESSED at two points, where it is 1 by construction. Only
+    # the presence direction was asserted, so mutating the gate to always-show
+    # left the suite green.
+    and !(Str.contains(Render.tte_screen({
+        watts: 265.0, seconds: 596.0, known: True, status: "in_model",
+        cp: 254.0, w_prime: 6416.0, fit_points: 2.I64, fit_r2: 1.0,
+        window_days: 90.I64, sport_family: "Ride", demonstrated_s: 0.0,
+        demonstrated_w: 0.0, demonstrated_known: False, contradicts_model: False,
+    }), "r2"))
     # the hour rollover is what keeps a near-CP query from rendering 222 days
     # as "320807:09" — pinned because mmss is the tempting reuse
     and Render.hms(596.I64) == "9:56"

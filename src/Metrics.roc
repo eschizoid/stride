@@ -3691,6 +3691,21 @@ expect {
     spent and recovered and overdrawn and never_refills
 }
 
+# the clock never runs backwards: a stamp EARLIER than the last charges no
+# time AND does not let the next stamp re-bill the span it already covered
+expect {
+    fit = { cp: 250.0, w_prime: 20000.0 }
+    p = |t, v| { t, v }
+    # 0,10,5,20 spans 20s at 100W over CP = 2000 J spent, not 2500
+    jumbled = Metrics.w_prime_balance([p(0, 350.0), p(10, 350.0), p(5, 350.0), p(20, 350.0)], fit)
+    correct = match List.last(jumbled) { Ok(b) => (b - 18000.0).abs() < 0.001  Err(_) => False }
+    # and sorted input is completely unaffected -- the guard is defensive, and
+    # a guard that changed the normal path would be a regression
+    sorted = Metrics.w_prime_balance([p(0, 350.0), p(5, 350.0), p(10, 350.0), p(20, 350.0)], fit)
+    unchanged = match List.last(sorted) { Ok(b) => (b - 18000.0).abs() < 0.001  Err(_) => False }
+    correct and unchanged
+}
+
 # ── the engine/coach boundary, pinned (#154) ────────────────────────
 # Stride describes state; it never prescribes. These expects iterate every
 # band's label and state id and fail if coaching vocabulary ever reappears —
