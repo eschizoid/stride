@@ -818,7 +818,10 @@ Render :: [].{
     reps_screen = |p| {
         shown = (List.len(p.sessions)).to_i64_wrap()
         more = if p.matched_total > shown " · showing ${I64.to_str(shown)} of ${I64.to_str(p.matched_total)}" else ""
-        header = "── ${I64.to_str(p.shape_reps)}×${mmss(p.shape_dur)} blocks · anchored ${p.anchor_date}${more} ──"
+        # "anchor" is load-bearing: the shape describes the anchor session, and
+        # each row states its own spread. Claiming it for the table would be the
+        # header/rows contradiction review found in round 1.
+        header = "── anchor ${I64.to_str(p.shape_reps)}×${mmss(p.shape_dur)} · ${p.anchor_date}${more} ──"
         rows = List.map(p.sessions, |s| {
             watts = Str.join_with(List.map(s.reps, |r| fmt0(r.avg_signal)), " · ")
             hr = if s.hr_rise_known " · hr +${fmt0(s.hr_rise_bpm)}" else ""

@@ -741,6 +741,37 @@ b_seed_analyze! = |ctx| {
     check!("hr rise spans first to last rep", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 331) | .hr_rise_bpm] | .[0] == 20") == "true")?
     check!("each session reports its own dispersion", strjq!(ctx, ["reps"], "[.data.sessions[] | has(\"uniformity\") and has(\"min_dur_s\") and has(\"max_dur_s\")] | all") == "true")?
     check!("the payload discloses how many matched", strjq!(ctx, ["reps"], ".data.matched_total >= (.data.sessions | length)") == "true")?
+    # ── each round-2 guarantee gets a mutation-killing probe ────────────
+    # count: a 4-rep session whose mean duration sits in the SAME band must be
+    # excluded, or `HAVING COUNT(*) = :reps` is untested (it was)
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,weighted_avg_watts,avg_watts,device_watts) VALUES (332,'four reps','Ride','Ride',date('${ctx.d1}','-19 days')||'T06:00:00Z',1800,200,200,1);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (332,0,'work',0,300,200.0,'power'),(332,1,'work',400,300,200.0,'power'),(332,2,'work',800,300,200.0,'power'),(332,3,'work',1200,300,200.0,'power');")
+    check!("a different rep COUNT is not comparable", strjq!(ctx, ["reps"], "[.data.sessions[].id] | index(332) == null") == "true")?
+    # signal: watts and m/s must never share a column
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,weighted_avg_watts,avg_watts,device_watts) VALUES (333,'pace signal','Ride','Ride',date('${ctx.d1}','-18 days')||'T06:00:00Z',1800,200,200,1);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (333,0,'work',0,300,4.0,'pace'),(333,1,'work',400,300,4.0,'pace'),(333,2,'work',800,300,4.0,'pace');")
+    check!("a different SIGNAL is not comparable", strjq!(ctx, ["reps"], "[.data.sessions[].id] | index(333) == null") == "true")?
+    # hr span: HR on the MIDDLE rep only must read unknown, not a narrowed span
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,weighted_avg_watts,avg_watts,device_watts) VALUES (334,'middle hr','Ride','Ride',date('${ctx.d1}','-17 days')||'T06:00:00Z',1800,200,200,1);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal,avg_hr) VALUES (334,0,'work',0,300,200.0,'power',140.0),(334,1,'work',400,300,200.0,'power',150.0),(334,2,'work',800,300,200.0,'power',NULL);")
+    # HR on reps 1 and 2 but NOT the last: the old semantics reported a
+    # "first-to-last" rise that actually spanned reps 1-2. Two HR-bearing reps
+    # is what makes this discriminate — a single one reads unknown either way.
+    check!("hr rise is unknown unless BOTH end reps carry it", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 334) | .hr_rise_known] | .[0] == false") == "true")?
+    # cap: the window is 12, so 13+ comparables must make matched_total exceed
+    # the rows returned. Asserting >= was satisfied by equality — which is
+    # exactly the bug a cap check exists to catch.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,weighted_avg_watts,avg_watts,device_watts) VALUES (340,'cap probe 0','Ride','Ride',date('${ctx.d1}','-40 days')||'T06:00:00Z',1800,200,200,1),(341,'cap probe 1','Ride','Ride',date('${ctx.d1}','-41 days')||'T06:00:00Z',1800,200,200,1),(342,'cap probe 2','Ride','Ride',date('${ctx.d1}','-42 days')||'T06:00:00Z',1800,200,200,1),(343,'cap probe 3','Ride','Ride',date('${ctx.d1}','-43 days')||'T06:00:00Z',1800,200,200,1),(344,'cap probe 4','Ride','Ride',date('${ctx.d1}','-44 days')||'T06:00:00Z',1800,200,200,1),(345,'cap probe 5','Ride','Ride',date('${ctx.d1}','-45 days')||'T06:00:00Z',1800,200,200,1),(346,'cap probe 6','Ride','Ride',date('${ctx.d1}','-46 days')||'T06:00:00Z',1800,200,200,1),(347,'cap probe 7','Ride','Ride',date('${ctx.d1}','-47 days')||'T06:00:00Z',1800,200,200,1),(348,'cap probe 8','Ride','Ride',date('${ctx.d1}','-48 days')||'T06:00:00Z',1800,200,200,1),(349,'cap probe 9','Ride','Ride',date('${ctx.d1}','-49 days')||'T06:00:00Z',1800,200,200,1),(350,'cap probe 10','Ride','Ride',date('${ctx.d1}','-50 days')||'T06:00:00Z',1800,200,200,1),(351,'cap probe 11','Ride','Ride',date('${ctx.d1}','-51 days')||'T06:00:00Z',1800,200,200,1),(352,'cap probe 12','Ride','Ride',date('${ctx.d1}','-52 days')||'T06:00:00Z',1800,200,200,1);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (340,0,'work',0,200,200.0,'power'),(340,1,'work',400,200,200.0,'power'),(340,2,'work',800,200,200.0,'power'),(341,0,'work',0,200,200.0,'power'),(341,1,'work',400,200,200.0,'power'),(341,2,'work',800,200,200.0,'power'),(342,0,'work',0,200,200.0,'power'),(342,1,'work',400,200,200.0,'power'),(342,2,'work',800,200,200.0,'power'),(343,0,'work',0,200,200.0,'power'),(343,1,'work',400,200,200.0,'power'),(343,2,'work',800,200,200.0,'power'),(344,0,'work',0,200,200.0,'power'),(344,1,'work',400,200,200.0,'power'),(344,2,'work',800,200,200.0,'power'),(345,0,'work',0,200,200.0,'power'),(345,1,'work',400,200,200.0,'power'),(345,2,'work',800,200,200.0,'power'),(346,0,'work',0,200,200.0,'power'),(346,1,'work',400,200,200.0,'power'),(346,2,'work',800,200,200.0,'power'),(347,0,'work',0,200,200.0,'power'),(347,1,'work',400,200,200.0,'power'),(347,2,'work',800,200,200.0,'power'),(348,0,'work',0,200,200.0,'power'),(348,1,'work',400,200,200.0,'power'),(348,2,'work',800,200,200.0,'power'),(349,0,'work',0,200,200.0,'power'),(349,1,'work',400,200,200.0,'power'),(349,2,'work',800,200,200.0,'power'),(350,0,'work',0,200,200.0,'power'),(350,1,'work',400,200,200.0,'power'),(350,2,'work',800,200,200.0,'power'),(351,0,'work',0,200,200.0,'power'),(351,1,'work',400,200,200.0,'power'),(351,2,'work',800,200,200.0,'power'),(352,0,'work',0,200,200.0,'power'),(352,1,'work',400,200,200.0,'power'),(352,2,'work',800,200,200.0,'power');")
+    check!("the window caps at 12 rows", strjq!(ctx, ["reps"], ".data.sessions | length == 12") == "true")?
+    check!("...and matched_total exceeds them, so truncation is visible", strjq!(ctx, ["reps"], ".data.matched_total > (.data.sessions | length)") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id BETWEEN 340 AND 352; DELETE FROM activities WHERE id BETWEEN 340 AND 352;")
+    # the anchor gate: a session whose blocks are NOT one repeated shape cannot
+    # be an anchor, and being the most recent must not change that
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,weighted_avg_watts,avg_watts,device_watts) VALUES (335,'irregular','Ride','Ride','2099-01-01T06:00:00Z',3000,200,200,1);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (335,0,'work',0,60,200.0,'power'),(335,1,'work',200,1800,200.0,'power'),(335,2,'work',2100,120,200.0,'power');")
+    check!("an irregular session is refused as an anchor", Str.contains(stride!(ctx.bin, ctx.home, ["reps"]), "irregular_anchor"))?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=335; DELETE FROM activities WHERE id=335;")
     check!("reps conforms to its schema", validate!("reps", "reps") == "")?
     check!("a date with no detected structure says so in band", Str.contains(stride!(ctx.bin, ctx.home, ["reps", "1999-01-01"]), "no_intervals_on_date"))?
     # comparability is not just the count: a same-count session whose reps sit
@@ -750,7 +781,10 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,distance,weighted_avg_watts,avg_watts,device_watts) VALUES (330,'short vo2','Ride','Ride','${ctx.d1}T05:00:00Z',1200,8000,240,240,1);")
     _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (330,0,'work',0,90,300.0,'power'),(330,1,'work',200,90,300.0,'power'),(330,2,'work',400,90,300.0,'power');")
     check!("a same-count session in another rep band is not comparable", Str.trim(strjq!(ctx, ["reps"], ".data.sessions | length")) == before_n)?
-    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (330,331); DELETE FROM activities WHERE id IN (330,331);")
+    # every probe activity leaves before the block ends — a later analyze would
+    # otherwise score them and move CTL, which surfaced as an unrelated form
+    # check failing 90 lines further down
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (330,331,332,333,334); DELETE FROM activity_metrics WHERE activity_id IN (330,331,332,333,334); DELETE FROM activities WHERE id IN (330,331,332,333,334);")
     # --help rather than a bare call: interpolating a compile-time empty string
     # into the command slot is the #32-class crash, and --help returns the
     # identical discovery payload

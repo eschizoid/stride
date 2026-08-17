@@ -1849,12 +1849,11 @@ Report :: [].{
                 else
                     Output.err_out!("no_intervals_on_date", "no detected interval structure on ${date_arg} — the ride may have been continuous, or its streams are missing")
             Ok(a) => {
-                # The anchor must itself BE a shape before anything can share
-                # it. Review found the old rule printing "3x11:58" over sessions
-                # whose reps ran 2187/67/250s: banding the MEAN says nothing
-                # about the spread, and with rep count already fixed, a mean
-                # band is arithmetically just a total-work-time band. Require
-                # every rep — the anchor's included — to land in ONE band.
+                # The anchor must itself BE a repeated shape before anything can
+                # share it. The old rule printed "3x11:58" over sessions whose
+                # reps ran 2187/67/250s: banding the MEAN says nothing about the
+                # spread, and with rep count already fixed, a mean band is
+                # arithmetically just a total-work-time band.
                 band = Metrics.rep_duration_band(a.mean_dur)
                 # The ANCHOR must be a repeated shape or there is nothing to
                 # compare against: a session whose blocks run 2187/67/250s has
@@ -1887,7 +1886,15 @@ Report :: [].{
                         \\HAVING COUNT(*) = :reps
                         \\   AND CAST(AVG(s.dur_s) AS INTEGER) >= :blo
                         \\   AND CAST(AVG(s.dur_s) AS INTEGER) < :bhi
-                        \\ORDER BY a2.start_local DESC, a2.id DESC LIMIT 12
+                        \\-- keep the MOST COMPARABLE twelve, not the most recent.
+                        \\-- Declining to filter on uniformity and then letting a
+                        \\-- recency cap discard the two most uniform sessions in
+                        \\-- the history (review measured exactly that) defers the
+                        \\-- judgment and withholds the data for it. Ties break by
+                        \\-- recency; the rows are re-sorted by date for display.
+                        \\ORDER BY (CAST(MAX(s.dur_s) AS REAL) / MAX(MIN(s.dur_s), 1)) ASC,
+                        \\         a2.start_local DESC, a2.id DESC
+                        \\LIMIT 12
                     ,
                     bindings: [
                         { name: ":id", value: Integer(a.id) },
@@ -1968,7 +1975,12 @@ Report :: [].{
                         Ok({ ordinal, dur_s, avg_signal, signal, avg_hr, hr_known: hr_known != 0, rec_drop, rec_drop_known: rec_drop_known != 0 })
                     },
                 })
-                built = List.map_try!(sessions, |sn| {
+                # selection ranked by uniformity, DISPLAY by date — the coach
+                # reads a trend down the page, not a ranking
+                # Str has no ordering in this Roc — sort on parsed day numbers
+                keyed = List.map(sessions, |sn| { d: (Metrics.date_str_to_days(sn.date)).ok_or(0), sn })
+                by_date = List.map(List.sort_with(keyed, |x, y| if x.d > y.d LT else if x.d < y.d GT else EQ), |k| k.sn)
+                built = List.map_try!(by_date, |sn| {
                     rs = rows_for!(sn.id)?
                     first_w = (List.first(rs)).map_ok(|r| r.avg_signal).ok_or(0.0)
                     last_w = (List.last(rs)).map_ok(|r| r.avg_signal).ok_or(0.0)
