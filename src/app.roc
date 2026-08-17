@@ -84,6 +84,7 @@ help_text =
         \\                            (power→EF, distance→speed/HR, rated→RPE); latest by default,
         \\                            oldest-first — desc lists newest first
         \\    compare [week|month]    this period vs the one before it (default week)
+        \\    season                  training blocks, monthly load, polarization, FTP over time
         \\    top <metric> [n] [sport]   best sessions by hr|tss|power|intensity|distance|time|output
         \\
         \\WHAT HAPPENED?
@@ -310,6 +311,7 @@ dispatch! = |cmd|
         Command.Activity(id_str) => Report.activity!(id_str)
         Command.Load(days) => Report.load_series!(days)
         Command.PowerCurve(days, sport) => Report.power_curve!(days, sport)
+        Command.Season => Report.season!({})
         Command.WeekView => Plan.plan_view!(ThisWeek)
         Command.WeekViewAll => Plan.plan_view!(AllTime)
         Command.WeekAdd(date, session_type, detail, rationale) => Plan.plan_add!(date, session_type, detail, rationale)

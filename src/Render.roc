@@ -811,6 +811,46 @@ Render :: [].{
             "  FTP (60d): ~${fmt0(ftp.estimated_ftp_w)}W — derived from your best 20-min power ${fmt0(ftp.best_20min_w_60d)}W",
         ]
 
+    # ── season screen (#139, ADR 0011) ──────────────────────────────────
+    # Blocks bounded by absence, described by measurement. No phase names: the
+    # trend is a slope with an r2, and a low r2 means the block had no trend,
+    # which is an answer rather than a gap.
+    season_screen = |p| {
+        block_rows = List.map(p.blocks, |b| {
+            trend =
+                if b.trend_known {
+                    "${signed(b.slope_tss_per_week)}/wk (r2 ${fmt2(b.trend_r2)})"
+                } else {
+                    "-"
+                }
+            pol = if b.polarization_known "${I64.to_str(b.easy_pct)}/${I64.to_str(b.moderate_pct)}/${I64.to_str(b.hard_pct)}" else "-"
+            # named, because a rowing threshold and a cycling FTP are not the
+            # same quantity and this athlete has both
+            ftp = if b.ftp_known "${b.ftp_family} ${fmt0(b.ftp_lo)}-${fmt0(b.ftp_hi)}" else "-"
+            [
+                "${b.start_date}..${b.end_date}",
+                I64.to_str(b.weeks),
+                fmt0(b.total_load),
+                fmt0(b.mean_weekly_load),
+                trend,
+                pol,
+                ftp,
+            ]
+        })
+        block_tbl = render_table(["block", "wks", "load", "load/wk", "trend", "e/m/h", "ftp"], block_rows)
+        # the last 12 months, newest last so the series reads left to right in time
+        recent = if List.len(p.months) > 12 List.drop_first(p.months, List.len(p.months) - 12) else p.months
+        month_rows = List.map(recent, |m| [
+            m.month,
+            fmt0(m.load),
+            I64.to_str(m.sessions),
+            if m.ftp_known "${m.ftp_family} ${fmt0(m.ftp_lo)}-${fmt0(m.ftp_hi)}" else "-",
+        ])
+        month_tbl = render_table(["month", "load", "sessions", "ftp"], month_rows)
+        legend = "a block is a run of training weeks closed by ${I64.to_str(p.gap_weeks)}+ weeks with no load · trend = TSS/week slope across the block, r2 = how much of the week-to-week movement it explains · e/m/h = easy/moderate/hard time % · blocks are described, not named · a threshold belongs to a sport, so each range names whose it is"
+        Str.join_with(["── blocks ──", "", block_tbl, "── by month ──", "", month_tbl, "", legend], "\n")
+    }
+
     # ── compare command screen ──────────────────────────────────────────
     # this rolling window vs the prior one, metric by metric, with a signed delta
     # The compare verdict as a PURE producer, extracted so the boundary guard can

@@ -1,0 +1,54 @@
+{
+  "title": "season",
+  "description": "The season at block and month scale (#139). A BLOCK is a maximal run of consecutive training weeks closed by an absence of `gap_weeks` or more calendar weeks carrying no load — see ADR 0011. That boundary is used because it is the only one in the data that is not a judgment call: textbook build/recover cycle detection fits 9 of 96 real training weeks, so a detector built on it segments noise. Blocks are DESCRIBED and never named — there is no `base`/`build`/`peak` field, because those are claims about intent and load observes only volume (#154). `slope_tss_per_week` is the regression slope of weekly load across the block and `trend_r2` how much of the week-to-week movement it explains; a low r2 means the block had no trend, which is an answer rather than a gap. Both are withheld (`trend_known: false`) under three weeks, where r2 is 1 by construction. A long block is reported as long and never subdivided — splitting it would fabricate the boundary this definition exists to avoid. `ftp_*` names the sport family it belongs to, because a rowing threshold and a cycling FTP are different quantities and an athlete may have both; the range covers the period and the family with the most sessions in it.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": ["gap_weeks", "blocks", "months"],
+  "properties": {
+    "gap_weeks": { "type": "integer" },
+    "blocks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": ["start_date", "end_date", "weeks", "total_load", "mean_weekly_load", "sessions", "slope_tss_per_week", "trend_r2", "trend_known", "easy_pct", "moderate_pct", "hard_pct", "polarization_known", "ftp_family", "ftp_lo", "ftp_hi", "ftp_known"],
+        "properties": {
+          "start_date": { "type": "string" },
+          "end_date": { "type": "string" },
+          "weeks": { "type": "integer" },
+          "total_load": { "type": "number" },
+          "mean_weekly_load": { "type": "number" },
+          "sessions": { "type": "integer" },
+          "slope_tss_per_week": { "type": "number" },
+          "trend_r2": { "type": "number" },
+          "trend_known": { "type": "boolean" },
+          "easy_pct": { "type": "integer" },
+          "moderate_pct": { "type": "integer" },
+          "hard_pct": { "type": "integer" },
+          "polarization_known": { "type": "boolean" },
+          "ftp_family": { "type": "string" },
+          "ftp_lo": { "type": "number" },
+          "ftp_hi": { "type": "number" },
+          "ftp_known": { "type": "boolean" }
+        }
+      }
+    },
+    "months": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": ["month", "load", "sessions", "ftp_family", "ftp_lo", "ftp_hi", "ftp_known"],
+        "properties": {
+          "month": { "type": "string" },
+          "load": { "type": "number" },
+          "sessions": { "type": "integer" },
+          "ftp_family": { "type": "string" },
+          "ftp_lo": { "type": "number" },
+          "ftp_hi": { "type": "number" },
+          "ftp_known": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

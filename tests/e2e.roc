@@ -814,6 +814,48 @@ b_seed_analyze! = |ctx| {
     sch_open = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d2}", "threshold", "schema probe open", "r"], ".data.id"))
     check!("plan arrays are populated for this check", strjq!(ctx, ["plan"], "(.data.open_sessions | length > 0) and (.data.plan_history_28d | length > 0)") == "true")?
     check!("plan with populated arrays conforms", validate!("plan", "plan") == "")?
+
+    # ── season: blocks bounded by absence (#139, ADR 0011) ──────────────
+    # The fixture's activities sit in a handful of dates, so this exercises the
+    # boundary rule rather than a rich history: what matters is that a gap
+    # OPENS a block, that a one-week gap does NOT, and that the count is a
+    # measured consequence of the dates rather than a constant.
+    check!("season conforms", validate!("season", "season") == "")?
+    check!("season reports at least one block", strjq!(ctx, ["season"], ".data.blocks | length > 0") == "true")?
+    check!("the gap threshold travels with the payload", strjq!(ctx, ["season"], ".data.gap_weeks") == "2")?
+    # every block must have a start no later than its end, and a positive week
+    # count -- a fabricated boundary usually shows up as one of these inverting
+    # phrased as "no block violates" rather than "count of good == total":
+    # after a pipe, jq's `.data.blocks` resolves against the piped array rather
+    # than the root, so the comparison silently read `1 == 0`
+    check!("blocks are well-formed spans", strjq!(ctx, ["season"], "[.data.blocks[] | select((.start_date <= .end_date | not) or .weeks <= 0)] | length == 0") == "true")?
+    # under three weeks the trend is WITHHELD, not zero-with-confidence
+    check!("short blocks withhold their trend", strjq!(ctx, ["season"], "[.data.blocks[] | select(.weeks < 3 and .trend_known)] | length == 0") == "true")?
+    # a threshold range must name the family it belongs to, or a rowing
+    # threshold and a cycling FTP get averaged into a number describing nobody
+    check!("a known FTP range names its sport family", strjq!(ctx, ["season"], "[.data.blocks[] | select(.ftp_known and (.ftp_family | length == 0))] | length == 0") == "true")?
+    # the boundary rule, end to end: insert a training day two clear weeks after
+    # the last one and the block COUNT must rise by exactly one
+    season_before = Str.trim(strjq!(ctx, ["season"], ".data.blocks | length"))
+    last_day = Str.trim(strjq!(ctx, ["season"], ".data.blocks | last | .end_date"))
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES (date('${last_day}', '+21 days'), 55.0, 10.0, 10.0, 0.0);")
+    check!("a gap of two clear weeks opens a new block", Str.trim(strjq!(ctx, ["season"], ".data.blocks | length")) != season_before)?
+    # ...and a day only ONE week later joins the block instead of opening one
+    _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = date('${last_day}', '+21 days');")
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES (date('${last_day}', '+7 days'), 55.0, 10.0, 10.0, 0.0);")
+    check!("a single week off does NOT open a block", Str.trim(strjq!(ctx, ["season"], ".data.blocks | length")) == season_before)?
+    _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = date('${last_day}', '+7 days');")
+    # A zero-load day is ABSENCE, not a light week -- daily_load carries rest
+    # days so CTL can decay, and counting them as training would erase every
+    # gap. Asserting "the count did not change" after inserting a lone zero day
+    # proves nothing: it does not change under either rule. The discriminating
+    # shape puts the zero week INSIDE what is otherwise a two-week gap --
+    # absence keeps the split, training bridges it into one block.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES (date('${last_day}', '+7 days'), 0.0, 10.0, 10.0, 0.0);")
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES (date('${last_day}', '+21 days'), 55.0, 10.0, 10.0, 0.0);")
+    check!("a zero-load week does not bridge a gap", Str.trim(strjq!(ctx, ["season"], ".data.blocks | length")) != season_before)?
+    _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day IN (date('${last_day}', '+7 days'), date('${last_day}', '+21 days'));")
+    check!("season is back to its original block count", Str.trim(strjq!(ctx, ["season"], ".data.blocks | length")) == season_before)?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${sch_done}, ${sch_open});")
     # ...and the validator is not a rubber stamp: each mutation MUST be caught,
     # or "conforms" above would mean nothing (a validator that passes everything

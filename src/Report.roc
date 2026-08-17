@@ -1982,6 +1982,183 @@ Report :: [].{
     # taken as the MAX across a window (per sport), plus a Critical Power / W' fit over the
     # aerobic points. Reads the stored best_<dur>_w columns — no stream re-read. 0-power
     # durations (no ride long enough) are dropped, so the curve only shows real data.
+    # ── season view (#139, ADR 0011) ────────────────────────────────────
+    # Blocks are bounded by ABSENCE and described by measurement. Nothing here
+    # names a phase: "base"/"build"/"peak" are claims about intent, and load
+    # observes only volume.
+    season_gap_weeks : I64
+    season_gap_weeks = 2
+
+    # A threshold belongs to a sport family — this athlete's rowing threshold
+    # runs 57-156 W against 139-271 W on the bike, so a min/max across families
+    # produces a range that describes nobody (the same mistake #190 fixed by
+    # fitting CP per family). Each range is reported WITH the family it is for,
+    # picked as the family with the most sessions in the period.
+    dominant_ftp : List({ fam : Str, n : I64, ftp_lo : F64, ftp_hi : F64 }) -> { ftp_family : Str, ftp_lo : F64, ftp_hi : F64, ftp_known : Bool }
+    dominant_ftp = |rows| {
+        withftp = List.keep_if(rows, |r| r.ftp_hi > 0.0)
+        best = List.fold(withftp, { fam: "", n: 0, ftp_lo: 0.0, ftp_hi: 0.0 }, |acc, r| if r.n > acc.n r else acc)
+        { ftp_family: best.fam, ftp_lo: best.ftp_lo, ftp_hi: best.ftp_hi, ftp_known: best.ftp_hi > 0.0 }
+    }
+
+    season! : {} => Try({}, _)
+    season! = |_| {
+        path = Db.open_db!({})?
+        day_rows = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT day AS day, CAST(COALESCE(tss, 0) AS REAL) AS tss,
+                \\       CAST(COALESCE(ctl, 0) AS REAL) AS ctl,
+                \\       CAST(COALESCE(atl, 0) AS REAL) AS atl,
+                \\       CAST(COALESCE(tsb, 0) AS REAL) AS tsb
+                \\FROM daily_load ORDER BY day
+            ,
+            bindings: [],
+            rows: |cols| |stmt| {
+                d = Sqlite.str("day")(cols)(stmt)?
+                tss = Sqlite.f64("tss")(cols)(stmt)?
+                ctl = Sqlite.f64("ctl")(cols)(stmt)?
+                atl = Sqlite.f64("atl")(cols)(stmt)?
+                tsb = Sqlite.f64("tsb")(cols)(stmt)?
+                Ok({ days: (Metrics.date_str_to_days(d)).ok_or(0), tss, ctl, atl, tsb })
+            },
+        })?
+        if List.is_empty(day_rows) {
+            Output.err_out!("no_activities", "no scored training days yet — `stride sync` then `stride analyze` builds the history a season is read from")
+        } else {
+            # Per date AND family. Block boundaries come from the weekly series
+            # and have no SQL expression, so the bucketing happens in Roc.
+            pol_rows = Sqlite.query_many!({
+                path: Path.utf8(path),
+                query:
+                    \\SELECT substr(a.start_local, 1, 10) AS date,
+                    \\       COALESCE(a.sport_family, a.sport_type) AS fam,
+                    \\       COUNT(*) AS n,
+                    \\       CAST(COALESCE(SUM(m.pi_easy_s), 0) AS REAL) AS easy_s,
+                    \\       CAST(COALESCE(SUM(m.pi_moderate_s), 0) AS REAL) AS mod_s,
+                    \\       CAST(COALESCE(SUM(m.pi_hard_s), 0) AS REAL) AS hard_s,
+                    \\       CAST(COALESCE(MIN(NULLIF(m.ftp_used, 0)), 0) AS REAL) AS ftp_lo,
+                    \\       CAST(COALESCE(MAX(m.ftp_used), 0) AS REAL) AS ftp_hi
+                    \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                    \\GROUP BY date, fam ORDER BY date
+                ,
+                bindings: [],
+                rows: |cols| |stmt| {
+                    d = Sqlite.str("date")(cols)(stmt)?
+                    fam = Sqlite.str("fam")(cols)(stmt)?
+                    n = Sqlite.i64("n")(cols)(stmt)?
+                    easy_s = Sqlite.f64("easy_s")(cols)(stmt)?
+                    mod_s = Sqlite.f64("mod_s")(cols)(stmt)?
+                    hard_s = Sqlite.f64("hard_s")(cols)(stmt)?
+                    ftp_lo = Sqlite.f64("ftp_lo")(cols)(stmt)?
+                    ftp_hi = Sqlite.f64("ftp_hi")(cols)(stmt)?
+                    Ok({ days: (Metrics.date_str_to_days(d)).ok_or(0), fam, n, easy_s, mod_s, hard_s, ftp_lo, ftp_hi })
+                },
+            })?
+            month_load = Sqlite.query_many!({
+                path: Path.utf8(path),
+                query:
+                    \\SELECT substr(day, 1, 7) AS month, CAST(SUM(tss) AS REAL) AS load
+                    \\FROM daily_load GROUP BY month ORDER BY month
+                ,
+                bindings: [],
+                rows: |cols| |stmt| {
+                    month = Sqlite.str("month")(cols)(stmt)?
+                    load = Sqlite.f64("load")(cols)(stmt)?
+                    Ok({ month, load })
+                },
+            })?
+            month_fam = Sqlite.query_many!({
+                path: Path.utf8(path),
+                query:
+                    \\SELECT substr(a.start_local, 1, 7) AS month,
+                    \\       COALESCE(a.sport_family, a.sport_type) AS fam,
+                    \\       COUNT(*) AS n,
+                    \\       CAST(COALESCE(MIN(NULLIF(m.ftp_used, 0)), 0) AS REAL) AS ftp_lo,
+                    \\       CAST(COALESCE(MAX(m.ftp_used), 0) AS REAL) AS ftp_hi
+                    \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
+                    \\GROUP BY month, fam ORDER BY month
+                ,
+                bindings: [],
+                rows: |cols| |stmt| {
+                    month = Sqlite.str("month")(cols)(stmt)?
+                    fam = Sqlite.str("fam")(cols)(stmt)?
+                    n = Sqlite.i64("n")(cols)(stmt)?
+                    ftp_lo = Sqlite.f64("ftp_lo")(cols)(stmt)?
+                    ftp_hi = Sqlite.f64("ftp_hi")(cols)(stmt)?
+                    Ok({ month, fam, n, ftp_lo, ftp_hi })
+                },
+            })?
+            weeks = Metrics.weekly_rollup(day_rows)
+            blocks = Metrics.season_blocks(List.map(weeks, |w| { week_start: w.week_start, tss: w.tss, sessions: w.sessions }), season_gap_weeks)
+            built = List.map(blocks, |b| {
+                # a block spans its first Monday through the Sunday closing its
+                # last training week
+                last_day = b.last_week + 6
+                inside = List.keep_if(pol_rows, |r| r.days >= b.first_week and r.days <= last_day)
+                easy = List.fold(inside, 0.0, |a, r| a + r.easy_s)
+                moderate = List.fold(inside, 0.0, |a, r| a + r.mod_s)
+                hard = List.fold(inside, 0.0, |a, r| a + r.hard_s)
+                pcts = Metrics.coverage_pcts(easy, moderate, hard)
+                # collapse the per-date rows to one row per family before
+                # picking the dominant one
+                fams = List.fold(inside, [], |acc, r|
+                    match List.find_first_index(acc, |f| f.fam == r.fam) {
+                        Ok(i) =>
+                            match List.get(acc, i) {
+                                Ok(f) =>
+                                    List.set(acc, i, {
+                                        fam: f.fam,
+                                        n: f.n + r.n,
+                                        ftp_lo: if f.ftp_lo == 0.0 or (r.ftp_lo > 0.0 and r.ftp_lo < f.ftp_lo) r.ftp_lo else f.ftp_lo,
+                                        ftp_hi: if r.ftp_hi > f.ftp_hi r.ftp_hi else f.ftp_hi,
+                                    }).ok_or(acc)
+                                Err(_) => acc
+                            }
+                        Err(_) => List.append(acc, { fam: r.fam, n: r.n, ftp_lo: r.ftp_lo, ftp_hi: r.ftp_hi })
+                    })
+                ftp = dominant_ftp(fams)
+                {
+                    start_date: Metrics.days_to_date_str(b.first_week),
+                    end_date: Metrics.days_to_date_str(last_day),
+                    weeks: b.weeks,
+                    total_load: b.total_load,
+                    mean_weekly_load: if b.weeks > 0 b.total_load / (b.weeks).to_f64() else 0.0,
+                    sessions: b.sessions,
+                    slope_tss_per_week: b.slope,
+                    trend_r2: b.r2,
+                    trend_known: b.trend_known,
+                    easy_pct: pcts.high_pct,
+                    moderate_pct: pcts.medium_pct,
+                    hard_pct: pcts.low_pct,
+                    polarization_known: easy + moderate + hard > 0.0,
+                    ftp_family: ftp.ftp_family,
+                    ftp_lo: ftp.ftp_lo,
+                    ftp_hi: ftp.ftp_hi,
+                    ftp_known: ftp.ftp_known,
+                }
+            })
+            months = List.map(month_load, |m| {
+                fams = List.map(List.keep_if(month_fam, |f| f.month == m.month), |f| { fam: f.fam, n: f.n, ftp_lo: f.ftp_lo, ftp_hi: f.ftp_hi })
+                ftp = dominant_ftp(fams)
+                sessions = List.fold(fams, 0, |a, f| a + f.n)
+                {
+                    month: m.month,
+                    load: m.load,
+                    sessions,
+                    ftp_family: ftp.ftp_family,
+                    ftp_lo: ftp.ftp_lo,
+                    ftp_hi: ftp.ftp_hi,
+                    ftp_known: ftp.ftp_known,
+                }
+            })
+            Output.out!(
+                { gap_weeks: season_gap_weeks, blocks: built, months },
+                Render.season_screen,
+            )
+        }
+    }
+
     power_curve! : U64, Str => Try({}, _)
     power_curve! = |days, sport| {
         path = Db.open_db!({})?

@@ -54,7 +54,7 @@ schema-check: build
     # (top) or where the file name cannot carry a dash (power_curve)
     for pair in summary:summary plan:plan activities:activities top:"top tss" load:load \
                 stats:stats doctor:doctor zones:zones compare:compare progress:progress \
-                week:week power_curve:power-curve; do
+                week:week power_curve:power-curve season:season; do
         c="${pair%%:*}"
         inv=$(printf '%s' "${pair#*:}" | tr -d '"')
         out=$(STRIDE_FORMAT=json ./stride $inv 2>&1 || true)
