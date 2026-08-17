@@ -319,6 +319,34 @@ Report :: [].{
                             }
                         Null => { max_hr: 0.0, best_60: 0.0, best_180: 0.0, best_300: 0.0, best_1200: 0.0, easy_s: 0, moderate_s: 0, hard_s: 0, failed: False, has_watts: False, has_dist: False }
                     }
+                # W' balance (#186): what the ride did to the anaerobic tank,
+                # against the fit as it stood on the ride's own date. Summary
+                # rather than the series — a per-second array in every activity
+                # payload would dwarf everything else, and min/end answer the
+                # question ("how close to empty, and did it come back?").
+                cpfit = cp_fit_as_of!(path, a.date, 90)?
+                # ANNOTATED: this payload is encode-only, and an unconstrained
+                # tag serializes as the STRING "True" (the trap this repo keeps
+                # rediscovering — pinned in e2e for the other flags)
+                wbal_known : Bool
+                wbal_known = cpfit.cp > 0.0 and (match raw_opt { NotNull(_) => True  Null => False })
+                wbal =
+                    match raw_opt {
+                        NotNull(_) if cpfit.cp > 0.0 => {
+                            decoded2 = Streams.decode_streams(raw_opt)
+                            wp = List.keep_if(Streams.stream_pairs(decoded2.streams.time, decoded2.streams.watts), |p| Metrics.valid_watts(p.v))
+                            series = Metrics.w_prime_balance(Metrics.resample_1s_pairs(wp, Hold), { cp: cpfit.cp, w_prime: cpfit.w_prime })
+                            if List.is_empty(series) {
+                                { min_j: 0.0, end_j: 0.0, computed: False }
+                            } else {
+                                lowest = List.fold(series, cpfit.w_prime, |acc, b| if b < acc b else acc)
+                                { min_j: lowest, end_j: (List.last(series)).ok_or(0.0), computed: True }
+                            }
+                        }
+                        _ => { min_j: 0.0, end_j: 0.0, computed: False }
+                    }
+                wbal_ok : Bool
+                wbal_ok = wbal_known and wbal.computed
                 pintensity = { easy_s: detail.easy_s, moderate_s: detail.moderate_s, hard_s: detail.hard_s }
                 has_power_intensity = (pintensity.easy_s + pintensity.moderate_s + pintensity.hard_s) > 0
 
@@ -449,6 +477,17 @@ Report :: [].{
                         # detected structure (ADR 0008), ADDITIVE. Empty list + "" = none
                         # detected or no stream signal — reporting only, never a judgment.
                         segments: seg_rows,
+                        # the tank: how low it went and where it ended, plus the
+                        # fit it was measured against (a CP from a thin window is
+                        # a different claim from one fitted on a rich one)
+                        w_prime_balance: {
+                            min_j: wbal.min_j,
+                            end_j: wbal.end_j,
+                            known: wbal_ok,
+                            cp_used: cpfit.cp,
+                            w_prime_used: cpfit.w_prime,
+                            fit_points: cpfit.points,
+                        },
                         interval_summary,
                         # TRUE = the detector actually ran with a signal (power, or
                         # pace on a pace-routed sport). Distinguishes "verified: no
@@ -1982,6 +2021,78 @@ Report :: [].{
     # taken as the MAX across a window (per sport), plus a Critical Power / W' fit over the
     # aerobic points. Reads the stored best_<dur>_w columns — no stream re-read. 0-power
     # durations (no ride long enough) are dropped, so the curve only shows real data.
+    # The athlete's CP/W' fit as of a DATE, over the same points and the same
+    # 2-20 minute band power-curve fits (#186/#187 spend this model, so they
+    # must not fit a second, differently-shaped one). Anchored rather than
+    # today-relative: a ride is judged against the fitness demonstrated before
+    # it, the no-future-leak rule #160 established.
+    cp_fit_as_of! : Str, Str, U64 => Try({ cp : F64, w_prime : F64, points : I64 }, _)
+    cp_fit_as_of! = |path, on_date, days| {
+        row = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT CAST(COALESCE(MAX(m.best_300s_w), 0) AS REAL) AS d300,
+                \\       CAST(COALESCE(MAX(m.best_600s_w), 0) AS REAL) AS d600,
+                \\       CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS d1200
+                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                \\WHERE a.sport_family = :fam
+                \\  AND substr(a.start_local, 1, 10) <= :on
+                \\  AND a.start_local >= date(:on, '-' || :days || ' days')
+            ,
+            bindings: [
+                { name: ":fam", value: String(Sports.canonical("Ride")) },
+                { name: ":on", value: String(on_date) },
+                { name: ":days", value: String((days).to_str()) },
+            ],
+            row: |cols| |stmt| {
+                d300 = Sqlite.f64("d300")(cols)(stmt)?
+                d600 = Sqlite.f64("d600")(cols)(stmt)?
+                d1200 = Sqlite.f64("d1200")(cols)(stmt)?
+                Ok({ d300, d600, d1200 })
+            },
+        })?
+        pts = List.keep_if(
+            [{ dur_s: 300.0, watts: row.d300 }, { dur_s: 600.0, watts: row.d600 }, { dur_s: 1200.0, watts: row.d1200 }],
+            |p| p.watts > 0.0,
+        )
+        match Metrics.critical_power(pts) {
+            Ok(c) => Ok({ cp: c.cp, w_prime: c.w_prime, points: (List.len(pts)).to_i64_wrap() })
+            Err(_) => Ok({ cp: 0.0, w_prime: 0.0, points: (List.len(pts)).to_i64_wrap() })
+        }
+    }
+
+    # Time to exhaustion at a caller-named power (#187). The model is the one
+    # power-curve publishes; this only spends it. Every refusal is explicit:
+    # no fit, at-or-below CP, or a result outside the 2-20 minute band where the
+    # 2-parameter model holds — that last still returns the number, LABELLED,
+    # rather than hiding it or pretending it is trustworthy.
+    tte! : Str => Try({}, _)
+    tte! = |watts_arg|
+        match F64.from_str(Str.trim(watts_arg)) {
+            Err(_) => Output.err_out!("bad_watts", "tte needs a power in watts — got '${watts_arg}'")
+            Ok(w) =>
+                if w <= 0.0 {
+                    Output.err_out!("bad_watts", "power must be positive — got '${watts_arg}'")
+                } else {
+                    path = Db.open_db!({})?
+                    today = Metrics.days_to_date_str(Db.local_today_days!(path))
+                    fit = cp_fit_as_of!(path, today, 90)?
+                    if fit.cp <= 0.0 {
+                        Output.err_out!("no_cp_fit", "not enough distinct 5/10/20-minute power bests in the last 90 days to fit a CP model — `stride power-curve` shows what is on record")
+                    } else {
+                        res = Metrics.time_to_exhaustion({ cp: fit.cp, w_prime: fit.w_prime }, w)
+                        seconds = match res { Seconds(t) => t  OutsideModel(t) => t  BelowCp => 0.0 }
+                        status = match res { Seconds(_) => "in_model"  OutsideModel(_) => "outside_model"  BelowCp => "below_cp" }
+                        known : Bool
+                        known = match res { BelowCp => False  _ => True }
+                        Output.out!(
+                            { watts: w, seconds, known, status, cp: fit.cp, w_prime: fit.w_prime, fit_points: fit.points, window_days: 90 },
+                            Render.tte_screen,
+                        )
+                    }
+                }
+        }
+
     power_curve! : U64, Str => Try({}, _)
     power_curve! = |days, sport| {
         path = Db.open_db!({})?

@@ -62,6 +62,11 @@ Never do training math yourself: read stride's numbers, add judgment.
   intervals it reflects workout shape (check `segments`: work reps present → don't
   read drift as durability). Unknown when: no usable signal, the signal covers less
   than half the session, or |value| > 50% (artifact).
+- **W′ balance** (`activity.w_prime_balance`): `min_j` is the lowest the anaerobic
+  tank got during the ride and `end_j` where it finished, against the CP fit as of
+  that ride's own date (`cp_used`/`w_prime_used`/`fit_points`). `min_j: 0` means it
+  emptied. `known: false` means there was no fit or no power stream — never read it
+  as "the tank stayed full".
 - **Detected structure** (`stride activity <id> --json`): `interval_summary` ("3×[12:00 @
   230W / 4:00 easy]"), `segments` (per-rep kind/duration/avg + HR peak/avg/60s
   recovery drop), `hr_drift` + `hr_drift_known` (rising across reps = fatigue), and
@@ -124,6 +129,7 @@ means for every date below.
 | `stride week --json` | this week (Mon-Sun) PLUS `unplanned` rows for activities no session references — statuses open/done/skipped/unplanned; rows carry `substitute_activity_id` ("did this instead" links, rendered `→ id`); unplanned rows carry their id in `activity_id`, NOT `completed_activity_id` — discriminate on `status`. `stride week all --json` = full session log, no unplanned rows. |
 | `stride doctor --json` | dataset health: coverage counts, per-model load provenance (`scored_by`), `strength_unrated` (strength sessions awaiting a rating) |
 | `stride compare [week\|month] --json` | rolling window vs the prior one: `{period, window_label, current, prior}`, each side with tss/sessions/hard_min/easy_pct/ctl + `has_data` — `has_data: false` is the discriminator for an empty window (do not read its 0s as training) |
+| `stride tte <watts> --json` | time to exhaustion at a power YOU name, from the CP model `power-curve` fits — `{watts, seconds, known, status, cp, w_prime, fit_points, window_days}`. `status` is the qualifier that matters: `in_model` (2-20min, where the two-parameter model holds), `outside_model` (real arithmetic, but the model overshoots — a direction, not a number), `below_cp` (the model says indefinitely; bodies do not). Weigh it by `fit_points`: a fit from three close-together bests understates W′ badly, which is what happens to an athlete who never does short maximal efforts. In-band errors: `bad_watts`, `no_cp_fit` |
 | `stride progress [date] [asc\|desc] --json` | `{anchor_date, anchor_scored, groups:[{name, lens, sessions}]}` — `lens` is `ef`\|`speed_hr`\|`rpe` (sport-aware); each session carries a `score` in that lens. Bare = latest analyzed workout; `desc` lists newest first without changing the trend. **`anchor_scored: false` means a workout anchored on that date could not be scored by its group's lens, so it is absent from `groups` and the trends exclude it** — do not read the trend as covering the session you asked about. In-band errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts` |
 
 ## Conventions & gotchas

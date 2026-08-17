@@ -811,6 +811,20 @@ Render :: [].{
             "  FTP (60d): ~${fmt0(ftp.estimated_ftp_w)}W — derived from your best 20-min power ${fmt0(ftp.best_20min_w_60d)}W",
         ]
 
+    # time to exhaustion: the number, and what the model thinks of it
+    tte_screen = |p| {
+        head = "at ${fmt0(p.watts)}W against CP ${fmt0(p.cp)} (W' ${fmt1(p.w_prime / 1000.0)} kJ from ${I64.to_str(p.fit_points)} points over ${I64.to_str(p.window_days)}d)"
+        body =
+            if p.status == "below_cp" {
+                "  at or below CP the model has no limit — it says indefinitely, which is the model's answer and not your body's"
+            } else if p.status == "outside_model" {
+                "  ~${mmss((p.seconds).round_to_i64_try().ok_or(0))} — OUTSIDE the 2-20min band the model holds in, so read it as a direction rather than a number"
+            } else {
+                "  ~${mmss((p.seconds).round_to_i64_try().ok_or(0))}"
+            }
+        "${head}\n${body}"
+    }
+
     # ── compare command screen ──────────────────────────────────────────
     # this rolling window vs the prior one, metric by metric, with a signed delta
     # The compare verdict as a PURE producer, extracted so the boundary guard can

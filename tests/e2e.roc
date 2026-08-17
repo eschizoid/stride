@@ -718,6 +718,16 @@ b_seed_analyze! = |ctx| {
     # interval ride and carries every segment kind, so it is what actually
     # exercises those declarations. It is deleted a few lines below.
     check!("interval activity conforms (non-empty segments)", validate!("activity 103", "activity") == "")?
+    # ── spending the CP model (#186/#187) ────────────────────────────────
+    # The fixture has no 5/10/20-min power bests spread widely enough to fit a
+    # CP model, so both features must REFUSE rather than invent one — which is
+    # the behaviour that matters most, since a fabricated CP would silently
+    # mis-scale every W' number downstream.
+    check!("no CP fit is an in-band refusal, not a number", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "300"]), "no_cp_fit"))?
+    check!("a non-numeric power is refused", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "abc"]), "bad_watts"))?
+    check!("a negative power is refused", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "-50"]), "bad_watts"))?
+    check!("without a fit, W' balance is flagged unknown rather than zeroed", strjq!(ctx, ["activity", "101"], ".data.w_prime_balance | (.known == false) and ((.known | type) == \"boolean\")") == "true")?
+    check!("...and the fit it would have used travels with it", strjq!(ctx, ["activity", "101"], ".data.w_prime_balance | has(\"cp_used\") and has(\"fit_points\")") == "true")?
     # --help rather than a bare call: interpolating a compile-time empty string
     # into the command slot is the #32-class crash, and --help returns the
     # identical discovery payload

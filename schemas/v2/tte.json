@@ -1,0 +1,17 @@
+{
+  "title": "tte",
+  "description": "Time to exhaustion at a power the CALLER names (#187), from the same CP model `power-curve` publishes. `status` is the honest qualifier: `in_model` (2-20 minutes, where the two-parameter model holds), `outside_model` (the number is real arithmetic but the model overshoots there — read it as a direction), or `below_cp` (at or under CP the model says indefinitely, which is the model's answer and not the athlete's). `cp`, `w_prime`, `fit_points` and `window_days` travel with it because a fit from three close-together bests is a different claim from one fitted on a wide curve.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": ["watts", "seconds", "known", "status", "cp", "w_prime", "fit_points", "window_days"],
+  "properties": {
+    "watts": { "type": "number" },
+    "seconds": { "type": "number" },
+    "known": { "type": "boolean" },
+    "status": { "type": "string", "enum": ["in_model", "outside_model", "below_cp"] },
+    "cp": { "type": "number" },
+    "w_prime": { "type": "number" },
+    "fit_points": { "type": "integer" },
+    "window_days": { "type": "integer" }
+  }
+}

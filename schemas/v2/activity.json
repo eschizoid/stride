@@ -38,7 +38,8 @@
     "segments",
     "hr_drift",
     "hr_drift_known",
-    "baselines"
+    "baselines",
+    "w_prime_balance"
   ],
   "properties": {
     "id": {
@@ -364,6 +365,38 @@
               "type": "boolean"
             }
           }
+        }
+      }
+    },
+    "w_prime_balance": {
+      "type": "object",
+      "additionalKeys": false,
+      "required": [
+        "min_j",
+        "end_j",
+        "known",
+        "cp_used",
+        "w_prime_used",
+        "fit_points"
+      ],
+      "properties": {
+        "min_j": {
+          "type": "number"
+        },
+        "end_j": {
+          "type": "number"
+        },
+        "known": {
+          "type": "boolean"
+        },
+        "cp_used": {
+          "type": "number"
+        },
+        "w_prime_used": {
+          "type": "number"
+        },
+        "fit_points": {
+          "type": "integer"
         }
       }
     }

@@ -776,6 +776,89 @@ Metrics :: [].{
         }
     }
 
+    # e^(-x) for x >= 0. The builtin `.exp()` returns NaN on the pinned
+    # compiler — the CTL/ATL constants above are literals for exactly that
+    # reason — but W' balance needs a live exponential over a range no table
+    # covers (tau varies with how far below CP each sample sits). Range
+    # reduction rather than a bare series: halve twelve times so the argument
+    # is under ~0.012 whatever came in, take four Taylor terms where that is
+    # accurate to ~1e-10, then square back up twelve times. Negative input
+    # would be e^(+x); callers pass magnitudes, and the guard keeps a sign
+    # slip from silently returning a plausible number.
+    exp_neg : F64 -> F64
+    exp_neg = |x| {
+        if x < 0.0 {
+            1.0
+        } else {
+            r = x / 4096.0
+            r2 = r * r
+            t = 1.0 - r + r2 / 2.0 - r2 * r / 6.0 + r2 * r2 / 24.0
+            Iter.fold(0..<12, t, |acc, _| acc * acc)
+        }
+    }
+
+    # ── spending the CP model (#186, #187) ──────────────────────────────
+    #
+    # Time to exhaustion at a power ABOVE CP: the model says the finite capacity
+    # W' drains at (P - CP) watts, so it lasts W'/(P - CP) seconds. Two honest
+    # refusals rather than a number:
+    #   - at or below CP the model divides by zero or goes negative, which reads
+    #     as "forever". The model believes that; bodies do not. BelowCp says so.
+    #   - the 2-parameter model is only meaningful over roughly 2-20 minutes.
+    #     Outside that it overshoots badly (anaerobic capacity dominates below,
+    #     unmodelled fatigue above), so a result outside the window is returned
+    #     as OutsideModel WITH the number, letting a caller show it labelled
+    #     rather than silently trusting it.
+    time_to_exhaustion : { cp : F64, w_prime : F64 }, F64 -> [Seconds(F64), OutsideModel(F64), BelowCp]
+    time_to_exhaustion = |fit, watts| {
+        over = watts - fit.cp
+        if over <= 0.0 {
+            BelowCp
+        } else {
+            t = fit.w_prime / over
+            if t < 120.0 or t > 1200.0 OutsideModel(t) else Seconds(t)
+        }
+    }
+
+    # W' balance through a ride: what is left of the anaerobic capacity at each
+    # moment. Above CP it drains at (P - CP); below CP it reconstitutes toward
+    # full, exponentially, with a time constant that depends on HOW far below CP
+    # the athlete is — recovery at 100 W under CP is much faster than at 10 W
+    # under it. This is the differential (Froncioni/Skiba) form; tau follows
+    # Skiba's fit, 546*e^(-0.01*DCP) + 316. The integral forms differ enough
+    # that the choice is named rather than left implicit.
+    #
+    # Returns the balance AFTER each sample, so the minimum over the list is the
+    # deepest the athlete went. Pauses are bridged at max_sample_gap_s like
+    # everywhere else — an unrecorded hour is not an hour of recovery.
+    w_prime_balance : List({ t : I64, v : F64 }), { cp : F64, w_prime : F64 } -> List(F64)
+    w_prime_balance = |pairs, fit|
+        (List.fold(pairs, { bal: fit.w_prime, prev_t: Err({}), out: [] }, |acc, p| {
+            dt =
+                match acc.prev_t {
+                    Ok(pt) => {
+                        raw = p.t - pt
+                        if raw > max_sample_gap_s max_sample_gap_s else if raw < 0 0 else raw
+                    }
+                    Err(_) => 0
+                }
+            dtf = (dt).to_f64()
+            over = p.v - fit.cp
+            next =
+                if over > 0.0 {
+                    b = acc.bal - over * dtf
+                    if b < 0.0 0.0 else b
+                } else {
+                    # DCP is how far below CP this sample sits; deeper recovery
+                    # refills faster, which is what the exponent encodes
+                    dcp = fit.cp - p.v
+                    tau = 546.0 * exp_neg(0.01 * dcp) + 316.0
+                    deficit = fit.w_prime - acc.bal
+                    acc.bal + deficit * (1.0 - exp_neg(dtf / tau))
+                }
+            { bal: next, prev_t: Ok(p.t), out: List.append(acc.out, next) }
+        })).out
+
     # ── power zones (Coggan / Peloton 7-zone model, watt ranges from FTP) ─
     # lo_w = 0 means the zone starts at 0 (Z1); hi_w = 0 means it is open above (Z7).
     power_zones : F64 -> List({ z : Str, name : Str, lo_w : F64, hi_w : F64 })
@@ -3525,6 +3608,51 @@ expect {
     and Metrics.percentile_of([1.0, 2.0, 3.0, 4.0], 2.5) == 50
     and Metrics.percentile_of([5.0], 5.0) == 100
     and Metrics.percentile_of([], 1.0) == 0
+}
+
+# exp_neg against known values — the builtin returns NaN here, so this is the
+# only exponential in the codebase that is computed rather than tabulated
+expect {
+    near = |a, b| (a - b).abs() < 0.000001
+    near(Metrics.exp_neg(0.0), 1.0)
+    and near(Metrics.exp_neg(1.0), 0.3678794412)
+    and near(Metrics.exp_neg(0.5), 0.6065306597)
+    and near(Metrics.exp_neg(3.0), 0.0497870684)
+    and near(Metrics.exp_neg(0.001), 0.9990004998)
+    # a sign slip must not read as a plausible decay
+    and near(Metrics.exp_neg(-1.0), 1.0)
+}
+
+# TTE: the model's own arithmetic, and its two honest refusals
+expect {
+    fit = { cp: 250.0, w_prime: 20000.0 }
+    # 300W is 50 over CP: 20000/50 = 400s, inside the 2-20min window
+    at300 = match Metrics.time_to_exhaustion(fit, 300.0) { Seconds(t) => (t - 400.0).abs() < 0.001  _ => False }
+    # at CP the model says forever; below it, worse than forever
+    at_cp = Metrics.time_to_exhaustion(fit, 250.0) == BelowCp
+    below = Metrics.time_to_exhaustion(fit, 200.0) == BelowCp
+    # 600W is 350 over: 57s — real, but far outside where the model holds
+    sprint = match Metrics.time_to_exhaustion(fit, 600.0) { OutsideModel(t) => (t - 57.142857).abs() < 0.001  _ => False }
+    # 265W is 15 over: 1333s, past twenty minutes
+    long = match Metrics.time_to_exhaustion(fit, 265.0) { OutsideModel(_) => True  _ => False }
+    at300 and at_cp and below and sprint and long
+}
+
+# W' balance: drains above CP, reconstitutes below it, never negative, and a
+# recording gap is bridged rather than credited as recovery
+expect {
+    fit = { cp: 250.0, w_prime: 20000.0 }
+    hard = Iter.fold(0.I64..<100, [], |acc, i| List.append(acc, { t: i, v: 350.0 }))
+    bal = Metrics.w_prime_balance(hard, fit)
+    # 100 samples at 100W over CP = 10 kJ spent, half the tank
+    spent = match List.last(bal) { Ok(b) => (b - 10000.0).abs() < 200.0  Err(_) => False }
+    # then easy riding puts some back
+    rest = List.concat(hard, Iter.fold(0.I64..<300, [], |acc, i| List.append(acc, { t: 100 + i, v: 150.0 })))
+    recovered = match List.last(Metrics.w_prime_balance(rest, fit)) { Ok(b) => b > 10000.0 and b <= 20000.0  Err(_) => False }
+    # a very long effort empties the tank but never goes below zero
+    epic = Iter.fold(0.I64..<1000, [], |acc, i| List.append(acc, { t: i, v: 400.0 }))
+    floored = List.all(Metrics.w_prime_balance(epic, fit), |b| b >= 0.0)
+    spent and recovered and floored
 }
 
 # ── the engine/coach boundary, pinned (#154) ────────────────────────
