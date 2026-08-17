@@ -173,7 +173,7 @@ main! = |raw_args| {
                     }
                 Err(Usage(u)) => Output.usage!(u)
                 Err(BadCount(s)) => Output.err_out!("bad_count", "expected a number, got '${s}'")
-                Ok(cmd) => dispatch!(cmd)
+                Ok(cmd) => run_command!(cmd)
 
             }
         ForceJson => reexec_with_format!(split.rest, "json")
@@ -206,6 +206,85 @@ reexec_with_format! = |cleaned, fmt| {
         Err(e) => Err(ReexecFailed(e))
     }
 }
+# THE boundary between platform failures and the published contract (#183).
+#
+# An uncaught platform error reaches main! as an opaque tag and the platform
+# prints `Program exited with error: <Tag>` to STDERR with empty stdout — no
+# code, no envelope, nothing a machine can branch on, and it was the first
+# thing a new user met (a query before `stride init`). Catching here rather
+# than at each of the ~40 call sites means one place decides, and a failure
+# that reaches a caller without a code is a missing arm in this match rather
+# than a habit nobody enforced.
+#
+# Err(Exit(_)) passes through untouched: that is stride's own clean signal,
+# raised by err_out! AFTER it has already printed the envelope. Converting it
+# here would print a second one.
+run_command! : Command.Command => Try({}, _)
+run_command! = |cmd|
+    match dispatch!(cmd) {
+        Ok(_) => Ok({})
+        Err(Exit(code)) => Err(Exit(code))
+        # SQLite collapses "absent" and "present but unopenable" into one code,
+        # and the remedy differs: `init` fixes the first and loops forever on the
+        # second (permissions, a directory where the file should be, an immutable
+        # flag). Ask the filesystem which one it is.
+        Err(SqliteErr(CanNotOpen, _)) => {
+            p = Db.db_path!({})?
+            # a directory at the db path answers False to is_file! but is very
+            # much "present and unopenable" — the case `init` cannot fix either
+            exists = ((Path.is_file!(Path.utf8(p))) ?? False) or ((Path.is_dir!(Path.utf8(p))) ?? False)
+            if exists {
+                Output.err_out!("unreadable_database", "${p} exists but could not be opened — check its permissions and the ownership of its directory (`init` will not fix this)")
+            } else {
+                Output.err_out!("no_database", "no database at ${p} — run `stride init` first")
+            }
+        }
+        Err(SqliteErr(NotADatabase, _)) =>
+            Output.err_out!("corrupt_database", "~/.stride/db.sqlite is not a readable SQLite database — restore a backup or re-run `stride init` against a fresh path")
+        Err(SqliteErr(code, msg)) =>
+            Output.err_out!("database_error", "the database refused this operation (${Str.inspect(code)}): ${msg}")
+        # Strava ANSWERED, with a status the caller must distinguish: an expired
+        # or revoked token is the routine one and has a code already, rate limits
+        # need their own so a caller can back off, and anything else is Strava's
+        # problem rather than a stride bug. Review found all of these landing in
+        # internal_error, telling users to file an issue for an expired token.
+        Err(HttpStatus(status, body)) =>
+            if status == 401 or status == 403 {
+                Output.err_out!("not_authenticated", "Strava rejected the credentials (HTTP ${(status).to_str()}) — run `stride auth` again")
+            } else if status == 429 {
+                Output.err_out!("rate_limited", "Strava rate limit reached (HTTP 429) — wait for the window to reset and retry")
+            } else {
+                Output.err_out!("strava_error", "Strava returned HTTP ${(status).to_str()}: ${clip_msg(body)}")
+            }
+        # Strava never answered: DNS, TLS, connection refused. The payload is a
+        # byte list, and inspecting it raw is the unreadable shape #183 was filed
+        # about — decode it.
+        Err(HttpErr(Other(bytes))) =>
+            Output.err_out!("network_unreachable", "could not reach the Strava API (${clip_msg(Str.from_utf8_lossy(bytes))}) — check the connection and retry")
+        Err(HttpErr(e)) =>
+            Output.err_out!("network_unreachable", "could not reach the Strava API (${clip_msg(Str.inspect(e))}) — check the connection and retry")
+        # a paste flow with nothing on stdin
+        Err(EndOfFile) =>
+            Output.err_out!("stdin_closed", "stdin closed before input arrived — `stride auth` needs a terminal to paste into")
+        # anything else still becomes an envelope rather than a runtime banner;
+        # the inspected tag rides in the message so the report is actionable
+        Err(other) =>
+            Output.err_out!("internal_error", "unhandled failure: ${clip_msg(Str.inspect(other))} — please open an issue with the command you ran")
+    }
+
+# An inspected tag carries whatever payload it holds — a 200 KB error body
+# produced a 200,157-byte single-line envelope in review, and response bodies
+# can carry credentials. Clip before it reaches stdout.
+clip_msg : Str -> Str
+clip_msg = |s| {
+    bytes = Str.to_utf8(s)
+    if List.len(bytes) <= 200 {
+        s
+    } else {
+        "${Str.from_utf8_lossy(List.take_first(bytes, 200))}… (truncated)"
+    }
+}
+
 dispatch! : Command.Command => Try({}, _)
 dispatch! = |cmd|
     match cmd {
