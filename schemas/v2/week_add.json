@@ -1,0 +1,22 @@
+{
+  "title": "week_add",
+  "description": "Result of `stride week add` \u2014 the id the coach links against later. Revising an existing open date returns the SAME id.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "id",
+    "session_type",
+    "target_date"
+  ],
+  "properties": {
+    "id": {
+      "type": "integer"
+    },
+    "session_type": {
+      "type": "string"
+    },
+    "target_date": {
+      "type": "string"
+    }
+  }
+}

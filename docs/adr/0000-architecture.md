@@ -162,8 +162,9 @@ change and always discriminate success from failure:
 
 Errors are in-band on stdout, and since #163 they also exit non-zero (see the amendment below). The envelope is
 deterministic (no timestamps) so golden comparisons stay stable. Human table output
-is a separate, independent rendering path. JSON is emitted when `STRIDE_FORMAT=json`
-or an agent env var is set. This was made the default (not gated) while the user
+is a separate, independent rendering path. JSON is emitted when asked for — `--json` on the command, else
+`STRIDE_FORMAT=json`; nothing is inferred from the environment (see the 2026-08-17
+amendments below). This was made the default (not gated) while the user
 base is still small enough to absorb the break.
 
 ## 8. "Today" is a local calendar day
@@ -227,4 +228,4 @@ When a decision here changes, update this ADR in the same commit as the code.
 
 §7 above said errors stay exit 0 and callers should read the JSON rather than `$?`. That was written when environment detection was the only machine interface and every caller was an LLM parsing stdout. #162 made the machine interface explicitly tool-neutral (`--json` for shell scripts, MCP clients, other agents), and for those callers an always-zero exit lies to `set -e`, `&&` chains, CI steps, and process supervisors.
 
-The envelope is unchanged — this adds information to a channel that previously carried none. Every error envelope exits 1 — but not every exit 1 carries an envelope: usage errors print a plain `usage:` line (#180), and an uncaught platform error prints to stderr with empty stdout. success exits 0; asking for help (bare `stride`, `--help`, `-h`, `help`) exits 0 because it is not a failure; an unknown command is an invocation error that emits an `unknown_command` envelope to machines and the help text to humans, exiting 1 either way. Warnings inside a successful command (analyze's pending/stream-error notes, a stream that would not decode) stay at exit 0 — they are reported in the payload, and the command did what it was asked.
+The envelope is unchanged — this adds information to a channel that previously carried none. Every error envelope exits 1 — but not every exit 1 carries an envelope: an uncaught platform error prints to stderr with empty stdout (#183). Usage errors DID print a plain line; #180 gave them an envelope for machines, so the human line survives only in human mode. success exits 0; asking for help (bare `stride`, `--help`, `-h`, `help`) exits 0 because it is not a failure; an unknown command is an invocation error that emits an `unknown_command` envelope to machines and the help text to humans, exiting 1 either way. Warnings inside a successful command (analyze's pending/stream-error notes, a stream that would not decode) stay at exit 0 — they are reported in the payload, and the command did what it was asked.

@@ -1,0 +1,103 @@
+{
+  "title": "progress",
+  "description": "Payload of `stride progress`.",
+  "type": "object",
+  "required": [
+    "anchor_date",
+    "anchor_scored",
+    "groups"
+  ],
+  "additionalKeys": false,
+  "properties": {
+    "anchor_date": {
+      "type": "string"
+    },
+    "anchor_scored": {
+      "type": "boolean"
+    },
+    "groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "lens",
+          "name",
+          "sessions"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "lens": {
+            "type": "string",
+            "enum": [
+              "ef",
+              "speed_hr",
+              "rpe"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "avg_hr",
+                "date",
+                "decoupling_known",
+                "decoupling_pct",
+                "distance_m",
+                "moving_time",
+                "np_w",
+                "output_kj",
+                "rpe",
+                "score",
+                "sport",
+                "tss"
+              ],
+              "additionalKeys": false,
+              "properties": {
+                "avg_hr": {
+                  "type": "number"
+                },
+                "date": {
+                  "type": "string"
+                },
+                "decoupling_known": {
+                  "type": "boolean"
+                },
+                "decoupling_pct": {
+                  "type": "number"
+                },
+                "distance_m": {
+                  "type": "number"
+                },
+                "moving_time": {
+                  "type": "integer"
+                },
+                "np_w": {
+                  "type": "number"
+                },
+                "output_kj": {
+                  "type": "number"
+                },
+                "rpe": {
+                  "type": "integer"
+                },
+                "score": {
+                  "type": "number"
+                },
+                "sport": {
+                  "type": "string"
+                },
+                "tss": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

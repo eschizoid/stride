@@ -65,8 +65,7 @@ differ:
 - **Reproducible recomputation** — every metric records the inputs it was computed from,
   so a changed input recomputes exactly the affected history. Edit a ride on Strava and
   the metrics self-heal.
-- **Scriptable** — every command emits JSON for tools and agents, tables for humans,
-  in a versioned envelope a caller can depend on (shape under [Commands](#commands)).
+- **Scriptable** — every command can emit JSON for tools and agents when passed `--json`, tables otherwise.
 - **An honest data model** — a session with no usable data shows `-`, not an
   invented number. Junk HR samples are filtered, and it says so. Strength, HIIT,
   and yoga score through your own effort rating (`stride rate`) instead of
@@ -218,21 +217,24 @@ stride plan                                       # everything needed to plan a 
 | `skip <id> <reason> [activity_id]` | Marks a planned session skipped, with the reason — optionally linking the activity done instead (rendered `→ id` in `week`). Adherence history stays honest either way; a bare re-skip keeps an existing link; pass a new id to change it or `none` to release it. A done session refuses skip — re-complete to fix a mis-link. |
 
 Every query command prints **human tables** in a terminal and **JSON** when
-`--json` is passed on any command (`STRIDE_FORMAT=json` and automatic agent-environment
-detection also work; the flag beats both, and `--` ends flag parsing for an argument
-whose literal value is `--json`). The JSON is
+`--json` is passed on any command (or `STRIDE_FORMAT=json` for a whole session; the
+flag beats the variable, and `--` ends flag parsing for an argument whose literal
+value is `--json`). Nothing is inferred from the environment — a machine caller asks.
+The JSON is
 a versioned envelope: success is `{"schema_version":2,"data":{…}}`, an in-band
 error is `{"schema_version":2,"error":{"code":"…","message":"…"}}` — printed on
 stdout AND accompanied by exit status 1, so `set -e`, `&&` chains and CI steps
-see failures while JSON consumers keep reading the same envelope. A bare `stride`
-prints help and exits 0; an unknown command is an error. Malformed invocations print a targeted `usage:` line;
+see failures while JSON consumers keep reading the same envelope. A bare `stride` prints
+help and exits 0 — machines get `{"data":{"commands":[…]}}` instead. An unknown command
+is an error. Malformed invocations print a targeted `usage:` line for humans and a
+`{"error":{"code":"usage",…}}` envelope for machines; both exit 1.
 `stride --help` is the full one-screen manual.
 
-The contract is a checked-in artifact, not prose: `schemas/v2/*.json` describes the
-`summary`, `activity` and `plan` payloads plus the envelope (required keys, types,
+The contract is a checked-in artifact, not prose: `schemas/v2/*.json` describes every
+published payload plus the envelope (including its error-code vocabulary) (required keys, types,
 enum values, and — via `additionalKeys: false` — the keys that are NOT part of the
-contract), and `tools/validate.jq` checks a payload against one. The remaining
-commands are not schema'd yet; the mechanism is in place for them. `just schema-check` runs it
+contract), and `tools/validate.jq` checks a payload against one. `just schema-check`
+validates your own database against them. `just schema-check` runs it
 against your own database; the e2e suite runs it against fixtures in CI, together
 with mutation checks proving the validator rejects a missing key, a wrong type, an
 undeclared key, and a bad enum value.

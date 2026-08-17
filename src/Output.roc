@@ -15,9 +15,16 @@ Output :: [].{
     error_status : I32
     error_status = 1
 
+    # A malformed invocation is a failure a machine must be able to READ (#180):
+    # under json_mode! it gets the same envelope every other error uses, with the
+    # usage line as the message. Humans keep the bare `usage:` line — it is what
+    # a terminal wants, and it is the shape the help text advertises.
     usage! : Str => Try({}, _)
     usage! = |u| {
-        Stdout.line!("usage: stride ${u}")?
+        (if json_mode!({})
+            emit_err!("usage", "usage: stride ${u}")
+        else
+            Stdout.line!("usage: stride ${u}"))?
         Err(Exit(error_status))
     }
 
@@ -96,19 +103,20 @@ Output :: [].{
     emit_err! : Str, Str => Try({}, _)
     emit_err! = |code, msg|
         Stdout.line!(Json.to_str({ schema_version: json_schema_version, error: { code, message: msg } }))
-    # output mode: humans get tables by default; LLM callers set STRIDE_FORMAT=json
-    # (CLAUDECODE env also flips to json for harnesses that set it)
+    # Output mode: humans get tables, machines ask for JSON — by `--json` on the
+    # command (which re-execs with STRIDE_FORMAT set for the child, see app.roc)
+    # or by STRIDE_FORMAT=json for a whole session.
+    #
+    # STRIDE_FORMAT is the ONLY environment input to this decision (#181). Stride
+    # does not sniff the environment for the caller's identity: a mode inferred
+    # from ambient state is one no documented command can describe, and it makes
+    # the same invocation return a table here and an envelope there depending on
+    # whose shell it ran in. Callers ask.
     json_mode! : {} => Bool
     json_mode! = |{}|
         match Env.var_str!(OsStr.from_str("STRIDE_FORMAT")) {
             Ok(v) => Str.with_ascii_lowercased(Str.trim(v)) == "json"
-            Err(_) =>
-                match Env.var_str!(OsStr.from_str("CLAUDECODE")) {
-                    # set-but-empty is not "on" — require a non-empty value
-                    Ok(v) => !(Str.is_empty(v))
-                    Err(_) => False
-
-                }
+            Err(_) => False
         }
     # ── progress narration (ADR 0007) ────────────────────────────────────
     #

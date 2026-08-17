@@ -1,0 +1,42 @@
+{
+  "title": "zones",
+  "description": "Payload of `stride zones`.",
+  "type": "object",
+  "required": [
+    "ftp",
+    "zones"
+  ],
+  "additionalKeys": false,
+  "properties": {
+    "ftp": {
+      "type": "number"
+    },
+    "zones": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "hi_w",
+          "lo_w",
+          "name",
+          "z"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "hi_w": {
+            "type": "number"
+          },
+          "lo_w": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "z": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

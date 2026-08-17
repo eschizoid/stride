@@ -1,0 +1,113 @@
+{
+  "title": "activities",
+  "description": "Payload of `stride activities` \u2014 a list.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "avg_hr",
+      "date",
+      "distance_m",
+      "hard_s",
+      "hr_known",
+      "id",
+      "intensity",
+      "intensity_known",
+      "load_model",
+      "moving_time",
+      "name",
+      "np_w",
+      "power_known",
+      "relative_effort",
+      "sport",
+      "tss",
+      "z1_s",
+      "z2_s",
+      "z3_s",
+      "z4_s",
+      "z5_s",
+      "zones_known"
+    ],
+    "additionalKeys": false,
+    "properties": {
+      "avg_hr": {
+        "type": "number"
+      },
+      "date": {
+        "type": "string"
+      },
+      "distance_m": {
+        "type": "number"
+      },
+      "hard_s": {
+        "type": "integer"
+      },
+      "hr_known": {
+        "type": "boolean"
+      },
+      "id": {
+        "type": "integer"
+      },
+      "intensity": {
+        "type": "number"
+      },
+      "intensity_known": {
+        "type": "boolean"
+      },
+      "load_model": {
+        "type": "string",
+        "enum": [
+          "power_stream",
+          "weighted_watts",
+          "avg_watts",
+          "rtss",
+          "hr_zones",
+          "hr_avg",
+          "session_rpe",
+          "relative_effort",
+          "none",
+          ""
+        ]
+      },
+      "moving_time": {
+        "type": "integer"
+      },
+      "name": {
+        "type": "string"
+      },
+      "np_w": {
+        "type": "number"
+      },
+      "power_known": {
+        "type": "boolean"
+      },
+      "relative_effort": {
+        "type": "number"
+      },
+      "sport": {
+        "type": "string"
+      },
+      "tss": {
+        "type": "number"
+      },
+      "z1_s": {
+        "type": "integer"
+      },
+      "z2_s": {
+        "type": "integer"
+      },
+      "z3_s": {
+        "type": "integer"
+      },
+      "z4_s": {
+        "type": "integer"
+      },
+      "z5_s": {
+        "type": "integer"
+      },
+      "zones_known": {
+        "type": "boolean"
+      }
+    }
+  }
+}

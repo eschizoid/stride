@@ -1,0 +1,126 @@
+{
+  "title": "doctor",
+  "description": "Payload of `stride doctor`.",
+  "type": "object",
+  "required": [
+    "activities",
+    "concurrent_reads_ok",
+    "conf_high",
+    "conf_low",
+    "conf_medium",
+    "conf_none",
+    "estimated_power_count_30d",
+    "ftp_derived_sports",
+    "hr_missing_streak",
+    "journal_mode",
+    "junk_filtered_pct_30d",
+    "junk_worst_session_pct_30d",
+    "pending_streams",
+    "rated",
+    "scored_by",
+    "sport_zone_overrides",
+    "strength_unrated",
+    "time",
+    "time_ok",
+    "unanalyzed",
+    "with_hr",
+    "with_power",
+    "with_streams",
+    "zero_load",
+    "zones_set"
+  ],
+  "additionalKeys": false,
+  "properties": {
+    "activities": {
+      "type": "integer"
+    },
+    "concurrent_reads_ok": {
+      "type": "boolean"
+    },
+    "conf_high": {
+      "type": "integer"
+    },
+    "conf_low": {
+      "type": "integer"
+    },
+    "conf_medium": {
+      "type": "integer"
+    },
+    "conf_none": {
+      "type": "integer"
+    },
+    "estimated_power_count_30d": {
+      "type": "integer"
+    },
+    "ftp_derived_sports": {
+      "type": "number"
+    },
+    "hr_missing_streak": {
+      "type": "number"
+    },
+    "journal_mode": {
+      "type": "string"
+    },
+    "junk_filtered_pct_30d": {
+      "type": "number"
+    },
+    "junk_worst_session_pct_30d": {
+      "type": "number"
+    },
+    "pending_streams": {
+      "type": "integer"
+    },
+    "rated": {
+      "type": "integer"
+    },
+    "scored_by": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "model",
+          "n"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "n": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "sport_zone_overrides": {
+      "type": "integer"
+    },
+    "strength_unrated": {
+      "type": "integer"
+    },
+    "time": {
+      "type": "string"
+    },
+    "time_ok": {
+      "type": "boolean"
+    },
+    "unanalyzed": {
+      "type": "integer"
+    },
+    "with_hr": {
+      "type": "number"
+    },
+    "with_power": {
+      "type": "integer"
+    },
+    "with_streams": {
+      "type": "integer"
+    },
+    "zero_load": {
+      "type": "integer"
+    },
+    "zones_set": {
+      "type": "boolean"
+    }
+  }
+}

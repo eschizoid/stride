@@ -1,0 +1,34 @@
+{
+  "title": "sync",
+  "description": "Result of `stride sync`. Counts are activities touched in the rolling window; `pruned` are rows Strava no longer returns.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "synced",
+    "new_activities",
+    "updated_activities",
+    "pruned",
+    "streams_fetched",
+    "pending_streams"
+  ],
+  "properties": {
+    "synced": {
+      "type": "integer"
+    },
+    "new_activities": {
+      "type": "integer"
+    },
+    "updated_activities": {
+      "type": "integer"
+    },
+    "pruned": {
+      "type": "integer"
+    },
+    "streams_fetched": {
+      "type": "integer"
+    },
+    "pending_streams": {
+      "type": "integer"
+    }
+  }
+}

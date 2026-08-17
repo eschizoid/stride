@@ -1,0 +1,14 @@
+{
+  "title": "init",
+  "description": "Result of `stride init` \u2014 the database it created or found.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "initialized"
+  ],
+  "properties": {
+    "initialized": {
+      "type": "string"
+    }
+  }
+}

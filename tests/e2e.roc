@@ -285,6 +285,20 @@ b_init_config! = |ctx| {
     # a REAL command with wrong arguments must not claim the command is unknown
     argerr = stride!(ctx.bin, ctx.home, ["sync", "extra"])
     check!("wrong arity on a real command is a usage error, not 'unknown'", Str.contains(argerr, "sync") and !(Str.contains(argerr, "unknown_command")))?
+    # ── every machine response is an envelope (#180) ─────────────────────
+    # These were the last two paths that handed a tool caller bare prose: a
+    # usage error printed `usage: stride ...` as text, and a bare invocation
+    # printed the whole human help screen.
+    check!("a usage error is an envelope for machines", Str.contains(stride!(ctx.bin, ctx.home, ["config"]), "\"code\":\"usage\""))?
+    check!("...and stays a plain line for humans", Str.contains(stride_human!(ctx.bin, ctx.home, ["config"]), "usage: stride config") and !(Str.contains(stride_human!(ctx.bin, ctx.home, ["config"]), "schema_version")))?
+    # asking what stride can do is a QUESTION, not a failure: same exit 0 in
+    # both modes, answered as data for machines and as the help screen for
+    # humans — and `--help` is the same request, so it gets the same answer
+    check!("a bare call answers with the command list, as data", strjq!(ctx, [], ".data.commands | index(\"summary\") != null") == "true")?
+    check!("--help answers identically for machines", strjq!(ctx, ["--help"], ".data.commands | index(\"plan\") != null") == "true")?
+    check!("-h and help answer the same way", strjq!(ctx, ["-h"], ".data.commands | length > 0") == "true" and strjq!(ctx, ["help"], ".data.commands | length > 0") == "true")?
+    check!("...and all four stay exit 0", stride_status!(ctx.bin, ctx.home, []) == 0 and stride_status!(ctx.bin, ctx.home, ["--help"]) == 0 and stride_status!(ctx.bin, ctx.home, ["-h"]) == 0 and stride_status!(ctx.bin, ctx.home, ["help"]) == 0)?
+    check!("humans still get the help screen", Str.contains(stride_human!(ctx.bin, ctx.home, []), "USAGE") and !(Str.contains(stride_human!(ctx.bin, ctx.home, []), "schema_version")))?
     check!("...and still exits non-zero", stride_status!(ctx.bin, ctx.home, ["sync", "extra"]) == 1)?
     # the FLAG path owns the exit code too (#162's re-exec wrapper): without
     # Err(Exit(child_code)) the parent collapses every child status to 1 and
@@ -355,6 +369,18 @@ b_config_ftp! = |ctx| {
     # ── explicit format flags (#162): the flag beats the environment, works in
     # any argv position, and the last flag wins. stride_env! pins STRIDE_FORMAT
     # so each check is a real precedence fight, not an ambient default.
+    # #181: STRIDE_FORMAT is the ONLY environment input to the mode. Stride used
+    # to sniff a tool-specific variable as well; the invariant that replaced it
+    # is stronger and vendor-neutral — no other environment variable, whatever a
+    # harness happens to export, may produce machine output.
+    # `env -u`, not the stride_env! helper: Cmd.env can only SET, so passing
+    # STRIDE_FORMAT="" lands in the Ok arm of json_mode! and short-circuits
+    # before any fallback is reached — the check could not fail for the
+    # regression it names. Review proved it by restoring a fallback on AGENT
+    # (a variable this very check sets) and watching the suite stay green.
+    ambient_sh = "env -u STRIDE_FORMAT AGENT=1 CI=true TERM=dumb CLAUDECODE=1 HOME='${ctx.home}' '${ctx.bin}' config get timezone"
+    check!("no ambient variable selects JSON", !(Str.contains(sh!(ambient_sh), "schema_version")))?
+    check!("...only the flag does, with the environment saying nothing", Str.contains(sh!("${ambient_sh} --json"), "schema_version"))?
     check!("--json beats STRIDE_FORMAT=human", Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--json"], [("STRIDE_FORMAT", "human")]), "schema_version"))?
     check!("--human beats STRIDE_FORMAT=json", !(Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--human"], [("STRIDE_FORMAT", "json")]), "schema_version")))?
     check!("flag position is free (before the subcommand)", Str.contains(stride_env!(ctx.bin, ctx.home, ["--json", "config", "get", "timezone"], [("STRIDE_FORMAT", "human")]), "schema_version"))?
@@ -657,6 +683,19 @@ b_seed_analyze! = |ctx| {
     check!("skill names the current platform", Str.contains(skill_text, "basic-cli 0.22"))?
     # ...and the commands it teaches exist: spot-check the ones this guard grew from
     check!("skill documents the derived-key refusal", Str.contains(skill_text, "derived_key"))?
+    # #181: the skill must TELL the coach to pass --json, and must not teach the
+    # retired environment detection as a way to get machine output
+    check!("skill instructs passing --json", Str.contains(skill_text, "PASS `--json` ON EVERY QUERY"))?
+    # the skill must not teach ANY environment sniffing as a way to get machine
+    # output — STRIDE_FORMAT is a session default, the flag is the instruction
+    # exact-phrase bans miss paraphrase (review slipped one past the previous
+    # version); the tree has zero occurrences of the retired name, so banning
+    # the name itself is both free and airtight
+    # the help text is a doc too, and it out-lived the removal once already
+    help_text_out = stride_human!(ctx.bin, ctx.home, ["--help"])
+    check!("help text teaches no environment detection", !(Str.contains(help_text_out, "CLAUDECODE")) and !(Str.contains(help_text_out, "JSON for tools")))?
+    check!("help text documents the flag", Str.contains(help_text_out, "--json"))?
+    check!("skill teaches no environment detection", !(Str.contains(skill_text, "CLAUDECODE")) and !(Str.contains(skill_text, "detected automatically")))?
 
     # ── the JSON contract as a tested artifact (#164) ────────────────────
     # schemas/v2/*.json is the ONE source of truth for the machine interface;
@@ -664,11 +703,13 @@ b_seed_analyze! = |ctx| {
     # violation. Run from the repo root (same CWD assumption as the skill guard
     # above). additionalKeys:false is the drift catcher — a payload that GAINS a
     # field without a schema update fails here, which is the whole point.
-    # 2>&1 on EVERY stage, not just the last: a redirect binds to one command,
-    # so a crashing binary or truncated JSON upstream left jq with nothing to
-    # read, printed its parse error to the SUITE's stderr, and returned an empty
-    # capture — which read as "conforms". Review measured both shapes.
-    validate! = |cmd, schema| Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${cmd} 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/${schema}.json -f tools/validate.jq 2>&1"))
+    # An empty capture used to read as "conforms" — a crashing binary or
+    # truncated JSON left jq with nothing and its parse error went to the
+    # SUITE's stderr. The first fix merged 2>&1 into every stage, which then
+    # corrupted the JSON of the commands that NARRATE to stderr by design
+    # (analyze, sync — ADR 0007). So: keep stderr out of the pipe, and fail
+    # explicitly on an empty payload instead of inferring conformance from it.
+    validate! = |cmd, schema| Str.trim(sh!("out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${cmd} 2>/dev/null); if [ -z \"$out\" ]; then echo \"no output from `${cmd}` — nothing was validated\"; else printf '%s' \"$out\" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/${schema}.json -f tools/validate.jq 2>&1; fi"))
     check!("summary conforms to its schema", validate!("summary", "summary") == "")?
     check!("plan conforms to its schema", validate!("plan", "plan") == "")?
     check!("activity conforms to its schema", validate!("activity 101", "activity") == "")?
@@ -677,6 +718,62 @@ b_seed_analyze! = |ctx| {
     # interval ride and carries every segment kind, so it is what actually
     # exercises those declarations. It is deleted a few lines below.
     check!("interval activity conforms (non-empty segments)", validate!("activity 103", "activity") == "")?
+    # --help rather than a bare call: interpolating a compile-time empty string
+    # into the command slot is the #32-class crash, and --help returns the
+    # identical discovery payload
+    check!("the command list conforms to its schema", validate!("--help", "commands") == "")?
+    # the remaining query payloads (#164 shipped three; the coach reads all of
+    # these). Each runs the real command against the fixture db.
+    check!("activities conforms", validate!("activities 30", "activities") == "")?
+    check!("top conforms", validate!("top tss 20", "top") == "")?
+    check!("load conforms", validate!("load 90", "load") == "")?
+    check!("stats conforms", validate!("stats", "stats") == "")?
+    check!("doctor conforms", validate!("doctor", "doctor") == "")?
+    check!("zones conforms", validate!("zones", "zones") == "")?
+    check!("power-curve conforms", validate!("power-curve", "power_curve") == "")?
+    check!("compare conforms", validate!("compare week", "compare") == "")?
+    check!("progress conforms", validate!("progress", "progress") == "")?
+    # `week` is the CURRENT Mon-Sun window, and the fixture's sessions are dated
+    # relative to today — d1/d2 can both land in the PREVIOUS week, leaving the
+    # payload empty and the item schema (14 required keys + the status enum)
+    # evaluated against nothing. Seed a session dated TODAY and assert the array
+    # is non-empty before trusting the validation. Third instance of this trap
+    # in this PR; the assertion is the cheap half.
+    wk_sess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.today}", "endurance", "week schema probe", "r"], ".data.id"))
+    check!("the week payload has rows to validate", strjq!(ctx, ["week"], ".data | length > 0") == "true")?
+    check!("week conforms (with rows)", validate!("week", "week") == "")?
+    check!("week all conforms (with rows)", validate!("week all", "week") == "")?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${wk_sess};")
+    check!("version conforms", validate!("--version", "version") == "")?
+    # the action payloads the coach consumes — week add's id is parsed back out,
+    # complete/skip results are branched on, analyze's converged flag drives a
+    # re-run. analyze NARRATES to stderr, which is exactly why validate! keeps
+    # stderr out of the pipe.
+    check!("analyze conforms", validate!("analyze", "analyze") == "")?
+    # config SET rather than get: set always returns the payload, while get on a
+    # key the fixture has not written is the not_set ERROR envelope (a different
+    # shape). Re-setting the value the suite already configured is idempotent.
+    check!("config conforms", validate!("config set timezone America/Chicago", "config") == "")?
+    act_sess = Str.trim(strjq!(ctx, ["week", "add", "2099-11-11", "endurance", "schema action probe", "r"], ".data.id"))
+    check!("week add conforms", validate!("week add 2099-11-12 endurance d r", "week_add") == "")?
+    check!("skip conforms", validate!("skip ${act_sess} \"probe reason\"", "skip") == "")?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date LIKE '2099-11-%';")
+    # ...and an empty capture must FAIL rather than read as conformance, which
+    # is what it did before (a crashed binary validated clean)
+    check!("an empty payload is not conformance", Str.contains(Str.trim(sh!("out=$(false 2>/dev/null); if [ -z \"$out\" ]; then echo 'no output from `x` — nothing was validated'; fi")), "nothing was validated"))?
+    # the error arm of the envelope, with its code vocabulary enumerated: an
+    # error code that is not in the schema fails here, which is the same drift
+    # bargain additionalKeys makes for payload keys
+    check!("an error envelope conforms, code included", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' activity 99999999 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1")) == "")?
+    # The enum is hand-maintained beside 27 emit sites, and this PR proved twice
+    # in one file that it drifts: a fabricated code (bad_args, left over from a
+    # rewritten branch) and a missing one (activity_required, a routine
+    # response). Set equality in BOTH directions, extracted multi-line-aware
+    # because err_out! calls wrap. A count check would have passed — the sets
+    # were both 27.
+    code_diff = Str.trim(sh!("cat src/*.roc | tr '\\n' ' ' | grep -oE '(err_out!|emit_err!)\\( *\"[a-z_]+\"' | grep -oE '\"[a-z_]+\"' | tr -d '\"' | sort -u > /tmp/stride_src_codes.$$; jq -r '.properties.error.properties.code.enum[]' schemas/v2/envelope.json | sort > /tmp/stride_enum_codes.$$; diff /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$; rm -f /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$"))
+    check!("every error code the source emits is in the contract, and vice versa", code_diff == "")?
+    check!("...and an unknown code would be caught", Str.contains(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' activity 99999999 2>&1 | jq '.error.code = \"not_a_real_code\"' 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1"), "not in enum"))?
     check!("the envelope itself conforms", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1")) == "")?
     # the summary EMBEDDED in the plan bundle is the same shape as the standalone
     # one — asserted, not assumed (plan.json types it loosely because the
@@ -1645,9 +1742,11 @@ b_concurrency! = |ctx| {
     # and the fifo cleanup, leaving sqlite3 alive holding the transaction and hanging every
     # check after this one — the regression would present as a stuck suite instead of a
     # failed assertion, and held.out would be lost.
-    # STRIDE_FORMAT is pinned because this bypasses the stride! helper, which sets it. The
-    # mode otherwise depends on CLAUDECODE being set in the developer's shell, so this
-    # passed locally and failed on CI, where the human table has no schema_version.
+    # STRIDE_FORMAT is pinned because this bypasses the stride! helper, which sets
+    # it. This check once depended on an environment variable that happened to be
+    # exported in the developer's shell and not on CI, so it passed locally and
+    # failed there; since #181 nothing infers the mode from ambient state, and
+    # pinning it explicitly is the whole story.
     held = Str.trim(sh!("f='${ctx.home}/hold.fifo'; rm -f \"$f\"; mkfifo \"$f\"; sqlite3 '${ctx.db}' < \"$f\" > /dev/null 2>&1 & holder=$!; exec 3> \"$f\"; printf 'BEGIN;\\nSELECT COUNT(*) FROM activities;\\n' >&3; sleep 1; HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' analyze > '${ctx.home}/held.out' 2>&1; exec 3>&-; wait $holder 2>/dev/null; rm -f \"$f\"; cat '${ctx.home}/held.out'"))
     # NOT schema_version: the ERROR envelope carries that too, so matching it would accept
     # the very failure this scenario exists to catch. `converged` appears only in analyze's

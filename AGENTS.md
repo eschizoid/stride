@@ -62,8 +62,9 @@ just install   # build + symlink to ~/.local/bin/stride
   validator against your own database; `tools/schema-lint.jq` keeps schemas
   inside the subset `tools/validate.jq` actually reads).
   Errors are in-band on stdout AND exit 1 (#163: the
-  envelope is the payload, the status is the signal; a bare invocation prints
-  help and exits 0, an unknown command is an error). New commands are born on this
+  envelope is the payload, the status is the signal; a bare invocation is not a
+  failure and exits 0 — humans get the help screen, machines get the command list —
+  and an unknown command is an error). New commands are born on this
   pattern; older ones migrate as touched.
 - `tests/e2e.roc` is ONE binary in two roles: a mock Strava server (`E2E_MODE=mock`) and
   the offline e2e driver (`E2E_MODE=sync` runs real sync + token refresh against it).

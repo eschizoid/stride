@@ -1,0 +1,20 @@
+{
+  "title": "complete",
+  "description": "Result of `stride complete <id> [activity]`. `rest` marks the bare form, allowed only for rest days.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "completed_session"
+  ],
+  "properties": {
+    "completed_session": {
+      "type": "integer"
+    },
+    "activity": {
+      "type": "integer"
+    },
+    "rest": {
+      "type": "boolean"
+    }
+  }
+}

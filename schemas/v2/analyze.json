@@ -1,0 +1,50 @@
+{
+  "title": "analyze",
+  "description": "Result of `stride analyze`. `form_*` describe the state AFTER scoring; `converged: false` means fuel ran out and another run will continue.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "computed",
+    "stream_errors",
+    "converged",
+    "form_tsb",
+    "form_tsb_known",
+    "form_state",
+    "form_delta_7d",
+    "form_delta_known"
+  ],
+  "properties": {
+    "computed": {
+      "type": "integer"
+    },
+    "stream_errors": {
+      "type": "integer"
+    },
+    "converged": {
+      "type": "boolean"
+    },
+    "form_tsb": {
+      "type": "number"
+    },
+    "form_tsb_known": {
+      "type": "boolean"
+    },
+    "form_state": {
+      "type": "string",
+      "enum": [
+        "high_modeled_fatigue",
+        "modeled_fatigue_building",
+        "balanced",
+        "fresh",
+        "very_fresh",
+        ""
+      ]
+    },
+    "form_delta_7d": {
+      "type": "number"
+    },
+    "form_delta_known": {
+      "type": "boolean"
+    }
+  }
+}

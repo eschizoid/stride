@@ -1,0 +1,8 @@
+{
+  "title": "version",
+  "description": "Answer to `stride --version --json`. A machine reads this alongside the envelope's schema_version to negotiate.",
+  "type": "object",
+  "required": ["version"],
+  "additionalKeys": false,
+  "properties": { "version": { "type": "string" } }
+}

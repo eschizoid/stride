@@ -12,7 +12,8 @@ app [main!] {
 # math), Render (tables/formatting), Schema (DDL).
 #
 # Two consumers, one contract: humans get tables (with legends and a verdict),
-# LLM coaches get JSON (STRIDE_FORMAT=json or an agent env var). The engine
+# LLM coaches get JSON by ASKING for it (--json, else STRIDE_FORMAT=json —
+# nothing is inferred from the environment). The engine
 # computes deterministically; the coach reasons and writes the plan back
 # through the coaching-log commands. Neither does the other's job.
 
@@ -45,6 +46,7 @@ import Report
 import Plan
 import Import
 
+version : Str
 version = "stride 0.6.0" # x-release-please-version
 
 help_text =
@@ -54,11 +56,11 @@ help_text =
         \\USAGE
         \\    stride <command>
         \\
-        \\Query commands print human tables in a terminal and JSON for tools. Pass
-        \\--json (or --human) on any command to choose explicitly; STRIDE_FORMAT=json
-        \\and the CLAUDECODE environment detection still work, in that order of
-        \\precedence. Use -- to end flag parsing when an argument is literally
-        \\"--json": stride skip 5 -- --json
+        \\Commands print human tables. Pass --json for machine output (or --human to
+        \\force tables); nothing is inferred from the environment, so a tool asks.
+        \\STRIDE_FORMAT=json sets a default for a whole shell session and the flag
+        \\beats it. Use -- to end flag parsing when an argument is literally
+        \\"--json": stride skip 5 --json -- --json
         \\
         \\SETUP (once)
         \\    init        create ~/.stride and migrate the SQLite db
@@ -103,7 +105,7 @@ help_text =
         \\    zones       power-zone watt ranges (7) from your FTP (alias: pz)
         \\
         \\FLAGS
-        \\    --json      machine output (beats STRIDE_FORMAT and CLAUDECODE)
+        \\    --json      machine output (beats STRIDE_FORMAT)
         \\    --human     human tables, even for tool callers
         \\    --help      show this help
         \\    --version   show version
@@ -141,7 +143,25 @@ main! = |raw_args| {
     match split.mode {
         Auto =>
             match Command.parse(split.rest) {
-                Err(ShowHelp) => Stdout.line!(help_text)
+                # Asking what stride can do — bare, or `--help` — is a question,
+                # not a failure, so it stays exit 0 in both modes (#163). A
+                # machine asking it got a screen of prose it could not parse
+                # (#180); it now gets the same question answered as DATA: the
+                # command list. `--help` and a bare call are the same request,
+                # so they get the same answer rather than one becoming an error.
+                Err(ShowHelp) =>
+                    if Output.json_mode!({}) {
+                        # subcommands and flags separately: the unknown-command
+                        # envelope tells a machine to "run `stride` for the
+                        # list", so that list must lead to everything runnable —
+                        # --version included (review found it unreachable)
+                        Output.emit_ok!({
+                            commands: List.keep_if(Command.command_names, |c| !(Str.starts_with(c, "-")) and c != "help"),
+                            flags: ["--json", "--human", "--help", "--version"],
+                        })
+                    } else {
+                        Stdout.line!(help_text)
+                    }
                 # an unknown command is an invocation error (#163): machines get
                 # an envelope, humans still get the help text, both exit non-zero
                 Err(UnknownCmd(name)) =>
@@ -199,7 +219,9 @@ dispatch! = |cmd|
         Command.Plan => Report.plan_bundle!({})
         Command.Doctor => Report.doctor!({})
         Command.Zones => Report.pz!({})
-        Command.Version => Stdout.line!(version)
+        # a machine calls this alongside schema_version to negotiate, so it
+        # answers in the envelope like every other query (#182)
+        Command.Version => Output.out!({ version: version }, |p| p.version)
         Command.Compare(period) => Report.compare!(period)
         Command.Activities(c, sport) => Report.activities!(c, sport)
         Command.Top(metric, c, sport) => Report.top!(metric, c, sport)
@@ -287,5 +309,8 @@ init! = |{}| {
     Db.secure_perms!(dir)?
     Db.ensure_schema!(path)?
     Db.secure_perms!(dir)?
-    Stdout.line!("initialized ${path}")
+    # init printed its line directly, so it was the ONE command that ignored
+    # --json — an absolute the skill states ("EVERY machine response is a
+    # versioned envelope") is only true if the setup step honors it too
+    Output.out!({ initialized: path }, |p| "initialized ${p.initialized}")
 }

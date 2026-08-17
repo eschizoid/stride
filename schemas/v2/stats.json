@@ -1,0 +1,70 @@
+{
+  "title": "stats",
+  "description": "Payload of `stride stats`.",
+  "type": "object",
+  "required": [
+    "all_time",
+    "ytd",
+    "ytd_year"
+  ],
+  "additionalKeys": false,
+  "properties": {
+    "all_time": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "hours",
+          "km",
+          "sessions",
+          "sport"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "hours": {
+            "type": "number"
+          },
+          "km": {
+            "type": "number"
+          },
+          "sessions": {
+            "type": "integer"
+          },
+          "sport": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ytd": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "hours",
+          "km",
+          "sessions",
+          "sport"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "hours": {
+            "type": "number"
+          },
+          "km": {
+            "type": "number"
+          },
+          "sessions": {
+            "type": "integer"
+          },
+          "sport": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ytd_year": {
+      "type": "integer"
+    }
+  }
+}

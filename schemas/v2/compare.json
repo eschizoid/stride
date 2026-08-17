@@ -1,0 +1,84 @@
+{
+  "title": "compare",
+  "description": "Payload of `stride compare week`.",
+  "type": "object",
+  "required": [
+    "current",
+    "period",
+    "prior",
+    "window_label"
+  ],
+  "additionalKeys": false,
+  "properties": {
+    "current": {
+      "type": "object",
+      "required": [
+        "ctl",
+        "easy_pct",
+        "hard_min",
+        "has_data",
+        "sessions",
+        "tss"
+      ],
+      "additionalKeys": false,
+      "properties": {
+        "ctl": {
+          "type": "number"
+        },
+        "easy_pct": {
+          "type": "number"
+        },
+        "hard_min": {
+          "type": "integer"
+        },
+        "has_data": {
+          "type": "boolean"
+        },
+        "sessions": {
+          "type": "integer"
+        },
+        "tss": {
+          "type": "number"
+        }
+      }
+    },
+    "period": {
+      "type": "string"
+    },
+    "prior": {
+      "type": "object",
+      "required": [
+        "ctl",
+        "easy_pct",
+        "hard_min",
+        "has_data",
+        "sessions",
+        "tss"
+      ],
+      "additionalKeys": false,
+      "properties": {
+        "ctl": {
+          "type": "number"
+        },
+        "easy_pct": {
+          "type": "number"
+        },
+        "hard_min": {
+          "type": "integer"
+        },
+        "has_data": {
+          "type": "boolean"
+        },
+        "sessions": {
+          "type": "integer"
+        },
+        "tss": {
+          "type": "number"
+        }
+      }
+    },
+    "window_label": {
+      "type": "string"
+    }
+  }
+}

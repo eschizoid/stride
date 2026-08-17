@@ -1,0 +1,75 @@
+{
+  "title": "week",
+  "description": "Payload of `stride week` \u2014 a list.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "activity_id",
+      "completed_activity_id",
+      "created_at",
+      "day",
+      "detail",
+      "done_date",
+      "id",
+      "rationale",
+      "session_type",
+      "skipped_reason",
+      "status",
+      "status_shown",
+      "substitute_activity_id",
+      "target_date"
+    ],
+    "additionalKeys": false,
+    "properties": {
+      "activity_id": {
+        "type": "integer"
+      },
+      "completed_activity_id": {
+        "type": "integer"
+      },
+      "created_at": {
+        "type": "string"
+      },
+      "day": {
+        "type": "string"
+      },
+      "detail": {
+        "type": "string"
+      },
+      "done_date": {
+        "type": "string"
+      },
+      "id": {
+        "type": "integer"
+      },
+      "rationale": {
+        "type": "string"
+      },
+      "session_type": {
+        "type": "string"
+      },
+      "skipped_reason": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "open",
+          "done",
+          "skipped",
+          "unplanned"
+        ]
+      },
+      "status_shown": {
+        "type": "string"
+      },
+      "substitute_activity_id": {
+        "type": "integer"
+      },
+      "target_date": {
+        "type": "string"
+      }
+    }
+  }
+}

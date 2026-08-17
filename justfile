@@ -46,17 +46,27 @@ schema-check: build
     # what went wrong. Under set -e the shell aborted on the failing pipeline
     # and the diagnostic — already captured, thanks to 2>&1 — was never shown.
     rc=0
-    for c in summary plan; do
-        out=$(STRIDE_FORMAT=json ./stride $c 2>&1 || true)
+    # `commands` needs no database, so it is the one payload check that can
+    # never be skipped — a real contract test even on a fresh install
+    errs=$(STRIDE_FORMAT=json ./stride --help 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/commands.json -f tools/validate.jq 2>&1 || true)
+    if [ -n "$errs" ]; then echo "commands:"; echo "$errs"; rc=1; else echo "commands: conforms"; fi
+    # schema name : invocation — they differ where a command needs an argument
+    # (top) or where the file name cannot carry a dash (power_curve)
+    for pair in summary:summary plan:plan activities:activities top:"top tss" load:load \
+                stats:stats doctor:doctor zones:zones compare:compare progress:progress \
+                week:week power_curve:power-curve; do
+        c="${pair%%:*}"
+        inv=$(printf '%s' "${pair#*:}" | tr -d '"')
+        out=$(STRIDE_FORMAT=json ./stride $inv 2>&1 || true)
         # a command that legitimately has nothing to say (fresh install, no
         # activities) returns an error ENVELOPE; that is the database being
         # empty, not the contract being violated, so skip rather than accuse
         if printf '%s' "$out" | jq -e 'has("error")' >/dev/null 2>&1; then
-            echo "$c: skipped ($(printf '%s' "$out" | jq -r '.error.code'))"
+            echo "$inv: skipped ($(printf '%s' "$out" | jq -r '.error.code'))"
             continue
         fi
         errs=$(printf '%s' "$out" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/$c.json -f tools/validate.jq 2>&1 || true)
-        if [ -n "$errs" ]; then echo "$c:"; echo "$errs"; rc=1; else echo "$c: conforms"; fi
+        if [ -n "$errs" ]; then echo "$inv:"; echo "$errs"; rc=1; else echo "$inv: conforms"; fi
     done
     act=$(STRIDE_FORMAT=json ./stride activities 1 2>&1 | jq -r '.data[0].id // empty' 2>&1 || true)
     if [ -n "$act" ]; then

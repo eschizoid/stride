@@ -1,0 +1,24 @@
+{
+  "title": "commands",
+  "description": "Answer to a bare `stride --json` (or `--help`/`-h`/`help` under --json): what this binary accepts. Sourced from the parser's own command table, so the answer cannot drift from what actually parses. Flags are excluded \u2014 these are subcommands.",
+  "type": "object",
+  "required": [
+    "commands",
+    "flags"
+  ],
+  "additionalKeys": false,
+  "properties": {
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "flags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
