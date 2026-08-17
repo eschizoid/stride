@@ -72,16 +72,23 @@ Never do training math yourself: read stride's numbers, add judgment.
 ## Output modes
 
 Query commands emit **JSON when `CLAUDECODE` is set to a non-empty value** (Claude Code
-exports it, so you get JSON automatically) and **human tables otherwise**. Override with
-`STRIDE_FORMAT=json|human` (case-insensitive). If output ever looks like a table instead
+exports it, so you get JSON automatically) and **human tables otherwise**. Precedence:
+**`--json`/`--human` flag** (any argv position, last one wins; `--` ends flag parsing, so `stride skip 5 -- --json` stores the literal string as the reason and still honors the requested format) beats `STRIDE_FORMAT=json|human`
+(case-insensitive) beats the `CLAUDECODE` detection — the flag is the tool-neutral way for
+non-Claude callers (scripts, other agents) to request machine output. If output ever looks like a table instead
 of JSON, prefix the command with `STRIDE_FORMAT=json`. EVERY machine response is a
 versioned envelope: success → `{"schema_version":2,"data":{…}}`, error →
 `{"schema_version":2,"error":{"code":"…","message":"…"}}`. The payloads described in
-the table below all live under `.data` and are described formally in
-`schemas/v2/*.json` in the repo (required keys, types, enums; CI validates real
-payloads against them, so the schema and the binary cannot disagree for long); `error` is an OBJECT whose `code` carries the
-in-band error names used throughout this file (`missing_config`, `not_authenticated`,
-`derived_key`, …), with the human text nested in `error.message`. `sync` and `analyze`
+the table below all live under `.data`; the `summary`, `activity` and `plan`
+payloads are described formally in `schemas/v2/*.json` in the repo (required
+keys, types, enums; CI validates real payloads against them, so the schema and
+the binary cannot disagree for long — the other commands are not schema'd yet).
+`error` is an OBJECT whose `code` carries the
+in-band error names used throughout this file (`unknown_command`, `missing_config`, `not_authenticated`,
+`derived_key`, …), with the human text nested in `error.message`. An error
+envelope is ALSO an exit status: stride exits 1 whenever it emits one (0 on
+success; a bare `stride` prints help and exits 0) — read either channel, they
+never disagree. `sync` and `analyze`
 emit JSON results too (`{synced, new_activities, updated_activities, streams_fetched,
 pending_streams}` / `{computed, stream_errors, form_tsb, form_tsb_known, form_state,
 form_delta_7d, form_delta_known, converged}`), and `config get` emits `{key, value}` or `not_set`.

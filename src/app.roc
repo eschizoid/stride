@@ -54,8 +54,11 @@ help_text =
         \\USAGE
         \\    stride <command>
         \\
-        \\Query commands print human tables in a terminal, JSON when STRIDE_FORMAT=json
-        \\or CLAUDECODE is set (for LLM/tool callers).
+        \\Query commands print human tables in a terminal and JSON for tools. Pass
+        \\--json (or --human) on any command to choose explicitly; STRIDE_FORMAT=json
+        \\and the CLAUDECODE environment detection still work, in that order of
+        \\precedence. Use -- to end flag parsing when an argument is literally
+        \\"--json": stride skip 5 -- --json
         \\
         \\SETUP (once)
         \\    init        create ~/.stride and migrate the SQLite db
@@ -100,6 +103,8 @@ help_text =
         \\    zones       power-zone watt ranges (7) from your FTP (alias: pz)
         \\
         \\FLAGS
+        \\    --json      machine output (beats STRIDE_FORMAT and CLAUDECODE)
+        \\    --human     human tables, even for tool callers
         \\    --help      show this help
         \\    --version   show version
         \\
@@ -112,17 +117,73 @@ help_text =
 # dispatch. All arity/count validation lives in the parser and is unit-tested there.
 main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
 main! = |raw_args| {
-    # basic-cli 0.21 hands args over as an OS-native tag union — that union IS `OsStr`
+    # basic-cli hands args over as an OS-native tag union — that union IS `OsStr`
     # (Utf8 | UnixBytes raw argv | WindowsU16s UTF-16 code units). OsStr.display decodes ALL
     # three, including Windows UTF-16, best-effort (invalid text -> U+FFFD). This is why macOS +
     # Linux + Windows all Just Work here: the platform owns the decoding, not us.
     args = List.map(raw_args, |a| OsStr.display(a))
-    match Command.parse(args) {
-        Err(ShowHelp) => Stdout.line!(help_text)
-        Err(Usage(u)) => Output.usage!(u)
-        Err(BadCount(s)) => Output.err_out!("bad_count", "expected a number, got '${s}'")
-        Ok(cmd) => dispatch!(cmd)
+    # explicit format flags (#162): --json / --human anywhere in argv beat the
+    # environment. basic-cli has no setenv and json_mode! is consulted from
+    # every error path, so rather than thread a mode through the whole output
+    # layer, the flag re-execs THIS binary with STRIDE_FORMAT set for the child.
+    # It is a shim, and an honest one: it costs ~10 ms and one extra process,
+    # and it now OWNS the exit code of every flagged invocation, which is why
+    # reexec_with_format! propagates the child's status verbatim (#163 made
+    # those codes carry meaning, so the propagation is load-bearing, not tidy).
+    #
+    # The child's args are prefixed with `--` so its own parse treats every
+    # token as literal: that is what makes recursion impossible AND what keeps
+    # an escaped `stride skip 5 -- --human` from being re-read as a flag by the
+    # child (review of #177 caught both). Argv is re-encoded via OsStr.display,
+    # which is lossy for non-UTF8 bytes — only on the flag path, and stride
+    # arguments are ids, dates and words in practice.
+    split = Command.split_format_args(args)
+    match split.mode {
+        Auto =>
+            match Command.parse(split.rest) {
+                Err(ShowHelp) => Stdout.line!(help_text)
+                # an unknown command is an invocation error (#163): machines get
+                # an envelope, humans still get the help text, both exit non-zero
+                Err(UnknownCmd(name)) =>
+                    if Output.json_mode!({}) {
+                        Output.err_out!("unknown_command", "no such command '${name}' — run `stride` for the list")
+                    } else {
+                        Stdout.line!(help_text)?
+                        Err(Exit(1))
+                    }
+                Err(Usage(u)) => Output.usage!(u)
+                Err(BadCount(s)) => Output.err_out!("bad_count", "expected a number, got '${s}'")
+                Ok(cmd) => dispatch!(cmd)
 
+            }
+        ForceJson => reexec_with_format!(split.rest, "json")
+        ForceHuman => reexec_with_format!(split.rest, "human")
+    }
+}
+
+# re-run the same binary (argv0) with STRIDE_FORMAT pinned for the child; stdio
+# is inherited, so output streams exactly as if the child were the process
+# Re-run THIS executable with STRIDE_FORMAT pinned for the child; stdio is
+# inherited, so output streams exactly as if the child were the process.
+#
+# The program is Env.exe_path!(), never argv[0]: a bare argv[0] would be
+# re-resolved through PATH for the child, so a shadowing entry earlier in PATH
+# could run a DIFFERENT binary than the one already executing (review-verified).
+# Killing the parent orphans the child, which runs to completion — inherent to
+# re-exec, and the reason this stays a shim rather than growing features.
+reexec_with_format! : List(Str), Str => Try({}, _)
+reexec_with_format! = |cleaned, fmt| {
+    self = Env.exe_path!()?
+    # `--` first: the child parses every remaining token as literal
+    child_args = List.prepend(List.map(List.drop_first(cleaned, 1), OsStr.from_str), OsStr.from_str("--"))
+    match Cmd.new(Path.to_os_str(self)).args(child_args).env(OsStr.from_str("STRIDE_FORMAT"), OsStr.from_str(fmt)).exec_cmd!() {
+        Ok(_) => Ok({})
+        # the child already printed its own error surface (envelope or human
+        # text) — carry its STATUS verbatim and print nothing more. Exit(code)
+        # is the one error the platform reports silently; anything else would
+        # stack a Roc runtime banner on top of the child's own message.
+        Err(ExecCmdFailed(f)) => Err(Exit(f.exit_code))
+        Err(e) => Err(ReexecFailed(e))
     }
 }
 dispatch! : Command.Command => Try({}, _)

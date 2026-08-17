@@ -218,10 +218,14 @@ stride plan                                       # everything needed to plan a 
 | `skip <id> <reason> [activity_id]` | Marks a planned session skipped, with the reason — optionally linking the activity done instead (rendered `→ id` in `week`). Adherence history stays honest either way; a bare re-skip keeps an existing link; pass a new id to change it or `none` to release it. A done session refuses skip — re-complete to fix a mis-link. |
 
 Every query command prints **human tables** in a terminal and **JSON** when
-`STRIDE_FORMAT=json` (agent environments are detected automatically). The JSON is
+`--json` is passed on any command (`STRIDE_FORMAT=json` and automatic agent-environment
+detection also work; the flag beats both, and `--` ends flag parsing for an argument
+whose literal value is `--json`). The JSON is
 a versioned envelope: success is `{"schema_version":2,"data":{…}}`, an in-band
-error is `{"schema_version":2,"error":{"code":"…","message":"…"}}` (exit stays 0 —
-read the JSON, not `$?`). Malformed invocations print a targeted `usage:` line;
+error is `{"schema_version":2,"error":{"code":"…","message":"…"}}` — printed on
+stdout AND accompanied by exit status 1, so `set -e`, `&&` chains and CI steps
+see failures while JSON consumers keep reading the same envelope. A bare `stride`
+prints help and exits 0; an unknown command is an error. Malformed invocations print a targeted `usage:` line;
 `stride --help` is the full one-screen manual.
 
 The contract is a checked-in artifact, not prose: `schemas/v2/*.json` describes
