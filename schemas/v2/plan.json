@@ -1,0 +1,236 @@
+{
+  "title": "plan",
+  "description": "The planning bundle. `summary` is intentionally typed loosely here \u2014 it is the summary payload and is validated against schemas/v2/summary.json in the same run; this validator has no $ref, so cross-file composition happens at the call site rather than being faked with a duplicated copy that would drift.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "summary",
+    "recent_activities_14d",
+    "open_sessions",
+    "plan_history_28d",
+    "adherence_28d"
+  ],
+  "properties": {
+    "summary": {
+      "type": "object"
+    },
+    "recent_activities_14d": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "date",
+          "sport",
+          "name",
+          "moving_time",
+          "tss",
+          "load_model",
+          "intensity",
+          "intensity_known",
+          "z1_s",
+          "z2_s",
+          "z3_s",
+          "z4_s",
+          "z5_s",
+          "zones_known",
+          "hard_s",
+          "distance_m",
+          "np_w",
+          "power_known",
+          "relative_effort",
+          "avg_hr",
+          "hr_known"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "date": {
+            "type": "string"
+          },
+          "sport": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "moving_time": {
+            "type": "integer"
+          },
+          "tss": {
+            "type": "number"
+          },
+          "load_model": {
+            "type": "string"
+          },
+          "intensity": {
+            "type": "number"
+          },
+          "intensity_known": {
+            "type": "boolean"
+          },
+          "z1_s": {
+            "type": "integer"
+          },
+          "z2_s": {
+            "type": "integer"
+          },
+          "z3_s": {
+            "type": "integer"
+          },
+          "z4_s": {
+            "type": "integer"
+          },
+          "z5_s": {
+            "type": "integer"
+          },
+          "zones_known": {
+            "type": "boolean"
+          },
+          "hard_s": {
+            "type": "integer"
+          },
+          "distance_m": {
+            "type": "number"
+          },
+          "np_w": {
+            "type": "number"
+          },
+          "power_known": {
+            "type": "boolean"
+          },
+          "relative_effort": {
+            "type": "number"
+          },
+          "avg_hr": {
+            "type": "number"
+          },
+          "hr_known": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "open_sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "target_date",
+          "session_type",
+          "detail",
+          "rationale"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "target_date": {
+            "type": "string"
+          },
+          "session_type": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "plan_history_28d": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "target_date",
+          "session_type",
+          "detail",
+          "status",
+          "skipped_reason",
+          "completed_activity_id",
+          "substitute_activity_id",
+          "completed_on"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "target_date": {
+            "type": "string"
+          },
+          "session_type": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "done",
+              "skipped"
+            ]
+          },
+          "skipped_reason": {
+            "type": "string"
+          },
+          "completed_activity_id": {
+            "type": "integer"
+          },
+          "substitute_activity_id": {
+            "type": "integer"
+          },
+          "completed_on": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "adherence_28d": {
+      "type": "object",
+      "required": [
+        "planned",
+        "completed",
+        "skipped",
+        "substituted",
+        "still_open",
+        "completion_pct",
+        "unplanned_activities"
+      ],
+      "additionalKeys": false,
+      "properties": {
+        "planned": {
+          "type": "integer"
+        },
+        "completed": {
+          "type": "integer"
+        },
+        "skipped": {
+          "type": "integer"
+        },
+        "substituted": {
+          "type": "integer"
+        },
+        "still_open": {
+          "type": "integer"
+        },
+        "completion_pct": {
+          "type": "integer"
+        },
+        "unplanned_activities": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

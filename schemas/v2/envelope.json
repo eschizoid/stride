@@ -1,0 +1,19 @@
+{
+  "title": "envelope",
+  "type": "object",
+  "required": ["schema_version"],
+  "additionalKeys": false,
+  "properties": {
+    "schema_version": { "type": "integer" },
+    "data": {},
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "additionalKeys": false,
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  }
+}

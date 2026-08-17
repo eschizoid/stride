@@ -1,0 +1,434 @@
+{
+  "title": "summary",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "as_of",
+    "fitness_ctl",
+    "fatigue_atl",
+    "form_tsb",
+    "form_state",
+    "form_delta_7d",
+    "form_delta_known",
+    "form_band_days",
+    "form_band_days_capped",
+    "ctl_warming_up",
+    "load_days",
+    "ramp_7d",
+    "ramp_28d_avg",
+    "last_7d",
+    "last_28d",
+    "ftp",
+    "hr_zones",
+    "hard_days",
+    "load_windows",
+    "form_coverage_90d",
+    "last_hard_session_date",
+    "pending_sessions",
+    "sports_28d"
+  ],
+  "properties": {
+    "as_of": {
+      "type": "string"
+    },
+    "fitness_ctl": {
+      "type": "number"
+    },
+    "fatigue_atl": {
+      "type": "number"
+    },
+    "form_tsb": {
+      "type": "number"
+    },
+    "form_state": {
+      "type": "string",
+      "enum": [
+        "high_modeled_fatigue",
+        "modeled_fatigue_building",
+        "balanced",
+        "fresh",
+        "very_fresh"
+      ]
+    },
+    "form_delta_7d": {
+      "type": "number"
+    },
+    "form_delta_known": {
+      "type": "boolean"
+    },
+    "form_band_days": {
+      "type": "integer"
+    },
+    "form_band_days_capped": {
+      "type": "boolean"
+    },
+    "ctl_warming_up": {
+      "type": "boolean"
+    },
+    "load_days": {
+      "type": "integer"
+    },
+    "ramp_7d": {
+      "type": "number"
+    },
+    "ramp_28d_avg": {
+      "type": "number"
+    },
+    "last_7d": {
+      "type": "object",
+      "required": [
+        "tss",
+        "sessions",
+        "moving_time",
+        "distance_m",
+        "easy_pct",
+        "moderate_pct",
+        "hard_pct",
+        "hr_streams",
+        "intensity_streams",
+        "load_coverage"
+      ],
+      "additionalKeys": false,
+      "properties": {
+        "tss": {
+          "type": "number"
+        },
+        "sessions": {
+          "type": "integer"
+        },
+        "moving_time": {
+          "type": "integer"
+        },
+        "distance_m": {
+          "type": "number"
+        },
+        "easy_pct": {
+          "type": "integer"
+        },
+        "moderate_pct": {
+          "type": "integer"
+        },
+        "hard_pct": {
+          "type": "integer"
+        },
+        "hr_streams": {
+          "type": "integer"
+        },
+        "intensity_streams": {
+          "type": "integer"
+        },
+        "measured_pct": {
+          "type": "integer"
+        },
+        "load_coverage": {
+          "type": "object",
+          "required": [
+            "high_pct",
+            "medium_pct",
+            "low_pct",
+            "known"
+          ],
+          "additionalKeys": false,
+          "properties": {
+            "high_pct": {
+              "type": "integer"
+            },
+            "medium_pct": {
+              "type": "integer"
+            },
+            "low_pct": {
+              "type": "integer"
+            },
+            "known": {
+              "type": "boolean"
+            }
+          }
+        },
+        "z1_s": {
+          "type": "integer"
+        },
+        "z2_s": {
+          "type": "integer"
+        },
+        "z3_s": {
+          "type": "integer"
+        },
+        "z4_s": {
+          "type": "integer"
+        },
+        "z5_s": {
+          "type": "integer"
+        }
+      }
+    },
+    "last_28d": {
+      "type": "object",
+      "required": [
+        "tss",
+        "sessions",
+        "moving_time",
+        "distance_m",
+        "easy_pct",
+        "moderate_pct",
+        "hard_pct",
+        "hr_streams",
+        "intensity_streams",
+        "load_coverage",
+        "measured_pct"
+      ],
+      "additionalKeys": false,
+      "properties": {
+        "tss": {
+          "type": "number"
+        },
+        "sessions": {
+          "type": "integer"
+        },
+        "moving_time": {
+          "type": "integer"
+        },
+        "distance_m": {
+          "type": "number"
+        },
+        "easy_pct": {
+          "type": "integer"
+        },
+        "moderate_pct": {
+          "type": "integer"
+        },
+        "hard_pct": {
+          "type": "integer"
+        },
+        "hr_streams": {
+          "type": "integer"
+        },
+        "intensity_streams": {
+          "type": "integer"
+        },
+        "measured_pct": {
+          "type": "integer"
+        },
+        "load_coverage": {
+          "type": "object",
+          "required": [
+            "high_pct",
+            "medium_pct",
+            "low_pct",
+            "known"
+          ],
+          "additionalKeys": false,
+          "properties": {
+            "high_pct": {
+              "type": "integer"
+            },
+            "medium_pct": {
+              "type": "integer"
+            },
+            "low_pct": {
+              "type": "integer"
+            },
+            "known": {
+              "type": "boolean"
+            }
+          }
+        },
+        "z1_s": {
+          "type": "integer"
+        },
+        "z2_s": {
+          "type": "integer"
+        },
+        "z3_s": {
+          "type": "integer"
+        },
+        "z4_s": {
+          "type": "integer"
+        },
+        "z5_s": {
+          "type": "integer"
+        }
+      }
+    },
+    "ftp": {
+      "type": "object",
+      "required": [
+        "best_20min_w_60d",
+        "estimated_ftp_w",
+        "prior_60d_best_20min_w",
+        "prior_60d_known"
+      ],
+      "additionalKeys": false,
+      "properties": {
+        "best_20min_w_60d": {
+          "type": "number"
+        },
+        "estimated_ftp_w": {
+          "type": "number"
+        },
+        "prior_60d_best_20min_w": {
+          "type": "number"
+        },
+        "prior_60d_known": {
+          "type": "boolean"
+        }
+      }
+    },
+    "hr_zones": {
+      "type": "object",
+      "required": [
+        "z1_max",
+        "z2_max",
+        "z3_max",
+        "z4_max"
+      ],
+      "additionalKeys": false,
+      "properties": {
+        "z1_max": {
+          "type": "number"
+        },
+        "z2_max": {
+          "type": "number"
+        },
+        "z3_max": {
+          "type": "number"
+        },
+        "z4_max": {
+          "type": "number"
+        }
+      }
+    },
+    "hard_days": {
+      "type": "object",
+      "required": [
+        "d14",
+        "d28",
+        "spacing_median_days_28d",
+        "spacing_known",
+        "days_since_last",
+        "days_since_known"
+      ],
+      "additionalKeys": false,
+      "properties": {
+        "d14": {
+          "type": "integer"
+        },
+        "d28": {
+          "type": "integer"
+        },
+        "spacing_median_days_28d": {
+          "type": "integer"
+        },
+        "spacing_known": {
+          "type": "boolean"
+        },
+        "days_since_last": {
+          "type": "integer"
+        },
+        "days_since_known": {
+          "type": "boolean"
+        }
+      }
+    },
+    "load_windows": {
+      "type": "object",
+      "required": [
+        "d7",
+        "d28",
+        "d90",
+        "prior_d7",
+        "prior_d28",
+        "delta_7d",
+        "delta_28d"
+      ],
+      "additionalKeys": false,
+      "properties": {
+        "d7": {
+          "type": "number"
+        },
+        "d28": {
+          "type": "number"
+        },
+        "d90": {
+          "type": "number"
+        },
+        "prior_d7": {
+          "type": "number"
+        },
+        "prior_d28": {
+          "type": "number"
+        },
+        "delta_7d": {
+          "type": "number"
+        },
+        "delta_28d": {
+          "type": "number"
+        }
+      }
+    },
+    "form_coverage_90d": {
+      "type": "object",
+      "required": [
+        "high_pct",
+        "medium_pct",
+        "low_pct",
+        "known"
+      ],
+      "additionalKeys": false,
+      "properties": {
+        "high_pct": {
+          "type": "integer"
+        },
+        "medium_pct": {
+          "type": "integer"
+        },
+        "low_pct": {
+          "type": "integer"
+        },
+        "known": {
+          "type": "boolean"
+        }
+      }
+    },
+    "last_hard_session_date": {
+      "type": "string"
+    },
+    "pending_sessions": {
+      "type": "integer"
+    },
+    "sports_28d": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "sport",
+          "sessions",
+          "tss",
+          "moving_time",
+          "distance_m",
+          "last_date"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "sport": {
+            "type": "string"
+          },
+          "sessions": {
+            "type": "integer"
+          },
+          "tss": {
+            "type": "number"
+          },
+          "moving_time": {
+            "type": "integer"
+          },
+          "distance_m": {
+            "type": "number"
+          },
+          "last_date": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
