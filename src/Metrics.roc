@@ -1188,6 +1188,28 @@ Metrics :: [].{
         List.any(words, |w| Str.contains(low, w))
     }
 
+    # median gap in days between consecutive stimulus dates (#159) — Unknown
+    # below two dates, because one session has no spacing to measure. Input is
+    # day numbers in ANY order; dedup + sort happen here so callers stay dumb.
+    median_gap_days : List(I64) -> [Known(I64), Unknown]
+    median_gap_days = |days| {
+        distinct = List.fold(days, [], |acc, d| if List.contains(acc, d) acc else List.append(acc, d))
+        sorted = List.sort_with(distinct, |a, b| if a < b LT else if a > b GT else EQ)
+        if List.len(sorted) < 2 {
+            Unknown
+        } else {
+            gaps = (List.fold(sorted, { prev: Err({}), out: [] }, |acc, d| {
+                out = match acc.prev {
+                    Ok(p) => List.append(acc.out, d - p)
+                    Err(_) => acc.out
+                }
+                { prev: Ok(d), out }
+            })).out
+            gs = List.sort_with(gaps, |a, b| if a < b LT else if a > b GT else EQ)
+            Known(List.get(gs, List.len(gs) // 2) ?? 0)
+        }
+    }
+
     # three-way percentage split that ALWAYS sums to exactly 100 (largest-
     # remainder rounding) — the #157 coverage invariant. All-zero inputs return
     # zeros; callers carry a _known flag for that case per ADR 0009.
@@ -3425,6 +3447,17 @@ expect {
     List.len(works) >= 3 and List.all(works, |s| s.avg_signal >= 230.0 and s.avg_signal <= 255.0)
 }
 
+
+# ── stimulus spacing (#159): dedup, sort, upper median; honest Unknown below
+# two distinct dates
+expect {
+    Metrics.median_gap_days([100, 103, 107, 110]) == Known(3)
+    and Metrics.median_gap_days([110, 100, 103, 107]) == Known(3)
+    and Metrics.median_gap_days([100, 100, 104]) == Known(4)
+    and Metrics.median_gap_days([100]) == Unknown
+    and Metrics.median_gap_days([]) == Unknown
+    and Metrics.median_gap_days([100, 101]) == Known(1)
+}
 
 # ── coverage split (#157): sums to exactly 100 under every rounding shape —
 # thirds, halves, tiny slivers, single-tier, and the all-zero honest case
