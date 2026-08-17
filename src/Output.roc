@@ -143,8 +143,8 @@ Output :: [].{
     say! = |msg| Stderr.line!(msg)
 
     # a known, user-fixable error: machine-readable JSON for tool callers, a plain
-    # line for humans. Exit stays 0 (in-band errors are the codebase convention —
-    # same as plan-add's dedup guard); the payload carries the failure.
+    # line for humans, and exit 1 either way (#163) — the payload carries the
+    # failure, the status carries the fact that there WAS one.
     err_out! : Str, Str => Try({}, _)
     err_out! = |code, msg| {
         (if json_mode!({})

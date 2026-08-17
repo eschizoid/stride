@@ -112,12 +112,36 @@ Command := [
 			[_, "skip", ..] => Err(Usage("skip <session_id> \"<reason>\" [activity_id|none]"))
 			[_, "activity", ..] => Err(Usage("activity <activity_id>"))
 			[_, "config", ..] => Err(Usage("config get <key>  |  config set <key> <value>"))
-			# a bare invocation asks for help; anything else with a leading token
-			# is a command stride does not have
+			# asking for help — bare, or by any of the conventional spellings —
+			# is not a failure and must not become one (#163 broke `--help` by
+			# deleting the old catch-all that had silently served it)
 			[_] => Err(ShowHelp)
 			[] => Err(ShowHelp)
-			[_, name, ..] => Err(UnknownCmd(name))
+			[_, "--help"] => Err(ShowHelp)
+			[_, "-h"] => Err(ShowHelp)
+			[_, "help"] => Err(ShowHelp)
+			# a leading token stride DOES have, that reached here, is a real
+			# command invoked with the wrong arguments — saying "no such command
+			# sync" would be false. Only a name stride does not have is unknown.
+			[_, name, ..] =>
+				if List.contains(command_names, name) {
+					Err(Usage("${name} — wrong arguments for this command; run `stride` for every command's form"))
+				} else {
+					Err(UnknownCmd(name))
+				}
 		}
+
+	## Every command name the parser answers to, so a wrong-arity invocation of a
+	## REAL command reports a usage error instead of claiming the command does not
+	## exist. Kept beside `parse` because it is the same fact; an expect below
+	## fails if a name here stops being parseable.
+	command_names : List(Str)
+	command_names = [
+		"init", "auth", "sync", "backfill", "analyze", "summary", "stats", "doctor",
+		"zones", "pz", "compare", "activities", "activity", "top", "import", "rate",
+		"load", "power-curve", "pc", "progress", "week", "plan", "complete", "skip",
+		"config", "--version",
+	]
 
 	count : Str, (U64 -> Command) -> Try(Command, ParseErr)
 	count = |s, f|
@@ -346,3 +370,44 @@ expect
 		_ => False
 	}
 
+
+# asking for help is never an error, however it is spelled (#163)
+expect {
+    help_forms = [["stride"], ["stride", "--help"], ["stride", "-h"], ["stride", "help"]]
+    List.all(help_forms, |f|
+        match Command.parse(f) {
+            Err(ShowHelp) => True
+            _ => False
+        })
+}
+
+# a REAL command with wrong arguments is a usage error naming itself, never
+# "no such command" — the message must not assert something false
+expect {
+    match Command.parse(["stride", "sync", "extra"]) {
+        Err(Usage(u)) => Str.contains(u, "sync")
+        _ => False
+    }
+}
+expect {
+    match Command.parse(["stride", "top"]) {
+        Err(Usage(_)) => True
+        _ => False
+    }
+}
+# ...and a name stride genuinely lacks is still unknown
+expect {
+    match Command.parse(["stride", "wat"]) {
+        Err(UnknownCmd("wat")) => True
+        _ => False
+    }
+}
+# every listed name is parseable as SOMETHING other than UnknownCmd — the list
+# cannot silently drift away from the parser
+expect {
+    List.all(Command.command_names, |n|
+        match Command.parse(["stride", n]) {
+            Err(UnknownCmd(_)) => False
+            _ => True
+        })
+}

@@ -278,6 +278,14 @@ b_init_config! = |ctx| {
     check!("an unknown command is an invocation error", stride_status!(ctx.bin, ctx.home, ["wat"]) == 1)?
     check!("...and machines get an envelope, not help text", Str.contains(stride!(ctx.bin, ctx.home, ["wat"]), "unknown_command"))?
     check!("a bare invocation asks for help, which is not an error", stride_status!(ctx.bin, ctx.home, []) == 0)?
+    # ...and neither is asking for it by name — the catch-all this change
+    # replaced was silently serving --help, and deleting it made help an error
+    check!("--help is not an error", stride_status!(ctx.bin, ctx.home, ["--help"]) == 0)?
+    check!("-h and bare help are not errors either", stride_status!(ctx.bin, ctx.home, ["-h"]) == 0 and stride_status!(ctx.bin, ctx.home, ["help"]) == 0)?
+    # a REAL command with wrong arguments must not claim the command is unknown
+    argerr = stride!(ctx.bin, ctx.home, ["sync", "extra"])
+    check!("wrong arity on a real command is a usage error, not 'unknown'", Str.contains(argerr, "sync") and !(Str.contains(argerr, "unknown_command")))?
+    check!("...and still exits non-zero", stride_status!(ctx.bin, ctx.home, ["sync", "extra"]) == 1)?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", "123"])
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max", "153"])
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z3_max", "168"])

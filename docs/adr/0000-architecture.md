@@ -160,7 +160,7 @@ change and always discriminate success from failure:
 - success → `{"schema_version":2,"data":{…}}` (was 1 until the doctor field rename, 2026-08-06)
 - error → `{"schema_version":2,"error":{"code":"…","message":"…"}}`
 
-Errors are in-band (exit code stays 0 — read the JSON, not `$?`). The envelope is
+Errors are in-band on stdout, and since #163 they also exit non-zero (see the amendment below). The envelope is
 deterministic (no timestamps) so golden comparisons stay stable. Human table output
 is a separate, independent rendering path. JSON is emitted when `STRIDE_FORMAT=json`
 or an agent env var is set. This was made the default (not gated) while the user
@@ -221,3 +221,10 @@ unchanged — sport-completeness is not multi-tenancy.
 Working notes and current watch-items live in `.claude/PLAN.md` (local, disposable).
 Enforced invariants and build/release mechanics live in the project instructions.
 When a decision here changes, update this ADR in the same commit as the code.
+
+
+## Amended 2026-08-17 — errors exit non-zero (#163, PR #178)
+
+§7 above said errors stay exit 0 and callers should read the JSON rather than `$?`. That was written when environment detection was the only machine interface and every caller was an LLM parsing stdout. #162 made the machine interface explicitly tool-neutral (`--json` for shell scripts, MCP clients, other agents), and for those callers an always-zero exit lies to `set -e`, `&&` chains, CI steps, and process supervisors.
+
+The envelope is unchanged — this adds information to a channel that previously carried none. An error envelope on stdout always accompanies exit 1; success exits 0; asking for help (bare `stride`, `--help`, `-h`, `help`) exits 0 because it is not a failure; an unknown command is an invocation error that emits an `unknown_command` envelope to machines and the help text to humans, exiting 1 either way. Warnings inside a successful command (analyze's pending/stream-error notes, a stream that would not decode) stay at exit 0 — they are reported in the payload, and the command did what it was asked.
