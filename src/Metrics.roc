@@ -1598,8 +1598,10 @@ Metrics :: [].{
     # One signal-agnostic pipeline: smooth (trailing mean) → two-window level-shift
     # edges (a shift counts when the H-second forward mean moves ≥ shift_frac of the
     # session IQR away from the H-second backward mean) → segments between edges →
-    # merge neighbors closer than the shift threshold → label work/recovery against
-    # the session's own distribution. HR never places edges (it lags effort by 30+ s);
+    # merge neighbors closer than the shift threshold → label work/recovery by the
+    # Otsu split of the segment LEVEL MEANS (#170 — never the session's global
+    # distribution), merge adjacent work, then gate on contrast and work fraction.
+    # HR never places edges (it lags effort by 30+ s);
     # it only enriches segments already found (enrich_hr below).
     #
     # These constants are the ADR 0008 starting point, validated against the
@@ -1805,8 +1807,8 @@ Metrics :: [].{
                     })
                 kept = List.keep_if(absorbed, |s| s.hi - s.lo >= p.hold)
                 # one level is a steady ride, not structure — and the work/recovery
-                # threshold comes from the LEVELS THEMSELVES (largest gap between
-                # sorted segment means), never from the global distribution: v1's
+                # threshold comes from the LEVELS THEMSELVES (the two-cluster split
+                # below), never from the global distribution: v1's
                 # quantile-midpoint threshold sat ABOVE the reps on a work-dominated
                 # ride and labeled 3x12 all-recovery (#170)
                 if List.len(kept) < 2 {
@@ -3333,8 +3335,9 @@ expect {
 
 # the false-positive shape (#170): a progressive ride — levels stepping up
 # back-to-back with no recoveries between — is ONE continuous effort, not reps.
-# The adjacent-work merge collapses the steps and the lone block flunks the
-# single-effort contrast limit against its warm "easy" parts.
+# (The gentle steps stay under the edge delta, so this rejects via the
+# single-effort contrast limit against its warm "easy" parts; the merge has its
+# own fixture below.)
 expect {
     mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
     fixture = List.join([
@@ -3347,6 +3350,22 @@ expect {
         mk(180.I64, 170.0, 2520.I64),
     ])
     List.is_empty(Metrics.detect_segments(fixture, Metrics.detect_power_params))
+}
+
+# the adjacent-work merge, pinned directly: three back-to-back blocks at 200/
+# 245/290 W step hard enough to segment separately, and MUST come out as ONE
+# work effort at the blended mean — a sliced continuous push is not reps.
+expect {
+    mk = |dur, v, t0| Iter.fold(0.I64..<dur, [], |acc, i| List.append(acc, { t: t0 + i, v }))
+    fixture = List.join([
+        mk(420.I64, 130.0, 0.I64),
+        mk(400.I64, 200.0, 420.I64),
+        mk(400.I64, 245.0, 820.I64),
+        mk(400.I64, 290.0, 1220.I64),
+        mk(600.I64, 125.0, 1620.I64),
+    ])
+    works = List.keep_if(Metrics.detect_segments(fixture, Metrics.detect_power_params), |s| s.kind == Work)
+    List.len(works) == 1 and List.all(works, |s| s.dur_s >= 1150 and s.dur_s <= 1250 and (s.avg_signal - 245.0).abs() < 8.0)
 }
 
 # true surge structure with IRREGULAR rep lengths (a music ride, not a workout
