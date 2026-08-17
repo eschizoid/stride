@@ -14,6 +14,36 @@ import Render
 Report :: [].{
     # ── shared queries ──────────────────────────────────────────────────
 
+    # ONE home for the load_model -> confidence-tier mapping (#157): doctor's
+    # session counts and summary's TSS-weighted coverage read these same lists,
+    # so the ladder cannot drift between surfaces. high = measured power (and
+    # rtss: pace threshold derives from measured speed), medium = HR/RPE-scaled,
+    # low = relative_effort (Strava's opaque estimate).
+    high_models_sql = "'power_stream','weighted_watts','avg_watts','rtss'"
+    medium_models_sql = "'hr_zones','hr_avg','session_rpe'"
+    low_models_sql = "'relative_effort'"
+
+    # TSS-weighted tier sums for one window: {high, medium, low} as F64 TSS
+    coverage_sums! : Str, Str => Try({ high : F64, medium : F64, low : F64 }, _)
+    coverage_sums! = |path, cutoff|
+        Sqlite.query!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT CAST(COALESCE(SUM(CASE WHEN m.load_model IN (${high_models_sql}) THEN m.tss ELSE 0 END),0) AS REAL) AS hi,
+                \\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN (${medium_models_sql}) THEN m.tss ELSE 0 END),0) AS REAL) AS med,
+                \\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN (${low_models_sql}) THEN m.tss ELSE 0 END),0) AS REAL) AS lo
+                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                \\WHERE a.start_local >= :cutoff
+            ,
+            bindings: [{ name: ":cutoff", value: String(cutoff) }],
+            row: |cols| |stmt| {
+                hi = Sqlite.f64("hi")(cols)(stmt)?
+                med = Sqlite.f64("med")(cols)(stmt)?
+                lo = Sqlite.f64("lo")(cols)(stmt)?
+                Ok({ high: hi, medium: med, low: lo })
+            },
+        })
+
     # zone + TSS totals for activities on/after a cutoff date
     zone_sum! : Str, Str => Try({ z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, measured : F64, easy : I64, moderate : I64, hard : I64, sessions : I64, moving_time : I64, distance_m : F64, hr_streams : I64, intensity_streams : I64 }, _)
     zone_sum! = |path, cutoff|
@@ -706,6 +736,24 @@ Report :: [].{
 
         cutoff7 = Metrics.days_to_date_str(anchor - 6)
         zsum7 = zone_sum!(path, cutoff7)?
+        # TSS-weighted confidence coverage per window (#157): 7d and 28d speak for
+        # the load numbers beside them; 90d spans two CTL time constants, so it is
+        # the honest provenance for CTL/ATL/TSB. Percentages sum to exactly 100
+        # (Metrics.coverage_pcts) and known=false marks an empty window — 0/0/0
+        # with known true would claim a measurement nobody took (ADR 0009).
+        cutoff90 = Metrics.days_to_date_str(anchor - 89)
+        cov7_raw = coverage_sums!(path, cutoff7)?
+        cov28_raw = coverage_sums!(path, cutoff28)?
+        cov90_raw = coverage_sums!(path, cutoff90)?
+        cov_block = |c| {
+            pcts = Metrics.coverage_pcts(c.high, c.medium, c.low)
+            known : Bool
+            known = c.high + c.medium + c.low > 0.0
+            { high_pct: pcts.high_pct, medium_pct: pcts.medium_pct, low_pct: pcts.low_pct, known }
+        }
+        cov7 = cov_block(cov7_raw)
+        cov28 = cov_block(cov28_raw)
+        cov90 = cov_block(cov90_raw)
 
         pending = Sqlite.query!({
             path: Path.utf8(path),
@@ -859,6 +907,7 @@ Report :: [].{
                 distance_m: zsum7.distance_m,
                 hr_streams: zsum7.hr_streams,
                 intensity_streams: zsum7.intensity_streams,
+                load_coverage: cov7,
             },
             last_28d: {
                 tss: zsum.tss,
@@ -876,7 +925,12 @@ Report :: [].{
                 distance_m: zsum.distance_m,
                 hr_streams: zsum.hr_streams,
                 intensity_streams: zsum.intensity_streams,
+                load_coverage: cov28,
             },
+            # provenance for the CTL/ATL/TSB numbers above: what the trailing ~two
+            # CTL time constants of load are MADE of. Descriptive only (#154) —
+            # stride states the mix, the coach decides whether it matters.
+            form_coverage_90d: cov90,
             ftp: {
                 best_20min_w_60d: best20_row,
                 estimated_ftp_w: Metrics.ftp_from_best_20min(best20_row),
@@ -1196,10 +1250,10 @@ Report :: [].{
                 \\-- measured power, medium = HR/RPE, low = relative_effort, none = unscored. The
                 \\-- e2e cross-checks the 'high' count against the power-rung provenance counts so
                 \\-- this mapping can't silently drift.
-                \\SELECT COALESCE(SUM(CASE WHEN load_model IN ('power_stream','weighted_watts','avg_watts','rtss') THEN 1 ELSE 0 END),0) AS hi,
-                \\       COALESCE(SUM(CASE WHEN load_model IN ('hr_zones','hr_avg','session_rpe') THEN 1 ELSE 0 END),0) AS med,
-                \\       COALESCE(SUM(CASE WHEN load_model='relative_effort' THEN 1 ELSE 0 END),0) AS lo,
-                \\       COALESCE(SUM(CASE WHEN load_model IS NULL OR load_model NOT IN ('power_stream','weighted_watts','avg_watts','rtss','hr_zones','hr_avg','session_rpe','relative_effort') THEN 1 ELSE 0 END),0) AS non
+                \\SELECT COALESCE(SUM(CASE WHEN load_model IN (${high_models_sql}) THEN 1 ELSE 0 END),0) AS hi,
+                \\       COALESCE(SUM(CASE WHEN load_model IN (${medium_models_sql}) THEN 1 ELSE 0 END),0) AS med,
+                \\       COALESCE(SUM(CASE WHEN load_model IN (${low_models_sql}) THEN 1 ELSE 0 END),0) AS lo,
+                \\       COALESCE(SUM(CASE WHEN load_model IS NULL OR load_model NOT IN (${high_models_sql},${medium_models_sql},${low_models_sql}) THEN 1 ELSE 0 END),0) AS non
                 \\FROM activity_metrics
             ,
             bindings: [],
