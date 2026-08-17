@@ -47,10 +47,13 @@
             "no_workout_on_date",
             "not_authenticated",
             "not_set",
+            "rate_limited",
             "session_done",
             "session_not_found",
             "stdin_closed",
+            "strava_error",
             "unknown_command",
+            "unreadable_database",
             "unscorable",
             "unzip_failed",
             "usage"

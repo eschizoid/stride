@@ -281,16 +281,24 @@ b_init_config! = |ctx| {
     _ = sh!("rm -rf '${nodb}' && mkdir -p '${nodb}'")
     check!("a missing database is an envelope, not a banner", Str.contains(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>/dev/null"), "\"code\":\"no_database\""))?
     check!("...and says nothing on stderr", Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>&1 >/dev/null")) == "")?
-    check!("...and exits 1", stride_status_home!(ctx.bin, nodb, ["summary"]) == 1)?
+    check!("...and exits 1", stride_status!(ctx.bin, nodb, ["summary"]) == 1)?
     check!("...and humans get the same guidance in prose", Str.contains(sh!("HOME='${nodb}' '${ctx.bin}' summary 2>/dev/null"), "stride init"))?
     corrupt = "${ctx.home}/corrupt-probe"
     _ = sh!("rm -rf '${corrupt}' && mkdir -p '${corrupt}/.stride' && printf 'definitely not sqlite' > '${corrupt}/.stride/db.sqlite'")
     check!("a corrupt database is an envelope too", Str.contains(sh!("HOME='${corrupt}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>/dev/null"), "\"code\":\"corrupt_database\""))?
     # the boundary must not swallow stride's OWN in-band errors, which have
     # already printed their envelope and raised Exit
-    check!("in-band errors still arrive as themselves", Str.contains(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' init >/dev/null 2>&1; HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' sync 2>/dev/null"), "not_authenticated"))?
+    # Err(Exit(_)) MUST pass through the boundary untouched: err_out! already
+    # printed the envelope and raised it, so converting it would print a second.
+    # Asserting the code alone was vacuous — review built a binary with the
+    # pass-through arm deleted and this check still passed, because the doubled
+    # output CONTAINS the code. Count the envelopes instead.
+    _ = sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' init >/dev/null 2>&1")
+    inband = sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' sync 2>/dev/null")
+    check!("in-band errors still arrive as themselves", Str.contains(inband, "not_authenticated"))?
+    check!("...exactly once — the boundary must not re-wrap Exit", Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' sync 2>/dev/null | grep -c schema_version")) == "1")?
     _ = sh!("mkdir -p '${ctx.home}/freshinit'")
-    check!("...and init on a fresh home still succeeds", stride_status_home!(ctx.bin, "${ctx.home}/freshinit", ["init"]) == 0)?
+    check!("...and init on a fresh home still succeeds", stride_status!(ctx.bin, "${ctx.home}/freshinit", ["init"]) == 0)?
     _ = sh!("rm -rf '${nodb}' '${corrupt}' '${ctx.home}/freshinit'")
     # ── exit status (#163): the envelope is unchanged, the STATUS now carries
     # success/failure so shell callers stop reading errors as success.
@@ -1943,10 +1951,6 @@ stride_env! = |bin, home, sargs, extra| {
 # exit STATUS of a stride invocation (#163): 0 on success, 1 on any error
 # envelope. Separate from the output helpers so a check can assert the process
 # contract without re-deriving it from text.
-# exit status against an ARBITRARY home — the #183 probes need throwaway homes
-stride_status_home! : Str, Str, List(Str) => I32
-stride_status_home! = |bin, home, sargs| stride_status!(bin, home, sargs)
-
 stride_status! : Str, Str, List(Str) => I32
 stride_status! = |bin, home, sargs| {
     cmd = Cmd.new(OsStr.from_str(bin))

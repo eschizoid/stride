@@ -85,10 +85,15 @@ wanted data, you left `--json` off. Every machine response you will
 consume is a versioned envelope — including usage errors (`{"error":{"code":"usage",…}}`) and a
 bare `stride --json`, which answers with `{"data":{"commands":[…]}}` rather than the
 human help screen (#180). One thing is NOT enveloped: `stride auth`, an interactive browser flow you run
-by hand. Platform failures ARE enveloped now (#183) — a missing database is
-`no_database`, a corrupt one `corrupt_database`, an unreachable Strava API
-`network_unreachable`, and anything unforeseen `internal_error` carrying the raw
-tag in its message, so a failure without a code is a bug rather than a shrug. Success →
+by hand. Platform failures ARE enveloped now (#183): `no_database` (absent — run `init`),
+`unreadable_database` (present but unopenable — permissions or a directory in its
+place, which `init` will NOT fix), `corrupt_database`, `database_error` (SQLite
+refused the operation, e.g. a lock), `network_unreachable` (Strava never
+answered), `strava_error` / `rate_limited` (it answered with a status),
+`stdin_closed`, and `internal_error` for anything unforeseen, carrying the
+clipped tag in its message — so a failure without a code is a bug, not a shrug.
+An expired token still arrives as `not_authenticated`, from the boundary as well
+as from sync. Success →
 `{"schema_version":2,"data":{…}}`, error →
 `{"schema_version":2,"error":{"code":"…","message":"…"}}`. The payloads described in
 the table below all live under `.data`; every payload here — the

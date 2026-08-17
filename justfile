@@ -61,6 +61,14 @@ schema-check: build
         # a command that legitimately has nothing to say (fresh install, no
         # activities) returns an error ENVELOPE; that is the database being
         # empty, not the contract being violated, so skip rather than accuse
+        # a BROKEN install is not "legitimately nothing to say" — no_database
+        # and friends must fail the check rather than read as a skip (#183 gave
+        # them envelopes, which is exactly what made them skippable)
+        code=$(printf '%s' "$out" | jq -r '.error.code // empty' 2>/dev/null)
+        case "$code" in
+            no_database|unreadable_database|corrupt_database|database_error)
+                echo "$inv: FAILED ($code)"; rc=1; continue ;;
+        esac
         if printf '%s' "$out" | jq -e 'has("error")' >/dev/null 2>&1; then
             echo "$inv: skipped ($(printf '%s' "$out" | jq -r '.error.code'))"
             continue
