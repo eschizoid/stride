@@ -862,6 +862,8 @@ Render :: [].{
         tail =
             if rest <= 0 {
                 ""
+            } else if atleast != "" and rest == 1.I64 {
+                " — up to one other matches its rep count and duration band without being this shape"
             } else if atleast != "" {
                 " — up to ${I64.to_str(rest)} others match its rep count and duration band without being this shape"
             } else if rest == 1.I64 {
@@ -1352,6 +1354,17 @@ expect {
     # and "the other 20" together is a contradiction the old test enshrined
     and Str.contains(power, "≥1 of 21 matched sessions is itself")
     and Str.contains(power, "up to 20 others")
+    # ...and the HEDGED branch needs the singular too. Fixing number agreement
+    # on the exact branch and not this one left "up to 1 others match", which
+    # is the very defect the round was opened to close.
+    and Str.contains(Render.reps_screen({
+        anchor_date: "2026-08-16",
+        shape_reps: 3.I64,
+        shape_dur: 718.I64,
+        matched_total: 2.I64,
+        signal: "power",
+        sessions: [sess("2026-08-16", 1.01, 11.0, 262.0, -16.0, [268.0, 252.0])],
+    }), "up to one other matches")
     and !(Str.contains(power, "the other 20"))
     # the NOUN stays plural even when one row conforms
     and !(Str.contains(power, "matched session is"))
