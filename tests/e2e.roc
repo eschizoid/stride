@@ -337,11 +337,16 @@ b_config_ftp! = |ctx| {
     check!("flag position is free (before the subcommand)", Str.contains(stride_env!(ctx.bin, ctx.home, ["--json", "config", "get", "timezone"], [("STRIDE_FORMAT", "human")]), "schema_version"))?
     check!("last flag wins", Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--human", "--json"], [("STRIDE_FORMAT", "human")]), "schema_version"))?
     check!("args survive the strip (value intact)", Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--json"], [("STRIDE_FORMAT", "human")]), "America/Chicago"))?
-    # `--` ends flag parsing: the literal "--json" reaches the command parser
-    # (which rejects it) instead of being eaten as a format flag — so output is
-    # neither JSON nor the successful config read
-    term_out = stride_env!(ctx.bin, ctx.home, ["--", "--json", "config", "get", "timezone"], [("STRIDE_FORMAT", "human")])
-    check!("`--` ends flag parsing", !(Str.contains(term_out, "schema_version")) and !(Str.contains(term_out, "America/Chicago")))?
+    # `--` ends flag parsing, proven by ROUND TRIP rather than by absence: the
+    # literal "--json" must land in the database as the skip reason, and the
+    # requested format must survive the escape (the first version of this check
+    # asserted only that the output was neither JSON nor the config value — it
+    # passed against help text, and would have passed with `--` unimplemented).
+    term_sess = Str.trim(strjq!(ctx, ["week", "add", "2099-06-06", "endurance", "terminator probe", "r"], ".data.id"))
+    term_out = stride_env!(ctx.bin, ctx.home, ["--json", "skip", term_sess, "--", "--json"], [("STRIDE_FORMAT", "human")])
+    check!("`--` protects a literal flag argument", Str.trim(sql!(ctx.db, "SELECT COALESCE(skipped_reason,'') FROM planned_sessions WHERE id = ${term_sess};")) == "--json")?
+    check!("...and the requested format still wins", Str.contains(term_out, "schema_version"))?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${term_sess};")
     check!("config get json value", strjq!(ctx, ["config", "get", "timezone"], ".data.value") == "America/Chicago")?
     check!("config get not_set error", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "nope"]), "not_set"))?
     # delete the row rather than storing "" — an empty value is a stored-but-invalid
