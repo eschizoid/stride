@@ -856,17 +856,26 @@ Render :: [].{
         block_rows = List.map(p.blocks, |b| {
             # signed() rounds to whole TSS/week, which turned a slope of 1.60
             # into "+2/wk" and would render anything in (-1, 0) as "-0/wk"
-            trend =
+            # The fitted endpoints lead, because "316→214" cannot be misread
+            # the way "-1.3/wk, r2 0.10" can: a low r2 is SCATTER, not evidence
+            # the slope is zero, and three of this athlete's four low-r2 blocks
+            # moved 30%+ across their span.
+            trend = if b.trend_known "${fmt0(b.fitted_start_load)}→${fmt0(b.fitted_end_load)}" else "-"
+            fit =
                 if b.trend_known {
                     sign = if b.slope_tss_per_week >= 0.0 "+" else "-"
-                    "${sign}${fmt1((b.slope_tss_per_week).abs())}/wk (r2 ${fmt2(b.trend_r2)})"
+                    "${sign}${fmt1((b.slope_tss_per_week).abs())}/wk r2 ${fmt2(b.trend_r2)}"
                 } else {
                     "-"
                 }
             pol = if b.polarization_known "${I64.to_str(b.easy_pct)}/${I64.to_str(b.moderate_pct)}/${I64.to_str(b.hard_pct)}" else "-"
             # named, because a rowing threshold and a cycling FTP are not the
             # same quantity and this athlete has both
-            ftp = if b.ftp_known "${b.ftp_family} ${fmt0(b.ftp_lo)}-${fmt0(b.ftp_hi)}" else "-"
+            # chronological start→end, not the min-max range, which read as a
+            # trajectory it did not have. The share is named when the "dominant"
+            # family is close to a coin flip.
+            share = if b.ftp_known and b.ftp_family_pct < 65.I64 " ${I64.to_str(b.ftp_family_pct)}%" else ""
+            ftp = if b.ftp_known "${b.ftp_family}${share} ${fmt0(b.ftp_start)}→${fmt0(b.ftp_end)}" else "-"
             # an open block has not been closed by an absence -- records just
             # stop -- so its numbers are still moving
             span = if b.closed "${b.start_date}..${b.end_date}" else "${b.start_date}..${b.end_date}*"
@@ -876,22 +885,23 @@ Render :: [].{
                 fmt0(b.total_load),
                 fmt0(b.mean_weekly_load),
                 trend,
+                fit,
                 pol,
                 ftp,
             ]
         })
-        block_tbl = render_table(["block", "trained/span wk", "load", "load/wk", "trend", "e/m/h", "ftp"], block_rows)
+        block_tbl = render_table(["block", "trained/span wk", "load", "load/wk", "load trend", "fit", "e/m/h", "ftp"], block_rows)
         # the last 12 months, newest last so the series reads left to right in time
         recent = if List.len(p.months) > 12 List.drop_first(p.months, List.len(p.months) - 12) else p.months
         month_rows = List.map(recent, |m| [
-            m.month,
+            if m.partial "${m.month}*" else m.month,
             fmt0(m.load),
             I64.to_str(m.sessions),
-            if m.ftp_known "${m.ftp_family} ${fmt0(m.ftp_lo)}-${fmt0(m.ftp_hi)}" else "-",
+            if m.ftp_known "${m.ftp_family} ${fmt0(m.ftp_start)}→${fmt0(m.ftp_end)}" else "-",
         ])
         month_tbl = render_table(["month", "load", "sessions", "ftp"], month_rows)
         months_note = if List.len(p.months) > List.len(recent) " · the month table shows the last ${I64.to_str((List.len(recent)).to_i64_wrap())} of ${I64.to_str((List.len(p.months)).to_i64_wrap())} months on record" else ""
-        legend = "a block is a run of training weeks closed by ${I64.to_str(p.gap_weeks)}+ weeks with no load; a * marks a block no absence has closed yet · trained/span wk = weeks with training out of calendar weeks covered, and load/wk divides by the span · trend = TSS/week slope across the block, r2 = how much of the week-to-week movement it explains · e/m/h = easy/moderate/hard time % · blocks are described, not named · a threshold belongs to a sport, so each range names whose it is${months_note}"
+        legend = "a block is a run of training weeks closed by ${I64.to_str(p.gap_weeks)}+ weeks with no load; a * marks a block no absence has closed yet (its trailing week is partial and excluded from the trend) or a month still in progress · trained/span wk = weeks with training out of calendar weeks covered, and load/wk divides by the span · trend = where the fitted line starts and ends, its slope, and r2 = how much of the week-to-week scatter it explains — a LOW r2 means the weeks were scattered, NOT that the block had no trend · e/m/h = easy/moderate/hard time % · blocks are described, not named · a threshold belongs to a sport, so each range names whose it is${months_note}"
         Str.join_with(["── blocks ──", "", block_tbl, "── by month ──", "", month_tbl, "", legend], "\n")
     }
 

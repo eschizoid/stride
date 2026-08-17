@@ -2306,11 +2306,26 @@ Report :: [].{
     # produces a range that describes nobody (the same mistake #190 fixed by
     # fitting CP per family). Each range is reported WITH the family it is for,
     # picked as the family with the most sessions in the period.
-    dominant_ftp : List({ fam : Str, n : I64, ftp_lo : F64, ftp_hi : F64 }) -> { ftp_family : Str, ftp_lo : F64, ftp_hi : F64, ftp_known : Bool }
+    dominant_ftp : List({ fam : Str, n : I64, ftp_lo : F64, ftp_hi : F64, ftp_first : F64, ftp_last : F64 }) -> { ftp_family : Str, ftp_lo : F64, ftp_hi : F64, ftp_start : F64, ftp_end : F64, ftp_family_pct : I64, ftp_known : Bool }
     dominant_ftp = |rows| {
         withftp = List.keep_if(rows, |r| r.ftp_hi > 0.0)
-        best = List.fold(withftp, { fam: "", n: 0, ftp_lo: 0.0, ftp_hi: 0.0 }, |acc, r| if r.n > acc.n r else acc)
-        { ftp_family: best.fam, ftp_lo: best.ftp_lo, ftp_hi: best.ftp_hi, ftp_known: best.ftp_hi > 0.0 }
+        best = List.fold(withftp, { fam: "", n: 0, ftp_lo: 0.0, ftp_hi: 0.0, ftp_first: 0.0, ftp_last: 0.0 }, |acc, r| if r.n > acc.n r else acc)
+        # the winner's SHARE, because 52/48 and 95/5 published identically and
+        # one of those is a coin flip standing in for a whole block
+        total_n = List.fold(withftp, 0, |a, r| a + r.n)
+        pct = if total_n > 0 (((best.n * 100 + total_n // 2) // total_n)).to_i64_wrap() else 0
+        {
+            ftp_family: best.fam,
+            ftp_lo: best.ftp_lo,
+            ftp_hi: best.ftp_hi,
+            # chronological, so the range stops reading as a direction it does
+            # not have: this athlete's current block is lo 234 / hi 271 but ran
+            # 234 -> 271 -> 243 -> 239, and `zones` reports 239.
+            ftp_start: best.ftp_first,
+            ftp_end: best.ftp_last,
+            ftp_family_pct: pct,
+            ftp_known: best.ftp_hi > 0.0,
+        }
     }
 
     season! : {} => Try({}, _)
@@ -2332,7 +2347,11 @@ Report :: [].{
                 ctl = Sqlite.f64("ctl")(cols)(stmt)?
                 atl = Sqlite.f64("atl")(cols)(stmt)?
                 tsb = Sqlite.f64("tsb")(cols)(stmt)?
-                Ok({ days: (Metrics.date_str_to_days(d)).ok_or(0), tss, ctl, atl, tsb })
+                # NOT ok_or(0): an unparseable day became epoch 0 and produced a
+                # block with span_weeks -2937 and zero load at exit 0. `summary`
+                # refuses the same row loudly, and so should this.
+                days = (Metrics.date_str_to_days(d)).map_err(|_| BadDailyLoadDay(d))?
+                Ok({ days, tss, ctl, atl, tsb })
             },
         })?
         if List.is_empty(day_rows) {
@@ -2356,7 +2375,7 @@ Report :: [].{
                     \\       CAST(COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END), 0) AS REAL) AS hard_s,
                     \\       CAST(COALESCE(MIN(NULLIF(m.ftp_used, 0)), 0) AS REAL) AS ftp_lo,
                     \\       CAST(COALESCE(MAX(m.ftp_used), 0) AS REAL) AS ftp_hi
-                    \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                    \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                     \\GROUP BY date, fam ORDER BY date
                 ,
                 bindings: [],
@@ -2406,10 +2425,18 @@ Report :: [].{
                     Ok({ month, fam, n, ftp_lo, ftp_hi })
                 },
             })?
-            weeks = Metrics.weekly_rollup(day_rows)
-            blocks = Metrics.season_blocks(List.map(weeks, |w| { week_start: w.week_start, tss: w.tss, sessions: w.sessions }), season_gap_weeks)
             today = Db.local_today_days!(path)
+            weeks = Metrics.weekly_rollup(day_rows)
+            # a week whose Sunday has not passed is still accumulating, so its
+            # load is a partial sum and cannot be regressed against full weeks
+            blocks = Metrics.season_blocks(
+                List.map(weeks, |w| { week_start: w.week_start, tss: w.tss, sessions: w.sessions, complete: w.week_start + 6 < today }),
+                season_gap_weeks,
+            )
             nblocks = (List.len(blocks)).to_i64_wrap()
+            # the Monday convention weekly_rollup uses, so `closed` is decided
+            # on the same axis the blocks were cut on
+            this_week = ((today + 3) // 7) * 7 - 3
             built = List.map_with_index(blocks, |b, idx| {
                 block_idx = (idx).to_i64_wrap()
                 # The block ends on its last TRAINING day, not the Sunday that
@@ -2425,6 +2452,8 @@ Report :: [].{
                 pcts = Metrics.coverage_pcts(easy, moderate, hard)
                 # collapse the per-date rows to one row per family before
                 # picking the dominant one
+                # pol_rows arrives ORDER BY date, so folding in order makes
+                # ftp_first/ftp_last chronological rather than min/max
                 fams = List.fold(inside, [], |acc, r|
                     match List.find_first_index(acc, |f| f.fam == r.fam) {
                         Ok(i) =>
@@ -2435,10 +2464,12 @@ Report :: [].{
                                         n: f.n + r.n,
                                         ftp_lo: if f.ftp_lo == 0.0 or (r.ftp_lo > 0.0 and r.ftp_lo < f.ftp_lo) r.ftp_lo else f.ftp_lo,
                                         ftp_hi: if r.ftp_hi > f.ftp_hi r.ftp_hi else f.ftp_hi,
+                                        ftp_first: if f.ftp_first == 0.0 r.ftp_hi else f.ftp_first,
+                                        ftp_last: if r.ftp_hi > 0.0 r.ftp_hi else f.ftp_last,
                                     }).ok_or(acc)
                                 Err(_) => acc
                             }
-                        Err(_) => List.append(acc, { fam: r.fam, n: r.n, ftp_lo: r.ftp_lo, ftp_hi: r.ftp_hi })
+                        Err(_) => List.append(acc, { fam: r.fam, n: r.n, ftp_lo: r.ftp_lo, ftp_hi: r.ftp_hi, ftp_first: r.ftp_hi, ftp_last: r.ftp_hi })
                     })
                 ftp = dominant_ftp(fams)
                 # `weeks` counts weeks WITH training; `span_weeks` counts the
@@ -2447,10 +2478,15 @@ Report :: [].{
                 # while printing the latter's dates overstated the mean by 8%
                 # on the longest block here.
                 span_weeks = (week_end - b.first_week) // 7 + 1
-                # a block is CLOSED when an absence ended it. The most recent
-                # one usually has not been: records simply stop.
+                # A block is CLOSED when an absence ended it. The most recent
+                # one usually has not been: records simply stop. This must be
+                # asked in the SAME terms the boundary rule uses -- week starts,
+                # not days -- or it answers a different question: comparing
+                # today to the last training DAY (which sits anywhere inside its
+                # week) declared blocks closed up to 7 days before a session
+                # today would actually have opened a new one.
                 closed : Bool
-                closed = block_idx + 1 < nblocks or today - last_day >= season_gap_weeks * 7
+                closed = block_idx + 1 < nblocks or this_week - b.last_week >= (season_gap_weeks + 1) * 7
                 {
                     start_date: Metrics.days_to_date_str(b.first_week),
                     end_date: Metrics.days_to_date_str(last_day),
@@ -2467,6 +2503,11 @@ Report :: [].{
                     slope_tss_per_week: b.slope,
                     trend_r2: b.r2,
                     trend_known: b.trend_known,
+                    # the fitted line's own endpoints: a slope plus a low r2
+                    # gets read as "no trend", but r2 is scatter, not whether
+                    # the slope differs from zero
+                    fitted_start_load: b.fitted_start,
+                    fitted_end_load: b.fitted_end,
                     easy_pct: pcts.high_pct,
                     moderate_pct: pcts.medium_pct,
                     hard_pct: pcts.low_pct,
@@ -2474,20 +2515,38 @@ Report :: [].{
                     ftp_family: ftp.ftp_family,
                     ftp_lo: ftp.ftp_lo,
                     ftp_hi: ftp.ftp_hi,
+                    ftp_family_pct: ftp.ftp_family_pct,
+                    # chronological, so the range stops reading as a direction
+                    # it does not have: this block is lo 234 / hi 271 but ran
+                    # 234 -> 271 -> 243 -> 239, and `zones` reports 239
+                    ftp_start: ftp.ftp_start,
+                    ftp_end: ftp.ftp_end,
                     ftp_known: ftp.ftp_known,
                 }
             })
+            # the same key shape SQL produced (substr(day,1,7)); Roc has no
+            # string slice in scope here, so rebuild it from the civil date
+            tc = Metrics.civil_from_days(today)
+            mpad = if tc.m < 10 "0" else ""
+            this_month = "${I64.to_str(tc.y)}-${mpad}${I64.to_str(tc.m)}"
             months = List.map(month_load, |m| {
-                fams = List.map(List.keep_if(month_fam, |f| f.month == m.month), |f| { fam: f.fam, n: f.n, ftp_lo: f.ftp_lo, ftp_hi: f.ftp_hi })
+                fams = List.map(List.keep_if(month_fam, |f| f.month == m.month), |f| { fam: f.fam, n: f.n, ftp_lo: f.ftp_lo, ftp_hi: f.ftp_hi, ftp_first: f.ftp_lo, ftp_last: f.ftp_hi })
                 ftp = dominant_ftp(fams)
                 sessions = List.fold(fams, 0, |a, f| a + f.n)
                 {
                     month: m.month,
                     load: m.load,
                     sessions,
+                    # the trailing month is almost always partial, and comparing
+                    # its load to a full one reads as a collapse: 751 TSS in 17
+                    # days against July's 1120 is a 22% INCREASE per day
+                    partial: m.month == this_month,
                     ftp_family: ftp.ftp_family,
                     ftp_lo: ftp.ftp_lo,
                     ftp_hi: ftp.ftp_hi,
+                    ftp_family_pct: ftp.ftp_family_pct,
+                    ftp_start: ftp.ftp_start,
+                    ftp_end: ftp.ftp_end,
                     ftp_known: ftp.ftp_known,
                 }
             })

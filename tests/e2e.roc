@@ -970,8 +970,11 @@ b_seed_analyze! = |ctx| {
     # blocks START and STOP.
     # easy/moderate/hard must land in that order, not transposed: the call site
     # reads `easy_pct: pcts.high_pct`, which looks inverted and is not.
+    pi_before = Str.trim(sql!(ctx.db, "SELECT COALESCE(pi_easy_s,0) || ',' || COALESCE(pi_moderate_s,0) || ',' || COALESCE(pi_hard_s,0) FROM activity_metrics WHERE activity_id = 101;"))
     _ = sql!(ctx.db, "UPDATE activity_metrics SET pi_easy_s = 3600, pi_moderate_s = 600, pi_hard_s = 0 WHERE activity_id = 101;")
     check!("easy time is reported as easy, not transposed onto hard", strjq!(ctx, ["season"], "[.data.blocks[] | select(.polarization_known and .easy_pct > .hard_pct)] | length > 0") == "true")?
+    # restore, or every check below this one runs on mutated fixture state
+    _ = sql!(ctx.db, "UPDATE activity_metrics SET pi_easy_s = CAST(substr('${pi_before}', 1, instr('${pi_before}', ',') - 1) AS INTEGER) WHERE activity_id = 101;")
     # the block must END on a training day, never later -- it used to end on the
     # Sunday closing the last training week, dating an open block into the future
     check!("no block ends after the last day it contains", strjq!(ctx, ["season"], "[.data.blocks[] | select(.end_date > (now | strftime(\"%Y-%m-%d\")))] | length == 0") == "true")?
@@ -980,6 +983,43 @@ b_seed_analyze! = |ctx| {
     # sessions counts ACTIVITIES, so the block totals must agree with the month
     # totals in the same payload -- they disagreed by 9 when one counted days
     check!("block and month session counts agree", strjq!(ctx, ["season"], "([.data.blocks[].sessions] | add) == ([.data.months[].sessions] | add)") == "true")?
+    # ...including in the ordinary post-sync, pre-analyze state, where an
+    # activity exists with no metrics row. Blocks used an inner join and months
+    # a left join, so the two disagreed exactly there.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (921,'unscored probe','Ride','Ride','2010-01-05T06:00:00Z',3600);")
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES ('2010-01-05', 30.0, 5.0, 5.0, 0.0);")
+    check!("...and still agree when an activity has no metrics row yet", strjq!(ctx, ["season"], "([.data.blocks[].sessions] | add) == ([.data.months[].sessions] | add)") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 921; DELETE FROM daily_load WHERE day = '2010-01-05';")
+    # `closed` must be decided on the same axis the blocks were cut on. A
+    # day-aligned test declared a block closed up to 7 days before a session
+    # today would actually have opened a new one, and nothing covered it.
+    # `closed` must be decided on the same axis the blocks were cut on. A
+    # day-aligned test declared a block closed up to 7 days before a session
+    # today would actually have opened a new one. Asserting "all but the last
+    # are closed" against this fixture proves nothing -- every block in it is
+    # historical, so it passes under any rule, including `closed = True`. The
+    # discriminating probe replaces daily_load with ONE row on each side of the
+    # boundary and restores it afterwards.
+    dl_rows_before = Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM daily_load;"))
+    _ = sql!(ctx.db, "CREATE TABLE dl_bak AS SELECT * FROM daily_load; DELETE FROM daily_load;")
+    mon = "date('now', '-' || ((CAST(strftime('%w','now') AS INTEGER) + 6) % 7) || ' days')"
+    # two clear weeks short of the gap: a session today would EXTEND this block
+    _ = sql!(ctx.db, "INSERT INTO daily_load (day,tss,ctl,atl,tsb) VALUES (date(${mon}, '-14 days'), 50.0, 5.0, 5.0, 0.0);")
+    check!("a block the gap has not yet closed reports open", strjq!(ctx, ["season"], ".data.blocks | last | .closed") == "false")?
+    # exactly the gap: a session today would OPEN a new block, so this one is closed
+    _ = sql!(ctx.db, "DELETE FROM daily_load; INSERT INTO daily_load (day,tss,ctl,atl,tsb) VALUES (date(${mon}, '-21 days'), 50.0, 5.0, 5.0, 0.0);")
+    check!("a block the gap HAS closed reports closed", strjq!(ctx, ["season"], ".data.blocks | last | .closed") == "true")?
+    # and training in the current week is unambiguously open
+    _ = sql!(ctx.db, "DELETE FROM daily_load; INSERT INTO daily_load (day,tss,ctl,atl,tsb) VALUES (date('now'), 50.0, 5.0, 5.0, 0.0);")
+    check!("training this week is never reported closed", strjq!(ctx, ["season"], ".data.blocks | last | .closed") == "false")?
+    _ = sql!(ctx.db, "DELETE FROM daily_load; INSERT INTO daily_load SELECT * FROM dl_bak; DROP TABLE dl_bak;")
+    check!("daily_load is restored after the closed probe", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM daily_load;")) == dl_rows_before)?
+    # a malformed day used to become epoch 0 and publish span_weeks -2937 at
+    # exit 0; it must refuse loudly, the way summary already does
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES ('not-a-date', 30.0, 5.0, 5.0, 0.0);")
+    bad_day = stride!(ctx.bin, ctx.home, ["season"])
+    check!("a malformed daily_load day is refused, not absorbed", !(Str.contains(bad_day, "span_weeks")) and Str.contains(bad_day, "error"))?
+    _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = 'not-a-date';")
     # A CONTROLLED block, because the fixture's own data does not discriminate:
     # asserting "end_date is not in the future" and "ftp_family is non-empty"
     # both passed with the end date reverted to the week end and the family
