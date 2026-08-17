@@ -1,18 +1,58 @@
 {
   "title": "envelope",
   "type": "object",
-  "required": ["schema_version"],
+  "required": [
+    "schema_version"
+  ],
   "additionalKeys": false,
   "properties": {
-    "schema_version": { "type": "integer" },
+    "schema_version": {
+      "type": "integer"
+    },
     "data": {},
     "error": {
       "type": "object",
-      "required": ["code", "message"],
+      "required": [
+        "code",
+        "message"
+      ],
       "additionalKeys": false,
       "properties": {
-        "code": { "type": "string" },
-        "message": { "type": "string" }
+        "code": {
+          "type": "string",
+          "enum": [
+            "activity_already_linked",
+            "activity_not_found",
+            "bad_args",
+            "bad_count",
+            "bad_date",
+            "bad_id",
+            "bad_metric",
+            "bad_period",
+            "bad_rpe",
+            "derived_key",
+            "empty_csv",
+            "missing_client_creds",
+            "missing_config",
+            "no_activities",
+            "no_activities_csv",
+            "no_data",
+            "no_power_data",
+            "no_scorable_workouts",
+            "no_workout_on_date",
+            "not_authenticated",
+            "not_set",
+            "session_done",
+            "session_not_found",
+            "unknown_command",
+            "unscorable",
+            "unzip_failed",
+            "usage"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
       }
     }
   }

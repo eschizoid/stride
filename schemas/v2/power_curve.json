@@ -1,0 +1,46 @@
+{
+  "title": "power_curve",
+  "description": "Payload of `stride power-curve`.",
+  "type": "object",
+  "required": [
+    "cp",
+    "points",
+    "sport",
+    "w_prime",
+    "window_days"
+  ],
+  "additionalKeys": false,
+  "properties": {
+    "cp": {
+      "type": "number"
+    },
+    "points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "dur_s",
+          "watts"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "dur_s": {
+            "type": "integer"
+          },
+          "watts": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "sport": {
+      "type": "string"
+    },
+    "w_prime": {
+      "type": "number"
+    },
+    "window_days": {
+      "type": "integer"
+    }
+  }
+}

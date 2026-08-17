@@ -1,0 +1,33 @@
+{
+  "title": "load",
+  "description": "Payload of `stride load` \u2014 a list.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "atl",
+      "ctl",
+      "day",
+      "tsb",
+      "tss"
+    ],
+    "additionalKeys": false,
+    "properties": {
+      "atl": {
+        "type": "number"
+      },
+      "ctl": {
+        "type": "number"
+      },
+      "day": {
+        "type": "string"
+      },
+      "tsb": {
+        "type": "number"
+      },
+      "tss": {
+        "type": "number"
+      }
+    }
+  }
+}

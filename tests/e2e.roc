@@ -296,7 +296,8 @@ b_init_config! = |ctx| {
     # humans — and `--help` is the same request, so it gets the same answer
     check!("a bare call answers with the command list, as data", strjq!(ctx, [], ".data.commands | index(\"summary\") != null") == "true")?
     check!("--help answers identically for machines", strjq!(ctx, ["--help"], ".data.commands | index(\"plan\") != null") == "true")?
-    check!("...and both stay exit 0", stride_status!(ctx.bin, ctx.home, []) == 0 and stride_status!(ctx.bin, ctx.home, ["--help"]) == 0)?
+    check!("-h and help answer the same way", strjq!(ctx, ["-h"], ".data.commands | length > 0") == "true" and strjq!(ctx, ["help"], ".data.commands | length > 0") == "true")?
+    check!("...and all four stay exit 0", stride_status!(ctx.bin, ctx.home, []) == 0 and stride_status!(ctx.bin, ctx.home, ["--help"]) == 0 and stride_status!(ctx.bin, ctx.home, ["-h"]) == 0 and stride_status!(ctx.bin, ctx.home, ["help"]) == 0)?
     check!("humans still get the help screen", Str.contains(stride_human!(ctx.bin, ctx.home, []), "USAGE") and !(Str.contains(stride_human!(ctx.bin, ctx.home, []), "schema_version")))?
     check!("...and still exits non-zero", stride_status!(ctx.bin, ctx.home, ["sync", "extra"]) == 1)?
     # the FLAG path owns the exit code too (#162's re-exec wrapper): without
@@ -372,9 +373,14 @@ b_config_ftp! = |ctx| {
     # to sniff a tool-specific variable as well; the invariant that replaced it
     # is stronger and vendor-neutral — no other environment variable, whatever a
     # harness happens to export, may produce machine output.
-    ambient = [("AGENT", "1"), ("CI", "true"), ("TERM", "dumb"), ("STRIDE_FORMAT", "")]
-    check!("no ambient variable selects JSON", !(Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone"], ambient), "schema_version")))?
-    check!("...only the flag does, with the environment saying nothing", Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--json"], ambient), "schema_version"))?
+    # `env -u`, not the stride_env! helper: Cmd.env can only SET, so passing
+    # STRIDE_FORMAT="" lands in the Ok arm of json_mode! and short-circuits
+    # before any fallback is reached — the check could not fail for the
+    # regression it names. Review proved it by restoring a fallback on AGENT
+    # (a variable this very check sets) and watching the suite stay green.
+    ambient_sh = "env -u STRIDE_FORMAT AGENT=1 CI=true TERM=dumb CLAUDECODE=1 HOME='${ctx.home}' '${ctx.bin}' config get timezone"
+    check!("no ambient variable selects JSON", !(Str.contains(sh!(ambient_sh), "schema_version")))?
+    check!("...only the flag does, with the environment saying nothing", Str.contains(sh!("${ambient_sh} --json"), "schema_version"))?
     check!("--json beats STRIDE_FORMAT=human", Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--json"], [("STRIDE_FORMAT", "human")]), "schema_version"))?
     check!("--human beats STRIDE_FORMAT=json", !(Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--human"], [("STRIDE_FORMAT", "json")]), "schema_version")))?
     check!("flag position is free (before the subcommand)", Str.contains(stride_env!(ctx.bin, ctx.home, ["--json", "config", "get", "timezone"], [("STRIDE_FORMAT", "human")]), "schema_version"))?
@@ -682,7 +688,14 @@ b_seed_analyze! = |ctx| {
     check!("skill instructs passing --json", Str.contains(skill_text, "PASS `--json` ON EVERY QUERY"))?
     # the skill must not teach ANY environment sniffing as a way to get machine
     # output — STRIDE_FORMAT is a session default, the flag is the instruction
-    check!("skill teaches no environment detection", !(Str.contains(skill_text, "is set to a non-empty value")) and !(Str.contains(skill_text, "detected automatically")))?
+    # exact-phrase bans miss paraphrase (review slipped one past the previous
+    # version); the tree has zero occurrences of the retired name, so banning
+    # the name itself is both free and airtight
+    # the help text is a doc too, and it out-lived the removal once already
+    help_text_out = stride_human!(ctx.bin, ctx.home, ["--help"])
+    check!("help text teaches no environment detection", !(Str.contains(help_text_out, "CLAUDECODE")) and !(Str.contains(help_text_out, "JSON for tools")))?
+    check!("help text documents the flag", Str.contains(help_text_out, "--json"))?
+    check!("skill teaches no environment detection", !(Str.contains(skill_text, "CLAUDECODE")) and !(Str.contains(skill_text, "detected automatically")))?
 
     # ── the JSON contract as a tested artifact (#164) ────────────────────
     # schemas/v2/*.json is the ONE source of truth for the machine interface;
@@ -703,6 +716,28 @@ b_seed_analyze! = |ctx| {
     # interval ride and carries every segment kind, so it is what actually
     # exercises those declarations. It is deleted a few lines below.
     check!("interval activity conforms (non-empty segments)", validate!("activity 103", "activity") == "")?
+    # --help rather than a bare call: interpolating a compile-time empty string
+    # into the command slot is the #32-class crash, and --help returns the
+    # identical discovery payload
+    check!("the command list conforms to its schema", validate!("--help", "commands") == "")?
+    # the remaining query payloads (#164 shipped three; the coach reads all of
+    # these). Each runs the real command against the fixture db.
+    check!("activities conforms", validate!("activities 30", "activities") == "")?
+    check!("top conforms", validate!("top tss 20", "top") == "")?
+    check!("load conforms", validate!("load 90", "load") == "")?
+    check!("stats conforms", validate!("stats", "stats") == "")?
+    check!("doctor conforms", validate!("doctor", "doctor") == "")?
+    check!("zones conforms", validate!("zones", "zones") == "")?
+    check!("power-curve conforms", validate!("power-curve", "power_curve") == "")?
+    check!("compare conforms", validate!("compare week", "compare") == "")?
+    check!("progress conforms", validate!("progress", "progress") == "")?
+    check!("week conforms (planned + unplanned rows)", validate!("week", "week") == "")?
+    check!("week all conforms", validate!("week all", "week") == "")?
+    # the error arm of the envelope, with its code vocabulary enumerated: an
+    # error code that is not in the schema fails here, which is the same drift
+    # bargain additionalKeys makes for payload keys
+    check!("an error envelope conforms, code included", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' activity 99999999 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1")) == "")?
+    check!("...and an unknown code would be caught", Str.contains(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' activity 99999999 2>&1 | jq '.error.code = \"not_a_real_code\"' 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1"), "not in enum"))?
     check!("the envelope itself conforms", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1")) == "")?
     # the summary EMBEDDED in the plan bundle is the same shape as the standalone
     # one — asserted, not assumed (plan.json types it loosely because the

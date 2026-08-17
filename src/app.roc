@@ -54,10 +54,11 @@ help_text =
         \\USAGE
         \\    stride <command>
         \\
-        \\Query commands print human tables in a terminal and JSON for tools. Pass
-        \\--json (or --human) on any command to choose explicitly, or set
-        \\STRIDE_FORMAT=json for a whole session; the flag wins. Use -- to end flag
-        \\parsing when an argument is literally "--json": stride skip 5 -- --json
+        \\Commands print human tables. Pass --json for machine output (or --human to
+        \\force tables); nothing is inferred from the environment, so a tool asks.
+        \\STRIDE_FORMAT=json sets a default for a whole shell session and the flag
+        \\beats it. Use -- to end flag parsing when an argument is literally
+        \\"--json": stride skip 5 --json -- --json
         \\
         \\SETUP (once)
         \\    init        create ~/.stride and migrate the SQLite db
@@ -297,5 +298,8 @@ init! = |{}| {
     Db.secure_perms!(dir)?
     Db.ensure_schema!(path)?
     Db.secure_perms!(dir)?
-    Stdout.line!("initialized ${path}")
+    # init printed its line directly, so it was the ONE command that ignored
+    # --json — an absolute the skill states ("EVERY machine response is a
+    # versioned envelope") is only true if the setup step honors it too
+    Output.out!({ initialized: path }, |p| "initialized ${p.initialized}")
 }

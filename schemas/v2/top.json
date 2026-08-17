@@ -1,0 +1,69 @@
+{
+  "title": "top",
+  "description": "Payload of `stride top` \u2014 a list.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "avg_hr",
+      "date",
+      "distance_m",
+      "hr_known",
+      "id",
+      "intensity",
+      "intensity_known",
+      "moving_time",
+      "name",
+      "np_w",
+      "output_kj",
+      "power_known",
+      "sport",
+      "tss"
+    ],
+    "additionalKeys": false,
+    "properties": {
+      "avg_hr": {
+        "type": "number"
+      },
+      "date": {
+        "type": "string"
+      },
+      "distance_m": {
+        "type": "number"
+      },
+      "hr_known": {
+        "type": "boolean"
+      },
+      "id": {
+        "type": "integer"
+      },
+      "intensity": {
+        "type": "number"
+      },
+      "intensity_known": {
+        "type": "boolean"
+      },
+      "moving_time": {
+        "type": "integer"
+      },
+      "name": {
+        "type": "string"
+      },
+      "np_w": {
+        "type": "number"
+      },
+      "output_kj": {
+        "type": "number"
+      },
+      "power_known": {
+        "type": "boolean"
+      },
+      "sport": {
+        "type": "string"
+      },
+      "tss": {
+        "type": "number"
+      }
+    }
+  }
+}
