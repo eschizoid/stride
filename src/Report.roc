@@ -1859,11 +1859,16 @@ Report :: [].{
                 # compare against: a session whose blocks run 2187/67/250s has
                 # the same mean as a real 3x12 and is not a repeated set at all.
                 # Candidates are NOT filtered on this — each reports its own
-                # spread and the coach judges (#154). 1.4x is the one judgment
-                # the engine makes, and only about the question it was asked.
-                anchor_uniform = a.max_dur * 10 <= a.min_dur * 14
+                # spread and the coach judges (#154). 1.6x is the one judgment
+                # the engine makes, and only about the question it was asked. It
+                # was 1.4x, which refused a session (9:43-13:42) that this very
+                # ranking placed second-most-comparable in the whole history —
+                # the engine calling one ride "comparable enough to show you"
+                # and "not repeated enough to be a workout" in the same breath.
+                # 1.6x still excludes everything from 2.1x up.
+                anchor_uniform = a.max_dur * 10 <= a.min_dur * 16
                 if !(anchor_uniform) {
-                    Output.err_out!("irregular_anchor", "the blocks detected in this session vary too much to be one repeated shape (${(a.min_dur).to_str()}s to ${(a.max_dur).to_str()}s) — nothing to compare it against as a repeated workout")
+                    Output.err_out!("irregular_anchor", "the blocks detected in this session vary too much to be one repeated shape (${(a.min_dur).to_str()}s to ${(a.max_dur).to_str()}s, and an anchor's blocks must sit within 1.6x of each other) — nothing to compare it against as a repeated workout")
                 } else {
                 # same family, same rep count, same rep-duration band, and never
                 # later than the anchor — the same no-future-leak rule as #160,
