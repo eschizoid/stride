@@ -58,12 +58,12 @@ jobs:
           nightly-tag: nightly-2026-08-17-b9ca140
 
       # One check covers the whole codebase: `roc check` follows every import, so
-      # this type-checks app.roc plus all 8 modules against basic-cli 0.22 + http.
+      # this type-checks app.roc plus all 16 modules against basic-cli 0.22 + http.
       - name: Type-check (app + all modules)
         shell: bash
         run: roc check src/app.roc
 
-      # The pure modules carry the logic and the tests (160 expects total). app.roc
+      # The pure modules carry the logic and the tests (656 expects total). app.roc
       # has no expects (its effectful ones can't run under the test runner), so it
       # is validated by `check` above.
       - name: Run pure-module tests

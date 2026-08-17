@@ -1,0 +1,11 @@
+{
+  "title": "import",
+  "description": "Payload of `stride import <dir>` — a Strava bulk-export archive read from disk. `imported` counts activities written to the mirror tier; `skipped` counts rows the CSV carried that were already present or unparseable. Import is additive and idempotent: re-running it over the same export imports 0 and skips the rest, so the pair is a diff against what the database already had, not a count of what the archive contained. Neither number is an error signal — a failure is an error envelope, not a zero.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": ["imported", "skipped"],
+  "properties": {
+    "imported": { "type": "integer" },
+    "skipped": { "type": "integer" }
+  }
+}

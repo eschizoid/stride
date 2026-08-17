@@ -21,7 +21,7 @@ leave stdout byte-identical.
 **1. Progress narrates on stderr; stdout is untouched.** Stderr is the process's
 narration channel and carries no contract: `rescoring 128/723…`,
 `fetching streams 14/60…`, `daily_load rebuild…`. Machine consumers parsing stdout
-never see it; golden fixtures never change. basic-cli 0.21 exposes `Stderr.line!` and
+never see it; golden fixtures never change. basic-cli 0.22 exposes `Stderr.line!` and
 `Stderr.write!` (no newline), so no platform work is needed.
 
 **2. Human mode gets a live bar; machine mode gets plain lines.** A `\r`-redrawn bar —
@@ -52,6 +52,14 @@ honest interim workaround is the existing one: `just e2e-sync` re-runs the whole
 which works precisely because the retry happens OUTSIDE the corrupted process. Tracked
 separately; this ADR's narration decisions (1, 2, 4) stand on their own and shipped
 without it.
+
+**Amended 2026-08-17 — Decision 3 is WITHDRAWN, not deferred.** Bug C was root-caused and
+fixed upstream: basic-cli 0.21's host double-freed every heap `Str` in a bindings list
+(basic-cli#471, fixed in #472, shipped in 0.22.0 — stride's #105, closed 2026-08-14). The
+5x retry that had absorbed the flake was deleted from `justfile` when the bug was fixed,
+deliberately, so a NEW flake here gets an investigation rather than absorption. The Context
+bullet above ("`sync` dies mid-run on bug C, ~25-50% of runs") describes a failure mode
+that can no longer occur; it is kept for the history, not as a live constraint.
 
 **4. Failures inherit context.** The narration is the context: whatever was last
 printed to stderr is what was happening when the process died. No separate "verbose

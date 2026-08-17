@@ -30,7 +30,7 @@ re-reading this thesis against anything that emits words rather than numbers.
 
 ## ADOPTED 2026-08-16, prioritized ASAP: the engine/coach contract round
 
-The full plan lives in `docs/plans/llm-coach-execution-plan.md`; its thesis is this
+That round's execution plan is closed and has been deleted (git history holds it; its durable test became ADR 0012). Its thesis was this
 roadmap's own, sharpened into an execution order: **stride knows what happened, the LLM
 decides what it means and what to do next** — and every surface gets held to it. Each
 item is a GitHub issue; this section is the priority ledger.

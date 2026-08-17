@@ -29,11 +29,11 @@ SQL queries next to their row decoders** (the adjacency guard the compiler still
 
 | Module | Contents | Effects |
 |---|---|---|
-| `Output.roc` | `out!`/`emit_ok!`/`emit_err!`/`print_json!`/`json_mode!`/`err_out!` | Stdout |
+| `Output.roc` | `out!`/`emit_ok!`/`emit_err!`/`json_mode!`/`err_out!`/`usage!`/`narrate!` | Stdout |
 | `Db.roc` | `open_db!`, `secure_perms!`, `run_migrations!`, config get/set, `sport_ftp!`, time-anchor | Sqlite, Cmd, Env |
 | `Strava.roc` | `auth!`, token refresh, `sync!`, `backfill!`, stream fetch, ftp→Strava | Http, Sqlite |
 | `Analyze.roc` | `analyze!`, `compute_one!`, `rebuild_daily_load!`, invalidation CASE | Sqlite |
-| `Report.roc` | read commands: summary/week/activities/top/load/stats/doctor/activity/progress/compare/pz | Sqlite |
+| `Report.roc` | read commands: summary/activities/top/load/stats/doctor/activity/progress/compare/pz/power-curve/reps/season/tte | Sqlite |
 | `Plan.roc` | `plan_*`, `complete!`, `skip!`, `rate!` (the judgment tier) | Sqlite |
 | `Import.roc` | `import_archive!` (CSV) | File, Cmd |
 | `app.roc` | just `main!` + `dispatch!` + help text — thin | — |
@@ -44,8 +44,16 @@ SQL queries next to their row decoders** (the adjacency guard the compiler still
 **When to split `Report.roc` (measurable, not a vibe).** "If it feels unwieldy" is
 unfalsifiable, so the trigger is: split when **either** a single command function exceeds
 **~250 lines**, **or** the file passes **~1500 lines**. As of 2026-08-05 it is 1185 lines
-across 18 definitions (~66 each); the largest are `week!` ≈214 and `doctor!` ≈171, so the
-trigger has NOT fired. Splitting early buys nothing measurable: specialization is
+across 18 definitions (~66 each); the largest were `week!` ≈214 and `doctor!` ≈171, so the
+trigger had NOT fired then.
+
+**Amended 2026-08-17 — the trigger has FIRED, on both halves (#196).** `Report.roc` is
+**2755 lines** across 37 definitions, and four command functions are past the ~250 line:
+`season!` ≈396, `summary_payload!` ≈391, `activity_body!` ≈377, `plan_bundle!` ≈253. For
+scale, the file that motivated this ADR's original split was `app.roc` at 2631 lines.
+The subdivision below is therefore in scope; what the boundaries should be is the open
+question. Note the trigger went unnoticed for weeks because it was tracked in an untracked
+scratch file — if it is restated, it should be measured by something that fails. Splitting early buys nothing measurable: specialization is
 whole-program, so a split does not speed the build (proven during the migration), and each
 new pure module must be wired into the `just test` recipe or its expects silently stop
 running.
@@ -55,7 +63,7 @@ modules is worse than one cohesive file) — the seams follow the help text:
 
 | Module | Commands |
 |---|---|
-| `Report.roc` | where do I stand: `summary`, `week`, `load`, `compare` |
+| `Report.roc` | where do I stand: `summary`, `load`, `compare` (`week` is dispatched to `Plan.plan_view!`) |
 | `ReportSessions.roc` | what happened: `activities`, `activity`, `top`, `progress` |
 | `ReportHealth.roc` | reference/diagnostics: `doctor`, `stats`, `zones`, `power-curve` |
 

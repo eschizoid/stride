@@ -1,6 +1,7 @@
 # ADR 0004 — Power-duration curve + Critical Power
 
-Status: proposed (2026-08-03)
+Status: accepted — shipped (proposed 2026-08-03; `power-curve` + the mean-max columns
+landed with #151/PR #169, and the CP model was spent by #186/#187 in PR #190)
 
 Extends [ADR 0002](0002-power-based-intensity.md) (power-based intensity). 0002 turned the
 watts stream into *intensity* (NP/IF/TSS vs FTP). This ADR turns the same stream into the
@@ -28,7 +29,10 @@ for `best_20min_w`. Extending it to a duration ladder is the whole job.
 1. **Store per-activity mean-max power at a fixed duration ladder.** At `analyze`, compute
    each activity's best rolling-mean power at `5s, 15s, 30s, 60s, 300s, 600s, 1200s, 3600s`
    from the 1 Hz watts stream (the same `best_rolling_mean` that already yields `best_20min_w`)
-   and store them as additive `activity_metrics` columns (`best_5s_w … best_60min_w`). This is
+   and store them as additive `activity_metrics` columns. As shipped the names are
+   `best_5s_w`/`best_15s_w`/`best_30s_w`/`best_60s_w`/`best_300s_w`/`best_600s_w`/`best_3600s_w`,
+   with the 1200 s rung reusing the pre-existing `best_20min_w` rather than adding a duplicate.
+   This is
    computed-tier (rebuilds from `analyze`); it needs a schema bump + a `metrics_rev` bump.
 
 2. **The power-duration curve** for a sport is `MAX(best_<dur>_w)` per duration over a recent

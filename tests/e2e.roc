@@ -1005,6 +1005,11 @@ b_seed_analyze! = |ctx| {
     # and `week all` were missing (the latter sits at exactly 100 on real data).
     wide = Str.trim(sh!("for c in season activities plan week 'week all' compare progress load stats zones 'power-curve' 'top tss'; do HOME='${ctx.home}' '${ctx.bin}' $c 2>/dev/null; done | grep -E '[│╭├╰]' | while IFS= read -r l; do printf '%s' \"$l\" | LC_ALL=en_US.UTF-8 wc -m; done | tr -d ' ' | awk '$1 > 100' | sort -rn | head -1"))
     check!("no human table exceeds the 100-column budget", wide == "")?
+    # The secret arm of `config get` is a DIFFERENT payload shape from the arm
+    # already covered — it adds `redacted` — and nothing validated it, which is
+    # how an undeclared key shipped under additionalKeys:false.
+    check!("config get on a secret conforms", validate!("config get strava_client_secret", "config") == "")?
+    check!("...and it really is the redacting arm", Str.contains(strjq!(ctx, ["config", "get", "strava_client_secret"], ".data.redacted"), "true"))?
     check!("season conforms", validate!("season", "season") == "")?
     check!("season reports at least one block", strjq!(ctx, ["season"], ".data.blocks | length > 0") == "true")?
     check!("the gap threshold travels with the payload", strjq!(ctx, ["season"], ".data.gap_weeks") == "2")?

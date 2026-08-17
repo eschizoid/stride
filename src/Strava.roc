@@ -452,7 +452,7 @@ Strava :: [].{
     # For a new user with thousands of activities, the 60/run sync cap means dozens
     # of manual runs. `backfill` drains streams hands-off: it fills each 15-min read
     # window, sleeps to the next, and stops cleanly at Strava's daily read cap
-    # (resume by re-running). Paces on the X-ReadRateLimit-* response headers.
+    # (resume by re-running). Paces by COUNTING its own reads (the next paragraph explains why headers are unavailable).
 
     # Rate pacing is COUNT-BASED, not header-based: basic-cli 0.20.0 surfaces only a
     # handful of response headers (never the x-readratelimit-* ones), AND Strava's

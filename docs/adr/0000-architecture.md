@@ -61,10 +61,10 @@ The compiler can't check a `SELECT … AS x` alias against a `Sqlite.i64("x")`
 decoder. Adjacency is the safeguard: query strings sit immediately next to the row
 decoder they feed. Only decoder-free DDL lives in `Schema.roc`.
 
-### Tests: pure `expect`s + a bash/python e2e
+### Tests: pure `expect`s + a native-Roc e2e
 
 Effectful `expect`s can't run under `roc test` — they need a platform (on alpha4 they
-segfaulted outright, exit 139). So Roc keeps the pure `expect`s (~220 of them), and
+segfaulted outright, exit 139). So Roc keeps the pure `expect`s (656 reachable from `app.roc` as of 2026-08-17), and
 end-to-end coverage is a native-Roc suite
 (`tests/e2e.roc`) that drives the real binary against a sandboxed `HOME` with seeded
 activities of known math. It's a basic-webserver app that runs every check in `init!`
@@ -82,7 +82,7 @@ Every table belongs to exactly one tier, and the tier dictates how it recovers:
 | Tier | Tables | Recovery |
 |---|---|---|
 | **Mirror** | `activities`, `streams` | Replace-on-sync; re-pullable from Strava. |
-| **Computed** | `activity_metrics`, `daily_load` | Rebuilt from `analyze`. |
+| **Computed** | `activity_metrics`, `daily_load`, `activity_segments` | Rebuilt from `analyze` (segments per ADR 0008 §4). |
 | **Judgment** | `planned_sessions`, `config`, `ratings` | Exist *only* here — human input. |
 
 The load-bearing rule: **human input must never be a column on a mirror table**, or
@@ -92,8 +92,9 @@ table rather than on `activities`.
 ## 4. Training load is a mixed model, not "TSS"
 
 Load is scored by a ladder that picks the best available source per activity:
-stream normalized power → Strava weighted watts → average watts → zone-weighted
-hrTSS → `relative_effort` → honest zero. For strength-class sports the athlete's
+stream normalized power → Strava weighted watts → average watts → **pace** (normalized
+graded pace against a threshold speed, per-sport exponent — ADR 0003) → zone-weighted
+hrTSS → **session-RPE** → `relative_effort` → honest zero. For strength-class sports the athlete's
 own **session-RPE** rating outranks HR (`load = hours × RPE × 10`, TSS-commensurate
 by construction — raw Foster minutes×RPE would be ~6× too large and corrupt CTL/ATL).
 
@@ -211,8 +212,11 @@ before writing a constraint into the record.
 ## 10. Deliberately out of scope
 
 TUI, MCP server, cloud/web sync, injury/medical claims, replacing SQLite, and moving
-any math into the LLM. The query-repository split is blocked (§2). These are revisited
-only when dogfooding demands them.
+any math into the LLM. (The query-repository split used to sit here as "blocked by the
+compiler"; that wall is gone and the split IS the current layout — see §2 and ADR 0001.
+What remains open is the further per-command subdivision of `Report.roc`, governed by ADR
+0001's measured trigger, which has now fired: #196.) These are revisited only when
+dogfooding demands them.
 
 **Promoted into scope:** a generic every-sport model. This list previously called it out
 of scope; dogfooding demanded it (friends who run and swim can't be scored honestly by

@@ -1,6 +1,6 @@
 {
   "title": "config",
-  "description": "Result of `stride config get|set <key> [value]` \u2014 the key and its stored value. An unset key is the `not_set` error envelope, not this payload.",
+  "description": "Result of `stride config get|set <key> [value]` \u2014 the key and its stored value. An unset key is the `not_set` error envelope, not this payload. `redacted: true` means the key is a secret (`Config.is_secret`) and `value` is the literal placeholder `<redacted>`, not the stored value \u2014 reading a secret back through this command is deliberately impossible.",
   "type": "object",
   "additionalKeys": false,
   "required": [
@@ -13,6 +13,9 @@
     },
     "value": {
       "type": "string"
+    },
+    "redacted": {
+      "type": "boolean"
     }
   }
 }

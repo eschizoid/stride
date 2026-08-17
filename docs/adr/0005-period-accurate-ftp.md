@@ -37,6 +37,21 @@ something you "set (or auto-derive)", but `Db.sport_ftp!` ignores configuration 
 and always derives. Whether a configured value should win is a separate open question
 (tracked as P3.2) and is deliberately **not** settled here.
 
+**Amended 2026-08-17.** Two things in this ADR have since been settled elsewhere:
+
+- **The override question is CLOSED.** ADR 0002's 2026-08-06 amendment settled it the day
+  after this was written: FTP is always derived, and `stride config set ftp_ride` is
+  refused outright by `Config.is_derived` (expect-tested for `ftp_ride`/`ftp_rowing`/
+  `ftp_kitesurfing`). "P3.2" tracked it in an untracked scratch file that no longer exists,
+  so there is no open item behind this paragraph.
+- **The window's population is the sport FAMILY, not the sport.** As written below, the
+  anchor is "the sport's best 20-minute power over the 60 days ending on that activity's
+  date"; since #151/PR #169 the query filters `a2.sport_family = a.sport_family`. Pace
+  thresholds deliberately still key on the exact `sport_type` — a trail run and a track run
+  are not interchangeable at a given pace, while a gravel ride and a road ride are at a
+  given wattage. Reading this ADR alone gives the wrong population; ADR 0002's 2026-08-16
+  amendment is the authority.
+
 ## Context
 
 `Db.sport_ftp!` derives a sport's FTP as its best 20-minute power over the **last 60 days**
