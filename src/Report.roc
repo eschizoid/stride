@@ -495,6 +495,7 @@ Report :: [].{
                             cp_used: cpfit.cp,
                             w_prime_used: cpfit.w_prime,
                             fit_points: cpfit.points,
+                            fit_r2: cpfit.r2,
                             fit_family: cpfit.family,
                         },
                         interval_summary,
@@ -2044,7 +2045,7 @@ Report :: [].{
     # The family is the CALLER's, never a hardcoded Ride: a rowing session was
     # being scored against a cyclist's CP and flagged known, which is worse than
     # having no number at all.
-    cp_fit_as_of! : Str, Str, Str, U64 => Try({ cp : F64, w_prime : F64, points : I64, family : Str, pts : List({ dur_s : F64, watts : F64 }) }, _)
+    cp_fit_as_of! : Str, Str, Str, U64 => Try({ cp : F64, w_prime : F64, points : I64, family : Str, r2 : F64, pts : List({ dur_s : F64, watts : F64 }) }, _)
     cp_fit_as_of! = |path, family, on_date, days| {
         row = Sqlite.query!({
             path: Path.utf8(path),
@@ -2074,8 +2075,8 @@ Report :: [].{
             |p| p.watts > 0.0,
         )
         match Metrics.critical_power(pts) {
-            Ok(c) => Ok({ cp: c.cp, w_prime: c.w_prime, points: (List.len(pts)).to_i64_wrap(), family, pts })
-            Err(_) => Ok({ cp: 0.0, w_prime: 0.0, points: (List.len(pts)).to_i64_wrap(), family, pts })
+            Ok(c) => Ok({ cp: c.cp, w_prime: c.w_prime, points: (List.len(pts)).to_i64_wrap(), family, r2: c.r2, pts })
+            Err(_) => Ok({ cp: 0.0, w_prime: 0.0, points: (List.len(pts)).to_i64_wrap(), family, r2: 0.0, pts })
         }
     }
 
@@ -2136,6 +2137,7 @@ Report :: [].{
                                 cp: fit.cp,
                                 w_prime: fit.w_prime,
                                 fit_points: fit.points,
+                                fit_r2: fit.r2,
                                 window_days: 90,
                                 sport_family: fit.family,
                                 demonstrated_s: best.dur_s,

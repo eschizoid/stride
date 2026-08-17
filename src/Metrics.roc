@@ -743,7 +743,7 @@ Metrics :: [].{
     # against 1/duration (x) — slope = W' (the finite anaerobic work capacity, joules),
     # intercept = CP (the sustainable aerobic ceiling, watts). Pass the mid-range bests
     # (~2-20 min) where the 2-parameter model holds; needs >= 2 points at distinct durations.
-    critical_power : List({ dur_s : F64, watts : F64 }) -> Try({ cp : F64, w_prime : F64 }, [TooFew])
+    critical_power : List({ dur_s : F64, watts : F64 }) -> Try({ cp : F64, w_prime : F64, r2 : F64 }, [TooFew])
     critical_power = |points| {
         pts = List.keep_if(points, |p| p.dur_s > 0.0 and p.watts > 0.0)
         n = List.len(pts)
@@ -762,6 +762,10 @@ Metrics :: [].{
                 dy = p.watts - my
                 a + dx * dy
             })
+            syy = List.fold(pts, 0.0, |a, p| {
+                dy = p.watts - my
+                a + dy * dy
+            })
             # sxx == 0 means every point is at the same duration — can't fit a line
             if sxx < 0.0000001
                 Err(TooFew)
@@ -771,7 +775,14 @@ Metrics :: [].{
                 # A fit can land on a negative CP or W' (noisy or near-collinear points).
                 # Neither is physically meaningful, so refuse rather than hand back a
                 # nonsense number the caller has to remember to check.
-                if cp <= 0.0 or w_prime <= 0.0 Err(TooFew) else Ok({ cp, w_prime })
+                # How well the line actually fits, so a caller has ONE number
+                # that does not depend on what it is later asked to predict.
+                # Without it the only quality signal is the point COUNT, which
+                # is 3 for a good fit and 3 for a degenerate one. Note r2 is 1
+                # by construction at two points -- there the count is the
+                # signal and this carries no information.
+                r2 = if syy < 0.0000001 0.0 else (sxy * sxy) / (sxx * syy)
+                if cp <= 0.0 or w_prime <= 0.0 Err(TooFew) else Ok({ cp, w_prime, r2 })
             }
         }
     }
@@ -780,15 +791,23 @@ Metrics :: [].{
     # compiler — the CTL/ATL constants above are literals for exactly that
     # reason — but W' balance needs a live exponential over a range no table
     # covers (tau varies with how far below CP each sample sits). Range
-    # reduction rather than a bare series: halve twelve times so the argument
-    # is under ~0.012 whatever came in, take four Taylor terms where that is
-    # accurate to ~1e-10, then square back up twelve times. Negative input
-    # would be e^(+x); callers pass magnitudes, and the guard keeps a sign
-    # slip from silently returning a plausible number.
+    # reduction rather than a bare series: halve twelve times, take five Taylor
+    # terms, then square back up twelve times. The halving puts the argument
+    # under ~0.012 only for x < 49; by x = 700 it is 0.171 and the result is
+    # ~0.6% off, which is why large x short-circuits instead of computing.
+    # Past x ~ 11000 the polynomial exceeds 1 in magnitude and twelve squarings
+    # send it to +INFINITY — the exact inverse of what this function means — so
+    # the upper guard matters as much as the lower one. Negative input would be
+    # e^(+x); callers pass magnitudes, and the guard keeps a sign slip from
+    # silently returning a plausible number.
     exp_neg : F64 -> F64
     exp_neg = |x| {
         if x < 0.0 {
             1.0
+        } else if x > 700.0 {
+            # e^-700 is already 1e-304; everything past here is zero to any
+            # precision a caller can use, and computing it returns +inf.
+            0.0
         } else {
             r = x / 4096.0
             r2 = r * r
@@ -824,9 +843,13 @@ Metrics :: [].{
     # moment. Above CP it drains at (P - CP); below CP it reconstitutes toward
     # full, exponentially, with a time constant that depends on HOW far below CP
     # the athlete is — recovery at 100 W under CP is much faster than at 10 W
-    # under it. This is the differential (Froncioni/Skiba) form; tau follows
-    # Skiba's fit, 546*e^(-0.01*DCP) + 316. The integral forms differ enough
-    # that the choice is named rather than left implicit.
+    # under it. This is the Skiba 2012 INTEGRAL form, evaluated as an
+    # exponential recurrence. It is NOT the Froncioni/Skiba differential form,
+    # which carries no tau and reconstitutes nothing at exactly CP — the two
+    # land 41% of W' apart on a real session here, so the name is load-bearing.
+    # Tau follows Skiba's fit, 546*e^(-0.01*DCP) + 316, computed from the
+    # INSTANTANEOUS sub-CP deficit per sample rather than Skiba's ride-mean;
+    # that is a deliberate variant worth ~3% of W' on real data.
     #
     # Returns the balance AFTER each sample, so the minimum over the list is the
     # deepest the athlete went. Pauses are bridged at max_sample_gap_s like
@@ -864,7 +887,13 @@ Metrics :: [].{
                     deficit = fit.w_prime - acc.bal
                     acc.bal + deficit * (1.0 - exp_neg(dtf / tau))
                 }
-            { bal: next, prev_t: Ok(p.t), out: List.append(acc.out, next) }
+            # The clock never runs backwards. A stamp EARLIER than the last
+            # one charges dt = 0 above, but advancing prev_t to it would then
+            # re-charge the span up to the next stamp — t = 0,10,5,20 billed
+            # 25s of drain across a 20s window. Callers resample sorted, so
+            # this is the function's own guard, not a live bug.
+            latest = match acc.prev_t { Ok(pt) => if p.t > pt p.t else pt  Err(_) => p.t }
+            { bal: next, prev_t: Ok(latest), out: List.append(acc.out, next) }
         })).out
 
     # ── power zones (Coggan / Peloton 7-zone model, watt ranges from FTP) ─

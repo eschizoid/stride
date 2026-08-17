@@ -830,7 +830,10 @@ Render :: [].{
 
     # time to exhaustion: the number, and what the model thinks of it
     tte_screen = |p| {
-        head = "at ${fmt0(p.watts)}W against CP ${fmt0(p.cp)} (${p.sport_family} fit, W' ${fmt1(p.w_prime / 1000.0)} kJ from ${I64.to_str(p.fit_points)} of the 5/10/20-min bests over ${I64.to_str(p.window_days)}d)"
+        # r2 is 1 by construction at two points, where the COUNT is the signal
+        # and this number would be false reassurance.
+        quality = if p.fit_points >= 3.I64 ", r2 ${fmt2(p.fit_r2)}" else ""
+        head = "at ${fmt0(p.watts)}W against CP ${fmt0(p.cp)} (${p.sport_family} fit, W' ${fmt1(p.w_prime / 1000.0)} kJ from ${I64.to_str(p.fit_points)} of the 5/10/20-min bests over ${I64.to_str(p.window_days)}d${quality})"
         # The athlete's own record at or above this power, when it is on file.
         # A model that predicts less than what is already recorded is refuted by
         # its own inputs, and the coach should see that on the same screen as
@@ -1266,6 +1269,7 @@ expect {
         cp: 254.0,
         w_prime: 6416.0,
         fit_points: 3.I64,
+        fit_r2: 0.72,
         window_days: 90.I64,
         sport_family: "Ride",
         demonstrated_s: 600.0,
@@ -1280,6 +1284,9 @@ expect {
         tte("below_cp", False, False),
     ]
     List.all(tte_phrases, |p| !(Metrics.has_coaching_language(p)))
+    # the query-independent fit-quality number reaches the human screen -- a
+    # coach reading only the terminal must see what the payload sees
+    and Str.contains(tte("in_model", False, False), "r2 0.72")
     # the hour rollover is what keeps a near-CP query from rendering 222 days
     # as "320807:09" — pinned because mmss is the tempting reuse
     and Render.hms(596.I64) == "9:56"

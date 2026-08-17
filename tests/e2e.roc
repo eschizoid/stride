@@ -754,6 +754,16 @@ b_seed_analyze! = |ctx| {
     check!("no CP fit is an in-band refusal, not a number", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "300"]), "no_cp_fit"))?
     check!("a non-numeric power is refused", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "abc"]), "bad_watts"))?
     check!("a negative power is refused", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "-50"]), "bad_watts"))?
+    # F64.from_str accepts nan/inf, and `w <= 0.0` is FALSE for NaN, so these
+    # sailed past the guard: JSON mode died with JsonEncodeFailed(NaN) outside
+    # the envelope, and human mode printed "~0:00" and exited 0. The refusal
+    # must be an ENVELOPE, so assert the code AND that the output still parses
+    # as the contract rather than merely lacking a number.
+    nan_out = stride!(ctx.bin, ctx.home, ["tte", "nan"])
+    check!("NaN is refused in-band, not at the encoder", Str.contains(nan_out, "bad_watts") and !(Str.contains(nan_out, "JsonEncodeFailed")))?
+    check!("infinity is refused", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "Infinity"]), "bad_watts"))?
+    check!("an absurd power is refused", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "1e9"]), "bad_watts"))?
+    check!("a plausible power is NOT refused by the ceiling", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "3000"]), "no_cp_fit"))?
     check!("without a fit, W' balance is flagged unknown rather than zeroed", strjq!(ctx, ["activity", "101"], ".data.w_prime_balance | (.known == false) and ((.known | type) == \"boolean\")") == "true")?
     check!("...and the fit it would have used travels with it", strjq!(ctx, ["activity", "101"], ".data.w_prime_balance | has(\"cp_used\") and has(\"fit_points\")") == "true")?
     # --help rather than a bare call: interpolating a compile-time empty string
