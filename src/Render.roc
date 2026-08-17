@@ -1284,7 +1284,7 @@ expect {
 
 expect {
     d = |day, tss| { day, tss, ctl: 10.0, atl: 5.0, tsb: 5.0 }
-    many = Iter.fold(0.I64..<21, [], |acc, i| List.append(acc, d(Metrics.days_to_date_str(20000 + i), 30.0)))
+    many = Iter.fold((0.I64..<21).iter(), [], |acc, i| List.append(acc, d(Metrics.days_to_date_str(20000 + i), 30.0)))
     Str.contains(Render.load_screen(many), "week of")
 }
 
