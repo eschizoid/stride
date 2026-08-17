@@ -173,7 +173,7 @@ main! = |raw_args| {
                     }
                 Err(Usage(u)) => Output.usage!(u)
                 Err(BadCount(s)) => Output.err_out!("bad_count", "expected a number, got '${s}'")
-                Ok(cmd) => dispatch!(cmd)
+                Ok(cmd) => run_command!(cmd)
 
             }
         ForceJson => reexec_with_format!(split.rest, "json")
@@ -206,6 +206,44 @@ reexec_with_format! = |cleaned, fmt| {
         Err(e) => Err(ReexecFailed(e))
     }
 }
+# THE boundary between platform failures and the published contract (#183).
+#
+# An uncaught platform error reaches main! as an opaque tag and the platform
+# prints `Program exited with error: <Tag>` to STDERR with empty stdout — no
+# code, no envelope, nothing a machine can branch on, and it was the first
+# thing a new user met (a query before `stride init`). Catching here rather
+# than at each of the ~40 call sites means one place decides, and a failure
+# that reaches a caller without a code is a missing arm in this match rather
+# than a habit nobody enforced.
+#
+# Err(Exit(_)) passes through untouched: that is stride's own clean signal,
+# raised by err_out! AFTER it has already printed the envelope. Converting it
+# here would print a second one.
+run_command! : Command.Command => Try({}, _)
+run_command! = |cmd|
+    match dispatch!(cmd) {
+        Ok(_) => Ok({})
+        Err(Exit(code)) => Err(Exit(code))
+        # the database the command needs is absent or unreadable
+        Err(SqliteErr(CanNotOpen, _)) =>
+            Output.err_out!("no_database", "no database at ~/.stride/db.sqlite — run `stride init` first")
+        Err(SqliteErr(NotADatabase, _)) =>
+            Output.err_out!("corrupt_database", "~/.stride/db.sqlite is not a readable SQLite database — restore a backup or re-run `stride init` against a fresh path")
+        Err(SqliteErr(code, msg)) =>
+            Output.err_out!("database_error", "the database refused this operation (${Str.inspect(code)}): ${msg}")
+        # Strava unreachable, DNS down, TLS refused — distinct from an auth
+        # failure, which the sync path already reports in-band
+        Err(HttpErr(e)) =>
+            Output.err_out!("network_unreachable", "could not reach the Strava API (${Str.inspect(e)}) — check the connection and retry")
+        # a paste flow with nothing on stdin
+        Err(EndOfFile) =>
+            Output.err_out!("stdin_closed", "stdin closed before input arrived — `stride auth` needs a terminal to paste into")
+        # anything else still becomes an envelope rather than a runtime banner;
+        # the inspected tag rides in the message so the report is actionable
+        Err(other) =>
+            Output.err_out!("internal_error", "unhandled failure: ${Str.inspect(other)} — please open an issue with the command you ran")
+    }
+
 dispatch! : Command.Command => Try({}, _)
 dispatch! = |cmd|
     match cmd {

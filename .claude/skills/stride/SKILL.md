@@ -84,10 +84,11 @@ because `--` stops flag parsing for everything after it. If output ever looks li
 wanted data, you left `--json` off. Every machine response you will
 consume is a versioned envelope — including usage errors (`{"error":{"code":"usage",…}}`) and a
 bare `stride --json`, which answers with `{"data":{"commands":[…]}}` rather than the
-human help screen (#180). Two things are NOT enveloped and never will be: `stride
-auth`, which is an interactive browser flow you run by hand, and an uncaught
-platform failure (a missing database, an unreachable Strava API), which prints a
-raw runtime line to stderr with empty stdout — tracked in #183. Success →
+human help screen (#180). One thing is NOT enveloped: `stride auth`, an interactive browser flow you run
+by hand. Platform failures ARE enveloped now (#183) — a missing database is
+`no_database`, a corrupt one `corrupt_database`, an unreachable Strava API
+`network_unreachable`, and anything unforeseen `internal_error` carrying the raw
+tag in its message, so a failure without a code is a bug rather than a shrug. Success →
 `{"schema_version":2,"data":{…}}`, error →
 `{"schema_version":2,"error":{"code":"…","message":"…"}}`. The payloads described in
 the table below all live under `.data`; every payload here — the
