@@ -140,7 +140,7 @@ Command := [
 		"init", "auth", "sync", "backfill", "analyze", "summary", "stats", "doctor",
 		"zones", "pz", "compare", "activities", "activity", "top", "import", "rate",
 		"load", "power-curve", "pc", "progress", "week", "plan", "complete", "skip",
-		"config", "--version",
+		"config", "--version", "--help", "-h", "help",
 	]
 
 	count : Str, (U64 -> Command) -> Try(Command, ParseErr)
@@ -402,12 +402,28 @@ expect {
         _ => False
     }
 }
-# every listed name is parseable as SOMETHING other than UnknownCmd — the list
-# cannot silently drift away from the parser
+# The ten no-argument commands that had no parse expect of their own. Asserting
+# each maps to its OWN variant is the real drift guard: an earlier version of
+# this checked only that names in `command_names` avoid UnknownCmd, which is
+# TRUE BY CONSTRUCTION (membership is what routes them elsewhere) and so could
+# not fail — deleting `[_, "stats"] => Ok(Stats)` left it green. Review caught
+# it with four mutations.
+expect match Command.parse(["stride", "auth"]) { Ok(Auth) => True  _ => False }
+expect match Command.parse(["stride", "sync"]) { Ok(Sync) => True  _ => False }
+expect match Command.parse(["stride", "backfill"]) { Ok(Backfill) => True  _ => False }
+expect match Command.parse(["stride", "analyze"]) { Ok(Analyze) => True  _ => False }
+expect match Command.parse(["stride", "summary"]) { Ok(Summary) => True  _ => False }
+expect match Command.parse(["stride", "stats"]) { Ok(Stats) => True  _ => False }
+expect match Command.parse(["stride", "doctor"]) { Ok(Doctor) => True  _ => False }
+expect match Command.parse(["stride", "import", "x.zip"]) { Ok(Import("x.zip")) => True  _ => False }
+expect match Command.parse(["stride", "rate", "1", "5"]) { Ok(Rate("1", "5")) => True  _ => False }
+expect match Command.parse(["stride", "activity", "7"]) { Ok(Activity("7")) => True  _ => False }
+
+# a help spelling with junk after it is still a help spelling, not an unknown
+# command — the falsehood item 2 removed, surviving in a corner
 expect {
-    List.all(Command.command_names, |n|
-        match Command.parse(["stride", n]) {
-            Err(UnknownCmd(_)) => False
-            _ => True
-        })
+    match Command.parse(["stride", "--help", "extra"]) {
+        Err(Usage(u)) => Str.contains(u, "--help")
+        _ => False
+    }
 }
