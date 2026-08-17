@@ -595,14 +595,109 @@ Report :: [].{
                         Ok({ id, target_date, session_type, detail, rationale })
                     },
                 })?
+                # ── plan history (#158): planned-vs-actual as deterministic memory.
+                # EVERY session whose target_date falls in the trailing 28 days, any
+                # status — open sessions appear here too (the complete record) AND in
+                # open_sessions (the actionable view); the two answer different
+                # questions and the id disambiguates. completed_on is the DATE OF THE
+                # LINKED ACTIVITY — the fact of when the work happened — not a status-
+                # change timestamp stride does not store.
+                cutoff28p = Metrics.days_to_date_str(anchor - 27)
+                history = Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query:
+                        \\SELECT p.id AS id, COALESCE(p.target_date,'') AS target_date,
+                        \\       COALESCE(p.session_type,'') AS session_type,
+                        \\       COALESCE(p.detail,'') AS detail,
+                        \\       COALESCE(p.status,'open') AS status,
+                        \\       COALESCE(p.skipped_reason,'') AS skipped_reason,
+                        \\       COALESCE(p.completed_activity_id, 0) AS completed_activity_id,
+                        \\       COALESCE(p.substitute_activity_id, 0) AS substitute_activity_id,
+                        \\       COALESCE(substr(a.start_local, 1, 10), '') AS completed_on
+                        \\FROM planned_sessions p
+                        \\LEFT JOIN activities a ON a.id = COALESCE(p.completed_activity_id, p.substitute_activity_id)
+                        \\WHERE p.target_date >= :cutoff AND p.target_date <= :today
+                        \\ORDER BY p.target_date, p.id
+                    ,
+                    bindings: [{ name: ":cutoff", value: String(cutoff28p) }, { name: ":today", value: String(s.as_of) }],
+                    rows: |cols| |stmt| {
+                        id = Sqlite.i64("id")(cols)(stmt)?
+                        target_date = Sqlite.str("target_date")(cols)(stmt)?
+                        session_type = Sqlite.str("session_type")(cols)(stmt)?
+                        detail = Sqlite.str("detail")(cols)(stmt)?
+                        status = Sqlite.str("status")(cols)(stmt)?
+                        skipped_reason = Sqlite.str("skipped_reason")(cols)(stmt)?
+                        completed_activity_id = Sqlite.i64("completed_activity_id")(cols)(stmt)?
+                        substitute_activity_id = Sqlite.i64("substitute_activity_id")(cols)(stmt)?
+                        completed_on = Sqlite.str("completed_on")(cols)(stmt)?
+                        Ok({ id, target_date, session_type, detail, status, skipped_reason, completed_activity_id, substitute_activity_id, completed_on })
+                    },
+                })?
+                # counts the coach should not re-derive: raw integers only (#154 —
+                # completion_pct: 75 is data; any word about it is the coach's job).
+                # substituted counts skipped sessions carrying a substitute link, so
+                # skipped is the SUPERSET; unplanned = window activities NO session
+                # references by EITHER link, live or tombstoned — deliberately
+                # STRICTER than week's display rule, which re-classifies a ride
+                # whose skip tombstone was superseded as unplanned: for adherence
+                # that would double-count one ride as both substituted and
+                # unplanned. Counted once here, as the substitution it was.
+                adh = Sqlite.query!({
+                    path: Path.utf8(path),
+                    query:
+                        \\SELECT COALESCE(SUM(1),0) AS planned,
+                        \\       COALESCE(SUM(CASE WHEN COALESCE(status,'open') = 'done' THEN 1 ELSE 0 END),0) AS completed,
+                        \\       COALESCE(SUM(CASE WHEN COALESCE(status,'open') = 'skipped' THEN 1 ELSE 0 END),0) AS skipped,
+                        \\       COALESCE(SUM(CASE WHEN COALESCE(status,'open') = 'skipped' AND substitute_activity_id IS NOT NULL THEN 1 ELSE 0 END),0) AS substituted,
+                        \\       COALESCE(SUM(CASE WHEN COALESCE(status,'open') = 'open' THEN 1 ELSE 0 END),0) AS still_open
+                        \\FROM planned_sessions
+                        \\WHERE target_date >= :cutoff AND target_date <= :today
+                    ,
+                    bindings: [{ name: ":cutoff", value: String(cutoff28p) }, { name: ":today", value: String(s.as_of) }],
+                    row: |cols| |stmt| {
+                        planned = Sqlite.i64("planned")(cols)(stmt)?
+                        completed = Sqlite.i64("completed")(cols)(stmt)?
+                        skipped = Sqlite.i64("skipped")(cols)(stmt)?
+                        substituted = Sqlite.i64("substituted")(cols)(stmt)?
+                        still_open = Sqlite.i64("still_open")(cols)(stmt)?
+                        Ok({ planned, completed, skipped, substituted, still_open })
+                    },
+                })?
+                unplanned_n = Sqlite.query!({
+                    path: Path.utf8(path),
+                    query:
+                        \\SELECT COUNT(*) AS n FROM activities a
+                        \\WHERE substr(a.start_local, 1, 10) >= :cutoff AND substr(a.start_local, 1, 10) <= :today
+                        \\  AND a.id NOT IN (SELECT completed_activity_id FROM planned_sessions WHERE completed_activity_id IS NOT NULL)
+                        \\  AND a.id NOT IN (SELECT substitute_activity_id FROM planned_sessions WHERE substitute_activity_id IS NOT NULL)
+                    ,
+                    bindings: [{ name: ":cutoff", value: String(cutoff28p) }, { name: ":today", value: String(s.as_of) }],
+                    row: Sqlite.i64("n"),
+                })?
+                completion_pct = if adh.planned > 0 (((adh.completed).to_f64() / (adh.planned).to_f64()) * 100.0).round_to_i64_try().ok_or(0) else 0
                 if Output.json_mode!({}) {
                     Output.emit_ok!({
                         summary: s,
                         recent_activities_14d: recent,
                         open_sessions: open_p,
+                        plan_history_28d: history,
+                        adherence_28d: {
+                            planned: adh.planned,
+                            completed: adh.completed,
+                            skipped: adh.skipped,
+                            substituted: adh.substituted,
+                            still_open: adh.still_open,
+                            # raw ratio of the two counts above; 0 with planned 0 —
+                            # planned is the discriminator, per the ambiguous-zero rule
+                            completion_pct,
+                            unplanned_activities: unplanned_n,
+                        },
                     })
                 } else {
                     Stdout.line!(Render.summary_screen(s))?
+                    Stdout.line!("")?
+                    # one descriptive line of plan memory (#158) — raw counts only
+                    Stdout.line!("28d PLAN: ${I64.to_str(adh.planned)} planned · ${I64.to_str(adh.completed)} done · ${I64.to_str(adh.skipped)} skipped (${I64.to_str(adh.substituted)} substituted) · ${I64.to_str(unplanned_n)} unplanned activities")?
                     Stdout.line!("")?
                     Stdout.line!("OPEN PLAN")?
                     Stdout.line!(Render.render_table(

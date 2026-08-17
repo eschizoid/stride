@@ -809,6 +809,29 @@ b_plan! = |ctx| {
     # this also pins the COALESCE that keeps a NULL from hard-failing the decoder
     check!("a completed rest day refuses skip in the NULL-link wording", Str.contains(stride!(ctx.bin, ctx.home, ["skip", restsess, "x"]), "completed rest day"))?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${today_sess}, ${extra_sess}, ${replan}, ${resess}, ${restsess}); DELETE FROM activities WHERE id IN (300, 303, 304);")
+
+    # ── plan history + adherence (#158): planned-vs-actual from ONE call.
+    # Self-contained probes on in-window dates (the 2099 lifecycle sessions
+    # above sit outside the 28d window on purpose), cleaned up after.
+    ph1 = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "history probe skip", "r"], ".data.id"))
+    ph2 = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d2}", "threshold", "history probe sub", "r"], ".data.id"))
+    _ = stride!(ctx.bin, ctx.home, ["skip", ph1, "weather"])
+    _ = stride!(ctx.bin, ctx.home, ["skip", ph2, "did the row instead", "102"])
+    check!("history row carries the skip reason", strjq!(ctx, ["plan"], ".data.plan_history_28d[] | select(.id == ${ph1}) | .status == \"skipped\" and .skipped_reason == \"weather\"") == "true")?
+    check!("history row carries the substitute link AND its date", strjq!(ctx, ["plan"], ".data.plan_history_28d[] | select(.id == ${ph2}) | (.substitute_activity_id == 102) and (.completed_on | length == 10)") == "true")?
+    # the adherence identity: every in-window session is exactly one of
+    # completed / skipped / still_open — leftover-proof, no magic totals
+    check!("adherence counts partition the planned set", strjq!(ctx, ["plan"], ".data.adherence_28d | .planned == (.completed + .skipped + .still_open)") == "true")?
+    check!("substituted is a subset of skipped", strjq!(ctx, ["plan"], ".data.adherence_28d | .substituted <= .skipped and .substituted >= 1") == "true")?
+    check!("completion_pct is a raw number", strjq!(ctx, ["plan"], ".data.adherence_28d.completion_pct | type") == "number")?
+    # 101 and 102 are both LINKED at this point (completion + substitute), so an
+    # unplanned probe activity proves the counter counts only unreferenced work
+    before_unplanned = Str.trim(strjq!(ctx, ["plan"], ".data.adherence_28d.unplanned_activities"))
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time) VALUES (399,'unplanned probe','Ride','${ctx.d2}T12:00:00Z',1800);")
+    after_unplanned = Str.trim(strjq!(ctx, ["plan"], ".data.adherence_28d.unplanned_activities"))
+    check!("an unreferenced activity raises the unplanned count by one", sfloat(after_unplanned) == sfloat(before_unplanned) + 1.0)?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 399; DELETE FROM planned_sessions WHERE id IN (${ph1}, ${ph2});")
+
     check!("complete non-numeric id", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "abc", "101"]), "bad_id"))?
     check!("week add rest id 3", strjq!(ctx, ["week", "add", "2099-01-02", "rest", "planned rest", "recovery"], ".data.id") == "3")?
     check!("week add vo2max id 4", strjq!(ctx, ["week", "add", "2099-01-03", "vo2max", "intervals", "stimulus"], ".data.id") == "4")?
