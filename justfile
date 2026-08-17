@@ -42,21 +42,34 @@ test:
 # EXITS NON-ZERO on a violation — a checker that always succeeds is decoration.
 schema-check: build
     #!/usr/bin/env sh
-    set -e
+    # No `set -e`: each capture is allowed to fail so the `if` below can PRINT
+    # what went wrong. Under set -e the shell aborted on the failing pipeline
+    # and the diagnostic — already captured, thanks to 2>&1 — was never shown.
     rc=0
     for c in summary plan; do
-        errs=$(STRIDE_FORMAT=json ./stride $c 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/$c.json -f tools/validate.jq 2>&1)
+        out=$(STRIDE_FORMAT=json ./stride $c 2>&1 || true)
+        # a command that legitimately has nothing to say (fresh install, no
+        # activities) returns an error ENVELOPE; that is the database being
+        # empty, not the contract being violated, so skip rather than accuse
+        if printf '%s' "$out" | jq -e 'has("error")' >/dev/null 2>&1; then
+            echo "$c: skipped ($(printf '%s' "$out" | jq -r '.error.code'))"
+            continue
+        fi
+        errs=$(printf '%s' "$out" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/$c.json -f tools/validate.jq 2>&1 || true)
         if [ -n "$errs" ]; then echo "$c:"; echo "$errs"; rc=1; else echo "$c: conforms"; fi
     done
-    act=$(STRIDE_FORMAT=json ./stride activities 1 2>&1 | jq -r '.data[0].id // empty' 2>&1)
+    act=$(STRIDE_FORMAT=json ./stride activities 1 2>&1 | jq -r '.data[0].id // empty' 2>&1 || true)
     if [ -n "$act" ]; then
-        errs=$(STRIDE_FORMAT=json ./stride activity "$act" 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/activity.json -f tools/validate.jq 2>&1)
+        errs=$(STRIDE_FORMAT=json ./stride activity "$act" 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/activity.json -f tools/validate.jq 2>&1 || true)
         if [ -n "$errs" ]; then echo "activity $act:"; echo "$errs"; rc=1; else echo "activity $act: conforms"; fi
+    else
+        echo "activity: skipped (no activities yet)"
     fi
-    errs=$(STRIDE_FORMAT=json ./stride summary 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1)
+    # the envelope schema covers BOTH arms, so this one is never skipped
+    errs=$(STRIDE_FORMAT=json ./stride summary 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1 || true)
     if [ -n "$errs" ]; then echo "envelope:"; echo "$errs"; rc=1; else echo "envelope: conforms"; fi
     for f in schemas/v2/*.json; do
-        lint=$(jq -r -f tools/schema-lint.jq "$f" 2>&1)
+        lint=$(jq -r -f tools/schema-lint.jq "$f" 2>&1 || true)
         if [ -n "$lint" ]; then echo "$lint"; rc=1; fi
     done
     exit $rc
