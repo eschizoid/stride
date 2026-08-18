@@ -308,7 +308,7 @@ dispatch! = |cmd|
         Command.Analyze => Analyze.analyze!({})
         Command.Summary => Report.summary!({})
         Command.Stats => Report.stats!({})
-        Command.Plan => Report.plan_bundle!({})
+        Command.Plan => Plan.plan_bundle!({})
         Command.Doctor => Report.doctor!({})
         Command.Zones => Report.pz!({})
         # a machine calls this alongside schema_version to negotiate, so it
