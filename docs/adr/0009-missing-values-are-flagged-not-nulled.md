@@ -16,7 +16,7 @@ Absence is carried by additive companion flags, not by null and not by key omiss
 
 - **Impossible-zero fields** (`np_w`, `avg_hr`, `intensity`, `ftp_used`): 0 means "not available", and the row carries `power_known` / `intensity_known` / `hr_known` booleans. The flags decode the **stored NULLs** (`CASE WHEN … IS NULL` in the same SELECT), never the coalesced magnitudes — the database already holds the distinction losslessly, and magnitudes lie (np can be present while intensity is NULL: power stream, no FTP yet).
 - **Ambiguous zeros** get a discriminator, not a flag reading: `tss: 0` is read through `load_model` (`""`/`"none"` = unscored); an all-zero zone vector is read through `zones_known` (`hr_samples_total > 0`), because summary `avg_hr` can exist with no HR stream.
-- **Both-possible fields** (a real 0 and absence both occur: `decoupling_pct`, `form_delta_7d`, `form_tsb`, `hr_drift`, `rec_drop_60s`) always carry a `_known` flag — the flag is the null.
+- **Both-possible fields** (a real 0 and absence both occur: `decoupling_pct`, `form_delta_7d`, `hr_drift`, `rec_drop`, and `form_tsb` in `analyze`) carry a `_known` flag — the flag is the null. The rule is PER PAYLOAD, not per field name: `summary` ships `form_tsb` bare because it is always computable there, so read the schema for the command rather than assuming a name carries a flag.
 - `schema_version` stays 2: every change is a field addition, and the envelope version tracks wrapper-shape changes, not payload growth.
 
 Key omission via `Try(F64, [Missing])` was considered and rejected: dropping a key is a removal (a real `schema_version` bump, plus `has()`-guards in every consumer jq path), while flags are additive and self-describing. If a wrapper bump ever happens for other reasons, revisit — omission would then be free to adopt.
@@ -24,5 +24,5 @@ Key omission via `Try(F64, [Missing])` was considered and rejected: dropping a k
 ## Consequences
 
 - Consumers (the coach skill first among them) read flags, never magnitudes. The contract lives as the comment block in `src/Output.roc` and the gotcha in `.claude/skills/stride/SKILL.md`; e2e pins both flag presence and flag discrimination (a power ride vs an HR-only row).
-- Surfaces: `activity`, `activities`, `plan.recent_activities_14d` carry all four flags + `load_model`; `top` carries the power/intensity/hr trio. `progress` sessions carry none on purpose — rows exist only because the group lens scored them, so the lens signal is present by construction.
-- The issue's original "schema v3 + null" instruction is superseded by this ADR; the roadmap ledger records the same.
+- Surfaces: `activity`, `activities`, `plan.recent_activities_14d` carry all four flags + `load_model`; `top` carries the power/intensity/hr trio. `progress` sessions carry only `decoupling_known` (required by `progress.json`) and no other flag on purpose — rows exist only because the group lens scored them, so the lens signal is present by construction.
+- The issue's original "schema v3 + null" instruction is superseded by this ADR. (It was also recorded in the roadmap's priority ledger, which has since been deleted — the roadmap that used to track status is retired.)

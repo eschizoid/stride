@@ -1,6 +1,6 @@
 # Roc new-compiler notes (syntax, stdlib, platform)
 
-Working reference for the new (Zig) compiler + basic-cli 0.21, learned empirically
+Working reference for the new (Zig) compiler + basic-cli 0.22, learned empirically
 against the compiler and roc-lang/roc source during the migration (completed
 2026-08-02). The migration's progress log is gone — this is the part worth keeping.
 
@@ -8,8 +8,8 @@ against the compiler and roc-lang/roc source during the migration (completed
 
 **Resolved 2026-08-17.** The segfault described in this section is fixed upstream, and
 the pin has moved from `nightly-2026-August-04-1cb06bc` to `nightly-2026-08-17-b9ca140`.
-Verified on the new pin: `roc test src/Render.roc` → All (313) tests passed; all eight
-modules green (1,569 expects); `just e2e` → ALL E2E CHECKS PASS. It was still broken on
+Verified on the new pin: all eight modules green under `roc test`, `just e2e` → ALL E2E
+CHECKS PASS. It was still broken on
 2026-08-10 (`roc test` SIGSEGV on both `Render` and `Streams`), so the fix landed between
 08-10 and 08-17.
 
@@ -25,7 +25,7 @@ The history below is kept because the traps in it are real and will apply to the
 Every nightly from **2026-08-05 onward segfaulted the compiler** on this codebase.
 Verified on 2026-08-08: the 2026-08-05, 2026-08-06, 2026-08-07 and 2026-08-08 nightlies
 all crash; 2026-08-04
-(the current pin) passes: `roc test src/Render.roc`. Nightlies live in `roc-lang/nightlies`, not
+(the pin at the time) passes: `roc test src/Render.roc`. Nightlies live in `roc-lang/nightlies`, not
 `roc-lang/roc`; note the tag format changed mid-window (`2026-August-05` → `2026-08-06`).
 
 What breaks, precisely:
@@ -72,10 +72,33 @@ nothing folds at compile time) builds clean and dies with `[ROC CRASHED]` when r
 building stride itself with the 2026-08-08 nightly succeeds and the binary then exits 139
 with NO output at all on `progress <date>`. A green build proves nothing on these nightlies.
 
-Filed upstream as [roc-lang/roc#10693](https://github.com/roc-lang/roc/issues/10693).
-When it closes, re-run the repros from that issue first. The tag is pinned in THREE
-workflows — `build.yml` (twice), `manual-release.yml` and `release-please.yml` — so
-`grep -rn nightly-tag .github/workflows` before declaring the bump done.
+Filed upstream as [roc-lang/roc#10693](https://github.com/roc-lang/roc/issues/10693),
+which is **still open** — the 2026-08-17 nightly no longer reproduces it, but nobody has
+closed it, so "fixed upstream" is an observation and not a provenance.
+
+**Checklist for the next bump** (this part is live, not history): the tag is pinned
+**NINE times across FOUR files** — `build.yml` ×4, `manual-release.yml` ×2,
+`release-please.yml` ×2, `verify-arm64.yml` ×1. An earlier version of this line said
+three files and omitted `verify-arm64.yml` entirely, which would have shipped a stale pin
+in the arm64 verification job. Always `grep -rln nightly-tag .github/workflows` and count,
+rather than trusting this sentence.
+
+## Behaviour that changed silently across a bump
+
+`I64.from_str` / `U64.from_str` accept **exponent notation** on the 2026-08-17 pin and did
+not on 2026-08-04: `"1e3"` was an error and is now 1000. Nothing in the suite could see it,
+because no test passed an exponent as an argument — found only by differential-probing the
+two compilers over a battery of parse inputs.
+
+It reaches judgment-tier MUTATING commands: `skip 1e1 "<reason>"` was "skip needs a numeric
+id" and now skips planned session 10. Dates are unaffected — `is_canonical_date`
+round-trips through `days_to_date_str`, so `week add 1e3-08-17 …` still refuses.
+
+Pinned in `tests/e2e.roc` so the next bump that moves it is visible. The lesson generalises:
+a green suite proves the behaviour you TESTED is unchanged, and a compiler bump can move
+behaviour you never thought to test. Differential-probe the primitives (float formatting,
+integer parsing and wrapping, sort stability, division and modulo on negatives) against the
+old compiler before trusting a bump.
 
 ## CLI flags: `=`, never a space
 
@@ -83,8 +106,9 @@ workflows — `build.yml` (twice), `manual-release.yml` and `release-please.yml`
 space-separated `--output stride` fails with a confusing error — it broke a release
 build once and a `roc test --main` invocation another time.
 
-**Always build with `--opt=dev`.** The default is `--opt=speed`, whose LLVM backend
-miscompiles this codebase (issue #32's intermittent SIGABRT; it also silently drops the
+**Build with `--opt=dev`** — for build time (~14s against ~2min), not correctness: the
+miscompile below was fixed by the 2026-08-17 pin. Historically the default `--opt=speed`
+MISCOMPILED this codebase (issue #32's intermittent SIGABRT; it also silently dropped the
 `progress` pace column, which e2e catches).
 
 ## Syntax
@@ -136,14 +160,15 @@ miscompiles this codebase (issue #32's intermittent SIGABRT; it also silently dr
 - Number literals carry a typed suffix: `0.I64`, `0.0.F64`, `0.U64`, `3.5.F64`.
 - Tag-union + `Try` equality IS auto-derived here, so `== Ok(x)` / `== SomeTag` often
   compiles — keep `==` when it does; fall back to match-based only when it errors.
-- **Floats have no `Eq`** — never `x == 0.0` in an expect; use `Num.abs(x) < 0.001`.
+- **Floats have no `Eq`** — never `x == 0.0` in an expect; use `(x).abs() < 0.001`.
+  (NOT `Num.abs` — see the method-style line above; it fails the build with DOES NOT EXIST.)
 - Unchanged: `List.sum/all/any/is_empty/len/append/concat/repeat/first/last/get/map/map2/
   contains/find_first/keep_if/take_first/take_last`, `Str.trim/split_on/with_ascii_lowercased`,
   `${}` interpolation.
 
-## Platform (basic-cli 0.21)
+## Platform (basic-cli 0.22)
 
-- Header: `app [main!] { pf: platform "…/0.21.0/….tar.zst" }`. HTTP data types
+- Header: `app [main!] { pf: platform "…/0.22.0/….tar.zst" }`. HTTP data types
   (Method/Request/Response) come from the `http` package, not `pf`.
 - **argv — decode with `OsStr.display`, never hand-match the tags.**
   `main!` receives `List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))])`,

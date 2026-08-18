@@ -1,6 +1,7 @@
 # ADR 0004 — Power-duration curve + Critical Power
 
-Status: proposed (2026-08-03)
+Status: accepted — shipped (proposed 2026-08-03; `power-curve` + the mean-max columns
+landed 2026-08-03 in `fadf38c`/`f0ab7e3`, and the CP model was spent by #186/#187 in PR #190)
 
 Extends [ADR 0002](0002-power-based-intensity.md) (power-based intensity). 0002 turned the
 watts stream into *intensity* (NP/IF/TSS vs FTP). This ADR turns the same stream into the
@@ -28,7 +29,10 @@ for `best_20min_w`. Extending it to a duration ladder is the whole job.
 1. **Store per-activity mean-max power at a fixed duration ladder.** At `analyze`, compute
    each activity's best rolling-mean power at `5s, 15s, 30s, 60s, 300s, 600s, 1200s, 3600s`
    from the 1 Hz watts stream (the same `best_rolling_mean` that already yields `best_20min_w`)
-   and store them as additive `activity_metrics` columns (`best_5s_w … best_60min_w`). This is
+   and store them as additive `activity_metrics` columns. As shipped the names are
+   `best_5s_w`/`best_15s_w`/`best_30s_w`/`best_60s_w`/`best_300s_w`/`best_600s_w`/`best_3600s_w`,
+   with the 1200 s rung reusing the pre-existing `best_20min_w` rather than adding a duplicate.
+   This is
    computed-tier (rebuilds from `analyze`); it needs a schema bump + a `metrics_rev` bump.
 
 2. **The power-duration curve** for a sport is `MAX(best_<dur>_w)` per duration over a recent
@@ -36,13 +40,17 @@ for `best_20min_w`. Extending it to a duration ladder is the whole job.
    aggregation over the stored columns; no re-reading streams.
 
 3. **Critical Power + W′** fit the 2-parameter hyperbolic model `P(t) = W′/t + CP` by linear
-   regression of `P` against `1/t` over the model's valid mid-range (~2–20 min; the fit
+   regression of `P` against `1/t` over the model's valid mid-range (the code fits
+   `dur_s` 300–1200, i.e. 5–20 min — the 2-min end of the textbook range has no rung; the fit
    breaks down at sprint and multi-hour durations). `CP` is the intercept (watts), `W′` the
    slope (joules). A small pure function in `Metrics`, expect-tested against known inputs.
 
 4. **A new query command `stride power-curve` (alias `pc`)** emits the curve + CP + W′ per
    power sport — JSON for the coach (versioned envelope), a table + one-line verdict for the
-   terminal. Numeric `0` = "not enough data at this duration", per the JSON contract.
+   terminal. A duration with no data is OMITTED from `points` entirely — measured, the
+   payload carries 7 rungs and no zero-watt entry — so read absence as a missing key, not
+   as a 0. (An earlier version of this line claimed the 0 convention; `Report.roc` filters
+   `watts > 0.0` before emitting.)
 
 5. **FTP-from-CP is deliberately OUT of scope here.** CP is a more principled FTP than
    20-min × 0.95 (CP ≈ 95–100% of FTP), but wiring it into the derived-FTP path couples this

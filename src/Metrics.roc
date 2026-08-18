@@ -563,7 +563,10 @@ Metrics :: [].{
             zb : ZoneBounds,
             ftp : F64,
             # pace rung (m/s SPEEDS, not s/km): the normalized graded pace speed (Missing
-            # for a non-pace sport or one without distance+altitude streams) and the sport's
+            # when there is no distance stream, or when the series is shorter than the
+            # np_window — analyze falls back to a flat
+            # time+dist triple when altitude is absent, and pace scores any distance
+            # sport, not only pace-routed ones) and the sport's
             # threshold speed (0 when none). See pace_tss / normalized_graded_pace.
             ngp : Try(F64, [Missing]),
             threshold_speed : F64,
@@ -631,7 +634,8 @@ Metrics :: [].{
                     Err(_) => Continue(acc)
                 })
         # pace rung, slotting in as power -> PACE -> HR -> RPE -> RE. Scores when a normalized
-        # graded pace SPEED was computed (a pace-routed sport with distance+altitude streams)
+        # graded pace SPEED was computed (any distance sport; graded when altitude exists,
+        # flat otherwise)
         # AND a threshold speed exists; otherwise falls through to HR/RPE/RE. rTSS/sTSS is
         # IF^exp * hours * 100 with IF = ngp_speed / threshold_speed; the exponent is
         # per-sport (running 2, swimming 3 — see Sports.pace_tss_exponent).
@@ -968,7 +972,7 @@ Metrics :: [].{
                 }
         }
 
-    # confidence tiers (high = measured power, medium = HR/RPE, low = relative_effort,
+    # confidence tiers (high = measured power OR distance-measured pace, medium = HR/RPE, low = relative_effort,
     # none = unscored) are derived from load_model at READ time in the doctor query
     # (see the CASE there). Not stored — it's a pure function of a column that already
     # exists, so a column would be redundant denormalization.
@@ -1611,7 +1615,7 @@ Metrics :: [].{
         # The fitted line's own endpoints. A slope with a low r2 is routinely
         # misread as "no trend" — but r2 measures SCATTER, not whether the
         # slope differs from zero, and a 71-week block at r2 0.10 still fell
-        # from 316 to 214 TSS/week. "316 → 214" cannot be mis-told that way.
+        # from 315 to 214 TSS/week. "315 → 214" cannot be mis-told that way.
         # Seeded from the first element, not 0.0: seeding at zero computes
         # min(0, xs), which is right only while complete weeks are a PREFIX.
         # They are, and the reason is `complete = week_start + 6 < today` is

@@ -30,13 +30,14 @@ or any JSON. The secret-key policy is one tested source of truth (`Config.is_sec
 ## 2. Written in Roc — and pinned, deliberately
 
 Toolchain: Roc's **new (Zig) compiler** (nightly, pinned by exact tag in
-`.github/workflows/build.yml`) · basic-cli `0.21` · builtin JSON (no roc-json). The
+`.github/workflows/build.yml`) · basic-cli `0.22` · builtin JSON (no roc-json). The
 earlier alpha4 / basic-cli 0.20 / roc-json 0.13 pin is retired; §9 records the
 migration and why the original "blocked on roc-json" conclusion was wrong. CI
 type-checks (`roc check`) and runs the pure tests (`roc test`) on this compiler across
 linux/macOS/Windows, then builds the real binary and runs the e2e suite on macOS. The
-`roc build` perf gate is gone (roc#10469, fixed by #10531); builds pin `--opt=dev`
-because the optimized backend still miscompiles (issue #32). Day-to-day compiler
+`roc build` perf gate is gone (roc#10469, fixed by #10531); builds pin `--opt=dev` for
+build time (~14s against ~2min), not correctness — the optimized backend's miscompile
+(issue #32) was fixed by the 2026-08-17 compiler pin. Day-to-day compiler
 syntax/stdlib/platform notes live in `docs/roc-new-compiler-notes.md`.
 
 ### Effects live in modules, organized by concern
@@ -60,10 +61,10 @@ The compiler can't check a `SELECT … AS x` alias against a `Sqlite.i64("x")`
 decoder. Adjacency is the safeguard: query strings sit immediately next to the row
 decoder they feed. Only decoder-free DDL lives in `Schema.roc`.
 
-### Tests: pure `expect`s + a bash/python e2e
+### Tests: pure `expect`s + a native-Roc e2e
 
 Effectful `expect`s can't run under `roc test` — they need a platform (on alpha4 they
-segfaulted outright, exit 139). So Roc keeps the pure `expect`s (~220 of them), and
+segfaulted outright, exit 139). So Roc keeps the pure `expect`s, and
 end-to-end coverage is a native-Roc suite
 (`tests/e2e.roc`) that drives the real binary against a sandboxed `HOME` with seeded
 activities of known math. It's a basic-webserver app that runs every check in `init!`
@@ -81,7 +82,7 @@ Every table belongs to exactly one tier, and the tier dictates how it recovers:
 | Tier | Tables | Recovery |
 |---|---|---|
 | **Mirror** | `activities`, `streams` | Replace-on-sync; re-pullable from Strava. |
-| **Computed** | `activity_metrics`, `daily_load` | Rebuilt from `analyze`. |
+| **Computed** | `activity_metrics`, `daily_load`, `activity_segments` | Rebuilt from `analyze` (segments per ADR 0008 §4). |
 | **Judgment** | `planned_sessions`, `config`, `ratings` | Exist *only* here — human input. |
 
 The load-bearing rule: **human input must never be a column on a mirror table**, or
@@ -91,8 +92,9 @@ table rather than on `activities`.
 ## 4. Training load is a mixed model, not "TSS"
 
 Load is scored by a ladder that picks the best available source per activity:
-stream normalized power → Strava weighted watts → average watts → zone-weighted
-hrTSS → `relative_effort` → honest zero. For strength-class sports the athlete's
+stream normalized power → Strava weighted watts → average watts → **pace** (normalized
+graded pace against a threshold speed, per-sport exponent — ADR 0003) → zone-weighted
+hrTSS → **session-RPE** → `relative_effort` → honest zero. For strength-class sports the athlete's
 own **session-RPE** rating outranks HR (`load = hours × RPE × 10`, TSS-commensurate
 by construction — raw Foster minutes×RPE would be ~6× too large and corrupt CTL/ATL).
 
@@ -100,9 +102,10 @@ Because the blended total is not all TSS, stride **stops calling it "TSS"** in
 mixed contexts and instead records, per metrics row:
 
 - `load_model` — which ladder rung scored it (provenance).
-- `load_confidence` — a tier: **high** (measured power), **medium** (HR or
-  session-RPE), **low** (relative effort), **none** (unscored). Deterministic,
-  documented, and surfaced as a distribution by `doctor`.
+- The confidence tier — **high** (measured power OR distance-measured pace), **medium**
+  (HR or session-RPE), **low** (relative effort), **none** (unscored). DERIVED from
+  `load_model` at read time, not stored: the `load_confidence` column existed until
+  schema v8 and was dropped for being derivable. Surfaced as a distribution by `doctor`.
 
 `doctor` is the trust center: coverage, provenance, the confidence distribution,
 config completeness, pending stream backfill, and the active time anchor — every
@@ -177,26 +180,31 @@ An unknown timezone name never silently becomes UTC — it falls back to the fix
 offset and `doctor` flags it. Historical per-activity dates already use Strava's
 civil date, so only the today boundary needs this.
 
-## 9. Compiler migration — DONE on the new compiler (full build gated on one upstream fix)
+## 9. Compiler migration — DONE on the new compiler, build no longer gated
 
 The migration to Roc's new (Zig) compiler is **merged to `main`**: the whole codebase
 is in the new type-module dialect (`Name :: [].{}`, `List(X)`, `Result`→`Try`,
-`True`/`False`), on basic-cli 0.21 with builtin JSON, and `build.yml` pins the new
+`True`/`False`), on basic-cli 0.22 with builtin JSON, and `build.yml` pins the new
 compiler by exact nightly tag. CI runs `roc check` + `roc test` (pure expects) green
 on every push.
 
-**Build unblocked; release binaries gated on the optimized backend.** `roc build
-src/app.roc` *used to* peg the Specialization phase for minutes — an upstream compiler-perf
-bug (roc-lang/roc#10469, SpecConstr blowup), fixed upstream by roc-lang/roc#10531 (merged
-2026-08-02). stride is re-pinned to the first nightly carrying the fix, and `roc build` now
-completes. What remains is a *separate* backend bug: an intermittent heap-corruption SIGABRT
-in the optimized (`--opt=speed`) codegen (issue #32), so the four platform release binaries
-stay gated on it while the `--opt=dev` build is stable meanwhile. `roc build` on the old
-alpha4 toolchain is gone with the migration.
+**Build unblocked, and no longer gated.** `roc build src/app.roc` *used to* peg the
+Specialization phase for minutes — an upstream compiler-perf bug (roc-lang/roc#10469,
+SpecConstr blowup), fixed upstream by roc-lang/roc#10531 (merged 2026-08-02). A *separate*
+backend bug then kept the optimized build unusable: an intermittent heap-corruption SIGABRT
+in `--opt=speed` (issue #32), measured at 40 aborts per 1400 invocations on the old pin and
+concentrated in `season` (~8%) and `power-curve` (~7%) but NOT confined to them —
+`activity` aborts at ~0.8%, found only by replicating; a single 200-run sample had read
+as zero. Both are resolved — the 2026-08-17 compiler pin
+gives 0 per 1400 with output byte-identical to `--opt=dev`. Builds still pin `--opt=dev`,
+now purely for build time. `roc build` on the old alpha4 toolchain is gone with the
+migration.
 
-**Windows** unblocks with the working full build: the new compiler + basic-cli 0.21's
-x64win host can target it (no build yet only because the full `roc build` is gated
-above), so Windows is a follow-up, not a Roc limitation.
+**Windows ships** (`stride-windows-x86_64`, since v0.3.0): the new compiler plus
+basic-cli's x64win host target it, and `OsStr.display` decodes the `WindowsU16s` argv arm.
+All five release targets ship, linux-arm64 included — `release-please.yml` passes it an
+explicit `roc_target: arm64musl`, `verify-arm64.yml` re-checks it on dispatch, and v0.6.0 carries
+`stride-linux-arm64`.
 
 **CORRECTION kept for the record (2026-08-01):** the earlier "hard-blocked on
 roc-json" conclusion was wrong — it assumed all JSON had to go through a roc-json
@@ -207,9 +215,33 @@ before writing a constraint into the record.
 
 ## 10. Deliberately out of scope
 
-TUI, MCP server, cloud/web sync, injury/medical claims, replacing SQLite, and moving
-any math into the LLM. The query-repository split is blocked (§2). These are revisited
-only when dogfooding demands them.
+This is the single list — the roadmap carried a second, overlapping one until it was
+retired, and neither was a superset of the other.
+
+- **TUI** and **MCP server** — the CLI plus versioned JSON is the interface.
+- **Cloud / web sync** — local-first is the identity, not a stage.
+- **Injury and medical claims** — outside what training data can honestly support.
+- **Replacing SQLite** — a file the athlete owns, greps and backs up with `cp`.
+- **Moving any math into the LLM** — the engine computes, the coach reasons (ADR 0012).
+- **Multi-athlete / coach views** — breaks the single-user local db that keeps everything
+  else simple; a coach reads the athlete's JSON instead. (Friends each running their own
+  copy is a different thing and is in scope.)
+- **Graphs** — that experiment ran and failed; tables, legends and verdict lines are the
+  visualization layer.
+- **ML predictions** — nothing ships that cannot be recomputed by hand from stored inputs.
+- **Social features** — Strava exists.
+- **Vendor-cloud integrations** (Garmin Connect, Wahoo, Peloton APIs, …) — the ingestion
+  boundary is the filesystem; Strava is the one grandfathered API.
+- **Raw device-format parsing** (FIT/TCX/GPX) — Strava is the parser (ADR 0006).
+- **`.zwo` workout export** for smart trainers — stride prescribes nothing (ADR 0012), so
+  it has no workout to export; the coach writes the session.
+
+(The query-repository split used to sit here as "blocked by the compiler"; that wall is
+gone and the split IS the current layout — see §2 and ADR 0001. What remains open is the
+further per-command subdivision of `Report.roc`, governed by ADR 0001's measured trigger,
+which has now fired: #196.)
+
+These are revisited only when dogfooding demands them.
 
 **Promoted into scope:** a generic every-sport model. This list previously called it out
 of scope; dogfooding demanded it (friends who run and swim can't be scored honestly by
@@ -219,7 +251,7 @@ unchanged — sport-completeness is not multi-tenancy.
 
 ---
 
-Working notes and current watch-items live in `.claude/PLAN.md` (local, disposable).
+Open work lives in GitHub issues; there is deliberately no scratch plan file (see AGENTS.md — a watch-item tracked in one went unnoticed for weeks, #196).
 Enforced invariants and build/release mechanics live in the project instructions.
 When a decision here changes, update this ADR in the same commit as the code.
 

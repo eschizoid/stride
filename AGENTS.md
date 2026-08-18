@@ -12,8 +12,10 @@ back. **Never do training math yourself — read stride's numbers, add judgment.
 
 Settled architecture + rationale live in `docs/adr/0000-architecture.md` (committed) —
 read it before proposing architectural changes; don't relitigate what it settles.
-`.claude/PLAN.md` (local, untracked) is disposable working scratch: live watch-items
-only, not decisions.
+Open work lives in GitHub issues, workflow lessons in auto-memory, shipped work in git
+history. There is deliberately no scratch plan file: `.claude/PLAN.md` was one, every
+section of it rotted, and a watch-item it was tracking (ADR 0001's split trigger, #196)
+fired unnoticed because nothing read it.
 
 ## Build & test
 
@@ -38,7 +40,7 @@ just install   # build + symlink to ~/.local/bin/stride
   miscompiled the codebase (#32's intermittent SIGABRT, plus a silently dropped progress
   column). Both are FIXED as of the `nightly-2026-08-17` pin — measured 0 SIGABRT in 1400
   runs where the old pin gave 40, and byte-identical output across 11 commands. It stays
-  the default because a speed build takes ~2.5 minutes against ~14 seconds, which is the
+  the default because a speed build takes ~2 minutes against ~14 seconds, which is the
   dev loop, not because the binary is wrong. `just build`, CI, and the release workflow
   all pin it.
 - **New-compiler flag gotcha: `=`, not a space.** `--output=x`, `--main=x`, `--opt=dev`.
@@ -52,7 +54,7 @@ just install   # build + symlink to ~/.local/bin/stride
   (their commands); `app.roc` is a thin argv → dispatch shell. (History: under alpha4
   a decoder wider than 2 columns failed to type-check once effects were injected, so
   everything effectful had to sit in app.roc — that wall is gone.)
-  Pure logic goes in `Metrics.roc` / `Sports.roc` (sport vocabulary: families, class, pace routing — a DATA table, not if-chains) / `Render.roc` / `Command.roc` (argv → typed
+  Pure logic goes in `Metrics.roc` / `Sports.roc` (sport vocabulary: the four sport-varying policies — family filters, load-model class, pace routing, the pace-TSS exponent — as a DATA table, not if-chains) / `Render.roc` / `Command.roc` (argv → typed
   `Command` union, `parse` is pure + unit-tested; `main!` is thin parse-then-dispatch)
   / `Config.roc` (`is_secret` secret-key policy) / `Csv.roc` / `Streams.roc` /
   `Backfill.roc` / `Schema.roc`, with `expect` tests. When adding logic: pure
@@ -65,7 +67,7 @@ just install   # build + symlink to ~/.local/bin/stride
   `schemas/v2/<command>.json` — `additionalKeys: false` means CI fails on an
   undeclared key, which is the point (`just schema-check` runs the same
   validator against your own database; `tools/schema-lint.jq` keeps schemas
-  inside the subset `tools/validate.jq` actually reads).
+  inside the subset `tools/validate.jq` actually reads, plus `description` for humans).
   Platform failures are converted to envelopes at ONE boundary (`run_command!`
   in app.roc) rather than at each call site, so a caller never meets a raw
   runtime banner; a new failure shape means a new arm there, not a new habit.
@@ -95,6 +97,20 @@ just install   # build + symlink to ~/.local/bin/stride
   monospace-single-width; no varying-height unicode blocks (they render as mush).
 - In bash test code: `grep -q` + `pipefail` = SIGPIPE trap; capture output first,
   then grep the variable.
+- **Never test against the live `~/.stride/db.sqlite`** — snapshot it first
+  (`sqlite3 ~/.stride/db.sqlite ".backup /tmp/x/.stride/db.sqlite"`) and run with an
+  explicit `HOME`. A stray `stride init` against the real HOME has happened.
+- **e2e id assertions are positional.** Inserting a `planned_sessions` row mid-scenario
+  shifts the auto-increment and breaks later fixed-id checks (22 of them today). Add new
+  fixtures at the END of a scenario, and delete what you insert.
+- **A bare `True`/`False` serializes as the STRING `"True"`** in an encode-only payload.
+  Annotate the field `: Bool` — the annotations scattered through `Report.roc` are there
+  for this, not for documentation.
+- **The compiler pin lives in FOUR workflow files** (`build`, `manual-release`,
+  `release-please`, `verify-arm64`) — `grep -rln nightly-tag .github/workflows` before
+  calling a bump done. It was documented as three, and that was already wrong.
+- **Mermaid diagrams in the README**: `<br>` and commas only; other punctuation breaks
+  the render.
 
 ## Idiomatic Roc (and the traps that actually bit us)
 
@@ -142,6 +158,9 @@ Every item here cost a debugging session at least once — they are not style op
   modules; everything effectful goes through the e2e harness.
 - **`roc test` caches.** A run can report `(cached)` while your new expects never
   executed. Prove they run by breaking one and watching the count drop.
+- **`roc test`'s summary line can lie about the outcome.** When an expect fails to
+  COMPILE, it prints `All (N) tests passed` with a silently smaller N and exits **1**. The
+  exit code is the truth; the text is not. Read the code, and watch the count.
 - **`roc test --main=src/app.roc <module>` runs every expect reachable from the app**, not
   just that module's — so the number it prints is not that file's test count.
 - **The e2e harness aborts at the first failing `check!`.** A negative control that
@@ -195,7 +214,20 @@ Every item here cost a debugging session at least once — they are not style op
 
 ## Product invariants (enforced by code and/or e2e — keep them true)
 
-- Machine JSON: numeric **0 = "not available"**, never invent numbers; `-` in human tables.
+- Machine JSON: **absence is FLAGGED or DISCRIMINATED, never silently zeroed** (ADR 0009,
+  whose three classes this summarises — `src/Output.roc`'s comment block is the contract of
+  record). *Impossible-zero* fields keep 0 as the magnitude and ship a `_known`
+  companion decoded from the STORED NULL (`CASE WHEN … IS NULL`) — `np_w`/`power_known`,
+  `avg_hr`/`hr_known`. (`ftp_used` is impossible-zero but ships NO flag: analyze always
+  binds a real value, so there is no stored NULL to decode.) The zone vector is the
+  exception that proves the rule: `zones_known` is `COALESCE(hr_samples_total,0) > 0`, a
+  count test rather than a NULL test, because an all-zero zone vector is ambiguous —
+  which makes it an *ambiguous-zero* discriminator, not an impossible-zero flag.
+  *Both-possible* fields always carry `_known`, and there the flag IS the null —
+  `decoupling_pct`, `form_delta_7d`, `hr_drift`, `rec_drop`, and `form_tsb` **in
+  `analyze`** (summary ships `form_tsb` bare — it is always computable there). *Ambiguous zeros* get a discriminator rather than a flag: `tss: 0` is read through
+  `load_model`, and the zone vector through `zones_known` (described above). The engine never invents a value; human
+  tables still render `-`.
 - Machine JSON is a **versioned envelope** — success `{schema_version, data}`, error
   `{schema_version, error:{code, message}}`. Bump `json_schema_version` when the WRAPPER
   changes, or when a payload field is REMOVED or retyped. **Adding** a field does not bump
@@ -204,8 +236,10 @@ Every item here cost a debugging session at least once — they are not style op
   Deterministic (no timestamps) so golden fixtures stay stable.
 - **Load is a mixed model, not "TSS"** — power/HR score in TSS, rated strength/HIIT in
   session-RPE. Don't relabel the blended total "TSS"; each metrics row carries
-  `load_model` (provenance) + `load_confidence` (high=power / medium=HR·RPE /
-  low=relative-effort / none). `doctor` reports the distribution.
+  `load_model` (provenance). Confidence is DERIVED from it at read time, not stored —
+  the `load_confidence` column existed until v8 and was dropped for being derivable —
+  and the mapping is high = measured power OR distance-measured pace (`rtss`), medium =
+  HR/RPE, low = relative-effort, none = unscored. `doctor` reports the distribution.
 - One **open** planned session per date; lifecycle open → done/skipped (never
   delete). Rest days complete WITHOUT an activity id; every other type requires
   one — done means evidence.
@@ -290,9 +324,12 @@ on `main`. You never tag or edit the version by hand.
   release, and the build/upload jobs attach the platform binaries. **Windows IS built and
   shipped** (`stride-windows-x86_64`, since v0.3.0) — basic-cli ships an x64win host
   and `OsStr.display` decodes the `WindowsU16s` argv arm. Targets: linux-x86_64,
-  macOS arm64 + Intel (macos-15-intel), windows-x86_64. **linux-arm64 currently FAILS**
-  (needs an explicit `--target`; it detects arm64v1musl) — `fail-fast: false` plus an
-  `always()` upload means the other targets still attach. Fixing it is an open follow-up.
+  macOS arm64 + Intel (macos-15-intel), windows-x86_64, **and linux-arm64** — that last
+  one needs the explicit `roc_target: arm64musl` the release workflow passes (left to
+  itself it detects arm64v1musl and fails), has a dispatch-only re-check in
+  `verify-arm64.yml`, and ships from
+  v0.6.0. `fail-fast: false` plus an `always()` upload means one bad target still lets the
+  others attach.
 - **Never cut a release without Mariano's explicit go-ahead** — landing feats on main is
   fine, but merging the release PR / tagging waits for a clear yes.
 - **GOTCHA — never write `feat:`/`fix:` as literal text in a commit _body_.** release-please

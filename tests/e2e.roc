@@ -4,7 +4,7 @@ app [Context, program] {
 }
 
 # The whole native-Roc test harness in ONE basic-webserver app. `E2E_MODE` picks a role:
-#   • (default / "e2e") run the ~140-check offline suite in init!, then exit
+#   • (default / "e2e") run the offline check suite in init!, then exit
 #   • "sync"            drive the real sync path (token refresh + activity/stream pull)
 #                       against a running mock, then exit
 #   • "mock"            serve the four Strava endpoints the sync test hits, and listen
@@ -185,8 +185,11 @@ run_all! = || {
     b_import!(ctx)?
     b_rpe!(ctx)?
     b_compare!(ctx)?
-    b_doctor!(ctx)?
+    # b_device_watts! BEFORE b_doctor!: it seeds the only avg_watts-scored activity,
+    # and doctor's confidence cross-check can only guard rungs that exist when it runs.
+    # Reversed, that check silently stopped covering the avg_watts rung.
     b_device_watts!(ctx)?
+    b_doctor!(ctx)?
     b_human!(ctx)?
     b_concurrency!(ctx)?
     b_migration!(ctx)?
@@ -776,7 +779,7 @@ b_seed_analyze! = |ctx| {
     # corrupted the JSON of the commands that NARRATE to stderr by design
     # (analyze, sync — ADR 0007). So: keep stderr out of the pipe, and fail
     # explicitly on an empty payload instead of inferring conformance from it.
-    validate! = |cmd, schema| Str.trim(sh!("out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${cmd} 2>/dev/null); if [ -z \"$out\" ]; then echo \"no output from `${cmd}` — nothing was validated\"; else printf '%s' \"$out\" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/${schema}.json -f tools/validate.jq 2>&1; fi"))
+    validate! = |cmd, schema| validate_schema!(ctx, cmd, schema)
     check!("summary conforms to its schema", validate!("summary", "summary") == "")?
     check!("plan conforms to its schema", validate!("plan", "plan") == "")?
     check!("activity conforms to its schema", validate!("activity 101", "activity") == "")?
@@ -1005,6 +1008,28 @@ b_seed_analyze! = |ctx| {
     # and `week all` were missing (the latter sits at exactly 100 on real data).
     wide = Str.trim(sh!("for c in season activities plan week 'week all' compare progress load stats zones 'power-curve' 'top tss'; do HOME='${ctx.home}' '${ctx.bin}' $c 2>/dev/null; done | grep -E '[│╭├╰]' | while IFS= read -r l; do printf '%s' \"$l\" | LC_ALL=en_US.UTF-8 wc -m; done | tr -d ' ' | awk '$1 > 100' | sort -rn | head -1"))
     check!("no human table exceeds the 100-column budget", wide == "")?
+    # The 2026-08-17 compiler widened I64.from_str to accept exponent notation:
+    # "1e1" was a parse error on the previous pin and is 10 now. That reaches
+    # MUTATING commands -- `skip 1e1` addresses planned session 10 -- and no
+    # test could see it, because nothing exercised an exponent argument.
+    #
+    # This PINS an accident rather than endorsing it (#201): `1e1` addresses
+    # session 10 while `3.3e1` cannot address session 33, which is nobody's
+    # design. If #201 narrows the parse, this check should be INVERTED to assert
+    # the refusal, not deleted -- the point is that the behaviour is decided on
+    # purpose rather than inherited from a stdlib change.
+    #
+    # Assert the RESULT, not the envelope: `schema_version` appears in the error
+    # arm too, so the first version of this check stayed green in exactly the
+    # state it exists to detect (proved by mutation). Comparing against `10`
+    # rather than a literal keeps it independent of the fixture's size.
+    check!("a numeric arg accepts exponent notation (compiler-driven, pinned)", Str.trim(strjq!(ctx, ["activities", "1e1"], ".data | length")) == Str.trim(strjq!(ctx, ["activities", "10"], ".data | length")))?
+    check!("...and a non-numeric arg is still refused", Str.contains(stride!(ctx.bin, ctx.home, ["activities", "ten"]), "bad_count"))?
+    # The secret arm of `config get` is a DIFFERENT payload shape from the arm
+    # already covered — it adds `redacted` — and nothing validated it, which is
+    # how an undeclared key shipped under additionalKeys:false.
+    check!("config get on a secret conforms", validate!("config get strava_client_secret", "config") == "")?
+    check!("...and it really is the redacting arm", Str.contains(strjq!(ctx, ["config", "get", "strava_client_secret"], ".data.redacted"), "true"))?
     check!("season conforms", validate!("season", "season") == "")?
     check!("season reports at least one block", strjq!(ctx, ["season"], ".data.blocks | length > 0") == "true")?
     check!("the gap threshold travels with the payload", strjq!(ctx, ["season"], ".data.gap_weeks") == "2")?
@@ -1289,11 +1314,13 @@ b_plan! = |ctx| {
     # typo that lands there cannot be re-derived — and it would belong to no training
     # week, matching no completion or adherence query. Each of the rejects below PARSES;
     # the last two would be silently normalized to a different day than the one typed.
-    # #105 workaround: dynamic text is now SPLICED into SQL as an escaped literal, not
-    # bound — so apostrophes are the case that must round-trip byte-for-byte. This detail
-    # exercises the escape (one quote, a doubled quote, and SQL-looking text) through the
-    # INSERT and back out through the reader. A broken escape either corrupts the text
-    # (assert catches it) or fails the INSERT loudly (also caught — the id check fails).
+    # Apostrophes must round-trip byte-for-byte through the INSERT and back out. Written
+    # when #105's workaround SPLICED dynamic text into SQL as an escaped literal; that
+    # workaround was deleted when the bug was fixed in basic-cli 0.22.0 and Plan.roc binds
+    # normally now (`:detail`, `:rationale`). The check is worth keeping either way -- it
+    # is the regression test for ever reaching for a splice again. A broken round trip
+    # either corrupts the text (assert catches it) or fails the INSERT loudly (also
+    # caught -- the id check fails).
     # stride! (direct exec, no shell) rather than strjq! — the harness's sh-based jq
     # wrapper single-quotes its args, so an apostrophed arg breaks the TEST's own
     # quoting before stride ever sees it. The id is read back with sql!, whose command
@@ -1876,12 +1903,16 @@ b_progress_b! = |ctx| {
 }
 
 # ── import: Strava account export ────────────────────────────────────
+validate_schema! : Ctx, Str, Str => Str
+validate_schema! = |ctx, cmd, schema| Str.trim(sh!("out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${cmd} 2>/dev/null); if [ -z \"$out\" ]; then echo \"no output from `${cmd}` — nothing was validated\"; else printf '%s' \"$out\" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/${schema}.json -f tools/validate.jq 2>&1; fi"))
+
 b_import! : Ctx => Try({}, _)
 b_import! = |ctx| {
     expdir = Str.trim(sh!("mktemp -d"))
     _ = write_csv!(expdir)
     imp = stride!(ctx.bin, ctx.home, ["import", expdir])
     check!("import 2 + skip 1", Str.contains(imp, "\"imported\":2") and Str.contains(imp, "\"skipped\":1"))?
+    check!("import conforms to its schema", validate_schema!(ctx, "import ${expdir}", "import") == "")?
     row9001 = Str.trim(sql!(ctx.db, "SELECT name || '|' || sport_type || '|' || start_local || '|' || moving_time || '|' || CAST(distance AS INT) || '|' || weighted_avg_watts FROM activities WHERE id=9001;"))
     check!("imported 9001 row exact", row9001 == "Morning ride, easy one|Ride|2025-07-01T06:30:00Z|3600|20100|190.0")?
     check!("HR-only 9002 keeps avg_hr", Str.trim(sql!(ctx.db, "SELECT avg_hr FROM activities WHERE id=9002;")) == "145.0")?
@@ -2011,8 +2042,19 @@ b_doctor! = |ctx| {
     check!("doctor conf_high >= 1", sfloat(strjq!(ctx, ["doctor"], ".data.conf_high")) >= 1.0)?
     check!("doctor conf_medium >= 1", sfloat(strjq!(ctx, ["doctor"], ".data.conf_medium")) >= 1.0)?
     ch = strjq!(ctx, ["doctor"], ".data.conf_high")
-    powr = strjq!(ctx, ["doctor"], "[.data.scored_by[] | select(.model==\"power_stream\" or .model==\"weighted_watts\" or .model==\"avg_watts\") | .n] | add // 0")
-    check!("conf_high == power-rung provenance", ch == powr)?
+    # This must enumerate EVERY rung the code maps to `high`, including rtss -- the
+    # comment over that mapping claimed the cross-check made it undriftable while this
+    # list omitted rtss, so dropping rtss from the mapping left the suite green.
+    powr = strjq!(ctx, ["doctor"], "[.data.scored_by[] | select(.model==\"power_stream\" or .model==\"weighted_watts\" or .model==\"avg_watts\" or .model==\"rtss\") | .n] | add // 0")
+    check!("conf_high == every rung mapped to high", ch == powr)?
+    # The guard is only as strong as the rungs that EXIST when it runs: a rung with zero
+    # rows leaves both sides of the equality unchanged, so dropping it from the mapping is
+    # invisible. That is an ordering property, not a fixture property -- avg_watts was
+    # uncovered only because b_doctor! ran before the body seeding it, and a comment here
+    # once asserted the fixture had no such row at all. Pin the coverage so a reorder that
+    # re-hides a rung fails HERE rather than silently weakening the check above.
+    covered = strjq!(ctx, ["doctor"], "[.data.scored_by[] | select(.n > 0) | .model] | sort | join(\",\")")
+    check!("every power rung the mapping names exists by the time doctor measures it", Str.contains(covered, "power_stream") and Str.contains(covered, "weighted_watts") and Str.contains(covered, "avg_watts") and Str.contains(covered, "rtss"))?
     check!("doctor reports sports with a DERIVED ftp", sfloat(strjq!(ctx, ["doctor"], ".data.ftp_derived_sports")) >= 1.0)?
     check!("doctor zones_set true", strjq!(ctx, ["doctor"], ".data.zones_set") == "true")?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ctx.tz])
@@ -2050,6 +2092,18 @@ b_device_watts! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("estimated watts fall through to HR", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=401;")) == "hr_avg")?
     check!("NULL device_watts still scores as measured", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=402;")) == "avg_watts")?
+    # one pace-scored activity that SURVIVES to b_doctor!, so doctor's confidence
+    # cross-check can guard the rtss rung. b_period_pace! seeds one too and then deletes
+    # it, which is the only reason the rung was invisible there -- a threshold speed
+    # derives from a single activity via period_threshold_sql's TRAILING-60-day arm,
+    # whose `b2.start_local <= a.start_local` includes the activity's own row, so no
+    # accumulated history is needed. (Not the cold-start forward-fill: delete that arm
+    # outright and the suite stays green.) Without this row, dropping 'rtss' from
+    # high_models_sql leaves the whole suite green.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (403,'doctor pace swim','Swim','${ctx.d1}T05:00:00Z',1800,2400);")
+    _ = seed_pace_stream!(ctx.db, 403, 1300, 1)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("a pace-scored activity survives to doctor", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=403;")) == "rtss")?
     Ok({})
 }
 

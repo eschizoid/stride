@@ -17,23 +17,33 @@ one ingestion layer, the analysis is yours.
 ```bash
 $ stride summary
 
-── stride report (as of 2026-07-31) ──────────────────
+── stride report (as of 2026-08-17) ──────────────────
 
-  fitness (CTL): 25   fatigue (ATL): 25   form (TSB): 0
-  → form 0, level with a week ago — balanced
+  fitness (CTL): 36   fatigue (ATL): 42   form (TSB): -6
+  → form -6, up 6 from a week ago — modeled fatigue building, 3 days in this band
+  ramp: +0/wk · +2/wk over 28d
+
 
   last 28 days:
-    training load: 819 (79% measured — rest estimated from HR/RPE; see doctor)
-    time in HR zones: Z1 409m  Z2 189m  Z3 276m  Z4 72m  Z5 0m
-    polarization: 63% easy (Z1-2) / 29% moderate (Z3) / 8% hard (Z4-5)
-    ⚠ zone gap: no Z5 heart-rate time in 28 days (could be no hard sessions, or
-      power-based / short intervals that didn't drive HR to Z5)
+    21 sessions · 19.1h · 324.9 km
+    training load: 1232 (75% measured — rest estimated from HR/RPE; see doctor)
+    confidence: 75% high · 25% medium · 0% low
+    time in HR zones: Z1 211m  Z2 243m  Z3 70m  Z4 263m  Z5 0m
+    polarization: 54% easy (Z1-2) / 15% moderate (Z3) / 31% hard (Z4-5)
+    ⚠ zone gap: no Z5 heart-rate time in 28 days (could be no hard sessions, or power-based / short intervals that didn't drive HR to Z5)
 
-  FTP (60d): ~243W — derived from your best 20-min power 256W
+  FTP (60d): ~239W — derived from your best 20-min power 252W
 
-  last 7 days: 208 load — 40% easy / 46% moderate / 14% hard
-  last hard session (5+ min Z4/Z5): 2026-07-28
-  open planned sessions: 3
+  sport mix (28d):
+    Ride: 10 sessions · 10.8h · 279.5 km · 700 load
+    Rowing: 4 sessions · 3.0h · 37.4 km · 269 load
+    Workout: 6 sessions · 4.6h · 0.0 km · 220 load
+    Run: 1 sessions · 0.8h · 7.9 km · 43 load
+
+  last 7 days: 5 sessions · 4.7h · 70.8 km · 273 load — 73% easy / 8% moderate / 19% hard
+  last hard session (5+ min hard, by power or HR): 2026-08-16
+  hard days: 1 in 14d · 9 in 28d · median gap 2d
+  open planned sessions: 7
 ```
 
 Every number above was computed locally from your raw activity streams — none came
@@ -41,7 +51,8 @@ from a model. "Training load" is a *mixed model*: power/HR sessions score in TSS
 rated strength/HIIT sessions in session-RPE, so stride stops calling the blended
 total "TSS" and `doctor` breaks it down by per-session confidence.
 
-**What you'll need:** a terminal and `sqlite3`. For your data, two paths — the free
+**What you'll need:** a terminal. (SQLite is linked into the binary — `sqlite3` on your
+PATH is only for poking at the database yourself, and for `just test`.) For your data, two paths — the free
 **account export** (`stride import`, no API app and no Strava subscription) for
 summary-level history, or your own **Strava API app** for live daily sync and full
 stream history (that path needs an active Strava subscription to hold API
@@ -65,19 +76,38 @@ differ:
 - **Reproducible recomputation** — every metric records the inputs it was computed from,
   so a changed input recomputes exactly the affected history. Edit a ride on Strava and
   the metrics self-heal.
-- **Scriptable** — every command can emit JSON for tools and agents when passed `--json`, tables otherwise.
+- **Scriptable** — every *query* command emits JSON for tools and agents when passed `--json`, tables otherwise; `--human` forces tables back. Either flag beats the `STRIDE_FORMAT` environment variable. (`auth` and `backfill` are interactive/long-running and always print progress text.)
 - **An honest data model** — a session with no usable data shows `-`, not an
   invented number. Junk HR samples are filtered, and it says so. Strength, HIIT,
   and yoga score through your own effort rating (`stride rate`) instead of
   pretending an aerobic model fits them — and every computed load records both
-  which method produced it and a **confidence tier** (high = measured power,
+  which method produced it and a **confidence tier** (high = measured power *or distance-measured pace*,
   medium = HR or session-RPE, low = Strava relative effort), which `doctor`
   reports as a distribution so you know how much of your load is measured vs
   estimated.
 
+### And if I already have a training platform?
+
+TrainingPeaks hides its math. intervals.icu is cloud-locked. Golden Cheetah deserves the
+fairest comparison — it is open source and it does show its work — but it is a dense
+desktop GUI built for a human to click through, not an engine a coach can script against.
+
+The position nobody owns is **the engine that shows its work *to a machine***: every
+number traceable to its inputs, recomputable from raw streams, and emitted as versioned
+JSON a tool can consume. That is the whole of stride's ambition, and every feature does
+one of two things — widens what the engine can honestly measure, or widens who can feed
+it data. None adds judgment to the engine; reasoning about the numbers stays with the
+coach (ADR 0012).
+
+**The ingestion boundary is the filesystem.** Where a device uploads its data — Garmin
+Connect, Wahoo, Peloton's servers — is between you and your vendor. stride reads files you
+put on disk: bulk export, USB, email, anything. Strava is the one grandfathered API
+because it exists and is an aggregator; no other vendor-cloud integration ships, ever.
+One sentence that deletes an entire category of scope.
+
 ## Installation
 
-Everyone needs `sqlite3`. Then pick a data path:
+Pick a data path:
 
 - **API sync (fullest data — live daily sync + full streams):** a
   [Strava API application](https://www.strava.com/settings/api) (client ID +
@@ -86,8 +116,9 @@ Everyone needs `sqlite3`. Then pick a data path:
   ([their announcement](https://communityhub.strava.com/insider-journal-9/an-update-to-our-developer-program-13428)).
 - **Account export (free, no API app):** `stride import <export.zip>` loads the
   archive Strava emails you from Settings → My Account → Download or Delete Your
-  Account. Summary-level data today; stream import is tracked in
-  [#6](https://github.com/eschizoid/stride/issues/6).
+  Account. Summary-level data only — the export carries no
+  streams, so nothing derived from them (normalized power, the power-duration curve,
+  interval detection) exists for imported activities. No open issue tracks changing that.
 
 ### Prebuilt binary (recommended)
 
@@ -100,7 +131,7 @@ and put it on your `PATH`. Pick one:
 | macOS · Apple Silicon | `stride-macos-arm64` |
 | macOS · Intel | `stride-macos-x86_64` |
 | Linux · arm64 | `stride-linux-arm64` |
-| Windows · x86_64 | `stride-windows-x86_64.exe` |
+| Windows · x86_64 | `stride-windows-x86_64` |
 
 ```bash
 # example: macOS Apple Silicon — adjust the asset for your platform
@@ -120,7 +151,11 @@ sha256sum -c SHA256SUMS.txt --ignore-missing   # checks the asset(s) you downloa
 
 ### Build from source
 
-Needs the pinned Roc toolchain (see [Development](#development)) and `just`:
+Needs `just` and the pinned Roc toolchain. CI installs it with the `roc-lang/setup-roc`
+Action; on a laptop, take the `nightly-tag` from `.github/workflows/build.yml` and download
+that release from [`roc-lang/nightlies`](https://github.com/roc-lang/nightlies) (the macOS assets are
+`roc_nightly-macos_apple_silicon-*` and `roc_nightly-macos_x86_64-*`). Note `just install` symlinks into `~/.local/bin`,
+which must exist and be on your PATH:
 
 ```bash
 git clone https://github.com/eschizoid/stride.git && cd stride
@@ -158,9 +193,9 @@ stride analyze
 ```
 
 `backfill` (API path) is the whole first-time pull: it fetches your complete activity
-list, then drains every activity's raw streams, pacing itself against Strava's rate
-limits (fills each 15-min window, sleeps to the next, stops cleanly at the daily
-cap). It's resumable — a multi-thousand-activity history spans a few days of
+list, then drains every activity's raw streams, pacing itself well inside Strava's rate
+limits (95 reads per 15-minute window against a cap of 100, then sleeps to the next
+window; stops cleanly at 940 reads per run against a daily cap of 1000). It's resumable — a multi-thousand-activity history spans a few days of
 `stride backfill` re-runs, hands-off.
 
 After `auth`, credentials live in the db — no env vars ever again. Day-to-day:
@@ -185,7 +220,7 @@ stride plan                                       # everything needed to plan a 
 | Command | What it does |
 | --- | --- |
 | `sync` | Pulls new activities + the next batch of HR/power streams. Re-pulls a rolling 30-day window so edits made on Strava self-heal. The fast daily command. |
-| `backfill` | Re-pulls the **full** activity list, then drains **all** missing stream history — hands-off, resumable, paced on Strava's rate-limit headers. First-time imports and deep reconciles (~after bulk edits older than 30 days). |
+| `backfill` | Re-pulls the **full** activity list, then drains **all** missing stream history — hands-off, resumable, and paced by counting its own reads, so it never depends on an endpoint sending rate-limit headers — against self-imposed budgets of 95 reads per 15-minute window (Strava's cap is 100) and 940 per run (Strava's daily cap is 1000). First-time imports and deep reconciles (~after bulk edits older than 30 days). |
 | `rate <activity_id\|latest> <1-10>` | *How hard did it feel?* Session-RPE (Borg): you are the sensor for strength, HIIT, and yoga. `load = hours × RPE × 10`, so an hour at RPE 10 = 100, TSS-comparable. For strength-class sports your rating outranks HR; for endurance, measured power/HR always win. |
 | `import <zip\|dir>` | Loads a **Strava account export** (the ZIP from Settings → My Account → Download or Delete Your Account) — **no API credentials or subscription needed**. Summary-level data (no streams yet, so zone breakdowns stay honestly absent); re-import is idempotent. English-language exports only. |
 | `analyze` | Computes metrics for new (or invalidated) activities — TSS, time-in-zone, normalized power — then rebuilds the daily fitness/fatigue/form series through today. Prints what it did plus a one-line form verdict. |
@@ -195,20 +230,20 @@ stride plan                                       # everything needed to plan a 
 | Command | The question it answers |
 | --- | --- |
 | `summary` | *Where do I stand today?* Form (with verdict), 7-day and 28-day zone mix + polarization, your derived FTP and the 20-min best behind it, date of your last hard session, per-sport breakdown. |
-| `activities [n] [sport]` | *What did each session actually contain?* Last *n* sessions (default 30), optionally filtered by sport family (human words widen: `bike` = Ride/VirtualRide/GravelRide/MountainBikeRide, `run` = Run/VirtualRun/TrailRun; e-bikes excluded; other sport_types filter exactly) (`activities 10 rowing`). Per session: load, intensity vs FTP, and minutes actually spent hard (Z4+Z5). |
+| `activities [n] [sport]` | *What did each session actually contain?* Last *n* sessions (default 30), optionally filtered by sport family (human words widen: `bike` = Ride/VirtualRide/GravelRide/MountainBikeRide, `run` = Run/VirtualRun/TrailRun; e-bikes excluded; other sport_types filter exactly) (`activities 10 rowing`). Per session: load, intensity vs FTP, and minutes actually spent hard — measured against the sport's threshold by *power* where power exists, else by the *pace* split where a threshold speed exists, else HR Z4+Z5. |
 | `top <metric> [n] [sport]` | *What were my best sessions?* Ranks activities (default top 10) by a metric — `hr`, `tss`, `power`, `intensity`, `distance`, `time`, or `output` (kJ) — optionally filtered by sport (`top tss 5 ride`). The leaderboard to `activities`' timeline. |
 | `doctor` | *Can I trust my data?* Coverage (HR/power/streams/ratings), how each activity was scored and the **measured-vs-estimated confidence split**, config gaps (HR zones), pending backfill, and the active time anchor. Every gap says what, why, and the fix. |
 | `zones` (alias `pz`) | *What watts is each power zone for me?* The 7 Coggan/Peloton power zones as watt ranges derived from your FTP (they shift when FTP changes). The targets you'd set on a Power Zone ride. |
 | `reps [date]` | *Am I riding the same workout harder?* One level below `progress`: the anchor session's detected interval blocks beside the same-shaped blocks of earlier sessions — per-rep watts, the within-session fade, and the first-to-last HR rise. Comparability is stated in the payload rather than assumed: same sport family, same rep count, same rep-duration band, same signal, never later than the anchor. Each row also reports its OWN rep spread, because whether an uneven session counts as "the same workout" is a judgment stride leaves to you. A session whose blocks vary too much to be one repeated shape is refused as an anchor rather than compared against. |
 | `progress [date] [asc\|desc]` | *Am I improving on this workout?* Every past instance of a workout, compared with a **sport-aware lens** — Efficiency Factor (NP ÷ HR) for power rides, speed ÷ HR for distance sports, RPE for rated strength/HIIT — with a trend verdict and last-vs-best. Bare `progress` uses your latest session; `stride --help` has the exact matching rules. Sessions list oldest-first (`asc`, the default) so the trend reads left to right; `desc` puts the newest first when you only want the last few. The verdict is computed chronologically either way. |
-| `load [days]` | *Is my training working over time?* Daily fitness/fatigue/form rows for windows ≤14 days; Monday-aligned **weekly rollups** (sessions, load, fitness trend) for longer windows (default 90). Ends with today's form verdict. |
+| `load [days]` | *Is my training working over time?* Daily fitness/fatigue/form rows for windows ≤14 days; Monday-aligned **weekly rollups** (sessions, load, fitness trend) for longer windows (default 90). Ends with today's form verdict. The rollup is a *rendering* — `--json` is always the daily series. |
 | `compare [week\|month]` | *Is this period better than the last?* The last rolling window (7 or 28 days) beside the one before it — load, sessions, hard minutes, easy %, and end-of-window fitness — with signed deltas and a ramp/fitness verdict. |
 | `plan` | *What should I do next?* One call bundling `summary` + every open session + the last 14 days of activities — the complete planning context. |
 | `week` / `week all` | *What was planned, and did it happen?* `week` is the current training week (Mon–Sun). `week all` sections the log — **upcoming**, **this week**, **last week** — and counts anything older rather than hiding it; the JSON payload always carries every row. Status is open / done / skipped, and a session completed on a different day than planned shows that date. |
 | `activity <id>` | *How did one session actually go?* Deep view of a single activity: load, intensity, zone minutes, hard time, and power bests (1/3/5/20 min) computed from its streams. The session-review tool. |
-| `power-curve [days] [sport]` (alias `pc`) | *What's my power at every duration?* The power-duration curve — best watts held for 5 s through 60 min across a window (default 90 days), per sport — with a **Critical Power / W′** fit: your sustainable aerobic ceiling and the finite battery above it. Reads the stored per-activity bests; the shape behind FTP. |
-| `season` | *What has this year actually looked like?* Training blocks, monthly load, polarization and FTP over time. A block is a run of training weeks closed by two or more weeks off — the only boundary in the data that is not a judgment call — and each one is described by its measured load trend rather than labelled a phase. See ADR 0011. |
-| `tte <watts>` | *How long could I hold this?* Time to exhaustion at a power you name, from a Critical Power model fitted on that sport family over the trailing 90 days. (Not identical to `power-curve`'s fit: that one spans every power sport and includes today, this one is per-family and excludes its anchor date.) Every answer carries what qualifies it: which band of the model it falls in, and the longest effort at or above that power you already have on record — when the model predicts less than your own file proves, it says so. |
+| `power-curve [days] [sport]` (alias `pc`) | *What's my power at every duration?* The power-duration curve — best watts held for 5 s through 60 min across a window (default 90 days), across every power sport unless you name one — with a **Critical Power / W′** fit: your sustainable aerobic ceiling and the finite battery above it. Reads the stored per-activity bests; the shape behind FTP. |
+| `season` | *What has my training actually looked like, block by block?* (the whole history, not a year — currently 2021 to today) Training blocks, monthly load, polarization and FTP over time. A block is a run of training weeks closed by two or more weeks off — the only boundary in the data that is not a judgment call — and each one is described by its measured load trend rather than labelled a phase. See ADR 0011. |
+| `tte <watts>` | *How long could I hold this?* Time to exhaustion at a power you name, from a Critical Power model fitted on your **ride** history over the trailing 90 days, from the 5/10/20-minute bests on record. (Not identical to `power-curve`'s fit: that one spans every power sport and includes today; this one is rides-only and excludes today. `tte` takes no sport argument.) Every answer carries what qualifies it: which band of the model it falls in, and the longest effort at or above that power you already have on record — when the model predicts less than your own file proves, it says so. |
 | `stats` | *What have I done, ever and this year?* Career and year-to-date totals per sport: sessions, hours, distance. |
 
 **Coaching log** (the adaptation loop)
@@ -242,27 +277,34 @@ against your own database; the e2e suite runs it against fixtures in CI, togethe
 with mutation checks proving the validator rejects a missing key, a wrong type, an
 undeclared key, and a bad enum value.
 
-The tables are built to surface the all-moderate trap — a `0.98`-intensity ride with
-`0m` of actual hard time:
+The tables put the load model's honesty on screen. A `-` is never a zero: it means no
+usable data for that column, not that the value was nothing.
 
 ```bash
-$ stride activities 4
-╭────────────┬─────────┬─────────────────────────────┬──────┬──────┬────────────────┬──────╮
-│ date       │ sport   │ name                        │ time │ load │ intensity (if) │ hard │
-├────────────┼─────────┼─────────────────────────────┼──────┼──────┼────────────────┼──────┤
-│ 2026-07-30 │ Workout │ 45 min Full Body Strength   │ 45m  │ 45   │ -              │ 0m   │
-│ 2026-07-28 │ Ride    │ 45 min Metallica Power Zone │ 45m  │ 66   │ 0.94           │ 12m  │
-│ 2026-07-27 │ Ride    │ 58 min Endurance Spin       │ 58m  │ 71   │ 0.98           │ 0m   │
-│ 2026-07-25 │ Workout │ 45 min Full Body Strength   │ 46m  │ -    │ -              │ 0m   │
-╰────────────┴─────────┴─────────────────────────────┴──────┴──────┴────────────────┴──────╯
+$ stride activities 4     # example output
+╭────────────┬─────────┬────────────────────────────────────┬──────┬──────┬────────────────┬──────╮
+│ date       │ sport   │ name                               │ time │ load │ intensity (if) │ hard │
+├────────────┼─────────┼────────────────────────────────────┼──────┼──────┼────────────────┼──────┤
+│ 2026-08-16 │ Ride    │ 45 min Metallica Ride with Kendall │ 45m  │ 82   │ 1.05           │ 36m  │
+│            │         │ Toole                              │      │      │                │      │
+│ 2026-08-15 │ Ride    │ Morning Ride                       │ 103m │ 65   │ -              │ 1m   │
+│ 2026-08-14 │ Workout │ Evening Workout                    │ 45m  │ 38   │ -              │ 0m   │
+│ 2026-08-12 │ Run     │ Morning Run                        │ 46m  │ 43   │ -              │ 0m   │
+╰────────────┴─────────┴────────────────────────────────────┴──────┴──────┴────────────────┴──────╯
 
 load:           session stress — TSS for power/HR, session-RPE for rated sessions; '-' = no usable data (e.g. dead HR strap)
 intensity (if): vs your FTP — ~0.7 easy · 0.85-0.95 tempo · ~1.0 threshold · 1.05+ vo2max
-hard:           minutes at/above threshold — by power (vs the sport's FTP) where there's power, else HR Z4+Z5
+hard:           minutes at/above threshold — by power (vs the sport's FTP), else the pace split, else HR Z4+Z5
 ```
 
-(The strength session on 2026-07-30 shows `load 45` from a session-RPE rating and
-`-` intensity — no power meter, so there's no FTP-relative number to invent.)
+Reading it: the Peloton ride has a power meter, so it gets an intensity factor and 36
+minutes measured at or above threshold *by power*. The outdoor ride has no power, so
+`intensity` is `-` rather than an invented number — but it does have a distance stream, so it is scored
+by **pace** (an `rtss` ride — the ladder below explains the rung), and its 1 minute of hard
+time comes from the pace intensity split, not from HR zones. The strength session scores a
+`load` from your own session-RPE rating (`stride rate`) with no intensity factor at all,
+because an aerobic model does not fit it.
+
 
 ## The coaching layer (optional)
 
@@ -298,7 +340,7 @@ flowchart TD
     subgraph db["SQLite — ~/.stride/db.sqlite"]
         direction LR
         mirror["mirror tier<br>activities, streams<br>re-pullable"]
-        computed["computed tier<br>activity_metrics, daily_load<br>rebuilt by analyze"]
+        computed["computed tier<br>activity_metrics, daily_load, activity_segments<br>rebuilt by analyze"]
         judgment["judgment tier<br>planned_sessions, ratings, config<br>exists only here"]
     end
 
@@ -306,13 +348,16 @@ flowchart TD
     queries["queries — JSON or tables"]
     coach(["LLM coach"])
 
-    strava --> auth --> sync --> mirror
-    export --> mirror
+    strava -->|"oauth token exchange"| auth
+    auth -.->|"writes tokens to config"| judgment
+    strava --> sync --> mirror
+    export -->|"import"| mirror
     mirror --> analyze --> computed
+    mirror --> queries
     computed --> queries
     judgment --> queries
     queries -->|"summary, week, progress"| coach
-    coach -->|"plan add, complete, skip, rate"| judgment
+    coach -->|"week add, complete, skip, rate"| judgment
 
     classDef tier fill:#f6f8fa,stroke:#57606a,color:#24292f
     classDef actor fill:#ddf4ff,stroke:#0969da,color:#0a3069
@@ -326,18 +371,37 @@ Human input never lives on a mirror table, because a re-sync would silently wipe
 
 **What the engine computes** (all deterministic):
 
-- **TSS ladder** — best available data wins: stream normalized power → grade-adjusted
-  pace (rTSS) → Strava weighted watts → average watts → zone-weighted hrTSS →
-  `relative_effort` → honest zero. Each row records which rung scored it.
+- **TSS ladder** — best available data wins, in this order:
+  1. **Measured power**, as a group: stream normalized power → Strava weighted watts →
+     average watts. The whole group is skipped when Strava marks the watts estimated
+     (`device_watts: false`) — an estimate is not a measurement — and also when the sport
+     has no derived FTP yet, since scoring against an FTP of 0 would compute a TSS of 0
+     *and* block every rung below it.
+  2. **Pace** (rTSS), for any sport with a usable distance stream, once that sport has a
+     derived 20-minute threshold speed. Altitude is optional: with it the pace is
+     grade-adjusted, without it raw speed scores. This is why a meterless outdoor ride
+     scores by pace rather than falling to HR — dozens of rides in this database do.
+  3. **A fallback whose order depends on the sport's class**: endurance sports take
+     HR → session-RPE → `relative_effort`; strength-class sports put the athlete's own
+     **session-RPE ahead of HR**, because a heart rate says little about a lifting session.
+     (The HR rung itself is zone-weighted hrTSS where zone seconds exist, else the whole
+     moving time placed in the zone the average HR falls in — a separate `load_model`.)
+  4. **Honest zero** if nothing above applies.
+
+  Each row records which rung scored it in `load_model`; the confidence tier is
+  derived from that at read time rather than stored.
 - **Normalized power** — 30-second rolling average over 1 Hz-resampled streams.
-- **Grade-adjusted pace (rTSS)** — for runs and pace sports with GPS: normalized graded
+- **Grade-adjusted pace (rTSS)** — for any sport with a distance stream, a pool swim included: normalized graded
   pace vs a **derived** per-sport threshold pace (best 20-min graded speed × 0.95), used
-  when power isn't available. Sports without dist+alt streams fall through to HR.
+  when power isn't available. Sports without a distance stream fall through to HR.
 - **Power-duration curve + Critical Power** — best power held at every duration (5 s–60 min)
   across a window, plus a CP/W′ fit. Surfaced by `power-curve`.
 - **CTL/ATL/TSB** — 42-day and 7-day exponential moving averages of daily load,
   extended through **today** so rest days decay fatigue and `form` is true as-of-now.
-- **Zones are HR-based** (universal across sports); power feeds TSS/NP only.
+- **Zones are HR-based** — one global set (`hr_z1_max`…`hr_z4_max`) with optional
+  per-sport overrides (`hr_z2_max_rowing`). Power never feeds the zone table, but it does
+  drive TSS/NP, the power-duration curve and CP/W′, the derived FTP, and the easy/moderate/
+  hard intensity split that the `hard` column reports.
 - **FTP is derived, never configured** — the sport family's best 20-min power × 0.95 over a
   60-day window, and the window is anchored to **the activity's own date**, not today. A
   2021 ride is scored against 2021 fitness, and a new personal best does not rewrite your
@@ -347,12 +411,12 @@ Human input never lives on a mirror table, because a re-sync would silently wipe
 
 Nothing here is a hardcoded sport list. **The data you have decides the rung** — the ladder
 takes the best available source and records which one won in `load_model`, so `doctor` can
-show you the distribution. Sport type only changes two things: whether a rating outranks
-heart rate, and the swim exponent.
+show you the distribution. Sport type changes four things, all of them data tables in `Sports.roc`: the FAMILY (which since #151 is the population the derived FTP is computed over, not just a display filter), pace routing for interval detection and decoupling, whether a rating outranks
+heart rate, and the pace-TSS exponent.
 
 | Sport | Load scored by | Also computed |
 |---|---|---|
-| **Ride / VirtualRide / GravelRide** | power stream → NP·IF (`power_stream`), else Strava weighted watts, else avg watts | power-duration curve + CP/W′, 20-min best → derived FTP, power-intensity split |
+| **Ride / VirtualRide / GravelRide / MountainBikeRide** | power stream → NP·IF (`power_stream`), else Strava weighted watts, else avg watts | power-duration curve + CP/W′, 20-min best → derived FTP, power-intensity split |
 | **Rowing** | same power ladder — a rowing watt is not a cycling watt, so it gets its **own** derived FTP | as above, on its own threshold |
 | **Run** | grade-adjusted pace (`rtss`): normalized graded pace vs derived threshold pace, **IF²** | Minetti grade adjustment, pace-intensity split |
 | **Swim** | grade-adjusted pace (`rtss`) with **IF³** — drag rises with v³, so squaring under-scores hard sets by ~20% | flat-altitude speed, CSS-equivalent threshold |
@@ -390,39 +454,55 @@ the Windows/compiler-migration situation — are recorded in
 
 ```bash
 just test      # pure expects (Metrics, Render, Command, Config, …) -> build -> e2e
-just build     # release binary
+just build     # the binary (--opt=dev; see AGENTS.md for why)
 just install   # build + symlink into ~/.local/bin
 ```
 
-- **Toolchain:** Roc's new (Zig) compiler (nightly, pinned by exact tag in
-  `.github/workflows/build.yml`) · [basic-cli 0.21](https://github.com/roc-lang/basic-cli) ·
-  builtin JSON (roc-json dropped). `roc check` + `roc test` run today; the full
-  `roc build` of `app.roc` is gated on one upstream perf fix — see ADR 0000 §9.
+- **Toolchain:** Roc's new (Zig) compiler, pinned by exact nightly tag in the workflow
+  files · [basic-cli 0.22](https://github.com/roc-lang/basic-cli) · builtin JSON. `roc
+  check`, `roc test` and a full `roc build` all work. Install the pinned compiler the way
+  CI does, via the `roc-lang/setup-roc` Action with the `nightly-tag` from
+  `.github/workflows/build.yml`; locally, download that tag from `roc-lang/nightlies`. **`AGENTS.md` is the maintained source
+  for build and test conventions**; this section is a summary and defers to it.
 - **Layout:** effects live in modules by concern — `Db.roc` (SQLite + migrations),
   `Strava.roc` (OAuth + sync), and the `Analyze.roc` / `Report.roc` / `Plan.roc` /
   `Import.roc` command modules; `app.roc` is a thin argv → dispatch shell. Pure, tested
   modules: `Metrics.roc` (math), `Render.roc` (tables/formatting), `Command.roc` (argv →
-  typed command parser), `Config.roc` (secret-key policy), `Schema.roc` (DDL). Query
+  typed command parser), `Config.roc` (secret-key policy), `Sports.roc` (the sport
+  vocabulary — families, class, pace routing, as a data table rather than if-chains),
+  `Streams.roc`, `Csv.roc` and `Backfill.roc`. `Output.roc` (the JSON envelope and
+  `json_schema_version`) and `Schema.roc` (DDL) are effectful and DDL respectively — both
+  type-checked rather than expect-tested. Query
   strings live next to their row decoders on purpose — the compiler can't check SQL
   aliases against decoders, so cohesion is the safeguard.
-- **Tests:** 220 pure `expect`s + an end-to-end suite (`just e2e`) that runs the real
-  binary against a sandboxed `HOME` with seeded activities of known math (power TSS
-  exactly 100, hrTSS exactly 55, FTP rescale 100→400, full plan lifecycle, the
+- **Tests:** pure `expect` blocks across eight modules, run by `just test`. No count is
+  quoted here on purpose: one rots on every commit that adds a test (four separate places
+  quoted one and all four went stale in a single PR), and the per-module numbers `roc
+  test` prints overlap each other, and the app-wide run adds ~207 expects belonging to
+  the basic-cli platform rather than to stride. Plus an
+  end-to-end suite (`just e2e`) that runs the real
+  binary against a sandboxed `HOME` with seeded activities of known math (power TSS ~111
+  from NP 200 against a derived FTP of 190, hrTSS ~55, derived-FTP family inheritance,
+  full plan lifecycle, the
   versioned JSON envelope, timezone precedence, power-spike filtering, migration
   from a legacy db, error contracts, corrupt-data resilience). A separate
   `just e2e-sync` runs that same `tests/e2e.roc` in two roles — a mock Strava server
   (`E2E_MODE=mock`) and a sync driver — to exercise the real sync + token-refresh
   path network-free.
-- **CI:** GitHub Actions on every push runs the same `just test` (Linux needs
-  `--linker=legacy`, roc issue #3609; the toolchain tarball is checksum-pinned).
+- **CI:** on every push, `roc check` plus every pure module's expects on Linux, macOS and
+  Windows; then a macOS job that builds the binary (`--opt=dev`) and runs the e2e suite.
+  The compiler is installed by `roc-lang/setup-roc` and pinned by exact nightly tag —
+  nine times across four workflow files, so `grep -rln nightly-tag .github/workflows`
+  before calling a bump done.
 
-## Roadmap
+## What's next, and what never ships
 
-Intentionally small — things get built when dogfooding demands them:
+What is next lives in [GitHub issues](https://github.com/eschizoid/stride/issues). Why it
+is built the way it is lives in [`docs/adr/`](docs/adr/), and the list of things stride
+deliberately will not do is [ADR 0000 §10](docs/adr/0000-architecture.md).
 
-- Terminal UI for browsing the database
-- `.zwo` workout export for smart-trainer owners
-- Deeper interval analytics (W′ balance, time-to-exhaustion) on top of the detected blocks
+That list is the only one — an earlier second copy of it lived here and drifted out of
+sync with it, which is why this paragraph points rather than repeats.
 
 Personal daily-driver, built for one athlete and open to adopters who bring
 their own Strava app credentials.

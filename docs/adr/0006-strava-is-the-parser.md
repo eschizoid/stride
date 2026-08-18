@@ -20,7 +20,8 @@ Strava subscription. Grilling it surfaced three facts:
    did not tier the data. The bulk export remains free for every account.
 3. **A FIT parser is the largest build on the roadmap in the riskiest place** — a
    binary format with hundreds of message types, in a language with no FIT library and
-   a compiler currently pinned around a miscompilation (roc-lang/roc#10693).
+   a compiler that was, when this was written, pinned around a miscompilation
+   (roc-lang/roc#10693); the pin moved on 2026-08-17 and the constraint is gone.
 
 Meanwhile every device vendor already syncs to Strava, which normalizes a hundred
 formats into the two outputs stride already consumes.

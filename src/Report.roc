@@ -52,12 +52,13 @@ Report :: [].{
             query:
                 \\SELECT COALESCE(SUM(m.z1_s),0) AS z1, COALESCE(SUM(m.z2_s),0) AS z2, COALESCE(SUM(m.z3_s),0) AS z3,
                 \\       COALESCE(SUM(m.z4_s),0) AS z4, COALESCE(SUM(m.z5_s),0) AS z5, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
-                \\       -- load from a MEASURED source — a power meter or GPS-measured pace
+                \\       -- load from a MEASURED source — a power meter or distance-measured pace
                 \\       -- (high-confidence rungs) — vs estimated from HR/RPE/relative-effort
                 \\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN ('power_stream','weighted_watts','avg_watts','rtss') THEN m.tss ELSE 0 END),0) AS REAL) AS measured,
-                \\       -- polarization intensity per activity: POWER split when the activity has
-                \\       -- power-intensity time, else the HR zones. So a power ride's threshold
-                \\       -- work counts as hard even when HR sat on a zone boundary.
+                \\       -- polarization intensity per activity: the pi_* split when the activity
+                \\       -- has one (power-derived with watts, pace-derived for a distance sport
+                \\       -- without), else the HR zones. So a power ride's threshold work counts
+                \\       -- as hard even when HR sat on a zone boundary.
                 \\       COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_easy_s ELSE m.z1_s + m.z2_s END),0) AS easy,
                 \\       COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_moderate_s ELSE m.z3_s END),0) AS moderate,
                 \\       COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END),0) AS hard,
@@ -999,7 +1000,8 @@ Report :: [].{
         # most recent day with a real hard stimulus (5+ min in Z4/Z5); '' = never
         # ONE hard-session predicate (#159): power-aware like every other hard
         # surface (week's hard column, polarization) — pi_hard when the activity
-        # has a power-intensity split, HR Z4+Z5 otherwise, 5+ min either way.
+        # has a pi_* intensity split (power- or pace-derived), HR Z4+Z5 otherwise,
+        # 5+ min either way.
         # last_hard previously used HR zones alone, which missed power-only rides
         # with junk HR straps; consolidated rather than grown a second definition.
         hard_expr = "COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) >= 300"
@@ -1096,11 +1098,13 @@ Report :: [].{
         prior_b20_known_b = prior_best20.bk != 0
 
         # polarization is power-aware: easy/moderate/hard come from POWER zones for
-        # activities that have power-intensity, HR zones otherwise (zone_sum! per-activity)
+        # activities that have a pi_* intensity split (power-derived with watts,
+        # pace-derived for a distance sport without), HR zones otherwise (zone_sum! per-activity)
         total = zsum.easy + zsum.moderate + zsum.hard
         easy = zsum.easy
         hard = zsum.hard
-        # what fraction of the 28d load is measured (power) vs estimated (HR/RPE/RE) —
+        # what fraction of the 28d load is measured (power OR distance-measured pace) vs estimated
+        # (HR/RPE/RE) —
         # so the fitness number carries its own confidence, not just doctor's
         measured_pct = if zsum.tss > 0.0 ((zsum.measured / zsum.tss) * 100.0).round_to_i64_try().ok_or(0) else 0
         total7 = zsum7.easy + zsum7.moderate + zsum7.hard
@@ -1292,9 +1296,9 @@ Report :: [].{
         # optional sport filter via sport_filter_sql: the FRAGMENT is interpolated
         # (its placeholders are numbered, values stay real bindings), and the empty
         # branch is a single space, never "" — interpolating a compile-time-constant
-        # empty string crashes this backend in str_concat (#32 class; fixed upstream
-        # in roc#10595 but our pinned nightly predates it). Non-empty by construction
-        # is the rule the :all-flag comment in Plan.roc states.
+        # empty string used to crash this backend in str_concat (#32 class, roc#10595,
+        # fixed upstream and carried by the current pin). Non-empty by construction is
+        # the rule the :all-flag comment in Plan.roc states, and it stays.
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
@@ -1304,8 +1308,10 @@ Report :: [].{
                 \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
                 \\       COALESCE(m.z1_s,0) AS z1_s, COALESCE(m.z2_s,0) AS z2_s, COALESCE(m.z3_s,0) AS z3_s,
                 \\       COALESCE(m.z4_s,0) AS z4_s, COALESCE(m.z5_s,0) AS z5_s,
-                \\       -- hard time: power (at/above threshold) when the activity has power-
-                \\       -- intensity, else HR Z4+Z5. So a power ride's threshold work counts.
+                \\       -- hard time: the pi_* intensity split when the activity has one --
+                \\       -- POWER-derived where there are watts, PACE-derived for a distance sport
+                \\       -- without them -- else HR Z4+Z5. So a power ride's threshold work counts,
+                \\       -- and so does a run's.
                 \\       COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) AS hard_s,
                 \\       CAST(COALESCE(a.relative_effort,0) AS REAL) AS relative_effort,
                 \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
@@ -1365,7 +1371,7 @@ Report :: [].{
             Stdout.line!("")?
             Stdout.line!("load:           session stress — TSS for power/HR, session-RPE for rated sessions; '-' = no usable data (e.g. dead HR strap)")?
             Stdout.line!("intensity (if): vs your FTP — ~0.7 easy · 0.85-0.95 tempo · ~1.0 threshold · 1.05+ vo2max")?
-            Stdout.line!("hard:           minutes at/above threshold — by power (vs the sport's FTP) where there's power, else HR Z4+Z5")
+            Stdout.line!("hard:           minutes at/above threshold — by power (vs the sport's FTP), else the pace split, else HR Z4+Z5")
         }
     }
     # metric keyword => its ORDER BY column + human table header. The column is HARDCODED
@@ -1593,9 +1599,20 @@ Report :: [].{
             path: Path.utf8(path),
             query:
                 \\-- confidence tiers derived from load_model at read time (not stored): high =
-                \\-- measured power, medium = HR/RPE, low = relative_effort, none = unscored. The
-                \\-- e2e cross-checks the 'high' count against the power-rung provenance counts so
-                \\-- this mapping can't silently drift.
+                \\-- measured power or distance-measured pace (rtss), medium = HR/RPE, low =
+                \\-- relative_effort, none = unscored. The e2e cross-checks the 'high' count
+                \\-- against this rung list, and all FOUR rungs are guarded: dropping any of
+                \\-- them fails the suite. That took one fixture row per rung reaching doctor
+                \\-- alive -- avg_watts was hidden by body ORDER, rtss by b_period_pace!
+                \\-- deleting its own pace-scored swims before doctor runs. Two earlier
+                \\-- versions of this comment guessed at causes instead (a missing fixture,
+                \\-- then an underivable threshold, then the wrong SQL arm); a threshold speed
+                \\-- derives from a single activity via period_threshold_sql's TRAILING-60-day
+                \\-- arm, whose `b2.start_local <= a.start_local` includes the activity's own
+                \\-- row -- not the cold-start forward-fill, which can be deleted outright with
+                \\-- the suite still green. Adding a rung here
+                \\-- needs a fixture row that SURVIVES to b_doctor!, or the guard silently
+                \\-- stops covering it.
                 \\SELECT COALESCE(SUM(CASE WHEN load_model IN (${high_models_sql}) THEN 1 ELSE 0 END),0) AS hi,
                 \\       COALESCE(SUM(CASE WHEN load_model IN (${medium_models_sql}) THEN 1 ELSE 0 END),0) AS med,
                 \\       COALESCE(SUM(CASE WHEN load_model IN (${low_models_sql}) THEN 1 ELSE 0 END),0) AS lo,
@@ -1777,7 +1794,7 @@ Report :: [].{
                     [
                         "",
                         "  confidence (how measured each load is):",
-                        "    high (power): ${(p.conf_high).to_str()}",
+                        "    high (power/pace): ${(p.conf_high).to_str()}",
                         "    medium (HR / RPE): ${(p.conf_medium).to_str()}",
                         "    low (relative effort): ${(p.conf_low).to_str()}",
                         "    none (unscored): ${(p.conf_none).to_str()}",
@@ -2399,8 +2416,9 @@ Report :: [].{
                     \\SELECT substr(a.start_local, 1, 10) AS date,
                     \\       COALESCE(a.sport_family, a.sport_type) AS fam,
                     \\       COUNT(*) AS n,
-                    \\       -- the house fallback (see zone_sum!): POWER split when the activity
-                    \\       -- has power-intensity time, else the HR zones. Summing the pi_ columns
+                    \\       -- the house fallback (see zone_sum!): the pi_* split when the activity
+                    \\       -- has one -- power-derived with watts, pace-derived for a distance
+                    \\       -- sport without them -- else the HR zones. Summing the pi_ columns
                     \\       -- raw drops every session without a split -- 50 of 731 here, 46 of which
                     \\       -- DO have zone seconds, and overwhelmingly easy ones, so the raw sum
                     \\       -- understates easy time and disagrees with what `summary` publishes.
@@ -2542,9 +2560,12 @@ Report :: [].{
                     month: m.month,
                     load: m.load,
                     sessions,
-                    # the trailing month is almost always partial, and comparing
-                    # its load to a full one reads as a collapse: 751 TSS in 17
-                    # days against July's 1120 is a 22% INCREASE per day
+                    # the trailing month is almost always partial, and comparing its load
+                    # to a full one reads as a collapse when the DAILY RATE is often
+                    # higher. No worked example here on purpose: a partial month grows,
+                    # so the totals and the percentage between them go stale on the next
+                    # sync -- one edit already turned a correct figure into a wrong one
+                    # and left the percentage beside it contradicting the new number.
                     partial: m.month == this_month,
                     ftp_family: ftp.ftp_family,
                     ftp_lo: ftp.ftp_lo,

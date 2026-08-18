@@ -212,8 +212,9 @@ Plan :: [].{
         })?
         unplanned_rows = List.map(unplanned, |u| {
             # bind first, then interpolate — `${if … else ""}` splices a compile-time
-            # "" into str_concat, the #32-class heap trap (fixed upstream in
-            # roc#10595, but our pinned nightly predates the fix)
+            # "" into str_concat, the #32-class heap trap. Fixed upstream in roc#10595
+            # and our pin now carries the fix, so this is style rather than survival;
+            # kept because non-empty-by-construction is the clearer rule either way.
             load_part = if u.tss >= 1.0 ", ${Render.fmt0(u.tss)} load" else " "
             {
             id: 0.I64,

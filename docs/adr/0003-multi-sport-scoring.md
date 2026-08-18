@@ -20,7 +20,8 @@ friends train sports the current engine can't score honestly — they **run and 
 "everything Strava captures" (soccer, basketball, tennis, hiking, climbing, …). Each
 friend **owns their own data** — this is not a multi-athlete request (see Scope boundary).
 
-What the code actually does today (verified 2026-08-02):
+What the code did when this was written (verified 2026-08-02 — **every bullet below is
+now HISTORY; see the amendment after the list**):
 
 - The load ladder is `power → HR → session-RPE → relative-effort` (`Metrics.tss_ladder`).
   There is **no pace rung**. Running and swimming without a power meter — the common case —
@@ -56,6 +57,25 @@ worth ranking RPE alongside HR there specifically. Still, the space reduces to: 
 pace rung, make HR zones per-sport, and route every sport to a sensible rung without ever
 rejecting an unknown one.**
 
+
+**Amended 2026-08-17 — all four bullets above have been fixed, and the sequencing shipped.**
+
+- The **pace rung exists**: `Metrics.tss_ladder` takes an `ngp` and a `threshold_speed` and
+  interposes `pace_or_fallback`, with per-sport exponents (`Sports.pace_tss_exponent` — run
+  2, swim 3). The ladder is now power → pace → HR → session-RPE → relative-effort.
+- **GAP is live**, not dead: `minetti_ratio` and `grade_adjusted_speeds` feed
+  `normalized_graded_pace`. (`grade_adjusted_distance` genuinely is still unused outside
+  expects, exactly as this ADR predicted.)
+- **HR zones are per-sport**: `hr_z<n>_max_<sport>` via `Metrics.hr_zone_key`, with a
+  per-sport `zones_used` signature driving invalidation.
+- **The cycling favoritism is gone**: `ftp_ride` appears nowhere outside a v10 migration
+  and the config-refusal policy.
+
+**One piece of Decision 5 did NOT ship.** 5(a) said the analyze gate becomes "has any
+usable threshold/zone for the sports present"; `Analyze.load_zone_config!` still
+hard-requires all four GLOBAL `hr_z1..z4_max` keys and returns `Err(MissingConfig)`
+otherwise, so an athlete carrying only per-sport zones is still refused `analyze`. That is
+the one live item left in this ADR.
 ## Decision
 
 1. **Score the full sport space.** Every sport gets the best-available model via a complete
@@ -158,7 +178,7 @@ deliberately small way. Do **not** write a data-transform migration for the metr
    - *Pace provenance* (Decision 2): new `load_model` strings (`ngp`/`rtss`/`css`) must join
      **every** `load_model IN(...)` list in `Report.roc` — the *measured* set, the `doctor`
      confidence tiers, and the catch-all → `non` bucket — declared **high (measured)** like
-     power; miss it and GPS-measured pace silently reports as *unmeasured*. `doctor`'s
+     power; miss it and distance-measured pace silently reports as *unmeasured*. `doctor`'s
      config-completeness (exact `hr_z*_max` list + `ftp_` prefix) must also learn the new
      `hr_z*_max_<sport>` / `model_<sport>` keys.
 
@@ -184,7 +204,7 @@ deliberately small way. Do **not** write a data-transform migration for the metr
 
 > The build is unblocked (roc-lang/roc#10469, fixed upstream by roc-lang/roc#10531). This ADR is the
 > durable sequencing; the live, disposable working checklist (in-flight PRs, watch-items)
-> lives in the gitignored `.claude/PLAN.md` scratch, not here. Slice 1 (per-sport HR zones)
+> lives in GitHub issues, not here. (The quoted scratch file has since been retired.) Slice 1 (per-sport HR zones)
 > resolves the zone half of Decision 4 + the `ftp_ride` removal of Decision 5.
 
 

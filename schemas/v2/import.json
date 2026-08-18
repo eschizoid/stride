@@ -1,0 +1,18 @@
+{
+  "title": "import",
+  "description": "Payload of `stride import <zip|dir>` \u2014 a Strava bulk-export archive read from disk. `imported` counts rows that PARSED and were upserted into the mirror tier; `skipped` counts rows that could not be parsed. Neither is a diff against what the database already held: an activity that was already present is upserted again and counts as `imported`, so re-running the same export returns the same numbers every time (the row COUNT in the database is idempotent, the reported counts are not \u2014 they describe the archive, not the change). Neither number is an error signal; a failure is an error envelope, not a zero.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "imported",
+    "skipped"
+  ],
+  "properties": {
+    "imported": {
+      "type": "integer"
+    },
+    "skipped": {
+      "type": "integer"
+    }
+  }
+}
