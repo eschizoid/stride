@@ -51,6 +51,7 @@ import Analyze
 import Report
 import ReportHealth
 import ReportSeason
+import ReportSessions
 import Plan
 import Import
 
@@ -317,14 +318,14 @@ dispatch! = |cmd|
         # answers in the envelope like every other query (#182)
         Command.Version => Output.out!({ version: version }, |p| p.version)
         Command.Compare(period) => Report.compare!(period)
-        Command.Activities(c, sport) => Report.activities!(c, sport)
-        Command.Top(metric, c, sport) => Report.top!(metric, c, sport)
+        Command.Activities(c, sport) => ReportSessions.activities!(c, sport)
+        Command.Top(metric, c, sport) => ReportSessions.top!(metric, c, sport)
         Command.Import(src) => Import.import_archive!(src)
         Command.Rate(target, rpe_str) => Plan.rate!(target, rpe_str)
-        Command.Progress(name, sort) => Report.progress!(name, sort)
+        Command.Progress(name, sort) => ReportSessions.progress!(name, sort)
         Command.Tte(watts) => ReportHealth.tte!(watts)
-        Command.Reps(date) => Report.reps!(date)
-        Command.Activity(id_str) => Report.activity!(id_str)
+        Command.Reps(date) => ReportSessions.reps!(date)
+        Command.Activity(id_str) => ReportSessions.activity!(id_str)
         Command.Load(days) => Report.load_series!(days)
         Command.PowerCurve(days, sport) => ReportHealth.power_curve!(days, sport)
         Command.Season => ReportSeason.season!({})
