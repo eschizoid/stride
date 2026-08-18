@@ -1724,48 +1724,38 @@ Metrics :: [].{
 
     # Integer parsing for USER ARGUMENTS, deliberately narrower than the stdlib's.
     #
-    # The 2026-08-17 compiler pin widened `I64.from_str`/`U64.from_str` to accept
-    # exponent notation. `"1e3"` was a parse error on the previous pin and is 1000 now.
-    # Nothing in stride asked for that, and it reached the JUDGMENT tier: `skip 1e1`
-    # silently addressed planned session 10 and performed a write that cannot be
-    # re-derived (ADR 0000 section 3). It is not even self-consistent -- `1e1` addresses
-    # 10, but `3.3e1` cannot address 33, because integral exponents parse and fractional
-    # mantissas do not. That inconsistency is the tell that it is a side effect of a
-    # stdlib change rather than an input format anyone designed.
+    # The 2026-08-17 pin widened `I64.from_str`/`U64.from_str` to accept exponent
+    # notation: `"1e3"` was a parse error and is 1000 now. Nothing asked for it, and it
+    # reached the JUDGMENT tier -- `skip 1e1` addressed planned session 10 and performed
+    # a write that cannot be re-derived (ADR 0000 section 3). It is not even
+    # self-consistent: `1e1` addresses 10 while `3.3e1` cannot address 33, because
+    # integral exponents parse and fractional mantissas do not. That inconsistency is
+    # the tell that it is a stdlib side effect, not an input format anyone designed.
     #
-    # An id or a count typed by a human is digits, optionally signed. Rejecting
-    # everything else BEFORE the stdlib sees it also pins the accepted SHAPE to this
-    # function rather than to the compiler: a future bump cannot widen or narrow the
-    # forms stride takes without failing the expects below. The shape, not the whole
-    # set -- overflow is still the stdlib's call ("99999999999999999999" passes
-    # is_plain_int and is refused by from_str), which is fine, because a bump that
-    # changes the overflow boundary changes a number, not a syntax.
+    # An id or a count typed by a human is digits, optionally signed. Rejecting the rest
+    # BEFORE the stdlib sees it pins the accepted SHAPE here rather than to the compiler.
+    # The shape, not the whole set: overflow stays the stdlib's call
+    # ("99999999999999999999" passes is_plain_int, from_str refuses it), which is fine --
+    # a bump that moves the overflow boundary moves a number, not a syntax.
     #
     # Deliberately dropped: a leading `+`. `I64.from_str("+60")` is 60 on this pin, so
     # `activities +5` worked before this narrowing and now returns bad_count.
     #
-    # DO NOT "simplify" this away by calling from_str directly -- the narrowing is
-    # deliberate (#201, docs/roc-new-compiler-notes.md), and deleting it silently
-    # restores an unrecoverable write on a fat-fingered argument.
+    # DO NOT "simplify" this away by calling from_str directly (#201,
+    # docs/roc-new-compiler-notes.md) -- deleting it silently restores an unrecoverable
+    # write on a fat-fingered argument.
     #
-    # 19 call sites use these; 15 are pinned by e2e checks that fail if the site reverts
-    # to a bare from_str (swept one at a time, since the harness stops at the first
-    # failure). The FOUR unpinned are Analyze.config_f64!/cfg_f64 and
-    # Db.resolve_time_mode!, which read config values that `config set` now refuses at
-    # the WRITE, and date_str_to_days, which sits behind is_canonical_date on every argv
-    # path and behind the CSV component checks on the import path.
+    # 19 call sites; 15 pinned by e2e checks that fail when the site reverts to a bare
+    # from_str. RE-COUNT BY SWEEPING (`grep -n Metrics.arg_` over src/), never by adding
+    # to the figure above -- three successive versions of this line were wrong because
+    # they counted the sites edited rather than the sites that exist.
     #
-    # Re-count this by sweeping, not by adding to the last figure. Three consecutive
-    # versions of this line were wrong (12/5, 13/4, 14/3), every time because the author
-    # counted the sites edited rather than the sites that exist -- `grep -n Metrics.arg_`
-    # over src/ is the answer.
-    #
-    # Unpinned is not the same as unreachable, and an earlier version of this comment
-    # claimed it was. All four ARE reachable by writing a bad value with direct SQL --
-    # the same `sql!` helper the harness already uses -- and by legacy rows written
-    # before the validation existed. They are untested, not untestable; the write-side
-    # refusal is what makes them hard to reach through the CLI, not impossible to reach
-    # at all. (That same comment also said 14/three while naming four. Both wrong.)
+    # The four unpinned -- Analyze.config_f64!/cfg_f64, Db.resolve_time_mode!,
+    # date_str_to_days -- are untested, NOT untestable. All four are reachable by writing
+    # a bad value with direct SQL, the same `sql!` the harness already uses, and by legacy
+    # rows predating the write-side validation. The refusal at `config set` makes them
+    # hard to reach through the CLI, not impossible to reach.
+
     is_plain_int : Str -> Bool
     is_plain_int = |s| {
         bytes = Str.to_utf8(s)
