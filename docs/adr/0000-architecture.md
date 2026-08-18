@@ -64,7 +64,7 @@ decoder they feed. Only decoder-free DDL lives in `Schema.roc`.
 ### Tests: pure `expect`s + a native-Roc e2e
 
 Effectful `expect`s can't run under `roc test` — they need a platform (on alpha4 they
-segfaulted outright, exit 139). So Roc keeps the pure `expect`s (656 reachable from `app.roc` as of 2026-08-17), and
+segfaulted outright, exit 139). So Roc keeps the pure `expect`s, and
 end-to-end coverage is a native-Roc suite
 (`tests/e2e.roc`) that drives the real binary against a sandboxed `HOME` with seeded
 activities of known math. It's a basic-webserver app that runs every check in `init!`
@@ -232,6 +232,8 @@ retired, and neither was a superset of the other.
 - **Vendor-cloud integrations** (Garmin Connect, Wahoo, Peloton APIs, …) — the ingestion
   boundary is the filesystem; Strava is the one grandfathered API.
 - **Raw device-format parsing** (FIT/TCX/GPX) — Strava is the parser (ADR 0006).
+- **`.zwo` workout export** for smart trainers — stride prescribes nothing (ADR 0012), so
+  it has no workout to export; the coach writes the session.
 
 (The query-repository split used to sit here as "blocked by the compiler"; that wall is
 gone and the split IS the current layout — see §2 and ADR 0001. What remains open is the

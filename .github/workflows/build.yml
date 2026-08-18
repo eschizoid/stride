@@ -34,9 +34,10 @@ jobs:
       - uses: actions/checkout@v7
 
       # Official cross-platform installer. `nightly-new-compiler` is the only
-      # channel that ships a Windows roc binary; pinned to the first nightly that
-      # carries the SpecConstr build fix (roc#10531 / commit 94cbed3), so `roc build`
-      # works again — and `roc check`/`roc test` stay deterministic on it.
+      # channel that ships a Windows roc binary. The current tag is pinned because it
+      # clears the compiler segfault that the 08-05-onward nightlies introduced (see
+      # docs/roc-new-compiler-notes.md); the SpecConstr build fix (roc#10531) that
+      # motivated the PREVIOUS pin is long since carried by every nightly in range.
       # The nightlies host intermittently serves a bad cert chain: four runs in one
       # day died on `curl: (60)` here, on all three runners, before compiling a
       # line. A manual re-run always succeeded immediately, so the failure is
@@ -63,7 +64,7 @@ jobs:
         shell: bash
         run: roc check src/app.roc
 
-      # The pure modules carry the logic and the tests (656 expects total). app.roc
+      # The pure modules carry the logic and the tests. app.roc
       # has no expects (its effectful ones can't run under the test runner), so it
       # is validated by `check` above.
       - name: Run pure-module tests

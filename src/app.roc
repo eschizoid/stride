@@ -5,11 +5,15 @@ app [main!] {
 
 # stride — a local-first multi-sport training engine.
 #
-# This module owns every effect: CLI dispatch, Strava OAuth + sync, metric
-# computation orchestration, SQLite access, and output rendering. In Roc only
-# the app module can use platform capabilities, so effects concentrate here by
-# design; the logic worth testing lives in pure modules — Metrics (training
-# math), Render (tables/formatting), Schema (DDL).
+# This module is a thin argv -> dispatch shell. It used to own every effect,
+# because alpha4 could not type-check a wide decoder once effects were injected
+# into a module; the new compiler lifted that wall, so effects now live with
+# their concern — Db (SQLite + migrations), Strava (OAuth + sync), and
+# Analyze/Report/Plan/Import (their commands). See ADR 0001.
+#
+# The logic worth testing lives in pure modules — Metrics (training math),
+# Sports (sport vocabulary), Render (tables/formatting), Command (argv parsing),
+# Config, Csv, Streams, Backfill and Schema (DDL).
 #
 # Two consumers, one contract: humans get tables (with legends and a verdict),
 # LLM coaches get JSON by ASKING for it (--json, else STRIDE_FORMAT=json —

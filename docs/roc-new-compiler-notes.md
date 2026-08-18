@@ -8,8 +8,8 @@ against the compiler and roc-lang/roc source during the migration (completed
 
 **Resolved 2026-08-17.** The segfault described in this section is fixed upstream, and
 the pin has moved from `nightly-2026-August-04-1cb06bc` to `nightly-2026-08-17-b9ca140`.
-Verified on the new pin: `roc test src/Render.roc` → All (313) tests passed; all eight
-modules green (1,569 expects); `just e2e` → ALL E2E CHECKS PASS. It was still broken on
+Verified on the new pin: all eight modules green under `roc test`, `just e2e` → ALL E2E
+CHECKS PASS. It was still broken on
 2026-08-10 (`roc test` SIGSEGV on both `Render` and `Streams`), so the fix landed between
 08-10 and 08-17.
 

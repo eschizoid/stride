@@ -15,7 +15,7 @@ default: test
 check:
     {{roc}} check src/app.roc
 
-# build the binary. --opt=dev on purpose, but for BUILD TIME (~14s against ~2m11s), not
+# build the binary. --opt=dev on purpose, but for BUILD TIME (~14s against ~2min), not
 # correctness: the optimized backend's miscompile (#32) was fixed by the 2026-08-17 pin.
 # CI and the release workflow both pin dev, so match them here or `just test` tests a
 # binary nobody ships.
@@ -96,12 +96,10 @@ schema-check: build
 # and a sync driver (E2E_MODE=sync) that runs real sync + token-refresh against it.
 # Binds a port, so it's separate from `just test`. Runs against the ./stride binary.
 # LOCAL-ONLY — it binds a port, so no CI job runs it. It exercises stride's sync path,
-# which is ~50% flaky on the current nightly (issue #105: heap corruption, still
-# uncharacterised at the source). Retried 5x because sync is idempotent, so a retry is
-# free. Fixing #105 is what would make this dependable enough for CI to adopt.
-#
-# The retry is a crutch and will equally mask a genuine regression, which is why the
-# message it prints stays neutral instead of blaming #105 for every failure.
+# which was ~50% flaky until bug C (#105) was root-caused to a basic-cli host double-free
+# and fixed in 0.22.0. It runs SINGLE-SHOT now: the 5x retry that used to absorb that
+# flake was deleted with the bug, and a new flake here deserves an investigation rather
+# than another crutch.
 #
 # Do not read a green run here as "sync works". Every string in the mock fixture is short
 # enough to live inline in a RocStr, and the corruption only bites heap-allocated decoded

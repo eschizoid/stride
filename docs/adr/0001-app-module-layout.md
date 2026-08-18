@@ -54,12 +54,12 @@ trigger had NOT fired then.
 scale, the file that motivated this ADR's original split was `app.roc` at 2631 lines.
 The subdivision below is therefore in scope; what the boundaries should be is the open
 question. Note the trigger went unnoticed for weeks because it was tracked in an untracked
-scratch file — if it is restated, it should be measured by something that fails. Splitting early buys nothing measurable: specialization is
+scratch file — if it is restated, it should be measured by something that fails. Splitting *before* the trigger bought nothing measurable: specialization is
 whole-program, so a split does not speed the build (proven during the migration), and each
 new pure module must be wired into the `just test` recipe or its expects silently stop
-running.
+running — which is why the threshold exists rather than a preference for small files.
 
-When it does fire, split by **read-command family**, not one module per command (11 tiny
+The split, now in scope, goes by **read-command family**, not one module per command (11 tiny
 modules is worse than one cohesive file) — the seams follow the help text:
 
 | Module | Commands |

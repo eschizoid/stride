@@ -40,7 +40,7 @@ just install   # build + symlink to ~/.local/bin/stride
   miscompiled the codebase (#32's intermittent SIGABRT, plus a silently dropped progress
   column). Both are FIXED as of the `nightly-2026-08-17` pin — measured 0 SIGABRT in 1400
   runs where the old pin gave 40, and byte-identical output across 11 commands. It stays
-  the default because a speed build takes ~2.5 minutes against ~14 seconds, which is the
+  the default because a speed build takes ~2 minutes (108-119s over three runs) against ~14 seconds, which is the
   dev loop, not because the binary is wrong. `just build`, CI, and the release workflow
   all pin it.
 - **New-compiler flag gotcha: `=`, not a space.** `--output=x`, `--main=x`, `--opt=dev`.
@@ -217,11 +217,15 @@ Every item here cost a debugging session at least once — they are not style op
 - Machine JSON: **absence is FLAGGED or DISCRIMINATED, never silently zeroed** (ADR 0009,
   whose three classes this summarises — `src/Output.roc`'s comment block is the contract of
   record). *Impossible-zero* fields keep 0 as the magnitude and ship a `_known`
-  companion decoded from the STORED NULL (`CASE WHEN … IS NULL`), never a coalesced one —
-  `np_w`/`power_known`, `avg_hr`/`hr_known`, the zone vector/`zones_known`. (`ftp_used`
-  is impossible-zero but ships NO flag: analyze always binds a real value, so there is no
-  stored NULL to decode.) *Both-possible* fields always carry `_known`, and there the flag
-  IS the null — `decoupling_pct`, `form_delta_7d`, `form_tsb`, `hr_drift`, `rec_drop_60s`. *Ambiguous
+  companion decoded from the STORED NULL (`CASE WHEN … IS NULL`) — `np_w`/`power_known`,
+  `avg_hr`/`hr_known`. (`ftp_used` is impossible-zero but ships NO flag: analyze always
+  binds a real value, so there is no stored NULL to decode.) The zone vector is the
+  exception that proves the rule: `zones_known` is `COALESCE(hr_samples_total,0) > 0`, a
+  count test rather than a NULL test, because an all-zero zone vector is ambiguous —
+  which makes it an *ambiguous-zero* discriminator, not an impossible-zero flag.
+  *Both-possible* fields always carry `_known`, and there the flag IS the null —
+  `decoupling_pct`, `form_delta_7d`, `hr_drift`, `rec_drop_60s`, and `form_tsb` **in
+  `analyze`** (summary ships `form_tsb` bare — it is always computable there). *Ambiguous
   zeros* get a discriminator rather than a flag: `tss: 0` is read through `load_model`, an
   all-zero zone vector through `zones_known`. The engine never invents a value; human
   tables still render `-`.

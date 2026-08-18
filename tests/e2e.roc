@@ -4,7 +4,7 @@ app [Context, program] {
 }
 
 # The whole native-Roc test harness in ONE basic-webserver app. `E2E_MODE` picks a role:
-#   • (default / "e2e") run the ~140-check offline suite in init!, then exit
+#   • (default / "e2e") run the offline check suite in init!, then exit
 #   • "sync"            drive the real sync path (token refresh + activity/stream pull)
 #                       against a running mock, then exit
 #   • "mock"            serve the four Strava endpoints the sync test hits, and listen
@@ -1018,9 +1018,8 @@ b_seed_analyze! = |ctx| {
     # design. If #201 narrows the parse, this check should be INVERTED to assert
     # the refusal, not deleted -- the point is that the behaviour is decided on
     # purpose rather than inherited from a stdlib change.
-    # arm too, so the first version of this check stayed green in exactly the
-    # state it exists to detect (proved by mutation).
-    # assert the RESULT, not the envelope: `schema_version` appears in the error
+    #
+    # Assert the RESULT, not the envelope: `schema_version` appears in the error
     # arm too, so the first version of this check stayed green in exactly the
     # state it exists to detect (proved by mutation). Comparing against `10`
     # rather than a literal keeps it independent of the fixture's size.

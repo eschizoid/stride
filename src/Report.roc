@@ -1593,7 +1593,8 @@ Report :: [].{
             path: Path.utf8(path),
             query:
                 \\-- confidence tiers derived from load_model at read time (not stored): high =
-                \\-- measured power, medium = HR/RPE, low = relative_effort, none = unscored. The
+                \\-- measured power or GPS-measured pace (rtss), medium = HR/RPE, low =
+                \\-- relative_effort, none = unscored. The
                 \\-- e2e cross-checks the 'high' count against the power-rung provenance counts so
                 \\-- this mapping can't silently drift.
                 \\SELECT COALESCE(SUM(CASE WHEN load_model IN (${high_models_sql}) THEN 1 ELSE 0 END),0) AS hi,
