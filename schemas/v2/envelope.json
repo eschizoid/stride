@@ -30,6 +30,7 @@
             "bad_metric",
             "bad_period",
             "bad_rpe",
+            "bad_value",
             "bad_watts",
             "corrupt_database",
             "database_error",

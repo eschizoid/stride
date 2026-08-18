@@ -1523,7 +1523,9 @@ Report :: [].{
                 Ok(v) => Ok(v)
                 Err(_) => Err(Missing)
             }
-        id = I64.from_str(field("Activity ID", 0)).map_err(|_| BadRow)?
+        # narrowed like every other id (#201): a widened parse here makes "7e2" import
+        # as id 700, and upsert_activity! would overwrite whatever real activity holds it
+        id = Metrics.arg_i64(field("Activity ID", 0)).map_err(|_| BadRow)?
         start = Metrics.export_date_to_iso(field("Activity Date", 0)).map_err(|_| BadRow)?
         moving_raw = field("Moving Time", 1)
         moving_str = if Str.is_empty(moving_raw) field("Moving Time", 0) else moving_raw

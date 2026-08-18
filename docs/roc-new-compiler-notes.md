@@ -95,10 +95,19 @@ id" and now skips planned session 10. Dates are unaffected — `is_canonical_dat
 round-trips through `days_to_date_str`, so `week add 1e3-08-17 …` still refuses.
 
 **Narrowed deliberately (#201), not pinned.** #197 pinned the accepting behaviour so a
-bump could not move it silently; #201 then decided the surface on purpose. User arguments
-now go through `Metrics.arg_i64` / `arg_u64`, which accept optional-minus-then-digits and
-nothing else, so what stride accepts is defined by that function rather than inherited from
-whatever `from_str` does this month. The e2e check was INVERTED rather than deleted: it
+bump could not move it silently; #201 then decided the surface on purpose. User-supplied
+numbers go through `Metrics.arg_i64` / `arg_u64` (optional minus, then digits) and
+`arg_f64` (the same, plus at most one dot), so the SHAPE stride accepts is defined by
+those functions rather than inherited from whatever `from_str` does this month. The shape,
+not the whole set — overflow stays the stdlib's call.
+
+"User-supplied" turned out to mean more than argv, and each round of review found another
+tier of it: the ids AND the other arguments of the same commands (`rate latest 1e1` wrote
+a 10/10 rating while `rate 1e1 5` was correctly refused), the values behind `config set`,
+and the activity ids in an imported CSV — where `7e2` became id 700 and the upsert would
+have overwritten a real activity. Config values are validated at the WRITE now, not just
+narrowed at the read: refusing them only at the read made `config set hr_z1_max 1.18e2`
+succeed, echo back, and then report missing_config. The e2e check was INVERTED rather than deleted: it
 asserts the refusal, on a count argument and on a judgment-tier write, each mutation-proved
 separately because the harness stops at the first failing check.
 

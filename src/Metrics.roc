@@ -4100,9 +4100,11 @@ expect {
     ids == ["high_modeled_fatigue", "modeled_fatigue_building", "balanced", "fresh", "very_fresh"]
 }
 
-# ── arg_i64 / arg_u64: user-argument integer parsing (#201) ─────────────
+# ── arg_i64 / arg_u64 / arg_f64: user-argument number parsing (#201) ────
 # Plain integers parse; every non-digit form is refused BEFORE the stdlib sees it,
-# which is what makes the accepted set independent of the compiler pin.
+# which is what makes the accepted SHAPE independent of the compiler pin. Not the whole
+# set: overflow stays the stdlib's call, and arg_i64/arg_f64 differ there on purpose
+# ("99999999999999999999" is Err for the integer, Ok(1e20) for the float).
 expect Metrics.is_plain_int("10") and Metrics.is_plain_int("-3") and Metrics.is_plain_int("0")
 expect !(Metrics.is_plain_int("1e1")) and !(Metrics.is_plain_int("3.3e1")) and !(Metrics.is_plain_int("1E1"))
 expect !(Metrics.is_plain_int("")) and !(Metrics.is_plain_int("-")) and !(Metrics.is_plain_int("ten")) and !(Metrics.is_plain_int(" 1"))
@@ -4110,6 +4112,10 @@ expect !(Metrics.is_plain_int("0x10")) and !(Metrics.is_plain_int("1_0")) and !(
 # both ENDS of the digit range, because widening it by one either way survived otherwise:
 # '/' is 47 and ':' is 58, so a 47..58 mutant admitted "1/0" and "1:0" with every expect green
 expect !(Metrics.is_plain_int("1/0")) and !(Metrics.is_plain_int("1:0"))
+# ...and the SAME bounds on is_plain_decimal, which the line above does not cover: the
+# 47..58 mutant survived here after being killed there, and the commit message said
+# "both endpoints are pinned now" while meaning one of the two functions
+expect !(Metrics.is_plain_decimal("1/0")) and !(Metrics.is_plain_decimal("1:0"))
 expect Metrics.is_plain_decimal("7.5") and Metrics.is_plain_decimal("7") and Metrics.is_plain_decimal("-0.5")
 expect !(Metrics.is_plain_decimal("1e1")) and !(Metrics.is_plain_decimal("0.5e1")) and !(Metrics.is_plain_decimal("7.5.5"))
 expect !(Metrics.is_plain_decimal(".")) and !(Metrics.is_plain_decimal("")) and !(Metrics.is_plain_decimal("7,5"))

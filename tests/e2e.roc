@@ -405,6 +405,14 @@ b_config_ftp! = |ctx| {
     check!("setting a derived key is refused", Str.contains(set_out, "derived_key"))?
     check!("refusal explains where FTP comes from", Str.contains(set_out, "power history"))?
     check!("reading a derived key is refused too", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "ftp_ride"]), "derived_key"))?
+    # #201: a numeric key is validated at the WRITE. Narrowing only the READ made
+    # `config set hr_z1_max 1.18e2` succeed, echo back, and then report missing_config --
+    # a stored value that parses nowhere, which is the same trap as one read nowhere.
+    # `utc_offset_minutes +330` was the silent version: it became UTC instead of +05:30.
+    check!("a numeric key refuses exponent notation at set time", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", "1.18e2"]), "bad_value"))?
+    check!("...and refuses a leading +, which used to become 0 silently", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "utc_offset_minutes", "+330"]), "bad_value"))?
+    check!("...while the plain forms still store", strjq!(ctx, ["config", "set", "hr_z1_max", "118.5"], ".data.value") == "118.5")?
+    check!("...and a free-text key is untouched by the rule", strjq!(ctx, ["config", "set", "timezone", "America/Chicago"], ".data.value") == "America/Chicago")?
 
     # the trap this closes: a db from before FTP was derived still holds an ftp_ride row.
     # Setting is refused, so only a LEGACY row can exist — and it must not be echoed back.

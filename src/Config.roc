@@ -25,6 +25,26 @@ Config :: [].{
 	is_derived : Str -> Bool
 	is_derived = |k| k == "ftp" or Str.starts_with(k, "ftp_")
 
+	# Keys whose value the engine parses as a NUMBER. Same reasoning as is_derived, one
+	# step further in: a value that parses nowhere is as much a trap as a value that is
+	# read nowhere, and it is a worse one, because `config get` echoes it back and looks
+	# like proof it took.
+	#
+	# This exists because #201's narrowing created exactly that trap. Refusing exponent
+	# notation at the READ sites meant `config set hr_z1_max 1.18e2` succeeded, echoed
+	# `1.18e2`, and then made `summary` report missing_config -- the value WAS set. And
+	# `utc_offset_minutes +330` silently became UTC instead of +05:30, because that read
+	# path coalesces a parse failure to 0. Validating at the WRITE makes the refusal loud
+	# and keeps the read sites honest.
+	numeric_key : Str -> [Int, Decimal, Free]
+	numeric_key = |k|
+		if k == "utc_offset_minutes" or k == "last_sync_epoch" or Str.ends_with(k, "_expires_at")
+			Int
+		else if Str.starts_with(k, "hr_z") or Str.ends_with(k, "_max")
+			Decimal
+		else
+			Free
+
 	# STRIDE_API_BASE is a test seam that points sync at a local mock. The token
 	# exchange/refresh POST carries the client_secret + rotating refresh token, so an
 	# unvalidated base would exfiltrate them to an attacker-controlled host. TLS does
