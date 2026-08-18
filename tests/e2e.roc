@@ -144,7 +144,8 @@ run_all! = || {
     # The first `config set timezone` in b_config_ftp! opened a disagreement, but its own
     # DELETE closed it again before any date check ran; what persisted was
     # b_seed_analyze!'s `validate!("config set timezone …")`, after which every remaining
-    # date check compared a UTC harness date against a Chicago binary. Between 00:00 and 05:00 UTC that is a whole day: `analyze` regenerates
+    # date check compared a UTC harness date against a Chicago binary. Between 00:00 and
+    # 05:00 UTC that is a whole day: `analyze` regenerates
     # daily_load out to the BINARY's today, which is a day behind the harness's, so the
     # series comes up one row short (#200). CI only saw it when a run landed in that
     # five-hour window.
@@ -2022,8 +2023,10 @@ b_doctor! = |ctx| {
     check!("bad tz shows UNKNOWN", Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UNKNOWN"))?
     # an empty value and an absent row are the SAME state -- Db.roc collapses both to
     # NoTz. That equivalence was assumed by a comment in b_config_ftp! and asserted
-    # nowhere, and this write sat here with nothing observing it, overwritten five lines
-    # later: dead code wearing a test's clothes.
+    # nowhere, and this write sat here with nothing observing it -- on main it was the
+    # LAST statement of this body, so it leaked the blank zone into every scenario after
+    # it, which is the actual reason it needs a restore. It asserts the equivalence now
+    # rather than sitting there as dead code wearing a test's clothes.
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ""])
     check!("empty timezone is the absent state, not an invalid one", strjq!(ctx, ["doctor"], ".data.time_ok") == "true" and Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UTC"))?
     # restore before returning: four scenarios run after this one, and leaving the zone
