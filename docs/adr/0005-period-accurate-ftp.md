@@ -54,15 +54,16 @@ and always derives. Whether a configured value should win is a separate open que
 
 ## Context
 
-`Db.sport_ftp!` derives a sport's FTP as its best 20-minute power over the **last 60 days**
-× 0.95. That single number then scores every activity of that sport, however old:
+`Db.sport_ftp!` derived a sport's FTP as its best 20-minute power over the **last 60 days**
+× 0.95, and that single number then scored every activity of that sport, however old —
+one `ftp_used` for the whole history of a sport, spanning years.
 
-```
-Ride    ftp_used = 243   2021-12-15 → 2026-08-03   (467 activities)
-Rowing  ftp_used = 139   2024-01-28 → 2026-08-01   (200 activities)
-```
-
-Two consequences follow, and both are live in the production database today.
+Two consequences followed, and both were live in the production database when this was
+written. (They are not now: the decision below shipped. The same database today carries
+53 distinct `ftp_used` values for Ride alone, from 139 to 271, one per activity's own
+era — which is the fix working. An earlier version of this section printed the two
+pre-fix rows as if they were current, which read as a live defect rather than the
+motivation for a decision already taken.)
 
 **Historical load is understated.** A December 2021 ride at NP 170 W scores IF 0.70 and
 TSS 36.5 against FTP 243. Scored against the FTP actually in force then — nearer the 190
