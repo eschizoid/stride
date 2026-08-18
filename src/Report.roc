@@ -620,7 +620,9 @@ Report :: [].{
     sport_filter_sql = |word|
         if Str.is_empty(word) {
             # a lone SPACE, never "": interpolating a compile-time-constant empty
-            # string is the #32-class str_concat trap, live on the pinned nightly
+            # string USED to be the #32-class str_concat trap. Fixed upstream in
+            # roc#10595 (closed 2026-08-04, before this pin), so this is now a style
+            # rule rather than survival — non-empty by construction, same as Plan.roc
             { frag: " ", binds: [] }
         } else {
             fam = Sports.family(word)
