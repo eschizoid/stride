@@ -4,10 +4,12 @@ name: release-please
 # (feat:/fix:/…), maintains CHANGELOG.md and the version in app.roc, and opens a
 # "release PR". Merging that PR tags vX.Y.Z + creates the GitHub release.
 #
-# NOTE (2026-08-04): binary build/upload jobs are ENABLED on the new (Zig) compiler, Aug-04
-# nightly, --opt=dev (chosen for build time; #32's SIGABRT was fixed by the 2026-08-17 pin). All 4 targets build with fail-fast
+# NOTE: binary build/upload jobs are ENABLED on the new (Zig) compiler, pinned nightly,
+# --opt=dev (chosen for build time; #32's SIGABRT was fixed by the 2026-08-17 pin). All FIVE
+# targets build with fail-fast
 # off + upload runs with always(), so a partial binary set attaches even if a target fails.
-# Caveat: bug C (sync heap corruption) is ~flaky on every platform and bug B (linux Json.to_str)
+# Historical caveat, both resolved: bug C (sync heap corruption, #105) was a basic-cli host
+# double-free fixed in 0.22.0, and bug B (linux Json.to_str)
 # is live — the shipped binaries build + report --version, but sync may need a retry. This is a
 # deliberate "see what CI does" pass; revisit gating once B/C are fixed upstream.
 on:
@@ -34,7 +36,7 @@ jobs:
     name: build ${{ matrix.target }}
     needs: release-please
     # EXPERIMENT (2026-08-04): ENABLED on the new (Zig) compiler, Aug-04 nightly (bug A fixed),
-    # --opt=dev (build time, not correctness — #32 fixed on the 2026-08-17 pin). All 4 targets, fail-fast off — we want to SEE which
+    # --opt=dev (build time, not correctness — #32 fixed on the 2026-08-17 pin). All five targets, fail-fast off — we want to SEE which
     # platforms build + pass version-check in CI. Known-live bugs that may bite: bug C (sync heap
     # corruption, ~flaky on all platforms) and bug B (linux Json.to_str). The version check only
     # runs `--version` (no sync/plan), so it should pass even with B/C live; a target failing here

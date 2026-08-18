@@ -563,7 +563,8 @@ Metrics :: [].{
             zb : ZoneBounds,
             ftp : F64,
             # pace rung (m/s SPEEDS, not s/km): the normalized graded pace speed (Missing
-            # only when there is no distance stream — analyze falls back to a flat
+            # when there is no distance stream, or when the series is shorter than the
+            # np_window — analyze falls back to a flat
             # time+dist triple when altitude is absent, and pace scores any distance
             # sport, not only pace-routed ones) and the sport's
             # threshold speed (0 when none). See pace_tss / normalized_graded_pace.

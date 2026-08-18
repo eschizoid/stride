@@ -38,8 +38,8 @@ jobs:
   build:
     name: build ${{ matrix.target }}
     needs: prepare
-    # ENABLED (2026-08-04) on the new (Zig) compiler, Aug-04 nightly, --opt=dev — mirrors
-    # release-please.yml's build job. Use this to (re)build the 4 binaries for the current
+    # ENABLED on the new (Zig) compiler, pinned nightly, --opt=dev — mirrors
+    # release-please.yml's build job. Use this to (re)build the five binaries for the current
     # app.roc version on demand (e.g. attach binaries to an already-cut release).
     runs-on: ${{ matrix.runs-on }}
     defaults:
@@ -53,11 +53,10 @@ jobs:
             runs-on: ubuntu-latest
           - target: linux-arm64
             runs-on: ubuntu-24.04-arm
-            # UNVERIFIED: this target has never produced an asset. On ubuntu-24.04-arm the
-            # compiler auto-detects arm64v1musl, which does not resolve to a usable host, so
-            # the job fails and the release ships without it (fail-fast is off, upload runs
-            # with always()). Naming the target explicitly is the documented fix; it can only
-            # be confirmed by a real release, and it cannot regress the other four.
+            # VERIFIED — v0.6.0 ships stride-linux-arm64, and verify-arm64.yml guards it.
+            # Left to itself the compiler auto-detects arm64v1musl on ubuntu-24.04-arm,
+            # which does not resolve to a usable host; naming the target explicitly is the
+            # fix, which is what roc_target below does. Do not drop it.
             roc_target: arm64musl
           - target: macos-arm64
             runs-on: macos-latest

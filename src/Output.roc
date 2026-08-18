@@ -56,8 +56,10 @@ Output :: [].{
     #   vector with zones_known false means "no HR stream", not "0s in every zone"
     #   (summary avg_hr can exist without one — hr_known does not cover zones).
     #   Where a field is BOTH possible-zero and possibly-absent (decoupling_pct,
-    #   form_delta_7d, form_tsb, hr_drift, rec_drop_60s), a _known flag is
-    #   MANDATORY — the flag is the null.
+    #   form_delta_7d, hr_drift, rec_drop_60s, and form_tsb in ANALYZE), a _known
+    #   flag is MANDATORY — the flag is the null. Per PAYLOAD, not per field name:
+    #   summary ships form_tsb bare because it is always computable there, so read
+    #   the schema for the command rather than assuming the name carries a flag.
     # Surfaces: activity, activities, plan.recent_activities_14d carry
     # power_known/intensity_known/hr_known/zones_known + load_model; top carries the
     # first three. progress sessions carry none on purpose — rows exist only because

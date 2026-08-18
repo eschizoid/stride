@@ -220,7 +220,7 @@ stride plan                                       # everything needed to plan a 
 | Command | What it does |
 | --- | --- |
 | `sync` | Pulls new activities + the next batch of HR/power streams. Re-pulls a rolling 30-day window so edits made on Strava self-heal. The fast daily command. |
-| `backfill` | Re-pulls the **full** activity list, then drains **all** missing stream history — hands-off, resumable, and paced by counting its own reads — the platform never surfaces the `x-readratelimit-*` headers, and `/streams` sends no rate-limit headers anyway — against self-imposed budgets of 95 reads per 15-minute window (Strava's cap is 100) and 940 per run (Strava's daily cap is 1000). First-time imports and deep reconciles (~after bulk edits older than 30 days). |
+| `backfill` | Re-pulls the **full** activity list, then drains **all** missing stream history — hands-off, resumable, and paced by counting its own reads, so it never depends on an endpoint sending rate-limit headers — against self-imposed budgets of 95 reads per 15-minute window (Strava's cap is 100) and 940 per run (Strava's daily cap is 1000). First-time imports and deep reconciles (~after bulk edits older than 30 days). |
 | `rate <activity_id\|latest> <1-10>` | *How hard did it feel?* Session-RPE (Borg): you are the sensor for strength, HIIT, and yoga. `load = hours × RPE × 10`, so an hour at RPE 10 = 100, TSS-comparable. For strength-class sports your rating outranks HR; for endurance, measured power/HR always win. |
 | `import <zip\|dir>` | Loads a **Strava account export** (the ZIP from Settings → My Account → Download or Delete Your Account) — **no API credentials or subscription needed**. Summary-level data (no streams yet, so zone breakdowns stay honestly absent); re-import is idempotent. English-language exports only. |
 | `analyze` | Computes metrics for new (or invalidated) activities — TSS, time-in-zone, normalized power — then rebuilds the daily fitness/fatigue/form series through today. Prints what it did plus a one-line form verdict. |
@@ -294,7 +294,7 @@ $ stride activities 4     # example output
 
 load:           session stress — TSS for power/HR, session-RPE for rated sessions; '-' = no usable data (e.g. dead HR strap)
 intensity (if): vs your FTP — ~0.7 easy · 0.85-0.95 tempo · ~1.0 threshold · 1.05+ vo2max
-hard:           minutes at/above threshold — by power (vs the sport's FTP) where there's power, else HR Z4+Z5
+hard:           minutes at/above threshold — by power (vs the sport's FTP), else the pace split, else HR Z4+Z5
 ```
 
 Reading it: the Peloton ride has a power meter, so it gets an intensity factor and 36
@@ -388,7 +388,8 @@ Human input never lives on a mirror table, because a re-sync would silently wipe
      moving time placed in the zone the average HR falls in — a separate `load_model`.)
   4. **Honest zero** if nothing above applies.
 
-  Each row records which rung scored it in `load_model`, and its confidence tier.
+  Each row records which rung scored it in `load_model`; the confidence tier is
+  derived from that at read time rather than stored.
 - **Normalized power** — 30-second rolling average over 1 Hz-resampled streams.
 - **Grade-adjusted pace (rTSS)** — for runs and pace sports with GPS: normalized graded
   pace vs a **derived** per-sport threshold pace (best 20-min graded speed × 0.95), used
@@ -411,7 +412,7 @@ Human input never lives on a mirror table, because a re-sync would silently wipe
 Nothing here is a hardcoded sport list. **The data you have decides the rung** — the ladder
 takes the best available source and records which one won in `load_model`, so `doctor` can
 show you the distribution. Sport type changes four things, all of them data tables in `Sports.roc`: the FAMILY (which since #151 is the population the derived FTP is computed over, not just a display filter), pace routing for interval detection and decoupling, whether a rating outranks
-heart rate, and the swim exponent.
+heart rate, and the pace-TSS exponent.
 
 | Sport | Load scored by | Also computed |
 |---|---|---|
@@ -474,9 +475,11 @@ just install   # build + symlink into ~/.local/bin
   type-checked rather than expect-tested. Query
   strings live next to their row decoders on purpose — the compiler can't check SQL
   aliases against decoders, so cohesion is the safeguard.
-- **Tests:** pure `expect` blocks across eight modules — `just test` prints the count, and
-  it is deliberately not repeated here (`roc test src/app.roc` reports a larger number
-  because ~207 of them belong to the basic-cli platform, not to stride). Plus an
+- **Tests:** pure `expect` blocks across eight modules, run by `just test`. No count is
+  quoted here on purpose: one rots on every commit that adds a test (four separate places
+  quoted one and all four went stale in a single PR), and the per-module numbers `roc
+  test` prints overlap each other and include ~207 expects belonging to the basic-cli
+  platform rather than to stride. Plus an
   end-to-end suite (`just e2e`) that runs the real
   binary against a sandboxed `HOME` with seeded activities of known math (power TSS ~111
   from NP 200 against a derived FTP of 190, hrTSS ~55, derived-FTP family inheritance,

@@ -158,7 +158,8 @@ Strava :: [].{
         #
         # DO NOT wrap these bindings in "${...}" to force a copy. That was tried against
         # #105 and crashed real sync every run — see the longer note in upsert_activity!.
-        # #105 remains open; copying is not the fix.
+        # #105 is FIXED (basic-cli 0.22.0); copying was never the fix, and this note
+        # stays so nobody re-tries the copy on the next mystery crash.
         Sqlite.execute!({
             path: Path.utf8(path),
             query:
@@ -452,11 +453,15 @@ Strava :: [].{
     # For a new user with thousands of activities, the 60/run sync cap means dozens
     # of manual runs. `backfill` drains streams hands-off: it fills each 15-min read
     # window, sleeps to the next, and stops cleanly at Strava's daily read cap
-    # (resume by re-running). Paces by COUNTING its own reads (the next paragraph explains why headers are unavailable).
+    # (resume by re-running). Paces by COUNTING its own reads (see the next paragraph).
 
-    # Rate pacing is COUNT-BASED, not header-based: basic-cli surfaces only a
-    # handful of response headers (never the x-readratelimit-* ones), AND Strava's
-    # /streams endpoint doesn't send them anyway. So we count our own reads against
+    # Rate pacing is COUNT-BASED, not header-based -- by choice, so it does not depend
+    # on any endpoint choosing to send rate-limit headers. (An earlier version of this
+    # comment blamed the platform for hiding them. That is false: basic-cli's
+    # InternalHttp.from_host_headers is an unfiltered pass-through, so stride sees
+    # whatever the server sends. The claim survived three doc-audit rounds and reached
+    # user-facing docs because it was 'verified' by reading this comment.)
+    # So we count our own reads against
     # Strava's known limits (100 reads / 15 min, 1000 / day) and pace proactively,
     # with 429 as a bounded backstop.
     window_sleep_ms = 905_000 # ~15 min + margin past the window reset

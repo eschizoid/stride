@@ -1292,9 +1292,9 @@ Report :: [].{
         # optional sport filter via sport_filter_sql: the FRAGMENT is interpolated
         # (its placeholders are numbered, values stay real bindings), and the empty
         # branch is a single space, never "" — interpolating a compile-time-constant
-        # empty string crashes this backend in str_concat (#32 class; fixed upstream
-        # in roc#10595 but our pinned nightly predates it). Non-empty by construction
-        # is the rule the :all-flag comment in Plan.roc states.
+        # empty string used to crash this backend in str_concat (#32 class, roc#10595,
+        # fixed upstream and carried by the current pin). Non-empty by construction is
+        # the rule the :all-flag comment in Plan.roc states, and it stays.
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
@@ -1365,7 +1365,7 @@ Report :: [].{
             Stdout.line!("")?
             Stdout.line!("load:           session stress — TSS for power/HR, session-RPE for rated sessions; '-' = no usable data (e.g. dead HR strap)")?
             Stdout.line!("intensity (if): vs your FTP — ~0.7 easy · 0.85-0.95 tempo · ~1.0 threshold · 1.05+ vo2max")?
-            Stdout.line!("hard:           minutes at/above threshold — by power (vs the sport's FTP) where there's power, else HR Z4+Z5")
+            Stdout.line!("hard:           minutes at/above threshold — by power (vs the sport's FTP), else the pace split, else HR Z4+Z5")
         }
     }
     # metric keyword => its ORDER BY column + human table header. The column is HARDCODED
@@ -1594,9 +1594,9 @@ Report :: [].{
             query:
                 \\-- confidence tiers derived from load_model at read time (not stored): high =
                 \\-- measured power or GPS-measured pace (rtss), medium = HR/RPE, low =
-                \\-- relative_effort, none = unscored. The
-                \\-- e2e cross-checks the 'high' count against the power-rung provenance counts so
-                \\-- this mapping can't silently drift.
+                \\-- relative_effort, none = unscored. The e2e cross-checks the 'high' count
+                \\-- against the three POWER rungs only, so dropping one of those drifts loudly
+                \\-- while dropping 'rtss' does not -- proved by mutation, suite stayed green.
                 \\SELECT COALESCE(SUM(CASE WHEN load_model IN (${high_models_sql}) THEN 1 ELSE 0 END),0) AS hi,
                 \\       COALESCE(SUM(CASE WHEN load_model IN (${medium_models_sql}) THEN 1 ELSE 0 END),0) AS med,
                 \\       COALESCE(SUM(CASE WHEN load_model IN (${low_models_sql}) THEN 1 ELSE 0 END),0) AS lo,

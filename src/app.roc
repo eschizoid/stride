@@ -5,7 +5,9 @@ app [main!] {
 
 # stride — a local-first multi-sport training engine.
 #
-# This module is a thin argv -> dispatch shell. It used to own every effect,
+# This module is argv -> dispatch, plus the handful of effects that have no better
+# home yet (`init!`, `config_show!`, `config_store!`) and a set of platform imports
+# left over from when it owned everything. It used to own every effect,
 # because alpha4 could not type-check a wide decoder once effects were injected
 # into a module; the new compiler lifted that wall, so effects now live with
 # their concern — Db (SQLite + migrations), Strava (OAuth + sync), and

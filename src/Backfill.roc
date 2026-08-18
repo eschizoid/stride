@@ -2,9 +2,8 @@ Backfill :: [].{
     # ── pure rate-pacing decision for the streams backfill ──────────────
     # Given a response status and the current per-run counters, decide the next
     # control-flow action. No effects — the effectful drain loop in app.roc dispatches
-    # on this, so every branch is unit-testable here. (Counting our own reads because
-    # basic-cli surfaces no rate-limit headers, and Strava's /streams endpoint sends
-    # none anyway.)
+    # on this, so every branch is unit-testable here. (Counting our own reads by choice,
+    # so pacing does not depend on any endpoint sending rate-limit headers.)
 
     Limits : { reads_per_window : I64, reads_per_run : I64, max_consecutive_429 : I64 }
 

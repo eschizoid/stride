@@ -226,8 +226,7 @@ Every item here cost a debugging session at least once — they are not style op
   *Both-possible* fields always carry `_known`, and there the flag IS the null —
   `decoupling_pct`, `form_delta_7d`, `hr_drift`, `rec_drop_60s`, and `form_tsb` **in
   `analyze`** (summary ships `form_tsb` bare — it is always computable there). *Ambiguous
-  zeros* get a discriminator rather than a flag: `tss: 0` is read through `load_model`, an
-  all-zero zone vector through `zones_known`. The engine never invents a value; human
+  zeros* get a discriminator rather than a flag: `tss: 0` is read through `load_model`. The engine never invents a value; human
   tables still render `-`.
 - Machine JSON is a **versioned envelope** — success `{schema_version, data}`, error
   `{schema_version, error:{code, message}}`. Bump `json_schema_version` when the WRAPPER
@@ -237,8 +236,10 @@ Every item here cost a debugging session at least once — they are not style op
   Deterministic (no timestamps) so golden fixtures stay stable.
 - **Load is a mixed model, not "TSS"** — power/HR score in TSS, rated strength/HIIT in
   session-RPE. Don't relabel the blended total "TSS"; each metrics row carries
-  `load_model` (provenance) + `load_confidence` (high=power / medium=HR·RPE /
-  low=relative-effort / none). `doctor` reports the distribution.
+  `load_model` (provenance). Confidence is DERIVED from it at read time, not stored —
+  the `load_confidence` column existed until v8 and was dropped for being derivable —
+  and the mapping is high = measured power OR GPS-measured pace (`rtss`), medium =
+  HR/RPE, low = relative-effort, none = unscored. `doctor` reports the distribution.
 - One **open** planned session per date; lifecycle open → done/skipped (never
   delete). Rest days complete WITHOUT an activity id; every other type requires
   one — done means evidence.
