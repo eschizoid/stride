@@ -1724,6 +1724,15 @@ Metrics :: [].{
     # DO NOT "simplify" this away by calling from_str directly -- the narrowing is
     # deliberate (#201, docs/roc-new-compiler-notes.md), and deleting it silently
     # restores an unrecoverable write on a fat-fingered argument.
+    #
+    # 17 call sites use these; 14 are pinned by e2e checks that fail if the site reverts
+    # to a bare from_str (swept one at a time, since the harness stops at the first
+    # failure). The three that are NOT pinned are structural, not oversight:
+    # Analyze.config_f64!/cfg_f64 and Db.resolve_time_mode! read config values that
+    # `config set` now refuses at the WRITE, so no test can store a value that reaches
+    # them; date_str_to_days sits behind is_canonical_date on every argv path and behind
+    # the CSV year/month/day narrowing on the import path. Reverting any of those four
+    # leaves the suite green -- verified, not assumed.
     is_plain_int : Str -> Bool
     is_plain_int = |s| {
         bytes = Str.to_utf8(s)

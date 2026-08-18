@@ -1369,6 +1369,8 @@ b_plan! = |ctx| {
     check!("session 2 done", strjq!(ctx, ["week", "all"], ".data[] | select(.id==2) | .status") == "done")?
     check!("session 2 completed activity 101", strjq!(ctx, ["week", "all"], ".data[] | select(.id==2) | .completed_activity_id") == "101")?
     check!("complete nonexistent session", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "999", "101"]), "session_not_found"))?
+    # complete_rest! is a SEPARATE parse from the two-argument form above
+    check!("an exponent id is refused by the rest-day complete", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "2e0"]), "bad_id"))?
     # #201 on the OTHER judgment-tier writes. `2e0` is session 2 and `1.01e2` is activity
     # 101 under the widened stdlib -- both real rows here, so these fail on a revert
     # instead of trading one not-found for another.
@@ -1392,6 +1394,9 @@ b_plan! = |ctx| {
     # unplanned row — ties must order sessions first, never reversed
     check!("session precedes unplanned on the same day", strjq!(ctx, ["week"], "[.data[] | select(.target_date == \"${ctx.today}\") | .status] | index(\"unplanned\") > 0") == "true")?
     check!("skip with substitute refuses a bogus activity", Str.contains(stride!(ctx.bin, ctx.home, ["skip", today_sess, "x", "88888"]), "activity_not_found"))?
+    # #201 on skip's SUBSTITUTE id: 3e2 is activity 300, which the next line links for
+    # real, so this fails on a revert rather than trading one not-found for another.
+    check!("skip refuses an exponent substitute id", Str.contains(stride!(ctx.bin, ctx.home, ["skip", today_sess, "x", "3e2"]), "bad_id"))?
     check!("skip with substitute links the activity", Str.contains(stride!(ctx.bin, ctx.home, ["skip", today_sess, "rode easy instead", "300"]), "\"substitute_activity\""))?
     check!("week carries the substitute id", strjq!(ctx, ["week"], "[.data[] | select(.substitute_activity_id == 300)] | length") == "1")?
     # once linked, the activity is no longer unplanned — one row, not two
