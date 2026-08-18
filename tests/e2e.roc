@@ -137,11 +137,23 @@ run_all! : () => Try({}, _)
 run_all! = || {
     bin = env_or!("STRIDE_BIN", "./stride")
     home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
-    today = need("date +%F", Str.trim(sh!("date -u +%F")))?
-    d1 = need("date -3d", Str.trim(sh!("date -u -v-3d +%F 2>/dev/null || date -u -d '3 days ago' +%F")))?
-    d2 = need("date -1d", Str.trim(sh!("date -u -v-1d +%F 2>/dev/null || date -u -d '1 day ago' +%F")))?
+    # The fixture configures `timezone America/Chicago`, so stride computes
+    # "today" in Chicago while these were computed in UTC. Between 00:00 and
+    # 05:00 UTC the two differ by a day, the seeded row for "today" lands in
+    # stride's future, and the daily series comes up one row short (#200). CI
+    # only ever saw it when a run happened to land in that five-hour window.
+    # Anchor the harness to the SAME clock the binary will use.
+    tz = "America/Chicago"
+    today = need("date +%F", Str.trim(sh!("TZ=${tz} date +%F")))?
+    d1 = need("date -3d", Str.trim(sh!("TZ=${tz} date -v-3d +%F 2>/dev/null || TZ=${tz} date -d '3 days ago' +%F")))?
+    d2 = need("date -1d", Str.trim(sh!("TZ=${tz} date -v-1d +%F 2>/dev/null || TZ=${tz} date -d '1 day ago' +%F")))?
     ctx = { bin, home, db: "${home}/.stride/db.sqlite", today, d1, d2 }
     b_init_config!(ctx)?
+    # Pin the sandbox clock to the same zone the dates above were computed in,
+    # BEFORE any date-dependent check runs. b_init_config! sets this later for
+    # its own assertions, but everything between here and there was comparing a
+    # Chicago-derived `today` against a binary still defaulting to UTC (#200).
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", tz])
     b_auth!(ctx)?
     b_config_ftp!(ctx)?
     b_cred_safety!(ctx)?
@@ -429,6 +441,12 @@ b_config_ftp! = |ctx| {
     # delete the row rather than storing "" — an empty value is a stored-but-invalid
     # timezone, not an absent one, and doctor treats those differently
     _ = sql!(ctx.db, "DELETE FROM config WHERE key='timezone';")
+    # ...then put it back. Leaving it unset changed the binary's clock MID-RUN,
+    # so every later date check compared a Chicago-derived harness date against
+    # a UTC-derived binary date, and the two disagree between 00:00 and 05:00
+    # UTC. That is #200: it failed on any machine west of UTC in the evening,
+    # and on CI only when a run happened to land in that five-hour window.
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", "America/Chicago"])
     Ok({})
 }
 
