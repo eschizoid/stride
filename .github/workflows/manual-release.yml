@@ -53,7 +53,8 @@ jobs:
             runs-on: ubuntu-latest
           - target: linux-arm64
             runs-on: ubuntu-24.04-arm
-            # VERIFIED — v0.6.0 ships stride-linux-arm64, and verify-arm64.yml guards it.
+            # VERIFIED — v0.4.0 onward ship stride-linux-arm64. (verify-arm64.yml is a
+            # dispatch-only re-check, not an automatic gate.)
             # Left to itself the compiler auto-detects arm64v1musl on ubuntu-24.04-arm,
             # which does not resolve to a usable host; naming the target explicitly is the
             # fix, which is what roc_target below does. Do not drop it.

@@ -43,9 +43,8 @@ SQL queries next to their row decoders** (the adjacency guard the compiler still
 
 **When to split `Report.roc` (measurable, not a vibe).** "If it feels unwieldy" is
 unfalsifiable, so the trigger is: split when **either** a single command function exceeds
-**~250 lines**, **or** the file passes **~1500 lines**. As of 2026-08-05 it is 1185 lines
-across 18 definitions (~66 each); the largest were `week!` ≈214 and `doctor!` ≈171, so the
-trigger had NOT fired then.
+**~250 lines**, **or** the file passes **~1500 lines**. When this ADR was written (2026-08-05) `Report.roc` was 1185 lines and its
+largest definition was `doctor!` at 171, so the trigger had NOT fired then.
 
 **Amended 2026-08-17 — the trigger has FIRED, on both halves (#196).** `Report.roc` is
 **over 2700 lines** across 37 definitions, and three command functions are past the ~250 line:

@@ -173,15 +173,18 @@ means for every date below.
   `zones_known: true`; all-zero with `zones_known: false` = no HR stream (summary
   `avg_hr` can exist without one — `hr_known` does not cover zones). `distance_m`
   0 is always literal. Fields that are BOTH possible-zero and possibly-absent
-  always carry a `_known` flag (`decoupling_known`, `form_delta_known`,
-  `form_tsb_known`, `hr_drift_known`, `rec_drop_known`) — trust the flag, never
-  the magnitude. `progress` sessions carry no flags on purpose: rows exist only
+  carry a `_known` flag (`decoupling_known`, `form_delta_known`, `hr_drift_known`,
+  `rec_drop_known`, and `form_tsb_known` in `analyze`) — trust the flag, never the
+  magnitude. The rule is PER PAYLOAD, not per field name: `summary` ships `form_tsb`
+  bare because it is always computable there. Read the schema for the command. `progress` sessions carry no flags on purpose: rows exist only
   because the group lens scored them.
 - Zone seconds are **HR-based** (universal across sports). Power feeds TSS/NP, and
   pace feeds the intensity split for GPS sports without power.
-- Load ladder: stream-NP → Strava weighted watts → avg watts → **pace (rtss)** → hrTSS
-  (zone-weighted) → **session-RPE** → relative_effort. It is a mixed model, not "TSS";
-  `load_model` on each row records which rung scored it.
+- Load ladder for ENDURANCE sports: stream-NP → Strava weighted watts → avg watts →
+  **pace (rtss)** → hrTSS (zone-weighted) → avg-HR → **session-RPE** → relative_effort.
+  Strength-class sports rank session-RPE ABOVE heart rate (`Sports.class`, ADR 0003) —
+  the athlete is the better sensor there. It is a mixed model, not "TSS"; `load_model`
+  on each row records which rung scored it.
 - **FTP is DERIVED, never configured.** Per sport, per activity era: best 20-min power
   × 0.95 over the 60 days up to each activity (`summary.ftp` = `{best_20min_w_60d,
   estimated_ftp_w}` for rides). the `ftp` / `ftp_<sport>` config keys are REFUSED with

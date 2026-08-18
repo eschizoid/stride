@@ -55,9 +55,10 @@ Report :: [].{
                 \\       -- load from a MEASURED source — a power meter or GPS-measured pace
                 \\       -- (high-confidence rungs) — vs estimated from HR/RPE/relative-effort
                 \\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN ('power_stream','weighted_watts','avg_watts','rtss') THEN m.tss ELSE 0 END),0) AS REAL) AS measured,
-                \\       -- polarization intensity per activity: POWER split when the activity has
-                \\       -- power-intensity time, else the HR zones. So a power ride's threshold
-                \\       -- work counts as hard even when HR sat on a zone boundary.
+                \\       -- polarization intensity per activity: the pi_* split when the activity
+                \\       -- has one (power-derived with watts, pace-derived for a GPS sport
+                \\       -- without), else the HR zones. So a power ride's threshold work counts
+                \\       -- as hard even when HR sat on a zone boundary.
                 \\       COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_easy_s ELSE m.z1_s + m.z2_s END),0) AS easy,
                 \\       COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_moderate_s ELSE m.z3_s END),0) AS moderate,
                 \\       COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END),0) AS hard,
@@ -999,7 +1000,8 @@ Report :: [].{
         # most recent day with a real hard stimulus (5+ min in Z4/Z5); '' = never
         # ONE hard-session predicate (#159): power-aware like every other hard
         # surface (week's hard column, polarization) — pi_hard when the activity
-        # has a power-intensity split, HR Z4+Z5 otherwise, 5+ min either way.
+        # has a pi_* intensity split (power- or pace-derived), HR Z4+Z5 otherwise,
+        # 5+ min either way.
         # last_hard previously used HR zones alone, which missed power-only rides
         # with junk HR straps; consolidated rather than grown a second definition.
         hard_expr = "COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) >= 300"
@@ -1304,8 +1306,10 @@ Report :: [].{
                 \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
                 \\       COALESCE(m.z1_s,0) AS z1_s, COALESCE(m.z2_s,0) AS z2_s, COALESCE(m.z3_s,0) AS z3_s,
                 \\       COALESCE(m.z4_s,0) AS z4_s, COALESCE(m.z5_s,0) AS z5_s,
-                \\       -- hard time: power (at/above threshold) when the activity has power-
-                \\       -- intensity, else HR Z4+Z5. So a power ride's threshold work counts.
+                \\       -- hard time: the pi_* intensity split when the activity has one --
+                \\       -- POWER-derived where there are watts, PACE-derived for a GPS sport
+                \\       -- without them -- else HR Z4+Z5. So a power ride's threshold work counts,
+                \\       -- and so does a run's.
                 \\       COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) AS hard_s,
                 \\       CAST(COALESCE(a.relative_effort,0) AS REAL) AS relative_effort,
                 \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
@@ -1595,8 +1599,11 @@ Report :: [].{
                 \\-- confidence tiers derived from load_model at read time (not stored): high =
                 \\-- measured power or GPS-measured pace (rtss), medium = HR/RPE, low =
                 \\-- relative_effort, none = unscored. The e2e cross-checks the 'high' count
-                \\-- against the three POWER rungs only, so dropping one of those drifts loudly
-                \\-- while dropping 'rtss' does not -- proved by mutation, suite stayed green.
+                \\-- against this rung list, but only rungs the FIXTURE produces are actually
+                \\-- guarded: measured, dropping 'power_stream' or 'weighted_watts' fails the
+                \\-- suite while dropping 'avg_watts' or 'rtss' does not, because no seeded
+                \\-- activity is scored by either. Changing this list needs a fixture ROW for
+                \\-- the rung, not just an edit to the e2e's enumeration.
                 \\SELECT COALESCE(SUM(CASE WHEN load_model IN (${high_models_sql}) THEN 1 ELSE 0 END),0) AS hi,
                 \\       COALESCE(SUM(CASE WHEN load_model IN (${medium_models_sql}) THEN 1 ELSE 0 END),0) AS med,
                 \\       COALESCE(SUM(CASE WHEN load_model IN (${low_models_sql}) THEN 1 ELSE 0 END),0) AS lo,

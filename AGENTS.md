@@ -40,7 +40,7 @@ just install   # build + symlink to ~/.local/bin/stride
   miscompiled the codebase (#32's intermittent SIGABRT, plus a silently dropped progress
   column). Both are FIXED as of the `nightly-2026-08-17` pin — measured 0 SIGABRT in 1400
   runs where the old pin gave 40, and byte-identical output across 11 commands. It stays
-  the default because a speed build takes ~2 minutes (108-119s over three runs) against ~14 seconds, which is the
+  the default because a speed build takes ~2 minutes against ~14 seconds, which is the
   dev loop, not because the binary is wrong. `just build`, CI, and the release workflow
   all pin it.
 - **New-compiler flag gotcha: `=`, not a space.** `--output=x`, `--main=x`, `--opt=dev`.
@@ -225,8 +225,8 @@ Every item here cost a debugging session at least once — they are not style op
   which makes it an *ambiguous-zero* discriminator, not an impossible-zero flag.
   *Both-possible* fields always carry `_known`, and there the flag IS the null —
   `decoupling_pct`, `form_delta_7d`, `hr_drift`, `rec_drop_60s`, and `form_tsb` **in
-  `analyze`** (summary ships `form_tsb` bare — it is always computable there). *Ambiguous
-  zeros* get a discriminator rather than a flag: `tss: 0` is read through `load_model`. The engine never invents a value; human
+  `analyze`** (summary ships `form_tsb` bare — it is always computable there). *Ambiguous zeros* get a discriminator rather than a flag: `tss: 0` is read through
+  `load_model`, and the zone vector through `zones_known` (described above). The engine never invents a value; human
   tables still render `-`.
 - Machine JSON is a **versioned envelope** — success `{schema_version, data}`, error
   `{schema_version, error:{code, message}}`. Bump `json_schema_version` when the WRAPPER

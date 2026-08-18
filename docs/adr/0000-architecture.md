@@ -36,7 +36,7 @@ migration and why the original "blocked on roc-json" conclusion was wrong. CI
 type-checks (`roc check`) and runs the pure tests (`roc test`) on this compiler across
 linux/macOS/Windows, then builds the real binary and runs the e2e suite on macOS. The
 `roc build` perf gate is gone (roc#10469, fixed by #10531); builds pin `--opt=dev` for
-build time (~14s against ~2min (108-119s measured)), not correctness — the optimized backend's miscompile
+build time (~14s against ~2min), not correctness — the optimized backend's miscompile
 (issue #32) was fixed by the 2026-08-17 compiler pin. Day-to-day compiler
 syntax/stdlib/platform notes live in `docs/roc-new-compiler-notes.md`.
 
@@ -102,9 +102,10 @@ Because the blended total is not all TSS, stride **stops calling it "TSS"** in
 mixed contexts and instead records, per metrics row:
 
 - `load_model` — which ladder rung scored it (provenance).
-- `load_confidence` — a tier: **high** (measured power), **medium** (HR or
-  session-RPE), **low** (relative effort), **none** (unscored). Deterministic,
-  documented, and surfaced as a distribution by `doctor`.
+- The confidence tier — **high** (measured power OR GPS-measured pace), **medium**
+  (HR or session-RPE), **low** (relative effort), **none** (unscored). DERIVED from
+  `load_model` at read time, not stored: the `load_confidence` column existed until
+  schema v8 and was dropped for being derivable. Surfaced as a distribution by `doctor`.
 
 `doctor` is the trust center: coverage, provenance, the confidence distribution,
 config completeness, pending stream backfill, and the active time anchor — every

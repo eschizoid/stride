@@ -478,8 +478,8 @@ just install   # build + symlink into ~/.local/bin
 - **Tests:** pure `expect` blocks across eight modules, run by `just test`. No count is
   quoted here on purpose: one rots on every commit that adds a test (four separate places
   quoted one and all four went stale in a single PR), and the per-module numbers `roc
-  test` prints overlap each other and include ~207 expects belonging to the basic-cli
-  platform rather than to stride. Plus an
+  test` prints overlap each other, and the app-wide run adds ~207 expects belonging to
+  the basic-cli platform rather than to stride. Plus an
   end-to-end suite (`just e2e`) that runs the real
   binary against a sandboxed `HOME` with seeded activities of known math (power TSS ~111
   from NP 200 against a derived FTP of 190, hrTSS ~55, derived-FTP family inheritance,

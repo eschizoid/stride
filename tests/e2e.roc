@@ -2037,8 +2037,20 @@ b_doctor! = |ctx| {
     check!("doctor conf_high >= 1", sfloat(strjq!(ctx, ["doctor"], ".data.conf_high")) >= 1.0)?
     check!("doctor conf_medium >= 1", sfloat(strjq!(ctx, ["doctor"], ".data.conf_medium")) >= 1.0)?
     ch = strjq!(ctx, ["doctor"], ".data.conf_high")
-    powr = strjq!(ctx, ["doctor"], "[.data.scored_by[] | select(.model==\"power_stream\" or .model==\"weighted_watts\" or .model==\"avg_watts\") | .n] | add // 0")
-    check!("conf_high == power-rung provenance", ch == powr)?
+    # This must enumerate EVERY rung the code maps to `high`, including rtss -- the
+    # comment over that mapping claimed the cross-check made it undriftable while this
+    # list omitted rtss, so dropping rtss from the mapping left the suite green.
+    powr = strjq!(ctx, ["doctor"], "[.data.scored_by[] | select(.model==\"power_stream\" or .model==\"weighted_watts\" or .model==\"avg_watts\" or .model==\"rtss\") | .n] | add // 0")
+    check!("conf_high == every rung mapped to high", ch == powr)?
+    # The guard is only as strong as the rungs the FIXTURE produces. A rung with zero rows
+    # leaves BOTH sides of the equality unchanged, so dropping it from the mapping is
+    # invisible -- measured: dropping 'power_stream' or 'weighted_watts' fails the suite,
+    # dropping 'avg_watts' or 'rtss' does not. Every seeded power row carries
+    # weighted_avg_watts, so the avg_watts rung is never selected, and nothing here is
+    # scored by pace. This pins WHICH rungs exist so the gap is explicit instead of
+    # something the next reader rediscovers by mutating.
+    covered = strjq!(ctx, ["doctor"], "[.data.scored_by[] | select(.n > 0) | .model] | sort | join(\",\")")
+    check!("the rungs this fixture exercises are the ones the guard can protect", Str.contains(covered, "power_stream") and Str.contains(covered, "weighted_watts") and !(Str.contains(covered, "avg_watts")) and !(Str.contains(covered, "rtss")))?
     check!("doctor reports sports with a DERIVED ftp", sfloat(strjq!(ctx, ["doctor"], ".data.ftp_derived_sports")) >= 1.0)?
     check!("doctor zones_set true", strjq!(ctx, ["doctor"], ".data.zones_set") == "true")?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ctx.tz])

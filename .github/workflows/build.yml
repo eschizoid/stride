@@ -23,7 +23,7 @@ jobs:
   # `roc test` stop before native codegen, so they are fast and deterministic and
   # make a good first gate. (The `e2e` job below does build the real binary, with
   # --opt=dev, which is now a BUILD-TIME choice: #32's SIGABRT was fixed by the
-  # 2026-08-17 compiler pin, and --opt=speed costs ~2min (108-119s measured) against ~14s.)
+  # 2026-08-17 compiler pin, and --opt=speed costs ~2min against ~14s.)
   check-and-test:
     strategy:
       fail-fast: false
@@ -87,10 +87,9 @@ jobs:
   # bug (a constant "" in a str op corrupting the heap) that hit the linux build even
   # where macOS was clean. That bug is roc#10595, fixed upstream on 2026-08-04, and the
   # current pin carries the fix — so the reason is spent and the placement is now just
-  # untested. Moving e2e to linux needs a trial run, not a comment change.
-  # macOS is the dev platform and the suite is green there; the
-  # cross-platform gate is `check` + pure `test` above (all three OSes). Move e2e back to
-  # linux once the upstream codegen bug is fixed. e2e-sync (network) is still local-only.
+  # untested. macOS is the dev platform and the suite is green there; the cross-platform
+  # gate is `check` + pure `test` above (all three OSes). Moving e2e to linux now needs a
+  # trial run, not a comment change. e2e-sync (network) is still local-only.
   e2e:
     needs: check-and-test
     runs-on: macos-latest
