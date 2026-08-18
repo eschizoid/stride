@@ -81,7 +81,7 @@ differ:
   invented number. Junk HR samples are filtered, and it says so. Strength, HIIT,
   and yoga score through your own effort rating (`stride rate`) instead of
   pretending an aerobic model fits them — and every computed load records both
-  which method produced it and a **confidence tier** (high = measured power *or GPS-measured pace*,
+  which method produced it and a **confidence tier** (high = measured power *or distance-measured pace*,
   medium = HR or session-RPE, low = Strava relative effort), which `doctor`
   reports as a distribution so you know how much of your load is measured vs
   estimated.

@@ -972,7 +972,7 @@ Metrics :: [].{
                 }
         }
 
-    # confidence tiers (high = measured power OR GPS-measured pace, medium = HR/RPE, low = relative_effort,
+    # confidence tiers (high = measured power OR distance-measured pace, medium = HR/RPE, low = relative_effort,
     # none = unscored) are derived from load_model at READ time in the doctor query
     # (see the CASE there). Not stored — it's a pure function of a column that already
     # exists, so a column would be redundant denormalization.
@@ -1615,7 +1615,7 @@ Metrics :: [].{
         # The fitted line's own endpoints. A slope with a low r2 is routinely
         # misread as "no trend" — but r2 measures SCATTER, not whether the
         # slope differs from zero, and a 71-week block at r2 0.10 still fell
-        # from 316 to 214 TSS/week. "316 → 214" cannot be mis-told that way.
+        # from 315 to 214 TSS/week. "315 → 214" cannot be mis-told that way.
         # Seeded from the first element, not 0.0: seeding at zero computes
         # min(0, xs), which is right only while complete weeks are a PREFIX.
         # They are, and the reason is `complete = week_start + 6 < today` is

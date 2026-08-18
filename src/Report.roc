@@ -52,7 +52,7 @@ Report :: [].{
             query:
                 \\SELECT COALESCE(SUM(m.z1_s),0) AS z1, COALESCE(SUM(m.z2_s),0) AS z2, COALESCE(SUM(m.z3_s),0) AS z3,
                 \\       COALESCE(SUM(m.z4_s),0) AS z4, COALESCE(SUM(m.z5_s),0) AS z5, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
-                \\       -- load from a MEASURED source — a power meter or GPS-measured pace
+                \\       -- load from a MEASURED source — a power meter or distance-measured pace
                 \\       -- (high-confidence rungs) — vs estimated from HR/RPE/relative-effort
                 \\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN ('power_stream','weighted_watts','avg_watts','rtss') THEN m.tss ELSE 0 END),0) AS REAL) AS measured,
                 \\       -- polarization intensity per activity: the pi_* split when the activity
@@ -1599,15 +1599,18 @@ Report :: [].{
             path: Path.utf8(path),
             query:
                 \\-- confidence tiers derived from load_model at read time (not stored): high =
-                \\-- measured power or GPS-measured pace (rtss), medium = HR/RPE, low =
+                \\-- measured power or distance-measured pace (rtss), medium = HR/RPE, low =
                 \\-- relative_effort, none = unscored. The e2e cross-checks the 'high' count
                 \\-- against this rung list, and all FOUR rungs are guarded: dropping any of
                 \\-- them fails the suite. That took one fixture row per rung reaching doctor
                 \\-- alive -- avg_watts was hidden by body ORDER, rtss by b_period_pace!
                 \\-- deleting its own pace-scored swims before doctor runs. Two earlier
                 \\-- versions of this comment guessed at causes instead (a missing fixture,
-                \\-- then an underivable threshold); a threshold speed derives from a single
-                \\-- activity via period_threshold_sql's cold-start arm. Adding a rung here
+                \\-- then an underivable threshold, then the wrong SQL arm); a threshold speed
+                \\-- derives from a single activity via period_threshold_sql's TRAILING-60-day
+                \\-- arm, whose `b2.start_local <= a.start_local` includes the activity's own
+                \\-- row -- not the cold-start forward-fill, which can be deleted outright with
+                \\-- the suite still green. Adding a rung here
                 \\-- needs a fixture row that SURVIVES to b_doctor!, or the guard silently
                 \\-- stops covering it.
                 \\SELECT COALESCE(SUM(CASE WHEN load_model IN (${high_models_sql}) THEN 1 ELSE 0 END),0) AS hi,
@@ -2413,8 +2416,9 @@ Report :: [].{
                     \\SELECT substr(a.start_local, 1, 10) AS date,
                     \\       COALESCE(a.sport_family, a.sport_type) AS fam,
                     \\       COUNT(*) AS n,
-                    \\       -- the house fallback (see zone_sum!): POWER split when the activity
-                    \\       -- has power-intensity time, else the HR zones. Summing the pi_ columns
+                    \\       -- the house fallback (see zone_sum!): the pi_* split when the activity
+                    \\       -- has one -- power-derived with watts, pace-derived for a distance
+                    \\       -- sport without them -- else the HR zones. Summing the pi_ columns
                     \\       -- raw drops every session without a split -- 50 of 731 here, 46 of which
                     \\       -- DO have zone seconds, and overwhelmingly easy ones, so the raw sum
                     \\       -- understates easy time and disagrees with what `summary` publishes.
@@ -2558,7 +2562,7 @@ Report :: [].{
                     sessions,
                     # the trailing month is almost always partial, and comparing
                     # its load to a full one reads as a collapse: 751 TSS in 17
-                    # days against July's 1120 is a 22% INCREASE per day
+                    # days against July's 1150 is a 22% INCREASE per day
                     partial: m.month == this_month,
                     ftp_family: ftp.ftp_family,
                     ftp_lo: ftp.ftp_lo,

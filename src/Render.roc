@@ -821,7 +821,7 @@ Render :: [].{
                     "    training load: ${fmt0(z.tss)} (${I64.to_str(z.measured_pct)}% measured by power or pace — rest estimated from HR/RPE; see doctor)",
                 ],
                 # tier line (#157): descriptive provenance for the load number above
-                # it — high = measured power OR GPS-measured pace, medium = HR/RPE,
+                # it — high = measured power OR distance-measured pace, medium = HR/RPE,
                 # low = Strava relative-effort. States the mix, prescribes nothing; absent when
                 # the window is empty rather than claiming 0/0/0.
                 if z.load_coverage.known {

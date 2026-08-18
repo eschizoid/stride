@@ -178,7 +178,7 @@ deliberately small way. Do **not** write a data-transform migration for the metr
    - *Pace provenance* (Decision 2): new `load_model` strings (`ngp`/`rtss`/`css`) must join
      **every** `load_model IN(...)` list in `Report.roc` — the *measured* set, the `doctor`
      confidence tiers, and the catch-all → `non` bucket — declared **high (measured)** like
-     power; miss it and GPS-measured pace silently reports as *unmeasured*. `doctor`'s
+     power; miss it and distance-measured pace silently reports as *unmeasured*. `doctor`'s
      config-completeness (exact `hr_z*_max` list + `ftp_` prefix) must also learn the new
      `hr_z*_max_<sport>` / `model_<sport>` keys.
 

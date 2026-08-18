@@ -62,7 +62,7 @@ Output :: [].{
     #   the schema for the command rather than assuming the name carries a flag.
     # Surfaces: activity, activities, plan.recent_activities_14d carry
     # power_known/intensity_known/hr_known/zones_known + load_model; top carries the
-    # first three. progress sessions carry none on purpose — rows exist only because
+    # first three. progress sessions carry only decoupling_known on purpose — rows exist only because
     # the group lens scored them, so the lens signal is present by construction.
     # Key-OMISSION (encode np_w as Try(F64, [Missing]) — Err drops the key) IS
     # expressible today and is the JSON-idiomatic alternative; it was rejected

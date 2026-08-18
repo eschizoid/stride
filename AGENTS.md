@@ -224,7 +224,7 @@ Every item here cost a debugging session at least once — they are not style op
   count test rather than a NULL test, because an all-zero zone vector is ambiguous —
   which makes it an *ambiguous-zero* discriminator, not an impossible-zero flag.
   *Both-possible* fields always carry `_known`, and there the flag IS the null —
-  `decoupling_pct`, `form_delta_7d`, `hr_drift`, `rec_drop_60s`, and `form_tsb` **in
+  `decoupling_pct`, `form_delta_7d`, `hr_drift`, `rec_drop`, and `form_tsb` **in
   `analyze`** (summary ships `form_tsb` bare — it is always computable there). *Ambiguous zeros* get a discriminator rather than a flag: `tss: 0` is read through
   `load_model`, and the zone vector through `zones_known` (described above). The engine never invents a value; human
   tables still render `-`.
@@ -238,7 +238,7 @@ Every item here cost a debugging session at least once — they are not style op
   session-RPE. Don't relabel the blended total "TSS"; each metrics row carries
   `load_model` (provenance). Confidence is DERIVED from it at read time, not stored —
   the `load_confidence` column existed until v8 and was dropped for being derivable —
-  and the mapping is high = measured power OR GPS-measured pace (`rtss`), medium =
+  and the mapping is high = measured power OR distance-measured pace (`rtss`), medium =
   HR/RPE, low = relative-effort, none = unscored. `doctor` reports the distribution.
 - One **open** planned session per date; lifecycle open → done/skipped (never
   delete). Rest days complete WITHOUT an activity id; every other type requires

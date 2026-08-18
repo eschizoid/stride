@@ -2054,7 +2054,7 @@ b_doctor! = |ctx| {
     # once asserted the fixture had no such row at all. Pin the coverage so a reorder that
     # re-hides a rung fails HERE rather than silently weakening the check above.
     covered = strjq!(ctx, ["doctor"], "[.data.scored_by[] | select(.n > 0) | .model] | sort | join(\",\")")
-    check!("every power rung the mapping names exists by the time doctor measures it", Str.contains(covered, "power_stream") and Str.contains(covered, "weighted_watts") and Str.contains(covered, "avg_watts"))?
+    check!("every power rung the mapping names exists by the time doctor measures it", Str.contains(covered, "power_stream") and Str.contains(covered, "weighted_watts") and Str.contains(covered, "avg_watts") and Str.contains(covered, "rtss"))?
     check!("doctor reports sports with a DERIVED ftp", sfloat(strjq!(ctx, ["doctor"], ".data.ftp_derived_sports")) >= 1.0)?
     check!("doctor zones_set true", strjq!(ctx, ["doctor"], ".data.zones_set") == "true")?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ctx.tz])

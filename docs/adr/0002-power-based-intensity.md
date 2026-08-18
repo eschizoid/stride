@@ -68,7 +68,7 @@ derived numbers as fact. The engine may compute; the coach must caveat.
 - Adding a sport needs **no code and no config** — its FTP derives from its own power
   history the moment that history exists.
 - Confidence tiers (ADR 0000 §4) annotate how much of the load is measured (power or
-  GPS-measured pace) vs
+  distance-measured pace) vs
   estimated (HR/RPE), surfaced by `doctor` and as `measured_pct` on the fitness number.
 - Recompute invalidation is per-sport: a change in one sport's derived FTP recomputes only that
   sport's rows (a generated `CASE` maps each sport to its FTP in the analyze filter).
