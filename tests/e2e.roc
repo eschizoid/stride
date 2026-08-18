@@ -39,7 +39,9 @@ import pf.Server
 import pf.Sleep
 import http.Response
 
-Ctx : { bin : Str, home : Str, db : Str, today : Str, d1 : Str, d2 : Str }
+# `tz` rides on Ctx so every scenario that touches the clock reads the SAME zone the
+# dates were computed in. A second literal is exactly how #200 got in.
+Ctx : { bin : Str, home : Str, db : Str, today : Str, d1 : Str, d2 : Str, tz : Str }
 
 Context : {}
 program = { init!, respond!, shutdown! }
@@ -147,12 +149,16 @@ run_all! = || {
     today = need("date +%F", Str.trim(sh!("TZ=${tz} date +%F")))?
     d1 = need("date -3d", Str.trim(sh!("TZ=${tz} date -v-3d +%F 2>/dev/null || TZ=${tz} date -d '3 days ago' +%F")))?
     d2 = need("date -1d", Str.trim(sh!("TZ=${tz} date -v-1d +%F 2>/dev/null || TZ=${tz} date -d '1 day ago' +%F")))?
-    ctx = { bin, home, db: "${home}/.stride/db.sqlite", today, d1, d2 }
+    ctx = { bin, home, db: "${home}/.stride/db.sqlite", today, d1, d2, tz }
     b_init_config!(ctx)?
     # Pin the sandbox clock to the same zone the dates above were computed in,
-    # BEFORE any date-dependent check runs. b_init_config! sets this later for
+    # BEFORE any date-dependent check runs. b_config_ftp! (line ~406) sets it too, for
     # its own assertions, but everything between here and there was comparing a
     # Chicago-derived `today` against a binary still defaulting to UTC (#200).
+    #
+    # Everything that reads a clock in this harness must go through `tz` or `ctx.today`.
+    # A second literal is how this bug got in: the fixture configured one zone and
+    # computed its dates in another.
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", tz])
     b_auth!(ctx)?
     b_config_ftp!(ctx)?
@@ -441,12 +447,17 @@ b_config_ftp! = |ctx| {
     # delete the row rather than storing "" — an empty value is a stored-but-invalid
     # timezone, not an absent one, and doctor treats those differently
     _ = sql!(ctx.db, "DELETE FROM config WHERE key='timezone';")
+    # ...and ASSERT the absent path, which nothing did before: the DELETE sat as the last
+    # statement of this function with no observation of its effect, so it proved nothing
+    # while still changing the clock for every check that followed. With no timezone and
+    # no utc_offset_minutes, doctor must report the UTC fallback rather than an error.
+    check!("absent timezone falls back to UTC, not an error", Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UTC"))?
     # ...then put it back. Leaving it unset changed the binary's clock MID-RUN,
     # so every later date check compared a Chicago-derived harness date against
     # a UTC-derived binary date, and the two disagree between 00:00 and 05:00
     # UTC. That is #200: it failed on any machine west of UTC in the evening,
     # and on CI only when a run happened to land in that five-hour window.
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", "America/Chicago"])
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ctx.tz])
     Ok({})
 }
 
@@ -1046,7 +1057,12 @@ b_seed_analyze! = |ctx| {
     # boundary and restores it afterwards.
     dl_rows_before = Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM daily_load;"))
     _ = sql!(ctx.db, "CREATE TABLE dl_bak AS SELECT * FROM daily_load; DELETE FROM daily_load;")
-    mon = "date('now', '-' || ((CAST(strftime('%w','now') AS INTEGER) + 6) % 7) || ' days')"
+    # anchored to ctx.today, NOT to SQLite's 'now': 'now' is UTC while the binary is on
+    # ${tz}, so on a Monday between 00:00 and 05:00 UTC the harness's Monday and the
+    # binary's this_week were a week apart and the `closed` checks failed. Same bug as
+    # #200, weekly rather than daily -- the first fix caught three clock reads and left
+    # these two.
+    mon = "date('${ctx.today}', '-' || ((CAST(strftime('%w','${ctx.today}') AS INTEGER) + 6) % 7) || ' days')"
     # two clear weeks short of the gap: a session today would EXTEND this block
     _ = sql!(ctx.db, "INSERT INTO daily_load (day,tss,ctl,atl,tsb) VALUES (date(${mon}, '-14 days'), 50.0, 5.0, 5.0, 0.0);")
     check!("a block the gap has not yet closed reports open", strjq!(ctx, ["season"], ".data.blocks | last | .closed") == "false")?
@@ -1054,7 +1070,7 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "DELETE FROM daily_load; INSERT INTO daily_load (day,tss,ctl,atl,tsb) VALUES (date(${mon}, '-21 days'), 50.0, 5.0, 5.0, 0.0);")
     check!("a block the gap HAS closed reports closed", strjq!(ctx, ["season"], ".data.blocks | last | .closed") == "true")?
     # and training in the current week is unambiguously open
-    _ = sql!(ctx.db, "DELETE FROM daily_load; INSERT INTO daily_load (day,tss,ctl,atl,tsb) VALUES (date('now'), 50.0, 5.0, 5.0, 0.0);")
+    _ = sql!(ctx.db, "DELETE FROM daily_load; INSERT INTO daily_load (day,tss,ctl,atl,tsb) VALUES (date('${ctx.today}'), 50.0, 5.0, 5.0, 0.0);")
     check!("training this week is never reported closed", strjq!(ctx, ["season"], ".data.blocks | last | .closed") == "false")?
     _ = sql!(ctx.db, "DELETE FROM daily_load; INSERT INTO daily_load SELECT * FROM dl_bak; DROP TABLE dl_bak;")
     check!("daily_load is restored after the closed probe", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM daily_load;")) == dl_rows_before)?
@@ -1992,6 +2008,11 @@ b_doctor! = |ctx| {
     check!("bad tz not ok", strjq!(ctx, ["doctor"], ".data.time_ok") == "false")?
     check!("bad tz shows UNKNOWN", Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UNKNOWN"))?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ""])
+    # restore before returning: four scenarios run after this one, and leaving the zone
+    # blank hands them a binary on a different clock than the harness -- the same defect
+    # this PR fixes at b_config_ftp!. Latent today (nothing after here is date-sensitive)
+    # and a trap for the next date-sensitive check appended to the suite.
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ctx.tz])
     Ok({})
 }
 
