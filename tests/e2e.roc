@@ -147,7 +147,8 @@ run_all! = || {
     # date check compared a UTC harness date against a Chicago binary. Between 00:00 and
     # 05:00 UTC that is a whole day: `analyze` regenerates daily_load out to the BINARY's
     # today, which is a day behind the harness's, so the series comes up one row short
-    # (#200). CI only saw it when a run landed in that five-hour window.
+    # (#200). CI only saw it when a run landed in that window -- five hours under CDT,
+    # six under CST.
     tz = "America/Chicago"
     today = need("date +%F", Str.trim(sh!("TZ=${tz} date +%F")))?
     d1 = need("date -3d", Str.trim(sh!("TZ=${tz} date -v-3d +%F 2>/dev/null || TZ=${tz} date -d '3 days ago' +%F")))?
@@ -1074,7 +1075,8 @@ b_seed_analyze! = |ctx| {
     # ${tz}, so on a Monday between 00:00 and 05:00 UTC the harness's Monday and the
     # binary's this_week were a week apart and the `closed` checks failed. Same bug as
     # #200, weekly rather than daily -- the first fix anchored the three shell `date`
-    # reads and left three more: these two SQLite ones and a jq `now | strftime` below.
+    # reads and left three more: these two SQLite ones and a jq `now | strftime` about
+    # 40 lines above.
     mon = "date('${ctx.today}', '-' || ((CAST(strftime('%w','${ctx.today}') AS INTEGER) + 6) % 7) || ' days')"
     # two clear weeks short of the gap: a session today would EXTEND this block
     _ = sql!(ctx.db, "INSERT INTO daily_load (day,tss,ctl,atl,tsb) VALUES (date(${mon}, '-14 days'), 50.0, 5.0, 5.0, 0.0);")
@@ -2029,7 +2031,8 @@ b_doctor! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ""])
     check!("empty timezone is the absent state, not an invalid one", strjq!(ctx, ["doctor"], ".data.time_ok") == "true" and Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UTC"))?
     # restore before returning: four scenarios run after this one, and leaving the zone
-    # blank hands them a binary on a different clock than the harness -- the same defect
+    # blank -- or on the unresolvable name set just above, which also resolves to UTC --
+    # hands them a binary on a different clock than the harness -- the same defect
     # this PR fixes at b_config_ftp!. Latent today (nothing after here is date-sensitive)
     # and a trap for the next date-sensitive check appended to the suite.
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ctx.tz])
