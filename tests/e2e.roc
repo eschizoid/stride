@@ -139,23 +139,24 @@ run_all! : () => Try({}, _)
 run_all! = || {
     bin = env_or!("STRIDE_BIN", "./stride")
     home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
-    # The fixture configures `timezone America/Chicago`, so stride computes
-    # "today" in Chicago while these were computed in UTC. Between 00:00 and
-    # 05:00 UTC the two differ by a day, the seeded row for "today" lands in
-    # stride's future, and the daily series comes up one row short (#200). CI
-    # only ever saw it when a run happened to land in that five-hour window.
-    # Anchor the harness to the SAME clock the binary will use.
+    # Anchor the harness to the SAME clock the binary will use. These used to be
+    # computed with `date -u` while the fixture configured `timezone America/Chicago`,
+    # so from the first `config set timezone` onward the two disagreed about the civil
+    # day. Between 00:00 and 05:00 UTC that is a whole day: `analyze` regenerates
+    # daily_load out to the BINARY's today, which is a day behind the harness's, so the
+    # series comes up one row short (#200). CI only saw it when a run landed in that
+    # five-hour window.
     tz = "America/Chicago"
     today = need("date +%F", Str.trim(sh!("TZ=${tz} date +%F")))?
     d1 = need("date -3d", Str.trim(sh!("TZ=${tz} date -v-3d +%F 2>/dev/null || TZ=${tz} date -d '3 days ago' +%F")))?
     d2 = need("date -1d", Str.trim(sh!("TZ=${tz} date -v-1d +%F 2>/dev/null || TZ=${tz} date -d '1 day ago' +%F")))?
     ctx = { bin, home, db: "${home}/.stride/db.sqlite", today, d1, d2, tz }
     b_init_config!(ctx)?
-    # Pin the sandbox clock to the same zone the dates above were computed in,
-    # BEFORE any date-dependent check runs. b_config_ftp! sets it too (at its "config set
-    # emits the JSON envelope" check), for
-    # its own assertions, but everything between here and there was comparing a
-    # Chicago-derived `today` against a binary still defaulting to UTC (#200).
+    # Pin the sandbox clock to the same zone the dates above were computed in, BEFORE any
+    # date-dependent check runs. b_config_ftp! sets it too, at its "config set emits the
+    # JSON envelope" check, for its own assertions. Nothing between here and there is
+    # date-dependent today, so this pin is defence in depth rather than a fix -- it means
+    # a date check ADDED to an early scenario cannot inherit a UTC binary.
     #
     # Everything that reads a clock in this harness must go through `tz` or `ctx.today`.
     # A second literal is how this bug got in: the fixture configured one zone and
@@ -454,12 +455,15 @@ b_config_ftp! = |ctx| {
     # statement of this function with no observation of its effect, so it proved nothing
     # while still changing the clock for every check that followed. With no timezone and
     # no utc_offset_minutes, doctor must report the UTC fallback rather than an error.
-    check!("absent timezone falls back to UTC, not an error", Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UTC"))?
-    # ...then put it back. Leaving it unset changed the binary's clock MID-RUN,
-    # so every later date check compared a Chicago-derived harness date against
-    # a UTC-derived binary date, and the two disagree between 00:00 and 05:00
-    # UTC. That is #200: it failed on any machine west of UTC in the evening,
-    # and on CI only when a run happened to land in that five-hour window.
+    check!("absent timezone falls back to UTC, not an error", Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UTC") and strjq!(ctx, ["doctor"], ".data.time_ok") == "true")?
+    # ...then put it back, because the harness is now anchored to ${tz}: an absent row
+    # leaves the binary on UTC, and the two would disagree for the rest of the run.
+    #
+    # This DELETE was NOT the cause of #200, though an earlier revision of this fix said
+    # so. On main the harness computed its dates with `date -u` and a fresh binary also
+    # defaults to UTC, so the DELETE returned them to AGREEMENT -- it was harmless there,
+    # and only became harmful once the harness moved to ${tz}. The line that actually
+    # broke the run is the `validate!("config set timezone ...")` in b_seed_analyze!.
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ctx.tz])
     Ok({})
 }
