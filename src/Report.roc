@@ -204,6 +204,62 @@ Report :: [].{
                 }
         }
     }
+    # The hard-day block of summary_payload!, lifted whole (#196). It is the one
+    # self-contained stretch in that function -- three inputs, one record out, and
+    # nothing downstream re-reads an intermediate. `hard_expr` stays inside: it is SQL
+    # text used twice here and nowhere else, and returning it would put a query
+    # fragment in a payload record.
+    hard_day_stats! = |path, anchor, cutoff28| {
+        # most recent day with a real hard stimulus (5+ min in Z4/Z5); '' = never
+        # ONE hard-session predicate (#159): power-aware like every other hard
+        # surface (week's hard column, polarization) — pi_hard when the activity
+        # has a pi_* intensity split (power- or pace-derived), HR Z4+Z5 otherwise,
+        # 5+ min either way.
+        # last_hard previously used HR zones alone, which missed power-only rides
+        # with junk HR straps; consolidated rather than grown a second definition.
+        hard_expr = "COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) >= 300"
+        last_hard = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT COALESCE(MAX(substr(a.start_local, 1, 10)), '') AS d
+                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                \\WHERE ${hard_expr}
+            ,
+            bindings: [],
+            row: Sqlite.str("d"),
+        })?
+        # stimulus features (#159): counts, spacing, and windowed loads the coach
+        # would otherwise re-derive from raw lists — measurements only, never
+        # judgments (hard_sessions.d14 is a count; whether 4 is "too many" is
+        # the coach's call, per the #154 boundary)
+        hard_days = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT DISTINCT substr(a.start_local, 1, 10) AS d
+                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                \\WHERE ${hard_expr} AND a.start_local >= :cutoff
+            ,
+            bindings: [{ name: ":cutoff", value: String(cutoff28) }],
+            rows: Sqlite.str("d"),
+        })?
+        hard_day_nums = List.keep_oks(hard_days, |d| Metrics.date_str_to_days(d))
+        # Str has no ordering — count on parsed day numbers, same anchor math
+        hard_d14 = List.len(List.keep_if(hard_day_nums, |d| d >= anchor - 13))
+        spacing = Metrics.median_gap_days(hard_day_nums)
+        days_since_hard =
+            match List.sort_with(hard_day_nums, |a, b| if a > b LT else if a < b GT else EQ) {
+                [newest_hard, ..] => Known(anchor - newest_hard)
+                [] => Unknown
+            }
+        # ANNOTATED Bools: this payload is encode-only, and a bare tag would
+        # serialize as the STRING "True" (the #32-class flag bug, pinned in e2e)
+        spacing_known_b : Bool
+        spacing_known_b = match spacing { Known(_) => True  Unknown => False }
+        days_since_known_b : Bool
+        days_since_known_b = match days_since_hard { Known(_) => True  Unknown => False }
+        Ok({ last_hard, d14: hard_d14, d28: (List.len(hard_day_nums)).to_i64_wrap(), spacing, days_since: days_since_hard, spacing_known: spacing_known_b, days_since_known: days_since_known_b })
+    }
+
     summary_payload! = |path, zb| {
         # empty daily_load (nothing analyzed yet) is a clean "no data" state, not an
         # error to blow up on — map NoRowsReturned to a tag the callers turn into a
@@ -306,53 +362,15 @@ Report :: [].{
             row: Sqlite.i64("n"),
         })?
 
-        # most recent day with a real hard stimulus (5+ min in Z4/Z5); '' = never
-        # ONE hard-session predicate (#159): power-aware like every other hard
-        # surface (week's hard column, polarization) — pi_hard when the activity
-        # has a pi_* intensity split (power- or pace-derived), HR Z4+Z5 otherwise,
-        # 5+ min either way.
-        # last_hard previously used HR zones alone, which missed power-only rides
-        # with junk HR straps; consolidated rather than grown a second definition.
-        hard_expr = "COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) >= 300"
-        last_hard = Sqlite.query!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT COALESCE(MAX(substr(a.start_local, 1, 10)), '') AS d
-                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
-                \\WHERE ${hard_expr}
-            ,
-            bindings: [],
-            row: Sqlite.str("d"),
-        })?
-        # stimulus features (#159): counts, spacing, and windowed loads the coach
-        # would otherwise re-derive from raw lists — measurements only, never
-        # judgments (hard_sessions.d14 is a count; whether 4 is "too many" is
-        # the coach's call, per the #154 boundary)
-        hard_days = Sqlite.query_many!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT DISTINCT substr(a.start_local, 1, 10) AS d
-                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
-                \\WHERE ${hard_expr} AND a.start_local >= :cutoff
-            ,
-            bindings: [{ name: ":cutoff", value: String(cutoff28) }],
-            rows: Sqlite.str("d"),
-        })?
-        hard_day_nums = List.keep_oks(hard_days, |d| Metrics.date_str_to_days(d))
-        # Str has no ordering — count on parsed day numbers, same anchor math
-        hard_d14 = List.len(List.keep_if(hard_day_nums, |d| d >= anchor - 13))
-        spacing = Metrics.median_gap_days(hard_day_nums)
-        days_since_hard =
-            match List.sort_with(hard_day_nums, |a, b| if a > b LT else if a < b GT else EQ) {
-                [newest_hard, ..] => Known(anchor - newest_hard)
-                [] => Unknown
-            }
-        # ANNOTATED Bools: this payload is encode-only, and a bare tag would
-        # serialize as the STRING "True" (the #32-class flag bug, pinned in e2e)
+        hd = hard_day_stats!(path, anchor, cutoff28)?
+        last_hard = hd.last_hard
+        hard_d14 = hd.d14
+        spacing = hd.spacing
+        days_since_hard = hd.days_since
         spacing_known_b : Bool
-        spacing_known_b = match spacing { Known(_) => True  Unknown => False }
+        spacing_known_b = hd.spacing_known
         days_since_known_b : Bool
-        days_since_known_b = match days_since_hard { Known(_) => True  Unknown => False }
+        days_since_known_b = hd.days_since_known
         # windowed loads + prior windows of the SAME length, deltas raw. The
         # prior-7d window is [-13..-7] and prior-28d is [-55..-28]: adjacent,
         # non-overlapping, same width — the delta compares like with like.
@@ -529,7 +547,7 @@ Report :: [].{
             # spacing/days-since flags are the ADR 0009 null (0 with known false)
             hard_days: {
                 d14: (hard_d14).to_i64_wrap(),
-                d28: (List.len(hard_day_nums)).to_i64_wrap(),
+                d28: hd.d28,
                 spacing_median_days_28d: match spacing { Known(g) => g  Unknown => 0 },
                 spacing_known: spacing_known_b,
                 days_since_last: match days_since_hard { Known(d) => d  Unknown => 0 },
