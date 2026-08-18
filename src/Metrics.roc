@@ -1698,6 +1698,38 @@ Metrics :: [].{
     # never learns their date moved), while an unpadded 2026-8-5 sorts after every
     # 2026-1x-xx date and lands in the wrong week. The year bound holds the string at
     # ten characters, since a 3-digit year would sort after every 2xxx one.
+    # Integer parsing for USER ARGUMENTS, deliberately narrower than the stdlib's.
+    #
+    # The 2026-08-17 compiler pin widened `I64.from_str`/`U64.from_str` to accept
+    # exponent notation. `"1e3"` was a parse error on the previous pin and is 1000 now.
+    # Nothing in stride asked for that, and it reached the JUDGMENT tier: `skip 1e1`
+    # silently addressed planned session 10 and performed a write that cannot be
+    # re-derived (ADR 0000 section 3). It is not even self-consistent -- `1e1` addresses
+    # 10, but `3.3e1` cannot address 33, because integral exponents parse and fractional
+    # mantissas do not. That inconsistency is the tell that it is a side effect of a
+    # stdlib change rather than an input format anyone designed.
+    #
+    # An id or a count typed by a human is digits, optionally signed. Rejecting
+    # everything else BEFORE the stdlib sees it also pins the accepted set to this
+    # function rather than to the compiler: a future bump cannot widen or narrow what
+    # stride accepts without failing the expects below.
+    #
+    # DO NOT "simplify" this away by calling from_str directly -- the narrowing is
+    # deliberate (#201, docs/roc-new-compiler-notes.md), and deleting it silently
+    # restores an unrecoverable write on a fat-fingered argument.
+    is_plain_int : Str -> Bool
+    is_plain_int = |s| {
+        bytes = Str.to_utf8(s)
+        digits = if Str.starts_with(s, "-") List.drop_first(bytes, 1) else bytes
+        !(List.is_empty(digits)) and List.all(digits, |b| b >= 48 and b <= 57)
+    }
+
+    arg_i64 : Str -> Try(I64, [NotAnInt])
+    arg_i64 = |s| if Metrics.is_plain_int(s) I64.from_str(s).map_err(|_| NotAnInt) else Err(NotAnInt)
+
+    arg_u64 : Str -> Try(U64, [NotAnInt])
+    arg_u64 = |s| if Metrics.is_plain_int(s) U64.from_str(s).map_err(|_| NotAnInt) else Err(NotAnInt)
+
     is_canonical_date : Str -> Bool
     is_canonical_date = |s|
         match date_str_to_days(s) {
@@ -4045,3 +4077,18 @@ expect {
     ids = List.map([-25.0, -12.0, -2.0, 8.0, 20.0], Metrics.form_state)
     ids == ["high_modeled_fatigue", "modeled_fatigue_building", "balanced", "fresh", "very_fresh"]
 }
+
+# ── arg_i64 / arg_u64: user-argument integer parsing (#201) ─────────────
+# Plain integers parse; every non-digit form is refused BEFORE the stdlib sees it,
+# which is what makes the accepted set independent of the compiler pin.
+expect Metrics.is_plain_int("10") and Metrics.is_plain_int("-3") and Metrics.is_plain_int("0")
+expect !(Metrics.is_plain_int("1e1")) and !(Metrics.is_plain_int("3.3e1")) and !(Metrics.is_plain_int("1E1"))
+expect !(Metrics.is_plain_int("")) and !(Metrics.is_plain_int("-")) and !(Metrics.is_plain_int("ten")) and !(Metrics.is_plain_int(" 1"))
+expect !(Metrics.is_plain_int("0x10")) and !(Metrics.is_plain_int("1_0")) and !(Metrics.is_plain_int("+1"))
+expect Metrics.arg_i64("10") == Ok(10)
+expect Metrics.arg_i64("-10") == Ok(-10)
+expect Metrics.arg_i64("1e1") == Err(NotAnInt)
+expect Metrics.arg_u64("10") == Ok(10)
+expect Metrics.arg_u64("1e1") == Err(NotAnInt)
+# the inconsistency that proved it was an accident, now refused on both sides
+expect Metrics.arg_i64("1e1") == Err(NotAnInt) and Metrics.arg_i64("3.3e1") == Err(NotAnInt)

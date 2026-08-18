@@ -1008,22 +1008,24 @@ b_seed_analyze! = |ctx| {
     # and `week all` were missing (the latter sits at exactly 100 on real data).
     wide = Str.trim(sh!("for c in season activities plan week 'week all' compare progress load stats zones 'power-curve' 'top tss'; do HOME='${ctx.home}' '${ctx.bin}' $c 2>/dev/null; done | grep -E '[│╭├╰]' | while IFS= read -r l; do printf '%s' \"$l\" | LC_ALL=en_US.UTF-8 wc -m; done | tr -d ' ' | awk '$1 > 100' | sort -rn | head -1"))
     check!("no human table exceeds the 100-column budget", wide == "")?
-    # The 2026-08-17 compiler widened I64.from_str to accept exponent notation:
-    # "1e1" was a parse error on the previous pin and is 10 now. That reaches
-    # MUTATING commands -- `skip 1e1` addresses planned session 10 -- and no
-    # test could see it, because nothing exercised an exponent argument.
+    # #201: the 2026-08-17 compiler widened I64.from_str/U64.from_str to accept
+    # exponent notation -- "1e1" was a parse error on the previous pin and is 10 now.
+    # It reached MUTATING commands (`skip 1e1` addressed planned session 10, an
+    # unrecoverable write to judgment-tier data) and no test could see it, because
+    # nothing exercised an exponent argument.
     #
-    # This PINS an accident rather than endorsing it (#201): `1e1` addresses
-    # session 10 while `3.3e1` cannot address session 33, which is nobody's
-    # design. If #201 narrows the parse, this check should be INVERTED to assert
-    # the refusal, not deleted -- the point is that the behaviour is decided on
-    # purpose rather than inherited from a stdlib change.
+    # #197 pinned the accepting behaviour so a future bump could not move it silently,
+    # and said that if #201 narrowed the parse this check should be INVERTED rather than
+    # deleted. This is that inversion: stride now refuses exponent notation in user
+    # arguments deliberately (Metrics.arg_i64/arg_u64), so the assertion is the REFUSAL.
+    # Deleting it would let a future stdlib change quietly hand the accident back.
     #
-    # Assert the RESULT, not the envelope: `schema_version` appears in the error
-    # arm too, so the first version of this check stayed green in exactly the
-    # state it exists to detect (proved by mutation). Comparing against `10`
-    # rather than a literal keeps it independent of the fixture's size.
-    check!("a numeric arg accepts exponent notation (compiler-driven, pinned)", Str.trim(strjq!(ctx, ["activities", "1e1"], ".data | length")) == Str.trim(strjq!(ctx, ["activities", "10"], ".data | length")))?
+    # Assert the RESULT, not the envelope: `schema_version` appears in the error arm
+    # too, so the first version of this check stayed green in exactly the state it
+    # exists to detect (proved by mutation).
+    check!("exponent notation is refused in a count arg", Str.contains(stride!(ctx.bin, ctx.home, ["activities", "1e1"]), "bad_count"))?
+    check!("...while the plain integer it would have meant still works", Str.trim(strjq!(ctx, ["activities", "10"], ".data | length")) != "")?
+    check!("exponent notation is refused by a judgment-tier write", Str.contains(stride!(ctx.bin, ctx.home, ["skip", "1e1", "probe"]), "bad_id"))?
     check!("...and a non-numeric arg is still refused", Str.contains(stride!(ctx.bin, ctx.home, ["activities", "ten"]), "bad_count"))?
     # The secret arm of `config get` is a DIFFERENT payload shape from the arm
     # already covered — it adds `redacted` — and nothing validated it, which is

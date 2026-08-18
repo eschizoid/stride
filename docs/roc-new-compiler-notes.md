@@ -94,7 +94,15 @@ It reaches judgment-tier MUTATING commands: `skip 1e1 "<reason>"` was "skip need
 id" and now skips planned session 10. Dates are unaffected — `is_canonical_date`
 round-trips through `days_to_date_str`, so `week add 1e3-08-17 …` still refuses.
 
-Pinned in `tests/e2e.roc` so the next bump that moves it is visible. The lesson generalises:
+**Narrowed deliberately (#201), not pinned.** #197 pinned the accepting behaviour so a
+bump could not move it silently; #201 then decided the surface on purpose. User arguments
+now go through `Metrics.arg_i64` / `arg_u64`, which accept optional-minus-then-digits and
+nothing else, so what stride accepts is defined by that function rather than inherited from
+whatever `from_str` does this month. The e2e check was INVERTED rather than deleted: it
+asserts the refusal, on a count argument and on a judgment-tier write, each mutation-proved
+separately because the harness stops at the first failing check.
+
+Do not "simplify" `arg_i64` back to a bare `from_str` — the narrowing is the fix. The lesson generalises:
 a green suite proves the behaviour you TESTED is unchanged, and a compiler bump can move
 behaviour you never thought to test. Differential-probe the primitives (float formatting,
 integer parsing and wrapping, sort stability, division and modulo on negatives) against the

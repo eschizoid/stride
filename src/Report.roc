@@ -193,7 +193,7 @@ Report :: [].{
     activity! : Str => Try({}, _)
     activity! = |id_str| {
         path = Db.open_db!({})?
-        match I64.from_str(id_str) {
+        match Metrics.arg_i64(id_str) {
             Err(_) => Output.err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
             Ok(aid) => activity_body!(path, id_str, aid)
 
