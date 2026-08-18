@@ -1964,10 +1964,20 @@ b_import! = |ctx| {
     # "2025-07-100T..." to "2025-07-10" and matched, so it was green on the exact poison
     # it was written to catch. Scoped to imported ids because activity 103 carries a
     # deliberately malformed date for the bad-date path.
-    # shape AND calendar validity. The GLOB alone is shape-only -- it caught the 3-digit
-    # day and passed Feb 30, Apr 31 and a year-1000 row. The julianday round trip closes
-    # that: SQLite normalises an impossible date, so the round-tripped string differs
-    # from the stored one. Both halves are needed; neither subsumes the other.
+    # Defence in depth on STORED shape, and worth being exact about what it does and does
+    # not pin, because an earlier comment here credited it with catching rows it cannot.
+    #
+    # What pins each component parse is the row COUNT above: widen any of them and the
+    # poison row imports instead of skipping, so skipped drops and the count check fails.
+    # Proved by reverting each of day/year/hour/minute/second/id one at a time.
+    #
+    # This check cannot see those, and that is a consequence of the fix rather than a
+    # gap: the components are parsed and re-emitted through pad2, so a widened parse now
+    # yields a VALID-but-wrong time ("1e1" becomes minute 10), not a malformed one. It
+    # guards the older failure -- a component interpolated verbatim into start_local --
+    # which is what produced 2025-07-100 and T37 in the first place. Shape plus a
+    # julianday round trip, because the GLOB alone passes Feb 30 and Apr 31: SQLite
+    # normalises an impossible date, so the round-tripped string differs from the stored.
     check!("no imported date is stored non-canonical", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id >= 9000 AND (start_local NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z' OR strftime('%Y-%m-%dT%H:%M:%SZ', julianday(start_local)) IS NOT start_local);")) == "0")?
     check!("import conforms to its schema", validate_schema!(ctx, "import ${expdir}", "import") == "")?
     row9001 = Str.trim(sql!(ctx.db, "SELECT name || '|' || sport_type || '|' || start_local || '|' || moving_time || '|' || CAST(distance AS INT) || '|' || weighted_avg_watts FROM activities WHERE id=9001;"))
