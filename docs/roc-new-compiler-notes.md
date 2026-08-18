@@ -91,10 +91,28 @@ because no test passed an exponent as an argument — found only by differential
 two compilers over a battery of parse inputs.
 
 It reaches judgment-tier MUTATING commands: `skip 1e1 "<reason>"` was "skip needs a numeric
-id" and now skips planned session 10. Dates are unaffected — `is_canonical_date`
+id" and now skips planned session 10. Dates typed on the CLI are unaffected — `is_canonical_date`
 round-trips through `days_to_date_str`, so `week add 1e3-08-17 …` still refuses.
 
-Pinned in `tests/e2e.roc` so the next bump that moves it is visible. The lesson generalises:
+**Narrowed deliberately (#201), not pinned.** #197 pinned the accepting behaviour so a
+bump could not move it silently; #201 then decided the surface on purpose. User-supplied
+numbers go through `Metrics.arg_i64` / `arg_u64` (optional minus, then digits) and
+`arg_f64` (the same, plus at most one dot), so the SHAPE stride accepts is defined by
+those functions rather than inherited from whatever `from_str` does this month. The shape,
+not the whole set — overflow stays the stdlib's call.
+
+"User-supplied" turned out to mean more than argv, and each round of review found another
+tier of it: the ids AND the other arguments of the same commands (`rate latest 1e1` wrote
+a 10/10 rating while `rate 1e1 5` was correctly refused), the values behind `config set`,
+and the ids AND DATES in an imported CSV — where `7e2` became id 700 and the upsert would
+have overwritten a real activity, and "Jul 1e2" stored a non-canonical `start_local` that
+string-windowing and day arithmetic disagree about. Config values are validated at the WRITE now, not just
+narrowed at the read: refusing them only at the read made `config set hr_z1_max 1.18e2`
+succeed, echo back, and then report missing_config. The e2e check was INVERTED rather than deleted: it
+asserts the refusal, on a count argument and on a judgment-tier write, each mutation-proved
+separately because the harness stops at the first failing check.
+
+Do not "simplify" `arg_i64` back to a bare `from_str` — the narrowing is the fix. The lesson generalises:
 a green suite proves the behaviour you TESTED is unchanged, and a compiler bump can move
 behaviour you never thought to test. Differential-probe the primitives (float formatting,
 integer parsing and wrapping, sort stability, division and modulo on negatives) against the

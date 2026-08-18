@@ -1069,14 +1069,39 @@ Metrics :: [].{
                 match (Str.split_on(month_day, " "), Str.split_on(clock, " ")) {
                     ([mon, day], [hms, ampm]) => {
                         month = month_num(mon)?
-                        day_n = Try.map_err(U64.from_str(day), |_| BadExportDate)?
+                        day_n = Try.map_err(Metrics.arg_u64(day), |_| BadExportDate)?
                         hour24 = hour_24(hms, ampm)?
                         rest =
                             match Str.split_on(hms, ":") {
-                                [_, mi, se] => Ok("${mi}:${se}")
+                                [_, mi, se] => {
+                                    mi_n = Try.map_err(Metrics.arg_u64(mi), |_| BadExportDate)?
+                                    se_n = Try.map_err(Metrics.arg_u64(se), |_| BadExportDate)?
+                                    if mi_n > 59 or se_n > 59 {
+                                        Err(BadExportDate)
+                                    } else {
+                                        Ok("${pad2(mi_n.to_i64_wrap())}:${pad2(se_n.to_i64_wrap())}")
+                                    }
+                                }
                                 _ => Err(BadExportDate)
                             }
-                        Ok("${year}-${pad2(month.to_i64_wrap())}-${pad2(day_n.to_i64_wrap())}T${pad2(hour24.to_i64_wrap())}:${rest?}Z")
+                        # EVERY component is range-checked, not just parsed. These are
+                        # interpolated into start_local verbatim, so a plain-digit but
+                        # out-of-range part still stores a non-canonical date: "Jul 100"
+                        # gave 2025-07-100 and "25:00:00 PM" gave T37, both of which
+                        # imported cleanly and then broke `season` with BadActivityDate.
+                        # pad2 cannot save a 3-digit day -- it only pads, never truncates.
+                        year_n = Try.map_err(Metrics.arg_u64(year), |_| BadExportDate)?
+                        date_part = "${(year_n).to_str()}-${pad2(month.to_i64_wrap())}-${pad2(day_n.to_i64_wrap())}"
+                        # is_canonical_date rather than a hand-rolled day range: it
+                        # round-trips through days_to_date_str, so it rejects Feb 30 and
+                        # every other calendar-invalid day without this function owning a
+                        # second, divergent definition of what a real date is. The year
+                        # bound is separate because canonicality accepts year 1000.
+                        if year_n < 1900 or year_n > 2999 or hour24 > 23 or !(Metrics.is_canonical_date(date_part)) {
+                            Err(BadExportDate)
+                        } else {
+                            Ok("${date_part}T${pad2(hour24.to_i64_wrap())}:${rest?}Z")
+                        }
                     }
 
                     _ => Err(BadExportDate)
@@ -1107,14 +1132,21 @@ Metrics :: [].{
     hour_24 = |hms, ampm| {
         h =
             match Str.split_on(hms, ":") {
-                [hh, _, _] => Try.map_err(U64.from_str(hh), |_| BadExportDate)
+                [hh, _, _] => Try.map_err(Metrics.arg_u64(hh), |_| BadExportDate)
                 _ => Err(BadExportDate)
             }
         hour = h?
-        match ampm {
-            "AM" => Ok(if hour == 12 0 else hour)
-            "PM" => Ok(if hour == 12 12 else hour + 12)
-            _ => Err(BadExportDate)
+        # bound BEFORE the +12: an unbounded `hour + 12` overflows U64 on a large
+        # plain-digit hour and CRASHES the process, so a single poison row denied the
+        # whole export -- worse than the bad row it was meant to reject.
+        if hour > 12 {
+            Err(BadExportDate)
+        } else {
+            match ampm {
+                "AM" => Ok(if hour == 12 0 else hour)
+                "PM" => Ok(if hour == 12 12 else hour + 12)
+                _ => Err(BadExportDate)
+            }
         }
     }
 
@@ -1671,7 +1703,7 @@ Metrics :: [].{
         date_part = List.first(Str.split_on(s, "T")).ok_or(s)
         match Str.split_on(date_part, "-") {
             [ys, ms, ds] =>
-                match (I64.from_str(ys), I64.from_str(ms), I64.from_str(ds)) {
+                match (Metrics.arg_i64(ys), Metrics.arg_i64(ms), Metrics.arg_i64(ds)) {
                     (Ok(y), Ok(m), Ok(d)) => Ok(days_from_civil(y, m, d))
                     _ => Err(BadDate)
                 }
@@ -1689,6 +1721,79 @@ Metrics :: [].{
     pad2 : I64 -> Str
     pad2 = |n|
         if n < 10 "0${I64.to_str(n)}" else I64.to_str(n)
+
+    # Integer parsing for USER ARGUMENTS, deliberately narrower than the stdlib's.
+    #
+    # The 2026-08-17 compiler pin widened `I64.from_str`/`U64.from_str` to accept
+    # exponent notation. `"1e3"` was a parse error on the previous pin and is 1000 now.
+    # Nothing in stride asked for that, and it reached the JUDGMENT tier: `skip 1e1`
+    # silently addressed planned session 10 and performed a write that cannot be
+    # re-derived (ADR 0000 section 3). It is not even self-consistent -- `1e1` addresses
+    # 10, but `3.3e1` cannot address 33, because integral exponents parse and fractional
+    # mantissas do not. That inconsistency is the tell that it is a side effect of a
+    # stdlib change rather than an input format anyone designed.
+    #
+    # An id or a count typed by a human is digits, optionally signed. Rejecting
+    # everything else BEFORE the stdlib sees it also pins the accepted SHAPE to this
+    # function rather than to the compiler: a future bump cannot widen or narrow the
+    # forms stride takes without failing the expects below. The shape, not the whole
+    # set -- overflow is still the stdlib's call ("99999999999999999999" passes
+    # is_plain_int and is refused by from_str), which is fine, because a bump that
+    # changes the overflow boundary changes a number, not a syntax.
+    #
+    # Deliberately dropped: a leading `+`. `I64.from_str("+60")` is 60 on this pin, so
+    # `activities +5` worked before this narrowing and now returns bad_count.
+    #
+    # DO NOT "simplify" this away by calling from_str directly -- the narrowing is
+    # deliberate (#201, docs/roc-new-compiler-notes.md), and deleting it silently
+    # restores an unrecoverable write on a fat-fingered argument.
+    #
+    # 19 call sites use these; 15 are pinned by e2e checks that fail if the site reverts
+    # to a bare from_str (swept one at a time, since the harness stops at the first
+    # failure). The FOUR unpinned are Analyze.config_f64!/cfg_f64 and
+    # Db.resolve_time_mode!, which read config values that `config set` now refuses at
+    # the WRITE, and date_str_to_days, which sits behind is_canonical_date on every argv
+    # path and behind the CSV component checks on the import path.
+    #
+    # Re-count this by sweeping, not by adding to the last figure. Three consecutive
+    # versions of this line were wrong (12/5, 13/4, 14/3), every time because the author
+    # counted the sites edited rather than the sites that exist -- `grep -n Metrics.arg_`
+    # over src/ is the answer.
+    #
+    # Unpinned is not the same as unreachable, and an earlier version of this comment
+    # claimed it was. All four ARE reachable by writing a bad value with direct SQL --
+    # the same `sql!` helper the harness already uses -- and by legacy rows written
+    # before the validation existed. They are untested, not untestable; the write-side
+    # refusal is what makes them hard to reach through the CLI, not impossible to reach
+    # at all. (That same comment also said 14/three while naming four. Both wrong.)
+    is_plain_int : Str -> Bool
+    is_plain_int = |s| {
+        bytes = Str.to_utf8(s)
+        digits = if Str.starts_with(s, "-") List.drop_first(bytes, 1) else bytes
+        !(List.is_empty(digits)) and List.all(digits, |b| b >= 48 and b <= 57)
+    }
+
+    arg_i64 : Str -> Try(I64, [NotAnInt])
+    arg_i64 = |s| if Metrics.is_plain_int(s) I64.from_str(s).map_err(|_| NotAnInt) else Err(NotAnInt)
+
+    # The decimal sibling, for arguments like RPE that are genuinely fractional.
+    # Same rule: digits, at most one dot, no exponent. `rate latest 1e1` wrote a 10/10
+    # rating to the judgment tier until this existed -- the id was narrowed first and the
+    # OTHER argument of the same command was left open, which is why this takes the whole
+    # argument surface of a command rather than the one field the bug report named.
+    is_plain_decimal : Str -> Bool
+    is_plain_decimal = |s| {
+        body = if Str.starts_with(s, "-") List.drop_first(Str.to_utf8(s), 1) else Str.to_utf8(s)
+        dots = List.len(List.keep_if(body, |b| b == 46))
+        digits = List.keep_if(body, |b| b >= 48 and b <= 57)
+        !(List.is_empty(digits)) and dots <= 1 and List.len(digits) + dots == List.len(body)
+    }
+
+    arg_f64 : Str -> Try(F64, [NotANumber])
+    arg_f64 = |s| if Metrics.is_plain_decimal(s) F64.from_str(s).map_err(|_| NotANumber) else Err(NotANumber)
+
+    arg_u64 : Str -> Try(U64, [NotAnInt])
+    arg_u64 = |s| if Metrics.is_plain_int(s) U64.from_str(s).map_err(|_| NotAnInt) else Err(NotAnInt)
 
     # "does it parse" is NOT enough for a date the engine stores: target_date is TEXT
     # and every week filter compares it as a STRING (a lexicographic BETWEEN), so the
@@ -4045,3 +4150,32 @@ expect {
     ids = List.map([-25.0, -12.0, -2.0, 8.0, 20.0], Metrics.form_state)
     ids == ["high_modeled_fatigue", "modeled_fatigue_building", "balanced", "fresh", "very_fresh"]
 }
+
+# ── arg_i64 / arg_u64 / arg_f64: user-argument number parsing (#201) ────
+# Plain integers parse; every non-digit form is refused BEFORE the stdlib sees it,
+# which is what makes the accepted SHAPE independent of the compiler pin. Not the whole
+# set: overflow stays the stdlib's call, and arg_i64/arg_f64 differ there on purpose
+# ("99999999999999999999" is Err for the integer, Ok(1e20) for the float).
+expect Metrics.is_plain_int("10") and Metrics.is_plain_int("-3") and Metrics.is_plain_int("0")
+expect !(Metrics.is_plain_int("1e1")) and !(Metrics.is_plain_int("3.3e1")) and !(Metrics.is_plain_int("1E1"))
+expect !(Metrics.is_plain_int("")) and !(Metrics.is_plain_int("-")) and !(Metrics.is_plain_int("ten")) and !(Metrics.is_plain_int(" 1"))
+expect !(Metrics.is_plain_int("0x10")) and !(Metrics.is_plain_int("1_0")) and !(Metrics.is_plain_int("+1"))
+# both ENDS of the digit range, because widening it by one either way survived otherwise:
+# '/' is 47 and ':' is 58, so a 47..58 mutant admitted "1/0" and "1:0" with every expect green
+expect !(Metrics.is_plain_int("1/0")) and !(Metrics.is_plain_int("1:0"))
+# ...and the SAME bounds on is_plain_decimal, which the line above does not cover: the
+# 47..58 mutant survived here after being killed there, and the commit message said
+# "both endpoints are pinned now" while meaning one of the two functions
+expect !(Metrics.is_plain_decimal("1/0")) and !(Metrics.is_plain_decimal("1:0"))
+expect Metrics.is_plain_decimal("7.5") and Metrics.is_plain_decimal("7") and Metrics.is_plain_decimal("-0.5")
+expect !(Metrics.is_plain_decimal("1e1")) and !(Metrics.is_plain_decimal("0.5e1")) and !(Metrics.is_plain_decimal("7.5.5"))
+expect !(Metrics.is_plain_decimal(".")) and !(Metrics.is_plain_decimal("")) and !(Metrics.is_plain_decimal("7,5"))
+expect Metrics.arg_f64("7.5") == Ok(7.5)
+expect Metrics.arg_f64("1e1") == Err(NotANumber)
+expect Metrics.arg_i64("10") == Ok(10)
+expect Metrics.arg_i64("-10") == Ok(-10)
+expect Metrics.arg_i64("1e1") == Err(NotAnInt)
+expect Metrics.arg_u64("10") == Ok(10)
+expect Metrics.arg_u64("1e1") == Err(NotAnInt)
+# the inconsistency that proved it was an accident, now refused on both sides
+expect Metrics.arg_i64("1e1") == Err(NotAnInt) and Metrics.arg_i64("3.3e1") == Err(NotAnInt)

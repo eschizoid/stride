@@ -194,7 +194,7 @@ Command := [
 
 	count : Str, (U64 -> Command) -> Try(Command, ParseErr)
 	count = |s, f|
-		match U64.from_str(s) {
+		match Metrics.arg_u64(s) {
 			Ok(n) => Ok(f(n))
 			Err(_) => Err(BadCount(s))
 		}

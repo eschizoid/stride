@@ -107,7 +107,7 @@ Db :: [].{
         fixed : Try(I64, [NoFixed])
         fixed =
             match config_get!(path, "utc_offset_minutes") {
-                Ok(s) => Ok(I64.from_str(s).ok_or(0))
+                Ok(s) => Ok(Metrics.arg_i64(s).ok_or(0))
                 Err(_) => Err(NoFixed)
             }
         tz =

@@ -193,7 +193,7 @@ Report :: [].{
     activity! : Str => Try({}, _)
     activity! = |id_str| {
         path = Db.open_db!({})?
-        match I64.from_str(id_str) {
+        match Metrics.arg_i64(id_str) {
             Err(_) => Output.err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
             Ok(aid) => activity_body!(path, id_str, aid)
 
@@ -1523,7 +1523,9 @@ Report :: [].{
                 Ok(v) => Ok(v)
                 Err(_) => Err(Missing)
             }
-        id = I64.from_str(field("Activity ID", 0)).map_err(|_| BadRow)?
+        # narrowed like every other id (#201): a widened parse here makes "7e2" import
+        # as id 700, and upsert_activity! would overwrite whatever real activity holds it
+        id = Metrics.arg_i64(field("Activity ID", 0)).map_err(|_| BadRow)?
         start = Metrics.export_date_to_iso(field("Activity Date", 0)).map_err(|_| BadRow)?
         moving_raw = field("Moving Time", 1)
         moving_str = if Str.is_empty(moving_raw) field("Moving Time", 0) else moving_raw
@@ -2640,7 +2642,7 @@ Report :: [].{
     # rather than hiding it or pretending it is trustworthy.
     tte! : Str => Try({}, _)
     tte! = |watts_arg|
-        match F64.from_str(Str.trim(watts_arg)) {
+        match Metrics.arg_f64(Str.trim(watts_arg)) {
             Err(_) => Output.err_out!("bad_watts", "tte needs a power in watts — got '${watts_arg}'")
             Ok(w) =>
                 # `w <= 0.0` is FALSE for NaN, so a NaN sailed straight through

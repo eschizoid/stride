@@ -17,7 +17,7 @@ Plan :: [].{
     rate! = |target, rpe_str| {
         path = Db.open_db!({})?
         rpe_result =
-            match F64.from_str(rpe_str) {
+            match Metrics.arg_f64(rpe_str) {
                 Ok(r) if r >= 1.0 and r <= 10.0 => Ok(r)
                 _ => Err(BadRpe)
             }
@@ -37,7 +37,7 @@ Plan :: [].{
                             Err(e) => Err(e)
                         }
                     } else {
-                        I64.from_str(target).map_err(|_| BadId)
+                        Metrics.arg_i64(target).map_err(|_| BadId)
                     }
                 match id_result {
                     Err(BadId) => Output.err_out!("bad_id", "rate needs an activity id or 'latest': rate <activity_id|latest> <1-10>")
@@ -441,7 +441,7 @@ Plan :: [].{
     complete! : Str, Str => Try({}, _)
     complete! = |session_id_str, activity_id_str| {
         path = Db.open_db!({})?
-        match (I64.from_str(session_id_str), I64.from_str(activity_id_str)) {
+        match (Metrics.arg_i64(session_id_str), Metrics.arg_i64(activity_id_str)) {
             (Ok(session_id), Ok(activity_id)) =>
                 # SQLite UPDATE matching 0 rows is not an error — check existence
                 # ourselves so a typo'd id can't report false success and silently
@@ -527,7 +527,7 @@ Plan :: [].{
     complete_rest! : Str => Try({}, _)
     complete_rest! = |session_id_str| {
         path = Db.open_db!({})?
-        match I64.from_str(session_id_str) {
+        match Metrics.arg_i64(session_id_str) {
             Err(_) => Output.err_out!("bad_id", "complete needs a numeric id: complete <session_id> [activity_id]")
             Ok(session_id) =>
                 if !(Report.row_exists!(path, "planned_sessions", session_id)?)
@@ -641,7 +641,7 @@ Plan :: [].{
     skip! : Str, Str, [NoSub, Sub(Str)] => Try({}, _)
     skip! = |session_id_str, reason, sub| {
         path = Db.open_db!({})?
-        match I64.from_str(session_id_str) {
+        match Metrics.arg_i64(session_id_str) {
             Ok(session_id) =>
                 if !(Report.row_exists!(path, "planned_sessions", session_id)?) {
                     session_not_found!(session_id)
@@ -724,7 +724,7 @@ Plan :: [].{
                                 }
                             }
                             Sub(activity_id_str) =>
-                                match I64.from_str(activity_id_str) {
+                                match Metrics.arg_i64(activity_id_str) {
                                     Ok(activity_id) =>
                                         if !(Report.row_exists!(path, "activities", activity_id)?) {
                                             Output.err_out!("activity_not_found", "activity ${activity_id_str} not found (run `stride activities` to list ids)")

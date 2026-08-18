@@ -364,6 +364,16 @@ config_show! = |key|
                 NotFound => Output.err_out!("not_set", "(not set)")
             }
     }
+numeric_refusal : Str, Str -> Str
+numeric_refusal = |key, val|
+    match Config.numeric_key(key) {
+        Free => ""
+        Int =>
+            if Metrics.is_plain_int(val) "" else "${key} takes a whole number — got '${val}'"
+        Decimal =>
+            if Metrics.is_plain_decimal(val) "" else "${key} takes a number — got '${val}'"
+    }
+
 config_store! : Str, Str => Try({}, _)
 config_store! = |key, val|
     # refuse the keys the engine derives — storing one would confirm a change that never
@@ -373,6 +383,13 @@ config_store! = |key, val|
             "derived_key",
             "${key} is derived from your power history, not configured — stride uses the sport family's best 20-min power x 0.95 over the 60 days up to each activity. Nothing to set; `stride summary` shows the current value.",
         )
+    else if numeric_refusal(key, val) != ""
+        # a stored value that parses nowhere is the same trap as one that is read
+        # nowhere (Config.is_derived's comment) -- refuse it here rather than let
+        # `config get` echo it back as though it took. numeric_refusal is pure and
+        # called twice rather than bound, because the body is an if-expression and
+        # a binding would need a block around the whole thing for no real gain.
+        Output.err_out!("bad_value", numeric_refusal(key, val))
     else {
         path = Db.open_db!({})?
         Db.config_set!(path, key, val)?

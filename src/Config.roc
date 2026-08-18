@@ -25,6 +25,26 @@ Config :: [].{
 	is_derived : Str -> Bool
 	is_derived = |k| k == "ftp" or Str.starts_with(k, "ftp_")
 
+	# Keys whose value the engine parses as a NUMBER. Same reasoning as is_derived, one
+	# step further in: a value that parses nowhere is as much a trap as a value that is
+	# read nowhere, and it is a worse one, because `config get` echoes it back and looks
+	# like proof it took.
+	#
+	# This exists because #201's narrowing created exactly that trap. Refusing exponent
+	# notation at the READ sites meant `config set hr_z1_max 1.18e2` succeeded, echoed
+	# `1.18e2`, and then made `summary` report missing_config -- the value WAS set. And
+	# `utc_offset_minutes +330` silently became UTC instead of +05:30, because that read
+	# path coalesces a parse failure to 0. Validating at the WRITE makes the refusal loud
+	# and keeps the read sites honest.
+	numeric_key : Str -> [Int, Decimal, Free]
+	numeric_key = |k|
+		if k == "utc_offset_minutes" or k == "last_sync_epoch" or Str.ends_with(k, "_expires_at")
+			Int
+		else if Str.starts_with(k, "hr_z")
+			Decimal
+		else
+			Free
+
 	# STRIDE_API_BASE is a test seam that points sync at a local mock. The token
 	# exchange/refresh POST carries the client_secret + rotating refresh token, so an
 	# unvalidated base would exfiltrate them to an attacker-controlled host. TLS does
@@ -90,6 +110,26 @@ Config :: [].{
 		}
 
 }
+
+# numeric_key: every clause pinned, and mutation-checked one at a time. A `_max` suffix
+# clause used to sit beside `hr_z` and was deleted rather than pinned: every key that ends
+# `_max` also starts `hr_z` (Metrics.hr_zone_key / hr_zone_key_global), so it was
+# unreachable, and an unreachable clause cannot be killed by any mutant. A rule no test
+# can falsify is not a guard, it is decoration. Three of the five survived mutation when this rule
+# shipped with only e2e coverage -- and the commit message claimed the e2e checks pinned
+# it, which is the over-claim this file's own convention (pure rules, pure expects)
+# exists to prevent.
+expect Config.numeric_key("utc_offset_minutes") == Int
+expect Config.numeric_key("last_sync_epoch") == Int
+expect Config.numeric_key("strava_expires_at") == Int
+expect Config.numeric_key("hr_z1_max") == Decimal
+# the per-sport zone keys, which the `_max` suffix does NOT reach -- `hr_z` is the only
+# clause that classifies them, and dropping it left the whole suite green
+expect Config.numeric_key("hr_z2_max_soccer") == Decimal
+expect Config.numeric_key("hr_z4_max_ride") == Decimal
+expect Config.numeric_key("timezone") == Free
+expect Config.numeric_key("strava_access_token") == Free
+expect Config.numeric_key("strava_client_id") == Free
 
 expect Config.is_secret("strava_access_token") == True
 expect Config.is_secret("strava_refresh_token") == True
