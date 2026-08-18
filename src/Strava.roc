@@ -258,15 +258,15 @@ Strava :: [].{
             Err(other) => Err(other)
             Ok(token) => {
                 started = Db.now_secs!({})
-                # incremental with a rolling 30-day overlap so recent edits on
-                # Strava self-heal (`backfill` is the full re-pull when needed)
-                # NotFound (never synced) = full pull; a real db read error propagates
-                # instead of silently burning the rate budget
-                # ABSENT and UNREADABLE part company here. Absent means never synced and
-                # a full pull is right. Unreadable used to mean the same thing, so a bad
-                # value silently forced a full re-pull every run -- conservative, and
-                # therefore invisible forever (#208). arg_i64 rather than I64.from_str so
-                # the shape accepted here matches what `config set` enforces.
+                # Incremental with a rolling 30-day overlap so recent edits on Strava
+                # self-heal (`backfill` is the full re-pull when needed).
+                #
+                # THREE outcomes, not two. Absent means never synced and a full pull is
+                # right. A db read error propagates rather than silently burning the rate
+                # budget. Unreadable used to collapse into the first, so a bad value
+                # forced a full re-pull every run -- conservative, and therefore
+                # invisible forever (#208). arg_i64 rather than I64.from_str, so the
+                # shape accepted here matches what `config set` enforces.
                 after_epoch =
                     match Db.config_opt!(path, "last_sync_epoch")? {
                         NotFound => None
