@@ -490,8 +490,28 @@ Analyze :: [].{
     # Each sport's zone SIGNATURE is frozen for the invalidation CASE; per-row scoring
     # re-resolves bounds from the same in-memory config. No circular dependency like
     # FTP has.
+    # Validated at the LOAD boundary rather than at each read. `cfg_f64` below is pure
+    # and total by design -- an ABSENT per-sport key must fall back to the global
+    # ceiling, which is the whole reason it takes a fallback. But an UNREADABLE one must
+    # not take that path: silently using the global value means the athlete's per-sport
+    # zones are ignored with nothing to see, the same trap as #206's coalesced offset.
+    #
+    # Checking here keeps the fallback total and still refuses the bad value: one pass
+    # over the rows we already fetched, at the only place that can return an error
+    # anyway. Threading Try through resolve_zones_pure was the alternative and it makes
+    # four pure call sites effectful to report a condition this catches once.
     load_config! : Str => Try(List((Str, Str)), _)
-    load_config! = |path|
+    load_config! = |path| {
+        pairs = load_config_raw!(path)?
+        bad = List.keep_if(pairs, |pair|
+            Str.starts_with(pair.0, "hr_z") and Metrics.arg_f64(pair.1).is_err())
+        match List.first(bad) {
+            Ok(pair) => Err(UnreadableConfig(pair.0, pair.1))
+            Err(_) => Ok(pairs)
+        }
+    }
+    load_config_raw! : Str => Try(List((Str, Str)), _)
+    load_config_raw! = |path|
         Sqlite.query_many!({
             path: Path.utf8(path),
             query: "SELECT key AS k, COALESCE(value, '') AS v FROM config",

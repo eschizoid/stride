@@ -428,6 +428,13 @@ b_config_ftp! = |ctx| {
     _ = sql!(ctx.db, "DELETE FROM config WHERE key='utc_offset_minutes'; UPDATE config SET value='1.18e2' WHERE key='hr_z1_max';")
     check!("an unreadable zone bound says unreadable, not missing", Str.contains(stride!(ctx.bin, ctx.home, ["analyze"]), "unreadable_config"))?
     _ = sql!(ctx.db, "UPDATE config SET value='118' WHERE key='hr_z1_max';")
+    # the PER-SPORT variant: an unreadable override silently used the global ceiling, so
+    # the athlete's sport zones were ignored with nothing to see. Absent still falls back
+    # -- that is designed -- so the next two lines pin both halves.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config VALUES ('hr_z2_max_soccer','1.5e2');")
+    check!("an unreadable per-sport zone is refused, not silently globalised", Str.contains(stride!(ctx.bin, ctx.home, ["analyze"]), "unreadable_config"))?
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key='hr_z2_max_soccer';")
+    check!("...while an ABSENT per-sport zone still falls back to the global", Str.contains(stride!(ctx.bin, ctx.home, ["analyze"]), "\"computed\":"))?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", "America/Chicago"])
 
     # the trap this closes: a db from before FTP was derived still holds an ftp_ride row.

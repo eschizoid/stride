@@ -248,6 +248,10 @@ run_command! = |cmd|
                 Output.err_out!("no_database", "no database at ${p} — run `stride init` first")
             }
         }
+        # A stored config value the engine cannot parse. Converted HERE rather than at
+        # each call site: several commands load config, and the remedy is identical for
+        # all of them -- name the key, echo the stored text (#206).
+        Err(UnreadableConfig(key, raw)) => Output.unreadable_config!(key, raw)
         Err(SqliteErr(NotADatabase, _)) =>
             Output.err_out!("corrupt_database", "~/.stride/db.sqlite is not a readable SQLite database — restore a backup or re-run `stride init` against a fresh path")
         Err(SqliteErr(code, msg)) =>
