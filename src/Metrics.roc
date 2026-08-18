@@ -1690,14 +1690,6 @@ Metrics :: [].{
     pad2 = |n|
         if n < 10 "0${I64.to_str(n)}" else I64.to_str(n)
 
-    # "does it parse" is NOT enough for a date the engine stores: target_date is TEXT
-    # and every week filter compares it as a STRING (a lexicographic BETWEEN), so the
-    # spelling has to be canonical YYYY-MM-DD, not merely numeric. Round-tripping
-    # through the day number tests both facts at once — days_from_civil silently
-    # NORMALIZES an out-of-range field (2026-02-30 becomes March 2, and the caller
-    # never learns their date moved), while an unpadded 2026-8-5 sorts after every
-    # 2026-1x-xx date and lands in the wrong week. The year bound holds the string at
-    # ten characters, since a 3-digit year would sort after every 2xxx one.
     # Integer parsing for USER ARGUMENTS, deliberately narrower than the stdlib's.
     #
     # The 2026-08-17 compiler pin widened `I64.from_str`/`U64.from_str` to accept
@@ -1710,9 +1702,15 @@ Metrics :: [].{
     # stdlib change rather than an input format anyone designed.
     #
     # An id or a count typed by a human is digits, optionally signed. Rejecting
-    # everything else BEFORE the stdlib sees it also pins the accepted set to this
-    # function rather than to the compiler: a future bump cannot widen or narrow what
-    # stride accepts without failing the expects below.
+    # everything else BEFORE the stdlib sees it also pins the accepted SHAPE to this
+    # function rather than to the compiler: a future bump cannot widen or narrow the
+    # forms stride takes without failing the expects below. The shape, not the whole
+    # set -- overflow is still the stdlib's call ("99999999999999999999" passes
+    # is_plain_int and is refused by from_str), which is fine, because a bump that
+    # changes the overflow boundary changes a number, not a syntax.
+    #
+    # Deliberately dropped: a leading `+`. `I64.from_str("+60")` is 60 on this pin, so
+    # `activities +5` worked before this narrowing and now returns bad_count.
     #
     # DO NOT "simplify" this away by calling from_str directly -- the narrowing is
     # deliberate (#201, docs/roc-new-compiler-notes.md), and deleting it silently
@@ -1727,9 +1725,33 @@ Metrics :: [].{
     arg_i64 : Str -> Try(I64, [NotAnInt])
     arg_i64 = |s| if Metrics.is_plain_int(s) I64.from_str(s).map_err(|_| NotAnInt) else Err(NotAnInt)
 
+    # The decimal sibling, for arguments like RPE that are genuinely fractional.
+    # Same rule: digits, at most one dot, no exponent. `rate latest 1e1` wrote a 10/10
+    # rating to the judgment tier until this existed -- the id was narrowed first and the
+    # OTHER argument of the same command was left open, which is why this takes the whole
+    # argument surface of a command rather than the one field the bug report named.
+    is_plain_decimal : Str -> Bool
+    is_plain_decimal = |s| {
+        body = if Str.starts_with(s, "-") List.drop_first(Str.to_utf8(s), 1) else Str.to_utf8(s)
+        dots = List.len(List.keep_if(body, |b| b == 46))
+        digits = List.keep_if(body, |b| b >= 48 and b <= 57)
+        !(List.is_empty(digits)) and dots <= 1 and List.len(digits) + dots == List.len(body)
+    }
+
+    arg_f64 : Str -> Try(F64, [NotANumber])
+    arg_f64 = |s| if Metrics.is_plain_decimal(s) F64.from_str(s).map_err(|_| NotANumber) else Err(NotANumber)
+
     arg_u64 : Str -> Try(U64, [NotAnInt])
     arg_u64 = |s| if Metrics.is_plain_int(s) U64.from_str(s).map_err(|_| NotAnInt) else Err(NotAnInt)
 
+    # "does it parse" is NOT enough for a date the engine stores: target_date is TEXT
+    # and every week filter compares it as a STRING (a lexicographic BETWEEN), so the
+    # spelling has to be canonical YYYY-MM-DD, not merely numeric. Round-tripping
+    # through the day number tests both facts at once — days_from_civil silently
+    # NORMALIZES an out-of-range field (2026-02-30 becomes March 2, and the caller
+    # never learns their date moved), while an unpadded 2026-8-5 sorts after every
+    # 2026-1x-xx date and lands in the wrong week. The year bound holds the string at
+    # ten characters, since a 3-digit year would sort after every 2xxx one.
     is_canonical_date : Str -> Bool
     is_canonical_date = |s|
         match date_str_to_days(s) {
@@ -4085,6 +4107,14 @@ expect Metrics.is_plain_int("10") and Metrics.is_plain_int("-3") and Metrics.is_
 expect !(Metrics.is_plain_int("1e1")) and !(Metrics.is_plain_int("3.3e1")) and !(Metrics.is_plain_int("1E1"))
 expect !(Metrics.is_plain_int("")) and !(Metrics.is_plain_int("-")) and !(Metrics.is_plain_int("ten")) and !(Metrics.is_plain_int(" 1"))
 expect !(Metrics.is_plain_int("0x10")) and !(Metrics.is_plain_int("1_0")) and !(Metrics.is_plain_int("+1"))
+# both ENDS of the digit range, because widening it by one either way survived otherwise:
+# '/' is 47 and ':' is 58, so a 47..58 mutant admitted "1/0" and "1:0" with every expect green
+expect !(Metrics.is_plain_int("1/0")) and !(Metrics.is_plain_int("1:0"))
+expect Metrics.is_plain_decimal("7.5") and Metrics.is_plain_decimal("7") and Metrics.is_plain_decimal("-0.5")
+expect !(Metrics.is_plain_decimal("1e1")) and !(Metrics.is_plain_decimal("0.5e1")) and !(Metrics.is_plain_decimal("7.5.5"))
+expect !(Metrics.is_plain_decimal(".")) and !(Metrics.is_plain_decimal("")) and !(Metrics.is_plain_decimal("7,5"))
+expect Metrics.arg_f64("7.5") == Ok(7.5)
+expect Metrics.arg_f64("1e1") == Err(NotANumber)
 expect Metrics.arg_i64("10") == Ok(10)
 expect Metrics.arg_i64("-10") == Ok(-10)
 expect Metrics.arg_i64("1e1") == Err(NotAnInt)

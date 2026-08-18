@@ -2640,7 +2640,7 @@ Report :: [].{
     # rather than hiding it or pretending it is trustworthy.
     tte! : Str => Try({}, _)
     tte! = |watts_arg|
-        match F64.from_str(Str.trim(watts_arg)) {
+        match Metrics.arg_f64(Str.trim(watts_arg)) {
             Err(_) => Output.err_out!("bad_watts", "tte needs a power in watts — got '${watts_arg}'")
             Ok(w) =>
                 # `w <= 0.0` is FALSE for NaN, so a NaN sailed straight through

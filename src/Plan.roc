@@ -17,7 +17,7 @@ Plan :: [].{
     rate! = |target, rpe_str| {
         path = Db.open_db!({})?
         rpe_result =
-            match F64.from_str(rpe_str) {
+            match Metrics.arg_f64(rpe_str) {
                 Ok(r) if r >= 1.0 and r <= 10.0 => Ok(r)
                 _ => Err(BadRpe)
             }

@@ -1024,7 +1024,7 @@ b_seed_analyze! = |ctx| {
     # too, so the first version of this check stayed green in exactly the state it
     # exists to detect (proved by mutation).
     check!("exponent notation is refused in a count arg", Str.contains(stride!(ctx.bin, ctx.home, ["activities", "1e1"]), "bad_count"))?
-    check!("...while the plain integer it would have meant still works", Str.trim(strjq!(ctx, ["activities", "10"], ".data | length")) != "")?
+    check!("...while the plain integer it would have meant still works", Str.trim(strjq!(ctx, ["activities", "10"], ".data | length > 0")) == "true")?
     check!("exponent notation is refused by a judgment-tier write", Str.contains(stride!(ctx.bin, ctx.home, ["skip", "1e1", "probe"]), "bad_id"))?
     check!("...and a non-numeric arg is still refused", Str.contains(stride!(ctx.bin, ctx.home, ["activities", "ten"]), "bad_count"))?
     # The secret arm of `config get` is a DIFFERENT payload shape from the arm

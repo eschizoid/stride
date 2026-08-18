@@ -163,7 +163,7 @@ Analyze :: [].{
         match Db.config_opt!(path, key)? {
             NotFound => Err(MissingConfig)
             Found(s) =>
-                match F64.from_str(s) {
+                match Metrics.arg_f64(s) {
                     Ok(v) => Ok(v)
                     Err(_) => Err(MissingConfig)
 
@@ -505,7 +505,7 @@ Analyze :: [].{
             [] => fallback
             [pair, .. as rest] =>
                 if pair.0 == key
-                    match F64.from_str(pair.1) {
+                    match Metrics.arg_f64(pair.1) {
                         Ok(v) => v
                         Err(_) => fallback
                     }
