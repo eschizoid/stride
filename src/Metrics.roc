@@ -1076,7 +1076,16 @@ Metrics :: [].{
                                 [_, mi, se] => Ok("${mi}:${se}")
                                 _ => Err(BadExportDate)
                             }
-                        Ok("${year}-${pad2(month.to_i64_wrap())}-${pad2(day_n.to_i64_wrap())}T${pad2(hour24.to_i64_wrap())}:${rest?}Z")
+                        # the YEAR must be validated too, and as four plain digits: it is
+                        # interpolated into start_local verbatim, so an unchecked "1e3"
+                        # stored a non-canonical date that every week filter compares as a
+                        # STRING while date_str_to_days normalised it to year 1000.
+                        year_n = Try.map_err(Metrics.arg_u64(year), |_| BadExportDate)?
+                        if year_n < 1900 or year_n > 2999 {
+                            Err(BadExportDate)
+                        } else {
+                            Ok("${(year_n).to_str()}-${pad2(month.to_i64_wrap())}-${pad2(day_n.to_i64_wrap())}T${pad2(hour24.to_i64_wrap())}:${rest?}Z")
+                        }
                     }
 
                     _ => Err(BadExportDate)
@@ -1671,7 +1680,7 @@ Metrics :: [].{
         date_part = List.first(Str.split_on(s, "T")).ok_or(s)
         match Str.split_on(date_part, "-") {
             [ys, ms, ds] =>
-                match (I64.from_str(ys), I64.from_str(ms), I64.from_str(ds)) {
+                match (Metrics.arg_i64(ys), Metrics.arg_i64(ms), Metrics.arg_i64(ds)) {
                     (Ok(y), Ok(m), Ok(d)) => Ok(days_from_civil(y, m, d))
                     _ => Err(BadDate)
                 }

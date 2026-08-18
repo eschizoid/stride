@@ -410,7 +410,9 @@ b_config_ftp! = |ctx| {
     # a stored value that parses nowhere, which is the same trap as one read nowhere.
     # `utc_offset_minutes +330` was the silent version: it became UTC instead of +05:30.
     check!("a numeric key refuses exponent notation at set time", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", "1.18e2"]), "bad_value"))?
-    check!("...and refuses a leading +, which used to become 0 silently", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "utc_offset_minutes", "+330"]), "bad_value"))?
+    # "+330" parsed fine on both pins -- it becomes 0 only because THIS PR narrowed the
+    # read in Db.roc, which is why the refusal has to live at the write.
+    check!("...and refuses a leading +, which this narrowing would otherwise coalesce to 0", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "utc_offset_minutes", "+330"]), "bad_value"))?
     check!("...while the plain forms still store", strjq!(ctx, ["config", "set", "hr_z1_max", "118.5"], ".data.value") == "118.5")?
     check!("...and a free-text key is untouched by the rule", strjq!(ctx, ["config", "set", "timezone", "America/Chicago"], ".data.value") == "America/Chicago")?
 
@@ -819,6 +821,12 @@ b_seed_analyze! = |ctx| {
     check!("NaN is refused in-band, not at the encoder", Str.contains(nan_out, "bad_watts") and !(Str.contains(nan_out, "JsonEncodeFailed")))?
     check!("infinity is refused", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "Infinity"]), "bad_watts"))?
     check!("an absurd power is refused", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "1e9"]), "bad_watts"))?
+    # 5000 reaches the RANGE guard; nan/Infinity/1e9 above no longer do, because #201's
+    # arg_f64 refuses them at the parse layer first. Without this the `w > 3000.0`
+    # ceiling and the `!(w > 0.0)` form (#183) both became unpinned -- three checks that
+    # still passed while guarding nothing.
+    check!("a power over the ceiling is refused BY THE CEILING", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "5000"]), "under 3000"))?
+    check!("...and zero is refused by the same guard", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "0"]), "positive number"))?
     check!("a plausible power is NOT refused by the ceiling", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "3000"]), "no_cp_fit"))?
     check!("without a fit, W' balance is flagged unknown rather than zeroed", strjq!(ctx, ["activity", "101"], ".data.w_prime_balance | (.known == false) and ((.known | type) == \"boolean\")") == "true")?
     check!("...and the fit it would have used travels with it", strjq!(ctx, ["activity", "101"], ".data.w_prime_balance | has(\"cp_used\") and has(\"fit_points\")") == "true")?
@@ -1361,6 +1369,12 @@ b_plan! = |ctx| {
     check!("session 2 done", strjq!(ctx, ["week", "all"], ".data[] | select(.id==2) | .status") == "done")?
     check!("session 2 completed activity 101", strjq!(ctx, ["week", "all"], ".data[] | select(.id==2) | .completed_activity_id") == "101")?
     check!("complete nonexistent session", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "999", "101"]), "session_not_found"))?
+    # #201 on the OTHER judgment-tier writes. `2e0` is session 2 and `1.01e2` is activity
+    # 101 under the widened stdlib -- both real rows here, so these fail on a revert
+    # instead of trading one not-found for another.
+    check!("an exponent session id is refused by complete", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "2e0", "101"]), "bad_id"))?
+    check!("an exponent activity id is refused by complete", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "3", "1.01e2"]), "bad_id"))?
+
     check!("complete nonexistent activity", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "2", "88888"]), "activity_not_found"))?
     check!("skip nonexistent session", Str.contains(stride!(ctx.bin, ctx.home, ["skip", "999", "x"]), "session_not_found"))?
     # ── substitutions (#144): a skip can name the activity that replaced the plan ──
@@ -1927,9 +1941,13 @@ b_import! = |ctx| {
     expdir = Str.trim(sh!("mktemp -d"))
     _ = write_csv!(expdir)
     imp = stride!(ctx.bin, ctx.home, ["import", expdir])
-    check!("import 2 + skip 4", Str.contains(imp, "\"imported\":2") and Str.contains(imp, "\"skipped\":4"))?
+    check!("import 2 + skip 5", Str.contains(imp, "\"imported\":2") and Str.contains(imp, "\"skipped\":5"))?
     check!("an exponent id is skipped, not upserted over id 700", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id IN (700, 7);")) == "0")?
-    check!("an exponent date is skipped, not stored non-canonical", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE length(substr(start_local,1,10)) != 10 OR start_local LIKE '%-100T%';")) == "0")?
+    # scoped to the IMPORT fixture (ids 9000+): activity 103 carries a deliberately
+    # malformed date for the bad-date path. The previous form of this check looked for a
+    # 3-digit day or a short substring, and returned 0 for both real poison shapes --
+    # green while "1e3-07-03T..." and "20250-07-0..." sat in the table.
+    check!("no imported date is stored non-canonical", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id >= 9000 AND substr(start_local,1,10) NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]';")) == "0")?
     check!("import conforms to its schema", validate_schema!(ctx, "import ${expdir}", "import") == "")?
     row9001 = Str.trim(sql!(ctx.db, "SELECT name || '|' || sport_type || '|' || start_local || '|' || moving_time || '|' || CAST(distance AS INT) || '|' || weighted_avg_watts FROM activities WHERE id=9001;"))
     check!("imported 9001 row exact", row9001 == "Morning ride, easy one|Ride|2025-07-01T06:30:00Z|3600|20100|190.0")?
@@ -1987,6 +2005,7 @@ b_rpe! = |ctx| {
     # writes a rating -- judgment-tier data that cannot be re-derived. The id argument
     # of this same command was narrowed first and this one was left open.
     check!("an exponent RPE is refused", Str.contains(stride!(ctx.bin, ctx.home, ["rate", "301", "1e1"]), "bad_rpe"))?
+    check!("an exponent activity id is refused by rate", Str.contains(stride!(ctx.bin, ctx.home, ["rate", "3e2", "5"]), "bad_id"))?
     check!("...and a fractional RPE still works", Str.contains(stride!(ctx.bin, ctx.home, ["rate", "301", "7.5"]), "\"rated\":301"))?
     check!("rate confirms", Str.contains(stride!(ctx.bin, ctx.home, ["rate", "301", "7"]), "\"rated\":301"))?
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
@@ -2442,11 +2461,15 @@ write_csv! = |dir| {
     # upsert_activity! is an UPSERT on that key -- it would overwrite whatever real
     # activity holds id 700. An exponent in the DATE stored start_local as
     # "2025-07-100T...", which every week filter compares as a STRING while
-    # date_str_to_days normalises it to a different month. Both must be skipped.
+    # date_str_to_days normalises it to a different month. All four poison rows must be
+    # skipped: exponent id, exponent day, exponent hour, exponent year.
     exp_id = "7e2,\\\"Jul 3, 2025, 6:00:00 AM\\\",Exp Id Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
     exp_day = "9003,\\\"Jul 1e2, 2025, 6:00:00 AM\\\",Exp Day Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
     exp_hour = "9004,\\\"Jul 3, 2025, 1e1:00:00 AM\\\",Exp Hour Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
-    sh!("mkdir -p '${dir}' && printf '%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n' \"${h}\" \"${r1}\" \"${r2}\" \"${junk}\" \"${exp_id}\" \"${exp_day}\" \"${exp_hour}\" > '${dir}/activities.csv'")
+    # 2e3, not 1e3: 1000 is also caught by the 1900-2999 range check, so a revert of the
+    # PARSE would still skip the row and the mutant would survive. 2000 is in range.
+    exp_year = "9005,\\\"Jul 3, 2e3, 6:00:00 AM\\\",Exp Year Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
+    sh!("mkdir -p '${dir}' && printf '%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n' \"${h}\" \"${r1}\" \"${r2}\" \"${junk}\" \"${exp_id}\" \"${exp_day}\" \"${exp_hour}\" \"${exp_year}\" > '${dir}/activities.csv'")
 }
 
 sfloat : Str -> F64
