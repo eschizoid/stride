@@ -59,6 +59,7 @@
             "stdin_closed",
             "strava_error",
             "unknown_command",
+            "unreadable_config",
             "unreadable_database",
             "unscorable",
             "unzip_failed",

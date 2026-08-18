@@ -165,6 +165,19 @@ Output :: [].{
     }
 
     # unconfigured zones/FTP: JSON error for tools, the setup help for humans
+    # The value is THERE and cannot be parsed -- naming the key and echoing the stored
+    # text is the whole point, because `config get` will happily show it back and the
+    # athlete has no other way to see why it is being ignored.
+    unreadable_config! : Str, Str => Try({}, _)
+    unreadable_config! = |key, raw| {
+        msg = "${key} is set to '${raw}', which is not a number — fix it with `stride config set ${key} <value>`"
+        (if json_mode!({})
+            emit_err!("unreadable_config", msg)
+        else
+            Stdout.line!(msg))?
+        Err(Exit(error_status))
+    }
+
     missing_config! : {} => Try({}, _)
     missing_config! = |{}| {
         (if json_mode!({})

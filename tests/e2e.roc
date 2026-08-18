@@ -412,9 +412,36 @@ b_config_ftp! = |ctx| {
     check!("a numeric key refuses exponent notation at set time", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", "1.18e2"]), "bad_value"))?
     # "+330" parsed fine on both pins -- it becomes 0 only because THIS PR narrowed the
     # read in Db.roc, which is why the refusal has to live at the write.
+    # the write gate must accept exactly what the READ can parse. It checked syntax only,
+    # so an overflowing but well-formed integer stored fine and then failed every read --
+    # a value permanently ignored, which is the trap this gate exists to prevent. Only the
+    # INT side is pinned: I64 overflows at 19 digits, which a human can fat-finger, while
+    # F64 needs 300+ and a literal that long says nothing a reader would learn from.
+    check!("a value too large for the reader is refused at the write", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "utc_offset_minutes", "99999999999999999999"]), "bad_value"))?
     check!("...and refuses a leading +, which this narrowing would otherwise coalesce to 0", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "utc_offset_minutes", "+330"]), "bad_value"))?
     check!("...while the plain forms still store", strjq!(ctx, ["config", "set", "hr_z1_max", "118.5"], ".data.value") == "118.5")?
     check!("...and a free-text key is untouched by the rule", strjq!(ctx, ["config", "set", "timezone", "America/Chicago"], ".data.value") == "America/Chicago")?
+    # #206: a LEGACY row -- written by SQL, as one written before the write-side
+    # validation existed would be -- must be reported, not coalesced. `+330` parsed fine
+    # on both compiler pins, so this is exactly what an athlete could have stored.
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key='timezone'; INSERT OR REPLACE INTO config VALUES ('utc_offset_minutes','+330');")
+    check!("an unreadable stored offset is named, not silently UTC", Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "not a whole number"))?
+    check!("...and it fails time_ok rather than passing as a UTC setting", strjq!(ctx, ["doctor"], ".data.time_ok") == "false")?
+    _ = sql!(ctx.db, "UPDATE config SET value='-300' WHERE key='utc_offset_minutes';")
+    check!("...while a readable one still resolves", Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "fixed offset -05:00"))?
+    # an unreadable HR zone is NOT missing_config: the key is present and config get
+    # echoes it, so telling the athlete to set it sends them to the wrong place
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key='utc_offset_minutes'; UPDATE config SET value='1.18e2' WHERE key='hr_z1_max';")
+    check!("an unreadable zone bound says unreadable, not missing", Str.contains(stride!(ctx.bin, ctx.home, ["analyze"]), "unreadable_config"))?
+    _ = sql!(ctx.db, "UPDATE config SET value='118' WHERE key='hr_z1_max';")
+    # the PER-SPORT variant: an unreadable override silently used the global ceiling, so
+    # the athlete's sport zones were ignored with nothing to see. Absent still falls back
+    # -- that is designed -- so the next two lines pin both halves.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config VALUES ('hr_z2_max_soccer','1.5e2');")
+    check!("an unreadable per-sport zone is refused, not silently globalised", Str.contains(stride!(ctx.bin, ctx.home, ["analyze"]), "unreadable_config"))?
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key='hr_z2_max_soccer';")
+    check!("...while an ABSENT per-sport zone still falls back to the global", Str.contains(stride!(ctx.bin, ctx.home, ["analyze"]), "\"computed\":"))?
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", "America/Chicago"])
 
     # the trap this closes: a db from before FTP was derived still holds an ftp_ride row.
     # Setting is refused, so only a LEGACY row can exist — and it must not be echoed back.

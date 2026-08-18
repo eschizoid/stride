@@ -248,6 +248,10 @@ run_command! = |cmd|
                 Output.err_out!("no_database", "no database at ${p} — run `stride init` first")
             }
         }
+        # A stored config value the engine cannot parse. Converted HERE rather than at
+        # each call site: several commands load config, and the remedy is identical for
+        # all of them -- name the key, echo the stored text (#206).
+        Err(UnreadableConfig(key, raw)) => Output.unreadable_config!(key, raw)
         Err(SqliteErr(NotADatabase, _)) =>
             Output.err_out!("corrupt_database", "~/.stride/db.sqlite is not a readable SQLite database — restore a backup or re-run `stride init` against a fresh path")
         Err(SqliteErr(code, msg)) =>
@@ -365,13 +369,20 @@ config_show! = |key|
             }
     }
 numeric_refusal : Str, Str -> Str
+# arg_i64/arg_f64, NOT is_plain_int/is_plain_decimal. The predicates check SYNTAX; the
+# readers use arg_*, which is the predicate PLUS from_str -- and from_str also rejects
+# overflow. Gating the write on the syntax half alone let `config set utc_offset_minutes
+# 99999999999999999999` succeed and then be unparseable at every read, which is a value
+# stored and permanently ignored: the exact trap #206 is about, created by the gate meant
+# to prevent it. The write must accept exactly what the read can parse, so it calls the
+# same function the read does.
 numeric_refusal = |key, val|
     match Config.numeric_key(key) {
         Free => ""
         Int =>
-            if Metrics.is_plain_int(val) "" else "${key} takes a whole number — got '${val}'"
+            if Metrics.arg_i64(val).is_ok() "" else "${key} takes a whole number — got '${val}'"
         Decimal =>
-            if Metrics.is_plain_decimal(val) "" else "${key} takes a number — got '${val}'"
+            if Metrics.arg_f64(val).is_ok() "" else "${key} takes a number — got '${val}'"
     }
 
 config_store! : Str, Str => Try({}, _)
