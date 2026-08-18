@@ -40,7 +40,7 @@ Config :: [].{
 	numeric_key = |k|
 		if k == "utc_offset_minutes" or k == "last_sync_epoch" or Str.ends_with(k, "_expires_at")
 			Int
-		else if Str.starts_with(k, "hr_z") or Str.ends_with(k, "_max")
+		else if Str.starts_with(k, "hr_z")
 			Decimal
 		else
 			Free
@@ -111,7 +111,11 @@ Config :: [].{
 
 }
 
-# numeric_key: every clause pinned. Three of the five survived mutation when this rule
+# numeric_key: every clause pinned, and mutation-checked one at a time. A `_max` suffix
+# clause used to sit beside `hr_z` and was deleted rather than pinned: every key that ends
+# `_max` also starts `hr_z` (Metrics.hr_zone_key / hr_zone_key_global), so it was
+# unreachable, and an unreachable clause cannot be killed by any mutant. A rule no test
+# can falsify is not a guard, it is decoration. Three of the five survived mutation when this rule
 # shipped with only e2e coverage -- and the commit message claimed the e2e checks pinned
 # it, which is the over-claim this file's own convention (pure rules, pure expects)
 # exists to prevent.

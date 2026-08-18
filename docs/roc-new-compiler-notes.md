@@ -104,8 +104,9 @@ not the whole set — overflow stays the stdlib's call.
 "User-supplied" turned out to mean more than argv, and each round of review found another
 tier of it: the ids AND the other arguments of the same commands (`rate latest 1e1` wrote
 a 10/10 rating while `rate 1e1 5` was correctly refused), the values behind `config set`,
-and the activity ids in an imported CSV — where `7e2` became id 700 and the upsert would
-have overwritten a real activity. Config values are validated at the WRITE now, not just
+and the ids AND DATES in an imported CSV — where `7e2` became id 700 and the upsert would
+have overwritten a real activity, and "Jul 1e2" stored a non-canonical `start_local` that
+string-windowing and day arithmetic disagree about. Config values are validated at the WRITE now, not just
 narrowed at the read: refusing them only at the read made `config set hr_z1_max 1.18e2`
 succeed, echo back, and then report missing_config. The e2e check was INVERTED rather than deleted: it
 asserts the refusal, on a count argument and on a judgment-tier write, each mutation-proved

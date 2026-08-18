@@ -809,6 +809,7 @@ b_seed_analyze! = |ctx| {
     check!("a refused fit still counts the bests it had", strjq!(ctx, ["pc"], ".data | (.cp == 0) and (.fit_points > 0)") == "true")?
     check!("a non-numeric power is refused", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "abc"]), "bad_watts"))?
     check!("a negative power is refused", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "-50"]), "bad_watts"))?
+    check!("an exponent power is refused", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "3e2"]), "bad_watts"))?
     # F64.from_str accepts nan/inf, and `w <= 0.0` is FALSE for NaN, so these
     # sailed past the guard: JSON mode died with JsonEncodeFailed(NaN) outside
     # the envelope, and human mode printed "~0:00" and exited 0. The refusal
@@ -1366,6 +1367,11 @@ b_plan! = |ctx| {
     # today-dated so the ThisWeek window sees both the session and the activity
     today_sess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.today}", "threshold", "sub test", "r"], ".data.id"))
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (300,'unplanned spin','Ride','${ctx.today}T08:00:00Z',3600,20000,120);")
+    # 3e2 addresses a REAL id (300). An earlier version used 1e1, which resolves to 10 --
+    # absent from the fixture, so both the narrowed and the widened binary answered
+    # activity_not_found and the check proved nothing.
+    check!("an exponent activity id is refused", Str.contains(stride!(ctx.bin, ctx.home, ["--json", "activity", "3e2"]), "activity_not_found"))?
+    check!("...while the id it would have meant does resolve", Str.contains(stride!(ctx.bin, ctx.home, ["--json", "activity", "300"]), "\"id\":300"))?
     # before any link: the activity surfaces as an UNPLANNED row in week
     check!("unlinked activity shows as unplanned", strjq!(ctx, ["week"], "[.data[] | select(.status == \"unplanned\" and .activity_id == 300)] | length") == "1")?
     # anti-stable-sort regression pin: today's SESSION row precedes today's
@@ -1921,7 +1927,7 @@ b_import! = |ctx| {
     expdir = Str.trim(sh!("mktemp -d"))
     _ = write_csv!(expdir)
     imp = stride!(ctx.bin, ctx.home, ["import", expdir])
-    check!("import 2 + skip 3", Str.contains(imp, "\"imported\":2") and Str.contains(imp, "\"skipped\":3"))?
+    check!("import 2 + skip 4", Str.contains(imp, "\"imported\":2") and Str.contains(imp, "\"skipped\":4"))?
     check!("an exponent id is skipped, not upserted over id 700", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id IN (700, 7);")) == "0")?
     check!("an exponent date is skipped, not stored non-canonical", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE length(substr(start_local,1,10)) != 10 OR start_local LIKE '%-100T%';")) == "0")?
     check!("import conforms to its schema", validate_schema!(ctx, "import ${expdir}", "import") == "")?
@@ -1977,6 +1983,11 @@ b_rpe! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("sensorless strength scores none", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=301;")) == "none")?
     check!("rpe over 10 refused", Str.contains(stride!(ctx.bin, ctx.home, ["rate", "301", "11"]), "bad_rpe"))?
+    # #201's headline case: `1e1` parses to 10.0, clears the 1..10 range guard, and
+    # writes a rating -- judgment-tier data that cannot be re-derived. The id argument
+    # of this same command was narrowed first and this one was left open.
+    check!("an exponent RPE is refused", Str.contains(stride!(ctx.bin, ctx.home, ["rate", "301", "1e1"]), "bad_rpe"))?
+    check!("...and a fractional RPE still works", Str.contains(stride!(ctx.bin, ctx.home, ["rate", "301", "7.5"]), "\"rated\":301"))?
     check!("rate confirms", Str.contains(stride!(ctx.bin, ctx.home, ["rate", "301", "7"]), "\"rated\":301"))?
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("45min @ RPE 7 => session_rpe 52.5", Str.trim(sql!(ctx.db, "SELECT load_model || '|' || ROUND(tss, 1) FROM activity_metrics WHERE activity_id=301;")) == "session_rpe|52.5")?
@@ -2430,11 +2441,12 @@ write_csv! = |dir| {
     # #201: an exponent in the ID imported as 700 on the widened stdlib, and
     # upsert_activity! is an UPSERT on that key -- it would overwrite whatever real
     # activity holds id 700. An exponent in the DATE stored start_local as
-    # "2022-02-100T...", which every week filter compares as a STRING while
+    # "2025-07-100T...", which every week filter compares as a STRING while
     # date_str_to_days normalises it to a different month. Both must be skipped.
     exp_id = "7e2,\\\"Jul 3, 2025, 6:00:00 AM\\\",Exp Id Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
     exp_day = "9003,\\\"Jul 1e2, 2025, 6:00:00 AM\\\",Exp Day Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
-    sh!("mkdir -p '${dir}' && printf '%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n' \"${h}\" \"${r1}\" \"${r2}\" \"${junk}\" \"${exp_id}\" \"${exp_day}\" > '${dir}/activities.csv'")
+    exp_hour = "9004,\\\"Jul 3, 2025, 1e1:00:00 AM\\\",Exp Hour Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
+    sh!("mkdir -p '${dir}' && printf '%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n' \"${h}\" \"${r1}\" \"${r2}\" \"${junk}\" \"${exp_id}\" \"${exp_day}\" \"${exp_hour}\" > '${dir}/activities.csv'")
 }
 
 sfloat : Str -> F64
