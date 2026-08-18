@@ -224,7 +224,7 @@ reexec_with_format! = |cleaned, fmt| {
 # prints `Program exited with error: <Tag>` to STDERR with empty stdout — no
 # code, no envelope, nothing a machine can branch on, and it was the first
 # thing a new user met (a query before `stride init`). Catching here rather
-# than at each of the ~40 call sites means one place decides, and a failure
+# than at each of the many platform call sites means one place decides, and a failure
 # that reaches a caller without a code is a missing arm in this match rather
 # than a habit nobody enforced.
 #

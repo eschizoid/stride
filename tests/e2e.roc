@@ -20,7 +20,9 @@ app [Context, program] {
 # building in seconds while staying a native Roc program. (Same reason there's no
 # `import pf.Sqlite`: its closure-in-record decoders trip the same bug.)
 #
-# WHY basic-webserver (not basic-cli): the offline suite fires ~350 subprocess spawns.
+# WHY basic-webserver (not basic-cli): the offline suite fires MANY hundreds of
+# subprocess spawns, and grows with every check added (it was ~350 when this was
+# written and is well past that now -- which is why the number is not quoted).
 # basic-cli's host loses a child's exit code intermittently under that volume
 # (FailedToGetExitCode), which the harness reads as an empty result and a spurious
 # failure (~2/3 of runs). basic-webserver's exec host reaps children cleanly (proven
