@@ -26,7 +26,8 @@ updates:
     ignore:
       # setup-roc decides HOW the compiler is resolved. A bump could change the default
       # channel or the meaning of nightly-tag and silently move us off the pinned nightly —
-      # onto one that segfaults, as every nightly after 2026-08-04 currently does. CI would
-      # catch it (roc test src/Render.roc is what dies), but this is not a change to review
+      # onto an unvetted one. (This used to say every nightly after 2026-08-04 segfaults;
+      # the current pin IS an after-08-04 nightly and builds, tests and e2es clean.) CI
+      # would catch a bad bump, but this is not a change to review
       # in a batch with a checkout bump. Update it deliberately, with the pin re-verified.
       - dependency-name: roc-lang/setup-roc

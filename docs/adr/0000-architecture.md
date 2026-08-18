@@ -203,7 +203,7 @@ migration.
 **Windows ships** (`stride-windows-x86_64`, since v0.3.0): the new compiler plus
 basic-cli's x64win host target it, and `OsStr.display` decodes the `WindowsU16s` argv arm.
 All five release targets ship, linux-arm64 included — `release-please.yml` passes it an
-explicit `roc_target: arm64musl`, `verify-arm64.yml` checks it, and v0.6.0 carries
+explicit `roc_target: arm64musl`, `verify-arm64.yml` re-checks it on dispatch, and v0.6.0 carries
 `stride-linux-arm64`.
 
 **CORRECTION kept for the record (2026-08-01):** the earlier "hard-blocked on

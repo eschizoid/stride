@@ -33,7 +33,8 @@ Three compounding reasons HR-only fails here:
   **that sport's own FTP**. `Metrics.time_in_power_intensity` splits stream time into
   easy (<76% FTP), moderate (76-90%), hard (≥91%). Summary polarization, the activities/
   week "hard" column, and the activity detail all read power-intensity when present and
-  fall back to HR zones only when there's no power. TSS/IF are likewise judged against the
+  fall back to the PACE split for a GPS sport without watts, and to HR zones only when
+  there is neither. TSS/IF are likewise judged against the
   sport's own FTP (so a rowing effort isn't scored against a cycling number).
 - **Per-sport FTP is generic and data-driven — NO hardcoded sport list** (explicitly
   rejected during design; it silently drops swimming/soccer/paddleboard). The threshold key
@@ -66,7 +67,8 @@ derived numbers as fact. The engine may compute; the coach must caveat.
   only as the fallback for no-power sports (strength, no-strap) and as a cross-sport lens.
 - Adding a sport needs **no code and no config** — its FTP derives from its own power
   history the moment that history exists.
-- Confidence tiers (ADR 0000 §4) annotate how much of the load is measured (power) vs
+- Confidence tiers (ADR 0000 §4) annotate how much of the load is measured (power or
+  GPS-measured pace) vs
   estimated (HR/RPE), surfaced by `doctor` and as `measured_pct` on the fitness number.
 - Recompute invalidation is per-sport: a change in one sport's derived FTP recomputes only that
   sport's rows (a generated `CASE` maps each sport to its FTP in the analyze filter).

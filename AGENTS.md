@@ -326,7 +326,8 @@ on `main`. You never tag or edit the version by hand.
   and `OsStr.display` decodes the `WindowsU16s` argv arm. Targets: linux-x86_64,
   macOS arm64 + Intel (macos-15-intel), windows-x86_64, **and linux-arm64** — that last
   one needs the explicit `roc_target: arm64musl` the release workflow passes (left to
-  itself it detects arm64v1musl and fails), is checked by `verify-arm64.yml`, and ships in
+  itself it detects arm64v1musl and fails), has a dispatch-only re-check in
+  `verify-arm64.yml`, and ships from
   v0.6.0. `fail-fast: false` plus an `always()` upload means one bad target still lets the
   others attach.
 - **Never cut a release without Mariano's explicit go-ahead** — landing feats on main is

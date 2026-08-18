@@ -1098,11 +1098,13 @@ Report :: [].{
         prior_b20_known_b = prior_best20.bk != 0
 
         # polarization is power-aware: easy/moderate/hard come from POWER zones for
-        # activities that have power-intensity, HR zones otherwise (zone_sum! per-activity)
+        # activities that have a pi_* intensity split (power-derived with watts,
+        # pace-derived for a GPS sport without), HR zones otherwise (zone_sum! per-activity)
         total = zsum.easy + zsum.moderate + zsum.hard
         easy = zsum.easy
         hard = zsum.hard
-        # what fraction of the 28d load is measured (power) vs estimated (HR/RPE/RE) —
+        # what fraction of the 28d load is measured (power OR GPS pace) vs estimated
+        # (HR/RPE/RE) —
         # so the fitness number carries its own confidence, not just doctor's
         measured_pct = if zsum.tss > 0.0 ((zsum.measured / zsum.tss) * 100.0).round_to_i64_try().ok_or(0) else 0
         total7 = zsum7.easy + zsum7.moderate + zsum7.hard
@@ -1599,11 +1601,12 @@ Report :: [].{
                 \\-- confidence tiers derived from load_model at read time (not stored): high =
                 \\-- measured power or GPS-measured pace (rtss), medium = HR/RPE, low =
                 \\-- relative_effort, none = unscored. The e2e cross-checks the 'high' count
-                \\-- against this rung list, but only rungs the FIXTURE produces are actually
-                \\-- guarded: measured, dropping 'power_stream' or 'weighted_watts' fails the
-                \\-- suite while dropping 'avg_watts' or 'rtss' does not, because no seeded
-                \\-- activity is scored by either. Changing this list needs a fixture ROW for
-                \\-- the rung, not just an edit to the e2e's enumeration.
+                \\-- against this rung list. Measured: dropping 'power_stream',
+                \\-- 'weighted_watts' or 'avg_watts' fails the suite. Dropping 'rtss' does NOT,
+                \\-- and the reason is structural rather than an oversight -- the pace rung
+                \\-- needs a DERIVED threshold speed, which comes from history the sandbox
+                \\-- never accumulates, so no e2e activity can score by pace. Guarding it
+                \\-- means seeding enough history to derive one, not adding a row.
                 \\SELECT COALESCE(SUM(CASE WHEN load_model IN (${high_models_sql}) THEN 1 ELSE 0 END),0) AS hi,
                 \\       COALESCE(SUM(CASE WHEN load_model IN (${medium_models_sql}) THEN 1 ELSE 0 END),0) AS med,
                 \\       COALESCE(SUM(CASE WHEN load_model IN (${low_models_sql}) THEN 1 ELSE 0 END),0) AS lo,
@@ -1785,7 +1788,7 @@ Report :: [].{
                     [
                         "",
                         "  confidence (how measured each load is):",
-                        "    high (power): ${(p.conf_high).to_str()}",
+                        "    high (power/pace): ${(p.conf_high).to_str()}",
                         "    medium (HR / RPE): ${(p.conf_medium).to_str()}",
                         "    low (relative effort): ${(p.conf_low).to_str()}",
                         "    none (unscored): ${(p.conf_none).to_str()}",

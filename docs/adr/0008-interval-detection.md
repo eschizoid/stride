@@ -79,4 +79,4 @@ Detection is now judged on STRUCTURE, after segmentation: the edge threshold kee
 the work to be a fraction of the ride — `work_frac ≤ 0.93` — because rescoring history
 surfaced dozens of steady rides reporting one 44-minute "rep" covering 0.98 of the session.
 
-The three rides are frozen as golden fixtures in Metrics.roc at 15 s resolution (behavior verified identical to full resolution): the 3×12 MUST detect three ~12-minute reps, the progressive ride MUST report nothing, and the surge ride MUST stay detected. `metrics_rev` 31 rescores history under the new gates.
+The three cases are frozen as pins in Metrics.roc — one REAL ride at 15 s resolution (behavior verified identical to full resolution, and the anchor because no synthetic reproduced the false negative) plus two synthetics built at 1 Hz: the 3×12 MUST detect three ~12-minute reps, the progressive ride MUST report nothing, and the surge ride MUST stay detected. `metrics_rev` 31 rescores history under the new gates.

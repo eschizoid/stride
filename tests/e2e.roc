@@ -185,8 +185,11 @@ run_all! = || {
     b_import!(ctx)?
     b_rpe!(ctx)?
     b_compare!(ctx)?
-    b_doctor!(ctx)?
+    # b_device_watts! BEFORE b_doctor!: it seeds the only avg_watts-scored activity,
+    # and doctor's confidence cross-check can only guard rungs that exist when it runs.
+    # Reversed, that check silently stopped covering the avg_watts rung.
     b_device_watts!(ctx)?
+    b_doctor!(ctx)?
     b_human!(ctx)?
     b_concurrency!(ctx)?
     b_migration!(ctx)?
@@ -1311,11 +1314,13 @@ b_plan! = |ctx| {
     # typo that lands there cannot be re-derived — and it would belong to no training
     # week, matching no completion or adherence query. Each of the rejects below PARSES;
     # the last two would be silently normalized to a different day than the one typed.
-    # #105 workaround: dynamic text is now SPLICED into SQL as an escaped literal, not
-    # bound — so apostrophes are the case that must round-trip byte-for-byte. This detail
-    # exercises the escape (one quote, a doubled quote, and SQL-looking text) through the
-    # INSERT and back out through the reader. A broken escape either corrupts the text
-    # (assert catches it) or fails the INSERT loudly (also caught — the id check fails).
+    # Apostrophes must round-trip byte-for-byte through the INSERT and back out. Written
+    # when #105's workaround SPLICED dynamic text into SQL as an escaped literal; that
+    # workaround was deleted when the bug was fixed in basic-cli 0.22.0 and Plan.roc binds
+    # normally now (`:detail`, `:rationale`). The check is worth keeping either way -- it
+    # is the regression test for ever reaching for a splice again. A broken round trip
+    # either corrupts the text (assert catches it) or fails the INSERT loudly (also
+    # caught -- the id check fails).
     # stride! (direct exec, no shell) rather than strjq! — the harness's sh-based jq
     # wrapper single-quotes its args, so an apostrophed arg breaks the TEST's own
     # quoting before stride ever sees it. The id is read back with sql!, whose command
@@ -2042,15 +2047,14 @@ b_doctor! = |ctx| {
     # list omitted rtss, so dropping rtss from the mapping left the suite green.
     powr = strjq!(ctx, ["doctor"], "[.data.scored_by[] | select(.model==\"power_stream\" or .model==\"weighted_watts\" or .model==\"avg_watts\" or .model==\"rtss\") | .n] | add // 0")
     check!("conf_high == every rung mapped to high", ch == powr)?
-    # The guard is only as strong as the rungs the FIXTURE produces. A rung with zero rows
-    # leaves BOTH sides of the equality unchanged, so dropping it from the mapping is
-    # invisible -- measured: dropping 'power_stream' or 'weighted_watts' fails the suite,
-    # dropping 'avg_watts' or 'rtss' does not. Every seeded power row carries
-    # weighted_avg_watts, so the avg_watts rung is never selected, and nothing here is
-    # scored by pace. This pins WHICH rungs exist so the gap is explicit instead of
-    # something the next reader rediscovers by mutating.
+    # The guard is only as strong as the rungs that EXIST when it runs: a rung with zero
+    # rows leaves both sides of the equality unchanged, so dropping it from the mapping is
+    # invisible. That is an ordering property, not a fixture property -- avg_watts was
+    # uncovered only because b_doctor! ran before the body seeding it, and a comment here
+    # once asserted the fixture had no such row at all. Pin the coverage so a reorder that
+    # re-hides a rung fails HERE rather than silently weakening the check above.
     covered = strjq!(ctx, ["doctor"], "[.data.scored_by[] | select(.n > 0) | .model] | sort | join(\",\")")
-    check!("the rungs this fixture exercises are the ones the guard can protect", Str.contains(covered, "power_stream") and Str.contains(covered, "weighted_watts") and !(Str.contains(covered, "avg_watts")) and !(Str.contains(covered, "rtss")))?
+    check!("every power rung the mapping names exists by the time doctor measures it", Str.contains(covered, "power_stream") and Str.contains(covered, "weighted_watts") and Str.contains(covered, "avg_watts"))?
     check!("doctor reports sports with a DERIVED ftp", sfloat(strjq!(ctx, ["doctor"], ".data.ftp_derived_sports")) >= 1.0)?
     check!("doctor zones_set true", strjq!(ctx, ["doctor"], ".data.zones_set") == "true")?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ctx.tz])

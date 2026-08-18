@@ -1,7 +1,7 @@
 Backfill :: [].{
     # ── pure rate-pacing decision for the streams backfill ──────────────
     # Given a response status and the current per-run counters, decide the next
-    # control-flow action. No effects — the effectful drain loop in Strava.backfill!
+    # control-flow action. No effects — the recursive drain loop in Strava.drain_streams!
     # dispatches on this, so every branch is unit-testable here. (Counting our own reads by choice,
     # so pacing does not depend on any endpoint sending rate-limit headers.)
 

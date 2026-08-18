@@ -300,7 +300,7 @@ hard:           minutes at/above threshold — by power (vs the sport's FTP), el
 Reading it: the Peloton ride has a power meter, so it gets an intensity factor and 36
 minutes measured at or above threshold *by power*. The outdoor ride has no power, so
 `intensity` is `-` rather than an invented number — but it does have GPS, so it is scored
-by **pace** (it is one of the five `rtss` rides mentioned above), and its 1 minute of hard
+by **pace** (one of the `rtss` rides mentioned above), and its 1 minute of hard
 time comes from the pace intensity split, not from HR zones. The strength session scores a
 `load` from your own session-RPE rating (`stride rate`) with no intensity factor at all,
 because an aerobic model does not fit it.
@@ -380,7 +380,7 @@ Human input never lives on a mirror table, because a re-sync would silently wipe
   2. **Pace** (rTSS), for any sport with a usable distance stream, once that sport has a
      derived 20-minute threshold speed. Altitude is optional: with it the pace is
      grade-adjusted, without it raw speed scores. This is why a meterless outdoor ride
-     scores by pace rather than falling to HR — five rides in this database do.
+     scores by pace rather than falling to HR — dozens of rides in this database do.
   3. **A fallback whose order depends on the sport's class**: endurance sports take
      HR → session-RPE → `relative_effort`; strength-class sports put the athlete's own
      **session-RPE ahead of HR**, because a heart rate says little about a lifting session.
