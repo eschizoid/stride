@@ -116,6 +116,16 @@ the one live item left in this ADR.
    — an unmapped sport still works via the safe default. This keeps ADR 0002's "no sport is
    dropped, adding a sport needs no code" promise.
 
+   **Shipped differently (recorded 2026-08-18).** There is no `model_<sport>` config key.
+   Routing lives in `Sports.roc` as a DATA TABLE — `families`, `class` (Endurance vs
+   StrengthLike) and `pace_routed` — so adding a sport is editing one row, and an unmapped
+   sport still falls through to the safe default exactly as this bullet requires. What was
+   dropped is the *user-overridable* half: an athlete cannot currently force a sport onto a
+   different rung. The property the bullet was protecting holds; the mechanism named here
+   does not exist, and following this text literally would send someone looking for a
+   config key. Per-sport HR zones DID ship as config (`hr_z<n>_max_<sport>`), which is
+   probably why this read as done.
+
 4. **HR zones become per-sport.** Per-sport zone keys (`hr_z*_max_<sport>`, or a per-sport
    LTHR that derives them) with the current global `hr_z*_max` as fallback. This is what
    makes the HR-native majority (soccer/basketball/tennis) *accurate*, and lets run/swim
@@ -176,8 +186,12 @@ deliberately small way. Do **not** write a data-transform migration for the metr
      zones per-sport needs a `zones_sig_case!` SQL CASE (like `sport_ftp_case!`) + per-row
      `zb` resolution, else rows never invalidate or recompute every run.
    - *Pace provenance* (Decision 2): new `load_model` strings (`ngp`/`rtss`/`css`) must join
-     **every** `load_model IN(...)` list in `Report.roc` — the *measured* set, the `doctor`
-     confidence tiers, and the catch-all → `non` bucket — declared **high (measured)** like
+     **every** `load_model IN(...)` list — the *measured* set, the `doctor` confidence
+     tiers, and the catch-all → `non` bucket. Since #196 split the read commands, those
+     lists span `Report.roc` AND `ReportHealth.roc` (doctor's are in the latter), while
+     the shared `high/medium/low_models_sql` constants stayed in `Report.roc`. Grep the
+     tree, not one file — this line said "in `Report.roc`" until the split moved half of
+     what it pointed at — declared **high (measured)** like
      power; miss it and distance-measured pace silently reports as *unmeasured*. `doctor`'s
      config-completeness (exact `hr_z*_max` list + `ftp_` prefix) must also learn the new
      `hr_z*_max_<sport>` / `model_<sport>` keys.

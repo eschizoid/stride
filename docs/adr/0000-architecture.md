@@ -44,8 +44,9 @@ syntax/stdlib/platform notes live in `docs/roc-new-compiler-notes.md`.
 
 The new compiler lets any module use platform effects, so I/O is split by concern
 instead of piled into `app.roc`: `Db.roc` owns SQLite plus the schema/migrations,
-`Strava.roc` owns the OAuth + sync HTTP, `Analyze/Report/Plan/Import` own their
-commands, and `app.roc` is a thin argv → dispatch shell. Pure logic still lives in
+`Strava.roc` owns the OAuth + sync HTTP, `Analyze/Plan/Import` and the report family
+(`Report.roc` plus `ReportSessions/ReportHealth/ReportSeason`, split by read-command
+family in #196) own their commands, and `app.roc` is a thin argv → dispatch shell. Pure logic still lives in
 its own tested modules: `Metrics.roc` (training math), `Render.roc`
 (tables/formatting), `Command.roc` (argv → typed command), `Config.roc` (key policy),
 `Csv/Streams/Backfill/Schema`.

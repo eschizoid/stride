@@ -49,7 +49,7 @@ for `best_20min_w`. Extending it to a duration ladder is the whole job.
    power sport — JSON for the coach (versioned envelope), a table + one-line verdict for the
    terminal. A duration with no data is OMITTED from `points` entirely — measured, the
    payload carries 7 rungs and no zero-watt entry — so read absence as a missing key, not
-   as a 0. (An earlier version of this line claimed the 0 convention; `Report.roc` filters
+   as a 0. (An earlier version of this line claimed the 0 convention; `ReportHealth.roc` filters
    `watts > 0.0` before emitting.)
 
 5. **FTP-from-CP is deliberately OUT of scope here.** CP is a more principled FTP than
