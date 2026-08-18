@@ -50,8 +50,11 @@ just install   # build + symlink to ~/.local/bin/stride
 
 - **Effects live in modules, by concern** — the new compiler lifted the alpha4
   monomorphic-module-param wall, so I/O is split out of app.roc: `Db.roc` (SQLite +
-  schema/migrations), `Strava.roc` (OAuth + sync HTTP), `Analyze/Report/Plan/Import`
-  (their commands); `app.roc` is a thin argv → dispatch shell. (History: under alpha4
+  schema/migrations), `Strava.roc` (OAuth + sync HTTP), `Analyze/Plan/Import` and the
+  report family — `Report.roc` (summary/load/compare + the helpers the others share),
+  `ReportSessions.roc`, `ReportHealth.roc`, `ReportSeason.roc` — each owning its commands;
+  `app.roc` is a thin argv → dispatch shell. The report modules depend INWARD on
+  `Report.roc` and it imports none of them (#196, ADR 0001). (History: under alpha4
   a decoder wider than 2 columns failed to type-check once effects were injected, so
   everything effectful had to sit in app.roc — that wall is gone.)
   Pure logic goes in `Metrics.roc` / `Sports.roc` (sport vocabulary: the four sport-varying policies — family filters, load-model class, pace routing, the pace-TSS exponent — as a DATA table, not if-chains) / `Render.roc` / `Command.roc` (argv → typed
