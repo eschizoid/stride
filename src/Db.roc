@@ -26,7 +26,7 @@ Db :: [].{
         home = home_dir!({})?
         Ok("${home}/.stride/db.sqlite")
     }
-    # owner-only permissions on the credential store. basic-cli 0.20 has no mode API,
+    # owner-only permissions on the credential store. basic-cli has no mode API (checked through 0.22),
     # so shell out; best-effort (never fails the command — a platform without chmod
     # just doesn't get hardened, and we don't claim it did). Sidecars may not exist.
     secure_perms! : Str => Try({}, _)

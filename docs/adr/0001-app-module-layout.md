@@ -48,8 +48,9 @@ across 18 definitions (~66 each); the largest were `week!` ≈214 and `doctor!` 
 trigger had NOT fired then.
 
 **Amended 2026-08-17 — the trigger has FIRED, on both halves (#196).** `Report.roc` is
-**2755 lines** across 37 definitions, and four command functions are past the ~250 line:
-`season!` ≈396, `summary_payload!` ≈391, `activity_body!` ≈377, `plan_bundle!` ≈253. For
+**2755 lines** across 37 definitions, and three command functions are past the ~250 line:
+`summary_payload!` ≈391, `activity_body!` ≈377, `plan_bundle!` ≈253 (`doctor!` ≈246 and
+`reps!` ≈245 sit just under; `season!` is ≈219). For
 scale, the file that motivated this ADR's original split was `app.roc` at 2631 lines.
 The subdivision below is therefore in scope; what the boundaries should be is the open
 question. Note the trigger went unnoticed for weeks because it was tracked in an untracked

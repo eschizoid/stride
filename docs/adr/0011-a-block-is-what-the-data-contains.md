@@ -14,7 +14,10 @@ A detector built on build/recover cycles would therefore return a segmentation o
 
 ## Decision
 
-**A block is a maximal run of consecutive training weeks bounded by an absence of training.** A gap of two or more calendar weeks with zero recorded load closes the current block and opens the next. Nothing else opens or closes a block.
+**A block is a maximal run of training weeks bounded by an absence of training.** A gap of
+two or more calendar weeks with zero recorded load closes the current block and opens the
+next; a single blank week does not, so a block is not a run of CONSECUTIVE training weeks —
+the 77-calendar-week block contains six blank ones. A gap of two or more calendar weeks with zero recorded load closes the current block and opens the next. Nothing else opens or closes a block.
 
 This boundary is observable, reproducible from raw records, and never invents a split where the athlete simply trained through. On the real history it yields **6 blocks over five years** — mean 32 trained weeks (33 calendar), longest 71 trained (77 calendar), from five gaps of 2/4/4/16/19 weeks.
 
@@ -22,7 +25,7 @@ Those numbers deserve to be stated plainly rather than sold, because they are no
 
 **A block is DESCRIBED, never named.** Stride reports, per block: its span and week count, total and weekly-mean load, the measured load trend across it (the regression slope of weekly load, in TSS per week, with its R²), polarization from the stored zone seconds, the FTP range that applied during it (ADR 0005 — each week scored against its own era's threshold), and the count of weeks in it. It does not label a block "base", "build", "peak", "taper", or "detraining". Those are claims about intent, and stride cannot observe intent — only load. A coach reading slope, polarization and FTP movement can name the phase; that naming is judgment and belongs to the coach (#154, ADR 0010).
 
-**Long blocks are reported as long, not subdivided.** A 47-week block means the athlete trained continuously for 47 weeks. Splitting it to produce more block-shaped blocks would be fabricating boundaries, which is the thing this ADR exists to prevent. If a coach wants finer granularity inside a long block, monthly load — which #139 already asks for and which needs no definition at all — provides it.
+**Long blocks are reported as long, not subdivided.** A 47-calendar-week block means the athlete trained in 46 of 47 consecutive weeks. Splitting it to produce more block-shaped blocks would be fabricating boundaries, which is the thing this ADR exists to prevent. If a coach wants finer granularity inside a long block, monthly load — which #139 already asks for and which needs no definition at all — provides it.
 
 **The two-week gap threshold is a knob, and pretending otherwise would be the same error this ADR rejects elsewhere.** Measured on the real history: one week gives 13 blocks (longest run 39 weeks), two gives 6 (longest 71), three gives 5 (longest 110). The answer roughly halves between the first two settings. An earlier draft of this ADR claimed the threshold was "a stated constant, not a tuned one" and "the only knob" — that claim rejected CTL changepoint detection for having a sensitivity parameter that chooses the answer, in language that describes `gap_weeks` verbatim.
 

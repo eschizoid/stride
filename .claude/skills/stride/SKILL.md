@@ -238,5 +238,5 @@ full `just test` — expects, build, and e2e — runs green; the roc#10469 perf 
 fixed. Build flags take `=` (`--output=`, `--main=`) and always `--opt=dev`, since the
 optimized backend was miscompiling (issue #32, fixed on the 2026-08-17 pin; dev is now
 kept for build time). Roc gotcha that keeps recurring: floats have
-no Eq — never `x == 0.0` in an expect; use `Num.abs(x) < 0.001`. Compiler syntax/stdlib
+no Eq — never `x == 0.0` in an expect; use `(x).abs() < 0.001` (`Num.abs` does not exist). Compiler syntax/stdlib
 reference: `docs/roc-new-compiler-notes.md`.

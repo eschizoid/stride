@@ -1,7 +1,7 @@
 # ADR 0004 — Power-duration curve + Critical Power
 
 Status: accepted — shipped (proposed 2026-08-03; `power-curve` + the mean-max columns
-landed with #151/PR #169, and the CP model was spent by #186/#187 in PR #190)
+landed 2026-08-03 in `fadf38c`/`f0ab7e3`, and the CP model was spent by #186/#187 in PR #190)
 
 Extends [ADR 0002](0002-power-based-intensity.md) (power-based intensity). 0002 turned the
 watts stream into *intensity* (NP/IF/TSS vs FTP). This ADR turns the same stream into the

@@ -454,7 +454,7 @@ Strava :: [].{
     # window, sleeps to the next, and stops cleanly at Strava's daily read cap
     # (resume by re-running). Paces by COUNTING its own reads (the next paragraph explains why headers are unavailable).
 
-    # Rate pacing is COUNT-BASED, not header-based: basic-cli 0.20.0 surfaces only a
+    # Rate pacing is COUNT-BASED, not header-based: basic-cli surfaces only a
     # handful of response headers (never the x-readratelimit-* ones), AND Strava's
     # /streams endpoint doesn't send them anyway. So we count our own reads against
     # Strava's known limits (100 reads / 15 min, 1000 / day) and pace proactively,

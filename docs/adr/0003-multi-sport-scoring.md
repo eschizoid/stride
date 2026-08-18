@@ -204,7 +204,7 @@ deliberately small way. Do **not** write a data-transform migration for the metr
 
 > The build is unblocked (roc-lang/roc#10469, fixed upstream by roc-lang/roc#10531). This ADR is the
 > durable sequencing; the live, disposable working checklist (in-flight PRs, watch-items)
-> lives in the gitignored `.claude/PLAN.md` scratch, not here. Slice 1 (per-sport HR zones)
+> lives in GitHub issues, not here. (The quoted scratch file has since been retired.) Slice 1 (per-sport HR zones)
 > resolves the zone half of Decision 4 + the `ftp_ride` removal of Decision 5.
 
 

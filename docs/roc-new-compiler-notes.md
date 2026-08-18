@@ -160,14 +160,15 @@ MISCOMPILED this codebase (issue #32's intermittent SIGABRT; it also silently dr
 - Number literals carry a typed suffix: `0.I64`, `0.0.F64`, `0.U64`, `3.5.F64`.
 - Tag-union + `Try` equality IS auto-derived here, so `== Ok(x)` / `== SomeTag` often
   compiles — keep `==` when it does; fall back to match-based only when it errors.
-- **Floats have no `Eq`** — never `x == 0.0` in an expect; use `Num.abs(x) < 0.001`.
+- **Floats have no `Eq`** — never `x == 0.0` in an expect; use `(x).abs() < 0.001`.
+  (NOT `Num.abs` — see the method-style line above; it fails the build with DOES NOT EXIST.)
 - Unchanged: `List.sum/all/any/is_empty/len/append/concat/repeat/first/last/get/map/map2/
   contains/find_first/keep_if/take_first/take_last`, `Str.trim/split_on/with_ascii_lowercased`,
   `${}` interpolation.
 
 ## Platform (basic-cli 0.22)
 
-- Header: `app [main!] { pf: platform "…/0.21.0/….tar.zst" }`. HTTP data types
+- Header: `app [main!] { pf: platform "…/0.22.0/….tar.zst" }`. HTTP data types
   (Method/Request/Response) come from the `http` package, not `pf`.
 - **argv — decode with `OsStr.display`, never hand-match the tags.**
   `main!` receives `List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))])`,

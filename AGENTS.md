@@ -214,12 +214,15 @@ Every item here cost a debugging session at least once — they are not style op
 
 ## Product invariants (enforced by code and/or e2e — keep them true)
 
-- Machine JSON: **absence is FLAGGED, not zeroed** (ADR 0009). Every numeric field that
-  can legitimately be absent ships an additive `_known` companion decoded from the STORED
-  NULL (`CASE WHEN … IS NULL`), never a coalesced magnitude — a bare 0 cannot distinguish
-  "no data" from "measured zero". The engine never invents a value to fill a gap; human
-  tables still render `-`. (The old "numeric 0 = not available" convention was retired at
-  the machine boundary by #156/PR #168 and survives only in pre-ADR-0009 payload fields.)
+- Machine JSON: **absence is FLAGGED or DISCRIMINATED, never silently zeroed** (ADR 0009,
+  whose three classes this summarises — `src/Output.roc`'s comment block is the contract of
+  record). *Impossible-zero* fields (`np_w`, `avg_hr`, `intensity`, `ftp_used`) keep 0 as
+  the magnitude and ship a `_known` companion decoded from the STORED NULL (`CASE WHEN …
+  IS NULL`), never a coalesced one. *Both-possible* fields (`decoupling_pct`,
+  `form_delta_7d`, `hr_drift`) always carry `_known` — the flag IS the null. *Ambiguous
+  zeros* get a discriminator rather than a flag: `tss: 0` is read through `load_model`, an
+  all-zero zone vector through `zones_known`. The engine never invents a value; human
+  tables still render `-`.
 - Machine JSON is a **versioned envelope** — success `{schema_version, data}`, error
   `{schema_version, error:{code, message}}`. Bump `json_schema_version` when the WRAPPER
   changes, or when a payload field is REMOVED or retyped. **Adding** a field does not bump

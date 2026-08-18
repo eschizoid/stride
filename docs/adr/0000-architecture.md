@@ -213,12 +213,31 @@ before writing a constraint into the record.
 
 ## 10. Deliberately out of scope
 
-TUI, MCP server, cloud/web sync, injury/medical claims, replacing SQLite, and moving
-any math into the LLM. (The query-repository split used to sit here as "blocked by the
-compiler"; that wall is gone and the split IS the current layout — see §2 and ADR 0001.
-What remains open is the further per-command subdivision of `Report.roc`, governed by ADR
-0001's measured trigger, which has now fired: #196.) These are revisited only when
-dogfooding demands them.
+This is the single list — the roadmap carried a second, overlapping one until it was
+retired, and neither was a superset of the other.
+
+- **TUI** and **MCP server** — the CLI plus versioned JSON is the interface.
+- **Cloud / web sync** — local-first is the identity, not a stage.
+- **Injury and medical claims** — outside what training data can honestly support.
+- **Replacing SQLite** — a file the athlete owns, greps and backs up with `cp`.
+- **Moving any math into the LLM** — the engine computes, the coach reasons (ADR 0012).
+- **Multi-athlete / coach views** — breaks the single-user local db that keeps everything
+  else simple; a coach reads the athlete's JSON instead. (Friends each running their own
+  copy is a different thing and is in scope.)
+- **Graphs** — that experiment ran and failed; tables, legends and verdict lines are the
+  visualization layer.
+- **ML predictions** — nothing ships that cannot be recomputed by hand from stored inputs.
+- **Social features** — Strava exists.
+- **Vendor-cloud integrations** (Garmin Connect, Wahoo, Peloton APIs, …) — the ingestion
+  boundary is the filesystem; Strava is the one grandfathered API.
+- **Raw device-format parsing** (FIT/TCX/GPX) — Strava is the parser (ADR 0006).
+
+(The query-repository split used to sit here as "blocked by the compiler"; that wall is
+gone and the split IS the current layout — see §2 and ADR 0001. What remains open is the
+further per-command subdivision of `Report.roc`, governed by ADR 0001's measured trigger,
+which has now fired: #196.)
+
+These are revisited only when dogfooding demands them.
 
 **Promoted into scope:** a generic every-sport model. This list previously called it out
 of scope; dogfooding demanded it (friends who run and swim can't be scored honestly by
@@ -228,7 +247,7 @@ unchanged — sport-completeness is not multi-tenancy.
 
 ---
 
-Working notes and current watch-items live in `.claude/PLAN.md` (local, disposable).
+Open work lives in GitHub issues; there is deliberately no scratch plan file (see AGENTS.md — a watch-item tracked in one went unnoticed for weeks, #196).
 Enforced invariants and build/release mechanics live in the project instructions.
 When a decision here changes, update this ADR in the same commit as the code.
 
