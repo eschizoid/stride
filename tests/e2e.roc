@@ -776,7 +776,7 @@ b_seed_analyze! = |ctx| {
     # corrupted the JSON of the commands that NARRATE to stderr by design
     # (analyze, sync — ADR 0007). So: keep stderr out of the pipe, and fail
     # explicitly on an empty payload instead of inferring conformance from it.
-    validate! = |cmd, schema| Str.trim(sh!("out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${cmd} 2>/dev/null); if [ -z \"$out\" ]; then echo \"no output from `${cmd}` — nothing was validated\"; else printf '%s' \"$out\" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/${schema}.json -f tools/validate.jq 2>&1; fi"))
+    validate! = |cmd, schema| validate_schema!(ctx, cmd, schema)
     check!("summary conforms to its schema", validate!("summary", "summary") == "")?
     check!("plan conforms to its schema", validate!("plan", "plan") == "")?
     check!("activity conforms to its schema", validate!("activity 101", "activity") == "")?
@@ -1018,7 +1018,6 @@ b_seed_analyze! = |ctx| {
     # design. If #201 narrows the parse, this check should be INVERTED to assert
     # the refusal, not deleted -- the point is that the behaviour is decided on
     # purpose rather than inherited from a stdlib change.
-    # assert the RESULT, not the envelope: `schema_version` appears in the error
     # arm too, so the first version of this check stayed green in exactly the
     # state it exists to detect (proved by mutation).
     # assert the RESULT, not the envelope: `schema_version` appears in the error
@@ -1900,12 +1899,16 @@ b_progress_b! = |ctx| {
 }
 
 # ── import: Strava account export ────────────────────────────────────
+validate_schema! : Ctx, Str, Str => Str
+validate_schema! = |ctx, cmd, schema| Str.trim(sh!("out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${cmd} 2>/dev/null); if [ -z \"$out\" ]; then echo \"no output from `${cmd}` — nothing was validated\"; else printf '%s' \"$out\" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/${schema}.json -f tools/validate.jq 2>&1; fi"))
+
 b_import! : Ctx => Try({}, _)
 b_import! = |ctx| {
     expdir = Str.trim(sh!("mktemp -d"))
     _ = write_csv!(expdir)
     imp = stride!(ctx.bin, ctx.home, ["import", expdir])
     check!("import 2 + skip 1", Str.contains(imp, "\"imported\":2") and Str.contains(imp, "\"skipped\":1"))?
+    check!("import conforms to its schema", validate_schema!(ctx, "import ${expdir}", "import") == "")?
     row9001 = Str.trim(sql!(ctx.db, "SELECT name || '|' || sport_type || '|' || start_local || '|' || moving_time || '|' || CAST(distance AS INT) || '|' || weighted_avg_watts FROM activities WHERE id=9001;"))
     check!("imported 9001 row exact", row9001 == "Morning ride, easy one|Ride|2025-07-01T06:30:00Z|3600|20100|190.0")?
     check!("HR-only 9002 keeps avg_hr", Str.trim(sql!(ctx.db, "SELECT avg_hr FROM activities WHERE id=9002;")) == "145.0")?

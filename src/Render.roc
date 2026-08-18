@@ -207,6 +207,12 @@ Render :: [].{
     # The `+` is the whole point of AtLeast reaching this far: `summary` reads a 31-day
     # window, so a 45-day streak truncates, and printing a bare "31" would present the
     # window size as a measurement.
+    # The progress trend verdict. A closed set of three, pinned by equality below
+    # (ADR 0012). Named rather than inline for exactly that reason -- see the pin.
+    trend_label : Bool, Bool -> Str
+    trend_label = |improved, declined|
+        if improved "improving" else if declined "declining" else "holding steady"
+
     band_days_phrase : [Known(I64), AtLeast(I64), Unknown] -> Str
     band_days_phrase = |band|
         match band {
@@ -559,7 +565,7 @@ Render :: [].{
             Ok(p) => if higher (p < -5.0) else (p > 5.0)
             Err(NoBaseline) => False
         }
-        label = if improved "improving" else if declined "declining" else "holding steady"
+        label = trend_label(improved, declined)
         avg = Metrics.mean(scores)
         short = match lens {
             Ef => "ef"
@@ -1262,6 +1268,23 @@ expect {
     before_old = List.first(Str.split_on(s, "2025-01-01")).ok_or("")
     Str.contains(before_old, "2025-02-01") and Str.contains(s, "improving")
 }
+
+# ADR 0012's hard guard applied to the progress verdict: the label is a closed set of
+# three, so all three are pinned by full-string EQUALITY. This producer had neither a pin
+# nor the denylist sweep until #165 -- exactly the "add a producer and believe it is
+# guarded" gap the ADR names.
+#
+# It is a named function rather than an inline `if` so the pin can BE equality. The first
+# attempt asserted Str.contains against progress_section's rendered output and passed a
+# mutation to "holding steadyZ" -- because "holding steadyZ" CONTAINS "holding steady".
+# A substring check cannot pin a closed set; it silently accepts every superstring.
+expect Render.trend_label(True, False) == "improving"
+expect Render.trend_label(False, True) == "declining"
+expect Render.trend_label(False, False) == "holding steady"
+expect List.all(
+    [Render.trend_label(True, False), Render.trend_label(False, True), Render.trend_label(False, False)],
+    |v| !(Metrics.has_coaching_language(v)),
+)
 
 # RPE lens is lower-is-better: RPE dropping 8 -> 6 reads as improving, "above your easiest"
 expect {

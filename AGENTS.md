@@ -54,7 +54,7 @@ just install   # build + symlink to ~/.local/bin/stride
   (their commands); `app.roc` is a thin argv → dispatch shell. (History: under alpha4
   a decoder wider than 2 columns failed to type-check once effects were injected, so
   everything effectful had to sit in app.roc — that wall is gone.)
-  Pure logic goes in `Metrics.roc` / `Sports.roc` (sport vocabulary: families, class, pace routing — a DATA table, not if-chains) / `Render.roc` / `Command.roc` (argv → typed
+  Pure logic goes in `Metrics.roc` / `Sports.roc` (sport vocabulary: the four sport-varying policies — family filters, load-model class, pace routing, the pace-TSS exponent — as a DATA table, not if-chains) / `Render.roc` / `Command.roc` (argv → typed
   `Command` union, `parse` is pure + unit-tested; `main!` is thin parse-then-dispatch)
   / `Config.roc` (`is_secret` secret-key policy) / `Csv.roc` / `Streams.roc` /
   `Backfill.roc` / `Schema.roc`, with `expect` tests. When adding logic: pure
@@ -216,10 +216,12 @@ Every item here cost a debugging session at least once — they are not style op
 
 - Machine JSON: **absence is FLAGGED or DISCRIMINATED, never silently zeroed** (ADR 0009,
   whose three classes this summarises — `src/Output.roc`'s comment block is the contract of
-  record). *Impossible-zero* fields (`np_w`, `avg_hr`, `intensity`, `ftp_used`) keep 0 as
-  the magnitude and ship a `_known` companion decoded from the STORED NULL (`CASE WHEN …
-  IS NULL`), never a coalesced one. *Both-possible* fields (`decoupling_pct`,
-  `form_delta_7d`, `hr_drift`) always carry `_known` — the flag IS the null. *Ambiguous
+  record). *Impossible-zero* fields keep 0 as the magnitude and ship a `_known`
+  companion decoded from the STORED NULL (`CASE WHEN … IS NULL`), never a coalesced one —
+  `np_w`/`power_known`, `avg_hr`/`hr_known`, the zone vector/`zones_known`. (`ftp_used`
+  is impossible-zero but ships NO flag: analyze always binds a real value, so there is no
+  stored NULL to decode.) *Both-possible* fields always carry `_known`, and there the flag
+  IS the null — `decoupling_pct`, `form_delta_7d`, `form_tsb`, `hr_drift`, `rec_drop_60s`. *Ambiguous
   zeros* get a discriminator rather than a flag: `tss: 0` is read through `load_model`, an
   all-zero zone vector through `zones_known`. The engine never invents a value; human
   tables still render `-`.
@@ -317,9 +319,11 @@ on `main`. You never tag or edit the version by hand.
   release, and the build/upload jobs attach the platform binaries. **Windows IS built and
   shipped** (`stride-windows-x86_64`, since v0.3.0) — basic-cli ships an x64win host
   and `OsStr.display` decodes the `WindowsU16s` argv arm. Targets: linux-x86_64,
-  macOS arm64 + Intel (macos-15-intel), windows-x86_64. **linux-arm64 currently FAILS**
-  (needs an explicit `--target`; it detects arm64v1musl) — `fail-fast: false` plus an
-  `always()` upload means the other targets still attach. Fixing it is an open follow-up.
+  macOS arm64 + Intel (macos-15-intel), windows-x86_64, **and linux-arm64** — that last
+  one needs the explicit `roc_target: arm64musl` the release workflow passes (left to
+  itself it detects arm64v1musl and fails), is checked by `verify-arm64.yml`, and ships in
+  v0.6.0. `fail-fast: false` plus an `always()` upload means one bad target still lets the
+  others attach.
 - **Never cut a release without Mariano's explicit go-ahead** — landing feats on main is
   fine, but merging the release PR / tagging waits for a clear yes.
 - **GOTCHA — never write `feat:`/`fix:` as literal text in a commit _body_.** release-please

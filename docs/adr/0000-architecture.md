@@ -179,7 +179,7 @@ An unknown timezone name never silently becomes UTC — it falls back to the fix
 offset and `doctor` flags it. Historical per-activity dates already use Strava's
 civil date, so only the today boundary needs this.
 
-## 9. Compiler migration — DONE on the new compiler (full build gated on one upstream fix)
+## 9. Compiler migration — DONE on the new compiler, build no longer gated
 
 The migration to Roc's new (Zig) compiler is **merged to `main`**: the whole codebase
 is in the new type-module dialect (`Name :: [].{}`, `List(X)`, `Result`→`Try`,
@@ -201,8 +201,9 @@ migration.
 
 **Windows ships** (`stride-windows-x86_64`, since v0.3.0): the new compiler plus
 basic-cli's x64win host target it, and `OsStr.display` decodes the `WindowsU16s` argv arm.
-The open platform gap is linux-arm64, which needs an explicit `--target` (it detects
-arm64v1musl).
+All five release targets ship, linux-arm64 included — `release-please.yml` passes it an
+explicit `roc_target: arm64musl`, `verify-arm64.yml` checks it, and v0.6.0 carries
+`stride-linux-arm64`.
 
 **CORRECTION kept for the record (2026-08-01):** the earlier "hard-blocked on
 roc-json" conclusion was wrong — it assumed all JSON had to go through a roc-json
