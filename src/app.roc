@@ -49,6 +49,7 @@ import Output
 import Strava
 import Analyze
 import Report
+import ReportSeason
 import Plan
 import Import
 
@@ -325,7 +326,7 @@ dispatch! = |cmd|
         Command.Activity(id_str) => Report.activity!(id_str)
         Command.Load(days) => Report.load_series!(days)
         Command.PowerCurve(days, sport) => Report.power_curve!(days, sport)
-        Command.Season => Report.season!({})
+        Command.Season => ReportSeason.season!({})
         Command.WeekView => Plan.plan_view!(ThisWeek)
         Command.WeekViewAll => Plan.plan_view!(AllTime)
         Command.WeekAdd(date, session_type, detail, rationale) => Plan.plan_add!(date, session_type, detail, rationale)
