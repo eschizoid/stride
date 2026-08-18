@@ -1011,8 +1011,13 @@ b_seed_analyze! = |ctx| {
     # The 2026-08-17 compiler widened I64.from_str to accept exponent notation:
     # "1e1" was a parse error on the previous pin and is 10 now. That reaches
     # MUTATING commands -- `skip 1e1` addresses planned session 10 -- and no
-    # test could see it, because nothing exercised an exponent argument. Pinned
-    # so the next compiler bump that moves it is visible rather than silent.
+    # test could see it, because nothing exercised an exponent argument.
+    #
+    # This PINS an accident rather than endorsing it (#201): `1e1` addresses
+    # session 10 while `3.3e1` cannot address session 33, which is nobody's
+    # design. If #201 narrows the parse, this check should be INVERTED to assert
+    # the refusal, not deleted -- the point is that the behaviour is decided on
+    # purpose rather than inherited from a stdlib change.
     # assert the RESULT, not the envelope: `schema_version` appears in the error
     # arm too, so the first version of this check stayed green in exactly the
     # state it exists to detect (proved by mutation).
