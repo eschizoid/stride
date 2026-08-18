@@ -818,11 +818,11 @@ Render :: [].{
                     "",
                     "  last 28 days:",
                     "    ${I64.to_str(z.sessions)} sessions · ${fmt1(z.moving_time.to_f64() / 3600.0)}h · ${fmt1(z.distance_m / 1000.0)} km",
-                    "    training load: ${fmt0(z.tss)} (${I64.to_str(z.measured_pct)}% measured — rest estimated from HR/RPE; see doctor)",
+                    "    training load: ${fmt0(z.tss)} (${I64.to_str(z.measured_pct)}% measured by power or pace — rest estimated from HR/RPE; see doctor)",
                 ],
                 # tier line (#157): descriptive provenance for the load number above
-                # it — high = measured power, medium = HR/RPE, low = Strava
-                # relative-effort. States the mix, prescribes nothing; absent when
+                # it — high = measured power OR GPS-measured pace, medium = HR/RPE,
+                # low = Strava relative-effort. States the mix, prescribes nothing; absent when
                 # the window is empty rather than claiming 0/0/0.
                 if z.load_coverage.known {
                     ["    confidence: ${I64.to_str(z.load_coverage.high_pct)}% high · ${I64.to_str(z.load_coverage.medium_pct)}% medium · ${I64.to_str(z.load_coverage.low_pct)}% low"]
