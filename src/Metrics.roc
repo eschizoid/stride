@@ -1073,7 +1073,15 @@ Metrics :: [].{
                         hour24 = hour_24(hms, ampm)?
                         rest =
                             match Str.split_on(hms, ":") {
-                                [_, mi, se] => Ok("${mi}:${se}")
+                                [_, mi, se] => {
+                                    mi_n = Try.map_err(Metrics.arg_u64(mi), |_| BadExportDate)?
+                                    se_n = Try.map_err(Metrics.arg_u64(se), |_| BadExportDate)?
+                                    if mi_n > 59 or se_n > 59 {
+                                        Err(BadExportDate)
+                                    } else {
+                                        Ok("${pad2(mi_n.to_i64_wrap())}:${pad2(se_n.to_i64_wrap())}")
+                                    }
+                                }
                                 _ => Err(BadExportDate)
                             }
                         # EVERY component is range-checked, not just parsed. These are
@@ -1128,10 +1136,17 @@ Metrics :: [].{
                 _ => Err(BadExportDate)
             }
         hour = h?
-        match ampm {
-            "AM" => Ok(if hour == 12 0 else hour)
-            "PM" => Ok(if hour == 12 12 else hour + 12)
-            _ => Err(BadExportDate)
+        # bound BEFORE the +12: an unbounded `hour + 12` overflows U64 on a large
+        # plain-digit hour and CRASHES the process, so a single poison row denied the
+        # whole export -- worse than the bad row it was meant to reject.
+        if hour > 12 {
+            Err(BadExportDate)
+        } else {
+            match ampm {
+                "AM" => Ok(if hour == 12 0 else hour)
+                "PM" => Ok(if hour == 12 12 else hour + 12)
+                _ => Err(BadExportDate)
+            }
         }
     }
 
@@ -1733,12 +1748,17 @@ Metrics :: [].{
     # deliberate (#201, docs/roc-new-compiler-notes.md), and deleting it silently
     # restores an unrecoverable write on a fat-fingered argument.
     #
-    # 17 call sites use these; 13 are pinned by e2e checks that fail if the site reverts
+    # 19 call sites use these; 15 are pinned by e2e checks that fail if the site reverts
     # to a bare from_str (swept one at a time, since the harness stops at the first
-    # failure). FOUR are unpinned: Analyze.config_f64!/cfg_f64 and Db.resolve_time_mode!,
-    # which read config values that `config set` now refuses at the WRITE, and
-    # date_str_to_days, which sits behind is_canonical_date on every argv path and behind
-    # the CSV component checks on the import path.
+    # failure). The FOUR unpinned are Analyze.config_f64!/cfg_f64 and
+    # Db.resolve_time_mode!, which read config values that `config set` now refuses at
+    # the WRITE, and date_str_to_days, which sits behind is_canonical_date on every argv
+    # path and behind the CSV component checks on the import path.
+    #
+    # Re-count this by sweeping, not by adding to the last figure. Three consecutive
+    # versions of this line were wrong (12/5, 13/4, 14/3), every time because the author
+    # counted the sites edited rather than the sites that exist -- `grep -n Metrics.arg_`
+    # over src/ is the answer.
     #
     # Unpinned is not the same as unreachable, and an earlier version of this comment
     # claimed it was. All four ARE reachable by writing a bad value with direct SQL --

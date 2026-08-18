@@ -1377,7 +1377,6 @@ b_plan! = |ctx| {
     # not parse on either pin, so that form returned bad_id with or without the
     # narrowing and the check proved nothing.
     check!("an exponent session id is refused by complete", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "2e0", "101"]), "bad_id"))?
-    check!("an exponent activity id is refused by complete", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "3", "3e2"]), "bad_id"))?
 
     check!("complete nonexistent activity", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "2", "88888"]), "activity_not_found"))?
     check!("skip nonexistent session", Str.contains(stride!(ctx.bin, ctx.home, ["skip", "999", "x"]), "session_not_found"))?
@@ -1389,6 +1388,12 @@ b_plan! = |ctx| {
     # absent from the fixture, so both the narrowed and the widened binary answered
     # activity_not_found and the check proved nothing.
     check!("an exponent activity id is refused", Str.contains(stride!(ctx.bin, ctx.home, ["--json", "activity", "3e2"]), "activity_not_found"))?
+    # `complete!` validates the SESSION before the activity, so this needs a session that
+    # EXISTS as well as activity 300. Placed earlier with session 3 absent, it returned
+    # session_not_found and killed its mutant by accident, proving nothing about the
+    # activity-id parse.
+    ex_sess = Str.trim(sql!(ctx.db, "SELECT id FROM planned_sessions WHERE status='open' ORDER BY id LIMIT 1;"))
+    check!("an exponent activity id is refused by complete", Str.contains(stride!(ctx.bin, ctx.home, ["complete", ex_sess, "3e2"]), "bad_id"))?
     check!("...while the id it would have meant does resolve", Str.contains(stride!(ctx.bin, ctx.home, ["--json", "activity", "300"]), "\"id\":300"))?
     # before any link: the activity surfaces as an UNPLANNED row in week
     check!("unlinked activity shows as unplanned", strjq!(ctx, ["week"], "[.data[] | select(.status == \"unplanned\" and .activity_id == 300)] | length") == "1")?
@@ -1948,7 +1953,8 @@ b_import! = |ctx| {
     expdir = Str.trim(sh!("mktemp -d"))
     _ = write_csv!(expdir)
     imp = stride!(ctx.bin, ctx.home, ["import", expdir])
-    check!("import 2 + skip 8", Str.contains(imp, "\"imported\":2") and Str.contains(imp, "\"skipped\":8"))?
+    check!("import 2 + skip 12", Str.contains(imp, "\"imported\":2") and Str.contains(imp, "\"skipped\":12"))?
+    check!("a poison row skips rather than crashing the whole import", Str.contains(imp, "\"imported\":"))?
     check!("an exponent id is skipped, not upserted over id 700", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id IN (700, 7);")) == "0")?
     # scoped to the IMPORT fixture (ids 9000+): activity 103 carries a deliberately
     # malformed date for the bad-date path. The previous form of this check looked for a
@@ -1958,7 +1964,11 @@ b_import! = |ctx| {
     # "2025-07-100T..." to "2025-07-10" and matched, so it was green on the exact poison
     # it was written to catch. Scoped to imported ids because activity 103 carries a
     # deliberately malformed date for the bad-date path.
-    check!("no imported date is stored non-canonical", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id >= 9000 AND start_local NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z';")) == "0")?
+    # shape AND calendar validity. The GLOB alone is shape-only -- it caught the 3-digit
+    # day and passed Feb 30, Apr 31 and a year-1000 row. The julianday round trip closes
+    # that: SQLite normalises an impossible date, so the round-tripped string differs
+    # from the stored one. Both halves are needed; neither subsumes the other.
+    check!("no imported date is stored non-canonical", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id >= 9000 AND (start_local NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z' OR strftime('%Y-%m-%dT%H:%M:%SZ', julianday(start_local)) IS NOT start_local);")) == "0")?
     check!("import conforms to its schema", validate_schema!(ctx, "import ${expdir}", "import") == "")?
     row9001 = Str.trim(sql!(ctx.db, "SELECT name || '|' || sport_type || '|' || start_local || '|' || moving_time || '|' || CAST(distance AS INT) || '|' || weighted_avg_watts FROM activities WHERE id=9001;"))
     check!("imported 9001 row exact", row9001 == "Morning ride, easy one|Ride|2025-07-01T06:30:00Z|3600|20100|190.0")?
@@ -2475,7 +2485,10 @@ write_csv! = |dir| {
     # date_str_to_days normalises it to a different month. All four poison rows must be
     # skipped: exponent id, exponent day, exponent hour, exponent year.
     exp_id = "7e2,\\\"Jul 3, 2025, 6:00:00 AM\\\",Exp Id Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
-    exp_day = "9003,\\\"Jul 1e2, 2025, 6:00:00 AM\\\",Exp Day Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
+    # 1e1 (=10), NOT 1e2 (=100): a 100th day is calendar-invalid and would be rejected
+    # whether or not the parse is narrowed, so it pinned nothing. Day 10 is valid, so
+    # only the exponent refusal can keep this row out.
+    exp_day = "9003,\\\"Jul 1e1, 2025, 6:00:00 AM\\\",Exp Day Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
     exp_hour = "9004,\\\"Jul 3, 2025, 1e1:00:00 AM\\\",Exp Hour Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
     # 2e3, not 1e3: 1000 is also caught by the 1900-2999 range check, so a revert of the
     # PARSE would still skip the row and the mutant would survive. 2000 is in range.
@@ -2486,7 +2499,15 @@ write_csv! = |dir| {
     big_day = "9006,\\\"Jul 100, 2025, 6:00:00 AM\\\",Big Day Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
     big_hour = "9007,\\\"Jul 3, 2025, 25:00:00 PM\\\",Big Hour Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
     feb30 = "9008,\\\"Feb 30, 2025, 6:00:00 AM\\\",Feb30 Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
-    sh!("mkdir -p '${dir}' && printf '%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n' \"${h}\" \"${r1}\" \"${r2}\" \"${junk}\" \"${exp_id}\" \"${exp_day}\" \"${exp_hour}\" \"${exp_year}\" \"${big_day}\" \"${big_hour}\" \"${feb30}\" > '${dir}/activities.csv'")
+    # minute and second were interpolated verbatim -- never parsed, never bounded
+    exp_min = "9009,\\\"Jul 3, 2025, 6:1e1:00 AM\\\",Exp Min Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
+    big_sec = "9010,\\\"Jul 3, 2025, 6:00:99 AM\\\",Big Sec Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
+    # 1e1 (=10) is an IN-RANGE second, so only the exponent refusal can reject it --
+    # 6:00:99 above pins the range check instead, and pinned nothing about the parse.
+    exp_sec = "9012,\\\"Jul 3, 2025, 6:00:1e1 AM\\\",Exp Sec Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
+    # a large plain-digit hour used to overflow U64 in the +12 and CRASH the import
+    ovf_hour = "9011,\\\"Jul 3, 2025, 18446744073709551615:00:00 PM\\\",Overflow Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
+    sh!("mkdir -p '${dir}' && printf '%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n' \"${h}\" \"${r1}\" \"${r2}\" \"${junk}\" \"${exp_id}\" \"${exp_day}\" \"${exp_hour}\" \"${exp_year}\" \"${big_day}\" \"${big_hour}\" \"${feb30}\" \"${exp_min}\" \"${big_sec}\" \"${ovf_hour}\" \"${exp_sec}\" > '${dir}/activities.csv'")
 }
 
 sfloat : Str -> F64
