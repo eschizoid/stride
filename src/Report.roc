@@ -56,7 +56,7 @@ Report :: [].{
                 \\       -- (high-confidence rungs) — vs estimated from HR/RPE/relative-effort
                 \\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN ('power_stream','weighted_watts','avg_watts','rtss') THEN m.tss ELSE 0 END),0) AS REAL) AS measured,
                 \\       -- polarization intensity per activity: the pi_* split when the activity
-                \\       -- has one (power-derived with watts, pace-derived for a GPS sport
+                \\       -- has one (power-derived with watts, pace-derived for a distance sport
                 \\       -- without), else the HR zones. So a power ride's threshold work counts
                 \\       -- as hard even when HR sat on a zone boundary.
                 \\       COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_easy_s ELSE m.z1_s + m.z2_s END),0) AS easy,
@@ -1099,11 +1099,11 @@ Report :: [].{
 
         # polarization is power-aware: easy/moderate/hard come from POWER zones for
         # activities that have a pi_* intensity split (power-derived with watts,
-        # pace-derived for a GPS sport without), HR zones otherwise (zone_sum! per-activity)
+        # pace-derived for a distance sport without), HR zones otherwise (zone_sum! per-activity)
         total = zsum.easy + zsum.moderate + zsum.hard
         easy = zsum.easy
         hard = zsum.hard
-        # what fraction of the 28d load is measured (power OR GPS pace) vs estimated
+        # what fraction of the 28d load is measured (power OR distance-measured pace) vs estimated
         # (HR/RPE/RE) —
         # so the fitness number carries its own confidence, not just doctor's
         measured_pct = if zsum.tss > 0.0 ((zsum.measured / zsum.tss) * 100.0).round_to_i64_try().ok_or(0) else 0
@@ -1309,7 +1309,7 @@ Report :: [].{
                 \\       COALESCE(m.z1_s,0) AS z1_s, COALESCE(m.z2_s,0) AS z2_s, COALESCE(m.z3_s,0) AS z3_s,
                 \\       COALESCE(m.z4_s,0) AS z4_s, COALESCE(m.z5_s,0) AS z5_s,
                 \\       -- hard time: the pi_* intensity split when the activity has one --
-                \\       -- POWER-derived where there are watts, PACE-derived for a GPS sport
+                \\       -- POWER-derived where there are watts, PACE-derived for a distance sport
                 \\       -- without them -- else HR Z4+Z5. So a power ride's threshold work counts,
                 \\       -- and so does a run's.
                 \\       COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) AS hard_s,
@@ -2560,9 +2560,12 @@ Report :: [].{
                     month: m.month,
                     load: m.load,
                     sessions,
-                    # the trailing month is almost always partial, and comparing
-                    # its load to a full one reads as a collapse: 751 TSS in 17
-                    # days against July's 1150 is a 22% INCREASE per day
+                    # the trailing month is almost always partial, and comparing its load
+                    # to a full one reads as a collapse when the DAILY RATE is often
+                    # higher. No worked example here on purpose: a partial month grows,
+                    # so the totals and the percentage between them go stale on the next
+                    # sync -- one edit already turned a correct figure into a wrong one
+                    # and left the percentage beside it contradicting the new number.
                     partial: m.month == this_month,
                     ftp_family: ftp.ftp_family,
                     ftp_lo: ftp.ftp_lo,

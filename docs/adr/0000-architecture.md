@@ -102,7 +102,7 @@ Because the blended total is not all TSS, stride **stops calling it "TSS"** in
 mixed contexts and instead records, per metrics row:
 
 - `load_model` — which ladder rung scored it (provenance).
-- The confidence tier — **high** (measured power OR GPS-measured pace), **medium**
+- The confidence tier — **high** (measured power OR distance-measured pace), **medium**
   (HR or session-RPE), **low** (relative effort), **none** (unscored). DERIVED from
   `load_model` at read time, not stored: the `load_confidence` column existed until
   schema v8 and was dropped for being derivable. Surfaced as a distribution by `doctor`.

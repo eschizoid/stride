@@ -33,7 +33,7 @@ Three compounding reasons HR-only fails here:
   **that sport's own FTP**. `Metrics.time_in_power_intensity` splits stream time into
   easy (<76% FTP), moderate (76-90%), hard (≥91%). Summary polarization, the activities/
   week "hard" column, and the activity detail all read power-intensity when present and
-  fall back to the PACE split for a GPS sport without watts, and to HR zones only when
+  fall back to the PACE split for any distance sport without watts, and to HR zones only when
   there is neither. TSS/IF are likewise judged against the
   sport's own FTP (so a rowing effort isn't scored against a cycling number).
 - **Per-sport FTP is generic and data-driven — NO hardcoded sport list** (explicitly
