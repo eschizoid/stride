@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.7.0](https://github.com/eschizoid/stride/compare/v0.6.0...v0.7.0) (2026-08-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* machine output is requested, never inferred. Stride no longer reads any agent or harness environment variable to choose its format. If a caller that used to receive JSON now gets human tables, pass --json on the command (any argv position) or export STRIDE_FORMAT=json for the session — STRIDE_FORMAT is unchanged and is now the only environment input. The coach skill shipped in this repo already passes --json on every query; a copy of that skill installed outside the repo must be refreshed.
+
+### Features
+
+* callers ask for JSON — drop environment detection, answer machines in envelopes, and schema every published payload ([535acfd](https://github.com/eschizoid/stride/commit/535acfd0fcf09a0006c62575a9f25158aeae9148))
+* coaching-language boundary guard with closed-set verdict pins ([#167](https://github.com/eschizoid/stride/issues/167)) ([29f1d02](https://github.com/eschizoid/stride/commit/29f1d02414914f9f023325d955c2658072d4b317))
+* error envelopes exit non-zero, and an unknown command stops pretending to succeed ([#178](https://github.com/eschizoid/stride/issues/178)) ([3b64cda](https://github.com/eschizoid/stride/commit/3b64cda60fade8902b2e8da0856f7c6ba4bc87c5))
+* explicit --json / --human flags for tool-neutral output selection ([#177](https://github.com/eschizoid/stride/issues/177)) ([e323890](https://github.com/eschizoid/stride/commit/e323890126ba3e4835e39afc27668cdf64fec21c))
+* FTP derives from the sport family via stored sport_family ([#169](https://github.com/eschizoid/stride/issues/169)) ([39f6a40](https://github.com/eschizoid/stride/commit/39f6a405f2920f683c454598afd00cdccf41302a))
+* missing values are flagged, not nulled ([#168](https://github.com/eschizoid/stride/issues/168)) ([fde7724](https://github.com/eschizoid/stride/commit/fde772439ce4cb7136ac262957798cdcfb848fcd))
+* personal-baseline primitives — current vs own history with deterministic comparability ([#175](https://github.com/eschizoid/stride/issues/175)) ([785ec04](https://github.com/eschizoid/stride/commit/785ec04972265f9fe442b16e803744b4f40f62a5))
+* plan payload gains 28d history and adherence counts ([#173](https://github.com/eschizoid/stride/issues/173)) ([827cccd](https://github.com/eschizoid/stride/commit/827cccd0563705f387d0b0d75a5dbd0c01a5fc48))
+* platform failures reach the caller as the contract ([#184](https://github.com/eschizoid/stride/issues/184)) ([6e7afc0](https://github.com/eschizoid/stride/commit/6e7afc08d7713e67ec70767e28cde324b579338e))
+* publish the JSON contract as checked-in, validated schemas ([#179](https://github.com/eschizoid/stride/issues/179)) ([68d1ff4](https://github.com/eschizoid/stride/commit/68d1ff4ff1ceedfe3f1753a1cc0602be34c376c3))
+* rep-level comparison — the same workout shape across sessions ([#185](https://github.com/eschizoid/stride/issues/185)) ([2515286](https://github.com/eschizoid/stride/commit/2515286c403669c76033b14c1f2f747dcc83be41))
+* spend the CP model — W′ balance and time to exhaustion ([#190](https://github.com/eschizoid/stride/issues/190)) ([6af2e21](https://github.com/eschizoid/stride/commit/6af2e21624036bf63dc8841fe2908a9afd0210a6))
+* sport words — family filters, honest empty results ([#150](https://github.com/eschizoid/stride/issues/150)) ([25b676c](https://github.com/eschizoid/stride/commit/25b676cd65a06db2b2309441612f531197c4fcaa))
+* stimulus history, windowed loads, and threshold trajectory as measurements ([#174](https://github.com/eschizoid/stride/issues/174)) ([17a2f67](https://github.com/eschizoid/stride/commit/17a2f6729bf1f4278462b6115a91644ef89e35ee))
+* stride season — training blocks, monthly load, polarization, FTP trajectory ([#192](https://github.com/eschizoid/stride/issues/192)) ([b25d3e9](https://github.com/eschizoid/stride/commit/b25d3e90b2578ae5217c6dac03460aedbf345d16))
+* substitute-activity links on skip and unplanned rows in week ([#145](https://github.com/eschizoid/stride/issues/145)) ([072d99e](https://github.com/eschizoid/stride/commit/072d99ef6faf0beb867b9d8ad64c333e535f01ba))
+* TSS-weighted confidence coverage on the load aggregates ([#172](https://github.com/eschizoid/stride/issues/172)) ([67430de](https://github.com/eschizoid/stride/commit/67430de81f16bf0bb527f30f9811437ad28811e8))
+
+
+### Bug Fixes
+
+* a done session refuses skip — completions are permanent evidence ([#153](https://github.com/eschizoid/stride/issues/153)) ([0379529](https://github.com/eschizoid/stride/commit/03795296bd692a9ef238711854bd0351e7c92a86))
+* refuse exponent notation in user-supplied ids and counts ([#203](https://github.com/eschizoid/stride/issues/203)) ([768c07e](https://github.com/eschizoid/stride/commit/768c07eda2377aca676e6049489d1e71c08fdf14))
+* repair the coach skill contract and add drift tests ([#166](https://github.com/eschizoid/stride/issues/166)) ([1b2ecf2](https://github.com/eschizoid/stride/commit/1b2ecf214edc58a71346489d051efe72410f4945))
+* stop the e2e fixture changing the binary's clock mid-run ([#202](https://github.com/eschizoid/stride/issues/202)) ([2c14649](https://github.com/eschizoid/stride/commit/2c14649690fa8794f8b53f4c018bf38daf18c982))
+* structure-gated interval detection — judge the segmentation, not the distribution ([#171](https://github.com/eschizoid/stride/issues/171)) ([aa218ef](https://github.com/eschizoid/stride/commit/aa218ef081f041c23dcd23d0956d3d49a1ab8a4b))
+* substitution hardening — prune guard, stable ordering, truthful claim semantics ([#147](https://github.com/eschizoid/stride/issues/147)) ([1efa473](https://github.com/eschizoid/stride/commit/1efa473bc4c733103b2d485ec210ab659e796fa6))
+
 ## [0.6.0](https://github.com/eschizoid/stride/compare/v0.5.0...v0.6.0) (2026-08-14)
 
 
