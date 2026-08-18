@@ -2095,8 +2095,10 @@ b_device_watts! = |ctx| {
     # one pace-scored activity that SURVIVES to b_doctor!, so doctor's confidence
     # cross-check can guard the rtss rung. b_period_pace! seeds one too and then deletes
     # it, which is the only reason the rung was invisible there -- a threshold speed
-    # derives from a single activity via period_threshold_sql's cold-start arm, so no
-    # accumulated history is needed. Without this row, dropping 'rtss' from
+    # derives from a single activity via period_threshold_sql's TRAILING-60-day arm,
+    # whose `b2.start_local <= a.start_local` includes the activity's own row, so no
+    # accumulated history is needed. (Not the cold-start forward-fill: delete that arm
+    # outright and the suite stays green.) Without this row, dropping 'rtss' from
     # high_models_sql leaves the whole suite green.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (403,'doctor pace swim','Swim','${ctx.d1}T05:00:00Z',1800,2400);")
     _ = seed_pace_stream!(ctx.db, 403, 1300, 1)
