@@ -256,6 +256,26 @@ run_sync! = || {
     # Pin the exact value (not just >0) so the whole stream->best20->deriveFTP->NP->TSS path is checked.
     check_near!("501 power streams score ~110.8 TSS (NP200 @ derived FTP190)", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 110.8, 1.0)?
 
+    # #208: the two config reads on the SYNC path. Both used to swallow an unreadable
+    # value -- last_sync_epoch by folding it into "never synced" (a silent full re-pull,
+    # conservative and therefore invisible), strava_expires_at by raising a tag nothing
+    # handled, which surfaced as internal_error telling the athlete to file a bug about
+    # their own config value. Written with sql! because that is how a legacy row arrives,
+    # and because `config set` now refuses these at the write.
+    #
+    # These live HERE rather than in the offline suite because both reads sit behind the
+    # sync path, which needs the mock. That means they run under `just e2e-sync` only --
+    # local, not CI. Stated plainly rather than left to be discovered.
+    _ = sql!(db, "UPDATE config SET value='1e9' WHERE key='last_sync_epoch';")
+    bad_epoch = sync_stride!(bin, home, base, ["sync"])
+    check!("an unreadable last_sync_epoch is named, not a silent full re-pull", Str.contains(bad_epoch, "unreadable_config") and Str.contains(bad_epoch, "last_sync_epoch"))?
+    _ = sql!(db, "DELETE FROM config WHERE key='last_sync_epoch';")
+    check!("...while an ABSENT one still means never-synced and syncs", Str.contains(sync_stride!(bin, home, base, ["sync"]), "\"new_activities\""))?
+    _ = sql!(db, "UPDATE config SET value='99999999999999999999' WHERE key='strava_expires_at';")
+    bad_exp = sync_stride!(bin, home, base, ["sync"])
+    check!("an unreadable strava_expires_at is named, not internal_error", Str.contains(bad_exp, "unreadable_config") and Str.contains(bad_exp, "strava_expires_at"))?
+    check!("...and never tells the athlete to open an issue", !(Str.contains(bad_exp, "please open an issue")))?
+
     _ = sh!("rm -rf '${home}'")
     Stdout.line!("SYNC E2E CHECKS PASS")
 }

@@ -179,7 +179,10 @@ Strava :: [].{
         access = token_field!(path, "strava_access_token")?
         refresh = token_field!(path, "strava_refresh_token")?
         expires_str = token_field!(path, "strava_expires_at")?
-        expires_at = (I64.from_str(expires_str)).map_err(|_| CorruptToken)?
+        # UnreadableConfig, not CorruptToken: that tag was raised here and handled
+        # nowhere, so a value the user can set with `config set` surfaced as
+        # internal_error -- "please open an issue" for their own typo (#208).
+        expires_at = (Metrics.arg_i64(expires_str)).map_err(|_| UnreadableConfig("strava_expires_at", expires_str))?
         now = Db.now_secs!({})
         if now < (expires_at - 60)
             Ok(access)
@@ -255,17 +258,22 @@ Strava :: [].{
             Err(other) => Err(other)
             Ok(token) => {
                 started = Db.now_secs!({})
-                # incremental with a rolling 30-day overlap so recent edits on
-                # Strava self-heal (`backfill` is the full re-pull when needed)
-                # NotFound (never synced) = full pull; a real db read error propagates
-                # instead of silently burning the rate budget
+                # Incremental with a rolling 30-day overlap so recent edits on Strava
+                # self-heal (`backfill` is the full re-pull when needed).
+                #
+                # THREE outcomes, not two. Absent means never synced and a full pull is
+                # right. A db read error propagates rather than silently burning the rate
+                # budget. Unreadable used to collapse into the first, so a bad value
+                # forced a full re-pull every run -- conservative, and therefore
+                # invisible forever (#208). arg_i64 rather than I64.from_str, so the
+                # shape accepted here matches what `config set` enforces.
                 after_epoch =
                     match Db.config_opt!(path, "last_sync_epoch")? {
                         NotFound => None
                         Found(epoch_str) =>
-                            match I64.from_str(epoch_str) {
+                            match Metrics.arg_i64(epoch_str) {
                                 Ok(e) => Some((e - 2592000).max(0))
-                                Err(_) => None
+                                Err(_) => return Err(UnreadableConfig("last_sync_epoch", epoch_str))
                             }
                     }
                 after_param =
