@@ -116,3 +116,11 @@ jobs:
         run: roc build src/app.roc --output=stride --opt=dev   # ~15s; new compiler uses --output=
       - name: Run offline e2e suite
         run: ROC=roc just e2e
+      # Cheap, and it guards a class that has rotted twice: a comment asserting an issue
+      # is still open when the tracker says closed (#165 found `#105 remains open` sitting
+      # 560 lines above the same file saying it was fixed). GITHUB_TOKEN is enough — it
+      # only reads issue state.
+      - name: Check issue-state claims in source comments
+        run: just issue-claims
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

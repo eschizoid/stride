@@ -35,6 +35,12 @@ test:
     just build
     just e2e
 
+# every `#NNN` in a source comment is a claim about an issue's state; this checks the
+# mechanical half of it against the tracker. Needs `gh` auth, so it is its own recipe
+# rather than part of `test` -- a suite that fails without network is worse than no check.
+issue-claims:
+    bash tools/issue-claims.sh
+
 # validate this machine's real payloads against the published contract
 # (schemas/v2/*.json). e2e runs the same validator against fixtures; this is the
 # "does MY data conform" pass, for after a schema or payload change. Depends on
