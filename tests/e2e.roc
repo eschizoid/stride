@@ -152,7 +152,8 @@ run_all! = || {
     ctx = { bin, home, db: "${home}/.stride/db.sqlite", today, d1, d2, tz }
     b_init_config!(ctx)?
     # Pin the sandbox clock to the same zone the dates above were computed in,
-    # BEFORE any date-dependent check runs. b_config_ftp! (line ~406) sets it too, for
+    # BEFORE any date-dependent check runs. b_config_ftp! sets it too (at its "config set
+    # emits the JSON envelope" check), for
     # its own assertions, but everything between here and there was comparing a
     # Chicago-derived `today` against a binary still defaulting to UTC (#200).
     #
@@ -409,8 +410,8 @@ b_config_ftp! = |ctx| {
     # a configurable key still round-trips normally
     # config set success is now a JSON envelope for tools (matching the refusal path) —
     # assert the envelope, and the human line separately
-    check!("config set emits the JSON envelope", strjq!(ctx, ["config", "set", "timezone", "America/Chicago"], ".data.value") == "America/Chicago")?
-    check!("config set human line", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "set", "timezone", "America/Chicago"]), "timezone = America/Chicago"))?
+    check!("config set emits the JSON envelope", strjq!(ctx, ["config", "set", "timezone", ctx.tz], ".data.value") == ctx.tz)?
+    check!("config set human line", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "set", "timezone", ctx.tz]), "timezone = ${ctx.tz}"))?
     check!("value stored + read back (human)", Str.trim(stride_human!(ctx.bin, ctx.home, ["config", "get", "timezone"])) == "America/Chicago")?
     # ── explicit format flags (#162): the flag beats the environment, works in
     # any argv position, and the last flag wins. stride_env! pins STRIDE_FORMAT
@@ -444,8 +445,10 @@ b_config_ftp! = |ctx| {
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${term_sess};")
     check!("config get json value", strjq!(ctx, ["config", "get", "timezone"], ".data.value") == "America/Chicago")?
     check!("config get not_set error", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "nope"]), "not_set"))?
-    # delete the row rather than storing "" — an empty value is a stored-but-invalid
-    # timezone, not an absent one, and doctor treats those differently
+    # delete the row rather than storing "" — not because they differ (Db.roc collapses
+    # both to NoTz, and doctor reports the same UTC fallback for each; that equivalence
+    # is pinned in b_doctor!) but because an absent row is the state a fresh install is
+    # actually in.
     _ = sql!(ctx.db, "DELETE FROM config WHERE key='timezone';")
     # ...and ASSERT the absent path, which nothing did before: the DELETE sat as the last
     # statement of this function with no observation of its effect, so it proved nothing
@@ -941,7 +944,10 @@ b_seed_analyze! = |ctx| {
     # config SET rather than get: set always returns the payload, while get on a
     # key the fixture has not written is the not_set ERROR envelope (a different
     # shape). Re-setting the value the suite already configured is idempotent.
-    check!("config conforms", validate!("config set timezone America/Chicago", "config") == "")?
+    # NOTE this validate! EXECUTES its argument, so it is a clock write, not a read.
+    # On main this was the line that actually caused #200 -- it flipped the binary to
+    # Chicago for the whole remainder of the run while the harness was still on UTC.
+    check!("config conforms", validate!("config set timezone ${ctx.tz}", "config") == "")?
     act_sess = Str.trim(strjq!(ctx, ["week", "add", "2099-11-11", "endurance", "schema action probe", "r"], ".data.id"))
     check!("week add conforms", validate!("week add 2099-11-12 endurance d r", "week_add") == "")?
     check!("skip conforms", validate!("skip ${act_sess} \"probe reason\"", "skip") == "")?
@@ -1020,7 +1026,11 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "UPDATE activity_metrics SET pi_easy_s = (SELECT pi_easy_s FROM pi_bak), pi_moderate_s = (SELECT pi_moderate_s FROM pi_bak), pi_hard_s = (SELECT pi_hard_s FROM pi_bak) WHERE activity_id = 101; DROP TABLE pi_bak;")
     # the block must END on a training day, never later -- it used to end on the
     # Sunday closing the last training week, dating an open block into the future
-    check!("no block ends after the last day it contains", strjq!(ctx, ["season"], "[.data.blocks[] | select(.end_date > (now | strftime(\"%Y-%m-%d\")))] | length == 0") == "true")?
+    # ctx.today, not jq's `now | strftime` -- jq resolves strftime through gmtime and
+    # ignores TZ entirely, so that compared a Chicago-anchored end_date against a UTC
+    # wall clock. It could not false-FAIL under this zone, which is why it survived two
+    # rounds; it was simply a day weaker than it read, and wrong for any zone east of UTC.
+    check!("no block ends after the last day it contains", strjq!(ctx, ["season"], "[.data.blocks[] | select(.end_date > \"${ctx.today}\")] | length == 0") == "true")?
     # trained weeks can never exceed the calendar weeks spanned
     check!("trained weeks never exceed the span", strjq!(ctx, ["season"], "[.data.blocks[] | select(.weeks > .span_weeks)] | length == 0") == "true")?
     # sessions counts ACTIVITIES. On THIS fixture the totals happen to agree,
@@ -1045,9 +1055,6 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES ('2010-06-15', 0.0, 1.0, 1.0, 0.0);")
     check!("an activity inside an absence counts for its month, not a block", strjq!(ctx, ["season"], "([.data.months[].sessions] | add) > ([.data.blocks[].sessions] | add)") == "true")?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 922; DELETE FROM daily_load WHERE day = '2010-06-15';")
-    # `closed` must be decided on the same axis the blocks were cut on. A
-    # day-aligned test declared a block closed up to 7 days before a session
-    # today would actually have opened a new one, and nothing covered it.
     # `closed` must be decided on the same axis the blocks were cut on. A
     # day-aligned test declared a block closed up to 7 days before a session
     # today would actually have opened a new one. Asserting "all but the last
@@ -2000,14 +2007,19 @@ b_doctor! = |ctx| {
     check!("conf_high == power-rung provenance", ch == powr)?
     check!("doctor reports sports with a DERIVED ftp", sfloat(strjq!(ctx, ["doctor"], ".data.ftp_derived_sports")) >= 1.0)?
     check!("doctor zones_set true", strjq!(ctx, ["doctor"], ".data.zones_set") == "true")?
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", "America/Chicago"])
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ctx.tz])
     check!("valid tz time_ok", strjq!(ctx, ["doctor"], ".data.time_ok") == "true")?
     dtime = strjq!(ctx, ["doctor"], ".data.time")
     check!("valid tz is DST-aware Chicago", Str.contains(dtime, "America/Chicago") and Str.contains(dtime, "DST-aware"))?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", "Not/ARealZone"])
     check!("bad tz not ok", strjq!(ctx, ["doctor"], ".data.time_ok") == "false")?
     check!("bad tz shows UNKNOWN", Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UNKNOWN"))?
+    # an empty value and an absent row are the SAME state -- Db.roc collapses both to
+    # NoTz. That equivalence was assumed by a comment in b_config_ftp! and asserted
+    # nowhere, and this write sat here with nothing observing it, overwritten five lines
+    # later: dead code wearing a test's clothes.
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ""])
+    check!("empty timezone is the absent state, not an invalid one", strjq!(ctx, ["doctor"], ".data.time_ok") == "true" and Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UTC"))?
     # restore before returning: four scenarios run after this one, and leaving the zone
     # blank hands them a binary on a different clock than the harness -- the same defect
     # this PR fixes at b_config_ftp!. Latent today (nothing after here is date-sensitive)
