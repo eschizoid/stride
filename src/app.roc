@@ -386,7 +386,9 @@ config_store! = |key, val|
     else if numeric_refusal(key, val) != ""
         # a stored value that parses nowhere is the same trap as one that is read
         # nowhere (Config.is_derived's comment) -- refuse it here rather than let
-        # `config get` echo it back as though it took
+        # `config get` echo it back as though it took. numeric_refusal is pure and
+        # called twice rather than bound, because the body is an if-expression and
+        # a binding would need a block around the whole thing for no real gain.
         Output.err_out!("bad_value", numeric_refusal(key, val))
     else {
         path = Db.open_db!({})?

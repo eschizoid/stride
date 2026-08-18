@@ -1069,7 +1069,7 @@ Metrics :: [].{
                 match (Str.split_on(month_day, " "), Str.split_on(clock, " ")) {
                     ([mon, day], [hms, ampm]) => {
                         month = month_num(mon)?
-                        day_n = Try.map_err(U64.from_str(day), |_| BadExportDate)?
+                        day_n = Try.map_err(Metrics.arg_u64(day), |_| BadExportDate)?
                         hour24 = hour_24(hms, ampm)?
                         rest =
                             match Str.split_on(hms, ":") {
@@ -1107,7 +1107,7 @@ Metrics :: [].{
     hour_24 = |hms, ampm| {
         h =
             match Str.split_on(hms, ":") {
-                [hh, _, _] => Try.map_err(U64.from_str(hh), |_| BadExportDate)
+                [hh, _, _] => Try.map_err(Metrics.arg_u64(hh), |_| BadExportDate)
                 _ => Err(BadExportDate)
             }
         hour = h?

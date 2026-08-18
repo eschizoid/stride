@@ -1921,7 +1921,9 @@ b_import! = |ctx| {
     expdir = Str.trim(sh!("mktemp -d"))
     _ = write_csv!(expdir)
     imp = stride!(ctx.bin, ctx.home, ["import", expdir])
-    check!("import 2 + skip 1", Str.contains(imp, "\"imported\":2") and Str.contains(imp, "\"skipped\":1"))?
+    check!("import 2 + skip 3", Str.contains(imp, "\"imported\":2") and Str.contains(imp, "\"skipped\":3"))?
+    check!("an exponent id is skipped, not upserted over id 700", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id IN (700, 7);")) == "0")?
+    check!("an exponent date is skipped, not stored non-canonical", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE length(substr(start_local,1,10)) != 10 OR start_local LIKE '%-100T%';")) == "0")?
     check!("import conforms to its schema", validate_schema!(ctx, "import ${expdir}", "import") == "")?
     row9001 = Str.trim(sql!(ctx.db, "SELECT name || '|' || sport_type || '|' || start_local || '|' || moving_time || '|' || CAST(distance AS INT) || '|' || weighted_avg_watts FROM activities WHERE id=9001;"))
     check!("imported 9001 row exact", row9001 == "Morning ride, easy one|Ride|2025-07-01T06:30:00Z|3600|20100|190.0")?
@@ -2425,7 +2427,14 @@ write_csv! = |dir| {
     r1 = "9001,\\\"Jul 1, 2025, 6:30:00 AM\\\",\\\"Morning ride, easy one\\\",Ride,3700,20.10,55,3600,20100.0,150,,180,190"
     r2 = "9002,\\\"Jul 2, 2025, 7:00:00 PM\\\",Evening Row,Rowing,1900,5.00,30,1800,5000.0,0,145,,"
     junk = "junk,not a date,Broken Row,Ride,x,y,z,q,w,e,r,t,y"
-    sh!("mkdir -p '${dir}' && printf '%s\\n%s\\n%s\\n%s\\n' \"${h}\" \"${r1}\" \"${r2}\" \"${junk}\" > '${dir}/activities.csv'")
+    # #201: an exponent in the ID imported as 700 on the widened stdlib, and
+    # upsert_activity! is an UPSERT on that key -- it would overwrite whatever real
+    # activity holds id 700. An exponent in the DATE stored start_local as
+    # "2022-02-100T...", which every week filter compares as a STRING while
+    # date_str_to_days normalises it to a different month. Both must be skipped.
+    exp_id = "7e2,\\\"Jul 3, 2025, 6:00:00 AM\\\",Exp Id Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
+    exp_day = "9003,\\\"Jul 1e2, 2025, 6:00:00 AM\\\",Exp Day Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
+    sh!("mkdir -p '${dir}' && printf '%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n' \"${h}\" \"${r1}\" \"${r2}\" \"${junk}\" \"${exp_id}\" \"${exp_day}\" > '${dir}/activities.csv'")
 }
 
 sfloat : Str -> F64

@@ -91,7 +91,7 @@ because no test passed an exponent as an argument — found only by differential
 two compilers over a battery of parse inputs.
 
 It reaches judgment-tier MUTATING commands: `skip 1e1 "<reason>"` was "skip needs a numeric
-id" and now skips planned session 10. Dates are unaffected — `is_canonical_date`
+id" and now skips planned session 10. Dates typed on the CLI are unaffected — `is_canonical_date`
 round-trips through `days_to_date_str`, so `week add 1e3-08-17 …` still refuses.
 
 **Narrowed deliberately (#201), not pinned.** #197 pinned the accepting behaviour so a

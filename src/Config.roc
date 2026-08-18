@@ -111,6 +111,22 @@ Config :: [].{
 
 }
 
+# numeric_key: every clause pinned. Three of the five survived mutation when this rule
+# shipped with only e2e coverage -- and the commit message claimed the e2e checks pinned
+# it, which is the over-claim this file's own convention (pure rules, pure expects)
+# exists to prevent.
+expect Config.numeric_key("utc_offset_minutes") == Int
+expect Config.numeric_key("last_sync_epoch") == Int
+expect Config.numeric_key("strava_expires_at") == Int
+expect Config.numeric_key("hr_z1_max") == Decimal
+# the per-sport zone keys, which the `_max` suffix does NOT reach -- `hr_z` is the only
+# clause that classifies them, and dropping it left the whole suite green
+expect Config.numeric_key("hr_z2_max_soccer") == Decimal
+expect Config.numeric_key("hr_z4_max_ride") == Decimal
+expect Config.numeric_key("timezone") == Free
+expect Config.numeric_key("strava_access_token") == Free
+expect Config.numeric_key("strava_client_id") == Free
+
 expect Config.is_secret("strava_access_token") == True
 expect Config.is_secret("strava_refresh_token") == True
 expect Config.is_secret("strava_client_secret") == True
