@@ -33,42 +33,63 @@ SQL queries next to their row decoders** (the adjacency guard the compiler still
 | `Db.roc` | `open_db!`, `secure_perms!`, `run_migrations!`, config get/set, `sport_ftp!`, time-anchor | Sqlite, Cmd, Env |
 | `Strava.roc` | `auth!`, token refresh, `sync!`, `backfill!`, stream fetch, ftp→Strava | Http, Sqlite |
 | `Analyze.roc` | `analyze!`, `compute_one!`, `rebuild_daily_load!`, invalidation CASE | Sqlite |
-| `Report.roc` | read commands: summary/activities/top/load/stats/doctor/activity/progress/compare/pz/power-curve/reps/season/tte/plan | Sqlite |
-| `Plan.roc` | `plan_*`, `complete!`, `skip!`, `rate!` (the judgment tier) | Sqlite |
+| `Report.roc` | where do I stand: summary/load/compare, plus the helpers shared across the report family | Sqlite |
+| `ReportSessions.roc` | what happened: activity/activities/top/progress/reps | Sqlite |
+| `ReportHealth.roc` | check the engine: doctor/stats/zones/power-curve/tte | Sqlite |
+| `ReportSeason.roc` | the long view: season (ADR 0011) | Sqlite |
+| `Plan.roc` | `plan_*` incl. `plan_bundle!`, `complete!`, `skip!`, `rate!` (the judgment tier) | Sqlite |
 | `Import.roc` | `import_archive!` (CSV) | File, Cmd |
 | `app.roc` | just `main!` + `dispatch!` + help text — thin | — |
 
-`Report.roc` is the fattest and will keep growing. The pure modules
-(Metrics/Render/Command/Config/Csv/Streams) already exist and don't change.
+The pure modules (Metrics/Render/Command/Config/Csv/Streams/Sports) already exist and
+don't change.
 
 **When to split `Report.roc` (measurable, not a vibe).** "If it feels unwieldy" is
 unfalsifiable, so the trigger is: split when **either** a single command function exceeds
 **~250 lines**, **or** the file passes **~1500 lines**. When this ADR was written (2026-08-05) `Report.roc` was 1185 lines and its
 largest definition was `doctor!` at 171, so the trigger had NOT fired then.
 
-**Amended 2026-08-17 — the trigger has FIRED, on both halves (#196).** `Report.roc` is
-**over 2700 lines** across 37 definitions, and four command functions are past the ~250
-line: `summary_payload!`, `activity_body!`, `doctor!` and `plan_bundle!`, with `reps!` and
-`season!` below it. Exact spans are deliberately not quoted here — an earlier version of
-this sentence put `doctor!` "just under" the trigger, and a comment edit in THIS PR pushed
-it over, which is the rot this ADR's own "measure it with something that fails" line warns
-about. `#196` measures them when the split is actually done. For
-scale, the file that motivated this ADR's original split was `app.roc` at 2631 lines.
-The subdivision below is therefore in scope; what the boundaries should be is the open
-question. Note the trigger went unnoticed for weeks because it was tracked in an untracked
-scratch file — if it is restated, it should be measured by something that fails. Splitting *before* the trigger bought nothing measurable: specialization is
-whole-program, so a split does not speed the build (proven during the migration), and each
-new pure module must be wired into the `just test` recipe or its expects silently stop
-running — which is why the threshold exists rather than a preference for small files.
+**Amended 2026-08-18 — the split is DONE (#196), and it went by read-command family.**
 
-The split, now in scope, goes by **read-command family**, not one module per command (11 tiny
-modules is worse than one cohesive file) — the seams follow the help text:
+| file | before | after |
+|---|---|---|
+| `Report.roc` | 2780 | 702 |
+| `ReportSessions.roc` | — | 1107 |
+| `ReportHealth.roc` | — | 499 |
+| `ReportSeason.roc` | — | 293 |
+| `Plan.roc` | 768 | 1025 |
 
-| Module | Commands |
-|---|---|
-| `Report.roc` | where do I stand: `summary`, `load`, `compare` (`week` is dispatched to `Plan.plan_view!`) |
-| `ReportSessions.roc` | what happened: `activities`, `activity`, `top`, `progress` |
-| `ReportHealth.roc` | reference/diagnostics: `doctor`, `stats`, `zones`, `power-curve` |
+`plan_bundle!` moved to `Plan.roc` rather than into a report module: it serves the `plan`
+command, `week` already dispatched to `Plan.plan_view!`, and `Plan.roc` owns the judgment
+tier (ADR 0000 §3). That was a misfiling, not a size problem.
+
+Three helpers stayed in `Report.roc` and are called qualified from the new modules, because
+each is shared across families: the high/medium/low model lists (doctor + summary's
+coverage), `sport_filter_sql` (power-curve + activities/top) and `cp_fit_as_of!` (tte +
+activity). The families depend inward on the core; the core imports none of them, so there
+is no cycle to reason about.
+
+**The file half of the trigger is now satisfied everywhere. The function half is not, and
+this ADR should probably stop treating them as the same measurement.** After the split,
+`summary_payload!` is 356, `activity_body!` 377, `plan_view!` 297, `doctor!` 259,
+`plan_bundle!` 254 — all past ~250.
+
+Lifting the one genuinely self-contained block out of `summary_payload!` (its hard-day
+stats: three inputs, one record out) took it from 394 to 356. Each further extraction of
+that quality buys roughly forty lines and needs three or four more to reach the trigger,
+and the remaining candidates each thread five or six intermediates, so the call site grows
+as the body shrinks.
+
+That is worth naming rather than grinding through. These functions are LINEAR sequences of
+forty-odd named bindings with no nesting — a different problem from a 350-line function
+with deep control flow, and a line count cannot tell them apart. Splitting further would
+satisfy the number while turning local bindings into record fields threaded across a
+boundary, which is not obviously more readable.
+
+So: the file trigger stands as written and worked. The function trigger needs a better
+predicate before it is worth acting on again — nesting depth, or the number of distinct
+things a reader must hold at once, rather than lines. Until someone proposes one, the five
+functions above are recorded as knowingly over the line rather than silently so.
 
 ## Consequences & sequencing
 

@@ -2,6 +2,7 @@ import Db
 import Output
 import Strava
 import Report
+import ReportSessions
 import Csv
 import pf.Sqlite
 import pf.Cmd
@@ -53,7 +54,7 @@ Import :: [].{
         match rows {
             [] => Ok(acc)
             [row, .. as rest] =>
-                match Report.export_row_to_summary(headers, row) {
+                match ReportSessions.export_row_to_summary(headers, row) {
                     Ok(summary) => {
                         # stamp 0 → synced_at stays NULL: CSV imports were never on Strava,
                         # so a later sync's prune must never treat them as deletions

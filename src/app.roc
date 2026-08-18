@@ -49,6 +49,9 @@ import Output
 import Strava
 import Analyze
 import Report
+import ReportHealth
+import ReportSeason
+import ReportSessions
 import Plan
 import Import
 
@@ -307,25 +310,25 @@ dispatch! = |cmd|
         Command.Backfill => Strava.backfill!({})
         Command.Analyze => Analyze.analyze!({})
         Command.Summary => Report.summary!({})
-        Command.Stats => Report.stats!({})
-        Command.Plan => Report.plan_bundle!({})
-        Command.Doctor => Report.doctor!({})
-        Command.Zones => Report.pz!({})
+        Command.Stats => ReportHealth.stats!({})
+        Command.Plan => Plan.plan_bundle!({})
+        Command.Doctor => ReportHealth.doctor!({})
+        Command.Zones => ReportHealth.pz!({})
         # a machine calls this alongside schema_version to negotiate, so it
         # answers in the envelope like every other query (#182)
         Command.Version => Output.out!({ version: version }, |p| p.version)
         Command.Compare(period) => Report.compare!(period)
-        Command.Activities(c, sport) => Report.activities!(c, sport)
-        Command.Top(metric, c, sport) => Report.top!(metric, c, sport)
+        Command.Activities(c, sport) => ReportSessions.activities!(c, sport)
+        Command.Top(metric, c, sport) => ReportSessions.top!(metric, c, sport)
         Command.Import(src) => Import.import_archive!(src)
         Command.Rate(target, rpe_str) => Plan.rate!(target, rpe_str)
-        Command.Progress(name, sort) => Report.progress!(name, sort)
-        Command.Tte(watts) => Report.tte!(watts)
-        Command.Reps(date) => Report.reps!(date)
-        Command.Activity(id_str) => Report.activity!(id_str)
+        Command.Progress(name, sort) => ReportSessions.progress!(name, sort)
+        Command.Tte(watts) => ReportHealth.tte!(watts)
+        Command.Reps(date) => ReportSessions.reps!(date)
+        Command.Activity(id_str) => ReportSessions.activity!(id_str)
         Command.Load(days) => Report.load_series!(days)
-        Command.PowerCurve(days, sport) => Report.power_curve!(days, sport)
-        Command.Season => Report.season!({})
+        Command.PowerCurve(days, sport) => ReportHealth.power_curve!(days, sport)
+        Command.Season => ReportSeason.season!({})
         Command.WeekView => Plan.plan_view!(ThisWeek)
         Command.WeekViewAll => Plan.plan_view!(AllTime)
         Command.WeekAdd(date, session_type, detail, rationale) => Plan.plan_add!(date, session_type, detail, rationale)
