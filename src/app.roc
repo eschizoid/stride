@@ -49,6 +49,7 @@ import Output
 import Strava
 import Analyze
 import Report
+import ReportHealth
 import ReportSeason
 import Plan
 import Import
@@ -308,10 +309,10 @@ dispatch! = |cmd|
         Command.Backfill => Strava.backfill!({})
         Command.Analyze => Analyze.analyze!({})
         Command.Summary => Report.summary!({})
-        Command.Stats => Report.stats!({})
+        Command.Stats => ReportHealth.stats!({})
         Command.Plan => Plan.plan_bundle!({})
-        Command.Doctor => Report.doctor!({})
-        Command.Zones => Report.pz!({})
+        Command.Doctor => ReportHealth.doctor!({})
+        Command.Zones => ReportHealth.pz!({})
         # a machine calls this alongside schema_version to negotiate, so it
         # answers in the envelope like every other query (#182)
         Command.Version => Output.out!({ version: version }, |p| p.version)
@@ -321,11 +322,11 @@ dispatch! = |cmd|
         Command.Import(src) => Import.import_archive!(src)
         Command.Rate(target, rpe_str) => Plan.rate!(target, rpe_str)
         Command.Progress(name, sort) => Report.progress!(name, sort)
-        Command.Tte(watts) => Report.tte!(watts)
+        Command.Tte(watts) => ReportHealth.tte!(watts)
         Command.Reps(date) => Report.reps!(date)
         Command.Activity(id_str) => Report.activity!(id_str)
         Command.Load(days) => Report.load_series!(days)
-        Command.PowerCurve(days, sport) => Report.power_curve!(days, sport)
+        Command.PowerCurve(days, sport) => ReportHealth.power_curve!(days, sport)
         Command.Season => ReportSeason.season!({})
         Command.WeekView => Plan.plan_view!(ThisWeek)
         Command.WeekViewAll => Plan.plan_view!(AllTime)
