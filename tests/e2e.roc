@@ -140,9 +140,11 @@ run_all! = || {
     bin = env_or!("STRIDE_BIN", "./stride")
     home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
     # Anchor the harness to the SAME clock the binary will use. These used to be
-    # computed with `date -u` while the fixture configured `timezone America/Chicago`,
-    # so from the first `config set timezone` onward the two disagreed about the civil
-    # day. Between 00:00 and 05:00 UTC that is a whole day: `analyze` regenerates
+    # computed with `date -u` while the fixture configured `timezone America/Chicago`.
+    # The first `config set timezone` in b_config_ftp! opened a disagreement, but its own
+    # DELETE closed it again before any date check ran; what persisted was
+    # b_seed_analyze!'s `validate!("config set timezone …")`, after which every remaining
+    # date check compared a UTC harness date against a Chicago binary. Between 00:00 and 05:00 UTC that is a whole day: `analyze` regenerates
     # daily_load out to the BINARY's today, which is a day behind the harness's, so the
     # series comes up one row short (#200). CI only saw it when a run landed in that
     # five-hour window.
