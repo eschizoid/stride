@@ -412,6 +412,12 @@ b_config_ftp! = |ctx| {
     check!("a numeric key refuses exponent notation at set time", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", "1.18e2"]), "bad_value"))?
     # "+330" parsed fine on both pins -- it becomes 0 only because THIS PR narrowed the
     # read in Db.roc, which is why the refusal has to live at the write.
+    # the write gate must accept exactly what the READ can parse. It checked syntax only,
+    # so an overflowing but well-formed integer stored fine and then failed every read --
+    # a value permanently ignored, which is the trap this gate exists to prevent. Only the
+    # INT side is pinned: I64 overflows at 19 digits, which a human can fat-finger, while
+    # F64 needs 300+ and a literal that long says nothing a reader would learn from.
+    check!("a value too large for the reader is refused at the write", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "utc_offset_minutes", "99999999999999999999"]), "bad_value"))?
     check!("...and refuses a leading +, which this narrowing would otherwise coalesce to 0", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "utc_offset_minutes", "+330"]), "bad_value"))?
     check!("...while the plain forms still store", strjq!(ctx, ["config", "set", "hr_z1_max", "118.5"], ".data.value") == "118.5")?
     check!("...and a free-text key is untouched by the rule", strjq!(ctx, ["config", "set", "timezone", "America/Chicago"], ".data.value") == "America/Chicago")?
