@@ -1730,6 +1730,7 @@ Report :: [].{
                 Zone(name, off) => "timezone ${name} (${Db.fmt_offset(off)} now, DST-aware)"
                 FixedOffset(off) => "fixed offset ${Db.fmt_offset(off)} (adjust seasonally for DST)"
                 BadZone(name, off) => "timezone '${name}' UNKNOWN to system tz db — using ${Db.fmt_offset(off)}; fix the name or set utc_offset_minutes"
+                BadOffset(raw) => "utc_offset_minutes '${raw}' is not a whole number — using UTC; fix it with `stride config set utc_offset_minutes <minutes east of UTC>"
                 Utc => "UTC (set `timezone` or `utc_offset_minutes` if you're not on UTC)"
             }
         # Bool-TYPED, not bare True/False tags: the builtin JSON serializes a bare tag as the
@@ -1738,6 +1739,7 @@ Report :: [].{
         time_ok =
             match mode {
                 BadZone(_, _) => 1 == 0
+                BadOffset(_) => 1 == 0
                 _ => 1 == 1
             }
         payload = {

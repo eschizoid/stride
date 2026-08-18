@@ -415,6 +415,20 @@ b_config_ftp! = |ctx| {
     check!("...and refuses a leading +, which this narrowing would otherwise coalesce to 0", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "utc_offset_minutes", "+330"]), "bad_value"))?
     check!("...while the plain forms still store", strjq!(ctx, ["config", "set", "hr_z1_max", "118.5"], ".data.value") == "118.5")?
     check!("...and a free-text key is untouched by the rule", strjq!(ctx, ["config", "set", "timezone", "America/Chicago"], ".data.value") == "America/Chicago")?
+    # #206: a LEGACY row -- written by SQL, as one written before the write-side
+    # validation existed would be -- must be reported, not coalesced. `+330` parsed fine
+    # on both compiler pins, so this is exactly what an athlete could have stored.
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key='timezone'; INSERT OR REPLACE INTO config VALUES ('utc_offset_minutes','+330');")
+    check!("an unreadable stored offset is named, not silently UTC", Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "not a whole number"))?
+    check!("...and it fails time_ok rather than passing as a UTC setting", strjq!(ctx, ["doctor"], ".data.time_ok") == "false")?
+    _ = sql!(ctx.db, "UPDATE config SET value='-300' WHERE key='utc_offset_minutes';")
+    check!("...while a readable one still resolves", Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "fixed offset -05:00"))?
+    # an unreadable HR zone is NOT missing_config: the key is present and config get
+    # echoes it, so telling the athlete to set it sends them to the wrong place
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key='utc_offset_minutes'; UPDATE config SET value='1.18e2' WHERE key='hr_z1_max';")
+    check!("an unreadable zone bound says unreadable, not missing", Str.contains(stride!(ctx.bin, ctx.home, ["analyze"]), "unreadable_config"))?
+    _ = sql!(ctx.db, "UPDATE config SET value='118' WHERE key='hr_z1_max';")
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", "America/Chicago"])
 
     # the trap this closes: a db from before FTP was derived still holds an ftp_ride row.
     # Setting is refused, so only a LEGACY row can exist — and it must not be echoed back.

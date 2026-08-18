@@ -86,7 +86,12 @@ Db :: [].{
     #   BadZone    — `timezone` is set but the name isn't in the system tz database;
     #                we fall back to the fixed offset (NEVER silently to UTC) and warn.
     #   Utc        — neither configured.
-    TimeMode : [Zone(Str, I64), FixedOffset(I64), BadZone(Str, I64), Utc]
+    # BadOffset carries the STORED TEXT, not a number, because there is no number to
+    # carry -- that is the whole point. An unreadable `utc_offset_minutes` used to be
+    # coalesced to 0, which is indistinguishable from a real UTC offset, so a typo read
+    # as "you are on UTC" and silently shifted every civil-day boundary (#206). It is
+    # the offset twin of BadZone: report it, do not guess it.
+    TimeMode : [Zone(Str, I64), FixedOffset(I64), BadZone(Str, I64), BadOffset(Str), Utc]
 
     # Read the current DST-correct offset (minutes east of UTC) for an IANA zone by
     # validating it against the system tz database, then reading `date +%z`. An
@@ -104,10 +109,17 @@ Db :: [].{
     }
     resolve_time_mode! : Str => TimeMode
     resolve_time_mode! = |path| {
-        fixed : Try(I64, [NoFixed])
+        # An unreadable value is NOT NoFixed and NOT zero: those both mean "carry on",
+        # and carrying on is what made #206 silent. Keep the raw text so doctor can name it.
+        fixed : Try(I64, [NoFixed, Unreadable(Str)])
         fixed =
             match config_get!(path, "utc_offset_minutes") {
-                Ok(s) => Ok(Metrics.arg_i64(s).ok_or(0))
+                Ok(s) =>
+                    match Metrics.arg_i64(s) {
+                        Ok(n) => Ok(n)
+                        Err(_) => Err(Unreadable(s))
+                    }
+
                 Err(_) => Err(NoFixed)
             }
         tz =
@@ -119,11 +131,13 @@ Db :: [].{
             Ok(name) =>
                 match zone_offset_now!(name) {
                     Ok(off) => Zone(name, off)
+                    # a bad zone falls back to the fixed offset, but only a READABLE one
                     Err(_) => BadZone(name, fixed.ok_or(0))
                 }
             Err(_) =>
                 match fixed {
                     Ok(off) => FixedOffset(off)
+                    Err(Unreadable(raw)) => BadOffset(raw)
                     Err(_) => Utc
                 }
         }
@@ -134,6 +148,9 @@ Db :: [].{
             Zone(_, off) => off
             FixedOffset(off) => off
             BadZone(_, off) => off
+            # 0 is the only safe arithmetic fallback, but unlike Utc it is REPORTED as a
+            # fault (time_ok false) rather than presented as a deliberate UTC setting.
+            BadOffset(_) => 0
             Utc => 0
 
         }

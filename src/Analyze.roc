@@ -16,6 +16,7 @@ Analyze :: [].{
         path = Db.open_db!({})?
         match load_zone_config!(path) {
             Err(MissingConfig) => Output.missing_config!({})
+            Err(UnreadableConfig(key, raw)) => Output.unreadable_config!(key, raw)
             Err(other) => Err(other)
             Ok(zb) => {
                 # ...and this line comes BEFORE the count, because the count is itself a
@@ -158,6 +159,10 @@ Analyze :: [].{
         z4 = config_f64!(path, "hr_z4_max")?
         Ok({ z1_max: z1, z2_max: z2, z3_max: z3, z4_max: z4 })
     }
+    # ABSENT and UNREADABLE are different faults and get different errors. Reporting an
+    # unreadable value as MissingConfig told the athlete to set a key that `config get`
+    # was already echoing back at them -- the trap Config.is_derived's comment names,
+    # arrived at from the other side (#206).
     config_f64! : Str, Str => Try(F64, _)
     config_f64! = |path, key|
         match Db.config_opt!(path, key)? {
@@ -165,7 +170,7 @@ Analyze :: [].{
             Found(s) =>
                 match Metrics.arg_f64(s) {
                     Ok(v) => Ok(v)
-                    Err(_) => Err(MissingConfig)
+                    Err(_) => Err(UnreadableConfig(key, s))
 
                 }
         }
