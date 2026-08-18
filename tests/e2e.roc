@@ -1371,11 +1371,13 @@ b_plan! = |ctx| {
     check!("complete nonexistent session", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "999", "101"]), "session_not_found"))?
     # complete_rest! is a SEPARATE parse from the two-argument form above
     check!("an exponent id is refused by the rest-day complete", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "2e0"]), "bad_id"))?
-    # #201 on the OTHER judgment-tier writes. `2e0` is session 2 and `1.01e2` is activity
-    # 101 under the widened stdlib -- both real rows here, so these fail on a revert
-    # instead of trading one not-found for another.
+    # #201 on the OTHER judgment-tier writes. `2e0` is session 2 and `3e2` is activity
+    # 300 under the widened stdlib -- both real rows here, so these fail on a revert
+    # instead of trading one error for another. NOT `1.01e2`: a fractional mantissa does
+    # not parse on either pin, so that form returned bad_id with or without the
+    # narrowing and the check proved nothing.
     check!("an exponent session id is refused by complete", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "2e0", "101"]), "bad_id"))?
-    check!("an exponent activity id is refused by complete", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "3", "1.01e2"]), "bad_id"))?
+    check!("an exponent activity id is refused by complete", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "3", "3e2"]), "bad_id"))?
 
     check!("complete nonexistent activity", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "2", "88888"]), "activity_not_found"))?
     check!("skip nonexistent session", Str.contains(stride!(ctx.bin, ctx.home, ["skip", "999", "x"]), "session_not_found"))?
@@ -1946,13 +1948,17 @@ b_import! = |ctx| {
     expdir = Str.trim(sh!("mktemp -d"))
     _ = write_csv!(expdir)
     imp = stride!(ctx.bin, ctx.home, ["import", expdir])
-    check!("import 2 + skip 5", Str.contains(imp, "\"imported\":2") and Str.contains(imp, "\"skipped\":5"))?
+    check!("import 2 + skip 8", Str.contains(imp, "\"imported\":2") and Str.contains(imp, "\"skipped\":8"))?
     check!("an exponent id is skipped, not upserted over id 700", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id IN (700, 7);")) == "0")?
     # scoped to the IMPORT fixture (ids 9000+): activity 103 carries a deliberately
     # malformed date for the bad-date path. The previous form of this check looked for a
     # 3-digit day or a short substring, and returned 0 for both real poison shapes --
     # green while "1e3-07-03T..." and "20250-07-0..." sat in the table.
-    check!("no imported date is stored non-canonical", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id >= 9000 AND substr(start_local,1,10) NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]';")) == "0")?
+    # GLOB the WHOLE column, not substr(...,1,10): the substring form truncated
+    # "2025-07-100T..." to "2025-07-10" and matched, so it was green on the exact poison
+    # it was written to catch. Scoped to imported ids because activity 103 carries a
+    # deliberately malformed date for the bad-date path.
+    check!("no imported date is stored non-canonical", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id >= 9000 AND start_local NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z';")) == "0")?
     check!("import conforms to its schema", validate_schema!(ctx, "import ${expdir}", "import") == "")?
     row9001 = Str.trim(sql!(ctx.db, "SELECT name || '|' || sport_type || '|' || start_local || '|' || moving_time || '|' || CAST(distance AS INT) || '|' || weighted_avg_watts FROM activities WHERE id=9001;"))
     check!("imported 9001 row exact", row9001 == "Morning ride, easy one|Ride|2025-07-01T06:30:00Z|3600|20100|190.0")?
@@ -2474,7 +2480,13 @@ write_csv! = |dir| {
     # 2e3, not 1e3: 1000 is also caught by the 1900-2999 range check, so a revert of the
     # PARSE would still skip the row and the mutant would survive. 2000 is in range.
     exp_year = "9005,\\\"Jul 3, 2e3, 6:00:00 AM\\\",Exp Year Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
-    sh!("mkdir -p '${dir}' && printf '%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n' \"${h}\" \"${r1}\" \"${r2}\" \"${junk}\" \"${exp_id}\" \"${exp_day}\" \"${exp_hour}\" \"${exp_year}\" > '${dir}/activities.csv'")
+    # plain digits, out of range: parsing is not enough, pad2 pads but never truncates,
+    # so "Jul 100" stored 2025-07-100 and "25:00:00 PM" stored T37. Both imported clean
+    # and then broke `season` with BadActivityDate.
+    big_day = "9006,\\\"Jul 100, 2025, 6:00:00 AM\\\",Big Day Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
+    big_hour = "9007,\\\"Jul 3, 2025, 25:00:00 PM\\\",Big Hour Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
+    feb30 = "9008,\\\"Feb 30, 2025, 6:00:00 AM\\\",Feb30 Probe,Ride,3600,10.00,20,3600,10000.0,0,140,,"
+    sh!("mkdir -p '${dir}' && printf '%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n' \"${h}\" \"${r1}\" \"${r2}\" \"${junk}\" \"${exp_id}\" \"${exp_day}\" \"${exp_hour}\" \"${exp_year}\" \"${big_day}\" \"${big_hour}\" \"${feb30}\" > '${dir}/activities.csv'")
 }
 
 sfloat : Str -> F64

@@ -1076,15 +1076,23 @@ Metrics :: [].{
                                 [_, mi, se] => Ok("${mi}:${se}")
                                 _ => Err(BadExportDate)
                             }
-                        # the YEAR must be validated too, and as four plain digits: it is
-                        # interpolated into start_local verbatim, so an unchecked "1e3"
-                        # stored a non-canonical date that every week filter compares as a
-                        # STRING while date_str_to_days normalised it to year 1000.
+                        # EVERY component is range-checked, not just parsed. These are
+                        # interpolated into start_local verbatim, so a plain-digit but
+                        # out-of-range part still stores a non-canonical date: "Jul 100"
+                        # gave 2025-07-100 and "25:00:00 PM" gave T37, both of which
+                        # imported cleanly and then broke `season` with BadActivityDate.
+                        # pad2 cannot save a 3-digit day -- it only pads, never truncates.
                         year_n = Try.map_err(Metrics.arg_u64(year), |_| BadExportDate)?
-                        if year_n < 1900 or year_n > 2999 {
+                        date_part = "${(year_n).to_str()}-${pad2(month.to_i64_wrap())}-${pad2(day_n.to_i64_wrap())}"
+                        # is_canonical_date rather than a hand-rolled day range: it
+                        # round-trips through days_to_date_str, so it rejects Feb 30 and
+                        # every other calendar-invalid day without this function owning a
+                        # second, divergent definition of what a real date is. The year
+                        # bound is separate because canonicality accepts year 1000.
+                        if year_n < 1900 or year_n > 2999 or hour24 > 23 or !(Metrics.is_canonical_date(date_part)) {
                             Err(BadExportDate)
                         } else {
-                            Ok("${(year_n).to_str()}-${pad2(month.to_i64_wrap())}-${pad2(day_n.to_i64_wrap())}T${pad2(hour24.to_i64_wrap())}:${rest?}Z")
+                            Ok("${date_part}T${pad2(hour24.to_i64_wrap())}:${rest?}Z")
                         }
                     }
 
