@@ -145,10 +145,9 @@ run_all! = || {
     # DELETE closed it again before any date check ran; what persisted was
     # b_seed_analyze!'s `validate!("config set timezone …")`, after which every remaining
     # date check compared a UTC harness date against a Chicago binary. Between 00:00 and
-    # 05:00 UTC that is a whole day: `analyze` regenerates
-    # daily_load out to the BINARY's today, which is a day behind the harness's, so the
-    # series comes up one row short (#200). CI only saw it when a run landed in that
-    # five-hour window.
+    # 05:00 UTC that is a whole day: `analyze` regenerates daily_load out to the BINARY's
+    # today, which is a day behind the harness's, so the series comes up one row short
+    # (#200). CI only saw it when a run landed in that five-hour window.
     tz = "America/Chicago"
     today = need("date +%F", Str.trim(sh!("TZ=${tz} date +%F")))?
     d1 = need("date -3d", Str.trim(sh!("TZ=${tz} date -v-3d +%F 2>/dev/null || TZ=${tz} date -d '3 days ago' +%F")))?
@@ -1074,8 +1073,8 @@ b_seed_analyze! = |ctx| {
     # anchored to ctx.today, NOT to SQLite's 'now': 'now' is UTC while the binary is on
     # ${tz}, so on a Monday between 00:00 and 05:00 UTC the harness's Monday and the
     # binary's this_week were a week apart and the `closed` checks failed. Same bug as
-    # #200, weekly rather than daily -- the first fix caught three clock reads and left
-    # these two.
+    # #200, weekly rather than daily -- the first fix anchored the three shell `date`
+    # reads and left three more: these two SQLite ones and a jq `now | strftime` below.
     mon = "date('${ctx.today}', '-' || ((CAST(strftime('%w','${ctx.today}') AS INTEGER) + 6) % 7) || ' days')"
     # two clear weeks short of the gap: a session today would EXTEND this block
     _ = sql!(ctx.db, "INSERT INTO daily_load (day,tss,ctl,atl,tsb) VALUES (date(${mon}, '-14 days'), 50.0, 5.0, 5.0, 0.0);")
