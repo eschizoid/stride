@@ -35,7 +35,7 @@ jobs:
   build:
     name: build ${{ matrix.target }}
     needs: release-please
-    # EXPERIMENT (2026-08-04): ENABLED on the new (Zig) compiler, Aug-04 nightly (bug A fixed),
+    # ENABLED on the new (Zig) compiler at the pinned nightly (bug A fixed),
     # --opt=dev (build time, not correctness — #32 fixed on the 2026-08-17 pin). All five targets, fail-fast off — we want to SEE which
     # platforms build + pass version-check in CI. The bugs this used to hedge against
     # (C: sync heap corruption, #105; B: linux Json.to_str) are gone -- see the header.
@@ -114,7 +114,7 @@ jobs:
     name: attach binaries to the release
     needs: [release-please, build]
     # ENABLED with `build` above. `always()` so it still attaches whatever DID build even if some
-    # target failed (fail-fast is off) — a partial binary set beats none while we shake out B/C.
+    # target failed (fail-fast is off) — a partial binary set beats none.
     if: ${{ always() && needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:

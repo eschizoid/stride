@@ -1,7 +1,7 @@
 name: manual-release
 
 # Manual, dispatch-only release cut — independent of release-please (which drives
-# 0.1.1+ automatically). Reads the version from app.roc, tags it, builds the 4
+# 0.1.1+ automatically). Reads the version from app.roc, tags it, builds the five
 # binaries, and publishes with notes from CHANGELOG.md. Use to (re-)cut a baseline
 # like v0.1.0. Do NOT dispatch while release-please has a pending release PR.
 on:

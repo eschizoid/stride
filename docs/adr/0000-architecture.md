@@ -30,7 +30,7 @@ or any JSON. The secret-key policy is one tested source of truth (`Config.is_sec
 ## 2. Written in Roc — and pinned, deliberately
 
 Toolchain: Roc's **new (Zig) compiler** (nightly, pinned by exact tag in
-`.github/workflows/build.yml`) · basic-cli `0.21` · builtin JSON (no roc-json). The
+`.github/workflows/build.yml`) · basic-cli `0.22` · builtin JSON (no roc-json). The
 earlier alpha4 / basic-cli 0.20 / roc-json 0.13 pin is retired; §9 records the
 migration and why the original "blocked on roc-json" conclusion was wrong. CI
 type-checks (`roc check`) and runs the pure tests (`roc test`) on this compiler across

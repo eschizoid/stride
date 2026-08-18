@@ -1601,12 +1601,15 @@ Report :: [].{
                 \\-- confidence tiers derived from load_model at read time (not stored): high =
                 \\-- measured power or GPS-measured pace (rtss), medium = HR/RPE, low =
                 \\-- relative_effort, none = unscored. The e2e cross-checks the 'high' count
-                \\-- against this rung list. Measured: dropping 'power_stream',
-                \\-- 'weighted_watts' or 'avg_watts' fails the suite. Dropping 'rtss' does NOT,
-                \\-- and the reason is structural rather than an oversight -- the pace rung
-                \\-- needs a DERIVED threshold speed, which comes from history the sandbox
-                \\-- never accumulates, so no e2e activity can score by pace. Guarding it
-                \\-- means seeding enough history to derive one, not adding a row.
+                \\-- against this rung list, and all FOUR rungs are guarded: dropping any of
+                \\-- them fails the suite. That took one fixture row per rung reaching doctor
+                \\-- alive -- avg_watts was hidden by body ORDER, rtss by b_period_pace!
+                \\-- deleting its own pace-scored swims before doctor runs. Two earlier
+                \\-- versions of this comment guessed at causes instead (a missing fixture,
+                \\-- then an underivable threshold); a threshold speed derives from a single
+                \\-- activity via period_threshold_sql's cold-start arm. Adding a rung here
+                \\-- needs a fixture row that SURVIVES to b_doctor!, or the guard silently
+                \\-- stops covering it.
                 \\SELECT COALESCE(SUM(CASE WHEN load_model IN (${high_models_sql}) THEN 1 ELSE 0 END),0) AS hi,
                 \\       COALESCE(SUM(CASE WHEN load_model IN (${medium_models_sql}) THEN 1 ELSE 0 END),0) AS med,
                 \\       COALESCE(SUM(CASE WHEN load_model IN (${low_models_sql}) THEN 1 ELSE 0 END),0) AS lo,

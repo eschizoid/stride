@@ -2092,6 +2092,16 @@ b_device_watts! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("estimated watts fall through to HR", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=401;")) == "hr_avg")?
     check!("NULL device_watts still scores as measured", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=402;")) == "avg_watts")?
+    # one pace-scored activity that SURVIVES to b_doctor!, so doctor's confidence
+    # cross-check can guard the rtss rung. b_period_pace! seeds one too and then deletes
+    # it, which is the only reason the rung was invisible there -- a threshold speed
+    # derives from a single activity via period_threshold_sql's cold-start arm, so no
+    # accumulated history is needed. Without this row, dropping 'rtss' from
+    # high_models_sql leaves the whole suite green.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (403,'doctor pace swim','Swim','${ctx.d1}T05:00:00Z',1800,2400);")
+    _ = seed_pace_stream!(ctx.db, 403, 1300, 1)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("a pace-scored activity survives to doctor", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=403;")) == "rtss")?
     Ok({})
 }
 

@@ -35,7 +35,8 @@ jobs:
 
       # Official cross-platform installer. `nightly-new-compiler` is the only
       # channel that ships a Windows roc binary. The current tag is pinned because it
-      # clears the compiler segfault that the 08-05-onward nightlies introduced (see
+      # clears the compiler segfault that some nightlies after 08-04 introduced -- the pin
+      # is itself later than that and is green, so the bound is not simply a date (see
       # docs/roc-new-compiler-notes.md); the SpecConstr build fix (roc#10531) that
       # motivated the PREVIOUS pin is long since carried by every nightly in range.
       # The nightlies host intermittently serves a bad cert chain: four runs in one

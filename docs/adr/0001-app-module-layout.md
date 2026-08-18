@@ -33,7 +33,7 @@ SQL queries next to their row decoders** (the adjacency guard the compiler still
 | `Db.roc` | `open_db!`, `secure_perms!`, `run_migrations!`, config get/set, `sport_ftp!`, time-anchor | Sqlite, Cmd, Env |
 | `Strava.roc` | `auth!`, token refresh, `sync!`, `backfill!`, stream fetch, ftp→Strava | Http, Sqlite |
 | `Analyze.roc` | `analyze!`, `compute_one!`, `rebuild_daily_load!`, invalidation CASE | Sqlite |
-| `Report.roc` | read commands: summary/activities/top/load/stats/doctor/activity/progress/compare/pz/power-curve/reps/season/tte | Sqlite |
+| `Report.roc` | read commands: summary/activities/top/load/stats/doctor/activity/progress/compare/pz/power-curve/reps/season/tte/plan | Sqlite |
 | `Plan.roc` | `plan_*`, `complete!`, `skip!`, `rate!` (the judgment tier) | Sqlite |
 | `Import.roc` | `import_archive!` (CSV) | File, Cmd |
 | `app.roc` | just `main!` + `dispatch!` + help text — thin | — |
@@ -47,9 +47,12 @@ unfalsifiable, so the trigger is: split when **either** a single command functio
 largest definition was `doctor!` at 171, so the trigger had NOT fired then.
 
 **Amended 2026-08-17 — the trigger has FIRED, on both halves (#196).** `Report.roc` is
-**over 2700 lines** across 37 definitions, and three command functions are past the ~250 line:
-`summary_payload!` ≈391, `activity_body!` ≈377, `plan_bundle!` ≈253 (`doctor!` ≈246 and
-`reps!` ≈245 sit just under; `season!` is ≈219). For
+**over 2700 lines** across 37 definitions, and four command functions are past the ~250
+line: `summary_payload!`, `activity_body!`, `doctor!` and `plan_bundle!`, with `reps!` and
+`season!` below it. Exact spans are deliberately not quoted here — an earlier version of
+this sentence put `doctor!` "just under" the trigger, and a comment edit in THIS PR pushed
+it over, which is the rot this ADR's own "measure it with something that fails" line warns
+about. `#196` measures them when the split is actually done. For
 scale, the file that motivated this ADR's original split was `app.roc` at 2631 lines.
 The subdivision below is therefore in scope; what the boundaries should be is the open
 question. Note the trigger went unnoticed for weeks because it was tracked in an untracked

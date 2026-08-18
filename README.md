@@ -300,7 +300,7 @@ hard:           minutes at/above threshold — by power (vs the sport's FTP), el
 Reading it: the Peloton ride has a power meter, so it gets an intensity factor and 36
 minutes measured at or above threshold *by power*. The outdoor ride has no power, so
 `intensity` is `-` rather than an invented number — but it does have GPS, so it is scored
-by **pace** (one of the `rtss` rides mentioned above), and its 1 minute of hard
+by **pace** (an `rtss` ride — the ladder below explains the rung), and its 1 minute of hard
 time comes from the pace intensity split, not from HR zones. The strength session scores a
 `load` from your own session-RPE rating (`stride rate`) with no intensity factor at all,
 because an aerobic model does not fit it.

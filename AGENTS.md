@@ -67,7 +67,7 @@ just install   # build + symlink to ~/.local/bin/stride
   `schemas/v2/<command>.json` — `additionalKeys: false` means CI fails on an
   undeclared key, which is the point (`just schema-check` runs the same
   validator against your own database; `tools/schema-lint.jq` keeps schemas
-  inside the subset `tools/validate.jq` actually reads).
+  inside the subset `tools/validate.jq` actually reads, plus `description` for humans).
   Platform failures are converted to envelopes at ONE boundary (`run_command!`
   in app.roc) rather than at each call site, so a caller never meets a raw
   runtime banner; a new failure shape means a new arm there, not a new habit.
