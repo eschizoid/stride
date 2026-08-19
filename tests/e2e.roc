@@ -163,8 +163,10 @@ run_all! = || {
     # date-dependent today, so this pin is defence in depth rather than a fix -- it means
     # a date check ADDED after it inherits a zoned binary rather than a UTC one. Two
     # windows are deliberately NOT covered: b_init_config! runs BEFORE this pin, on a
-    # freshly-init'ed db with no timezone row; and b_config_ftp! strips the zone twice to
-    # assert the UTC fallback, so a date check added inside those two stretches gets UTC.
+    # freshly-init'ed db with no timezone row, so a date check there gets UTC; and
+    # b_config_ftp! strips the zone twice, once to assert a readable utc_offset_minutes
+    # still resolves (that stretch is on -05:00, not UTC) and once to assert the UTC
+    # fallback with no zone and no offset at all.
     #
     # Everything that reads a clock in this harness must go through `tz` or `ctx.today`.
     # A second literal is how this bug got in: the fixture configured one zone and
@@ -420,10 +422,10 @@ b_pz! = |ctx| {
 }
 
 # ── config set/get: local key-value store. FTP keys are REFUSED (ADR 0005 — derived from
-# power history, never configured). Everything else round-trips EXCEPT the two classes
-# asserted below: validated keys reject malformed values (exponent zone bounds, an
-# out-of-range or signed utc_offset_minutes), and secret keys store but read back
-# redacted. ───────────────────────────────────────────────────────────────────────────
+# power history, never configured). Everything else round-trips except two classes:
+# validated keys reject malformed values (exponent zone bounds, an out-of-range or signed
+# utc_offset_minutes), asserted in this function; and secret keys store but read back
+# redacted, asserted in b_cred_safety! rather than here. ──────────────────────────────
 b_config_ftp! : Ctx => Try({}, _)
 b_config_ftp! = |ctx| {
     # FTP is DERIVED (ADR 0005): setting it must be refused, not silently stored. This block
@@ -576,8 +578,9 @@ b_seed_analyze! = |ctx| {
     # FTP is derived from stream power, not config, so a summary-watts-only ride scores 0
     # only while its sport family has no stream power at all. Once this stream lands the
     # Ride family HAS a derived FTP, and a later summary-watts ride scores against it
-    # (402, "NULL device_watts still scores as measured"). The Ski row at b_ladder! is the
-    # genuinely unscored case — a family with no stream anywhere.
+    # (402, "NULL device_watts still scores as measured"). The Ski row later in this
+    # function ("an out-of-family sport keeps its own empty window") is the genuinely
+    # unscored case — a family with no stream anywhere.
     _ = seed_power_stream!(ctx.db, 101, 3600, 200)
     # first analyze converges the derived FTP: pass 1 scores both rows (best_20min_w still 0
     # -> FTP 0), pass 2 recomputes the ride once its best_20min_w resolves FTP to 190: 2+1=3

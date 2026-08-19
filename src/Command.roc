@@ -489,7 +489,8 @@ expect {
 # CONSTRUCTION (membership is what routes them elsewhere) and so could not fail —
 # deleting `[_, "stats"] => Ok(Stats)` left it green. Review caught it with four
 # mutations. It then pinned only ten of the thirty-two names while the comment beside
-# also left it green; review caught THAT one too. The aliases share a variant with
+# `command_names` claimed the whole list, so deleting the `season` arm also left it
+# green; review caught THAT one too. The aliases share a variant with
 # their long form on purpose — deleting either arm still fails here, because the
 # name then falls through to the wrong-arguments usage error rather than its command.
 expect match Command.parse(["stride", "init"]) { Ok(Init) => True  _ => False }

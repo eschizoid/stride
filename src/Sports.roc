@@ -4,8 +4,11 @@
 # used to live scattered through Metrics.roc beside resampling math; four
 # separate policies (family filters, load-model class, pace routing for
 # detection AND decoupling, the pace-TSS exponent) each carried their own list.
-# Here the vocabulary is DATA — a table of rows — and the functions are thin
-# lookups, so adding a sport or a synonym is editing one row, not four ifs.
+# Here the vocabulary is DATA rather than if-chains scattered across modules, but
+# not uniformly: `families` is a table of rows and `strengthish` a list literal, so
+# adding a family or a synonym is editing one row. `pace_routed` and
+# `pace_tss_exponent` are name-substring predicates, so a pace-routed sport whose
+# name lacks "run" or "swim" means editing the predicate, not adding a row.
 Sports :: [].{
 
     # Human words and the Strava sport_type spellings they mean. NO e-bike arms
