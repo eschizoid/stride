@@ -18,10 +18,11 @@ Sports :: [].{
     # a power stream, so one motor-assisted ride would set the power-curve max
     # at every duration and drag the CP fit up permanently — and since #151 the
     # family is also the FTP DERIVATION POPULATION (activities.sport_family),
-    # which makes that warning doubly load-bearing. Editing a row here changes
+    # which makes that warning doubly load-bearing. Editing a row's `sports` changes
     # scoring, not just display: it needs a schema_version bump in Db.roc so the
     # sport_family backfill and triggers regenerate, and historical ftp_used
-    # self-detects the change on the next analyze.
+    # self-detects the change on the next analyze. Editing `words` does not — only
+    # `sports` is spliced into the stored column, via sql_canonical_case.
     families : List({ words : List(Str), sports : List(Str) })
     families = [
         { words: ["bike", "cycling", "ride", "rides"], sports: ["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"] },

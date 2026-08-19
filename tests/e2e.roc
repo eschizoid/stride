@@ -159,19 +159,19 @@ run_all! = || {
     b_init_config!(ctx)?
     # Pin the sandbox clock to the same zone the dates above were computed in, BEFORE any
     # date-dependent check runs. b_config_ftp! sets it too, at its "config set emits the
-    # JSON envelope" check, for its own assertions. `analyze` IS date-dependent -- it
-    # regenerates daily_load out to the binary's today, which is the whole of #200 -- and
-    # it runs several times between here and there, so this pin is load-bearing rather
-    # than defence in depth: a date check ADDED after it inherits a zoned binary rather
-    # than a UTC one. Two
-    # windows are deliberately NOT covered: b_init_config! runs BEFORE this pin, on a
-    # freshly-init'ed db with no timezone row, so a date check there gets UTC; and
-    # b_config_ftp! strips the zone twice. Both of those stretches run on UTC, except for
-    # the two lines pinning a readable utc_offset_minutes at -05:00: an UNREADABLE offset
-    # and an ABSENT one both resolve to 0 (Db.time_mode_offset maps BadOffset and Utc
-    # alike), which is the same civil-day boundary as UTC. The three analyze calls in the
-    # first stretch's tail therefore run on UTC — date-dependent work in exactly the
-    # window #200 was about.
+    # JSON envelope" check, for its own assertions. Nothing between here and there is
+    # date-dependent TODAY, and the reason is worth stating because two reviews got it
+    # wrong in opposite directions: the three analyze calls in that span all run before
+    # b_seed_analyze! seeds an activity, and with no parseable day row analyze returns at
+    # `List.first(valid_days)` without ever calling Db.local_today_days!. So this pin is
+    # defence in depth rather than a fix -- it means a date check ADDED after it inherits
+    # a zoned binary rather than a UTC one. Two windows are deliberately NOT covered:
+    # b_init_config! runs BEFORE this pin on a freshly-init'ed db with no timezone row;
+    # and b_config_ftp! strips the zone twice, so its own analyze calls run on UTC no
+    # matter what this pin did. Both stretches are UTC except the two lines pinning a
+    # readable utc_offset_minutes at -05:00 -- an UNREADABLE offset and an ABSENT one both
+    # resolve to 0 (Db.time_mode_offset maps BadOffset and Utc alike), the same civil-day
+    # boundary as UTC.
     #
     # Everything that reads a clock in this harness must go through `tz` or `ctx.today`.
     # A second literal is how this bug got in: the fixture configured one zone and
