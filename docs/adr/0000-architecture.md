@@ -1,6 +1,6 @@
 # ADR 0000 — stride architecture and key decisions
 
-Status: accepted · Last reviewed: 2026-07-31
+Status: accepted · Last reviewed: 2026-08-19
 
 This is the foundational architecture decision record. It captures *why* stride is
 shaped the way it is — the decisions that are expensive to reverse and the
@@ -44,11 +44,12 @@ syntax/stdlib/platform notes live in `docs/roc-new-compiler-notes.md`.
 
 The new compiler lets any module use platform effects, so I/O is split by concern
 instead of piled into `app.roc`: `Db.roc` owns SQLite plus the schema/migrations,
-`Strava.roc` owns the OAuth + sync HTTP, `Analyze/Report/Plan/Import` own their
-commands, and `app.roc` is a thin argv → dispatch shell. Pure logic still lives in
-its own tested modules: `Metrics.roc` (training math), `Render.roc`
-(tables/formatting), `Command.roc` (argv → typed command), `Config.roc` (key policy),
-`Csv/Streams/Backfill/Schema`.
+`Strava.roc` owns the OAuth + sync HTTP, `Analyze/Plan/Import` and the report family
+(`Report.roc` plus `ReportSessions/ReportHealth/ReportSeason`, split by read-command
+family in #196) own their commands, and `app.roc` is a thin argv → dispatch shell. Pure logic still lives in
+its own tested modules: `Metrics.roc` (training math), `Sports.roc` (sport vocabulary),
+`Render.roc` (tables/formatting), `Command.roc` (argv → typed command), `Config.roc` (key
+policy), `Csv/Streams/Backfill`. `Schema.roc` is pure DDL with no expects. `Output.roc` owns the envelope and is effectful.
 
 Historical note: under alpha4 this split was impossible — module params were
 *monomorphic*, so injecting effects broke any row decoder wider than two columns and
@@ -68,7 +69,7 @@ segfaulted outright, exit 139). So Roc keeps the pure `expect`s, and
 end-to-end coverage is a native-Roc suite
 (`tests/e2e.roc`) that drives the real binary against a sandboxed `HOME` with seeded
 activities of known math. It's a basic-webserver app that runs every check in `init!`
-then exits (basic-cli's exec host drops child exit codes under the suite's ~350
+then exits (basic-cli's exec host drops child exit codes under the suite's several hundred
 subprocess spawns; basic-webserver's reaps them cleanly). The network path (sync +
 token refresh) is the same file's `E2E_MODE=sync` role driven against its
 `E2E_MODE=mock` role (a mock Strava on a local port), pointed at via `STRIDE_API_BASE`
@@ -117,6 +118,9 @@ Computed metrics must never go stale silently. Each `activity_metrics` row recor
 the inputs it was computed under, and recomputation is triggered by:
 
 - **FTP change** — compared via `ftp_used`.
+- **Derived threshold-pace change** — compared via `threshold_pace_used`, the pace
+  analog of `ftp_used`, keyed per *sport* rather than per family. Like `ftp_used`, a new
+  best rescores only the rows whose own 60-day window moved (#79).
 - **HR-zone change** — compared via a `zones_used` signature.
 - **Algorithm change** — the `metrics_rev` constant; bump it whenever `Metrics`
   math changes (config provenance can't see code changes).
@@ -203,8 +207,8 @@ migration.
 **Windows ships** (`stride-windows-x86_64`, since v0.3.0): the new compiler plus
 basic-cli's x64win host target it, and `OsStr.display` decodes the `WindowsU16s` argv arm.
 All five release targets ship, linux-arm64 included — `release-please.yml` passes it an
-explicit `roc_target: arm64musl`, `verify-arm64.yml` re-checks it on dispatch, and v0.6.0 carries
-`stride-linux-arm64`.
+explicit `roc_target: arm64musl`, `verify-arm64.yml` re-checks it on dispatch, and every
+release from v0.4.0 onward carries `stride-linux-arm64`.
 
 **CORRECTION kept for the record (2026-08-01):** the earlier "hard-blocked on
 roc-json" conclusion was wrong — it assumed all JSON had to go through a roc-json
@@ -237,9 +241,10 @@ retired, and neither was a superset of the other.
   it has no workout to export; the coach writes the session.
 
 (The query-repository split used to sit here as "blocked by the compiler"; that wall is
-gone and the split IS the current layout — see §2 and ADR 0001. What remains open is the
-further per-command subdivision of `Report.roc`, governed by ADR 0001's measured trigger,
-which has now fired: #196.)
+gone and the split IS the current layout — see §2 and ADR 0001. The further per-command
+subdivision of `Report.roc` is done too: ADR 0001's file-size trigger fired, and #196
+shipped the read-command split. What is left is that ADR's function-size half, deferred
+until it has a better predicate.)
 
 These are revisited only when dogfooding demands them.
 

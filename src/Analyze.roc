@@ -480,10 +480,11 @@ Analyze :: [].{
     # (hr_z*_max_<sport>) — a rowing Z2 ceiling need not equal a running one. The whole
     # config table is read ONCE (query_many cleanly handles 0+ rows) and resolution is
     # then PURE. This deliberately avoids a per-key Sqlite.query! on the many OPTIONAL,
-    # usually-ABSENT per-sport keys: on basic-cli 0.21 that path returns
+    # usually-ABSENT per-sport keys: Sqlite.query! on a row that does not exist returns
     # Err(NoRowsReturned), which would fail the whole command on the first missing
-    # override. (An earlier note here called it a SIGABRT in hosted_sqlite_prepare; that
-    # was the alpha4/0.20 behaviour and no longer reproduces — #114.) The four REQUIRED
+    # override. Measured on 0.21 and still true on the current 0.22 pin, so the design
+    # does not hinge on a version. (An earlier note called it a SIGABRT in
+    # hosted_sqlite_prepare; that was alpha4/0.20 and no longer reproduces — #114.) The four REQUIRED
     # global hr_z*_max keys are still read via Db.config_opt! in load_zone_config!, but
     # they're normally present, so that zero-row path isn't exercised there.
     #
@@ -565,7 +566,7 @@ Analyze :: [].{
         Ok(List.map(sports, |s| (s, zones_sig(resolve_zones_pure(cfg, s, g)))))
     }
     # pure: `CASE a.sport_type WHEN '<sport>' THEN '<sig>' … ELSE '<global_sig>' END`, the
-    # zones analog of ftp_case_from_map, built from the frozen (sport, sig) list. Each row's
+    # zones analog of `period_ftp_sql`, built from the frozen (sport, sig) list. Each row's
     # stored zones_used is compared to ITS sport's signature, so a per-sport zone edit
     # invalidates only that sport's rows.
     zones_case_from_sigs : List((Str, Str)), Metrics.ZoneBounds -> Str

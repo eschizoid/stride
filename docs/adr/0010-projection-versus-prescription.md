@@ -1,6 +1,8 @@
 # ADR 0010 — Projection is arithmetic, prescription is coaching
 
-Date: 2026-08-17. Status: accepted. Issue: #161. PR: #176. Prerequisite for #138 (event targeting) and #139 (season view); constrains #140 (taper projection).
+Date: 2026-08-17. Status: accepted. Issue: #161. PR: #176. Prerequisite for #138 (event targeting) and #139 (season view); constrains #140 (taper projection, since split out as #189).
+
+**Exercised 2026-08-18.** #139 shipped under this rule and ADR 0011 records the result: `season` describes blocks by slope, polarization and FTP range and refuses to NAME them (base/build/peak), and `season_screen` renders no verdict line at all. So the constraint held on the first feature to meet it, which is the evidence an ADR of this kind otherwise lacks. #138 and #140/#189 remain open and still inherit it.
 
 ## Context
 

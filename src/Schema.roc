@@ -3,7 +3,7 @@ Schema :: [].{
     # ── database schema (DDL only — pure strings, no decoders to drift from) ──
     #
     # These are the ORIGINAL CREATE statements. Columns added later live as additive
-    # ALTERs in app.roc `run_migrations!` (weighted_avg_watts, best_20min_w, ftp_used,
+    # ALTERs in Db.roc `run_migrations!` (weighted_avg_watts, best_20min_w, ftp_used,
     # planned_sessions.status, planned_sessions.skipped_reason) — look there, not here, if a
     # column seems missing. (`relative_effort` is REAL as of schema v2; read sites keep
     # the CAST(... AS REAL) so pre-v2 dbs, where it was INTEGER, still decode.)

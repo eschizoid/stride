@@ -4,15 +4,13 @@
 
 # stride
 
-stride answers the training questions Strava doesn't — is my training actually
-polarized, is my fitness climbing, when was my last *real* hard session, is my FTP
-stale — from your own Strava history, computed locally into a SQLite file you own.
-Optional LLM coaching layer on top.
+stride answers the training questions Strava doesn't. Is my training actually polarized?
+Is my fitness climbing? When was my last *real* hard session? Is my FTP stale? It reads
+your own Strava history and computes the answers locally, into a SQLite file you own.
 
-Local-first and deterministic, written in [Roc](https://www.roc-lang.org): Strava is
-one ingestion layer, the analysis is yours.
-
-> **The engine does the math. The LLM does the judgment.**
+Local-first and deterministic, written in [Roc](https://www.roc-lang.org). Strava is one
+ingestion layer, not the product. The engine does the math; attach an LLM and it does the
+judgment, never the arithmetic.
 
 ```bash
 $ stride summary
@@ -26,7 +24,7 @@ $ stride summary
 
   last 28 days:
     21 sessions · 19.1h · 324.9 km
-    training load: 1232 (75% measured — rest estimated from HR/RPE; see doctor)
+    training load: 1232 (75% measured by power or pace — rest estimated from HR/RPE; see doctor)
     confidence: 75% high · 25% medium · 0% low
     time in HR zones: Z1 211m  Z2 243m  Z3 70m  Z4 263m  Z5 0m
     polarization: 54% easy (Z1-2) / 15% moderate (Z3) / 31% hard (Z4-5)
@@ -46,64 +44,59 @@ $ stride summary
   open planned sessions: 7
 ```
 
-Every number above was computed locally from your raw activity streams — none came
-from a model. "Training load" is a *mixed model*: power/HR sessions score in TSS,
-rated strength/HIIT sessions in session-RPE, so stride stops calling the blended
-total "TSS" and `doctor` breaks it down by per-session confidence.
+Every number above was computed locally from your raw activity streams. None of it came
+from a model. "Training load" is a *mixed model*: power/HR sessions score in TSS, rated
+strength/HIIT sessions in session-RPE, so stride stops calling the blended total "TSS"
+and `doctor` breaks it down by per-session confidence.
 
-**What you'll need:** a terminal. (SQLite is linked into the binary — `sqlite3` on your
-PATH is only for poking at the database yourself, and for `just test`.) For your data, two paths — the free
-**account export** (`stride import`, no API app and no Strava subscription) for
-summary-level history, or your own **Strava API app** for live daily sync and full
-stream history (that path needs an active Strava subscription to hold API
-credentials). Either way stride is a command-line tool and a personal daily-driver,
-not a hosted service or a phone app; first-time setup is about ten minutes.
+You need a terminal. (SQLite is linked into the binary. `sqlite3` on your PATH is only
+for poking at the database yourself, and for `just test`.) For your data there are two
+paths: the free account export (`stride import`, no API app and no Strava subscription)
+for summary-level history, or your own Strava API app for live daily sync and full stream
+history, which needs an active Strava subscription to hold API credentials. Either way
+this is a command-line tool you run yourself, not a hosted service or a phone app.
+First-time setup takes about ten minutes.
 
 ## Why stride, if I already have Strava?
-
-**Strava records activities. stride explains training.**
 
 Strava is the system of record; stride is the analysis layer on top of it. Where they
 differ:
 
-- **Deterministic metrics** — TSS, normalized power, intensity factor, CTL/ATL/TSB,
+- **Deterministic metrics.** TSS, normalized power, intensity factor, CTL/ATL/TSB,
   time-in-zone, derived per-sport FTP. Same inputs, same numbers, every time.
-- **A database you own** — everything lives in `~/.stride/db.sqlite`. Query it with
+- **A database you own.** Everything lives in `~/.stride/db.sqlite`. Query it with
   `sqlite3`, back it up with `cp`, inspect any computed value's inputs, and read it
   offline after a sync. It also holds your Strava tokens and client secret, so stride
   locks `~/.stride` to `0700` and the db to `0600` (owner-only) on every run, and
   `config get` never prints secret keys.
-- **Reproducible recomputation** — every metric records the inputs it was computed from,
+- **Reproducible recomputation.** Every metric records the inputs it was computed from,
   so a changed input recomputes exactly the affected history. Edit a ride on Strava and
   the metrics self-heal.
-- **Scriptable** — every *query* command emits JSON for tools and agents when passed `--json`, tables otherwise; `--human` forces tables back. Either flag beats the `STRIDE_FORMAT` environment variable. (`auth` and `backfill` are interactive/long-running and always print progress text.)
-- **An honest data model** — a session with no usable data shows `-`, not an
-  invented number. Junk HR samples are filtered, and it says so. Strength, HIIT,
-  and yoga score through your own effort rating (`stride rate`) instead of
-  pretending an aerobic model fits them — and every computed load records both
-  which method produced it and a **confidence tier** (high = measured power *or distance-measured pace*,
-  medium = HR or session-RPE, low = Strava relative effort), which `doctor`
-  reports as a distribution so you know how much of your load is measured vs
-  estimated.
+- **Scriptable.** Every *query* command emits JSON for tools and agents when passed `--json`, tables otherwise; `--human` forces tables back. Either flag beats the `STRIDE_FORMAT` environment variable. (`auth` and `backfill` are interactive or long-running, so they always print progress text.)
+- **An honest data model.** A session with no usable data shows `-`, not an invented
+  number. Junk HR samples are filtered, and it says so. Strength, HIIT and yoga score
+  through your own effort rating (`stride rate`) rather than pretending an aerobic model
+  fits them. Every computed load records both which method produced it and a confidence
+  tier (high = measured power *or distance-measured pace*, medium = HR or session-RPE,
+  low = Strava relative effort), which `doctor` reports as a distribution so you know how
+  much of your load is measured and how much is estimated.
 
 ### And if I already have a training platform?
 
 TrainingPeaks hides its math. intervals.icu is cloud-locked. Golden Cheetah deserves the
-fairest comparison — it is open source and it does show its work — but it is a dense
+fairest comparison, since it is open source and it does show its work, but it is a dense
 desktop GUI built for a human to click through, not an engine a coach can script against.
 
-The position nobody owns is **the engine that shows its work *to a machine***: every
-number traceable to its inputs, recomputable from raw streams, and emitted as versioned
-JSON a tool can consume. That is the whole of stride's ambition, and every feature does
-one of two things — widens what the engine can honestly measure, or widens who can feed
-it data. None adds judgment to the engine; reasoning about the numbers stays with the
-coach (ADR 0012).
+What none of them do is show their work *to a machine*: every number traceable to its
+inputs, recomputable from raw streams, and emitted as versioned JSON a tool can consume.
+That is what stride is for. A feature either widens what the engine can honestly measure
+or widens who can feed it data. None of them add judgment to the engine — reasoning about
+the numbers stays with the coach (ADR 0012).
 
-**The ingestion boundary is the filesystem.** Where a device uploads its data — Garmin
-Connect, Wahoo, Peloton's servers — is between you and your vendor. stride reads files you
-put on disk: bulk export, USB, email, anything. Strava is the one grandfathered API
-because it exists and is an aggregator; no other vendor-cloud integration ships, ever.
-One sentence that deletes an entire category of scope.
+Ingestion stops at the filesystem. Where a device uploads its data (Garmin Connect,
+Wahoo, Peloton's servers) is between you and your vendor. stride reads files you put on
+disk: bulk export, USB, email, anything. Strava is the one grandfathered API, because it
+already exists and it aggregates. No other vendor-cloud integration ships, ever.
 
 ## Installation
 
@@ -235,7 +228,7 @@ stride plan                                       # everything needed to plan a 
 | `doctor` | *Can I trust my data?* Coverage (HR/power/streams/ratings), how each activity was scored and the **measured-vs-estimated confidence split**, config gaps (HR zones), pending backfill, and the active time anchor. Every gap says what, why, and the fix. |
 | `zones` (alias `pz`) | *What watts is each power zone for me?* The 7 Coggan/Peloton power zones as watt ranges derived from your FTP (they shift when FTP changes). The targets you'd set on a Power Zone ride. |
 | `reps [date]` | *Am I riding the same workout harder?* One level below `progress`: the anchor session's detected interval blocks beside the same-shaped blocks of earlier sessions — per-rep watts, the within-session fade, and the first-to-last HR rise. Comparability is stated in the payload rather than assumed: same sport family, same rep count, same rep-duration band, same signal, never later than the anchor. Each row also reports its OWN rep spread, because whether an uneven session counts as "the same workout" is a judgment stride leaves to you. A session whose blocks vary too much to be one repeated shape is refused as an anchor rather than compared against. |
-| `progress [date] [asc\|desc]` | *Am I improving on this workout?* Every past instance of a workout, compared with a **sport-aware lens** — Efficiency Factor (NP ÷ HR) for power rides, speed ÷ HR for distance sports, RPE for rated strength/HIIT — with a trend verdict and last-vs-best. Bare `progress` uses your latest session; `stride --help` has the exact matching rules. Sessions list oldest-first (`asc`, the default) so the trend reads left to right; `desc` puts the newest first when you only want the last few. The verdict is computed chronologically either way. |
+| `progress [date] [asc\|desc]` | *Am I improving on this workout?* Every past instance of a workout, compared with a **sport-aware lens** — Efficiency Factor (NP ÷ HR) for power rides, speed ÷ HR for distance sports, RPE for rated strength/HIIT — with a trend verdict and last-vs-best. Bare `progress` uses your latest session; `Metrics.anchor_filter` carries the exact matching rules (exact-named workouts compare every instance; auto-named sessions — Morning/Lunch/Afternoon/Evening/Night, any sport — compare only within ±10% of the anchor distance, and an auto-named anchor with no distance recorded shows alone). Sessions list oldest-first (`asc`, the default) so the trend reads left to right; `desc` puts the newest first when you only want the last few. The verdict is computed chronologically either way. |
 | `load [days]` | *Is my training working over time?* Daily fitness/fatigue/form rows for windows ≤14 days; Monday-aligned **weekly rollups** (sessions, load, fitness trend) for longer windows (default 90). Ends with today's form verdict. The rollup is a *rendering* — `--json` is always the daily series. |
 | `compare [week\|month]` | *Is this period better than the last?* The last rolling window (7 or 28 days) beside the one before it — load, sessions, hard minutes, easy %, and end-of-window fitness — with signed deltas and a ramp/fitness verdict. |
 | `plan` | *What should I do next?* One call bundling `summary` + every open session + the last 14 days of activities — the complete planning context. |
@@ -324,9 +317,9 @@ commands:
 5. sessions that didn't happen get `stride skip <id> "<reason>" [activity_id]` — adherence
    history stays honest
 
-The planned-sessions table is what makes _"next session adapts"_ real: the coach can
-see what it asked for and what actually happened. Without an LLM, everything
-still works — the human tables carry the same numbers, legends, and verdicts.
+The planned-sessions table is what lets the next session adapt: the coach can see what
+it asked for and what actually happened. Without an LLM everything still works, since
+the human tables carry the same numbers, legends and verdicts.
 
 ## Architecture
 
@@ -353,9 +346,8 @@ flowchart TD
     strava --> sync --> mirror
     export -->|"import"| mirror
     mirror --> analyze --> computed
-    mirror --> queries
-    computed --> queries
-    judgment --> queries
+    judgment ~~~ queries
+    db --> queries
     queries -->|"summary, week, progress"| coach
     coach -->|"week add, complete, skip, rate"| judgment
 
@@ -365,9 +357,10 @@ flowchart TD
     class coach actor
 ```
 
-The three database tiers matter more than they look: **mirror** is replace-on-sync and
-re-pullable, **computed** rebuilds from `analyze`, and **judgment** exists nowhere else.
-Human input never lives on a mirror table, because a re-sync would silently wipe it.
+The three tiers exist because they have three different recovery stories. Mirror is
+replace-on-sync and re-pullable, computed rebuilds from `analyze`, and judgment exists
+nowhere else. Human input never lives on a mirror table, because a re-sync would
+silently wipe it.
 
 **What the engine computes** (all deterministic):
 
@@ -409,10 +402,14 @@ Human input never lives on a mirror table, because a re-sync would silently wipe
 
 ### What gets computed per sport
 
-Nothing here is a hardcoded sport list. **The data you have decides the rung** — the ladder
+Nothing here is a hardcoded sport list. The data you have decides the rung: the ladder
 takes the best available source and records which one won in `load_model`, so `doctor` can
-show you the distribution. Sport type changes four things, all of them data tables in `Sports.roc`: the FAMILY (which since #151 is the population the derived FTP is computed over, not just a display filter), pace routing for interval detection and decoupling, whether a rating outranks
-heart rate, and the pace-TSS exponent.
+show you the distribution. Sport type changes four things, all of them in `Sports.roc`,
+but only one of them is a table of rows: the other three are a list literal and two
+name-substring predicates. Those four are the FAMILY (which
+since #151 is the population the derived FTP is computed over, not just a display filter),
+pace routing for interval detection and decoupling, whether a rating outranks heart rate,
+and the pace-TSS exponent.
 
 | Sport | Load scored by | Also computed |
 |---|---|---|
@@ -424,30 +421,31 @@ heart rate, and the pace-TSS exponent.
 | Anything with only HR | zone-weighted hrTSS (Friel 30/55/70/80/100 per hour) | HR zone seconds |
 | Anything with none of the above | Strava `relative_effort`, else an honest **zero** | — |
 
-Two consequences worth knowing:
+Two consequences:
 
 - **Strength sessions need a rating to score honestly.** A junk HR strap gives them a
-  near-zero load, which is truthful "no data" rather than "no effort" — `stride rate <id> <1-10>`
-  is what turns that into real load. `doctor` lists the unrated ones.
-- **Every threshold is self-derived, per family for power and per sport for pace.** A
-  GravelRide scores against the whole ride family's FTP (same muscles, same meter — #151);
+  near-zero load, which is truthful "no data" rather than "no effort". `stride rate <id> <1-10>`
+  is what turns that into real load, and `doctor` lists the unrated ones.
+- **Every threshold is self-derived**, per family for power and per sport for pace. A
+  GravelRide scores against the whole ride family's FTP (same muscles, same meter, #151);
   pace thresholds stay exact-match because surface changes what a speed means. Add a new
-  sport and it starts scoring as soon as it has the data; there is nothing to configure.
+  sport and it starts scoring as soon as it has the data. There is nothing to configure.
 
-**Self-healing by construction:**
+How it stays correct without being told to:
 
-- Every metrics row stores what it was scored with — the FTP in force on that
-  activity's date, the HR zones, and the activity's own inputs — so `analyze`
-  recomputes exactly the rows whose inputs actually changed, and nothing else.
+- Every metrics row stores what it was scored with: the FTP and the derived threshold
+  pace in force on that activity's
+  date, the HR zones, and the activity's own inputs. So `analyze` recomputes exactly the
+  rows whose inputs actually changed, and nothing else.
 - Edit a ride on Strava and the next `analyze` notices and rescores it. `sync`
   itself never discards computed work: it re-lists a rolling 30-day window every
   run and cannot tell an edit from a no-op.
-- The schema versions itself — upgrading the binary against an existing db
-  migrates on the next command.
+- The schema versions itself. Upgrading the binary against an existing db migrates on
+  the next command.
 
-The decisions behind all of this — why Roc and why pinned, the effects-only module
+The decisions behind all of this (why Roc and why pinned, the effects-only module
 layout, the three data tiers, the mixed-model load, the versioned JSON envelope, and
-the Windows/compiler-migration situation — are recorded in
+the Windows/compiler-migration situation) are recorded in
 [`docs/adr/0000-architecture.md`](docs/adr/0000-architecture.md).
 
 ## Development
@@ -465,21 +463,21 @@ just install   # build + symlink into ~/.local/bin
   `.github/workflows/build.yml`; locally, download that tag from `roc-lang/nightlies`. **`AGENTS.md` is the maintained source
   for build and test conventions**; this section is a summary and defers to it.
 - **Layout:** effects live in modules by concern — `Db.roc` (SQLite + migrations),
-  `Strava.roc` (OAuth + sync), and the `Analyze.roc` / `Report.roc` / `Plan.roc` /
+  `Strava.roc` (OAuth + sync), and the `Analyze.roc` / report family / `Plan.roc` /
   `Import.roc` command modules; `app.roc` is a thin argv → dispatch shell. Pure, tested
   modules: `Metrics.roc` (math), `Render.roc` (tables/formatting), `Command.roc` (argv →
   typed command parser), `Config.roc` (secret-key policy), `Sports.roc` (the sport
-  vocabulary — families, class, pace routing, as a data table rather than if-chains),
+  vocabulary — families, class, pace routing and the pace-TSS exponent, gathered in one
+  module rather than if-chains scattered through others),
   `Streams.roc`, `Csv.roc` and `Backfill.roc`. `Output.roc` (the JSON envelope and
   `json_schema_version`) and `Schema.roc` (DDL) are effectful and DDL respectively — both
   type-checked rather than expect-tested. Query
   strings live next to their row decoders on purpose — the compiler can't check SQL
   aliases against decoders, so cohesion is the safeguard.
 - **Tests:** pure `expect` blocks across eight modules, run by `just test`. No count is
-  quoted here on purpose: one rots on every commit that adds a test (four separate places
-  quoted one and all four went stale in a single PR), and the per-module numbers `roc
-  test` prints overlap each other, and the app-wide run adds ~207 expects belonging to
-  the basic-cli platform rather than to stride. Plus an
+  quoted here — it would rot on the next commit that adds a test, `roc test`'s per-module
+  numbers overlap each other, and the app-wide run adds ~207 expects belonging to the
+  basic-cli platform rather than to stride. Plus an
   end-to-end suite (`just e2e`) that runs the real
   binary against a sandboxed `HOME` with seeded activities of known math (power TSS ~111
   from NP 200 against a derived FTP of 190, hrTSS ~55, derived-FTP family inheritance,
@@ -499,10 +497,8 @@ just install   # build + symlink into ~/.local/bin
 
 What is next lives in [GitHub issues](https://github.com/eschizoid/stride/issues). Why it
 is built the way it is lives in [`docs/adr/`](docs/adr/), and the list of things stride
-deliberately will not do is [ADR 0000 §10](docs/adr/0000-architecture.md).
+deliberately will not do is [ADR 0000 §10](docs/adr/0000-architecture.md). That is the
+only copy of the list, on purpose.
 
-That list is the only one — an earlier second copy of it lived here and drifted out of
-sync with it, which is why this paragraph points rather than repeats.
-
-Personal daily-driver, built for one athlete and open to adopters who bring
-their own Strava app credentials.
+A personal daily driver, built for one athlete, open to anyone who brings their own
+Strava app credentials.

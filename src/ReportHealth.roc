@@ -360,7 +360,7 @@ ReportHealth :: [].{
     # "am I improving on THIS workout?" — anchored on a date: resolves that day's workout(s)
     # and shows every comparable instance chronologically, with Efficiency Factor (NP/HR) as
     # the fitness tell. Named classes match by exact name; Strava auto-names ("Morning Ride")
-    # cover different routes, so those only compare rides within ±10% of the anchor's distance.
+    # cover different routes, so those only compare sessions within ±10% of the anchor's distance.
     # JSON tag for a chosen lens
     tte! : Str => Try({}, _)
     tte! = |watts_arg|

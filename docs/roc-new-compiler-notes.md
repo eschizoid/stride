@@ -205,11 +205,14 @@ MISCOMPILED this codebase (issue #32's intermittent SIGABRT; it also silently dr
 - **Sqlite API is ~UNCHANGED**: `Sqlite.query!({path, query, bindings, row})`,
   `query_many!`, `execute!`; decoders `Sqlite.i64/str/f64/u64/nullable_*`;
   `decode_record`; `Binding {name, value}`; `Value [Null, Real, Integer, String, Bytes]`
-  all identical. ONE change: `path` is `Path.Path`, not `Str` — wrap via `Path.from_str`
-  (import pf.Path).
-- **Never `Sqlite.query!` a maybe-absent key** — a missing row is a deterministic
-  SIGABRT (heap crash), not an `Err`. Load optional config with `query_many!` and
-  treat the empty list as absent.
+  all identical. ONE change: `path` is `Path.Path`, not `Str` — wrap via `Path.utf8`
+  (import pf.Path). There is no `Path.from_str`; reaching for it fails the build with
+  DOES NOT EXIST.
+- **Never `Sqlite.query!` a maybe-absent key.** Load optional config with `query_many!`
+  and treat the empty list as absent. (On basic-cli 0.21/0.22 a missing row returns
+  `Err(NoRowsReturned)`, so an unhandled `?` exits 1. The deterministic SIGABRT this
+  note used to claim was the alpha4 / 0.20 behaviour — the rule is unchanged, the
+  failure mode is milder than advertised.)
 
 ### Sqlite row decoders
 

@@ -3,9 +3,14 @@
 # One home for every "what kind of sport is this string" question. The answers
 # used to live scattered through Metrics.roc beside resampling math; four
 # separate policies (family filters, load-model class, pace routing for
-# detection AND decoupling, the pace-TSS exponent) each carried their own list.
-# Here the vocabulary is DATA — a table of rows — and the functions are thin
-# lookups, so adding a sport or a synonym is editing one row, not four ifs.
+# detection AND decoupling, the pace-TSS exponent) each answered it their own way.
+# Gathering them here did NOT make them uniform, and the header used to claim it had:
+# only `families` is a table of rows, so adding a family or a synonym is editing one
+# row. (Adding a `sports` spelling also needs a schema_version bump — see the note on
+# `families` below. A `words` synonym does not: nothing stored reads it.) `class` reads a
+# list literal bound inside the function, and `pace_routed` and `pace_tss_exponent` are
+# name-substring predicates, so a pace-routed sport whose name lacks "run" or "swim"
+# means editing the predicate rather than adding a row.
 Sports :: [].{
 
     # Human words and the Strava sport_type spellings they mean. NO e-bike arms
@@ -13,10 +18,11 @@ Sports :: [].{
     # a power stream, so one motor-assisted ride would set the power-curve max
     # at every duration and drag the CP fit up permanently — and since #151 the
     # family is also the FTP DERIVATION POPULATION (activities.sport_family),
-    # which makes that warning doubly load-bearing. Editing a row here changes
+    # which makes that warning doubly load-bearing. Editing a row's `sports` changes
     # scoring, not just display: it needs a schema_version bump in Db.roc so the
     # sport_family backfill and triggers regenerate, and historical ftp_used
-    # self-detects the change on the next analyze.
+    # self-detects the change on the next analyze. Editing `words` does not — only
+    # `sports` is spliced into the stored column, via sql_canonical_case.
     families : List({ words : List(Str), sports : List(Str) })
     families = [
         { words: ["bike", "cycling", "ride", "rides"], sports: ["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"] },

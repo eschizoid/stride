@@ -431,13 +431,14 @@ Metrics :: [].{
 
     # ── the TSS ladder ──────────────────────────────────────────────────
     # Best-available-data fallback chain, one decision in one testable place:
-    #   stream NP -> Strava weighted watts -> avg watts -> zone-based hrTSS
-    #   -> avg-HR classified into one zone -> relative_effort -> 0 (no data).
+    #   stream NP -> Strava weighted watts -> avg watts -> pace rTSS -> zone-based
+    #   hrTSS -> avg-HR classified into one zone -> session-RPE -> relative_effort
+    #   -> 0 (no data). For strength-class sports the athlete's session-RPE outranks
+    #   HR — it moves above BOTH HR rungs, which are one slot here (hr_zones falls back
+    #   to hr_avg internally), with relative_effort last in either class. HR-based load
+    #   systematically underestimates lifting: the aerobic model doesn't see bar weight.
+    #   `Sports.class` decides which order applies.
     # Returns the tss and the power figure used (Err NoPower if HR/RE path).
-
-    # ── sport classification ────────────────────────────────────────────
-    # Strength-class sports: HR-based load systematically underestimates them (the
-    # aerobic model doesn't see bar weight), so user session-RPE outranks HR there.
     # ── ramp rate (#93): weekly CTL delta, as a number ───────────────────
     #
     # CTL on the most recent day at or before `target`. Missing is NOT zero: a series that
@@ -953,8 +954,8 @@ Metrics :: [].{
             })
 
     # which comparison a group's anchor (the instance on the asked date) supports:
-    # exact-named workouts compare every instance; auto-named rides ("Morning Ride")
-    # are different routes under one name, so only rides within ±10% of the anchor's
+    # exact-named workouts compare every instance; auto-named sessions ("Morning Ride")
+    # are different routes under one name, so only sessions within ±10% of the anchor's
     # distance compare — and with no distance recorded, only the anchor itself shows.
     # Groups whose anchor isn't on the asked date drop entirely.
     anchor_filter : { name : Str, rows : List(ProgressRow) }, Str -> Try({ name : Str, kind : [Exact, SimilarDistance(F64), LoneNoDistance], rows : List(ProgressRow) }, [NoAnchor])
@@ -1487,13 +1488,14 @@ Metrics :: [].{
     # same form band. THE thing a band label structurally cannot express: 16 days at -11 and
     # one day at -11 render identically, yet mean different things.
     #
-    # Known/Unknown, same shape as form_delta_7d but a NARROWER meaning of Unknown: it
-    # says only that the series has no value at or before `today`, so there is no band to
-    # be in. Once today is known the answer is always Known(n >= 1) — including Known(1)
-    # when the day before is missing or in a different band. 1 is a truthful "today, and
-    # nothing established before it"; the renderer suppresses it because a one-day streak
-    # carries no information, not because it is wrong.
-    # THREE outcomes, not two. `AtLeast` exists because the walk can stop for a reason that
+    # THREE outcomes, not the Known/Unknown pair form_delta_7d returns — and a NARROWER
+    # Unknown than that one's: it says only that the series has no row for `today` ITSELF
+    # (the anchor is an exact lookup, not at-or-before), so there is no band to be in.
+    # Known(n >= 1) is the ordinary answer — including Known(1) when the day before is
+    # missing or in a different band. 1 is a truthful "today, and nothing established
+    # before it"; the renderer suppresses it because a one-day streak carries no
+    # information, not because it is wrong.
+    # `AtLeast` exists because the walk can stop for a reason that
     # is not an answer: running out of series. Callers hand this a WINDOW (summary passes 31
     # days sized for the #93 ramp, `load` passes whatever window it was asked for), so a
     # streak longer than the window is truncated — and a truncated 31 is indistinguishable
@@ -1724,48 +1726,41 @@ Metrics :: [].{
 
     # Integer parsing for USER ARGUMENTS, deliberately narrower than the stdlib's.
     #
-    # The 2026-08-17 compiler pin widened `I64.from_str`/`U64.from_str` to accept
-    # exponent notation. `"1e3"` was a parse error on the previous pin and is 1000 now.
-    # Nothing in stride asked for that, and it reached the JUDGMENT tier: `skip 1e1`
-    # silently addressed planned session 10 and performed a write that cannot be
-    # re-derived (ADR 0000 section 3). It is not even self-consistent -- `1e1` addresses
-    # 10, but `3.3e1` cannot address 33, because integral exponents parse and fractional
-    # mantissas do not. That inconsistency is the tell that it is a side effect of a
-    # stdlib change rather than an input format anyone designed.
+    # The 2026-08-17 pin widened `I64.from_str`/`U64.from_str` to accept exponent
+    # notation: `"1e3"` was a parse error and is 1000 now. Nothing asked for it, and it
+    # reached the JUDGMENT tier -- `skip 1e1` addressed planned session 10 and performed
+    # a write that cannot be re-derived (ADR 0000 section 3). It is not even
+    # self-consistent: `1e1` addresses 10 while `3.3e1` cannot address 33, because
+    # integral exponents parse and fractional mantissas do not. That inconsistency is
+    # the tell that it is a stdlib side effect, not an input format anyone designed.
     #
-    # An id or a count typed by a human is digits, optionally signed. Rejecting
-    # everything else BEFORE the stdlib sees it also pins the accepted SHAPE to this
-    # function rather than to the compiler: a future bump cannot widen or narrow the
-    # forms stride takes without failing the expects below. The shape, not the whole
-    # set -- overflow is still the stdlib's call ("99999999999999999999" passes
-    # is_plain_int and is refused by from_str), which is fine, because a bump that
-    # changes the overflow boundary changes a number, not a syntax.
+    # An id or a count typed by a human is digits, optionally signed. Rejecting the rest
+    # BEFORE the stdlib sees it pins the accepted SHAPE here rather than to the compiler.
+    # The shape, not the whole set: overflow stays the stdlib's call
+    # ("99999999999999999999" passes is_plain_int, from_str refuses it), which is fine --
+    # a bump that moves the overflow boundary moves a number, not a syntax.
     #
     # Deliberately dropped: a leading `+`. `I64.from_str("+60")` is 60 on this pin, so
     # `activities +5` worked before this narrowing and now returns bad_count.
     #
-    # DO NOT "simplify" this away by calling from_str directly -- the narrowing is
-    # deliberate (#201, docs/roc-new-compiler-notes.md), and deleting it silently
-    # restores an unrecoverable write on a fat-fingered argument.
+    # DO NOT "simplify" this away by calling from_str directly (#201,
+    # docs/roc-new-compiler-notes.md) -- deleting it silently restores an unrecoverable
+    # write on a fat-fingered argument.
     #
-    # 19 call sites use these; 15 are pinned by e2e checks that fail if the site reverts
-    # to a bare from_str (swept one at a time, since the harness stops at the first
-    # failure). The FOUR unpinned are Analyze.config_f64!/cfg_f64 and
-    # Db.resolve_time_mode!, which read config values that `config set` now refuses at
-    # the WRITE, and date_str_to_days, which sits behind is_canonical_date on every argv
-    # path and behind the CSV component checks on the import path.
+    # No count is quoted here, deliberately. Four successive versions of this line gave
+    # one, and every one was contradicted by the sweep it told the reader to run --
+    # `grep -rn 'Metrics.arg_' src/` finds call sites in THIS file too, which the counts
+    # kept dropping. Derive the sites that way, minus this file's own expects, and derive
+    # which are PINNED by reverting one site at a time to a bare from_str and running the
+    # suite (it stops at the first failure, so sweep one at a time, not in a batch).
     #
-    # Re-count this by sweeping, not by adding to the last figure. Three consecutive
-    # versions of this line were wrong (12/5, 13/4, 14/3), every time because the author
-    # counted the sites edited rather than the sites that exist -- `grep -n Metrics.arg_`
-    # over src/ is the answer.
-    #
-    # Unpinned is not the same as unreachable, and an earlier version of this comment
-    # claimed it was. All four ARE reachable by writing a bad value with direct SQL --
-    # the same `sql!` helper the harness already uses -- and by legacy rows written
-    # before the validation existed. They are untested, not untestable; the write-side
-    # refusal is what makes them hard to reach through the CLI, not impossible to reach
-    # at all. (That same comment also said 14/three while naming four. Both wrong.)
+    # The ones the sweep finds unpinned -- Analyze.config_f64!/cfg_f64,
+    # Db.resolve_time_mode! and date_str_to_days at least -- are untested, NOT
+    # untestable. Each is reachable by writing a bad value with direct SQL, the same
+    # `sql!` the harness already uses, and by legacy rows predating the write-side
+    # validation. The refusal at `config set` makes them hard to reach through the CLI,
+    # not impossible to reach.
+
     is_plain_int : Str -> Bool
     is_plain_int = |s| {
         bytes = Str.to_utf8(s)

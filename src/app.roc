@@ -10,12 +10,14 @@ app [main!] {
 # left over from when it owned everything. It used to own every effect,
 # because alpha4 could not type-check a wide decoder once effects were injected
 # into a module; the new compiler lifted that wall, so effects now live with
-# their concern — Db (SQLite + migrations), Strava (OAuth + sync), and
-# Analyze/Report/Plan/Import (their commands). See ADR 0001.
+# their concern — Db (SQLite + migrations), Strava (OAuth + sync), Analyze/Plan/
+# Import, and the report family (Report plus ReportSessions/ReportHealth/
+# ReportSeason, split by read-command family in #196). See ADR 0001.
 #
 # The logic worth testing lives in pure modules — Metrics (training math),
 # Sports (sport vocabulary), Render (tables/formatting), Command (argv parsing),
-# Config, Csv, Streams, Backfill and Schema (DDL).
+# Config, Csv, Streams and Backfill. Schema (DDL) is pure but carries no expects;
+# it is type-checked only, and is not in the `just test` recipe.
 #
 # Two consumers, one contract: humans get tables (with legends and a verdict),
 # LLM coaches get JSON by ASKING for it (--json, else STRIDE_FORMAT=json —
@@ -224,7 +226,7 @@ reexec_with_format! = |cleaned, fmt| {
 # prints `Program exited with error: <Tag>` to STDERR with empty stdout — no
 # code, no envelope, nothing a machine can branch on, and it was the first
 # thing a new user met (a query before `stride init`). Catching here rather
-# than at each of the ~40 call sites means one place decides, and a failure
+# than at each of the many platform call sites means one place decides, and a failure
 # that reaches a caller without a code is a missing arm in this match rather
 # than a habit nobody enforced.
 #

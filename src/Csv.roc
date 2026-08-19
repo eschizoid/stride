@@ -6,7 +6,7 @@
 Csv :: [].{
 
     # What one byte means given the quoting state. Flat classification so the fold below is
-    # a seven-case table instead of a five-deep if/else staircase. RFC 4180: a doubled quote
+    # an eight-case table instead of a five-deep if/else staircase. RFC 4180: a doubled quote
     # inside a quoted field is one literal quote, which is why leaving quotes remembers
     # prev_quote — the next byte decides whether that quote CLOSED the field or escaped one.
     parse_case : Bool, Bool, U8 -> [QuotedByte, LeaveQuotes, EscapedQuote, EnterQuotes, EndField, EndRow, SkipCr, PlainByte]
@@ -63,7 +63,8 @@ Csv :: [].{
 
     # Accumulating at the front is O(1); reversing once at a field/row boundary keeps
     # parsing linear. The previous append-per-byte implementation became quadratic on
-    # real Strava exports and could trigger the current compiler's heap-corruption bug.
+    # real Strava exports and could trigger the pre-2026-08-17 compiler's heap-corruption
+    # bug (#32, fixed on the current pin — the linear shape is still the right one).
     reverse : List(a) -> List(a)
     reverse = |xs| List.fold(xs, [], |acc, x| List.prepend(acc, x))
 

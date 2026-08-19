@@ -57,10 +57,10 @@ just install   # build + symlink to ~/.local/bin/stride
   `Report.roc` and it imports none of them (#196, ADR 0001). (History: under alpha4
   a decoder wider than 2 columns failed to type-check once effects were injected, so
   everything effectful had to sit in app.roc — that wall is gone.)
-  Pure logic goes in `Metrics.roc` / `Sports.roc` (sport vocabulary: the four sport-varying policies — family filters, load-model class, pace routing, the pace-TSS exponent — as a DATA table, not if-chains) / `Render.roc` / `Command.roc` (argv → typed
+  Pure logic goes in `Metrics.roc` / `Sports.roc` (sport vocabulary: the four sport-varying policies — family filters, load-model class, pace routing, the pace-TSS exponent — gathered in one module rather than scattered through others; only the family filter is a table of rows, the class reads a list literal inside its own function, and the last two are name-substring predicates) / `Render.roc` / `Command.roc` (argv → typed
   `Command` union, `parse` is pure + unit-tested; `main!` is thin parse-then-dispatch)
   / `Config.roc` (`is_secret` secret-key policy) / `Csv.roc` / `Streams.roc` /
-  `Backfill.roc` / `Schema.roc`, with `expect` tests. When adding logic: pure
+  `Backfill.roc`, with `expect` tests (`Schema.roc` is pure DDL and carries none). When adding logic: pure
   function + expects first, thin effectful skin. Add new pure modules to the
   `just test` recipe so their expects run.
 - **Query-command output goes through `out!`** (payload + render fn): JSON is wrapped
@@ -70,7 +70,8 @@ just install   # build + symlink to ~/.local/bin/stride
   `schemas/v2/<command>.json` — `additionalKeys: false` means CI fails on an
   undeclared key, which is the point (`just schema-check` runs the same
   validator against your own database; `tools/schema-lint.jq` keeps schemas
-  inside the subset `tools/validate.jq` actually reads, plus `description` for humans).
+  inside the subset `tools/validate.jq` actually reads — `title` included, since the
+  validator uses it as the violation path's prefix — plus `description` for humans).
   Platform failures are converted to envelopes at ONE boundary (`run_command!`
   in app.roc) rather than at each call site, so a caller never meets a raw
   runtime banner; a new failure shape means a new arm there, not a new habit.
@@ -104,7 +105,8 @@ just install   # build + symlink to ~/.local/bin/stride
   (`sqlite3 ~/.stride/db.sqlite ".backup /tmp/x/.stride/db.sqlite"`) and run with an
   explicit `HOME`. A stray `stride init` against the real HOME has happened.
 - **e2e id assertions are positional.** Inserting a `planned_sessions` row mid-scenario
-  shifts the auto-increment and breaks later fixed-id checks (22 of them today). Add new
+  shifts the auto-increment and breaks later fixed-id checks — find them with
+  `grep -nE '\["(complete|skip)", "[0-9]' tests/e2e.roc` rather than trusting a count. Add new
   fixtures at the END of a scenario, and delete what you insert.
 - **A bare `True`/`False` serializes as the STRING `"True"`** in an encode-only payload.
   Annotate the field `: Bool` — the annotations scattered through `Report.roc` are there
@@ -222,7 +224,8 @@ Every item here cost a debugging session at least once — they are not style op
   record). *Impossible-zero* fields keep 0 as the magnitude and ship a `_known`
   companion decoded from the STORED NULL (`CASE WHEN … IS NULL`) — `np_w`/`power_known`,
   `avg_hr`/`hr_known`. (`ftp_used` is impossible-zero but ships NO flag: analyze always
-  binds a real value, so there is no stored NULL to decode.) The zone vector is the
+  BINDS it — never NULL, and 0 when the sport has no derivable FTP — so a NULL-decoded
+  flag would be all-true. Readers discriminate on `ftp_used > 0`, as `doctor` does.) The zone vector is the
   exception that proves the rule: `zones_known` is `COALESCE(hr_samples_total,0) > 0`, a
   count test rather than a NULL test, because an all-zero zone vector is ambiguous —
   which makes it an *ambiguous-zero* discriminator, not an impossible-zero flag.
@@ -248,7 +251,7 @@ Every item here cost a debugging session at least once — they are not style op
   one — done means evidence.
 - **Three data tiers, three recovery stories**: mirror tables (`activities`,
   `streams`) are replace-on-sync and re-pullable — design freely; computed tables
-  (`activity_metrics`, `daily_load`) rebuild from `analyze`; judgment tables
+  (`activity_metrics`, `activity_segments`, `daily_load`) rebuild from `analyze`; judgment tables
   (`planned_sessions`, `config`, `ratings`) exist ONLY here — human input must
   NEVER be a column on a mirror table (a re-sync would silently wipe it).
 - **Session-RPE load is `hours × RPE × 10`** (1h @ RPE 10 = 100, TSS-commensurate
@@ -268,10 +271,12 @@ Every item here cost a debugging session at least once — they are not style op
   timezone name never silently becomes UTC — it falls back to the fixed offset and
   `doctor` reports `time_ok:false`. (Historical per-activity dates already use
   Strava's civil date, so only the today boundary needs this.)
-- Metric invalidation (recompute triggers): FTP change (`ftp_used`), **HR zone
+- Metric invalidation (recompute triggers): **derived-threshold change** — `ftp_used`
+  for power and `threshold_pace_used` for pace, both period-anchored and compared the
+  same way (the pace one keys on exact `sport_type`, not family) — **HR zone
   change** (`zones_used` signature), **stream arrival** (store_streams! deletes
   metrics), **activity-input change** (each metrics row stores the inputs it was scored from — `mt_used`, `aw_used`, `sport_used`, … — and analyze compares them value by value, like `ftp_used`. `sync` does NOT delete metrics: it re-lists a rolling 30-day window every run and cannot tell an edit from a no-op, so invalidating there wiped a month of metrics per sync), **rating change** (rate! deletes metrics). Any new metric
-  input must join this story — `ftp_used`/`zones_used`/`metrics_rev`/the `*_used`
+  input must join this story — `ftp_used`/`threshold_pace_used`/`zones_used`/`metrics_rev`/the `*_used`
   input columns are all compared in `compute_missing_metrics!`'s WHERE; only the
   stream-arrival and rating paths DELETE the row. An activity edit does NOT delete:
   `sync` cannot tell an edit from a no-op, so analyze detects it by comparison.
@@ -294,9 +299,10 @@ Every item here cost a debugging session at least once — they are not style op
 ## Repo & CI
 
 `github.com/eschizoid/stride` (**public**). Remote is SSH — the gh OAuth token lacks
-workflow scope for pushing workflow files. Three workflows: `build.yml` (check + pure
+workflow scope for pushing workflow files. Four workflows: `build.yml` (check + pure
 tests on linux/macOS/Windows, then build + e2e on macOS), `release-please.yml`
-(automated releases, below), and `manual-release.yml` (dispatch-only re-cut).
+(automated releases, below), `manual-release.yml` (dispatch-only re-cut), and
+`verify-arm64.yml` (dispatch-only linux-arm64 re-check).
 
 - **Normal git history — no more squash/force-push on `main`.** Commit normally, push
   fast-forward. (We used to amend one commit and force-push; that era is over. The one
@@ -330,9 +336,9 @@ on `main`. You never tag or edit the version by hand.
   macOS arm64 + Intel (macos-15-intel), windows-x86_64, **and linux-arm64** — that last
   one needs the explicit `roc_target: arm64musl` the release workflow passes (left to
   itself it detects arm64v1musl and fails), has a dispatch-only re-check in
-  `verify-arm64.yml`, and ships from
-  v0.6.0. `fail-fast: false` plus an `always()` upload means one bad target still lets the
-  others attach.
+  `verify-arm64.yml`, and has shipped continuously since v0.4.0 — it was also in
+  v0.1.0, then absent from v0.2.0 and v0.3.0. `fail-fast: false` plus an `always()`
+  upload means one bad target still lets the others attach.
 - **Never cut a release without Mariano's explicit go-ahead** — landing feats on main is
   fine, but merging the release PR / tagging waits for a clear yes.
 - **GOTCHA — never write `feat:`/`fix:` as literal text in a commit _body_.** release-please

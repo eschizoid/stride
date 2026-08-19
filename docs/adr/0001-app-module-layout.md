@@ -2,7 +2,7 @@
 
 Status: accepted · executed 2026-08-02 (the split shipped — `app.roc` is now a thin
 argv → dispatch shell; effectful code lives in the `Db.roc`, `Strava.roc`, `Analyze.roc`,
-`Report.roc`, `Plan.roc`, and `Import.roc` modules,
+the report family (`Report.roc` + `ReportSessions`/`ReportHealth`/`ReportSeason`), `Plan.roc`, and `Import.roc` modules,
 all `roc check` green on the new compiler) · 2026-08-01
 
 Supersedes the monolith constraint in [ADR 0000 §2](0000-architecture.md). ADR 0000
@@ -50,6 +50,9 @@ unfalsifiable, so the trigger is: split when **either** a single command functio
 largest definition was `doctor!` at 171, so the trigger had NOT fired then.
 
 **Amended 2026-08-18 — the split is DONE (#196), and it went by read-command family.**
+
+Line counts are a snapshot at the split commit, not a live measurement — they are here to
+show the shape of the move, and later edits to these files do not make the table wrong.
 
 | file | before | after |
 |---|---|---|

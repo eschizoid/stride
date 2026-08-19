@@ -6,8 +6,9 @@
 # `additionalKeys: false`, it looks correct, and it would turn drift detection
 # off for that object without a word. A denylist of known keywords cannot cover
 # that (nor a typo'd `additionalkeys`), so this is a WHITELIST: every key in a
-# schema POSITION must be one the validator actually reads — except `description`,
-# which is documentation for humans and is deliberately allowed through.
+# schema POSITION must be one the validator actually reads — plus `description`,
+# which is documentation for humans and is deliberately allowed through. (`title`
+# IS read by validate.jq, as the violation path's prefix, so it is not an exception.)
 #
 # Schema positions are the root, each value of `properties`, and `items` —
 # the same three places validate.jq recurses into. Keys INSIDE `properties`

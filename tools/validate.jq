@@ -3,7 +3,8 @@
 # Validates one instance against one schema and prints a line per violation;
 # prints nothing when the instance conforms. The supported subset is exactly
 # what stride's contract uses — "type" (object/array/string/number/integer/
-# boolean), "properties", "required", "items", "enum", and "additionalKeys"
+# boolean), "properties", "required", "items", "enum", "title" (read below as the
+# violation path's prefix), and "additionalKeys"
 # (our own knob: when false, keys outside "properties" are reported, which is
 # how a payload that GREW without a schema update gets caught).
 #
