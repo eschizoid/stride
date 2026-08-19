@@ -46,7 +46,9 @@ SE(CP)                       =    8.7 W      ->  CP = 254.2 +/-   8.7 (+/-  3%)
 95% CI for W' (df = 1)       = [-44 kJ, +57 kJ]
 ```
 
-That asymmetry is the whole problem in one line. Read it as WITHIN-fit precision only:
+That asymmetry is what the payload does not currently say, which is why the fix is to
+publish it — not that imprecision is itself the defect; the next section shows the most
+precise fits are the least plausible. Read it as WITHIN-fit precision only:
 across windows CP moves 250.34 → 283.07, a 32.7 W spread that dwarfs its own ±8.7, so CP is
 the better-determined half of a given fit rather than a stable number. So the missing piece
 is not a threshold but a number:
@@ -75,14 +77,12 @@ athlete, same database, same day — only the window changes:
 
 An `r² ≥ 0.90` gate refuses stride's 90-day answer and passes its 120-day answer, whose W′
 is half as plausible. No synthetic input is required to break the gate; the command breaks
-it unaided. The 120-day row is worse than its r² suggests in a second way: it returns
-CP 283.07 against its own 1200 s point of 285.36, i.e. **99.2% of the athlete's best
-20-minute power**, where a credible CP is nearer 92–95% of it.
+it unaided.
 
-Every interval in that column spans zero, which is the evidence for the claim two sections
-below that this is a property of the ladder rather than of one window. Note also that the
-fit the gate prefers has the TIGHTEST interval — tight, and centred on a value no trained
-cyclist has.
+Every interval in that column spans zero, which is the evidence for the claim in the next
+section that this is a property of the ladder rather than of one window. Note also that the
+fit the gate prefers has the TIGHTEST interval — tight, and centred on 3059 J, a fifth of
+the bottom of the normal band this ADR quotes above.
 
 Refitting confirms the direction. Adding this athlete's own 5 s best:
 
