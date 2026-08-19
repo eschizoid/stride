@@ -332,9 +332,9 @@ on `main`. You never tag or edit the version by hand.
   macOS arm64 + Intel (macos-15-intel), windows-x86_64, **and linux-arm64** — that last
   one needs the explicit `roc_target: arm64musl` the release workflow passes (left to
   itself it detects arm64v1musl and fails), has a dispatch-only re-check in
-  `verify-arm64.yml`, and has shipped continuously
-  since v0.4.0 — it was also in v0.1.0, then absent from v0.2.0 and v0.3.0. `fail-fast: false` plus an `always()` upload means one bad target still lets the
-  others attach.
+  `verify-arm64.yml`, and has shipped continuously since v0.4.0 — it was also in
+  v0.1.0, then absent from v0.2.0 and v0.3.0. `fail-fast: false` plus an `always()`
+  upload means one bad target still lets the others attach.
 - **Never cut a release without Mariano's explicit go-ahead** — landing feats on main is
   fine, but merging the release PR / tagging waits for a clear yes.
 - **GOTCHA — never write `feat:`/`fix:` as literal text in a commit _body_.** release-please

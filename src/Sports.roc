@@ -3,13 +3,13 @@
 # One home for every "what kind of sport is this string" question. The answers
 # used to live scattered through Metrics.roc beside resampling math; four
 # separate policies (family filters, load-model class, pace routing for
-# detection AND decoupling, the pace-TSS exponent) each carried their own list.
-# Here the vocabulary is DATA rather than if-chains scattered across modules, but
-# not uniformly: only `families` is a table of rows, so adding a family or a synonym
-# is editing one row. `class` decides StrengthLike from a list literal held inside the
-# function rather than a table, and `pace_routed` and
-# `pace_tss_exponent` are name-substring predicates, so a pace-routed sport whose
-# name lacks "run" or "swim" means editing the predicate, not adding a row.
+# detection AND decoupling, the pace-TSS exponent) each answered it their own way.
+# Gathering them here did NOT make them uniform, and the header used to claim it had:
+# only `families` is a table of rows, so adding a family or a synonym is editing one
+# row (plus a schema_version bump — see the note on `families` below). `class` reads a
+# list literal bound inside the function, and `pace_routed` and `pace_tss_exponent` are
+# name-substring predicates, so a pace-routed sport whose name lacks "run" or "swim"
+# means editing the predicate rather than adding a row.
 Sports :: [].{
 
     # Human words and the Strava sport_type spellings they mean. NO e-bike arms

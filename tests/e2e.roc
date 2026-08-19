@@ -164,9 +164,12 @@ run_all! = || {
     # a date check ADDED after it inherits a zoned binary rather than a UTC one. Two
     # windows are deliberately NOT covered: b_init_config! runs BEFORE this pin, on a
     # freshly-init'ed db with no timezone row, so a date check there gets UTC; and
-    # b_config_ftp! strips the zone twice, once to assert a readable utc_offset_minutes
-    # still resolves (that stretch is on -05:00, not UTC) and once to assert the UTC
-    # fallback with no zone and no offset at all.
+    # b_config_ftp! strips the zone twice. Both of those stretches run on UTC, except for
+    # the two lines pinning a readable utc_offset_minutes at -05:00: an UNREADABLE offset
+    # and an ABSENT one both resolve to 0 (Db.time_mode_offset maps BadOffset and Utc
+    # alike), which is the same civil-day boundary as UTC. The three analyze calls in the
+    # first stretch's tail therefore run on UTC — date-dependent work in exactly the
+    # window #200 was about.
     #
     # Everything that reads a clock in this harness must go through `tz` or `ctx.today`.
     # A second literal is how this bug got in: the fixture configured one zone and
