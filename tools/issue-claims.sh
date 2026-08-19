@@ -4,7 +4,10 @@
 # (#165, #205).
 #
 # Checks the one class with a free oracle: a comment BLOCK that names an issue and says
-# it is still open, blocked, pending or awaited, when the tracker says CLOSED.
+# it remains/is still open, is not yet fixed/released/landed/merged, is blocked by or on
+# something, is awaiting something, is unreleased, or waits "until X lands/ships" — when
+# the tracker says CLOSED. That list is the PATTERN below, verbatim; a block phrased with
+# "pending" or "awaited" is NOT matched, so widen the pattern rather than assume coverage.
 #
 # BLOCK-scoped, not line-scoped, and that is the whole design. The first version matched
 # a state phrase and a ref on the SAME line, which on this tree paired zero times -- it

@@ -1747,16 +1747,19 @@ Metrics :: [].{
     # docs/roc-new-compiler-notes.md) -- deleting it silently restores an unrecoverable
     # write on a fat-fingered argument.
     #
-    # 19 call sites; 15 pinned by e2e checks that fail when the site reverts to a bare
-    # from_str. RE-COUNT BY SWEEPING (`grep -n Metrics.arg_` over src/), never by adding
-    # to the figure above -- three successive versions of this line were wrong because
-    # they counted the sites edited rather than the sites that exist.
+    # No count is quoted here, deliberately. Four successive versions of this line gave
+    # one, and every one was contradicted by the sweep it told the reader to run --
+    # `grep -rn 'Metrics.arg_' src/` finds call sites in THIS file too, which the counts
+    # kept dropping. Derive the sites that way, minus this file's own expects, and derive
+    # which are PINNED by reverting one site at a time to a bare from_str and running the
+    # suite (it stops at the first failure, so sweep one at a time, not in a batch).
     #
-    # The four unpinned -- Analyze.config_f64!/cfg_f64, Db.resolve_time_mode!,
-    # date_str_to_days -- are untested, NOT untestable. All four are reachable by writing
-    # a bad value with direct SQL, the same `sql!` the harness already uses, and by legacy
-    # rows predating the write-side validation. The refusal at `config set` makes them
-    # hard to reach through the CLI, not impossible to reach.
+    # The ones the sweep finds unpinned -- Analyze.config_f64!/cfg_f64,
+    # Db.resolve_time_mode! and date_str_to_days at least -- are untested, NOT
+    # untestable. Each is reachable by writing a bad value with direct SQL, the same
+    # `sql!` the harness already uses, and by legacy rows predating the write-side
+    # validation. The refusal at `config set` makes them hard to reach through the CLI,
+    # not impossible to reach.
 
     is_plain_int : Str -> Bool
     is_plain_int = |s| {
