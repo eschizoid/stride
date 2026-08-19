@@ -57,7 +57,7 @@ just install   # build + symlink to ~/.local/bin/stride
   `Report.roc` and it imports none of them (#196, ADR 0001). (History: under alpha4
   a decoder wider than 2 columns failed to type-check once effects were injected, so
   everything effectful had to sit in app.roc — that wall is gone.)
-  Pure logic goes in `Metrics.roc` / `Sports.roc` (sport vocabulary: the four sport-varying policies — family filters, load-model class, pace routing, the pace-TSS exponent — as a DATA table, not if-chains) / `Render.roc` / `Command.roc` (argv → typed
+  Pure logic goes in `Metrics.roc` / `Sports.roc` (sport vocabulary: the four sport-varying policies — family filters, load-model class, pace routing, the pace-TSS exponent — as data, not if-chains; the first two are tables, the last two name-substring predicates) / `Render.roc` / `Command.roc` (argv → typed
   `Command` union, `parse` is pure + unit-tested; `main!` is thin parse-then-dispatch)
   / `Config.roc` (`is_secret` secret-key policy) / `Csv.roc` / `Streams.roc` /
   `Backfill.roc` / `Schema.roc`, with `expect` tests. When adding logic: pure
@@ -222,7 +222,8 @@ Every item here cost a debugging session at least once — they are not style op
   record). *Impossible-zero* fields keep 0 as the magnitude and ship a `_known`
   companion decoded from the STORED NULL (`CASE WHEN … IS NULL`) — `np_w`/`power_known`,
   `avg_hr`/`hr_known`. (`ftp_used` is impossible-zero but ships NO flag: analyze always
-  binds a real value, so there is no stored NULL to decode.) The zone vector is the
+  BINDS it — never NULL, and 0 when the sport has no derivable FTP — so a NULL-decoded
+  flag would be all-true. Readers discriminate on `ftp_used > 0`, as `doctor` does.) The zone vector is the
   exception that proves the rule: `zones_known` is `COALESCE(hr_samples_total,0) > 0`, a
   count test rather than a NULL test, because an all-zero zone vector is ambiguous —
   which makes it an *ambiguous-zero* discriminator, not an impossible-zero flag.
@@ -248,7 +249,7 @@ Every item here cost a debugging session at least once — they are not style op
   one — done means evidence.
 - **Three data tiers, three recovery stories**: mirror tables (`activities`,
   `streams`) are replace-on-sync and re-pullable — design freely; computed tables
-  (`activity_metrics`, `daily_load`) rebuild from `analyze`; judgment tables
+  (`activity_metrics`, `activity_segments`, `daily_load`) rebuild from `analyze`; judgment tables
   (`planned_sessions`, `config`, `ratings`) exist ONLY here — human input must
   NEVER be a column on a mirror table (a re-sync would silently wipe it).
 - **Session-RPE load is `hours × RPE × 10`** (1h @ RPE 10 = 100, TSS-commensurate

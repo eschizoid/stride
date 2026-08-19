@@ -26,7 +26,7 @@ $ stride summary
 
   last 28 days:
     21 sessions · 19.1h · 324.9 km
-    training load: 1232 (75% measured — rest estimated from HR/RPE; see doctor)
+    training load: 1232 (75% measured by power or pace — rest estimated from HR/RPE; see doctor)
     confidence: 75% high · 25% medium · 0% low
     time in HR zones: Z1 211m  Z2 243m  Z3 70m  Z4 263m  Z5 0m
     polarization: 54% easy (Z1-2) / 15% moderate (Z3) / 31% hard (Z4-5)
@@ -411,7 +411,8 @@ Human input never lives on a mirror table, because a re-sync would silently wipe
 
 Nothing here is a hardcoded sport list. **The data you have decides the rung** — the ladder
 takes the best available source and records which one won in `load_model`, so `doctor` can
-show you the distribution. Sport type changes four things, all of them data tables in `Sports.roc`: the FAMILY (which since #151 is the population the derived FTP is computed over, not just a display filter), pace routing for interval detection and decoupling, whether a rating outranks
+show you the distribution. Sport type changes four things, all of them in `Sports.roc` — two as data tables, two as
+name-substring predicates: the FAMILY (which since #151 is the population the derived FTP is computed over, not just a display filter), pace routing for interval detection and decoupling, whether a rating outranks
 heart rate, and the pace-TSS exponent.
 
 | Sport | Load scored by | Also computed |

@@ -51,6 +51,9 @@ largest definition was `doctor!` at 171, so the trigger had NOT fired then.
 
 **Amended 2026-08-18 — the split is DONE (#196), and it went by read-command family.**
 
+Line counts are a snapshot at the split commit, not a live measurement — they are here to
+show the shape of the move, and later edits to these files do not make the table wrong.
+
 | file | before | after |
 |---|---|---|
 | `Report.roc` | 2780 | 702 |

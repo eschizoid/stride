@@ -47,9 +47,9 @@ instead of piled into `app.roc`: `Db.roc` owns SQLite plus the schema/migrations
 `Strava.roc` owns the OAuth + sync HTTP, `Analyze/Plan/Import` and the report family
 (`Report.roc` plus `ReportSessions/ReportHealth/ReportSeason`, split by read-command
 family in #196) own their commands, and `app.roc` is a thin argv → dispatch shell. Pure logic still lives in
-its own tested modules: `Metrics.roc` (training math), `Render.roc`
-(tables/formatting), `Command.roc` (argv → typed command), `Config.roc` (key policy),
-`Csv/Streams/Backfill/Schema`.
+its own tested modules: `Metrics.roc` (training math), `Sports.roc` (sport vocabulary),
+`Render.roc` (tables/formatting), `Command.roc` (argv → typed command), `Config.roc` (key
+policy), `Csv/Streams/Backfill/Schema`. `Output.roc` owns the envelope and is effectful.
 
 Historical note: under alpha4 this split was impossible — module params were
 *monomorphic*, so injecting effects broke any row decoder wider than two columns and

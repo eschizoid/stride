@@ -117,8 +117,10 @@ the one live item left in this ADR.
    dropped, adding a sport needs no code" promise.
 
    **Shipped differently (recorded 2026-08-18).** There is no `model_<sport>` config key.
-   Routing lives in `Sports.roc` as a DATA TABLE — `families`, `class` (Endurance vs
-   StrengthLike) and `pace_routed` — so adding a sport is editing one row, and an unmapped
+   Routing lives in `Sports.roc`: `families` is a data table and `class` a list literal,
+   while `pace_routed` and `pace_tss_exponent` are name-substring predicates. Adding a
+   family is editing one row; adding a pace-routed sport whose name lacks "run"/"swim"
+   (rowing ergo, skate-ski, kayak) means editing a predicate. An unmapped
    sport still falls through to the safe default exactly as this bullet requires. What was
    dropped is the *user-overridable* half: an athlete cannot currently force a sport onto a
    different rung. The property the bullet was protecting holds; the mechanism named here
@@ -193,8 +195,10 @@ deliberately small way. Do **not** write a data-transform migration for the metr
      tree, not one file — this line said "in `Report.roc`" until the split moved half of
      what it pointed at — declared **high (measured)** like
      power; miss it and distance-measured pace silently reports as *unmeasured*. `doctor`'s
-     config-completeness (exact `hr_z*_max` list + `ftp_` prefix) must also learn the new
-     `hr_z*_max_<sport>` / `model_<sport>` keys.
+     config-completeness (the exact `hr_z1..z4_max` list) would need the new pace keys. It
+     already counts per-sport HR overrides via `GLOB 'hr_z[1-4]_max_?*'`, and it reads
+     derived FTP from `activity_metrics.ftp_used > 0` rather than any `ftp_` config key.
+     There is no `model_<sport>` key to learn — see the amendment on Decision 3.
 
 2. **Computed data — RECOMPUTE, do not transform.** `activity_metrics` and `daily_load` are
    the disposable computed tier: **bump the `metrics_rev` constant** and the next `analyze`
