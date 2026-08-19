@@ -35,7 +35,7 @@ just install   # build + symlink to ~/.local/bin/stride
   SYMLINK to `~/.local/roc-new/roc` (identical binary), which is why a bare `roc`
   in the justfile works; it is no longer the alpha4 trap this line used to warn
   about, but pin the explicit path in anything that must not depend on that link.
-  `check`, `test`, and a full `roc build` all work (roc#10469 was fixed by #10531).
+  `check`, `test`, and a full `roc build` all work (roc#10469 was fixed by roc#10531).
 - **Build with `--opt=dev`.** This used to be a correctness requirement: `--opt=speed`
   miscompiled the codebase (#32's intermittent SIGABRT, plus a silently dropped progress
   column). Both are FIXED as of the `nightly-2026-08-17` pin — measured 0 SIGABRT in 1400

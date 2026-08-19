@@ -3,11 +3,21 @@
 # silently: `#105 remains open` sat 560 lines above the same file saying it was fixed
 # (#165, #205).
 #
-# Checks the one class with a free oracle: a comment BLOCK that names an issue and says
-# it remains/is still open, is not yet fixed/released/landed/merged, is blocked by or on
-# something, is awaiting something, is unreleased, or waits "until X lands/ships" — when
-# the tracker says CLOSED. That list is the PATTERN below, verbatim; a block phrased with
-# "pending" or "awaited" is NOT matched, so widen the pattern rather than assume coverage.
+# Checks the one class with a free oracle: a BLOCK that names an issue and says it
+# remains/is still open, is not yet fixed/released/landed/merged, is blocked by or on
+# something, is awaiting or awaited, is/still/remains pending, is pending
+# upstream/release/a fix, is unreleased, or waits until X lands/ships — when the tracker
+# says CLOSED. That list is the PATTERN below, verbatim. Read the pattern, not this
+# sentence, before believing a phrasing is covered: this comment claimed "pending" and
+# "awaited" for a while when the regex matched neither.
+#
+# Scope is Roc comments AND the Markdown docs. Docs went unscanned at first, and the gap
+# was not hypothetical — ADR 0000 asserted the #196 split "remains open" for a day after
+# it shipped, while this same class was enforced two directories away.
+#
+# Bare `pending` is deliberately NOT matched: it is this codebase's own vocabulary
+# ("pending backfill", "pending sessions"), and a block carrying one of those plus any
+# ref would flag forever. Only the qualified forms assert a tracker state.
 #
 # BLOCK-scoped, not line-scoped, and that is the whole design. The first version matched
 # a state phrase and a ref on the SAME line, which on this tree paired zero times -- it
@@ -30,17 +40,59 @@ fail=0; checked=0; blocks=0
 
 # one line per comment block: file<TAB>startline<TAB>joined text
 awk '
+  FNR==1 { if (n) { print f"\t"s"\t"t; n=0 } }
   /^[[:space:]]*#/ { if (!n) { f=FILENAME; s=FNR; t="" } n++; l=$0; sub(/^[[:space:]]*#[[:space:]]?/,"",l); t=t" "l; next }
   { if (n) { print f"\t"s"\t"t; n=0 } }
   END { if (n) print f"\t"s"\t"t }
 ' src/*.roc tests/*.roc > "$BLOCKS"
 
+# Markdown needs its OWN extractor: it has no comment syntax, so the `^#` rule above
+# would key on HEADINGS and slice every document into nonsense. Here a block is a
+# paragraph — consecutive non-blank lines — which is the same unit the Roc pass uses
+# (a run of comment lines) and produces the same file<TAB>line<TAB>text shape.
+#
+# Docs were unscanned until now, and that gap was not theoretical: ADR 0000 asserted the
+# #196 split "remains open" for a day after it shipped, while the identical class was
+# enforced two directories away.
+#
+# FNR==1 flushes at every file boundary. Without it a file ending mid-paragraph merges
+# into the next file's opening paragraph, and the merged block is reported at the FIRST
+# file's name and line — so a stale claim gets pinned to a document that does not
+# contain it. Caught by planting a claim at the end of ADR 0001 and watching the report
+# quote ADR 0002's title back. The Roc pass above needs the same guard for the same
+# reason, a file that ends on a comment line.
+awk '
+  FNR==1 { if (n) { print f"\t"s"\t"t; n=0 } }
+  /^[[:space:]]*$/ { if (n) { print f"\t"s"\t"t; n=0 } next }
+  { if (!n) { f=FILENAME; s=FNR; t="" } n++; t=t" "$0 }
+  END { if (n) print f"\t"s"\t"t }
+' README.md AGENTS.md docs/*.md docs/adr/*.md .claude/skills/stride/SKILL.md >> "$BLOCKS"
+
 while IFS=$'\t' read -r f s txt; do
   blocks=$((blocks + 1))
   # "open ABOVE", "keeps this open", "this open just created" are not issue states --
   # require the word to be about an ISSUE, so the phrase must sit near a ref.
-  printf '%s' "$txt" | grep -qiE 'remains open|still open|not yet (fixed|released|landed|merged)|blocked (by|on)|awaiting|unreleased|until .*(lands|ships)' || continue
-  refs=$(printf '%s' "$txt" | grep -oE '(^|[^a-zA-Z/-])#[0-9]{2,5}' | grep -oE '[0-9]{2,5}' | sort -u)
+  # `pending` and `awaited` are qualified, not bare. Bare `pending` matches this
+  # codebase's own vocabulary -- "pending backfill", "pending stream", "pending
+  # sessions" -- none of which say anything about an ISSUE, and a block carrying one of
+  # those plus any ref would flag forever. The qualified forms are the ones that assert
+  # a tracker state.
+  # A state phrase inside quotation marks is being QUOTED, not asserted, so quoted spans
+  # come out before the match. Docs make this load-bearing: prose narrates superseded
+  # states constantly, and both paragraphs this flagged on its first run over docs/ were
+  # of exactly that shape -- `used to sit here as "blocked by the compiler"` and `why the
+  # original "blocked on roc-json" conclusion was wrong`. Rewording accurate history to
+  # satisfy a regex would be the wrong direction to fix that.
+  said=$(printf '%s' "$txt" | sed -E 's/"[^"]*"//g')
+  printf '%s' "$said" | grep -qiE 'remains open|still open|not yet (fixed|released|landed|merged)|blocked (by|on)|awaiting|awaited|(is|still|remains) pending|pending (upstream|release|a fix|the fix)|unreleased|until .*(lands|ships)' || continue
+  # Strip six-digit hex colours first. Scanning Markdown brought mermaid `classDef`
+  # lines into range, and `stroke:#57606a` offers the ref pattern a five-digit prefix to
+  # match -- which resolves to nothing and trips the fail-closed arm, so the gate would
+  # have gone permanently red on a stylesheet. SIX only: three hex chars is also a legal
+  # colour, but `#196` is three hex chars too, and stripping those would silently blind
+  # the checker to most of this repo's own issue numbers.
+  clean=$(printf '%s' "$txt" | sed -E 's/#[0-9a-fA-F]{6}//g')
+  refs=$(printf '%s' "$clean" | grep -oE '(^|[^a-zA-Z/-])#[0-9]{2,5}' | grep -oE '[0-9]{2,5}' | sort -u)
   [ -z "$refs" ] && continue
   for ref in $refs; do
     st=$(grep "^$ref " "$CACHE" 2>/dev/null | cut -d' ' -f2)

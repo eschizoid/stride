@@ -35,7 +35,7 @@ earlier alpha4 / basic-cli 0.20 / roc-json 0.13 pin is retired; §9 records the
 migration and why the original "blocked on roc-json" conclusion was wrong. CI
 type-checks (`roc check`) and runs the pure tests (`roc test`) on this compiler across
 linux/macOS/Windows, then builds the real binary and runs the e2e suite on macOS. The
-`roc build` perf gate is gone (roc#10469, fixed by #10531); builds pin `--opt=dev` for
+`roc build` perf gate is gone (roc#10469, fixed by roc#10531); builds pin `--opt=dev` for
 build time (~14s against ~2min), not correctness — the optimized backend's miscompile
 (issue #32) was fixed by the 2026-08-17 compiler pin. Day-to-day compiler
 syntax/stdlib/platform notes live in `docs/roc-new-compiler-notes.md`.
