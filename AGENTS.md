@@ -273,8 +273,7 @@ Every item here cost a debugging session at least once — they are not style op
   Strava's civil date, so only the today boundary needs this.)
 - Metric invalidation (recompute triggers): **derived-threshold change** — `ftp_used`
   for power and `threshold_pace_used` for pace, both period-anchored and compared the
-  same way (the pace one is stored for any sport with a distance stream, so it is live
-  on rides, not only pace-routed sports) — **HR zone
+  same way (the pace one keys on exact `sport_type`, not family) — **HR zone
   change** (`zones_used` signature), **stream arrival** (store_streams! deletes
   metrics), **activity-input change** (each metrics row stores the inputs it was scored from — `mt_used`, `aw_used`, `sport_used`, … — and analyze compares them value by value, like `ftp_used`. `sync` does NOT delete metrics: it re-lists a rolling 30-day window every run and cannot tell an edit from a no-op, so invalidating there wiped a month of metrics per sync), **rating change** (rate! deletes metrics). Any new metric
   input must join this story — `ftp_used`/`threshold_pace_used`/`zones_used`/`metrics_rev`/the `*_used`

@@ -197,7 +197,7 @@ means for every date below.
   detraining or a power-data gap — check `doctor` coverage before concluding).
 - **Metric recompute triggers (the invalidation story):** derived-FTP change (metrics
   store `ftp_used`), derived threshold-pace change (`threshold_pace_used`, the pace
-  analog — stored for any sport with a distance stream, so it is live on rides too),
+  analog, keyed per sport),
   HR-zone change, **stream arrival**, **rating change**, and
   activity-input edits (analyze compares each row's stored inputs — sync itself never
   deletes metrics). So after a sync, always `analyze` to pick up recomputes.

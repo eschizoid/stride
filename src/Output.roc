@@ -43,8 +43,7 @@ Output :: [].{
     # ── machine interface (JSON output for LLM/tool consumption) ────────
     # Missing-value contract (#156, ADR 0009): literal JSON null is NOT expressible —
     # the builtin encoder stringifies tags ("None"/"Null"), verified by probe. So the
-    # contract is per-field, in ADR 0009's three classes — impossible-zero,
-    # ambiguous-zero (a discriminator rather than a flag), and both-possible:
+    # contract is per-field, in ADR 0009's three classes:
     #   IMPOSSIBLE-ZERO fields (np_w, avg_hr, intensity, ftp_used): a real 0 cannot
     #   occur, so 0 means "not available". THREE of those four carry a flag — ftp_used
     #   deliberately does not, because analyze always binds it (0 when no FTP is

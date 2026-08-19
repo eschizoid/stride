@@ -954,8 +954,8 @@ Metrics :: [].{
             })
 
     # which comparison a group's anchor (the instance on the asked date) supports:
-    # exact-named workouts compare every instance; auto-named rides ("Morning Ride")
-    # are different routes under one name, so only rides within ±10% of the anchor's
+    # exact-named workouts compare every instance; auto-named sessions ("Morning Ride")
+    # are different routes under one name, so only sessions within ±10% of the anchor's
     # distance compare — and with no distance recorded, only the anchor itself shows.
     # Groups whose anchor isn't on the asked date drop entirely.
     anchor_filter : { name : Str, rows : List(ProgressRow) }, Str -> Try({ name : Str, kind : [Exact, SimilarDistance(F64), LoneNoDistance], rows : List(ProgressRow) }, [NoAnchor])

@@ -189,14 +189,12 @@ deliberately small way. Do **not** write a data-transform migration for the metr
      `zb` resolution, else rows never invalidate or recompute every run.
    - *Pace provenance* (Decision 2): new `load_model` strings (`ngp`/`rtss`/`css`) must join
      **every** `load_model IN(...)` list — the *measured* set, the `doctor` confidence
-     tiers, and the catch-all → `non` bucket. Since #196 split the read commands, those
-     lists live in `Report.roc` as the `high/medium/low_models_sql` constants, and every
-     reader — including doctor's tiers in `ReportHealth.roc` — interpolates them rather
-     than restating them, so a new rung is a one-line edit there. Still grep the
-     tree before believing that: this line said "in `Report.roc`" until the split moved
-     half of
-     what it pointed at — declared **high (measured)** like
-     power; miss it and distance-measured pace silently reports as *unmeasured*. `doctor`'s
+     tiers, and the catch-all → `non` bucket — declared **high (measured)** like power;
+     miss it and distance-measured pace silently reports as *unmeasured*. Since #196
+     those lists live in `Report.roc` as the `high/medium/low_models_sql` constants and
+     every reader interpolates them, doctor's tiers in `ReportHealth.roc` included, so it
+     is a one-line edit there — but grep the tree before believing that, because this
+     line said "in `Report.roc`" until the split moved half of what it pointed at. `doctor`'s
      config-completeness (the exact `hr_z1..z4_max` list) would need the new pace keys. It
      already counts per-sport HR overrides via `GLOB 'hr_z[1-4]_max_?*'`, and it reads
      derived FTP from `activity_metrics.ftp_used > 0` rather than any `ftp_` config key.

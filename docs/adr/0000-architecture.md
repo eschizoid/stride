@@ -119,10 +119,8 @@ the inputs it was computed under, and recomputation is triggered by:
 
 - **FTP change** — compared via `ftp_used`.
 - **Derived threshold-pace change** — compared via `threshold_pace_used`, the pace
-  analog of `ftp_used` and period-anchored the same way (per *sport*, not per family).
-  It is stored for any sport with a distance stream, so on this athlete's data it is
-  live on Ride, GravelRide and Rowing rows, not only the pace-routed sports. Like
-  `ftp_used`, a new best rescores only the rows whose own 60-day window moved (#79).
+  analog of `ftp_used`, keyed per *sport* rather than per family. Like `ftp_used`, a new
+  best rescores only the rows whose own 60-day window moved (#79).
 - **HR-zone change** — compared via a `zones_used` signature.
 - **Algorithm change** — the `metrics_rev` constant; bump it whenever `Metrics`
   math changes (config provenance can't see code changes).
