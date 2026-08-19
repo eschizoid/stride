@@ -63,8 +63,20 @@ awk '
 # contain it. Caught by planting a claim at the end of ADR 0001 and watching the report
 # quote ADR 0002's title back. The Roc pass above needs the same guard for the same
 # reason, a file that ends on a comment line.
+#
+# FENCED REGIONS ARE DROPPED HERE, AT LINE LEVEL, AND THAT IS WHY THE PASSES BELOW WORK.
+# A fence is three backticks -- an ODD RUN -- and it is a LINE construct that cannot be
+# recognised once lines are joined into a paragraph. Five successive versions of the
+# quotation logic tried to survive it by counting delimiters, and counting sees the total
+# while the damage is done by the pairing: one compensating stray tick restores an even
+# total and leaves polarity inverted for the rest of the block. Measured on this tree:
+# backtick runs are 3400 of length 1 and 28 of length 3, and all 28 are fence markers.
+# Dropping fences takes the odd runs to zero, which is the only thing that makes an even
+# total actually imply correct pairing.
 awk '
-  FNR==1 { if (n) { print f"\t"s"\t"t; n=0 } }
+  FNR==1 { if (n) { print f"\t"s"\t"t; n=0 } fence=0 }
+  /^[[:space:]]*```/ { fence = 1 - fence; next }
+  fence { next }
   /^[[:space:]]*$/ { if (n) { print f"\t"s"\t"t; n=0 } next }
   { if (!n) { f=FILENAME; s=FNR; t="" } n++; t=t" "$0 }
   END { if (n) print f"\t"s"\t"t }
@@ -106,13 +118,15 @@ while IFS=$'\t' read -r f s txt; do
   # Every stray quote in this tree sits inside backticks, so removing code spans first
   # takes the odd-cardinality blocks from one to zero and the polarity problem with it.
   #
-  # The guards are COUPLED, and that coupling is load-bearing. An odd count of either
-  # delimiter means the text does not pair, so nothing is blanked and the block is judged
-  # whole. Guarding each pass separately looks equivalent and is not: an odd backtick
-  # count would leave the code spans IN, and the quote pass would then run over the very
-  # samples that make quote polarity unsafe. One stray backtick plus one stray quote,
-  # anywhere in the paragraph, and the same 177 characters vanish again. Two coincident
-  # typos is a narrower trigger than one, not a fixed bug.
+  # Each pass re-checks parity on the string IT receives, and any skip skips the rest.
+  # Both halves of that are load-bearing and each was learned by getting it wrong.
+  # Guarding the passes independently lets an odd backtick count leave the code spans IN,
+  # and the quote pass then runs over the very samples that make quote polarity unsafe.
+  # Guarding them only on the ORIGINAL text is just as bad in the other direction: pass 2
+  # never sees $0, it sees the code spans already removed, so counting quotes up front
+  # measures a string that no longer exists — one stray quote in prose alongside nine
+  # inside code spans passes the outer check and then opens a quotation that runs to the
+  # end of the block.
   #
   # Note what removing code spans also does, beyond protecting quote parity: a state
   # phrase written in code font -- `blocked on` -- is now suppressed like a quoted one.
@@ -124,7 +138,15 @@ while IFS=$'\t' read -r f s txt; do
   # across a blanked span that ended a sentence ("not yet \"done.\" Merged in June" reads
   # as `not yet Merged`), which over-reports. That is the direction this file chooses.
   said=$(printf '%s' "$txt" | awk '
-    function blank(s, d,    out, ins, i, c) {
+    function blank(s, d,    out, ins, i, c, n) {
+      # A RUN longer than one is not a delimiter this can pair. Markdown closes a span
+      # with a run of the same length, so ``` opens something a per-character parity scan
+      # will mis-pair, and one compensating tick restores an even TOTAL while leaving the
+      # pairing inverted. Dropping fences at line level removes every such run in this
+      # tree, but an inline ``` is still writable, so refuse rather than trust the count.
+      if (index(s, d d) > 0) return "\001"
+      n = gsub(d, "&", s)
+      if (n % 2 == 1) return "\001"
       out = ""; ins = 0
       for (i = 1; i <= length(s); i++) {
         c = substr(s, i, 1)
@@ -134,9 +156,10 @@ while IFS=$'\t' read -r f s txt; do
       return out
     }
     {
-      b = gsub(/`/, "&"); q = gsub(/"/, "&")
-      if (b % 2 == 1 || q % 2 == 1) { print; next }
-      s = blank($0, "`"); s = blank(s, "\"")
+      s = blank($0, "`")
+      if (s == "\001") { print; next }
+      s = blank(s, "\"")
+      if (s == "\001") { print; next }
       gsub(/  +/, " ", s); print s
     }')
   printf '%s' "$said" | grep -qiE 'remains open|still open|not yet (fixed|released|landed|merged)|blocked (by|on)|awaiting|awaited|(is|still|remains) pending|pending (upstream|release|a fix|the fix)|unreleased|until .*(lands|ships)' || continue
