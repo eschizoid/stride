@@ -97,26 +97,35 @@ while IFS=$'\t' read -r f s txt; do
   # suppressions the other way, turning CI red on quoted history after an unrelated
   # edit elsewhere in the paragraph.
   #
-  # Parity cannot desync, and it also fixes the case the bounded version could not:
-  # `not yet "fully" merged` blanks to `not yet  merged`, and collapsing the runs makes
-  # it match, so a state phrase INTERRUPTED by a quotation is still a state phrase.
+  # CODE SPANS COME OUT FIRST, and that is what makes the quote pass safe. Parity does
+  # not desync the way a pairing regex does, but quote polarity is GLOBAL across a
+  # joined paragraph: any run of quotes with odd cardinality inverts inside/outside for
+  # everything after it. Code samples are exactly such runs -- one block here carries
+  # `grep -nE '\["(complete|skip)", "[0-9]'`, three quote characters, the third never
+  # closing -- and inverting there swallows the 177 characters of prose that follow.
+  # Every stray quote in this tree sits inside backticks, so removing code spans first
+  # takes the odd-cardinality blocks from one to zero and the polarity problem with it.
   #
-  # An odd number of quotes means the text does not pair at all, so nothing is blanked
-  # and the block is judged whole. That is the over-reporting direction, which this file
-  # is deliberately wrong in.
+  # Each pass guards its own delimiter independently: an odd count means the text does
+  # not pair, so that pass blanks nothing rather than guessing where the span ends.
+  #
+  # Collapsing space runs afterwards is what makes a phrase INTERRUPTED by a span still
+  # match -- `not yet "fully" merged` becomes `not yet merged`. It can also weld a phrase
+  # across a blanked span that ended a sentence ("not yet \"done.\" Merged in June" reads
+  # as `not yet Merged`), which over-reports. That is the direction this file chooses.
   said=$(printf '%s' "$txt" | awk '
-    {
-      q = gsub(/"/, "\"")
-      if (q % 2 == 1) { print; next }
-      out = ""; inq = 0; n = length($0)
-      for (i = 1; i <= n; i++) {
-        c = substr($0, i, 1)
-        if (c == "\"") { inq = 1 - inq; out = out " "; continue }
-        out = out (inq ? " " : c)
+    function blank(s, d,    q, out, ins, i, c) {
+      q = gsub(d, "&", s)
+      if (q % 2 == 1) return s
+      out = ""; ins = 0
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (c == d) { ins = 1 - ins; out = out " "; continue }
+        out = out (ins ? " " : c)
       }
-      gsub(/  +/, " ", out)
-      print out
-    }')
+      return out
+    }
+    { s = blank($0, "`"); s = blank(s, "\""); gsub(/  +/, " ", s); print s }')
   printf '%s' "$said" | grep -qiE 'remains open|still open|not yet (fixed|released|landed|merged)|blocked (by|on)|awaiting|awaited|(is|still|remains) pending|pending (upstream|release|a fix|the fix)|unreleased|until .*(lands|ships)' || continue
   # Scanning Markdown brought mermaid `classDef` lines into range, and `stroke:#57606a`
   # offers the ref pattern a five-digit prefix to match -- unresolvable, so it trips the
@@ -126,7 +135,10 @@ while IFS=$'\t' read -r f s txt; do
   # otherwise yields ref 00 and `fill:#5760` yields 5760, both unresolvable, both
   # tripping the fail-closed arm and turning CI permanently red on a stylesheet. The
   # property prefix is what makes stripping 3- and 4-digit runs safe here, since a bare
-  # `#196` can never carry one. Then six-digit hex anywhere, for colours written without
+  # `#196` can never carry one. The prefix must also be a WHOLE word -- without the
+  # leading boundary, `backfill:#196` matched on its last four letters and lost both the
+  # ref and the words around it, and "pending backfill" is vocabulary this file's own
+  # header cites twice. Then six-digit hex anywhere, for colours written without
   # a property.
   clean=$(printf '%s' "$txt" | sed -E 's/(^|[^a-z])(fill|stroke|color):#[0-9a-fA-F]{3,8}/\1/g; s/#[0-9a-fA-F]{6}//g')
   refs=$(printf '%s' "$clean" | grep -oE '(^|[^a-zA-Z/-])#[0-9]{2,5}' | grep -oE '[0-9]{2,5}' | sort -u)
