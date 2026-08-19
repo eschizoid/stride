@@ -120,8 +120,8 @@ as from sync. Success →
 `{"schema_version":2,"data":{…}}`, error →
 `{"schema_version":2,"error":{"code":"…","message":"…"}}`. The payloads described in
 the table below all live under `.data`; every payload here — the
-sixteen queries, the actions you branch on (`sync`, `analyze`, `import`, `rate`,
-`week add`, `complete`, `skip`, `config`, `init`), the command list and the envelope itself —
+every query, every action you branch on, the command list and the envelope itself (one
+file per published payload in `schemas/v2/`, so the directory listing is the inventory) —
 is described formally in `schemas/v2/*.json` in the repo (required keys, types,
 enums, and the error-code vocabulary, which is diffed against the source in CI so
 a code stride can emit cannot be missing from the contract).

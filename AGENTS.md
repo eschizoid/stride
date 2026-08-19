@@ -105,7 +105,8 @@ just install   # build + symlink to ~/.local/bin/stride
   (`sqlite3 ~/.stride/db.sqlite ".backup /tmp/x/.stride/db.sqlite"`) and run with an
   explicit `HOME`. A stray `stride init` against the real HOME has happened.
 - **e2e id assertions are positional.** Inserting a `planned_sessions` row mid-scenario
-  shifts the auto-increment and breaks later fixed-id checks (22 of them today). Add new
+  shifts the auto-increment and breaks later fixed-id checks — find them with
+  `grep -nE '\["(complete|skip)", "[0-9]' tests/e2e.roc` rather than trusting a count. Add new
   fixtures at the END of a scenario, and delete what you insert.
 - **A bare `True`/`False` serializes as the STRING `"True"`** in an encode-only payload.
   Annotate the field `: Bool` — the annotations scattered through `Report.roc` are there

@@ -124,9 +124,11 @@ e2e-sync:
     #
     # EXIT alone, deliberately. Adding INT/TERM to a handler that does not itself exit
     # REPLACES the default terminate-on-signal, so Ctrl-C ran the cleanup and then carried
-    # on through all five retries. Measured: with `EXIT INT TERM` a SIGTERM'd run completed
-    # the whole loop and exited 0; with `EXIT` alone it stopped at once (143) and still ran
-    # the cleanup, which is the behaviour we want.
+    # on instead of stopping. Measured back when the 5x retry loop below still existed:
+    # with `EXIT INT TERM` a SIGTERM'd run completed all five retries and exited 0; with
+    # `EXIT` alone it stopped at once (143) and still ran the cleanup. The loop is gone,
+    # so that exact measurement is no longer reproducible here, but the signal-handling
+    # rule it established is why this trap names only EXIT.
     trap 'kill $MOCK 2>/dev/null' EXIT
     # single shot, no retry. The 5x retry loop that used to live here absorbed bug C's
     # ~50% flake; with the bug fixed (basic-cli 0.22.0, #105) the flake is gone —
