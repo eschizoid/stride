@@ -79,35 +79,56 @@ while IFS=$'\t' read -r f s txt; do
   # sessions" -- none of which say anything about an ISSUE, and a block carrying one of
   # those plus any ref would flag forever. The qualified forms are the ones that assert
   # a tracker state.
-  # A state phrase inside quotation marks is being QUOTED, not asserted, so quoted spans
-  # come out before the match. Docs make this load-bearing: prose narrates superseded
-  # states constantly, and both paragraphs this flagged on its first run over docs/ were
-  # of exactly that shape -- `used to sit here as "blocked by the compiler"` and `why the
-  # original "blocked on roc-json" conclusion was wrong`. Rewording accurate history to
-  # satisfy a regex would be the wrong direction to fix that.
-  # BOUNDED at 80 characters, and the bound is the whole safety. Unbounded, `"[^"]*"`
-  # pairs quotes left-to-right across the entire joined block, and a Markdown block is a
-  # whole paragraph -- AGENTS.md's conventions list is one 5651-char block with nine
-  # quote characters, where the fourth "pair" spans ~200 characters of live prose because
-  # a quote inside a grep pattern mispairs with a quote inside a code span. A stale claim
-  # sitting in that gap was reported as clean: the gate said none stale with a literal
-  # `blocked by #196` in the file. Eighty covers every quoted phrase this repo actually
-  # writes and cannot span two unrelated code samples.
-  said=$(printf '%s' "$txt" | sed -E 's/"[^"]{0,80}"//g')
+  #
+  # A state phrase inside quotation marks is being QUOTED, not asserted. Docs make that
+  # load-bearing: prose narrates superseded states constantly, and the first run over
+  # docs/ flagged `used to sit here as "blocked by the compiler"` and `why the original
+  # "blocked on roc-json" conclusion was wrong`. Rewording accurate history to satisfy a
+  # checker would be the wrong direction.
+  #
+  # Blank the INSIDE of quotations by scanning parity, one character at a time. Any
+  # regex that PAIRS quotes is wrong here, and two versions proved it: `"[^"]*"` paired
+  # greedily across a 5651-character block and deleted ~200 characters of live prose,
+  # and bounding it to 80 only shrank the blast radius -- a quotation longer than the
+  # bound cannot be matched, so the matcher steps past its opening quote and every
+  # later pairing is off by one for the rest of the block. Fifty-seven blocks in this
+  # tree contain an over-80-character quotation, three already lost prose, and a
+  # planted `blocked by #196` in ADR 0010 read as clean. The same desync breaks
+  # suppressions the other way, turning CI red on quoted history after an unrelated
+  # edit elsewhere in the paragraph.
+  #
+  # Parity cannot desync, and it also fixes the case the bounded version could not:
+  # `not yet "fully" merged` blanks to `not yet  merged`, and collapsing the runs makes
+  # it match, so a state phrase INTERRUPTED by a quotation is still a state phrase.
+  #
+  # An odd number of quotes means the text does not pair at all, so nothing is blanked
+  # and the block is judged whole. That is the over-reporting direction, which this file
+  # is deliberately wrong in.
+  said=$(printf '%s' "$txt" | awk '
+    {
+      q = gsub(/"/, "\"")
+      if (q % 2 == 1) { print; next }
+      out = ""; inq = 0; n = length($0)
+      for (i = 1; i <= n; i++) {
+        c = substr($0, i, 1)
+        if (c == "\"") { inq = 1 - inq; out = out " "; continue }
+        out = out (inq ? " " : c)
+      }
+      gsub(/  +/, " ", out)
+      print out
+    }')
   printf '%s' "$said" | grep -qiE 'remains open|still open|not yet (fixed|released|landed|merged)|blocked (by|on)|awaiting|awaited|(is|still|remains) pending|pending (upstream|release|a fix|the fix)|unreleased|until .*(lands|ships)' || continue
-  # Strip six-digit hex colours first. Scanning Markdown brought mermaid `classDef`
-  # lines into range, and `stroke:#57606a` offers the ref pattern a five-digit prefix to
-  # match -- which resolves to nothing and trips the fail-closed arm, so the gate would
-  # have gone permanently red on a stylesheet. SIX only: three hex chars is also a legal
-  # colour, but `#196` is three hex chars too, and stripping those would silently blind
-  # the checker to most of this repo's own issue numbers.
+  # Scanning Markdown brought mermaid `classDef` lines into range, and `stroke:#57606a`
+  # offers the ref pattern a five-digit prefix to match -- unresolvable, so it trips the
+  # fail-closed arm and the gate goes permanently red on a stylesheet.
+  #
   # Colours in a CSS/mermaid PROPERTY go first, at any shorthand length: `fill:#00f`
   # otherwise yields ref 00 and `fill:#5760` yields 5760, both unresolvable, both
   # tripping the fail-closed arm and turning CI permanently red on a stylesheet. The
   # property prefix is what makes stripping 3- and 4-digit runs safe here, since a bare
   # `#196` can never carry one. Then six-digit hex anywhere, for colours written without
   # a property.
-  clean=$(printf '%s' "$txt" | sed -E 's/(fill|stroke|color):#[0-9a-fA-F]{3,8}//g; s/#[0-9a-fA-F]{6}//g')
+  clean=$(printf '%s' "$txt" | sed -E 's/(^|[^a-z])(fill|stroke|color):#[0-9a-fA-F]{3,8}/\1/g; s/#[0-9a-fA-F]{6}//g')
   refs=$(printf '%s' "$clean" | grep -oE '(^|[^a-zA-Z/-])#[0-9]{2,5}' | grep -oE '[0-9]{2,5}' | sort -u)
   [ -z "$refs" ] && continue
   for ref in $refs; do
