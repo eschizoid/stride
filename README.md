@@ -346,7 +346,9 @@ flowchart TD
     strava --> sync --> mirror
     export -->|"import"| mirror
     mirror --> analyze --> computed
-    db --> queries
+    mirror --> queries
+    computed --> queries
+    judgment --> queries
     queries -->|"summary, week, progress"| coach
     coach -->|"week add, complete, skip, rate"| judgment
 
