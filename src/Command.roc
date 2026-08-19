@@ -182,8 +182,8 @@ Command := [
 
 	## Every command name the parser answers to, so a wrong-arity invocation of a
 	## REAL command reports a usage error instead of claiming the command does not
-	## exist. Kept beside `parse` because it is the same fact; an expect below
-	## fails if a name here stops being parseable.
+	## exist. Kept beside `parse` because it is the same fact; every name here has an
+	## expect below that fails if it stops parsing to its own form.
 	command_names : List(Str)
 	command_names = [
 		"init", "auth", "sync", "backfill", "analyze", "summary", "stats", "doctor",
@@ -483,12 +483,16 @@ expect {
         _ => False
     }
 }
-# The ten no-argument commands that had no parse expect of their own. Asserting
-# each maps to its OWN variant is the real drift guard: an earlier version of
-# this checked only that names in `command_names` avoid UnknownCmd, which is
-# TRUE BY CONSTRUCTION (membership is what routes them elsewhere) and so could
-# not fail — deleting `[_, "stats"] => Ok(Stats)` left it green. Review caught
-# it with four mutations.
+# One expect per name in `command_names`, each in its minimal valid form. Asserting
+# each maps to its OWN variant is the real drift guard: an earlier version of this
+# checked only that names in `command_names` avoid UnknownCmd, which is TRUE BY
+# CONSTRUCTION (membership is what routes them elsewhere) and so could not fail —
+# deleting `[_, "stats"] => Ok(Stats)` left it green. Review caught it with four
+# mutations. It then pinned only ten of the thirty-two names while the comment beside
+# also left it green; review caught THAT one too. The aliases share a variant with
+# their long form on purpose — deleting either arm still fails here, because the
+# name then falls through to the wrong-arguments usage error rather than its command.
+expect match Command.parse(["stride", "init"]) { Ok(Init) => True  _ => False }
 expect match Command.parse(["stride", "auth"]) { Ok(Auth) => True  _ => False }
 expect match Command.parse(["stride", "sync"]) { Ok(Sync) => True  _ => False }
 expect match Command.parse(["stride", "backfill"]) { Ok(Backfill) => True  _ => False }
@@ -499,6 +503,27 @@ expect match Command.parse(["stride", "doctor"]) { Ok(Doctor) => True  _ => Fals
 expect match Command.parse(["stride", "import", "x.zip"]) { Ok(Import("x.zip")) => True  _ => False }
 expect match Command.parse(["stride", "rate", "1", "5"]) { Ok(Rate("1", "5")) => True  _ => False }
 expect match Command.parse(["stride", "activity", "7"]) { Ok(Activity("7")) => True  _ => False }
+expect match Command.parse(["stride", "zones"]) { Ok(Zones) => True  _ => False }
+expect match Command.parse(["stride", "pz"]) { Ok(Zones) => True  _ => False }
+expect match Command.parse(["stride", "compare"]) { Ok(Compare("week")) => True  _ => False }
+expect match Command.parse(["stride", "activities"]) { Ok(Activities(30, "")) => True  _ => False }
+expect match Command.parse(["stride", "top", "np"]) { Ok(Top("np", 10, "")) => True  _ => False }
+expect match Command.parse(["stride", "load"]) { Ok(Load(90)) => True  _ => False }
+expect match Command.parse(["stride", "power-curve"]) { Ok(PowerCurve(90, "")) => True  _ => False }
+expect match Command.parse(["stride", "pc"]) { Ok(PowerCurve(90, "")) => True  _ => False }
+expect match Command.parse(["stride", "progress"]) { Ok(Progress("", Asc)) => True  _ => False }
+expect match Command.parse(["stride", "week"]) { Ok(WeekView) => True  _ => False }
+expect match Command.parse(["stride", "plan"]) { Ok(Plan) => True  _ => False }
+expect match Command.parse(["stride", "complete", "3", "9"]) { Ok(Complete("3", "9")) => True  _ => False }
+expect match Command.parse(["stride", "skip", "3", "sick"]) { Ok(Skip("3", "sick")) => True  _ => False }
+expect match Command.parse(["stride", "config", "get", "ftp"]) { Ok(ConfigGet("ftp")) => True  _ => False }
+expect match Command.parse(["stride", "tte", "250"]) { Ok(Tte("250")) => True  _ => False }
+expect match Command.parse(["stride", "reps"]) { Ok(Reps("")) => True  _ => False }
+expect match Command.parse(["stride", "season"]) { Ok(Season) => True  _ => False }
+expect match Command.parse(["stride", "--version"]) { Ok(Version) => True  _ => False }
+expect match Command.parse(["stride", "--help"]) { Err(ShowHelp) => True  _ => False }
+expect match Command.parse(["stride", "-h"]) { Err(ShowHelp) => True  _ => False }
+expect match Command.parse(["stride", "help"]) { Err(ShowHelp) => True  _ => False }
 
 # a help spelling with junk after it is still a help spelling, not an unknown
 # command — the falsehood item 2 removed, surviving in a corner

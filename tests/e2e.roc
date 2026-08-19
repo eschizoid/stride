@@ -161,7 +161,10 @@ run_all! = || {
     # date-dependent check runs. b_config_ftp! sets it too, at its "config set emits the
     # JSON envelope" check, for its own assertions. Nothing between here and there is
     # date-dependent today, so this pin is defence in depth rather than a fix -- it means
-    # a date check ADDED to an early scenario cannot inherit a UTC binary.
+    # a date check ADDED after it inherits a zoned binary rather than a UTC one. Two
+    # windows are deliberately NOT covered: b_init_config! runs BEFORE this pin, on a
+    # freshly-init'ed db with no timezone row; and b_config_ftp! strips the zone twice to
+    # assert the UTC fallback, so a date check added inside those two stretches gets UTC.
     #
     # Everything that reads a clock in this harness must go through `tz` or `ctx.today`.
     # A second literal is how this bug got in: the fixture configured one zone and
@@ -417,7 +420,10 @@ b_pz! = |ctx| {
 }
 
 # ── config set/get: local key-value store. FTP keys are REFUSED (ADR 0005 — derived from
-# power history, never configured); everything else round-trips. ──────────────────────
+# power history, never configured). Everything else round-trips EXCEPT the two classes
+# asserted below: validated keys reject malformed values (exponent zone bounds, an
+# out-of-range or signed utc_offset_minutes), and secret keys store but read back
+# redacted. ───────────────────────────────────────────────────────────────────────────
 b_config_ftp! : Ctx => Try({}, _)
 b_config_ftp! = |ctx| {
     # FTP is DERIVED (ADR 0005): setting it must be refused, not silently stored. This block
@@ -442,7 +448,7 @@ b_config_ftp! = |ctx| {
     check!("a value too large for the reader is refused at the write", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "utc_offset_minutes", "99999999999999999999"]), "bad_value"))?
     check!("...and refuses a leading +, which this narrowing would otherwise coalesce to 0", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "utc_offset_minutes", "+330"]), "bad_value"))?
     check!("...while the plain forms still store", strjq!(ctx, ["config", "set", "hr_z1_max", "118.5"], ".data.value") == "118.5")?
-    check!("...and a free-text key is untouched by the rule", strjq!(ctx, ["config", "set", "timezone", "America/Chicago"], ".data.value") == "America/Chicago")?
+    check!("...and a free-text key is untouched by the rule", strjq!(ctx, ["config", "set", "timezone", ctx.tz], ".data.value") == ctx.tz)?
     # #206: a LEGACY row -- written by SQL, as one written before the write-side
     # validation existed would be -- must be reported, not coalesced. `+330` parsed fine
     # on both compiler pins, so this is exactly what an athlete could have stored.
@@ -463,7 +469,7 @@ b_config_ftp! = |ctx| {
     check!("an unreadable per-sport zone is refused, not silently globalised", Str.contains(stride!(ctx.bin, ctx.home, ["analyze"]), "unreadable_config"))?
     _ = sql!(ctx.db, "DELETE FROM config WHERE key='hr_z2_max_soccer';")
     check!("...while an ABSENT per-sport zone still falls back to the global", Str.contains(stride!(ctx.bin, ctx.home, ["analyze"]), "\"computed\":"))?
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", "America/Chicago"])
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ctx.tz])
 
     # the trap this closes: a db from before FTP was derived still holds an ftp_ride row.
     # Setting is refused, so only a LEGACY row can exist — and it must not be echoed back.
@@ -478,7 +484,7 @@ b_config_ftp! = |ctx| {
     # assert the envelope, and the human line separately
     check!("config set emits the JSON envelope", strjq!(ctx, ["config", "set", "timezone", ctx.tz], ".data.value") == ctx.tz)?
     check!("config set human line", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "set", "timezone", ctx.tz]), "timezone = ${ctx.tz}"))?
-    check!("value stored + read back (human)", Str.trim(stride_human!(ctx.bin, ctx.home, ["config", "get", "timezone"])) == "America/Chicago")?
+    check!("value stored + read back (human)", Str.trim(stride_human!(ctx.bin, ctx.home, ["config", "get", "timezone"])) == ctx.tz)?
     # ── explicit format flags (#162): the flag beats the environment, works in
     # any argv position, and the last flag wins. stride_env! pins STRIDE_FORMAT
     # so each check is a real precedence fight, not an ambient default.
@@ -498,7 +504,7 @@ b_config_ftp! = |ctx| {
     check!("--human beats STRIDE_FORMAT=json", !(Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--human"], [("STRIDE_FORMAT", "json")]), "schema_version")))?
     check!("flag position is free (before the subcommand)", Str.contains(stride_env!(ctx.bin, ctx.home, ["--json", "config", "get", "timezone"], [("STRIDE_FORMAT", "human")]), "schema_version"))?
     check!("last flag wins", Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--human", "--json"], [("STRIDE_FORMAT", "human")]), "schema_version"))?
-    check!("args survive the strip (value intact)", Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--json"], [("STRIDE_FORMAT", "human")]), "America/Chicago"))?
+    check!("args survive the strip (value intact)", Str.contains(stride_env!(ctx.bin, ctx.home, ["config", "get", "timezone", "--json"], [("STRIDE_FORMAT", "human")]), ctx.tz))?
     # `--` ends flag parsing, proven by ROUND TRIP rather than by absence: the
     # literal "--json" must land in the database as the skip reason, and the
     # requested format must survive the escape (the first version of this check
@@ -509,7 +515,7 @@ b_config_ftp! = |ctx| {
     check!("`--` protects a literal flag argument", Str.trim(sql!(ctx.db, "SELECT COALESCE(skipped_reason,'') FROM planned_sessions WHERE id = ${term_sess};")) == "--json")?
     check!("...and the requested format still wins", Str.contains(term_out, "schema_version"))?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${term_sess};")
-    check!("config get json value", strjq!(ctx, ["config", "get", "timezone"], ".data.value") == "America/Chicago")?
+    check!("config get json value", strjq!(ctx, ["config", "get", "timezone"], ".data.value") == ctx.tz)?
     check!("config get not_set error", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "nope"]), "not_set"))?
     # delete the row rather than storing "" — not because they differ (Db.roc collapses
     # both to NoTz, and doctor reports the same UTC fallback for each; that equivalence
@@ -567,7 +573,11 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,weighted_avg_watts,avg_watts) VALUES (101,'power ride','Ride','${ctx.d1}T10:00:00Z',3600,30000,100,200,200);")
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (102,'hr row','Rowing','${ctx.d2}T10:00:00Z',3600,9000,0,150);")
     # a real 200W stream so the ride derives an FTP (best-20min 200 x 0.95 = 190). Post-#26
-    # FTP is derived from stream power, not config, so a summary-watts-only ride scores 0.
+    # FTP is derived from stream power, not config, so a summary-watts-only ride scores 0
+    # only while its sport family has no stream power at all. Once this stream lands the
+    # Ride family HAS a derived FTP, and a later summary-watts ride scores against it
+    # (402, "NULL device_watts still scores as measured"). The Ski row at b_ladder! is the
+    # genuinely unscored case — a family with no stream anywhere.
     _ = seed_power_stream!(ctx.db, 101, 3600, 200)
     # first analyze converges the derived FTP: pass 1 scores both rows (best_20min_w still 0
     # -> FTP 0), pass 2 recomputes the ride once its best_20min_w resolves FTP to 190: 2+1=3
@@ -1240,11 +1250,14 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (931,932); DELETE FROM activities WHERE id IN (931,932); DELETE FROM daily_load WHERE day IN ('2010-03-02','2010-03-20');")
     check!("a known FTP range names its sport family", strjq!(ctx, ["season"], "[.data.blocks[] | select(.ftp_known and (.ftp_family | length == 0))] | length == 0") == "true")?
     # the boundary rule, end to end: insert a training day two clear weeks after
-    # the last one and the block COUNT must rise by exactly one
+    # the last one and the block COUNT must rise by exactly one — asserted as an
+    # equality against before+1, so "two new blocks" fails here too
     season_before = Str.trim(strjq!(ctx, ["season"], ".data.blocks | length"))
     last_day = Str.trim(strjq!(ctx, ["season"], ".data.blocks | last | .end_date"))
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES (date('${last_day}', '+21 days'), 55.0, 10.0, 10.0, 0.0);")
-    check!("a gap of two clear weeks opens a new block", Str.trim(strjq!(ctx, ["season"], ".data.blocks | length")) != season_before)?
+    # `== before + 1`, not `!= before`: strjq! swallows stderr, so a crashed binary
+    # yields "" — which satisfies any inequality and made this pass on a dead engine.
+    check!("a gap of two clear weeks opens a new block", Str.trim(strjq!(ctx, ["season"], ".data.blocks | length == (${season_before} + 1)")) == "true")?
     # ...and a day only ONE week later joins the block instead of opening one
     _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = date('${last_day}', '+21 days');")
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES (date('${last_day}', '+7 days'), 55.0, 10.0, 10.0, 0.0);")
@@ -1258,7 +1271,7 @@ b_seed_analyze! = |ctx| {
     # absence keeps the split, training bridges it into one block.
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES (date('${last_day}', '+7 days'), 0.0, 10.0, 10.0, 0.0);")
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES (date('${last_day}', '+21 days'), 55.0, 10.0, 10.0, 0.0);")
-    check!("a zero-load week does not bridge a gap", Str.trim(strjq!(ctx, ["season"], ".data.blocks | length")) != season_before)?
+    check!("a zero-load week does not bridge a gap", Str.trim(strjq!(ctx, ["season"], ".data.blocks | length == (${season_before} + 1)")) == "true")?
     _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day IN (date('${last_day}', '+7 days'), date('${last_day}', '+21 days'));")
     check!("season is back to its original block count", Str.trim(strjq!(ctx, ["season"], ".data.blocks | length")) == season_before)?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${sch_done}, ${sch_open});")
@@ -1995,7 +2008,7 @@ b_progress_b! = |ctx| {
 
 # ── import: Strava account export ────────────────────────────────────
 validate_schema! : Ctx, Str, Str => Str
-validate_schema! = |ctx, cmd, schema| Str.trim(sh!("out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${cmd} 2>/dev/null); if [ -z \"$out\" ]; then echo \"no output from `${cmd}` — nothing was validated\"; else printf '%s' \"$out\" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/${schema}.json -f tools/validate.jq 2>&1; fi"))
+validate_schema! = |ctx, cmd, schema| Str.trim(sh!("out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${cmd} 2>/dev/null); if [ -z \"$out\" ]; then echo \"no output from '${cmd}' — nothing was validated\"; else printf '%s' \"$out\" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/${schema}.json -f tools/validate.jq 2>&1; fi"))
 
 b_import! : Ctx => Try({}, _)
 b_import! = |ctx| {
@@ -2182,7 +2195,7 @@ b_doctor! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ctx.tz])
     check!("valid tz time_ok", strjq!(ctx, ["doctor"], ".data.time_ok") == "true")?
     dtime = strjq!(ctx, ["doctor"], ".data.time")
-    check!("valid tz is DST-aware Chicago", Str.contains(dtime, "America/Chicago") and Str.contains(dtime, "DST-aware"))?
+    check!("a valid tz is reported DST-aware", Str.contains(dtime, ctx.tz) and Str.contains(dtime, "DST-aware"))?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", "Not/ARealZone"])
     check!("bad tz not ok", strjq!(ctx, ["doctor"], ".data.time_ok") == "false")?
     check!("bad tz shows UNKNOWN", Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UNKNOWN"))?
@@ -2194,7 +2207,7 @@ b_doctor! = |ctx| {
     # rather than sitting there as dead code wearing a test's clothes.
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ""])
     check!("empty timezone is the absent state, not an invalid one", strjq!(ctx, ["doctor"], ".data.time_ok") == "true" and Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UTC"))?
-    # restore before returning: four scenarios run after this one, and leaving the zone
+    # restore before returning: three scenarios run after this one, and leaving the zone
     # blank -- or on the unresolvable name set just above, which also resolves to UTC --
     # hands them a binary on a different clock than the harness -- the same defect
     # this PR fixes at b_config_ftp!. Latent today (nothing after here is date-sensitive)
@@ -2406,9 +2419,10 @@ seed_pace_hr_stream! = |db, id, n, mps| {
     times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
     dist = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i * mps)), ",")
     hr = Str.join_with(List.map(int_seq(n), |i| U64.to_str(if i * 2 < n 140 else 150)), ",")
-    # flat measured altitude: real outdoor streams carry one, and the pace
-    # decoupling arm requires a graded triple (an altitude-less "run" cannot
-    # prove its terrain was flat, so it honestly gets Unknown)
+    # flat measured altitude: real outdoor streams carry one, and only the
+    # GRADE-ADJUSTED pace arm requires a graded triple. An altitude-less run
+    # still gets a known drift — it is just labeled "speed" rather than pace,
+    # so nobody reads terrain effects as grade-adjusted (activity 107 pins this)
     alt = Str.join_with(List.map(int_seq(n), |_| "100"), ",")
     raw = "{\"time\":{\"data\":[${times}]},\"distance\":{\"data\":[${dist}]},\"altitude\":{\"data\":[${alt}]},\"heartrate\":{\"data\":[${hr}]}}"
     _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
