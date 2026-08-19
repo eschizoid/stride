@@ -566,7 +566,7 @@ Analyze :: [].{
         Ok(List.map(sports, |s| (s, zones_sig(resolve_zones_pure(cfg, s, g)))))
     }
     # pure: `CASE a.sport_type WHEN '<sport>' THEN '<sig>' … ELSE '<global_sig>' END`, the
-    # zones analog of ftp_case_from_map, built from the frozen (sport, sig) list. Each row's
+    # zones analog of `period_ftp_sql`, built from the frozen (sport, sig) list. Each row's
     # stored zones_used is compared to ITS sport's signature, so a per-sport zone edit
     # invalidates only that sport's rows.
     zones_case_from_sigs : List((Str, Str)), Metrics.ZoneBounds -> Str

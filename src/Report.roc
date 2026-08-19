@@ -424,9 +424,9 @@ Report :: [].{
         prior_b20_known_b : Bool
         prior_b20_known_b = prior_best20.bk != 0
 
-        # polarization is power-aware: easy/moderate/hard come from POWER zones for
-        # activities that have a pi_* intensity split (power-derived with watts,
-        # pace-derived for a distance sport without), HR zones otherwise (zone_sum! per-activity)
+        # polarization is intensity-aware: easy/moderate/hard come from the pi_* split for
+        # activities that have one (power-derived with watts, pace-derived for a distance
+        # sport without), HR zones otherwise (zone_sum! per-activity)
         total = zsum.easy + zsum.moderate + zsum.hard
         easy = zsum.easy
         hard = zsum.hard

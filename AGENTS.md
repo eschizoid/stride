@@ -294,9 +294,10 @@ Every item here cost a debugging session at least once — they are not style op
 ## Repo & CI
 
 `github.com/eschizoid/stride` (**public**). Remote is SSH — the gh OAuth token lacks
-workflow scope for pushing workflow files. Three workflows: `build.yml` (check + pure
+workflow scope for pushing workflow files. Four workflows: `build.yml` (check + pure
 tests on linux/macOS/Windows, then build + e2e on macOS), `release-please.yml`
-(automated releases, below), and `manual-release.yml` (dispatch-only re-cut).
+(automated releases, below), `manual-release.yml` (dispatch-only re-cut), and
+`verify-arm64.yml` (dispatch-only linux-arm64 re-check).
 
 - **Normal git history — no more squash/force-push on `main`.** Commit normally, push
   fast-forward. (We used to amend one commit and force-push; that era is over. The one
@@ -331,7 +332,7 @@ on `main`. You never tag or edit the version by hand.
   one needs the explicit `roc_target: arm64musl` the release workflow passes (left to
   itself it detects arm64v1musl and fails), has a dispatch-only re-check in
   `verify-arm64.yml`, and ships from
-  v0.6.0. `fail-fast: false` plus an `always()` upload means one bad target still lets the
+  v0.4.0. `fail-fast: false` plus an `always()` upload means one bad target still lets the
   others attach.
 - **Never cut a release without Mariano's explicit go-ahead** — landing feats on main is
   fine, but merging the release PR / tagging waits for a clear yes.

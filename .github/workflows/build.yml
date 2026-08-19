@@ -113,7 +113,7 @@ jobs:
       - name: Install just
         run: brew install just
       - name: Build stride (dev backend — chosen for build time, not correctness)
-        run: roc build src/app.roc --output=stride --opt=dev   # ~15s; new compiler uses --output=
+        run: roc build src/app.roc --output=stride --opt=dev   # new compiler uses --output=
       - name: Run offline e2e suite
         run: ROC=roc just e2e
       # Cheap, and it guards a class that has rotted twice: a comment asserting an issue

@@ -20,7 +20,7 @@ leave stdout byte-identical.
 
 **1. Progress narrates on stderr; stdout is untouched.** Stderr is the process's
 narration channel and carries no contract: `rescoring 128/723…`,
-`fetching streams 14/60…`, `daily_load rebuild…`. Machine consumers parsing stdout
+`fetching streams 14/60…`, `rebuilding daily load…`. Machine consumers parsing stdout
 never see it; golden fixtures never change. basic-cli 0.22 exposes `Stderr.line!` and
 `Stderr.write!` (no newline), so no platform work is needed.
 
