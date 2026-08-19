@@ -55,7 +55,39 @@ Render :: [].{
                 },
             )
             final = if Str.is_empty(packed.cur) packed.out else List.append(packed.out, packed.cur)
-            if List.is_empty(final) [""] else final
+            # The packer above can only break BETWEEN words, so a token with no spaces
+            # comes out whole and ignores the cap it was just handed. That made fit_caps'
+            # squeeze a no-op for precisely the columns that needed squeezing, and the
+            # table then overran the budget with nothing reporting it (#194: a season
+            # block reads `2021-12-13..2022-02-10`, one space-free token). Breaking every
+            # produced line here rather than only the no-space case covers the arm that
+            # carries an over-long word forward as `cur` too.
+            capped = List.join(List.map(final, |line| hard_break(line, cap)))
+            if List.is_empty(capped) [""] else capped
+        }
+
+    # Split a token that has no break opportunity into cap-wide pieces. Cuts land on
+    # CHARACTER boundaries: a UTF-8 continuation byte contributes 0 display width, so it
+    # can never trigger a cut and never starts a piece — the same byte classification
+    # `display_width` uses, kept in step with it deliberately.
+    hard_break : Str, U64 -> List(Str)
+    hard_break = |s, cap|
+        if cap == 0 or display_width(s) <= cap {
+            [s]
+        } else {
+            st = List.fold(
+                Str.to_utf8(s),
+                { cur: [], w: 0, out: [] },
+                |acc, b| {
+                    bw = if b >= 0xF0 2 else if b < 0x80 or b >= 0xC0 1 else 0
+                    if bw > 0 and acc.w + bw > cap and !(List.is_empty(acc.cur))
+                        { cur: [b], w: bw, out: List.append(acc.out, acc.cur) }
+                    else
+                        { cur: List.append(acc.cur, b), w: acc.w + bw, out: acc.out }
+                },
+            )
+            pieces = if List.is_empty(st.cur) st.out else List.append(st.out, st.cur)
+            List.map(pieces, |bs| Str.from_utf8(bs).ok_or(""))
         }
 
     idx_of_max : List(U64) -> U64
@@ -1215,6 +1247,28 @@ expect {
     )
     Render.display_width(List.get(Str.split_on(t, "\n"), 0).ok_or("")) <= Render.max_total
 }
+# ...and the budget still holds when the widest cell has NO break opportunity. The expect
+# above wraps a spaced sentence, so it only ever exercised the word packer; a space-free
+# token took the other arm of wrap_cell, which emitted it whole and overran the budget in
+# silence (#194 — a season block is `2021-12-13..2022-02-10`, one token). Checks EVERY
+# line, not just the top border: the border is built from the caps, so it can be legal
+# while a data row it is supposed to bound is not.
+expect {
+    span = "2021-12-13..2022-02-10-and-a-tail-long-enough-that-it-cannot-possibly-fit"
+    t = Render.render_table(
+        ["block", "wk", "sessions", "load/wk", "trend", "r2", "polarization", "ftp"],
+        [[span, "71", "128", "315", "falling", "0.10", "54/15/31", "239-271"]],
+    )
+    List.all(Str.split_on(t, "\n"), |l| Render.display_width(l) <= Render.max_total)
+}
+# hard_break cuts at the cap and loses nothing
+expect Render.hard_break("abcdefghij", 4) == ["abcd", "efgh", "ij"]
+# ...and cuts on CHARACTER boundaries, not byte offsets. A 4-byte glyph is display-width
+# 2, so a cap of 3 fits one glyph plus one ASCII column and never splits the glyph — the
+# failure that would print a broken code point into the middle of a table.
+expect Render.hard_break("🚴ab🚴", 3) == ["🚴a", "b🚴"]
+# a token that already fits is returned untouched, so wrap_cell's fast path is unaffected
+expect Render.hard_break("short", 12) == ["short"]
 # a short cell is rendered whole on one line — exact match proves no wrapping
 # #123: the phrase distinguishes an exact streak from a truncated one, and stays silent
 # where the number carries no information. The n=1/n=2 pair pins the suppression threshold
