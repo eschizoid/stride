@@ -1,6 +1,6 @@
 # ADR 0000 — stride architecture and key decisions
 
-Status: accepted · Last reviewed: 2026-07-31
+Status: accepted · Last reviewed: 2026-08-19
 
 This is the foundational architecture decision record. It captures *why* stride is
 shaped the way it is — the decisions that are expensive to reverse and the
@@ -49,7 +49,7 @@ instead of piled into `app.roc`: `Db.roc` owns SQLite plus the schema/migrations
 family in #196) own their commands, and `app.roc` is a thin argv → dispatch shell. Pure logic still lives in
 its own tested modules: `Metrics.roc` (training math), `Sports.roc` (sport vocabulary),
 `Render.roc` (tables/formatting), `Command.roc` (argv → typed command), `Config.roc` (key
-policy), `Csv/Streams/Backfill/Schema`. `Output.roc` owns the envelope and is effectful.
+policy), `Csv/Streams/Backfill`. `Schema.roc` is pure DDL with no expects. `Output.roc` owns the envelope and is effectful.
 
 Historical note: under alpha4 this split was impossible — module params were
 *monomorphic*, so injecting effects broke any row decoder wider than two columns and
@@ -69,7 +69,7 @@ segfaulted outright, exit 139). So Roc keeps the pure `expect`s, and
 end-to-end coverage is a native-Roc suite
 (`tests/e2e.roc`) that drives the real binary against a sandboxed `HOME` with seeded
 activities of known math. It's a basic-webserver app that runs every check in `init!`
-then exits (basic-cli's exec host drops child exit codes under the suite's ~350
+then exits (basic-cli's exec host drops child exit codes under the suite's several hundred
 subprocess spawns; basic-webserver's reaps them cleanly). The network path (sync +
 token refresh) is the same file's `E2E_MODE=sync` role driven against its
 `E2E_MODE=mock` role (a mock Strava on a local port), pointed at via `STRIDE_API_BASE`
@@ -118,6 +118,9 @@ Computed metrics must never go stale silently. Each `activity_metrics` row recor
 the inputs it was computed under, and recomputation is triggered by:
 
 - **FTP change** — compared via `ftp_used`.
+- **Derived threshold-pace change** — compared via `threshold_pace_used`, the pace
+  analog of `ftp_used` and period-anchored the same way. A new 20-minute pace best
+  rescores run/swim history with no FTP change anywhere.
 - **HR-zone change** — compared via a `zones_used` signature.
 - **Algorithm change** — the `metrics_rev` constant; bump it whenever `Metrics`
   math changes (config provenance can't see code changes).

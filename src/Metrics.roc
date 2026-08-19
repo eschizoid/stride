@@ -431,13 +431,13 @@ Metrics :: [].{
 
     # ── the TSS ladder ──────────────────────────────────────────────────
     # Best-available-data fallback chain, one decision in one testable place:
-    #   stream NP -> Strava weighted watts -> avg watts -> zone-based hrTSS
-    #   -> avg-HR classified into one zone -> relative_effort -> 0 (no data).
+    #   stream NP -> Strava weighted watts -> avg watts -> pace rTSS -> zone-based
+    #   hrTSS -> avg-HR classified into one zone -> session-RPE -> relative_effort
+    #   -> 0 (no data). Strength-class sports swap the last two of the middle: the
+    #   athlete's session-RPE outranks HR there, because HR-based load
+    #   systematically underestimates lifting (the aerobic model doesn't see bar
+    #   weight). `Sports.class` decides which order applies.
     # Returns the tss and the power figure used (Err NoPower if HR/RE path).
-
-    # ── sport classification ────────────────────────────────────────────
-    # Strength-class sports: HR-based load systematically underestimates them (the
-    # aerobic model doesn't see bar weight), so user session-RPE outranks HR there.
     # ── ramp rate (#93): weekly CTL delta, as a number ───────────────────
     #
     # CTL on the most recent day at or before `target`. Missing is NOT zero: a series that

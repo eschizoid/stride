@@ -54,7 +54,7 @@ Report :: [].{
                 \\       COALESCE(SUM(m.z4_s),0) AS z4, COALESCE(SUM(m.z5_s),0) AS z5, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
                 \\       -- load from a MEASURED source — a power meter or distance-measured pace
                 \\       -- (high-confidence rungs) — vs estimated from HR/RPE/relative-effort
-                \\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN ('power_stream','weighted_watts','avg_watts','rtss') THEN m.tss ELSE 0 END),0) AS REAL) AS measured,
+                \\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN (${high_models_sql}) THEN m.tss ELSE 0 END),0) AS REAL) AS measured,
                 \\       -- polarization intensity per activity: the pi_* split when the activity
                 \\       -- has one (power-derived with watts, pace-derived for a distance sport
                 \\       -- without), else the HR zones. So a power ride's threshold work counts

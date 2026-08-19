@@ -60,7 +60,7 @@ just install   # build + symlink to ~/.local/bin/stride
   Pure logic goes in `Metrics.roc` / `Sports.roc` (sport vocabulary: the four sport-varying policies — family filters, load-model class, pace routing, the pace-TSS exponent — gathered in one module rather than scattered through others; only the family filter is a table of rows, the class reads a list literal inside its own function, and the last two are name-substring predicates) / `Render.roc` / `Command.roc` (argv → typed
   `Command` union, `parse` is pure + unit-tested; `main!` is thin parse-then-dispatch)
   / `Config.roc` (`is_secret` secret-key policy) / `Csv.roc` / `Streams.roc` /
-  `Backfill.roc` / `Schema.roc`, with `expect` tests. When adding logic: pure
+  `Backfill.roc`, with `expect` tests (`Schema.roc` is pure DDL and carries none). When adding logic: pure
   function + expects first, thin effectful skin. Add new pure modules to the
   `just test` recipe so their expects run.
 - **Query-command output goes through `out!`** (payload + render fn): JSON is wrapped
@@ -70,7 +70,8 @@ just install   # build + symlink to ~/.local/bin/stride
   `schemas/v2/<command>.json` — `additionalKeys: false` means CI fails on an
   undeclared key, which is the point (`just schema-check` runs the same
   validator against your own database; `tools/schema-lint.jq` keeps schemas
-  inside the subset `tools/validate.jq` actually reads, plus `description` for humans).
+  inside the subset `tools/validate.jq` actually reads — `title` included, since the
+  validator uses it as the violation path's prefix — plus `description` for humans).
   Platform failures are converted to envelopes at ONE boundary (`run_command!`
   in app.roc) rather than at each call site, so a caller never meets a raw
   runtime banner; a new failure shape means a new arm there, not a new habit.
@@ -270,9 +271,9 @@ Every item here cost a debugging session at least once — they are not style op
   `doctor` reports `time_ok:false`. (Historical per-activity dates already use
   Strava's civil date, so only the today boundary needs this.)
 - Metric invalidation (recompute triggers): FTP change (`ftp_used`), **HR zone
-  change** (`zones_used` signature), **stream arrival** (store_streams! deletes
+  change** (`zones_used` signature), **derived-threshold change** (`ftp_used` for power, `threshold_pace_used` for pace — both period-anchored), **stream arrival** (store_streams! deletes
   metrics), **activity-input change** (each metrics row stores the inputs it was scored from — `mt_used`, `aw_used`, `sport_used`, … — and analyze compares them value by value, like `ftp_used`. `sync` does NOT delete metrics: it re-lists a rolling 30-day window every run and cannot tell an edit from a no-op, so invalidating there wiped a month of metrics per sync), **rating change** (rate! deletes metrics). Any new metric
-  input must join this story — `ftp_used`/`zones_used`/`metrics_rev`/the `*_used`
+  input must join this story — `ftp_used`/`threshold_pace_used`/`zones_used`/`metrics_rev`/the `*_used`
   input columns are all compared in `compute_missing_metrics!`'s WHERE; only the
   stream-arrival and rating paths DELETE the row. An activity edit does NOT delete:
   `sync` cannot tell an edit from a no-op, so analyze detects it by comparison.

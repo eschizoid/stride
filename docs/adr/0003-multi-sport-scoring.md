@@ -190,8 +190,9 @@ deliberately small way. Do **not** write a data-transform migration for the metr
    - *Pace provenance* (Decision 2): new `load_model` strings (`ngp`/`rtss`/`css`) must join
      **every** `load_model IN(...)` list — the *measured* set, the `doctor` confidence
      tiers, and the catch-all → `non` bucket. Since #196 split the read commands, those
-     lists span `Report.roc` AND `ReportHealth.roc` (doctor's are in the latter), while
-     the shared `high/medium/low_models_sql` constants stayed in `Report.roc`. Grep the
+     lists live in `Report.roc` as the `high/medium/low_models_sql` constants, and every
+     reader — including doctor's tiers in `ReportHealth.roc` — interpolates them rather
+     than restating them, so a new rung is a one-line edit. Grep the
      tree, not one file — this line said "in `Report.roc`" until the split moved half of
      what it pointed at — declared **high (measured)** like
      power; miss it and distance-measured pace silently reports as *unmeasured*. `doctor`'s
