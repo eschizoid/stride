@@ -106,17 +106,25 @@ while IFS=$'\t' read -r f s txt; do
   # Every stray quote in this tree sits inside backticks, so removing code spans first
   # takes the odd-cardinality blocks from one to zero and the polarity problem with it.
   #
-  # Each pass guards its own delimiter independently: an odd count means the text does
-  # not pair, so that pass blanks nothing rather than guessing where the span ends.
+  # The guards are COUPLED, and that coupling is load-bearing. An odd count of either
+  # delimiter means the text does not pair, so nothing is blanked and the block is judged
+  # whole. Guarding each pass separately looks equivalent and is not: an odd backtick
+  # count would leave the code spans IN, and the quote pass would then run over the very
+  # samples that make quote polarity unsafe. One stray backtick plus one stray quote,
+  # anywhere in the paragraph, and the same 177 characters vanish again. Two coincident
+  # typos is a narrower trigger than one, not a fixed bug.
+  #
+  # Note what removing code spans also does, beyond protecting quote parity: a state
+  # phrase written in code font -- `blocked on` -- is now suppressed like a quoted one.
+  # That is the same argument (a span shows a phrase rather than asserting it), but it is
+  # a real behaviour change and nothing else in this file says so.
   #
   # Collapsing space runs afterwards is what makes a phrase INTERRUPTED by a span still
   # match -- `not yet "fully" merged` becomes `not yet merged`. It can also weld a phrase
   # across a blanked span that ended a sentence ("not yet \"done.\" Merged in June" reads
   # as `not yet Merged`), which over-reports. That is the direction this file chooses.
   said=$(printf '%s' "$txt" | awk '
-    function blank(s, d,    q, out, ins, i, c) {
-      q = gsub(d, "&", s)
-      if (q % 2 == 1) return s
+    function blank(s, d,    out, ins, i, c) {
       out = ""; ins = 0
       for (i = 1; i <= length(s); i++) {
         c = substr(s, i, 1)
@@ -125,7 +133,12 @@ while IFS=$'\t' read -r f s txt; do
       }
       return out
     }
-    { s = blank($0, "`"); s = blank(s, "\""); gsub(/  +/, " ", s); print s }')
+    {
+      b = gsub(/`/, "&"); q = gsub(/"/, "&")
+      if (b % 2 == 1 || q % 2 == 1) { print; next }
+      s = blank($0, "`"); s = blank(s, "\"")
+      gsub(/  +/, " ", s); print s
+    }')
   printf '%s' "$said" | grep -qiE 'remains open|still open|not yet (fixed|released|landed|merged)|blocked (by|on)|awaiting|awaited|(is|still|remains) pending|pending (upstream|release|a fix|the fix)|unreleased|until .*(lands|ships)' || continue
   # Scanning Markdown brought mermaid `classDef` lines into range, and `stroke:#57606a`
   # offers the ref pattern a five-digit prefix to match -- unresolvable, so it trips the
