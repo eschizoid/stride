@@ -1092,6 +1092,36 @@ b_seed_analyze! = |ctx| {
     # and `week all` were missing (the latter sits at exactly 100 on real data).
     wide = Str.trim(sh!("for c in season activities plan week 'week all' compare progress load stats zones 'power-curve' 'top tss'; do HOME='${ctx.home}' '${ctx.bin}' $c 2>/dev/null; done | grep -E '[│╭├╰]' | while IFS= read -r l; do printf '%s' \"$l\" | LC_ALL=en_US.UTF-8 wc -m; done | tr -d ' ' | awk '$1 > 100' | sort -rn | head -1"))
     check!("no human table exceeds the 100-column budget", wide == "")?
+    # ...and again with a cell that has NO break opportunity, which is what gives the
+    # sweep above teeth. On the fixture every table sits well inside the budget, so that
+    # one passes even on a binary whose squeeze does not work (#194). The lever is a
+    # user-supplied token, not the data: `week add`'s detail is free text, so a hyphenated
+    # phrase with no spaces is a single unbreakable word in the widest column of `week`.
+    # Inflating daily_load does NOT work here and is the trap worth naming -- season's
+    # block cell is a fixed-width date span, so load only widens the NUMERIC columns and
+    # never the unbreakable one. Measured inside this harness on a reverted binary:
+    # 84/84/87/89/98 at x1 through x1e14, green every time.
+    # A FAR-FUTURE date swept through `week all`, not ctx.d1 through bare `week`. Two
+    # traps, both hit while writing this: `week add` on an existing date REVISES that
+    # date's open session in place, so a fixture date would have been clobbered rather
+    # than added to; and bare `week` renders only the current Mon-Sun window, so a date
+    # three days back can land in the PREVIOUS week and never appear. That version of
+    # this check passed against a reverted binary -- the token rendered at 138 columns
+    # standalone and the check never saw it. The row is deleted again because
+    # planned_sessions ids are positional in this suite.
+    _ = stride!(ctx.bin, ctx.home, ["week", "add", "2099-06-15", "endurance", "Z2-endurance-90min-outdoor-conversational-no-chasing-wheels-keep-it-truly-easy", "unbreakable-detail-probe"])
+    wide_tok = Str.trim(sh!("HOME='${ctx.home}' '${ctx.bin}' week all 2>/dev/null | grep -E '[│╭├╰]' | while IFS= read -r l; do printf '%s' \"$l\" | LC_ALL=en_US.UTF-8 wc -m; done | tr -d ' ' | awk '$1 > 100' | sort -rn | head -1"))
+    # The probe must have been INSERTED, asserted before the width is judged.
+    # `wide_tok == ""` is satisfied by absence, so if `week add` ever stops inserting -- a
+    # bad date, a changed arity -- the width check goes green against a binary that fails
+    # it. Verified: breaking the add made the whole suite pass on a REVERTED binary.
+    # Asserted against the ROW, not the rendered text: at min_col the token is broken into
+    # twelve-column pieces, so no word of it survives whole on one line to grep for. The
+    # first version of this assertion did grep, and failed against a working binary.
+    tok_rows = Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE rationale = 'unbreakable-detail-probe';"))
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE rationale = 'unbreakable-detail-probe';")
+    check!("the unbreakable-token probe was inserted", tok_rows == "1")?
+    check!("...and none exceeds the budget when a detail is one unbreakable token", wide_tok == "")?
     # #201: the 2026-08-17 compiler widened I64.from_str/U64.from_str to accept
     # exponent notation -- "1e1" was a parse error on the previous pin and is 10 now.
     # It reached MUTATING commands (`skip 1e1` addressed planned session 10, an
