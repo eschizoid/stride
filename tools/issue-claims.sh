@@ -92,76 +92,24 @@ while IFS=$'\t' read -r f s txt; do
   # those plus any ref would flag forever. The qualified forms are the ones that assert
   # a tracker state.
   #
-  # A state phrase inside quotation marks is being QUOTED, not asserted. Docs make that
-  # load-bearing: prose narrates superseded states constantly, and the first run over
-  # docs/ flagged `used to sit here as "blocked by the compiler"` and `why the original
-  # "blocked on roc-json" conclusion was wrong`. Rewording accurate history to satisfy a
-  # checker would be the wrong direction.
+  # NO PARSING. A block opts out with a literal marker, and that is the whole
+  # mechanism. Six successive versions tried to decide MECHANICALLY whether a state
+  # phrase was asserted or merely quoted -- pairing quotes, bounding the pair, scanning
+  # parity, removing code spans, dropping fences, refusing unpairable runs -- and every
+  # one of them could be defeated by a single compensating character, silently, in the
+  # MISS direction. The last one was beaten by an inches mark.
   #
-  # Blank the INSIDE of quotations by scanning parity, one character at a time. Any
-  # regex that PAIRS quotes is wrong here, and two versions proved it: `"[^"]*"` paired
-  # greedily across a 5651-character block and deleted ~200 characters of live prose,
-  # and bounding it to 80 only shrank the blast radius -- a quotation longer than the
-  # bound cannot be matched, so the matcher steps past its opening quote and every
-  # later pairing is off by one for the rest of the block. Fifty-seven blocks in this
-  # tree contain an over-80-character quotation, three already lost prose, and a
-  # planted `blocked by #196` in ADR 0010 read as clean. The same desync breaks
-  # suppressions the other way, turning CI red on quoted history after an unrelated
-  # edit elsewhere in the paragraph.
+  # Telling `asserts X` from `quotes someone asserting X` is a natural-language problem,
+  # and all that machinery was protecting exactly TWO paragraphs, both quoted history in
+  # ADR 0000. An explicit marker costs those two paragraphs one token each and cannot be
+  # defeated at all: there is nothing to mis-pair. Every suppression in the repo is now
+  # greppable, which the heuristic never was.
   #
-  # CODE SPANS COME OUT FIRST, and that is what makes the quote pass safe. Parity does
-  # not desync the way a pairing regex does, but quote polarity is GLOBAL across a
-  # joined paragraph: any run of quotes with odd cardinality inverts inside/outside for
-  # everything after it. Code samples are exactly such runs -- one block here carries
-  # `grep -nE '\["(complete|skip)", "[0-9]'`, three quote characters, the third never
-  # closing -- and inverting there swallows the 177 characters of prose that follow.
-  # Every stray quote in this tree sits inside backticks, so removing code spans first
-  # takes the odd-cardinality blocks from one to zero and the polarity problem with it.
-  #
-  # Each pass re-checks parity on the string IT receives, and any skip skips the rest.
-  # Both halves of that are load-bearing and each was learned by getting it wrong.
-  # Guarding the passes independently lets an odd backtick count leave the code spans IN,
-  # and the quote pass then runs over the very samples that make quote polarity unsafe.
-  # Guarding them only on the ORIGINAL text is just as bad in the other direction: pass 2
-  # never sees $0, it sees the code spans already removed, so counting quotes up front
-  # measures a string that no longer exists — one stray quote in prose alongside nine
-  # inside code spans passes the outer check and then opens a quotation that runs to the
-  # end of the block.
-  #
-  # Note what removing code spans also does, beyond protecting quote parity: a state
-  # phrase written in code font -- `blocked on` -- is now suppressed like a quoted one.
-  # That is the same argument (a span shows a phrase rather than asserting it), but it is
-  # a real behaviour change and nothing else in this file says so.
-  #
-  # Collapsing space runs afterwards is what makes a phrase INTERRUPTED by a span still
-  # match -- `not yet "fully" merged` becomes `not yet merged`. It can also weld a phrase
-  # across a blanked span that ended a sentence ("not yet \"done.\" Merged in June" reads
-  # as `not yet Merged`), which over-reports. That is the direction this file chooses.
-  said=$(printf '%s' "$txt" | awk '
-    function blank(s, d,    out, ins, i, c, n) {
-      # A RUN longer than one is not a delimiter this can pair. Markdown closes a span
-      # with a run of the same length, so ``` opens something a per-character parity scan
-      # will mis-pair, and one compensating tick restores an even TOTAL while leaving the
-      # pairing inverted. Dropping fences at line level removes every such run in this
-      # tree, but an inline ``` is still writable, so refuse rather than trust the count.
-      if (index(s, d d) > 0) return "\001"
-      n = gsub(d, "&", s)
-      if (n % 2 == 1) return "\001"
-      out = ""; ins = 0
-      for (i = 1; i <= length(s); i++) {
-        c = substr(s, i, 1)
-        if (c == d) { ins = 1 - ins; out = out " "; continue }
-        out = out (ins ? " " : c)
-      }
-      return out
-    }
-    {
-      s = blank($0, "`")
-      if (s == "\001") { print; next }
-      s = blank(s, "\"")
-      if (s == "\001") { print; next }
-      gsub(/  +/, " ", s); print s
-    }')
+  # It fails in the LOUD direction too. Forget the marker on new quoted history and CI
+  # goes red naming the file and line, which is one read and a fix. The heuristic failed
+  # by reporting a clean tree with a stale claim sitting in it.
+  case "$txt" in *"issue-claims: quoting"*) continue ;; esac
+  said="$txt"
   printf '%s' "$said" | grep -qiE 'remains open|still open|not yet (fixed|released|landed|merged)|blocked (by|on)|awaiting|awaited|(is|still|remains) pending|pending (upstream|release|a fix|the fix)|unreleased|until .*(lands|ships)' || continue
   # Scanning Markdown brought mermaid `classDef` lines into range, and `stroke:#57606a`
   # offers the ref pattern a five-digit prefix to match -- unresolvable, so it trips the

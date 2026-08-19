@@ -31,7 +31,7 @@ or any JSON. The secret-key policy is one tested source of truth (`Config.is_sec
 
 Toolchain: Roc's **new (Zig) compiler** (nightly, pinned by exact tag in
 `.github/workflows/build.yml`) · basic-cli `0.22` · builtin JSON (no roc-json). The
-earlier alpha4 / basic-cli 0.20 / roc-json 0.13 pin is retired; §9 records the
+earlier alpha4 / basic-cli 0.20 / roc-json 0.13 pin is retired (issue-claims: quoting); §9 records the
 migration and why the original "blocked on roc-json" conclusion was wrong. CI
 type-checks (`roc check`) and runs the pure tests (`roc test`) on this compiler across
 linux/macOS/Windows, then builds the real binary and runs the e2e suite on macOS. The
@@ -240,7 +240,7 @@ retired, and neither was a superset of the other.
 - **`.zwo` workout export** for smart trainers — stride prescribes nothing (ADR 0012), so
   it has no workout to export; the coach writes the session.
 
-(The query-repository split used to sit here as "blocked by the compiler"; that wall is
+(issue-claims: quoting. The query-repository split used to sit here as "blocked by the compiler"; that wall is
 gone and the split IS the current layout — see §2 and ADR 0001. The further per-command
 subdivision of `Report.roc` is done too: ADR 0001's file-size trigger fired, and #196
 shipped the read-command split. What is left is that ADR's function-size half, deferred
