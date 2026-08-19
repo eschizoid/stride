@@ -405,7 +405,8 @@ silently wipe it.
 Nothing here is a hardcoded sport list. The data you have decides the rung: the ladder
 takes the best available source and records which one won in `load_model`, so `doctor` can
 show you the distribution. Sport type changes four things, all of them in `Sports.roc`,
-two as data tables and two as name-substring predicates. Those four are the FAMILY (which
+but only one of them is a table of rows: the other three are a list literal and two
+name-substring predicates. Those four are the FAMILY (which
 since #151 is the population the derived FTP is computed over, not just a display filter),
 pace routing for interval detection and decoupling, whether a rating outranks heart rate,
 and the pace-TSS exponent.
@@ -465,7 +466,8 @@ just install   # build + symlink into ~/.local/bin
   `Import.roc` command modules; `app.roc` is a thin argv → dispatch shell. Pure, tested
   modules: `Metrics.roc` (math), `Render.roc` (tables/formatting), `Command.roc` (argv →
   typed command parser), `Config.roc` (secret-key policy), `Sports.roc` (the sport
-  vocabulary — families, class, pace routing, as a data table rather than if-chains),
+  vocabulary — families, class, pace routing and the pace-TSS exponent, gathered in one
+  module rather than if-chains scattered through others),
   `Streams.roc`, `Csv.roc` and `Backfill.roc`. `Output.roc` (the JSON envelope and
   `json_schema_version`) and `Schema.roc` (DDL) are effectful and DDL respectively — both
   type-checked rather than expect-tested. Query

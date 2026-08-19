@@ -159,9 +159,11 @@ run_all! = || {
     b_init_config!(ctx)?
     # Pin the sandbox clock to the same zone the dates above were computed in, BEFORE any
     # date-dependent check runs. b_config_ftp! sets it too, at its "config set emits the
-    # JSON envelope" check, for its own assertions. Nothing between here and there is
-    # date-dependent today, so this pin is defence in depth rather than a fix -- it means
-    # a date check ADDED after it inherits a zoned binary rather than a UTC one. Two
+    # JSON envelope" check, for its own assertions. `analyze` IS date-dependent -- it
+    # regenerates daily_load out to the binary's today, which is the whole of #200 -- and
+    # it runs several times between here and there, so this pin is load-bearing rather
+    # than defence in depth: a date check ADDED after it inherits a zoned binary rather
+    # than a UTC one. Two
     # windows are deliberately NOT covered: b_init_config! runs BEFORE this pin, on a
     # freshly-init'ed db with no timezone row, so a date check there gets UTC; and
     # b_config_ftp! strips the zone twice. Both of those stretches run on UTC, except for
