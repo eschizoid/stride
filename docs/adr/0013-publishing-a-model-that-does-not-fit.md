@@ -33,7 +33,7 @@ with nothing between, so a 12-minute effort is invisible to it. Reading a ladder
 measurement of the athlete is exactly the mistake `contradicts_model` exists to prevent, and
 it made the model look 0.7% off instead of 21%.
 
-## `fit_r2` reports the imprecision exactly — and we do not publish it
+## `fit_r2` reports the imprecision exactly — and the imprecision is what we do not publish
 
 An earlier draft claimed r² "carries no information about whether the slope is identified".
 That is false. With three points and one predictor there is one residual degree of freedom,
@@ -113,13 +113,16 @@ quality threshold, so "r² measures precision, not plausibility" does not dispos
 The structural analogue here would be to refuse whenever W′'s interval spans zero. Every
 row of the sweep above does, because `fit_points` is **at most 3** — the ladder offers only
 300/600/1200 in the band — so df is at most 1, a property of the design rather than of this
-athlete. That refusal is unconditional: it would silence `tte` for everyone, permanently, on
-a ladder ADR 0004 shipped deliberately.
+athlete. That refusal is unconditional, and worse than unconditional: at two fitted points
+there is no interval at all — df is zero, as the implementation note above says — so it
+would refuse every three-point fit and wave through the two-point ones, which are the least
+supported case in this document. It would silence `tte` for everyone who has enough data to
+be refused, on a ladder ADR 0004 shipped deliberately.
 
 A published `± 3957` is the same diagnosis without the silence, and ADR 0012's "Not doing"
 section explicitly allows it: *a `_known` flag or a `model_exceeded` boolean is a diagnosis
-of the model, not advice to the athlete.* The screen already carries both halves — verbatim
-from `tte 265` on this database:
+of the model, not advice to the athlete.* The screen already carries r² and the refutation —
+verbatim from `tte 265` on this database:
 
 ```
 at 265W against CP 254 (Ride fit, W' 6.4 kJ from 3 of the 5/10/20-min bests over 90d, r2 0.72)
