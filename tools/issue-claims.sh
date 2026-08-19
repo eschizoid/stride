@@ -6,7 +6,7 @@
 # Checks the one class with a free oracle: a BLOCK that names an issue and says it
 # remains/is still open, is not yet fixed/released/landed/merged, is blocked by or on
 # something, is awaiting or awaited, is/still/remains pending, is pending
-# upstream/release/a fix, is unreleased, or waits until X lands/ships — when the tracker
+# upstream/release/a fix/the fix, is unreleased, or waits until X lands/ships — when the tracker
 # says CLOSED. That list is the PATTERN below, verbatim. Read the pattern, not this
 # sentence, before believing a phrasing is covered: this comment claimed "pending" and
 # "awaited" for a while when the regex matched neither.
@@ -15,9 +15,11 @@
 # was not hypothetical — ADR 0000 asserted the #196 split "remains open" for a day after
 # it shipped, while this same class was enforced two directories away.
 #
-# Bare `pending` is deliberately NOT matched: it is this codebase's own vocabulary
-# ("pending backfill", "pending sessions"), and a block carrying one of those plus any
-# ref would flag forever. Only the qualified forms assert a tracker state.
+# Bare `pending` is deliberately NOT matched, because this codebase says "pending
+# backfill" and "pending sessions" constantly and a block carrying one plus any ref would
+# flag forever. Note what that does and does not buy: the qualified forms have no
+# trailing boundary, so `is pending backfill` DOES match. The prefix is what is required,
+# not a particular following noun.
 #
 # BLOCK-scoped, not line-scoped, and that is the whole design. The first version matched
 # a state phrase and a ref on the SAME line, which on this tree paired zero times -- it
@@ -83,7 +85,15 @@ while IFS=$'\t' read -r f s txt; do
   # of exactly that shape -- `used to sit here as "blocked by the compiler"` and `why the
   # original "blocked on roc-json" conclusion was wrong`. Rewording accurate history to
   # satisfy a regex would be the wrong direction to fix that.
-  said=$(printf '%s' "$txt" | sed -E 's/"[^"]*"//g')
+  # BOUNDED at 80 characters, and the bound is the whole safety. Unbounded, `"[^"]*"`
+  # pairs quotes left-to-right across the entire joined block, and a Markdown block is a
+  # whole paragraph -- AGENTS.md's conventions list is one 5651-char block with nine
+  # quote characters, where the fourth "pair" spans ~200 characters of live prose because
+  # a quote inside a grep pattern mispairs with a quote inside a code span. A stale claim
+  # sitting in that gap was reported as clean: the gate said none stale with a literal
+  # `blocked by #196` in the file. Eighty covers every quoted phrase this repo actually
+  # writes and cannot span two unrelated code samples.
+  said=$(printf '%s' "$txt" | sed -E 's/"[^"]{0,80}"//g')
   printf '%s' "$said" | grep -qiE 'remains open|still open|not yet (fixed|released|landed|merged)|blocked (by|on)|awaiting|awaited|(is|still|remains) pending|pending (upstream|release|a fix|the fix)|unreleased|until .*(lands|ships)' || continue
   # Strip six-digit hex colours first. Scanning Markdown brought mermaid `classDef`
   # lines into range, and `stroke:#57606a` offers the ref pattern a five-digit prefix to
@@ -91,7 +101,13 @@ while IFS=$'\t' read -r f s txt; do
   # have gone permanently red on a stylesheet. SIX only: three hex chars is also a legal
   # colour, but `#196` is three hex chars too, and stripping those would silently blind
   # the checker to most of this repo's own issue numbers.
-  clean=$(printf '%s' "$txt" | sed -E 's/#[0-9a-fA-F]{6}//g')
+  # Colours in a CSS/mermaid PROPERTY go first, at any shorthand length: `fill:#00f`
+  # otherwise yields ref 00 and `fill:#5760` yields 5760, both unresolvable, both
+  # tripping the fail-closed arm and turning CI permanently red on a stylesheet. The
+  # property prefix is what makes stripping 3- and 4-digit runs safe here, since a bare
+  # `#196` can never carry one. Then six-digit hex anywhere, for colours written without
+  # a property.
+  clean=$(printf '%s' "$txt" | sed -E 's/(fill|stroke|color):#[0-9a-fA-F]{3,8}//g; s/#[0-9a-fA-F]{6}//g')
   refs=$(printf '%s' "$clean" | grep -oE '(^|[^a-zA-Z/-])#[0-9]{2,5}' | grep -oE '[0-9]{2,5}' | sort -u)
   [ -z "$refs" ] && continue
   for ref in $refs; do
