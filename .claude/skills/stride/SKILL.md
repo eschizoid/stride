@@ -196,7 +196,9 @@ means for every date below.
   trajectory instead (a rising `estimated_ftp_w` is fitness, a falling one is
   detraining or a power-data gap — check `doctor` coverage before concluding).
 - **Metric recompute triggers (the invalidation story):** derived-FTP change (metrics
-  store `ftp_used`), HR-zone change, **stream arrival**, **rating change**, and
+  store `ftp_used`), derived threshold-pace change (`threshold_pace_used`, the pace
+  analog — stored for any sport with a distance stream, so it is live on rides too),
+  HR-zone change, **stream arrival**, **rating change**, and
   activity-input edits (analyze compares each row's stored inputs — sync itself never
   deletes metrics). So after a sync, always `analyze` to pick up recomputes.
 - CTL/ATL/TSB are **as of today** (daily_load extends through today with 0-TSS rest

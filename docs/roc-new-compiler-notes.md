@@ -211,7 +211,7 @@ MISCOMPILED this codebase (issue #32's intermittent SIGABRT; it also silently dr
   and treat the empty list as absent. (On basic-cli 0.21/0.22 a missing row returns
   `Err(NoRowsReturned)`, so an unhandled `?` exits 1. The deterministic SIGABRT this
   note used to claim was the alpha4 / 0.20 behaviour — the rule is unchanged, the
-  failure mode is milder than it says.)
+  failure mode is milder than advertised.)
 
 ### Sqlite row decoders
 
