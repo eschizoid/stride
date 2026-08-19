@@ -17,64 +17,106 @@ Re-derived against the live database on 2026-08-19:
 | `fit_r2` | 0.724 |
 | `fit_points` | 3 |
 | `tte 265` prediction | 596 s (9:56) |
-| longest effort actually held at ≥265 W | **755 s (12:35)**, 2026-08-16 |
+| effort actually held at ≥265 W | **over 12 minutes** — 720 s at 268.3 W, 3.3 W clear of the cutoff |
 
-The model is **27% short**, not marginally off.
+The demonstrated effort is **26.7% longer** than the prediction.
 
-**The first draft of this ADR said 600 s, and that error is worth keeping on the record**
-because it is the failure this document describes, committed while describing it. 600 s is
-the longest of the three FITTED points at ≥265 W, not the longest effort: the stored
-ladder jumps 600 → 1200 with nothing between, so anything the athlete held for 12:35 is
-invisible to it. Reading a ladder rung as a measurement of the athlete is exactly the
-mistake `contradicts_model` exists to prevent, and it made the model look 0.7% off instead
-of 27%.
+Anchored at 720 s deliberately. The mean-max window that ends exactly at 265 W is 756 s by
+stride's own resampler, but its margin there is +0.003 W and it flips negative one second
+later — a figure that moves on the last decimal of a gap-filling choice has no business
+carrying an argument about false precision. 720 s cannot move.
 
-## Does `fit_r2` report the problem? Yes — exactly, and we do not publish it
+**The first draft of this ADR said 600 s, and that error stays on the record**, because it
+is the failure this document describes, committed while describing it. 600 s is the longest
+of the three FITTED points at ≥265 W, not the longest effort: the ladder jumps 600 → 1200
+with nothing between, so a 12-minute effort is invisible to it. Reading a ladder rung as a
+measurement of the athlete is exactly the mistake `contradicts_model` exists to prevent, and
+it made the model look 0.7% off instead of 27%.
 
-An earlier draft claimed r² "carries no information about whether the slope is
-identified". That is false. With three points and one predictor there is one degree of
-freedom, and r² and the slope's t-statistic are in exact bijection:
+## `fit_r2` reports the imprecision exactly — and we do not publish it
+
+An earlier draft claimed r² "carries no information about whether the slope is identified".
+That is false. With three points and one predictor there is one residual degree of freedom,
+so r² and the slope's t-statistic are in exact bijection:
 
 ```
-t  = sqrt(r2 / (1 - r2)) = sqrt(0.724454 / 0.275546) = 1.6215
-SE(W') = W' / t          = 6416 / 1.6215 = 3957 J
-95% CI (df = 1)          = [-43861, +56694]
+t      = sqrt(r2 / (1 - r2)) = 1.6215
+SE(W') = W' / t              = 3957 J        ->  W' = 6416 +/- 3957   (+/- 62%)
+SE(CP)                       =    8.7 W      ->  CP = 254.2 +/-   8.7 (+/-  3%)
+95% CI for W' (df = 1)       = [-44 kJ, +57 kJ]
 ```
 
-The confidence interval spans zero. r² is *precisely* the statistic that says so — it is
-the only thing it says. So the honest missing piece is not a threshold but a number:
-**publish `SE(W')` beside `w_prime`.** It comes from the same three points, requires no
-opinion, and turns `6416` into `6416 ± 3957`, which a coach can read without knowing
-anything about hyperbolic fits.
+That asymmetry is the whole problem in one line, and it is why `power-curve`'s CP is
+trustworthy while its W′ is not. So the missing piece is not a threshold but a number:
+**publish `SE(W')` beside `w_prime`.** It falls out of the same three points, needs no
+opinion, and turns `6416` into `6416 ± 3957`.
+
+Implementation note for whoever adds it: `SE` divides by zero at two fitted points, where
+r² is 1 by construction and there is no residual degree of freedom. `critical_power` accepts
+n ≥ 2 and `cp_fit_as_of!` drops zero-watt rungs, so that case is reachable. Report it
+unknown per ADR 0009 — `tte_screen` already special-cases r² there for the same reason.
 
 ## Decision: no `fit_r2` refusal threshold
 
-Not because thresholds are opinions — that is #199's argument and it is sound but not
-load-bearing. The reason is that **r² measures precision, not plausibility**, and gating on
-it would reward the wrong fits.
+Not because thresholds are opinions — that is #199's argument, and it is sound but not
+load-bearing. The reason is that **r² measures precision, not plausibility**, so gating on
+it rewards the wrong fits.
 
-Refitting this athlete's own bests, same regression, only the input set changed:
+The shipped command is its own counterexample. `stride power-curve <days> Ride`, same
+athlete, same database, same day — only the window changes:
 
-| points fitted | CP | W′ | r² |
+| window | CP | W′ | `fit_r2` |
 |---|---|---|---|
-| 300 / 600 / 1200 (shipped) | 254.24 | 6416 J | 0.7245 |
-| + the 5 s best | 265.13 | **796 J** | **0.9918** |
+| 30–60 d | 250.34 | 7754 J | 0.6967 |
+| 75–90 d | 254.24 | 6416 J | 0.7245 |
+| 120–1095 d | 283.07 | **3059 J** | **0.9924** |
+
+An `r² ≥ 0.90` gate refuses stride's 90-day answer and passes its 120-day answer, whose W′
+is half as plausible. No synthetic input is required to break the gate; the command breaks
+it unaided.
+
+Refitting confirms the direction. Adding this athlete's own 5 s best:
+
+| points fitted | CP | W′ | `fit_r2` |
+|---|---|---|---|
+| 300 / 600 / 1200 (shipped) | 254.24 | 6416 ± 3957 J | 0.7245 |
+| + the 5 s best | 265.13 | **796 ± 51 J** | **0.9918** |
 | + 5 / 15 / 30 / 60 s bests | 282.21 | 772 J | 0.8744 |
 
-Adding the 5 s best raises r² from 0.72 to **0.99** while collapsing W′ to a twelfth of an
-already-implausible value. Any r² gate prefers the second row to the first. It would admit
-a fit that is far more wrong and refuse the one that is merely imprecise.
+r² rises to 0.99 while W′ collapses to an eighth of an already-implausible value — and the
+fit an r² gate would prefer reports `796 ± 51`: tight, confident, absurd, stated in the very
+units this ADR asks for.
 
-That second row is also why the obvious repair — feed the fit the short bests the power
-curve already holds — is wrong. The 5 s best is 424.2 W against a CP of 254.2, i.e. 1.67×.
-It is the hardest five seconds inside rides that were never sprints, so it drags the line
-down; with it, CP rises to 265.13 and `tte 265` answers `below_cp`. The 300–1200 s band is
-right. The shortage is of maximal efforts, not of samples.
+That row is also why the obvious repair fails. The 5 s best is 424.2 W against a CP of
+254.2, i.e. 1.67×. It is the hardest five seconds inside rides that were never sprints, so
+it drags the line down; with it CP rises to 265.13 and `tte 265` answers `below_cp`. The
+300–1200 s band is right. The shortage is of maximal efforts, not of samples.
+
+## Why this is not `no_cp_fit` or `trend_known: false`
+
+#199 named both as precedents for declining rather than qualifying, and they are the
+strongest case for refusing, so they deserve an answer rather than silence.
+
+Both are **structural** refusals: they fire when the inputs are absent or degenerate —
+too few bests, or under three weeks where r² would be 1 by construction. Neither is a
+quality threshold, so "r² measures precision, not plausibility" does not dispose of them.
+
+The structural analogue here would be to refuse whenever W′'s interval spans zero. It does
+so on essentially every fit this ladder produces, because `fit_points` is **always 3** and
+therefore df is always 1 — a property of the design, not of this athlete. That refusal is
+unconditional: it would silence `tte` for everyone, permanently, on a ladder ADR 0004
+shipped deliberately.
+
+A published `± 3957` is the same diagnosis without the silence, and ADR 0012's "Not doing"
+section explicitly allows it: *a `_known` flag or a `model_exceeded` boolean is a diagnosis
+of the model, not advice to the athlete.* The screen already shows `r2 0.72` and the
+contradiction line beside the prediction; "9:56 — on record: 12:00 at 268 W, LONGER than
+predicted" tells a coach strictly more than `no_cp_fit` does.
 
 ## What follows for a reader
 
 A low `w_prime` here means **this athlete's 5-, 10- and 20-minute bests are ride segments
-rather than maximal efforts**. It is not a measurement of anaerobic capacity, and it is not
+rather than maximal efforts**. It is not a measurement of anaerobic capacity and not
 evidence of a small one.
 
 `contradicts_model` remains the only empirical check, because it compares the prediction
@@ -84,22 +126,21 @@ against what was actually done rather than against the model's own residuals.
 
 `contradicts_model` draws its evidence from `fit.pts` — the three fitted points — so
 `demonstrated_s` can only ever be 300, 600 or 1200 seconds. That is what produced the 600 s
-error above.
+error above, and it is why a 12-minute effort went unreported.
 
-Widening it to the stored ladder is a coverage gain with no threshold and no judgment, and
-it is the right next change. Two things to know before making it: the *contradiction band*
-barely moves (5.7 W of the answerable range, because this athlete's short efforts are
-submaximal and refute nothing), but `demonstrated_s`/`demonstrated_w` become populated
-across roughly 150 W where they currently report `demonstrated_known: false`. Widening
-further, to the athlete's true mean-max curve rather than the stored rungs, is what would
-have caught the 12:35 effort.
+Widening it to the stored ladder is a coverage gain with no threshold and no judgment.
+Two things to know first: the *contradiction band* barely moves (5.7 W, because this
+athlete's short efforts are submaximal and refute nothing), but `demonstrated_s`/
+`demonstrated_w` become populated across 150 W where they currently report
+`demonstrated_known: false`. Widening further, to the athlete's true mean-max curve rather
+than the stored rungs, is what would have caught the 12-minute effort.
 
 ## Consequences for #188
 
-`D'` is the pace-domain analog of `W'` and inherits all of this: same model, same
-dependence on maximal efforts the athlete may never perform, same precision-not-plausibility
-property in r². Critical speed should publish `SE(D')` from the start, and must not adopt
-an r² gate on the strength of it looking like a quality signal.
+`D'` is the pace-domain analog of `W'` and inherits all of this: same model, same dependence
+on maximal efforts the athlete may never perform, same precision-not-plausibility property
+in r². Critical speed should publish `SE(D')` from the start, and must not adopt an r² gate
+on the strength of it looking like a quality signal.
 
 This athlete has **one** Run on record, so `CS`/`D'` cannot be fitted on his data at all —
 that feature is validated against someone else's history or not at all.
