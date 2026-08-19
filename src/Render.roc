@@ -4,12 +4,20 @@ Render :: [].{
     # ── pure text-rendering helpers for human CLI output ────────────────
 
     # aligned table: headers + rows -> multiline string.
-    # Keeps the WHOLE table within max_total display-columns so a row never wraps
-    # in the terminal — but WITHOUT losing text. Columns take their natural width;
-    # if the table would overflow, the single widest column (in practice a free-text
-    # `detail` or a long activity name) is squeezed and its text is WORD-WRAPPED
-    # across continuation lines within the same row. The full text is always shown;
-    # it just spans several physical lines.
+    # Keeps a table within max_total display-columns so a row never wraps in the
+    # terminal — but WITHOUT losing text. Columns take their natural width; if the table
+    # would overflow, the single widest column (in practice a free-text `detail` or a
+    # long activity name) is squeezed and its text is WORD-WRAPPED across continuation
+    # lines within the same row, or character-broken when it has no space to break at.
+    # The full text is always shown; it just spans several physical lines.
+    #
+    # NOT a guarantee, and the word "whole" used to sit here claiming it was. fit_caps
+    # squeezes ONE column and floors it at min_col, so a table whose excess is larger
+    # than that column can surrender still overruns. Measured on the real database with
+    # daily_load inflated 100000x: 115 columns before #194's fix, 105 after. The
+    # ordinary cases land inside it (103 -> 100 at 5x), and nothing silently truncates
+    # either way; a table that needs more than one column squeezed needs a narrower
+    # design, not a wider budget.
     #
     # 100, not 80: the squeezed column is ALWAYS the free-text one, so every column
     # the budget spends elsewhere comes straight out of the workout description —
@@ -34,8 +42,11 @@ Render :: [].{
     indices_go = |n, acc| if n == 0 acc else indices_go(n - 1, List.prepend(acc, n - 1))
 
     # greedy word-wrap: pack space-separated words into lines of at most `cap`
-    # display-columns. A lone word wider than cap gets its own line (details are
-    # prose — no giant tokens — so this practically never widens the column).
+    # display-columns. A lone word wider than cap is CHARACTER-BROKEN to fit, by
+    # hard_break below. It used to get its own line at full width instead, on the
+    # reasoning that "details are prose — no giant tokens": `detail` is free text from
+    # `week add`, and a season block span is `2021-12-13..2022-02-10`, so the assumption
+    # was wrong in both the user-supplied and the generated direction (#194).
     wrap_cell : Str, U64 -> List(Str)
     wrap_cell = |s, cap|
         if display_width(s) <= cap
@@ -893,8 +904,10 @@ Render :: [].{
     #
     # Held under the repo's 100-column table budget. It shipped at 126 -- the
     # only violator in the CLI -- because fit_caps can squeeze only the widest
-    # column, and a block span is one space-free token, so wrap_cell emits it
-    # whole and the width snaps back. Under 126 columns the rows wrapped
+    # column, and a block span is one space-free token, which wrap_cell then emitted
+    # whole so the width snapped back. That second half is fixed as of #194: wrap_cell
+    # character-breaks a token with no break opportunity, so the squeeze now takes
+    # effect. The table still sits at exactly 100 on real data. Under 126 columns the rows wrapped
     # mid-number into unreadable fragments. The block TOTAL and the SLOPE both
     # went, and the session count that was JSON-only took the space. The total
     # is recoverable from the row (/wk x span, within 0.2%); the SLOPE is NOT --
