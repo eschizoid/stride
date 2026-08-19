@@ -17,9 +17,9 @@ Re-derived against the live database on 2026-08-19:
 | `fit_r2` | 0.724 |
 | `fit_points` | 3 |
 | `tte 265` prediction | 596 s (9:56) |
-| effort actually held at ≥265 W | **over 12 minutes** — 720 s at 268.3 W, 3.3 W clear of the cutoff |
+| effort actually held at ≥265 W | **over 12 minutes** — 720 s at 268.4 W, 3.4 W clear of the cutoff |
 
-The demonstrated effort is **26.7% longer** than the prediction.
+The demonstrated effort is **20.8% longer** than the prediction.
 
 Anchored at 720 s deliberately. The mean-max window that ends exactly at 265 W is 756 s by
 stride's own resampler, but its margin there is +0.003 W and it flips negative one second
@@ -31,7 +31,7 @@ is the failure this document describes, committed while describing it. 600 s is 
 of the three FITTED points at ≥265 W, not the longest effort: the ladder jumps 600 → 1200
 with nothing between, so a 12-minute effort is invisible to it. Reading a ladder rung as a
 measurement of the athlete is exactly the mistake `contradicts_model` exists to prevent, and
-it made the model look 0.7% off instead of 27%.
+it made the model look 0.7% off instead of 21%.
 
 ## `fit_r2` reports the imprecision exactly — and we do not publish it
 
@@ -46,8 +46,10 @@ SE(CP)                       =    8.7 W      ->  CP = 254.2 +/-   8.7 (+/-  3%)
 95% CI for W' (df = 1)       = [-44 kJ, +57 kJ]
 ```
 
-That asymmetry is the whole problem in one line, and it is why `power-curve`'s CP is
-trustworthy while its W′ is not. So the missing piece is not a threshold but a number:
+That asymmetry is the whole problem in one line. Read it as WITHIN-fit precision only:
+across windows CP moves 250.34 → 283.07, a 32.7 W spread that dwarfs its own ±8.7, so CP is
+the better-determined half of a given fit rather than a stable number. So the missing piece
+is not a threshold but a number:
 **publish `SE(W')` beside `w_prime`.** It falls out of the same three points, needs no
 opinion, and turns `6416` into `6416 ± 3957`.
 
@@ -65,15 +67,22 @@ it rewards the wrong fits.
 The shipped command is its own counterexample. `stride power-curve <days> Ride`, same
 athlete, same database, same day — only the window changes:
 
-| window | CP | W′ | `fit_r2` |
-|---|---|---|---|
-| 30–60 d | 250.34 | 7754 J | 0.6967 |
-| 75–90 d | 254.24 | 6416 J | 0.7245 |
-| 120–1095 d | 283.07 | **3059 J** | **0.9924** |
+| window | CP | W′ | 95% CI for W′ | `fit_r2` |
+|---|---|---|---|---|
+| 30–60 d | 250.34 | 7754 J | [−57 kJ, +73 kJ] | 0.6967 |
+| 75–90 d | 254.24 | 6416 J | [−44 kJ, +57 kJ] | 0.7245 |
+| 120–1095 d | 283.07 | **3059 J** | [−0.3 kJ, +6.5 kJ] | **0.9924** |
 
 An `r² ≥ 0.90` gate refuses stride's 90-day answer and passes its 120-day answer, whose W′
 is half as plausible. No synthetic input is required to break the gate; the command breaks
-it unaided.
+it unaided. The 120-day row is worse than its r² suggests in a second way: it returns
+CP 283.07 against its own 1200 s point of 285.36, i.e. **99.2% of the athlete's best
+20-minute power**, where a credible CP is nearer 92–95% of it.
+
+Every interval in that column spans zero, which is the evidence for the claim two sections
+below that this is a property of the ladder rather than of one window. Note also that the
+fit the gate prefers has the TIGHTEST interval — tight, and centred on a value no trained
+cyclist has.
 
 Refitting confirms the direction. Adding this athlete's own 5 s best:
 
@@ -101,17 +110,24 @@ Both are **structural** refusals: they fire when the inputs are absent or degene
 too few bests, or under three weeks where r² would be 1 by construction. Neither is a
 quality threshold, so "r² measures precision, not plausibility" does not dispose of them.
 
-The structural analogue here would be to refuse whenever W′'s interval spans zero. It does
-so on essentially every fit this ladder produces, because `fit_points` is **always 3** and
-therefore df is always 1 — a property of the design, not of this athlete. That refusal is
-unconditional: it would silence `tte` for everyone, permanently, on a ladder ADR 0004
-shipped deliberately.
+The structural analogue here would be to refuse whenever W′'s interval spans zero. Every
+row of the sweep above does, because `fit_points` is **at most 3** — the ladder offers only
+300/600/1200 in the band — so df is at most 1, a property of the design rather than of this
+athlete. That refusal is unconditional: it would silence `tte` for everyone, permanently, on
+a ladder ADR 0004 shipped deliberately.
 
 A published `± 3957` is the same diagnosis without the silence, and ADR 0012's "Not doing"
 section explicitly allows it: *a `_known` flag or a `model_exceeded` boolean is a diagnosis
-of the model, not advice to the athlete.* The screen already shows `r2 0.72` and the
-contradiction line beside the prediction; "9:56 — on record: 12:00 at 268 W, LONGER than
-predicted" tells a coach strictly more than `no_cp_fit` does.
+of the model, not advice to the athlete.* The screen already carries both halves — verbatim
+from `tte 265` on this database:
+
+```
+at 265W against CP 254 (Ride fit, W' 6.4 kJ from 3 of the 5/10/20-min bests over 90d, r2 0.72)
+  ~9:56 · on record: 271W for 10:00 in this window — LONGER than the model predicts, so the fit understates this rider
+```
+
+That tells a coach strictly more than `no_cp_fit` would. Note what it does NOT say: the
+10:00 is the 600 s fitted point, not the 12-minute effort, for the reason recorded below.
 
 ## What follows for a reader
 
