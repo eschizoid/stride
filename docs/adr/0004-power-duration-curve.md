@@ -44,6 +44,11 @@ for `best_20min_w`. Extending it to a duration ladder is the whole job.
    `dur_s` 300–1200, i.e. 5–20 min — the 2-min end of the textbook range has no rung; the fit
    breaks down at sprint and multi-hour durations). `CP` is the intercept (watts), `W′` the
    slope (joules). A small pure function in `Metrics`, expect-tested against known inputs.
+   Note which of the two that makes reliable: the three fitted points sit at `1/t` between
+   0.00083 and 0.00333, so the INTERCEPT is well determined and the SLOPE is estimated over
+   a lever arm of 0.0025. `W′` is therefore an extrapolation toward t→0 from data holding no
+   anaerobic effort, and `fit_r2` cannot detect that — [ADR 0013](0013-publishing-a-model-that-does-not-fit.md)
+   decides what to publish anyway.
 
 4. **A new query command `stride power-curve` (alias `pc`)** emits the curve + CP + W′ per
    power sport — JSON for the coach (versioned envelope), a table + one-line verdict for the
