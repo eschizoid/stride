@@ -241,9 +241,10 @@ retired, and neither was a superset of the other.
   it has no workout to export; the coach writes the session.
 
 (The query-repository split used to sit here as "blocked by the compiler"; that wall is
-gone and the split IS the current layout — see §2 and ADR 0001. What remains open is the
-further per-command subdivision of `Report.roc`, governed by ADR 0001's measured trigger,
-which has now fired: #196.)
+gone and the split IS the current layout — see §2 and ADR 0001. The further per-command
+subdivision of `Report.roc` is done too: ADR 0001's file-size trigger fired, and #196
+shipped the read-command split. What is left is that ADR's function-size half, deferred
+until it has a better predicate.)
 
 These are revisited only when dogfooding demands them.
 
