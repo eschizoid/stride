@@ -1487,13 +1487,14 @@ Metrics :: [].{
     # same form band. THE thing a band label structurally cannot express: 16 days at -11 and
     # one day at -11 render identically, yet mean different things.
     #
-    # Known/Unknown, same shape as form_delta_7d but a NARROWER meaning of Unknown: it
-    # says only that the series has no value at or before `today`, so there is no band to
-    # be in. Once today is known the answer is always Known(n >= 1) — including Known(1)
-    # when the day before is missing or in a different band. 1 is a truthful "today, and
-    # nothing established before it"; the renderer suppresses it because a one-day streak
-    # carries no information, not because it is wrong.
-    # THREE outcomes, not two. `AtLeast` exists because the walk can stop for a reason that
+    # THREE outcomes, not the Known/Unknown pair form_delta_7d returns — and a NARROWER
+    # Unknown than that one's: it says only that the series has no row for `today` ITSELF
+    # (the anchor is an exact lookup, not at-or-before), so there is no band to be in.
+    # Known(n >= 1) is the ordinary answer — including Known(1) when the day before is
+    # missing or in a different band. 1 is a truthful "today, and nothing established
+    # before it"; the renderer suppresses it because a one-day streak carries no
+    # information, not because it is wrong.
+    # `AtLeast` exists because the walk can stop for a reason that
     # is not an answer: running out of series. Callers hand this a WINDOW (summary passes 31
     # days sized for the #93 ramp, `load` passes whatever window it was asked for), so a
     # streak longer than the window is truncated — and a truncated 31 is indistinguishable
