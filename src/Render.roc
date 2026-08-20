@@ -881,6 +881,7 @@ Render :: [].{
             ftp = if b.ftp_known "${b.ftp_family}${share} ${ftp_path(b.ftp_start, b.ftp_end, b.ftp_lo, b.ftp_hi)}" else "-"
             # the * marks the WEEK COUNT, not the end date -- glued to the date
             # it read as "approximately 08-16", not "this block is still open"
+            # (issue-claims: quoting -- that phrase is rendered output, not an issue state)
             wks = "${I64.to_str(b.weeks)}/${I64.to_str(b.span_weeks)}"
             wk = if b.closed wks else "${wks}*"
             ["${b.start_date}..${b.end_date}", wk, I64.to_str(b.sessions), fmt0(b.mean_weekly_load), trend, r2c, pol, ftp]

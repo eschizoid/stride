@@ -5,7 +5,8 @@
 #
 # Checks the one class with a free oracle: a BLOCK that names an issue and says it
 # remains/is still open, is not yet fixed/released/landed/merged, is blocked by or on
-# something, is awaiting or awaited, is/still/remains pending, is pending
+# something, is awaiting upstream/release/a fix/the fix/merge, is still awaiting, is/still
+# awaited, is/still/remains pending, is pending
 # upstream/release/a fix/the fix, is unreleased, or waits until X lands/ships — when the tracker
 # says CLOSED. That list is the PATTERN below, verbatim. Read the pattern, not this
 # sentence, before believing a phrasing is covered: this comment claimed "pending" and
@@ -15,11 +16,12 @@
 # was not hypothetical — ADR 0000 asserted the #196 split "remains open" for a day after
 # it shipped, while this same class was enforced two directories away.
 #
-# Bare `pending` is deliberately NOT matched, because this codebase says "pending
-# backfill" and "pending sessions" constantly and a block carrying one plus any ref would
-# flag forever. Note what that does and does not buy: the qualified forms have no
-# trailing boundary, so `is pending backfill` DOES match. The prefix is what is required,
-# not a particular following noun.
+# Bare `pending` and bare `awaiting` are deliberately NOT matched. Both are this
+# codebase's own vocabulary — "pending backfill", "pending sessions", "strength sessions
+# awaiting a rating" — and a block carrying one plus any ref would flag forever, on a
+# phrase that says nothing about an issue. Note what the qualification does and does not
+# buy: `(is|still|remains) pending` has no trailing boundary, so `is pending backfill`
+# DOES match. The prefix is what is required, not a particular following noun.
 #
 # BLOCK-scoped, not line-scoped, and that is the whole design. The first version matched
 # a state phrase and a ref on the SAME line, which on this tree paired zero times -- it
@@ -38,7 +40,9 @@
 set -uo pipefail
 REPO="${GH_REPO:-eschizoid/stride}"
 CACHE=$(mktemp); BLOCKS=$(mktemp); trap 'rm -f "$CACHE" "$BLOCKS"' EXIT
-fail=0; checked=0; blocks=0
+fail=0; checked=0; blocks=0; quoting=0
+# every `issue-claims: quoting` marker in the repo, pinned so a new one is deliberate
+EXPECTED_QUOTING=4
 
 # one line per comment block: file<TAB>startline<TAB>joined text
 awk '
@@ -100,17 +104,26 @@ while IFS=$'\t' read -r f s txt; do
   # MISS direction. The last one was beaten by an inches mark.
   #
   # Telling `asserts X` from `quotes someone asserting X` is a natural-language problem,
-  # and all that machinery was protecting exactly TWO paragraphs, both quoted history in
-  # ADR 0000. An explicit marker costs those two paragraphs one token each and cannot be
-  # defeated at all: there is nothing to mis-pair. Every suppression in the repo is now
-  # greppable, which the heuristic never was.
+  # and all that machinery was protecting four blocks of quoted history.
+  #
+  # State the property precisely, because claiming more than the code delivers is what
+  # burned five of the six previous versions. The marker CANNOT be defeated by a
+  # compensating character -- there is nothing to mis-pair -- and it can only be
+  # OVER-applied: the unit is the whole block, so a genuine claim added to a marked
+  # paragraph is exempted with it, and a paragraph that merely documents this token opts
+  # itself out. Both require somebody to have typed the token, and
+  # `grep -rn 'issue-claims: quoting'` lists every one. That is the trade: silent misses
+  # from one stray character, for loud misses that are all visible in one command.
   #
   # It fails in the LOUD direction too. Forget the marker on new quoted history and CI
   # goes red naming the file and line, which is one read and a fix. The heuristic failed
   # by reporting a clean tree with a stale claim sitting in it.
-  case "$txt" in *"issue-claims: quoting"*) continue ;; esac
+  #
+  # EXPECTED is pinned below so an accidental token -- a doc explaining the mechanism,
+  # a copy-paste -- fails loudly instead of quietly widening the exemption.
+  case "$txt" in *"issue-claims: quoting"*) quoting=$((quoting + 1)); continue ;; esac
   said="$txt"
-  printf '%s' "$said" | grep -qiE 'remains open|still open|not yet (fixed|released|landed|merged)|blocked (by|on)|awaiting|awaited|(is|still|remains) pending|pending (upstream|release|a fix|the fix)|unreleased|until .*(lands|ships)' || continue
+  printf '%s' "$said" | grep -qiE 'remains open|still open|not yet (fixed|released|landed|merged)|blocked (by|on)|awaiting (upstream|release|a fix|the fix|merge)|still awaiting|(is|still) awaited|(is|still|remains) pending|pending (upstream|release|a fix|the fix)|unreleased|until .*(lands|ships)' || continue
   # Scanning Markdown brought mermaid `classDef` lines into range, and `stroke:#57606a`
   # offers the ref pattern a five-digit prefix to match -- unresolvable, so it trips the
   # fail-closed arm and the gate goes permanently red on a stylesheet.
@@ -154,6 +167,10 @@ done < "$BLOCKS"
 if [ "$blocks" = "0" ]; then
   echo "issue-claims: found 0 comment blocks — the EXTRACTION is broken, not the comments" >&2
   exit 2
+fi
+if [ "$quoting" != "$EXPECTED_QUOTING" ]; then
+  echo "issue-claims: $quoting quoting markers, expected $EXPECTED_QUOTING — a suppression was added or removed; confirm it is deliberate and update EXPECTED_QUOTING" >&2
+  exit 4
 fi
 [ "$fail" = "0" ] && echo "issue-claims: $blocks comment blocks, $checked issue-state claims resolved against $REPO — none stale"
 exit $fail

@@ -210,7 +210,7 @@ All five release targets ship, linux-arm64 included — `release-please.yml` pas
 explicit `roc_target: arm64musl`, `verify-arm64.yml` re-checks it on dispatch, and every
 release from v0.4.0 onward carries `stride-linux-arm64`.
 
-**CORRECTION kept for the record (2026-08-01):** the earlier "hard-blocked on
+**CORRECTION kept for the record (2026-08-01; issue-claims: quoting):** the earlier "hard-blocked on
 roc-json" conclusion was wrong — it assumed all JSON had to go through a roc-json
 port, but JSON parsing is a builtin in the new compiler
 (lukewilliamboswell/roc-json#52), so roc-json was dropped, not ported. Lesson worth
