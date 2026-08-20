@@ -5,8 +5,8 @@
 #
 # Checks the one class with a free oracle: a BLOCK that names an issue and says it
 # remains/is still open, is not yet fixed/released/landed/merged, is blocked by or on
-# something, is awaiting upstream/release/a fix/the fix/merge, is still awaiting, is/still
-# awaited, is/still/remains pending, is pending
+# something, is awaiting upstream/release/a fix/the fix/merge, is/still/remains awaiting,
+# is/still awaited, is/still/remains pending, is pending
 # upstream/release/a fix/the fix, is unreleased, or waits until X lands/ships — when the tracker
 # says CLOSED. That list is the PATTERN below, verbatim. Read the pattern, not this
 # sentence, before believing a phrasing is covered: this comment claimed "pending" and
@@ -121,9 +121,18 @@ while IFS=$'\t' read -r f s txt; do
   #
   # EXPECTED is pinned below so an accidental token -- a doc explaining the mechanism,
   # a copy-paste -- fails loudly instead of quietly widening the exemption.
-  case "$txt" in *"issue-claims: quoting"*) quoting=$((quoting + 1)); continue ;; esac
+  # Counts OCCURRENCES, not blocks, so the pin agrees with the grep recommended above.
+  # A duplicate token inside an already-marked paragraph is exactly the copy-paste the
+  # pin exists to catch, and block-counting cannot see it.
+  case "$txt" in
+    *"issue-claims: quoting"*)
+      # grep -o | wc -l, NOT grep -c: the block is one joined line, so -c counts that
+      # single line and reads two tokens as one -- which is the case being guarded.
+      quoting=$((quoting + $(printf '%s' "$txt" | grep -o 'issue-claims: quoting' | wc -l)))
+      continue ;;
+  esac
   said="$txt"
-  printf '%s' "$said" | grep -qiE 'remains open|still open|not yet (fixed|released|landed|merged)|blocked (by|on)|awaiting (upstream|release|a fix|the fix|merge)|still awaiting|(is|still) awaited|(is|still|remains) pending|pending (upstream|release|a fix|the fix)|unreleased|until .*(lands|ships)' || continue
+  printf '%s' "$said" | grep -qiE 'remains open|still open|not yet (fixed|released|landed|merged)|blocked (by|on)|awaiting (upstream|release|a fix|the fix|merge)|(is|still|remains) awaiting|(is|still) awaited|(is|still|remains) pending|pending (upstream|release|a fix|the fix)|unreleased|until .*(lands|ships)' || continue
   # Scanning Markdown brought mermaid `classDef` lines into range, and `stroke:#57606a`
   # offers the ref pattern a five-digit prefix to match -- unresolvable, so it trips the
   # fail-closed arm and the gate goes permanently red on a stylesheet.
