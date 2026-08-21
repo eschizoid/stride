@@ -99,7 +99,9 @@ just install   # build + symlink to ~/.local/bin/stride
   `STRIDE_READS_PER_RUN` / `STRIDE_WINDOW_SLEEP_MS` / `STRIDE_READS_PER_WINDOW` /
   `STRIDE_MAX_429` shrink the rate-limit pacing so terminal arms that cost 940 reads or
   two 15-minute sleeps are reachable in milliseconds. Same species of seam as
-  `STRIDE_API_BASE`; humans never set any of them. This recipe DOES run in CI — it needs
+  `STRIDE_API_BASE`; humans never set any of them. They can only LOWER a limit — an
+  override able to RAISE one would let a typo or a copied command line hammer Strava and
+  get the athlete's own API app suspended, and lowering is all a test needs. This recipe DOES run in CI — it needs
   no network and no credential (loopback mocks, a fake token row in a sandboxed HOME).
   It runs single-shot — the 5× retry that absorbed bug C's ~50% flake was
   deleted when the bug was fixed; a new flake here deserves a new investigation, not

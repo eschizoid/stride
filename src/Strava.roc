@@ -481,12 +481,16 @@ Strava :: [].{
     # green — review demonstrated exactly that. Overriding them from the environment
     # reaches both arms in milliseconds against the mock. Humans never set these; the
     # defaults are the real limits and are what every non-test run uses.
+    # An override may only LOWER a limit, never raise it. These bound requests against
+    # Strava's real caps, and an env var that could raise them would let a typo — or a
+    # copied command line — hammer the API and get the athlete's own API app suspended.
+    # Lowering is all a test needs, so the useful direction is the safe one.
     env_i64! : Str, I64 => I64
     env_i64! = |name, fallback|
         match Env.var_str!(OsStr.from_str(name)) {
             Ok(v) =>
                 match I64.from_str(v) {
-                    Ok(n) if n > 0 => n
+                    Ok(n) if n > 0 and n < fallback => n
                     _ => fallback
                 }
             Err(_) => fallback
@@ -497,9 +501,11 @@ Strava :: [].{
     window_sleep_ms! : {} => U64
     window_sleep_ms! = |{}|
         match Env.var_str!(OsStr.from_str("STRIDE_WINDOW_SLEEP_MS")) {
+            # shorter only, same one-directional rule as env_i64! — a LONGER sleep is
+            # harmless to Strava but would hang a run for as long as the value says
             Ok(v) =>
                 match U64.from_str(v) {
-                    Ok(n) if n > 0 => n
+                    Ok(n) if n > 0 and n < 905_000 => n
                     _ => 905_000 # ~15 min + margin past the window reset
                 }
             Err(_) => 905_000
