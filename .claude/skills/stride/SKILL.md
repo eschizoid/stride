@@ -27,7 +27,10 @@ Never do training math yourself: read stride's numbers, add judgment.
    prints count + form verdict — the full report lives in `summary`). If any stored
    streams won't decode it says "N had unreadable stream data" (they retry next sync).
 3. **`stride plan --json`** — THE weekly-planning payload: summary + the open sessions +
-   last-14d activities in one call. Use `stride summary --json` alone for quick check-ins.
+   last-14d activities + `plan_history_28d` + `adherence_28d`, in one call. The last two
+   are what make the loop closed rather than a fresh guess each week — what was targeted
+   and what actually happened — so read them before proposing anything. Use
+   `stride summary --json` alone for quick check-ins.
 4. Reason: polarization, zone gaps, form (TSB), FTP staleness, sport balance —
    AND reconcile the open plan against recent activities (match by date/type,
    then `stride complete <session_id> <activity_id> --json` for each match).
