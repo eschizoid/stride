@@ -286,10 +286,14 @@ closed-world validator for third parties.** `additionalKeys: false` exists so th
 payload which GREW without a schema update is caught rather than shipped. In CI that
 enforcement is `just e2e`, which runs `tools/validate.jq` against seeded fixtures;
 `just schema-check` runs the same validator against your own database and is the
-"does MY data conform" pass, local and not part of CI. Coverage is not total — five
+"does MY data conform" pass, local and not part of CI. Coverage is not total, and it now has three tiers rather than two. Five
 payloads (`complete`, `import`, `init`, `rate`, `sync`) are validated by neither pass, so
 a key added to THOSE is currently caught by nothing. `tte` is covered by the local recipe
-but not by CI.
+but not by CI. `backfill` is a third case: it needs a token and a live API, so it is
+validated only by `just e2e-sync` against the mock — local, and in neither CI nor
+`just schema-check`. It is not unguarded, but the guard is the COMPILER rather than the
+validator: `Render.backfill_screen` takes a closed record, so an added payload key fails
+the build until its annotation and expects are widened, and CI runs the build.
 A downstream consumer should read the keys it needs and validate its OWN required subset.
 It should not use stride's schema as a closed-world check, and stride does not promise
 that it can.

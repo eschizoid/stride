@@ -10,6 +10,15 @@ Backfill :: [].{
     # what to do after a successful fetch has been stored
     PostStore : [Continue, SleepWindow, StopRun]
 
+    # Why a drain run ended — the value that ships as the payload's `stopped`.
+    # A TAG, not a Str, so the COMPILER enforces the set at the producer: drain_streams!
+    # cannot invent a fourth reason or typo an existing one. `stopped_label` below is the
+    # single place it becomes a string, and its three arms are pinned by equality expects.
+    # This shape was chosen after the Str version shipped pinned by nothing: Render's
+    # expects hand-type their own literals, so they check Render against itself, and
+    # renaming a literal in the producer left every test green.
+    StopReason : [Complete, BudgetReached, RateLimited]
+
     Action : [
         Refresh, # 401: refresh the access token, retry the same id
         Backoff(I64), # 429 under the retry limit: sleep, retry same id, with this new retry count
@@ -41,6 +50,16 @@ Backfill :: [].{
                     Continue
                 }
             Store({ done: done2, window: window2, after })
+        }
+
+    # the ONE tag -> wire-string conversion. These three strings are also the enum in
+    # schemas/v2/backfill.json; changing one without the other is a contract break.
+    stopped_label : StopReason -> Str
+    stopped_label = |r|
+        match r {
+            Complete => "complete"
+            BudgetReached => "budget_reached"
+            RateLimited => "rate_limited"
         }
 
     test_lim : Limits
@@ -104,3 +123,10 @@ expect match Backfill.decide({ status: 200, done: 0, window: 0, retries: 1 }, Ba
     Store({ done: 1, window: 1, after: Continue }) => True
     _ => False
 }
+
+# the wire strings, pinned by equality. These must equal the enum in
+# schemas/v2/backfill.json; Render.backfill_note matches on the same three, and a
+# composed expect there ties producer to consumer so a rename cannot pass either side.
+expect Backfill.stopped_label(Complete) == "complete"
+expect Backfill.stopped_label(BudgetReached) == "budget_reached"
+expect Backfill.stopped_label(RateLimited) == "rate_limited"

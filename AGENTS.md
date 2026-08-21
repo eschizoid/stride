@@ -71,8 +71,12 @@ just install   # build + symlink to ~/.local/bin/stride
   in the versioned envelope by `emit_ok!`/`emit_err!` (`{schema_version, data}` /
   `{schema_version, error:{code,message}}`), humans get a pure `Render.<cmd>_screen`
   (or inline closure). A payload field you ADD must also be added to
-  `schemas/v2/<command>.json` — `additionalKeys: false` means CI fails on an
-  undeclared key, which is the point (`just schema-check` runs the same
+  `schemas/v2/<command>.json` — `additionalKeys: false` means an undeclared key
+  fails validation, which is the point. Say CI only where CI validates that
+  payload: ADR §9c enumerates which commands each pass covers, and it is not all
+  of them (`backfill` is validated by `just e2e-sync` alone). Where the validator
+  does not run, the closed record on the screen function is what catches the key
+  (`just schema-check` runs the same
   validator against your own database; `tools/schema-lint.jq` keeps schemas
   inside the subset `tools/validate.jq` actually reads — `title` included, since the
   validator uses it as the violation path's prefix — plus `description` for humans).

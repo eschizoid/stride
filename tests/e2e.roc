@@ -67,6 +67,12 @@ init! = ||
                 Ok(_) => Err(Exit(0))
                 Err(_) => Err(Exit(1))
             }
+        # drive the backfill skip-path test against a mock started with E2E_BAD_STREAM=1
+        "backfill" =>
+            match run_backfill!() {
+                Ok(_) => Err(Exit(0))
+                Err(_) => Err(Exit(1))
+            }
         # default: run the offline suite, then exit (never listens)
         _ =>
             match run_all!() {
@@ -108,6 +114,13 @@ respond! = |req, _ctx| {
             # a realistic 1 Hz stream (1300 samples, constant 200W, HR sawtooth 120–179): long enough that
             # best_20min_w -> derived FTP 190 -> TSS ~110.8. See mock_power_stream_json.
             Ok(mock_json(mock_power_stream_json(1300, 200)))
+        } else if env_or!("E2E_BAD_STREAM", "") == "1" {
+            # 200 with a body that is NOT UTF-8 — store_stream_response! returns
+            # SkippedNonUtf8 and writes no row, so the id stays pending and retries
+            # next run. This is the only way to reach `complete` with pending > 0,
+            # which is the state `resumable` exists for (#218). Served by a SECOND
+            # mock instance so the 404-marker fixture above stays untouched.
+            Ok(mock_bad_utf8)
         } else {
             # 404 = "no streams recorded" — exercises the {} marker path
             Ok(mock_not_found("{}"))
@@ -133,6 +146,16 @@ mock_json = |body|
 mock_not_found : Str -> Server.Outcome
 mock_not_found = |body|
     Server.respond(Response.from_status(404).with_body(Str.to_utf8(body)))
+
+# a 200 whose body is not valid UTF-8 (a lone 0xff can never appear in UTF-8).
+# Raw bytes deliberately — Str.to_utf8 cannot express this, which is the point.
+mock_bad_utf8 : Server.Outcome
+mock_bad_utf8 =
+    Server.respond(
+        Response.from_status(200)
+        .add_header("Content-Type", "application/json")
+        .with_body([0xff, 0xfe, 0xff, 0xfe]),
+    )
 
 shutdown! : Server.ShutdownReason, Context => Try({}, [Exit(I64), ..])
 shutdown! = |_reason, _ctx| Ok({})
@@ -292,7 +315,8 @@ run_sync! = || {
 
     # ── backfill's machine contract (#218) ────────────────────────────────────
     # backfill used to print prose on STDOUT and emit no envelope at all, so it
-    # was the one command `--json` could not deliver: an agent asking for JSON
+    # was, besides the interactive `auth`, the command `--json` could not deliver:
+    # an agent asking for JSON
     # got unparseable text. It now goes through out! like every other query
     # command, with progress narrating on stderr (ADR 0007).
     #
@@ -325,6 +349,12 @@ run_sync! = || {
     check!("a run with nothing to do reports complete", bfq!(".data.stopped") == "complete")?
     check!("...is not resumable", bfq!(".data.resumable") == "false")?
     check!("...and fetched nothing", bfq!(".data.streams_fetched") == "0")?
+    # 502's streams 404 here, which STORES a `{}` marker — so it is not pending, and
+    # "an activity Strava has no streams for stays pending" is false. That wrong story
+    # shipped in four docs before review caught it; this pins the true behaviour.
+    check!("...with a 404-marked activity counted as done, not pending", bfq!(".data.streams_pending") == "0")?
+    check!("...nothing pruned, since the mock still lists both", bfq!(".data.pruned") == "0")?
+    check!("...and nothing skipped on a clean run", bfq!(".data.streams_skipped") == "0")?
 
     # drop one stored stream and re-run, so the count has to MOVE. Without this
     # every check above would pass just as well against a backfill that never
@@ -339,6 +369,12 @@ run_sync! = || {
     bf_human = Str.trim(sh!("cat '${bo}'"))
     check!("humans get the rendered line", Str.contains(bf_human, "backfill: 2 activities") and Str.contains(bf_human, "all streams present"))?
     check!("...with no envelope in it", !(Str.contains(bf_human, "schema_version")))?
+    # refetching 501's streams above ran invalidate_metrics!, dropping its metrics row.
+    # Nothing later in this scenario reads them today, which is exactly why it is worth
+    # restoring: a future check placed after this block would otherwise fail for a
+    # reason that has nothing to do with what it is testing.
+    _ = sync_stride!(bin, home, base, ["analyze"])
+    check_near!("501's metrics are restored after the backfill block", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 110.8, 1.0)?
 
     # #208: the two config reads on the SYNC path. Both used to swallow an unreadable
     # value -- last_sync_epoch by folding it into "never synced" (a silent full re-pull,
@@ -364,6 +400,61 @@ run_sync! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     Stdout.line!("SYNC E2E CHECKS PASS")
+}
+
+# ── backfill against a mock whose stream bodies do not decode (#218) ─────────
+# The one state run_sync! cannot reach: a run that DRAINS its queue and still has
+# work left. store_stream_response! deliberately does not store a non-UTF-8 body
+# ("storing would mark it done forever"), so that id stays pending and retries next
+# run — which makes `complete` with pending > 0 reachable, and `resumable` TRUE
+# after it.
+#
+# This scenario exists because review proved the suite was blind here: a build with
+# `resumable` hardcoded permanently false passed every check in run_sync!, since
+# every run there ends with pending == 0. `resumable` is the one field SKILL.md
+# tells agents to branch on, so an unobservable value is not an acceptable gap.
+# Runs under `just e2e-sync` only -- local, not CI, like every mock-backed check.
+run_backfill! : () => Try({}, _)
+run_backfill! = || {
+    bin = env_or!("STRIDE_BIN", "./stride")
+    base = env_or!("STRIDE_API_BASE", "http://127.0.0.1:8798")
+    home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+    db = "${home}/.stride/db.sqlite"
+
+    _ = wait_ready!(base, 50)
+    check!("bad-stream mock came up on ${base}", mock_up!(base))?
+
+    _ = sync_stride!(bin, home, base, ["init"])
+    _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','mock-access'),('strava_refresh_token','mock-refresh'),('strava_expires_at','9999999999');")
+    # sync pulls both activities; 501's streams store, 502's body does not decode
+    _ = sync_stride!(bin, home, base, ["sync"])
+
+    bo = "${home}/bf.out"
+    bfq! = |filter| Str.trim(sh!("jq -r '${filter}' '${bo}' 2>&1"))
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' backfill >'${bo}' 2>/dev/null")
+
+    check!("an undecodable body is COUNTED, not silently dropped", bfq!(".data.streams_skipped") == "1")?
+    check!("...and stores nothing", bfq!(".data.streams_fetched") == "0")?
+    check!("...so the activity stays pending", bfq!(".data.streams_pending") == "1")?
+    # the queue emptied, so the drain IS complete — and there is still work to do.
+    # These two assertions together are the whole point: deriving `resumable` from
+    # `stopped` reports false here, about a row stride itself intends to retry.
+    check!("the queue drained, so stopped is complete", bfq!(".data.stopped") == "complete")?
+    check!("...yet the run is resumable, because that id retries next run", bfq!(".data.resumable") == "true")?
+    check!("the skip payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/backfill.json -f tools/validate.jq 2>&1")) == "")?
+
+    # re-running really does re-attempt it — the claim `resumable: true` makes
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' backfill >'${bo}' 2>/dev/null")
+    check!("a second run re-attempts the skipped id rather than retiring it", bfq!(".data.streams_skipped") == "1")?
+
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' backfill >'${bo}' 2>/dev/null")
+    human = Str.trim(sh!("cat '${bo}'"))
+    check!("humans are told the data was unreadable", Str.contains(human, "unreadable stream data"))?
+    check!("...and never that Strava simply has no streams for it", !(Str.contains(human, "carry no streams")))?
+    check!("...nor that everything is present", !(Str.contains(human, "all streams present")))?
+
+    _ = sh!("rm -rf '${home}'")
+    Stdout.line!("BACKFILL E2E CHECKS PASS")
 }
 
 # stride against the sandbox HOME + mock API base; local commands ignore the base

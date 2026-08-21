@@ -8,6 +8,8 @@ roc := env("ROC", "roc")
 linker := env("STRIDE_LINKER", "")
 # port the e2e-sync mock binds and the driver targets; overridable when 8799 is occupied
 mock_port := env("MOCK_PORT", "8799")
+# second mock instance, serving undecodable stream bodies (backfill's skip path)
+bad_stream_port := env("BAD_STREAM_PORT", "8798")
 
 default: test
 
@@ -111,11 +113,15 @@ schema-check: build
 # enough to live inline in a RocStr, and the corruption only bites heap-allocated decoded
 # strings — so this suite is structurally incapable of reproducing the real-data failure
 # that shipped once already. Real payloads need a real sync to verify.
-e2e-sync:
+# depends on `build` for the same reason `just test` does: this recipe rebuilt ./e2e
+# but NOT ./stride, so editing source and re-running silently tested the PREVIOUS
+# binary. That cost a reviewer a wrong diagnosis — a failure reported from code that
+# was no longer on disk. AGENTS.md already names the stale-binary hazard for a FAILED
+# build; a successful build of since-reverted source is the same trap.
+e2e-sync: build
     #!/usr/bin/env bash
     set -uo pipefail
     {{roc}} build tests/e2e.roc --output=e2e --opt=dev || exit 1
-    test -x ./stride || { echo "e2e-sync needs a ./stride binary — run \`just build\` first"; exit 1; }
     E2E_MODE=mock MOCK_PORT={{mock_port}} ./e2e &
     MOCK=$!
     # kill the mock on ANY exit, including Ctrl-C — the old single-line form only killed
@@ -134,7 +140,14 @@ e2e-sync:
     # ~50% flake; with the bug fixed (basic-cli 0.22.0, #105) the flake is gone —
     # measured 10/10 clean unretried on 2026-08-14. If this starts failing again it
     # should fail LOUDLY, not be absorbed: a new flake deserves a new investigation.
-    E2E_MODE=sync STRIDE_API_BASE=http://127.0.0.1:{{mock_port}} ./e2e
+    E2E_MODE=sync STRIDE_API_BASE=http://127.0.0.1:{{mock_port}} ./e2e || exit 1
+    # a SECOND mock, serving stream bodies that are not UTF-8, for the skip path.
+    # Separate instance rather than a flag on the first: the 404-marker fixture in the
+    # sync scenario has to stay exactly as it is, and one process cannot be both.
+    E2E_MODE=mock E2E_BAD_STREAM=1 MOCK_PORT={{bad_stream_port}} ./e2e &
+    BADMOCK=$!
+    trap 'kill $MOCK $BADMOCK 2>/dev/null' EXIT
+    E2E_MODE=backfill STRIDE_API_BASE=http://127.0.0.1:{{bad_stream_port}} ./e2e
 
 # build + refresh the ~/.local/bin symlink
 install: build

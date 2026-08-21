@@ -19,10 +19,13 @@ Never do training math yourself: read stride's numbers, add judgment.
    `stride backfill` — it re-pulls the full activity list + ALL missing streams,
    rate-limit-aware and resumable across days (Strava caps reads at ~1000/day).
    It ends in the usual envelope (`schemas/v2/backfill.json`) with progress on
-   stderr: read `resumable` to decide whether to run it again, and `stopped` for
-   why it ended (`complete` / `budget_reached` / `rate_limited`). `streams_pending`
-   is NOT the same question — an activity Strava holds no streams for stays
-   pending forever, which is why `complete` can leave a non-zero count (#218).
+   stderr: read `resumable` (= `streams_pending > 0`) to decide whether to run it
+   again, and `stopped` for why it ended (`complete` / `budget_reached` /
+   `rate_limited` — both non-complete reasons mean tomorrow, they stop against the
+   daily read cap). `complete` can still leave work: a stream body that does not
+   decode is skipped WITHOUT storing, so it retries next run and shows up in
+   `streams_skipped`. An activity Strava has no streams for is NOT that case — a
+   404 stores an empty marker and retires it permanently (#218).
    **No API credentials** (Strava requires a subscription for API access since
    June 2026): `stride import <export.zip|dir> --json` loads a Strava account export —
    summary-level activities (no streams), idempotent, English exports only.

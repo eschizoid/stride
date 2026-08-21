@@ -545,23 +545,27 @@ Strava :: [].{
                 outcome : BackfillOutcome
                 outcome =
                     if missing == 0 {
-                        { fetched: 0, pending: 0, stopped: "complete" }
+                        { stored: 0, skipped: 0, pending: 0, stopped: Complete }
                     } else {
                         Output.say!("backfill: ${U64.to_str(counts.relisted)} activities, ${U64.to_str(missing)} need streams. Strava allows ~1000 reads/day, so a large first pull can span a few days — this run drains as far as today's limit allows and is resumable (just run `stride backfill` again).")?
-                        drain_streams!(path, token, missing_ids, { done: 0, window: 0, retries: 0 })?
+                        drain_streams!(path, token, missing_ids, { done: 0, window: 0, retries: 0, stored: 0, skipped: 0 })?
                     }
-                # `resumable` is the question a caller actually asks, and it is NOT
-                # `pending > 0`: a run can end complete with rows still pending because
-                # their activities carry no streams at all. It means "running this again
-                # would fetch more", which is exactly the two non-complete outcomes.
+                # `resumable` is the question a caller acts on, and it is simply "is
+                # anything still missing?". Deriving it from `stopped` instead was wrong in
+                # BOTH directions: a run ending `complete` with an undecodable body still
+                # has work (that id stored nothing and retries next run), and a run that
+                # stops exactly on the read budget with an empty queue has none.
+                # `pending` is measured from the database after the last store, so it is
+                # the honest answer in every terminal arm.
                 Output.out!(
                     {
                         activities: counts.relisted,
                         pruned,
-                        streams_fetched: outcome.fetched,
+                        streams_fetched: outcome.stored,
+                        streams_skipped: outcome.skipped,
                         streams_pending: outcome.pending,
-                        stopped: outcome.stopped,
-                        resumable: outcome.stopped != "complete",
+                        stopped: Backfill.stopped_label(outcome.stopped),
+                        resumable: outcome.pending > 0,
                     },
                     Render.backfill_screen,
                 )
@@ -570,24 +574,34 @@ Strava :: [].{
     }
     # Per-run drain state: `done` = reads this run (vs the daily cap), `window` = reads
     # since the last window sleep (vs the 15-min cap), `retries` = consecutive 429s
-    # after a sleep (to detect the daily cap without headers).
-    DrainState : { done : I64, window : I64, retries : I64 }
+    # after a sleep (to detect the daily cap without headers), `stored`/`skipped` = what
+    # those reads actually produced.
+    #
+    # `done` and `stored` are deliberately different numbers and must stay so. Pacing is
+    # about READS — a 404 spends a read and stores a marker, an undecodable body spends a
+    # read and stores nothing — while the payload reports WORK. Publishing `done` as
+    # `streams_fetched` (as the first cut of #218 did) reports rows that do not exist and
+    # disagrees with `sync`'s identically-named field, which counts stores.
+    DrainState : { done : I64, window : I64, retries : I64, stored : I64, skipped : I64 }
 
     # Walk the missing-streams list once per run. Walking a LIST (not re-querying
     # "next missing") means an unstorable body is skipped, not refetched forever.
     # The pacing DECISION is pure (Backfill.decide, unit-tested); this is the thin
     # effectful skin that dispatches on it: fetch, then act.
-    # The four ways a drain ends, RETURNED rather than printed, because "should I run
-    # backfill again?" is the one question a caller actually has and it is not derivable
-    # from the counts: `budget_reached` and `rate_limited` both leave work pending, and
-    # only the second means waiting is required. `stopped` is a closed set — complete,
-    # rate_limited, budget_reached — pinned by an expect in Render.
-    BackfillOutcome : { fetched : I64, pending : I64, stopped : Str }
+    # The THREE ways a drain ends, RETURNED rather than printed, because "why did it
+    # stop?" is not derivable from the counts. (A fourth exit exists and is deliberately
+    # not an outcome: a token refresh that does not help raises Err(HttpStatus(401, …)),
+    # which is a failure, not a stopping reason.) Both non-complete reasons stop against
+    # Strava's DAILY cap — `reads_per_run` is 940 against 1000 — so both mean tomorrow.
+    #
+    # `stopped` is a Backfill.StopReason tag, so the compiler enforces the set here;
+    # Backfill.stopped_label is the one place it becomes the string that ships.
+    BackfillOutcome : { stored : I64, skipped : I64, pending : I64, stopped : Backfill.StopReason }
 
     drain_streams! : Str, Str, List(I64), DrainState => Try(BackfillOutcome, _)
     drain_streams! = |path, token, ids, st|
         match ids {
-            [] => Ok({ fetched: st.done, pending: pending_streams!(path)?, stopped: "complete" })
+            [] => Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: Complete })
             [id, .. as rest] => {
                 uri = "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
                 resp = send_bearer!(uri, token)?
@@ -608,23 +622,34 @@ Strava :: [].{
                         Sleep.millis!(window_sleep_ms)
                         drain_streams!(path, token, ids, { ..st, window: 0, retries })
                     }
-                    GiveUp => Ok({ fetched: st.done, pending: pending_streams!(path)?, stopped: "rate_limited" })
+                    GiveUp => Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: RateLimited })
                     Store({ done, window, after }) => {
-                        # 404 => empty marker, 2xx => body, other => error propagated
-                        _stored = store_stream_response!(path, id, resp)?
+                        # 404 => empty marker, 2xx => body, other => error propagated.
+                        # MATCHED, not discarded, exactly as the sibling fetch_streams_all!
+                        # does: SkippedNonUtf8 writes no row, so that id stays pending and
+                        # retries next run. Counting it as fetched reported rows that were
+                        # never stored and let a lossy run present itself as a clean one.
+                        counted =
+                            match store_stream_response!(path, id, resp)? {
+                                Stored => { stored: st.stored + 1, skipped: st.skipped }
+                                SkippedNonUtf8 => {
+                                    Output.say!("  activity ${I64.to_str(id)}: stream data would not decode — skipped, retries next run")?
+                                    { stored: st.stored, skipped: st.skipped + 1 }
+                                }
+                            }
                         (if done % 50 == 0
-                            Output.say!("  ...${I64.to_str(done)} fetched this run")
+                            Output.say!("  ...${I64.to_str(done)} reads this run, ${I64.to_str(counted.stored)} stored")
                         else
                             Ok({}))?
                         match after {
-                            StopRun => Ok({ fetched: done, pending: pending_streams!(path)?, stopped: "budget_reached" })
+                            StopRun => Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_streams!(path)?, stopped: BudgetReached })
                             SleepWindow => {
                                 Output.say!("  15-min read window nearly full (${I64.to_str(window)}) — sleeping ~15 min...")?
                                 Sleep.millis!(window_sleep_ms)
-                                drain_streams!(path, token, rest, { done, window: 0, retries: 0 })
+                                drain_streams!(path, token, rest, { done, window: 0, retries: 0, stored: counted.stored, skipped: counted.skipped })
                             }
                             Continue =>
-                                drain_streams!(path, token, rest, { done, window, retries: 0 })
+                                drain_streams!(path, token, rest, { done, window, retries: 0, stored: counted.stored, skipped: counted.skipped })
 
                         }
                     }
