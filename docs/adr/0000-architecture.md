@@ -159,6 +159,10 @@ boundary from §3: a schema change must **never silently destroy judgment-tier d
 here and cannot be re-derived, so it must be migrated or explicitly, knowingly reset.
 Don't spend effort making migrations bulletproof against versions no real db is on.
 
+That permission is scoped to pre-1.0 and expires with it — §9c states what each versioned
+surface promises from 1.0 onward, and the tier rule above is the one part that was never
+a pre-1.0 concession in the first place.
+
 ## 7. Machine output is a versioned envelope
 
 Every JSON response is wrapped and versioned so tool callers can detect a contract
@@ -217,6 +221,90 @@ port, but JSON parsing is a builtin in the new compiler
 keeping: "blocked" was an untested assumption stated as fact — verify with the source
 before writing a constraint into the record.
 
+## 9b. What stride IS
+
+Everything below in §10 says what stride refuses. Nothing has said what it is, and the
+cost of that is measurable: a careful outside reviewer read this repository and wrote a
+page proposing, as future direction, an architecture stride already ships — provenance,
+confidence tiers, plan and adherence memory, null semantics, versioned schemas,
+rep-level progression, an engine/coach boundary. They then proposed two things §10 and
+ADR 0006 rule out, without engaging the reasoning, because nothing pointed at it (#216).
+
+**Stride is the deterministic, local source of athlete state.** It turns training
+evidence into traceable facts — each carrying its own provenance and its own uncertainty
+— that a human or a reasoning system can consume without trusting stride's judgment,
+because stride does not offer any.
+
+Three consequences. Most of §10 follows from one of them. Not all, and the exceptions are
+worth naming rather than papering over: graphs and social carry their own grounds in §10
+— an experiment that ran and failed, and the fact that Strava already exists — neither of
+which is an architectural consequence of anything here. Medical follows from the header
+above rather than from these three:
+
+- **Data providers are inputs, not the identity.** Strava is one grandfathered API
+  because it is an aggregator that already exists (ADR 0006). The engine is not "a Strava
+  tool"; it is an athlete-state engine that currently ingests Strava. That is why the
+  ingestion boundary is the filesystem rather than a vendor list.
+- **The reasoning layer is interchangeable BY CONSTRUCTION.** No model in the binary, no
+  model API key, no vendor coupling — versioned JSON on stdout and an exit code. (§1's
+  Strava tokens are ingestion credentials, a different thing.) Any agent can
+  consume it, and the engine outlives whichever model is currently best. This is why §10
+  refuses an MCP server: the claim is that the CLI plus versioned JSON already IS the
+  agent interface, not that agent consumption is unwanted.
+- **The athlete's state is the product.** Not the report, not the recommendation. A file
+  they own, greppable, backed up with `cp`, recomputable from raw streams.
+
+§10 is the single scope list; this section does not restate it and must not grow into a
+second one.
+
+## 9c. The 1.0 compatibility contract
+
+Pre-1.0 breakage (§6) is scoped to pre-1.0. Releasing 1.0 changes what that permission
+means, and stride has six surfaces a caller can depend on which are NOT one promise
+(#217). Only three of them carry a version number of their own — the binary,
+`PRAGMA user_version`, and `json_schema_version`; CLI behaviour and judgment-tier data
+carry none, which is exactly why they need stating rather than inferring.
+
+| surface | 1.x promise |
+|---|---|
+| Binary version (`app.roc`, release-please) | semver, and the source of truth for "which stride is this" |
+| SQLite schema (`PRAGMA user_version`) | migrates forward on next command; §3's tier rule is inviolable — judgment-tier data is never silently destroyed |
+| Envelope (`json_schema_version`) | bumps when the WRAPPER changes, or a payload field is removed or retyped |
+| CLI commands and arguments | additive; a name that parses in 1.x keeps parsing to the same variant |
+| Judgment-tier data | survives every upgrade, unconditionally — it cannot be re-derived |
+| `schemas/v2/*.json` | see below, because this one is not what it looks like |
+
+**Adding a payload key: non-breaking to READERS, breaking to VALIDATORS.** Both halves of
+that were already written down and they appear to contradict: the envelope rule says
+adding a field does not bump the version because "a consumer reading known keys is
+unaffected by a new one appearing", while every schema carries `additionalKeys: false`,
+so anything validating a payload against the checked-in schema fails the moment a key is
+added. Both are true. "Consumer" means two different things.
+
+The 1.x resolution: **the schemas are stride's own contract with itself, not a
+closed-world validator for third parties.** `additionalKeys: false` exists so that a
+payload which GREW without a schema update is caught rather than shipped. In CI that
+enforcement is `just e2e`, which runs `tools/validate.jq` against seeded fixtures;
+`just schema-check` runs the same validator against your own database and is the
+"does MY data conform" pass, local and not part of CI. Coverage is not total — five
+payloads (`complete`, `import`, `init`, `rate`, `sync`) are validated by neither pass, so
+a key added to THOSE is currently caught by nothing. `tte` is covered by the local recipe
+but not by CI.
+A downstream consumer should read the keys it needs and validate its OWN required subset.
+It should not use stride's schema as a closed-world check, and stride does not promise
+that it can.
+
+So: adding a key is additive and does not bump `json_schema_version`. Removing or
+retyping one does. A change that would break a reader of known keys is a `v3/` directory,
+not an edit to `v2/`.
+
+**Error codes are additive in 1.x.** The vocabulary is published, and `tests/e2e.roc`
+diffs the enum against the codes the source emits, so the two cannot silently disagree.
+Note what that does NOT enforce: it asserts set EQUALITY, so deleting a code from the
+source and the enum together passes green. Additivity is a promise this document makes,
+not one the suite currently checks — a caller branching on a code must keep working, and
+nothing but review stops that being broken.
+
 ## 10. Deliberately out of scope
 
 This is the single list — the roadmap carried a second, overlapping one until it was
@@ -256,7 +344,8 @@ unchanged — sport-completeness is not multi-tenancy.
 
 ---
 
-Open work lives in GitHub issues; there is deliberately no scratch plan file (see AGENTS.md — a watch-item tracked in one went unnoticed for weeks, #196).
+Open work lives in GitHub issues; no scratch plan file DESCRIBES work (see AGENTS.md — a watch-item tracked in one went unnoticed for weeks, #196). A root `PLAN.md` may hold sequencing and its reasons — the one thing issues cannot carry — provided every item is a pointer, it is scanned by `just issue-claims` like any other doc, and it deletes itself when the sequence is done. The moment it describes what a ticket contains — beyond the one fact that creates a
+sequencing constraint — it has become the file that rotted.
 Enforced invariants and build/release mechanics live in the project instructions.
 When a decision here changes, update this ADR in the same commit as the code.
 
