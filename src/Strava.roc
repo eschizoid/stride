@@ -16,6 +16,7 @@ import Streams
 import Backfill
 import Metrics
 import Config
+import Render
 
 Strava :: [].{
     # push a new FTP to Strava (PUT /athlete?ftp=). Best-effort: any failure just
@@ -400,8 +401,9 @@ Strava :: [].{
                     # envelope at the end, so a plain line on stdout would sit in front of
                     # that JSON and break every machine consumer parsing it. It is
                     # narration about how the run went, which is exactly what stderr is
-                    # for. (`backfill` prints its own progress on stdout legitimately —
-                    # that command emits no envelope, so its lines ARE its output.)
+                    # for. `backfill` holds to the same rule for the same reason (#218):
+                    # it emits an envelope too, so its progress is narration on stderr and
+                    # the envelope's `stopped` field carries the outcome this line reports.
                     _ = if total > 0 { Output.narrate_done!({})? } else { {} }
                     Output.say!("rate limited by Strava — stopping streams backfill for now (will resume next sync)")?
                     Ok(acc)
@@ -520,13 +522,13 @@ Strava :: [].{
             Ok(token) => {
                 # pull the full activity list first so backfill is self-sufficient —
                 # no need to run `sync` beforehand (that's what made it two commands)
-                Stdout.line!("backfill: refreshing the activity list...")?
+                Output.say!("backfill: refreshing the activity list...")?
                 started = Db.now_secs!({})
                 # backfill reports neither counts, so it skips the per-row classify SELECT
                 counts = fetch_pages!(path, token, "", started, 1, { relisted: 0, new_n: 0, updated_n: 0 }, False, False)?
                 # full re-pull: window_start "" prunes every activity Strava no longer lists
                 pruned = prune_deleted!(path, started, "")?
-                (if pruned > 0 Stdout.line!("backfill: pruned ${U64.to_str(pruned)} activities removed on Strava") else Ok({}))?
+                (if pruned > 0 Output.say!("backfill: pruned ${U64.to_str(pruned)} activities removed on Strava") else Ok({}))?
                 Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
                 missing_ids = Sqlite.query_many!({
                     path: Path.utf8(path),
@@ -540,12 +542,29 @@ Strava :: [].{
                     rows: Sqlite.i64("id"),
                 })?
                 missing = List.len(missing_ids)
-                if missing == 0 {
-                    Stdout.line!("backfill: ${U64.to_str(counts.relisted)} activities, all streams already present — nothing to do")
-                } else {
-                    Stdout.line!("backfill: ${U64.to_str(counts.relisted)} activities, ${U64.to_str(missing)} need streams. Strava allows ~1000 reads/day, so a large first pull can span a few days — this run drains as far as today's limit allows and is resumable (just run `stride backfill` again).")?
-                    drain_streams!(path, token, missing_ids, { done: 0, window: 0, retries: 0 })
-                }
+                outcome : BackfillOutcome
+                outcome =
+                    if missing == 0 {
+                        { fetched: 0, pending: 0, stopped: "complete" }
+                    } else {
+                        Output.say!("backfill: ${U64.to_str(counts.relisted)} activities, ${U64.to_str(missing)} need streams. Strava allows ~1000 reads/day, so a large first pull can span a few days — this run drains as far as today's limit allows and is resumable (just run `stride backfill` again).")?
+                        drain_streams!(path, token, missing_ids, { done: 0, window: 0, retries: 0 })?
+                    }
+                # `resumable` is the question a caller actually asks, and it is NOT
+                # `pending > 0`: a run can end complete with rows still pending because
+                # their activities carry no streams at all. It means "running this again
+                # would fetch more", which is exactly the two non-complete outcomes.
+                Output.out!(
+                    {
+                        activities: counts.relisted,
+                        pruned,
+                        streams_fetched: outcome.fetched,
+                        streams_pending: outcome.pending,
+                        stopped: outcome.stopped,
+                        resumable: outcome.stopped != "complete",
+                    },
+                    Render.backfill_screen,
+                )
             }
         }
     }
@@ -558,10 +577,17 @@ Strava :: [].{
     # "next missing") means an unstorable body is skipped, not refetched forever.
     # The pacing DECISION is pure (Backfill.decide, unit-tested); this is the thin
     # effectful skin that dispatches on it: fetch, then act.
-    drain_streams! : Str, Str, List(I64), DrainState => Try({}, _)
+    # The four ways a drain ends, RETURNED rather than printed, because "should I run
+    # backfill again?" is the one question a caller actually has and it is not derivable
+    # from the counts: `budget_reached` and `rate_limited` both leave work pending, and
+    # only the second means waiting is required. `stopped` is a closed set — complete,
+    # rate_limited, budget_reached — pinned by an expect in Render.
+    BackfillOutcome : { fetched : I64, pending : I64, stopped : Str }
+
+    drain_streams! : Str, Str, List(I64), DrainState => Try(BackfillOutcome, _)
     drain_streams! = |path, token, ids, st|
         match ids {
-            [] => Stdout.line!("backfill complete — ${I64.to_str(st.done)} streams fetched this run; ${I64.to_str(pending_streams!(path)?)} still missing")
+            [] => Ok({ fetched: st.done, pending: pending_streams!(path)?, stopped: "complete" })
             [id, .. as rest] => {
                 uri = "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
                 resp = send_bearer!(uri, token)?
@@ -573,33 +599,27 @@ Strava :: [].{
                         if fresh == token {
                             Err(HttpStatus(401, "token refresh did not help — re-run `stride auth`"))
                         } else {
-                            Stdout.line!("  access token expired — refreshed, continuing...")?
+                            Output.say!("  access token expired — refreshed, continuing...")?
                             drain_streams!(path, fresh, ids, st)
                         }
                     }
                     Backoff(retries) => {
-                        Stdout.line!("  rate limited — pausing ~15 min, then resuming...")?
+                        Output.say!("  rate limited — pausing ~15 min, then resuming...")?
                         Sleep.millis!(window_sleep_ms)
                         drain_streams!(path, token, ids, { ..st, window: 0, retries })
                     }
-                    GiveUp => {
-                        left = pending_streams!(path)?
-                        Stdout.line!("still rate-limited after backing off — likely today's Strava read cap (${I64.to_str(st.done)} fetched this run, ${I64.to_str(left)} to go). Run `stride backfill` again later or tomorrow.")
-                    }
+                    GiveUp => Ok({ fetched: st.done, pending: pending_streams!(path)?, stopped: "rate_limited" })
                     Store({ done, window, after }) => {
                         # 404 => empty marker, 2xx => body, other => error propagated
                         _stored = store_stream_response!(path, id, resp)?
                         (if done % 50 == 0
-                            Stdout.line!("  ...${I64.to_str(done)} fetched this run")
+                            Output.say!("  ...${I64.to_str(done)} fetched this run")
                         else
                             Ok({}))?
                         match after {
-                            StopRun => {
-                                left = pending_streams!(path)?
-                                Stdout.line!("reached this run's safe read budget — ${I64.to_str(done)} fetched, ${I64.to_str(left)} still to go. Run `stride backfill` again tomorrow to continue.")
-                            }
+                            StopRun => Ok({ fetched: done, pending: pending_streams!(path)?, stopped: "budget_reached" })
                             SleepWindow => {
-                                Stdout.line!("  15-min read window nearly full (${I64.to_str(window)}) — sleeping ~15 min...")?
+                                Output.say!("  15-min read window nearly full (${I64.to_str(window)}) — sleeping ~15 min...")?
                                 Sleep.millis!(window_sleep_ms)
                                 drain_streams!(path, token, rest, { done, window: 0, retries: 0 })
                             }

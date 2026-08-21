@@ -290,6 +290,56 @@ run_sync! = || {
     # Pin the exact value (not just >0) so the whole stream->best20->deriveFTP->NP->TSS path is checked.
     check_near!("501 power streams score ~110.8 TSS (NP200 @ derived FTP190)", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 110.8, 1.0)?
 
+    # ── backfill's machine contract (#218) ────────────────────────────────────
+    # backfill used to print prose on STDOUT and emit no envelope at all, so it
+    # was the one command `--json` could not deliver: an agent asking for JSON
+    # got unparseable text. It now goes through out! like every other query
+    # command, with progress narrating on stderr (ADR 0007).
+    #
+    # These live HERE rather than in the offline suite because backfill needs a
+    # token AND an API to talk to, which means the mock. That means they run
+    # under `just e2e-sync` only -- local, not CI. Stated plainly rather than
+    # left to be discovered.
+    bo = "${home}/bf.out"
+    be = "${home}/bf.err"
+    backfill! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' '${bin}' backfill >'${bo}' 2>'${be}'")
+    bfq! = |filter| Str.trim(sh!("jq -r '${filter}' '${bo}' 2>&1"))
+
+    _ = backfill!("json")
+    bf_out = Str.trim(sh!("cat '${bo}'"))
+    # pin BOTH ends and the line count: starts_with alone would still accept
+    # prose appended after the envelope, which is the exact shape of the bug.
+    check!(
+        "backfill's stdout is the envelope and nothing else",
+        Str.starts_with(bf_out, "{\"schema_version\"")
+        and Str.ends_with(bf_out, "}")
+        and List.len(Str.split_on(bf_out, "\n")) == 1,
+    )?
+    check!("...while its progress narrates on stderr", Str.contains(sh!("cat '${be}'"), "refreshing the activity list"))?
+    check!("...and that narration never reaches stdout", !(Str.contains(bf_out, "refreshing the activity list")))?
+    check!("backfill conforms to its schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/backfill.json -f tools/validate.jq 2>&1")) == "")?
+
+    # sync already drained both activities' streams, so this run has nothing to
+    # fetch. `resumable` is the field a caller acts on -- pin it directly rather
+    # than leaving it inferred from the counts.
+    check!("a run with nothing to do reports complete", bfq!(".data.stopped") == "complete")?
+    check!("...is not resumable", bfq!(".data.resumable") == "false")?
+    check!("...and fetched nothing", bfq!(".data.streams_fetched") == "0")?
+
+    # drop one stored stream and re-run, so the count has to MOVE. Without this
+    # every check above would pass just as well against a backfill that never
+    # fetched anything at all.
+    _ = sql!(db, "DELETE FROM streams WHERE activity_id=501;")
+    _ = backfill!("json")
+    check!("a run with work to do fetches it", bfq!(".data.streams_fetched") == "1")?
+    check!("...and reports complete once drained", bfq!(".data.stopped") == "complete")?
+    check!("...still not resumable, having finished the queue", bfq!(".data.resumable") == "false")?
+
+    _ = backfill!("human")
+    bf_human = Str.trim(sh!("cat '${bo}'"))
+    check!("humans get the rendered line", Str.contains(bf_human, "backfill: 2 activities") and Str.contains(bf_human, "all streams present"))?
+    check!("...with no envelope in it", !(Str.contains(bf_human, "schema_version")))?
+
     # #208: the two config reads on the SYNC path. Both used to swallow an unreadable
     # value -- last_sync_epoch by folding it into "never synced" (a silent full re-pull,
     # conservative and therefore invisible), strava_expires_at by raising a tag nothing
@@ -379,6 +429,14 @@ b_init_config! = |ctx| {
     inband = sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' sync 2>/dev/null")
     check!("in-band errors still arrive as themselves", Str.contains(inband, "not_authenticated"))?
     check!("...exactly once — the boundary must not re-wrap Exit", Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' sync 2>/dev/null | grep -c schema_version")) == "1")?
+    # #218: backfill answers `--json` with an envelope like every other command.
+    # This is the REFUSAL path only -- it is what CI can reach without a token or
+    # a network. The success envelope, the schema conformance, and the
+    # stdout/stderr split are covered in run_sync! against the mock, which is
+    # `just e2e-sync` and therefore local-only.
+    bf_unauth = Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' backfill 2>/dev/null"))
+    check!("backfill refuses in-band, as one envelope", Str.contains(bf_unauth, "not_authenticated") and List.len(Str.split_on(bf_unauth, "\n")) == 1)?
+    check!("...and exits non-zero", stride_status!(ctx.bin, nodb, ["backfill"]) == 1)?
     _ = sh!("mkdir -p '${ctx.home}/freshinit'")
     check!("...and init on a fresh home still succeeds", stride_status!(ctx.bin, "${ctx.home}/freshinit", ["init"]) == 0)?
     _ = sh!("rm -rf '${nodb}' '${corrupt}' '${ctx.home}/freshinit'")

@@ -1,0 +1,19 @@
+{
+  "title": "backfill",
+  "description": "One backfill run: what it listed, what it fetched, and why it stopped. Progress narration goes to stderr so this payload is the only thing on stdout.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": ["activities", "pruned", "streams_fetched", "streams_pending", "stopped", "resumable"],
+  "properties": {
+    "activities": { "type": "integer", "description": "activities re-listed from Strava this run" },
+    "pruned": { "type": "integer", "description": "activities deleted locally because Strava no longer lists them" },
+    "streams_fetched": { "type": "integer", "description": "stream rows stored this run" },
+    "streams_pending": { "type": "integer", "description": "activities still without streams after this run. NOT the same as work remaining — an activity Strava has no streams for stays pending forever" },
+    "stopped": {
+      "type": "string",
+      "description": "why the run ended. complete = the queue emptied; budget_reached = stopped at the self-imposed per-run read budget; rate_limited = Strava's cap, still limited after backing off",
+      "enum": ["complete", "budget_reached", "rate_limited"]
+    },
+    "resumable": { "type": "boolean", "description": "true when running backfill again would fetch more. Read THIS rather than streams_pending > 0" }
+  }
+}

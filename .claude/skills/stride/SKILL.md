@@ -17,9 +17,12 @@ Never do training math yourself: read stride's numbers, add judgment.
    backfill is capped at 60/run; sync reports how many activities still need streams.
    **First-time import or deep reconcile** (bulk edits older than 30 days): use
    `stride backfill` — it re-pulls the full activity list + ALL missing streams,
-   and like `auth` it prints progress prose, NOT an envelope (there is no
-   `schemas/v2/backfill.json`); `--json` is accepted and changes nothing,
    rate-limit-aware and resumable across days (Strava caps reads at ~1000/day).
+   It ends in the usual envelope (`schemas/v2/backfill.json`) with progress on
+   stderr: read `resumable` to decide whether to run it again, and `stopped` for
+   why it ended (`complete` / `budget_reached` / `rate_limited`). `streams_pending`
+   is NOT the same question — an activity Strava holds no streams for stays
+   pending forever, which is why `complete` can leave a non-zero count (#218).
    **No API credentials** (Strava requires a subscription for API access since
    June 2026): `stride import <export.zip|dir> --json` loads a Strava account export —
    summary-level activities (no streams), idempotent, English exports only.
@@ -110,8 +113,9 @@ because `--` stops flag parsing for everything after it. If output ever looks li
 wanted data, you left `--json` off. Every machine response you will
 consume is a versioned envelope — including usage errors (`{"error":{"code":"usage",…}}`) and a
 bare `stride --json`, which answers with `{"data":{"commands":[…]}}` rather than the
-human help screen (#180). Two things are NOT enveloped: `stride auth`, an interactive browser
-flow you run by hand, and `stride backfill`, which is long-running and narrates progress. Platform failures ARE enveloped now (#183): `no_database` (absent — run `init`),
+human help screen (#180). One thing is NOT enveloped: `stride auth`, an interactive browser
+flow you run by hand. `stride backfill` narrates progress too, but on stderr — its stdout is
+the envelope, so you can read it (#218). Platform failures ARE enveloped now (#183): `no_database` (absent — run `init`),
 `unreadable_database` (present but unopenable — permissions or a directory in its
 place, which `init` will NOT fix), `corrupt_database`, `database_error` (SQLite
 refused the operation, e.g. a lock), `network_unreachable` (Strava never

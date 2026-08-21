@@ -681,6 +681,28 @@ Render :: [].{
     # ── load command screen ─────────────────────────────────────────────
 
     # daily fitness table for short windows; Mon-aligned weekly rollup beyond 14 days
+    # `stopped` is a CLOSED SET of three, and this function exists so that set is
+    # pinnable by `==` rather than by `Str.contains` on a rendered screen — a contains
+    # check accepts every superstring, so "complete" would match "completely broken"
+    # (ADR 0012, and the reps-verdict bug that taught it). The catch-all renders the
+    # tag verbatim instead of guessing, so a fourth outcome is visible rather than
+    # silently displayed as one of these three.
+    backfill_note : Str, I64 -> Str
+    backfill_note = |stopped, pending|
+        match stopped {
+            "complete" if pending == 0 => "all streams present"
+            "complete" => "${I64.to_str(pending)} activities carry no streams on Strava"
+            "budget_reached" => "stopped at this run's safe read budget — ${I64.to_str(pending)} to go, run `stride backfill` again tomorrow"
+            "rate_limited" => "stopped on Strava's read cap — ${I64.to_str(pending)} to go, try again tomorrow"
+            other => "${other} — ${I64.to_str(pending)} to go"
+        }
+
+    backfill_screen : { activities : U64, pruned : U64, streams_fetched : I64, streams_pending : I64, stopped : Str, resumable : Bool } -> Str
+    backfill_screen = |p| {
+        pruned_note = if p.pruned > 0 ", pruned ${U64.to_str(p.pruned)} removed on Strava" else ""
+        "backfill: ${U64.to_str(p.activities)} activities${pruned_note}, ${I64.to_str(p.streams_fetched)} streams fetched this run — ${backfill_note(p.stopped, p.streams_pending)}"
+    }
+
     load_screen : List({ day : Str, tss : F64, ctl : F64, atl : F64, tsb : F64 }) -> Str
     load_screen = |ordered| {
         verdict =
@@ -1753,3 +1775,31 @@ expect {
 }
 
 expect !(Metrics.has_coaching_language(Render.warming_up_note(True, 12))) and !(Metrics.has_coaching_language(Render.warming_up_note(False, 90)))
+
+# backfill (#218). `stopped` is a closed set of three shared with
+# schemas/v2/backfill.json's enum; these pin each arm to a DISTINCT string so
+# collapsing two of them fails here rather than silently reporting the wrong
+# reason to a human.
+expect Render.backfill_note("complete", 0) == "all streams present"
+expect Render.backfill_note("complete", 5) == "5 activities carry no streams on Strava"
+expect Render.backfill_note("budget_reached", 40) == "stopped at this run's safe read budget — 40 to go, run `stride backfill` again tomorrow"
+expect Render.backfill_note("rate_limited", 40) == "stopped on Strava's read cap — 40 to go, try again tomorrow"
+
+# `complete` with pending > 0 is NOT a contradiction and must not read as one:
+# Strava has no streams for those activities, so re-running fetches nothing.
+expect Render.backfill_note("complete", 5) != Render.backfill_note("budget_reached", 5)
+
+# an unknown outcome renders verbatim rather than being guessed into one of the
+# three — so a fourth value added to the enum is VISIBLE in human output.
+expect Render.backfill_note("throttled_by_proxy", 7) == "throttled_by_proxy — 7 to go"
+
+# no known outcome may fall through to the catch-all: a typo'd match string
+# (`budget_reach`) would still render plausibly, and this is what catches it.
+expect {
+    known = ["complete", "budget_reached", "rate_limited"]
+    List.all(known, |s| Render.backfill_note(s, 9) != "${s} — 9 to go")
+}
+
+expect Render.backfill_screen({ activities: 3, pruned: 0, streams_fetched: 2, streams_pending: 0, stopped: "complete", resumable: False }) == "backfill: 3 activities, 2 streams fetched this run — all streams present"
+
+expect Render.backfill_screen({ activities: 3, pruned: 1, streams_fetched: 2, streams_pending: 0, stopped: "complete", resumable: False }) == "backfill: 3 activities, pruned 1 removed on Strava, 2 streams fetched this run — all streams present"
