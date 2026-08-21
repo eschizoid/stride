@@ -159,6 +159,10 @@ boundary from §3: a schema change must **never silently destroy judgment-tier d
 here and cannot be re-derived, so it must be migrated or explicitly, knowingly reset.
 Don't spend effort making migrations bulletproof against versions no real db is on.
 
+That permission is scoped to pre-1.0 and expires with it — §9c states what each versioned
+surface promises from 1.0 onward, and the tier rule above is the one part that was never
+a pre-1.0 concession in the first place.
+
 ## 7. Machine output is a versioned envelope
 
 Every JSON response is wrapped and versioned so tool callers can detect a contract
@@ -216,6 +220,73 @@ port, but JSON parsing is a builtin in the new compiler
 (lukewilliamboswell/roc-json#52), so roc-json was dropped, not ported. Lesson worth
 keeping: "blocked" was an untested assumption stated as fact — verify with the source
 before writing a constraint into the record.
+
+## 9b. What stride IS
+
+Everything below in §10 says what stride refuses. Nothing has said what it is, and the
+cost of that is measurable: a careful outside reviewer read this repository and wrote a
+page proposing, as future direction, an architecture stride already ships — provenance,
+confidence tiers, plan and adherence memory, null semantics, versioned schemas,
+rep-level progression, an engine/coach boundary. They then proposed two things §10 and
+ADR 0006 rule out, without engaging the reasoning, because nothing pointed at it (#216).
+
+**Stride is the deterministic, local source of athlete state.** It turns training
+evidence into traceable facts — each carrying its own provenance and its own uncertainty
+— that a human or a reasoning system can consume without trusting stride's judgment,
+because stride does not offer any.
+
+Three consequences, and every refusal in §10 follows from one of them:
+
+- **Data providers are inputs, not the identity.** Strava is one grandfathered API
+  because it is an aggregator that already exists (ADR 0006). The engine is not "a Strava
+  tool"; it is an athlete-state engine that currently ingests Strava. That is why the
+  ingestion boundary is the filesystem rather than a vendor list.
+- **The reasoning layer is interchangeable BY CONSTRUCTION.** No model in the binary, no
+  API key, no vendor coupling — versioned JSON on stdout and an exit code. Any agent can
+  consume it, and the engine outlives whichever model is currently best. This is why §10
+  refuses an MCP server: the claim is that the CLI plus versioned JSON already IS the
+  agent interface, not that agent consumption is unwanted.
+- **The athlete's state is the product.** Not the report, not the recommendation. A file
+  they own, greppable, backed up with `cp`, recomputable from raw streams.
+
+§10 is the single scope list; this section does not restate it and must not grow into a
+second one.
+
+## 9c. The 1.0 compatibility contract
+
+Pre-1.0 breakage (§6) is scoped to pre-1.0. Releasing 1.0 changes what that permission
+means, and stride versions six surfaces independently, which are not one promise (#217).
+
+| surface | 1.x promise |
+|---|---|
+| Binary version (`app.roc`, release-please) | semver, and the source of truth for "which stride is this" |
+| SQLite schema (`PRAGMA user_version`) | migrates forward on next command; §3's tier rule is inviolable — judgment-tier data is never silently destroyed |
+| Envelope (`json_schema_version`) | bumps when the WRAPPER changes, or a payload field is removed or retyped |
+| CLI commands and arguments | additive; a name that parses in 1.x keeps parsing to the same variant |
+| Judgment-tier data | survives every upgrade, unconditionally — it cannot be re-derived |
+| `schemas/v2/*.json` | see below, because this one is not what it looks like |
+
+**Adding a payload key: non-breaking to READERS, breaking to VALIDATORS.** Both halves of
+that were already written down and they appear to contradict: the envelope rule says
+adding a field does not bump the version because "a consumer reading known keys is
+unaffected by a new one appearing", while every schema carries `additionalKeys: false`,
+so anything validating a payload against the checked-in schema fails the moment a key is
+added. Both are true. "Consumer" means two different things.
+
+The 1.x resolution: **the schemas are stride's own contract with itself, not a
+closed-world validator for third parties.** `additionalKeys: false` exists so that a
+payload which GREW without a schema update fails CI — that is its whole job, and it is
+why `just schema-check` runs against a real database. A downstream consumer should read
+the keys it needs and validate its OWN required subset. It should not use stride's schema
+as a closed-world check, and stride does not promise that it can.
+
+So: adding a key is additive and does not bump `json_schema_version`. Removing or
+retyping one does. A change that would break a reader of known keys is a `v3/` directory,
+not an edit to `v2/`.
+
+**Error codes are additive in 1.x.** The vocabulary is published (43 codes, diffed
+against source in CI), so a code may be added but not removed or repurposed — a caller
+branching on one must keep working.
 
 ## 10. Deliberately out of scope
 
