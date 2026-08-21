@@ -344,7 +344,8 @@ unchanged — sport-completeness is not multi-tenancy.
 
 ---
 
-Open work lives in GitHub issues; no scratch plan file DESCRIBES work (see AGENTS.md — a watch-item tracked in one went unnoticed for weeks, #196). A root `PLAN.md` may hold sequencing and its reasons — the one thing issues cannot carry — provided every item is a pointer, it is scanned by `just issue-claims` like any other doc, and it deletes itself when the sequence is done. The moment it describes what a ticket contains, it has become the file that rotted.
+Open work lives in GitHub issues; no scratch plan file DESCRIBES work (see AGENTS.md — a watch-item tracked in one went unnoticed for weeks, #196). A root `PLAN.md` may hold sequencing and its reasons — the one thing issues cannot carry — provided every item is a pointer, it is scanned by `just issue-claims` like any other doc, and it deletes itself when the sequence is done. The moment it describes what a ticket contains — beyond the one fact that creates a
+sequencing constraint — it has become the file that rotted.
 Enforced invariants and build/release mechanics live in the project instructions.
 When a decision here changes, update this ADR in the same commit as the code.
 

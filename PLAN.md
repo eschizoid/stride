@@ -5,7 +5,10 @@ their state true for free. If you find yourself describing what a ticket contain
 the file has started rotting — that is what happened to the last one, and it is why
 AGENTS.md permits this one only under those terms.
 
-**Delete this file when the phases below are merged.** It has no other purpose.
+**Delete this file when the order below is merged.** It has no other purpose, and that is
+not left to good intentions: this file remains open until #220 lands. `just issue-claims`
+reads that as a state claim, so the day #220 closes, CI goes red naming this file. The
+last plan file survived because deleting it was a request nobody was holding.
 
 ## The two constraints that set the order
 
@@ -15,7 +18,7 @@ AGENTS.md permits this one only under those terms.
    retypes `commands`. Deciding the policy after shipping either is backwards.
 2. **File contention.** #216 and #217 both edit `docs/adr/0000-architecture.md`. #218,
    #219 and #138 all touch `src/app.roc`, and #219 and #138 both touch `src/Command.roc`.
-   That is why the code phases are sequential rather than parallel PRs.
+   That is why the code steps are sequential rather than parallel PRs.
 
 ## Order
 

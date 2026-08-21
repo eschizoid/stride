@@ -18,7 +18,7 @@ it rotted, and a watch-item it was tracking (ADR 0001's split trigger, #196) fir
 unnoticed because nothing read it. A root `PLAN.md` holding only SEQUENCING and the
 constraints behind it is allowed — that is the one thing issues cannot carry — but it must
 be pointers, it must be scanned by `just issue-claims` like any other doc, and it must
-delete itself when the sequence is done. Restating what a ticket contains is how the last
+delete itself when the sequence is done. Restating what a ticket contains, beyond the one fact that creates a sequencing constraint, is how the last
 one started rotting.
 
 ## Build & test
