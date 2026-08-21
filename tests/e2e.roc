@@ -73,6 +73,13 @@ init! = ||
                 Ok(_) => Err(Exit(0))
                 Err(_) => Err(Exit(1))
             }
+        # drive the budget_reached / rate_limited stop reasons (E2E_EXPECT_RATE_LIMIT
+        # picks which, against a mock started with the matching E2E_RATE_LIMIT)
+        "stops" =>
+            match run_stops!() {
+                Ok(_) => Err(Exit(0))
+                Err(_) => Err(Exit(1))
+            }
         # default: run the offline suite, then exit (never listens)
         _ =>
             match run_all!() {
@@ -110,7 +117,13 @@ respond! = |req, _ctx| {
             Ok(mock_json("[]"))
         }
     } else if Str.contains(uri, "/streams") {
-        if Str.contains(uri, "/activities/501/") {
+        if Str.contains(uri, "/activities/501/") and env_or!("E2E_RATE_LIMIT", "") == "1" {
+            # 429 forever on 501 ONLY. It has to be 501 rather than 502: missing_ids is
+            # ORDER BY start_local DESC, so 502 drains first and stores its marker, and
+            # the resulting streams_fetched:1 is what proves the counters survived the
+            # Backoff rounds. A mock that 429s everything reports 0 and proves nothing.
+            Ok(Server.respond(Response.from_status(429).with_body(Str.to_utf8("rate limited"))))
+        } else if Str.contains(uri, "/activities/501/") {
             # a realistic 1 Hz stream (1300 samples, constant 200W, HR sawtooth 120–179): long enough that
             # best_20min_w -> derived FTP 190 -> TSS ~110.8. See mock_power_stream_json.
             Ok(mock_json(mock_power_stream_json(1300, 200)))
@@ -322,7 +335,7 @@ run_sync! = || {
     #
     # These live HERE rather than in the offline suite because backfill needs a
     # token AND an API to talk to, which means the mock. That means they run
-    # under `just e2e-sync` only -- local, not CI. Stated plainly rather than
+    # under `just e2e-sync`, which runs in CI. Stated plainly rather than
     # left to be discovered.
     bo = "${home}/bf.out"
     be = "${home}/bf.err"
@@ -385,7 +398,7 @@ run_sync! = || {
     #
     # These live HERE rather than in the offline suite because both reads sit behind the
     # sync path, which needs the mock. That means they run under `just e2e-sync` only --
-    # local, not CI. Stated plainly rather than left to be discovered.
+    # `just e2e-sync`, which runs in CI. Stated plainly rather than left to be discovered.
     _ = sql!(db, "UPDATE config SET value='1e9' WHERE key='last_sync_epoch';")
     bad_epoch = sync_stride!(bin, home, base, ["sync"])
     check!("an unreadable last_sync_epoch is named, not a silent full re-pull", Str.contains(bad_epoch, "unreadable_config") and Str.contains(bad_epoch, "last_sync_epoch"))?
@@ -413,7 +426,7 @@ run_sync! = || {
 # `resumable` hardcoded permanently false passed every check in run_sync!, since
 # every run there ends with pending == 0. `resumable` is the one field SKILL.md
 # tells agents to branch on, so an unobservable value is not an acceptable gap.
-# Runs under `just e2e-sync` only -- local, not CI, like every mock-backed check.
+# Runs under `just e2e-sync`, like every mock-backed check — and that recipe is in CI.
 run_backfill! : () => Try({}, _)
 run_backfill! = || {
     bin = env_or!("STRIDE_BIN", "./stride")
@@ -430,10 +443,13 @@ run_backfill! = || {
     _ = sync_stride!(bin, home, base, ["sync"])
 
     bo = "${home}/bf.out"
+    be = "${home}/bf.err"
     bfq! = |filter| Str.trim(sh!("jq -r '${filter}' '${bo}' 2>&1"))
-    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' backfill >'${bo}' 2>/dev/null")
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' backfill >'${bo}' 2>'${be}'")
 
     check!("an undecodable body is COUNTED, not silently dropped", bfq!(".data.streams_skipped") == "1")?
+    # the counter alone is a number nobody reads; the run must SAY it, naming the id
+    check!("...and named on stderr, with the activity id", Str.contains(sh!("cat '${be}'"), "502: stream data would not decode"))?
     check!("...and stores nothing", bfq!(".data.streams_fetched") == "0")?
     check!("...so the activity stays pending", bfq!(".data.streams_pending") == "1")?
     # the queue emptied, so the drain IS complete — and there is still work to do.
@@ -450,11 +466,77 @@ run_backfill! = || {
     _ = sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' backfill >'${bo}' 2>/dev/null")
     human = Str.trim(sh!("cat '${bo}'"))
     check!("humans are told the data was unreadable", Str.contains(human, "unreadable stream data"))?
-    check!("...and never that Strava simply has no streams for it", !(Str.contains(human, "carry no streams")))?
     check!("...nor that everything is present", !(Str.contains(human, "all streams present")))?
 
     _ = sh!("rm -rf '${home}'")
     Stdout.line!("BACKFILL E2E CHECKS PASS")
+}
+
+# ── the two non-complete stop reasons (#218) ─────────────────────────────────
+# Until the read limits became env-overridable, reaching `budget_reached` honestly
+# cost 940 reads and `rate_limited` cost two 15-minute sleeps — so of the three
+# StopReason values only `complete` was ever observed, and review proved a
+# transposition in BOTH the StopRun and GiveUp arms (`stored: counted.skipped`)
+# passed the entire suite. These two runs are the only thing that catches it.
+run_stops! : () => Try({}, _)
+run_stops! = || {
+    bin = env_or!("STRIDE_BIN", "./stride")
+    base = env_or!("STRIDE_API_BASE", "http://127.0.0.1:8797")
+    rate_limited = env_or!("E2E_EXPECT_RATE_LIMIT", "") == "1"
+    home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+    db = "${home}/.stride/db.sqlite"
+
+    _ = wait_ready!(base, 50)
+    check!("stop-reason mock came up on ${base}", mock_up!(base))?
+
+    _ = sync_stride!(bin, home, base, ["init"])
+    _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','mock-access'),('strava_refresh_token','mock-refresh'),('strava_expires_at','9999999999');")
+    # list the activities WITHOUT draining streams, so backfill has a full queue.
+    # STRIDE_READS_PER_RUN=0 is rejected by the parser (must be > 0), so sync would
+    # still drain; instead seed via sync and delete the rows it stored.
+    _ = sync_stride!(bin, home, base, ["sync"])
+    _ = sql!(db, "DELETE FROM streams;")
+
+    bo = "${home}/bf.out"
+    bfq! = |filter| Str.trim(sh!("jq -r '${filter}' '${bo}' 2>&1"))
+    # The two arms need DIFFERENT seams, and setting both breaks the rate-limited one:
+    # with a budget of 1 the drain stops after 502 and never reaches 501's 429, so the
+    # run reports budget_reached and the 429 arm is never entered.
+    #   budget: one read per run, so the second queued id is never requested.
+    #   rate:   the real budget, so the drain DOES reach 501 — only the window sleep is
+    #           shortened, turning two Backoff rounds from ~30 minutes into 10ms.
+    envs = if rate_limited "STRIDE_WINDOW_SLEEP_MS=5" else "STRIDE_READS_PER_RUN=1"
+    run_bf! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' ${envs} '${bin}' backfill >'${bo}' 2>/dev/null")
+    _ = run_bf!("json")
+
+    if rate_limited {
+        # 501 429s forever. 502 drains first (ORDER BY start_local DESC) and stores its
+        # 404 marker, so a surviving counter reads 1 and a reset one reads 0.
+        check!("a 429 past the retry limit stops the run", bfq!(".data.stopped") == "rate_limited")?
+        check!("...counting what it stored BEFORE backing off", bfq!(".data.streams_fetched") == "1")?
+        check!("...leaving the 429'd id pending", bfq!(".data.streams_pending") == "1")?
+        check!("...and resumable, because waiting will help", bfq!(".data.resumable") == "true")?
+        check!("the rate-limited payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/backfill.json -f tools/validate.jq 2>&1")) == "")?
+        # fresh queue: the JSON run above already stored one, so without this the human
+        # run drains what is left and renders "all streams present" instead
+        _ = sql!(db, "DELETE FROM streams;")
+        _ = run_bf!("human")
+        check!("humans are told to try again tomorrow", Str.contains(Str.trim(sh!("cat '${bo}'")), "stopped on Strava's read cap"))?
+    } else {
+        # one read, two ids queued: stores the first, stops on the budget with one left
+        check!("the per-run read budget stops the run", bfq!(".data.stopped") == "budget_reached")?
+        check!("...having stored exactly the one read it spent", bfq!(".data.streams_fetched") == "1")?
+        check!("...with the untouched id still pending", bfq!(".data.streams_pending") == "1")?
+        check!("...and resumable, because work remains", bfq!(".data.resumable") == "true")?
+        check!("the budget-stopped payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/backfill.json -f tools/validate.jq 2>&1")) == "")?
+        # fresh queue, same reason as the rate-limited branch above
+        _ = sql!(db, "DELETE FROM streams;")
+        _ = run_bf!("human")
+        check!("humans are told to run it again tomorrow", Str.contains(Str.trim(sh!("cat '${bo}'")), "stopped at today's Strava read budget"))?
+    }
+
+    _ = sh!("rm -rf '${home}'")
+    Stdout.line!("STOP-REASON E2E CHECKS PASS")
 }
 
 # stride against the sandbox HOME + mock API base; local commands ignore the base
@@ -524,7 +606,7 @@ b_init_config! = |ctx| {
     # This is the REFUSAL path only -- it is what CI can reach without a token or
     # a network. The success envelope, the schema conformance, and the
     # stdout/stderr split are covered in run_sync! against the mock, which is
-    # `just e2e-sync` and therefore local-only.
+    # `just e2e-sync`, which runs in CI.
     bf_unauth = Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' backfill 2>/dev/null"))
     check!("backfill refuses in-band, as one envelope", Str.contains(bf_unauth, "not_authenticated") and List.len(Str.split_on(bf_unauth, "\n")) == 1)?
     check!("...and exits non-zero", stride_status!(ctx.bin, nodb, ["backfill"]) == 1)?

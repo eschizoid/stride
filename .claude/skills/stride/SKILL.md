@@ -26,6 +26,12 @@ Never do training math yourself: read stride's numbers, add judgment.
    decode is skipped WITHOUT storing, so it retries next run and shows up in
    `streams_skipped`. An activity Strava has no streams for is NOT that case — a
    404 stores an empty marker and retires it permanently (#218).
+   **Do not loop on `resumable` alone.** `streams_fetched: 0` with
+   `streams_skipped > 0` and `resumable: true` means the run did nothing and is
+   still asking: those bodies are unreadable, not late, and re-running will keep
+   returning that identical envelope. Stop and report it. (`sync` takes the same
+   skip path and reports no equivalent — its `pending_streams` moving nowhere is
+   the only hint there.)
    **No API credentials** (Strava requires a subscription for API access since
    June 2026): `stride import <export.zip|dir> --json` loads a Strava account export —
    summary-level activities (no streams), idempotent, English exports only.

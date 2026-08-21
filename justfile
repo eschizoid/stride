@@ -10,6 +10,8 @@ linker := env("STRIDE_LINKER", "")
 mock_port := env("MOCK_PORT", "8799")
 # second mock instance, serving undecodable stream bodies (backfill's skip path)
 bad_stream_port := env("BAD_STREAM_PORT", "8798")
+# third instance, 429ing forever on one id (backfill's rate_limited stop reason)
+rate_limit_port := env("RATE_LIMIT_PORT", "8797")
 
 default: test
 
@@ -103,7 +105,7 @@ schema-check: build
 # sync integration: ONE binary in two roles — a mock Strava server (E2E_MODE=mock)
 # and a sync driver (E2E_MODE=sync) that runs real sync + token-refresh against it.
 # Binds a port, so it's separate from `just test`. Runs against the ./stride binary.
-# LOCAL-ONLY — it binds a port, so no CI job runs it. It exercises stride's sync path,
+# Runs in CI as well as locally: it binds only loopback and needs no credential. It exercises stride's sync path,
 # which was ~50% flaky until bug C (#105) was root-caused to a basic-cli host double-free
 # and fixed in 0.22.0. It runs SINGLE-SHOT now: the 5x retry that used to absorb that
 # flake was deleted with the bug, and a new flake here deserves an investigation rather
@@ -147,7 +149,14 @@ e2e-sync: build
     E2E_MODE=mock E2E_BAD_STREAM=1 MOCK_PORT={{bad_stream_port}} ./e2e &
     BADMOCK=$!
     trap 'kill $MOCK $BADMOCK 2>/dev/null' EXIT
-    E2E_MODE=backfill STRIDE_API_BASE=http://127.0.0.1:{{bad_stream_port}} ./e2e
+    E2E_MODE=backfill STRIDE_API_BASE=http://127.0.0.1:{{bad_stream_port}} ./e2e || exit 1
+    # budget_reached needs no special mock — just a read budget of 1 against the main one
+    E2E_MODE=stops STRIDE_API_BASE=http://127.0.0.1:{{mock_port}} ./e2e || exit 1
+    # rate_limited needs a mock that 429s forever on one id
+    E2E_MODE=mock E2E_RATE_LIMIT=1 MOCK_PORT={{rate_limit_port}} ./e2e &
+    RLMOCK=$!
+    trap 'kill $MOCK $BADMOCK $RLMOCK 2>/dev/null' EXIT
+    E2E_MODE=stops E2E_EXPECT_RATE_LIMIT=1 STRIDE_API_BASE=http://127.0.0.1:{{rate_limit_port}} ./e2e
 
 # build + refresh the ~/.local/bin symlink
 install: build

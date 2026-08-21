@@ -289,11 +289,19 @@ enforcement is `just e2e`, which runs `tools/validate.jq` against seeded fixture
 "does MY data conform" pass, local and not part of CI. Coverage is not total, and it now has three tiers rather than two. Five
 payloads (`complete`, `import`, `init`, `rate`, `sync`) are validated by neither pass, so
 a key added to THOSE is currently caught by nothing. `tte` is covered by the local recipe
-but not by CI. `backfill` is a third case: it needs a token and a live API, so it is
-validated only by `just e2e-sync` against the mock — local, and in neither CI nor
-`just schema-check`. It is not unguarded, but the guard is the COMPILER rather than the
-validator: `Render.backfill_screen` takes a closed record, so an added payload key fails
-the build until its annotation and expects are widened, and CI runs the build.
+but not by CI. `backfill` is covered by a third pass: `just e2e-sync`, which drives it against loopback
+mocks and now runs in CI. That recipe was assumed to need a token and a live API and so
+was left out of CI for a long time; it needs neither — the mocks bind loopback, and the
+token is a fake row in a sandboxed HOME — and the assumption cost `backfill` its only
+payload-vs-schema check.
+
+Worth stating because the near-miss is tempting: the COMPILER does not substitute for
+the validator. `Render.backfill_screen` takes a closed record, so an added, removed or
+retyped payload key fails `roc check` until that annotation and its expects are widened.
+That guards payload↔SCREEN. Widen both and the build is green with the schema untouched
+— payload↔schema is a different invariant, and the compiler error never mentions the
+schema, so it does not even prompt the right fix. Where a payload has no validating pass,
+it is unguarded against its schema, full stop.
 A downstream consumer should read the keys it needs and validate its OWN required subset.
 It should not use stride's schema as a closed-world check, and stride does not promise
 that it can.

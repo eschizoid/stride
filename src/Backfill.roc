@@ -1,9 +1,13 @@
 Backfill :: [].{
-    # ── pure rate-pacing decision for the streams backfill ──────────────
-    # Given a response status and the current per-run counters, decide the next
-    # control-flow action. No effects — the recursive drain loop in Strava.drain_streams!
-    # dispatches on this, so every branch is unit-testable here. (Counting our own reads by choice,
-    # so pacing does not depend on any endpoint sending rate-limit headers.)
+    # ── the streams backfill's pure half ────────────────────────────────
+    # Two things, both pure and both belonging to the drain loop in Strava.drain_streams!:
+    # the rate-pacing DECISION (`decide`), and the vocabulary its outcome ships in
+    # (`StopReason` + `stopped_label`). The loop is a thin effectful skin dispatching on
+    # both, so every branch is unit-testable here.
+    #
+    # `decide` takes a response status and the per-run counters and returns the next
+    # control-flow action. (Counting our own reads by choice, so pacing does not depend
+    # on any endpoint sending rate-limit headers.)
 
     Limits : { reads_per_window : I64, reads_per_run : I64, max_consecutive_429 : I64 }
 

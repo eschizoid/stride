@@ -1,6 +1,6 @@
 {
   "title": "backfill",
-  "description": "One backfill run: what it listed, what it stored, and why it stopped. Progress narration goes to stderr so this payload is the only thing on stdout. Validated by the e2e-sync suite (local) rather than CI, because backfill needs a token and an API to talk to; an undeclared key is still caught at build time by Render.backfill_screen's closed record.",
+  "description": "One backfill run: what it listed, what it stored, and why it stopped. Progress narration goes to stderr so this payload is the only thing on stdout. This schema is checked against a real payload by the mock-backed e2e-sync suite, which runs in CI. Note the compiler does not substitute for that check: widening both the payload and Render.backfill_screen keeps the build green with this file stale.",
   "type": "object",
   "additionalKeys": false,
   "required": ["activities", "pruned", "streams_fetched", "streams_skipped", "streams_pending", "stopped", "resumable"],

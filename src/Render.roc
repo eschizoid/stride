@@ -691,17 +691,26 @@ Render :: [].{
     # as one of these three.
     backfill_note : Str, I64 -> Str
     backfill_note = |stopped, pending|
-        match stopped {
-            "complete" if pending == 0 => "all streams present"
-            # The ONLY way to drain the queue and still be pending: a stream body that
-            # would not decode is skipped WITHOUT storing, so it retries next run. A 404
-            # is NOT this case — it stores a `{}` marker and leaves the pending set at
-            # once, which is why "Strava has no streams for these" is the wrong sentence
-            # here however plausible it sounds.
-            "complete" => "${I64.to_str(pending)} had unreadable stream data — they retry next run"
-            "budget_reached" => "stopped at today's Strava read budget — ${I64.to_str(pending)} to go, run `stride backfill` again tomorrow"
-            "rate_limited" => "stopped on Strava's read cap — ${I64.to_str(pending)} to go, try again tomorrow"
-            other => "${other} — ${I64.to_str(pending)} to go"
+        # `pending` is tested FIRST, before the reason. Nothing is left to do regardless
+        # of why the run ended, and a budget stop that happened to empty the queue is
+        # reachable (StopRun fires on the read just stored, without inspecting the rest
+        # of the list). Keying this on `stopped` instead printed "0 to go, run `stride
+        # backfill` again tomorrow" beside a payload saying resumable: false — the human
+        # and machine surfaces contradicting each other about the same run.
+        if pending == 0 {
+            "all streams present"
+        } else {
+            match stopped {
+                # The ONLY way to drain the queue and still be pending: a stream body
+                # that would not decode is skipped WITHOUT storing, so it retries next
+                # run. A 404 is NOT this case — it stores a `{}` marker and leaves the
+                # pending set at once, which is why "Strava has no streams for these" is
+                # the wrong sentence here however plausible it sounds.
+                "complete" => "${I64.to_str(pending)} had unreadable stream data — they retry next run"
+                "budget_reached" => "stopped at today's Strava read budget — ${I64.to_str(pending)} to go, run `stride backfill` again tomorrow"
+                "rate_limited" => "stopped on Strava's read cap — ${I64.to_str(pending)} to go, try again tomorrow"
+                other => "${other} — ${I64.to_str(pending)} to go"
+            }
         }
 
     backfill_screen : { activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, streams_pending : I64, stopped : Str, resumable : Bool } -> Str
@@ -1795,6 +1804,14 @@ expect !(Metrics.has_coaching_language(Render.warming_up_note(True, 12))) and !(
 # every stream was present. Each expect below fails on at least one mutation that
 # the previous set accepted.
 expect Render.backfill_note("complete", 0) == "all streams present"
+
+# `pending` outranks the reason. A budget stop that happened to empty the queue is
+# done — StopRun fires on the read just stored without inspecting the rest of the
+# list, so this is reachable — and keying the note on `stopped` printed "0 to go, run
+# `stride backfill` again tomorrow" next to a payload saying resumable: false. The
+# human and machine surfaces must not contradict each other about the same run.
+expect Render.backfill_note("budget_reached", 0) == "all streams present"
+expect Render.backfill_note("rate_limited", 0) == "all streams present"
 expect Render.backfill_note("complete", 5) == "5 had unreadable stream data — they retry next run"
 expect Render.backfill_note("budget_reached", 40) == "stopped at today's Strava read budget — 40 to go, run `stride backfill` again tomorrow"
 expect Render.backfill_note("rate_limited", 40) == "stopped on Strava's read cap — 40 to go, try again tomorrow"
