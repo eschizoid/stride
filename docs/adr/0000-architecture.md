@@ -235,9 +235,11 @@ evidence into traceable facts — each carrying its own provenance and its own u
 — that a human or a reasoning system can consume without trusting stride's judgment,
 because stride does not offer any.
 
-Three consequences. Most of §10 follows from one of them — though not all: the refusals
-grounded in an empirical trial (graphs), a market fact (social), or a limit on what the
-data can support (medical) come from the header above rather than from these three:
+Three consequences. Most of §10 follows from one of them. Not all, and the exceptions are
+worth naming rather than papering over: graphs and social carry their own grounds in §10
+— an experiment that ran and failed, and the fact that Strava already exists — neither of
+which is an architectural consequence of anything here. Medical follows from the header
+above rather than from these three:
 
 - **Data providers are inputs, not the identity.** Strava is one grandfathered API
   because it is an aggregator that already exists (ADR 0006). The engine is not "a Strava
@@ -285,8 +287,9 @@ payload which GREW without a schema update is caught rather than shipped. In CI 
 enforcement is `just e2e`, which runs `tools/validate.jq` against seeded fixtures;
 `just schema-check` runs the same validator against your own database and is the
 "does MY data conform" pass, local and not part of CI. Coverage is not total — five
-payloads (`complete`, `import`, `init`, `rate`, `sync`) are validated by neither, and
-`tte` only by the local recipe, so a key added there is currently caught by nothing.
+payloads (`complete`, `import`, `init`, `rate`, `sync`) are validated by neither pass, so
+a key added to THOSE is currently caught by nothing. `tte` is covered by the local recipe
+but not by CI.
 A downstream consumer should read the keys it needs and validate its OWN required subset.
 It should not use stride's schema as a closed-world check, and stride does not promise
 that it can.
@@ -341,7 +344,7 @@ unchanged — sport-completeness is not multi-tenancy.
 
 ---
 
-Open work lives in GitHub issues; no scratch plan file DESCRIBES work (see AGENTS.md — a watch-item tracked in one went unnoticed for weeks, #196). A root `PLAN.md` may hold sequencing and its reasons — the one thing issues cannot carry — provided every item is a pointer and it deletes itself when the sequence is done. The moment it describes what a ticket contains, it has become the file that rotted.
+Open work lives in GitHub issues; no scratch plan file DESCRIBES work (see AGENTS.md — a watch-item tracked in one went unnoticed for weeks, #196). A root `PLAN.md` may hold sequencing and its reasons — the one thing issues cannot carry — provided every item is a pointer, it is scanned by `just issue-claims` like any other doc, and it deletes itself when the sequence is done. The moment it describes what a ticket contains, it has become the file that rotted.
 Enforced invariants and build/release mechanics live in the project instructions.
 When a decision here changes, update this ADR in the same commit as the code.
 
