@@ -10,10 +10,11 @@ Delete this file when the 1.0 phases below are merged. It has no other purpose.
 
 ## The two constraints that set the order
 
-1. **#217 must land before anything adds a payload key.** The envelope docs say adding a
-   key is non-breaking; every schema carries `additionalKeys: false`, so a consumer
-   validating against one BREAKS on an added key. #219 and #221 both add keys. Deciding
-   that policy after shipping the additions is backwards.
+1. **#217 must land before anything changes a payload shape.** The envelope docs say
+   adding a key is non-breaking; every schema carries `additionalKeys: false`, so a
+   consumer validating against one BREAKS on an added key. #221 adds keys; #219 RETYPES
+   `commands` from strings to records, which under §9c's own rule is the heavier change of
+   the two. Deciding the policy after shipping either is backwards.
 2. **File contention.** #216 and #217 both edit `docs/adr/0000-architecture.md`. #218,
    #219 and #138 all touch `src/app.roc`, and #219 and #138 both touch `src/Command.roc`.
    That is why the code phases are sequential rather than parallel PRs.
@@ -45,7 +46,7 @@ Feature track, independent of the above and startable any time: **#138**, then *
 
 | | blocked on |
 |---|---|
-| #188 critical speed / D′ | one Run in the database; needs someone else's export. ADR 0013 applies |
+| #188 critical speed / D′ | no mean-max SPEED curve exists — the power path stores `best_5s_w`…`best_3600s_w` at analyze time, the pace equivalent has no columns and no producer. NOT "one Run in the database": that argument is retracted on the issue itself, because a per-athlete measurement cannot rank a feature aimed at the circle |
 | #137 wellness inputs | its homework question — does anyone in the circle sleep with a watch? |
 | #198 structured prescription | parked by design; reopening is a deliberate argument |
 | #27 `roc format` | upstream fmt bug |

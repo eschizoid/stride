@@ -84,7 +84,7 @@ awk '
   /^[[:space:]]*$/ { if (n) { print f"\t"s"\t"t; n=0 } next }
   { if (!n) { f=FILENAME; s=FNR; t="" } n++; t=t" "$0 }
   END { if (n) print f"\t"s"\t"t }
-' README.md AGENTS.md docs/*.md docs/adr/*.md .claude/skills/stride/SKILL.md >> "$BLOCKS"
+' README.md AGENTS.md PLAN.md docs/*.md docs/adr/*.md .claude/skills/stride/SKILL.md >> "$BLOCKS"
 
 while IFS=$'\t' read -r f s txt; do
   blocks=$((blocks + 1))

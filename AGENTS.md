@@ -13,9 +13,13 @@ back. **Never do training math yourself — read stride's numbers, add judgment.
 Settled architecture + rationale live in `docs/adr/0000-architecture.md` (committed) —
 read it before proposing architectural changes; don't relitigate what it settles.
 Open work lives in GitHub issues, workflow lessons in auto-memory, shipped work in git
-history. There is deliberately no scratch plan file: `.claude/PLAN.md` was one, every
-section of it rotted, and a watch-item it was tracking (ADR 0001's split trigger, #196)
-fired unnoticed because nothing read it.
+history. No scratch plan file DESCRIBES work: `.claude/PLAN.md` was one, every section of
+it rotted, and a watch-item it was tracking (ADR 0001's split trigger, #196) fired
+unnoticed because nothing read it. A root `PLAN.md` holding only SEQUENCING and the
+constraints behind it is allowed — that is the one thing issues cannot carry — but it must
+be pointers, it must be scanned by `just issue-claims` like any other doc, and it must
+delete itself when the sequence is done. Restating what a ticket contains is how the last
+one started rotting.
 
 ## Build & test
 
@@ -239,6 +243,8 @@ Every item here cost a debugging session at least once — they are not style op
   changes, or when a payload field is REMOVED or retyped. **Adding** a field does not bump
   it: the version describes the envelope, not the keys inside `data`, and a consumer
   reading known keys is unaffected by a new one appearing (precedent: `converged`, 9c67470).
+  That is true of a READER and false of a VALIDATOR — `additionalKeys: false` makes an
+  added key fail — and ADR §9c resolves which one 1.x promises.
   Deterministic (no timestamps) so golden fixtures stay stable.
 - **Load is a mixed model, not "TSS"** — power/HR score in TSS, rated strength/HIIT in
   session-RPE. Don't relabel the blended total "TSS"; each metrics row carries
