@@ -177,6 +177,25 @@ run_all! = || {
     # A second literal is how this bug got in: the fixture configured one zone and
     # computed its dates in another.
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", tz])
+    match run_scenarios!(ctx) {
+        Ok(_) => {}
+        Err(e) => {
+            # the whole point of the guard: say what really broke, on the way out
+            report_sqlite_errors!(ctx.db, home)
+            Err(e)?
+        }
+    }
+    # #226: an sqlite3 fixture write that ERRORED. Checked here as well as on the abort
+    # path above, so a failure with no downstream symptom is still named.
+    fixture_errs = sqlite_errors!(ctx.db)
+    check!("no fixture write errored (${fixture_errs})", Str.is_empty(fixture_errs))?
+    _ = sh!("rm -rf '${home}'")
+    Stdout.line!("ALL E2E CHECKS PASS")
+}
+
+# the scenario chain, extracted so its Err path can report before propagating
+run_scenarios! : Ctx => Try({}, _)
+run_scenarios! = |ctx| {
     b_auth!(ctx)?
     b_config_ftp!(ctx)?
     b_cred_safety!(ctx)?
@@ -205,12 +224,7 @@ run_all! = || {
     b_human!(ctx)?
     b_concurrency!(ctx)?
     b_migration!(ctx)?
-    # #226: every fixture write above actually happened. A silently-failed sqlite3 write
-    # would otherwise surface as an unrelated assertion in whichever LATER check happens
-    # to read the state it should have created -- which is exactly how this was seen.
-    check!("no fixture write failed silently", no_failed_writes!(ctx.db) == "")?
-    _ = sh!("rm -rf '${home}'")
-    Stdout.line!("ALL E2E CHECKS PASS")
+    Ok({})
 }
 
 # ── sync mode: drive the real sync path against a running mock (a sibling instance
@@ -292,7 +306,8 @@ run_sync! = || {
     check!("an unreadable strava_expires_at is named, not internal_error", Str.contains(bad_exp, "unreadable_config") and Str.contains(bad_exp, "strava_expires_at"))?
     check!("...and never tells the athlete to open an issue", !(Str.contains(bad_exp, "please open an issue")))?
 
-    check!("no fixture write failed silently", no_failed_writes!(db) == "")?
+    sync_errs = sqlite_errors!(db)
+    check!("no fixture write errored (${sync_errs})", Str.is_empty(sync_errs))?
     _ = sh!("rm -rf '${home}'")
     Stdout.line!("SYNC E2E CHECKS PASS")
 }
@@ -2393,7 +2408,10 @@ b_migration! : Ctx => Try({}, _)
 b_migration! = |ctx| {
     mighome = Str.trim(sh!("mktemp -d"))
     migdb = "${mighome}/.stride/db.sqlite"
-    _ = sh!("mkdir -p '${mighome}/.stride' && sqlite3 '${migdb}' < tests/fixtures/db/v1-legacy.sql")
+    # the one fixture write that does not go through sql! — it reads a FILE rather than a
+    # heredoc — so it gets the same timeout and the same failure capture by hand rather
+    # than being the single unguarded sqlite3 write left in the file it is hardening
+    _ = sh!("mkdir -p '${mighome}/.stride' && sqlite3 -cmd '.timeout 5000' '${migdb}' 2>'${migdb}.sqlerr' < tests/fixtures/db/v1-legacy.sql || { echo \"sqlite3 failed seeding the v1 fixture:\" >> '${migdb}.sqlfail'; cat '${migdb}.sqlerr' >> '${migdb}.sqlfail'; }")
     check!("fixture starts at user_version 1", Str.trim(sql!(migdb, "PRAGMA user_version;")) == "1")?
     # any command that OPENS the db runs migrations. It used to be `config get ftp_ride`,
     # which no longer touches the db at all — a derived key is refused before open_db!, so
@@ -2412,6 +2430,11 @@ b_migration! = |ctx| {
     _ = stride!(ctx.bin, mighome, ["config", "get", "timezone"])
     check!("re-run idempotent (version stable)", str_to_i64(Str.trim(sql!(migdb, "PRAGMA user_version;"))) == migv)?
     check!("re-run keeps data", Str.trim(sql!(migdb, "SELECT COUNT(*) FROM activities;")) == "2")?
+    # migdb is a SECOND sandbox with its own sidecar. Read it before the rm, or these 9
+    # call sites are unguarded and their evidence is deleted — review added a failing
+    # write here and the suite reported "no fixture write failed silently" and exited 0.
+    mig_errs = sqlite_errors!(migdb)
+    check!("no migration fixture write errored (${mig_errs})", Str.is_empty(mig_errs))?
     _ = sh!("rm -rf '${mighome}'")
     Ok({})
 }
@@ -2447,10 +2470,21 @@ sh! = |script|
 # Two guards, both for #226 — the suite failed twice in ~18 runs at two unrelated checks.
 #
 # `.timeout 5000`: the sqlite3 CLI defaults to busy_timeout 0, so ANY lock contention
-# fails instantly instead of waiting. stride's own connections set a timeout (Db.roc,
-# "busy_timeout FIRST"); these fixture writes were the one path in the system without
-# one, and both observed failures were under `just test`, which runs a build and eight
-# test invocations alongside.
+# fails instantly instead of waiting. stride's own connections set exactly this value
+# (Db.roc, "busy_timeout FIRST"); these fixture writes were the one path in the system
+# without one. Hardening on its own merits — NOT a diagnosis. The first draft of this
+# comment claimed the failures happened under `just test` "which runs a build and eight
+# test invocations alongside"; that recipe is strictly sequential and nothing runs
+# alongside anything, so the mechanism was invented. No concurrent writer to ctx.db has
+# been demonstrated at all: the harness is single-process, and b_concurrency!'s holder
+# takes a READ transaction under WAL, which blocks no writer.
+#
+# A competing hypothesis this guard is BLIND to, and which the file's own header makes
+# at least as plausible: sh!'s `Err(_) => ""` arm fires when a child never runs or its
+# exit code is lost, and this harness moved off basic-cli precisely because that host
+# "loses a child's exit code intermittently under that volume". Then sqlite3 never runs,
+# nothing is appended, and sql! returns "" — indistinguishable from success. Worth
+# reaching for before lock contention if #226 recurs.
 #
 # The sidecar log: a failing write used to be invisible three times over. sqlite3 reports
 # on stderr, sh! discards stderr AND the exit code, and ~276 call sites discard the
@@ -2463,10 +2497,42 @@ sql! : Str, Str => Str
 sql! = |db, query|
     sh!("sqlite3 -cmd '.timeout 5000' '${db}' 2>'${db}.sqlerr' <<'SQLHEREDOC' || { echo \"sqlite3 failed:\" >> '${db}.sqlfail'; cat '${db}.sqlerr' >> '${db}.sqlfail'; }\n${query}\nSQLHEREDOC")
 
-# every fixture write in this scenario succeeded. Named rather than a bare boolean so a
-# failure prints what sqlite3 actually said instead of just "false".
-no_failed_writes! : Str => Str
-no_failed_writes! = |db| Str.trim(sh!("cat '${db}.sqlfail' 2>/dev/null"))
+# sqlite3's own words for every fixture write that ERRORED, or "" if none did.
+#
+# "errored", not "happened": a syntactically valid statement whose WHERE matches nothing
+# exits 0 and is invisible here. That shape is real in this file — there are UPDATEs
+# against config rows that may be absent — so the name says what an exit code can prove
+# and no more.
+sqlite_errors! : Str => Str
+sqlite_errors! = |db| Str.trim(sh!("cat '${db}.sqlfail' 2>/dev/null"))
+
+# Report on the path that ABORTED, not only the clean one.
+#
+# The first cut checked this once, after the last scenario. `check!` ends the run at the
+# first failure, so the single case the guard exists for — a fixture write fails and
+# surfaces as an unrelated assertion later — aborted before reaching it. Review proved
+# it: breaking the activity-101 seed killed the run at check 71 of 561 on a name about
+# derived-FTP convergence, with `no such table` sitting unread in the sidecar, and the
+# `rm -rf` skipped so the evidence was stranded in an unnamed temp directory.
+#
+# So this runs on BOTH paths, and prints the sandbox too — without it the sidecar
+# survives an abort in a directory whose path the harness never says out loud.
+report_sqlite_errors! : Str, Str => {}
+report_sqlite_errors! = |db, home| {
+    errs = sqlite_errors!(db)
+    say! = |line|
+        match Stdout.line!(line) {
+            Ok(_) => {}
+            Err(_) => {}
+        }
+    if Str.is_empty(errs) {
+        {}
+    } else {
+        say!("  ↳ a fixture write ERRORED during this run — likely the real cause of the failure above:")
+        say!(errs)
+        say!("  ↳ sandbox kept for inspection: ${home}")
+    }
+}
 
 # seed a constant-power stream (n 1 Hz samples at w watts) as Strava-style raw_json so an
 # analyzed ride computes best_20min_w -> a derived per-sport FTP. Post-#26 FTP is derived
