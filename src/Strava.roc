@@ -337,8 +337,19 @@ Strava :: [].{
     # next sync refetch them.
 
     # close the bar before anything else prints, or the line lands on the bar's row
-    bar_done! : DrainState => Try({}, _)
-    bar_done! = |st| if st.total > 0 { Output.narrate_done!({}) } else { Ok({}) }
+    # Swallows its own failure on purpose, same policy as the boundary reporter: a stderr
+    # write that fails must not convert a successful terminal arm into an error envelope,
+    # nor replace an error already being reported with a narration error.
+    bar_done! : DrainState => {}
+    bar_done! = |st|
+        if st.total > 0 {
+            match Output.narrate_done!({}) {
+                Ok(_) => {}
+                Err(_) => {}
+            }
+        } else {
+            {}
+        }
 
     # ONE stream loop for the whole engine (#232). There used to be two — a capped,
     # unpaced one here for `sync` and a paced one for `backfill` — doing the same job.
@@ -368,23 +379,56 @@ Strava :: [].{
             rows: Sqlite.i64("id"),
         })?
         total = List.len(ids)
-        if total == 0 {
-            Ok({ stored: 0, skipped: 0, pending: 0, stopped: Complete })
+        # No `total == 0` short-circuit. One existed, returning a hardcoded `pending: 0`
+        # that was right only because this query's WHERE clause is character-identical to
+        # `pending_streams!`'s — an invariant nothing pinned, whose explaining comment was
+        # deleted along with the command that carried it. Falling through to the `[]` arm
+        # MEASURES pending instead of asserting it, and `bar_done!` is a no-op at total 0,
+        # so the branch bought nothing but a way to silently zero an absence.
+        _ = if total > 0 {
+            # An immediate 0/total frame BEFORE the first request: narrating only after a
+            # response returns shows nothing for exactly as long as a stall lasts.
+            Output.narrate!("fetching streams", 0, total)?
+            # Said up front, because this run may not finish the job and the retired
+            # command said so before spending a read. Strava's daily cap means a large
+            # first pull spans days; every stored stream is permanent, so re-running is
+            # never wasted work.
+            Output.say!("draining ${U64.to_str(total)} activities' streams — Strava caps reads per day, so a large first pull can span a few runs; every stream stored is kept")?
         } else {
-            # an immediate 0/total frame BEFORE the first request: narrating only after a
-            # response returns shows nothing for exactly as long as a stall lasts, which
-            # is the "it looks hung" failure this bar exists to prevent
-            _ = Output.narrate!("fetching streams", 0, total)?
-            match drain_streams!(path, token, ids, { done: 0, window: 0, retries: 0, stored: 0, skipped: 0, total, refreshes: 0 }) {
-                Ok(o) => Ok(o)
-                Err(e) => {
-                    # every non-terminal exit is an error propagating from the HTTP call,
-                    # the status check or the store — none of which closes the bar on the
-                    # way past, so it is closed here once instead of at each `?`
-                    _ = Output.narrate_done!({})?
-                    Err(e)
-                }
+            {}
+        }
+        match drain_streams!(path, token, ids, { done: 0, window: 0, retries: 0, stored: 0, skipped: 0, total, refreshes: 0 }) {
+            Ok(o) => Ok(o)
+            Err(e) => {
+                # ONE place, covering every propagating `?` in the drain rather than the
+                # two sites say_partial! used to be wired to by hand — the promise ("report
+                # durable progress before an error escapes") now matches the code. The
+                # token refresh, the terminal pending_streams! read and the narration calls
+                # were all uncovered, and the refresh is the realistic one: it is the
+                # mid-run network call on a long drain.
+                #
+                # Nothing here uses `?`. This runs on the way out of a failure that is
+                # already being reported, so a broken stderr must not replace that error
+                # with its own — the policy say_partial! documents, now applied where the
+                # contradiction was.
+                _ = say_partial_stored!(total)
+                Err(e)
             }
+        }
+    }
+
+    # what the drain durably stored is not knowable from here, so report the queue it was
+    # working and point at the command that continues it. The counts live in the payload
+    # on every path that returns one.
+    say_partial_stored! : U64 => {}
+    say_partial_stored! = |total| {
+        _ = match Output.narrate_done!({}) {
+            Ok(_) => {}
+            Err(_) => {}
+        }
+        match Output.say!("sync stopped on an error partway through ${U64.to_str(total)} activities — everything already stored is saved; run `stride sync` again to continue") {
+            Ok(_) => {}
+            Err(_) => {}
         }
     }
 
@@ -536,41 +580,16 @@ Strava :: [].{
     # Drain.stopped_label is the one place it becomes the string that ships.
     DrainOutcome : { stored : I64, skipped : I64, pending : I64, stopped : Drain.StopReason }
 
-    # Report durable progress before an error escapes the drain (#225). The rows already
-    # stored are committed and the next run measures `pending_streams` from the database,
-    # so the machine contract stays honest without carrying partial state in the error
-    # envelope — a caller's action is the same either way: run it again. What was lost was
-    # the human's picture: a run that died on read 900 and one that died on read 2 produced
-    # identical output, because the error envelope carries no counts.
-    #
-    # Its own failure is swallowed deliberately: this runs on the way out of a failure that
-    # is already being reported, and a broken stderr must not replace that error with this.
-    say_partial! : DrainState => {}
-    say_partial! = |st| {
-        _ = bar_done!(st)
-        match Output.say!("sync stopped on an error — the ${I64.to_str(st.stored)} streams stored this run are saved; run `stride sync` again to continue from there") {
-            Ok(_) => {}
-            Err(_) => {}
-        }
-    }
-
     drain_streams! : Str, Str, List(I64), DrainState => Try(DrainOutcome, _)
     drain_streams! = |path, token, ids, st|
         match ids {
             [] => {
-                bar_done!(st)?
+                bar_done!(st)
                 Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: Complete })
             }
             [id, .. as rest] => {
                 uri = "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
-                resp =
-                    match send_bearer!(uri, token) {
-                        Ok(r) => Ok(r)
-                        Err(e) => {
-                            say_partial!(st)
-                            Err(e)
-                        }
-                    }?
+                resp = send_bearer!(uri, token)?
                 match Drain.decide({ status: Response.status(resp), done: st.done, window: st.window, retries: st.retries }, read_limits!({})) {
                     Refresh => {
                         # Long runs outlive the ~6h access token; refresh and retry the same
@@ -584,15 +603,15 @@ Strava :: [].{
                         # not charge a 401 against `done` either, so the read budget never
                         # ended it. Same token back is still a real auth problem.
                         if st.refreshes >= max_refreshes {
-                            bar_done!(st)?
+                            bar_done!(st)
                             Err(HttpStatus(401, "kept getting 401 after refreshing the token — re-run `stride auth`"))
                         } else {
                             fresh = get_valid_token!(path)?
                             if fresh == token {
-                                bar_done!(st)?
+                                bar_done!(st)
                                 Err(HttpStatus(401, "token refresh did not help — re-run `stride auth`"))
                             } else {
-                                bar_done!(st)?
+                                bar_done!(st)
                                 Output.say!("  access token expired — refreshed, continuing...")?
                                 drain_streams!(path, fresh, ids, { ..st, refreshes: st.refreshes + 1 })
                             }
@@ -606,11 +625,11 @@ Strava :: [].{
                     # honest move is to hand the terminal back and let the next run continue
                     # — which is the whole reason `backfill` could be deleted.
                     Backoff(_) => {
-                        bar_done!(st)?
+                        bar_done!(st)
                         Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: RateLimited })
                     }
                     GiveUp => {
-                        bar_done!(st)?
+                        bar_done!(st)
                         Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: RateLimited })
                     }
                     Store({ done, window, after }) => {
@@ -621,18 +640,10 @@ Strava :: [].{
                         # clean one — a bug that had to be fixed twice (#218, #224) back when
                         # this loop had a twin.
                         counted =
-                            match (
-                                match store_stream_response!(path, id, resp) {
-                                    Ok(v) => Ok(v)
-                                    Err(e) => {
-                                        say_partial!(st)
-                                        Err(e)
-                                    }
-                                }
-                            )? {
+                            match store_stream_response!(path, id, resp)? {
                                 Stored => { stored: st.stored + 1, skipped: st.skipped }
                                 SkippedNonUtf8 => {
-                                    bar_done!(st)?
+                                    bar_done!(st)
                                     Output.say!("  activity ${I64.to_str(id)}: stream data would not decode — skipped, retries next run")?
                                     { stored: st.stored, skipped: st.skipped + 1 }
                                 }
@@ -643,7 +654,7 @@ Strava :: [].{
                         _ = if st.total > 0 { Output.narrate!("fetching streams", st.total - List.len(rest), st.total)? } else { {} }
                         match after {
                             StopRun => {
-                                bar_done!(st)?
+                                bar_done!(st)
                                 Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_streams!(path)?, stopped: BudgetReached })
                             }
                             # same policy as Backoff: the window is full, so stop rather
@@ -651,7 +662,7 @@ Strava :: [].{
                             # history runs sync again; a caller who wanted today's ride
                             # already has it.
                             SleepWindow => {
-                                bar_done!(st)?
+                                bar_done!(st)
                                 Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_streams!(path)?, stopped: BudgetReached })
                             }
                             Continue =>

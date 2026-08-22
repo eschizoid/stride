@@ -90,6 +90,10 @@ Command := [
 			[_, "auth"] => Ok(Auth)
 			[_, "sync"] => Ok(Sync(False))
 			[_, "sync", "--all"] => Ok(Sync(True))
+			## Retired in #232, with a pointer rather than a bare unknown_command. Every
+			## README, skill and shell history said `stride backfill` until that commit,
+			## and the plan->week rename beside it sets the precedent for redirecting.
+			[_, "backfill", ..] => Err(Usage("sync — `backfill` is retired; `stride sync` drains all missing streams, and `stride sync --all` re-lists from scratch"))
 			[_, "analyze"] => Ok(Analyze)
 			[_, "summary"] => Ok(Summary)
 			[_, "stats"] => Ok(Stats)

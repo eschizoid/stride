@@ -171,7 +171,7 @@ main! = |raw_args| {
                         # --version included (review found it unreachable)
                         Output.emit_ok!({
                             commands: List.keep_if(Command.command_names, |c| !(Str.starts_with(c, "-")) and c != "help"),
-                            flags: ["--json", "--human", "--help", "--version"],
+                            flags: ["--json", "--human", "--help", "--version", "--all"],
                         })
                     } else {
                         Stdout.line!(help_text)

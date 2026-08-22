@@ -645,7 +645,7 @@ b_init_config! = |ctx| {
     # it answers `--json` with an envelope on every path including refusal. Asserting the
     # command is GONE rather than merely unused: a dispatch left behind would still run.
     bf_gone = Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' backfill 2>/dev/null"))
-    check!("the retired backfill command is unknown, not silently accepted", Str.contains(bf_gone, "unknown_command"))?
+    check!("the retired backfill command is refused, with a pointer at its replacement", Str.contains(bf_gone, "usage") and Str.contains(bf_gone, "`stride sync` drains all missing streams"))?
     check!("...and it is absent from the machine command list", !(Str.contains(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' --help 2>/dev/null"), "\"backfill\"")))?
     sync_unauth = Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' sync 2>/dev/null"))
     check!("sync refuses in-band, as one envelope", Str.contains(sync_unauth, "not_authenticated") and List.len(Str.split_on(sync_unauth, "\n")) == 1)?
