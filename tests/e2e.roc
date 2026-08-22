@@ -139,6 +139,7 @@ shutdown! = |_reason, _ctx| Ok({})
 
 run_all! : () => Try({}, _)
 run_all! = || {
+    reset_sqlite_errors!({})
     bin = env_or!("STRIDE_BIN", "./stride")
     home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
     # Anchor the harness to the SAME clock the binary will use. These used to be
@@ -180,16 +181,18 @@ run_all! = || {
     match run_scenarios!(ctx) {
         Ok(_) => {}
         Err(e) => {
-            # the whole point of the guard: say what really broke, on the way out
-            report_sqlite_errors!(ctx.db, home)
+            # check! already said WHAT broke; name the sandbox it broke in, then propagate
+            report_sandbox!(home)
             Err(e)?
         }
     }
-    # #226: an sqlite3 fixture write that ERRORED. Checked here as well as on the abort
-    # path above, so a failure with no downstream symptom is still named.
-    fixture_errs = sqlite_errors!(ctx.db)
-    check!("no fixture write errored (${fixture_errs})", Str.is_empty(fixture_errs))?
+    # #226: an sqlite3 fixture write that ERRORED, in EITHER sandbox this run touched —
+    # the log is run-scoped, so b_migration!'s second HOME is covered by this one check.
+    # Checked here as well as on the abort path above, so a failure with no downstream
+    # symptom is still named. The text is printed by check!, not spliced into the name.
+    check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
+    reset_sqlite_errors!({})
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -235,6 +238,7 @@ run_scenarios! = |ctx| {
 # has no power, so it falls to HR. ───────────────────────────────────────────────────
 run_sync! : () => Try({}, _)
 run_sync! = || {
+    reset_sqlite_errors!({})
     bin = env_or!("STRIDE_BIN", "./stride")
     base = env_or!("STRIDE_API_BASE", "http://127.0.0.1:8799")
     home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
@@ -306,9 +310,9 @@ run_sync! = || {
     check!("an unreadable strava_expires_at is named, not internal_error", Str.contains(bad_exp, "unreadable_config") and Str.contains(bad_exp, "strava_expires_at"))?
     check!("...and never tells the athlete to open an issue", !(Str.contains(bad_exp, "please open an issue")))?
 
-    sync_errs = sqlite_errors!(db)
-    check!("no fixture write errored (${sync_errs})", Str.is_empty(sync_errs))?
+    check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
+    reset_sqlite_errors!({})
     Stdout.line!("SYNC E2E CHECKS PASS")
 }
 
@@ -2409,9 +2413,9 @@ b_migration! = |ctx| {
     mighome = Str.trim(sh!("mktemp -d"))
     migdb = "${mighome}/.stride/db.sqlite"
     # the one fixture write that does not go through sql! — it reads a FILE rather than a
-    # heredoc — so it gets the same timeout and the same failure capture by hand rather
-    # than being the single unguarded sqlite3 write left in the file it is hardening
-    _ = sh!("mkdir -p '${mighome}/.stride' && sqlite3 -cmd '.timeout 5000' '${migdb}' 2>'${migdb}.sqlerr' < tests/fixtures/db/v1-legacy.sql || { echo \"sqlite3 failed seeding the v1 fixture:\" >> '${migdb}.sqlfail'; cat '${migdb}.sqlerr' >> '${migdb}.sqlfail'; }")
+    # heredoc — so it gets the same timeout and logs to the same run-scoped file by hand
+    # rather than being the single unguarded sqlite3 write left in the file it is hardening
+    _ = sh!("mkdir -p '${mighome}/.stride' && sqlite3 -cmd '.timeout 5000' '${migdb}' 2>'${sqlfail_log}.err' < tests/fixtures/db/v1-legacy.sql || { echo \"sqlite3 failed seeding the v1 fixture into ${migdb}:\" >> '${sqlfail_log}'; cat '${sqlfail_log}.err' >> '${sqlfail_log}'; }")
     check!("fixture starts at user_version 1", Str.trim(sql!(migdb, "PRAGMA user_version;")) == "1")?
     # any command that OPENS the db runs migrations. It used to be `config get ftp_ride`,
     # which no longer touches the db at all — a derived key is refused before open_db!, so
@@ -2430,11 +2434,10 @@ b_migration! = |ctx| {
     _ = stride!(ctx.bin, mighome, ["config", "get", "timezone"])
     check!("re-run idempotent (version stable)", str_to_i64(Str.trim(sql!(migdb, "PRAGMA user_version;"))) == migv)?
     check!("re-run keeps data", Str.trim(sql!(migdb, "SELECT COUNT(*) FROM activities;")) == "2")?
-    # migdb is a SECOND sandbox with its own sidecar. Read it before the rm, or these 9
-    # call sites are unguarded and their evidence is deleted — review added a failing
-    # write here and the suite reported "no fixture write failed silently" and exited 0.
-    mig_errs = sqlite_errors!(migdb)
-    check!("no migration fixture write errored (${mig_errs})", Str.is_empty(mig_errs))?
+    # No guard of its own: migdb is a SECOND sandbox, and a per-db log needed a per-db
+    # check here to be read at all before this `rm -rf` deleted it. The run-scoped log
+    # made that check redundant — run_all!'s single one covers this sandbox too, and
+    # covers it on the ABORT path as well, which a check placed here never could.
     _ = sh!("rm -rf '${mighome}'")
     Ok({})
 }
@@ -2486,40 +2489,64 @@ sh! = |script|
 # nothing is appended, and sql! returns "" — indistinguishable from success. Worth
 # reaching for before lock contention if #226 recurs.
 #
-# The sidecar log: a failing write used to be invisible three times over. sqlite3 reports
-# on stderr, sh! discards stderr AND the exit code, and ~276 call sites discard the
-# return with `_ = sql!(...)`. So the write silently did not happen and surfaced later as
-# an unrelated-looking assertion about state. Recording failures to `<db>.sqlfail`, which
-# each scenario asserts is absent, turns a silent skip into a named failure. That half is
-# worth having whether or not the timeout was the cause: a harness that ignores failed
-# setup writes will mislead again.
+# The failure log: a failing write used to be invisible three times over. sqlite3 reports
+# on stderr, sh! discards stderr AND the exit code, and 199 of the 277 call sites discard
+# the return with `_ = sql!(...)`. So the write silently did not happen and surfaced later
+# as an unrelated-looking assertion about state. That half is worth having whether or not
+# the timeout was the cause: a harness that ignores failed setup writes will mislead again.
 sql! : Str, Str => Str
 sql! = |db, query|
-    sh!("sqlite3 -cmd '.timeout 5000' '${db}' 2>'${db}.sqlerr' <<'SQLHEREDOC' || { echo \"sqlite3 failed:\" >> '${db}.sqlfail'; cat '${db}.sqlerr' >> '${db}.sqlfail'; }\n${query}\nSQLHEREDOC")
+    sh!("sqlite3 -cmd '.timeout 5000' '${db}' 2>'${sqlfail_log}.err' <<'SQLHEREDOC' || { echo \"sqlite3 failed on ${db}:\" >> '${sqlfail_log}'; cat '${sqlfail_log}.err' >> '${sqlfail_log}'; }\n${query}\nSQLHEREDOC")
 
-# sqlite3's own words for every fixture write that ERRORED, or "" if none did.
+# ONE log for the whole run, at a FIXED path — not a `<db>.sqlfail` beside each database.
+# Keying the log to the db was wrong in three ways, all proven by mutation:
+#
+#   • only a scenario holding that db's path can read it. b_migration! works against a
+#     second sandbox, so its call sites went unread and `rm -rf '${mighome}'` deleted the
+#     evidence; a deliberately failing write there passed the suite 560-ok and exit 0.
+#   • the abort-path reporter takes ONE db, so it could only ever speak for the sandbox it
+#     was handed. A migdb error that aborted inside b_migration! printed a bare `FAIL
+#     rename preserves planned session row` with the real cause unread — finding #1 again,
+#     one sandbox over.
+#   • a `sql!` against a MISTYPED path logged beside the db nobody reads (silent), and one
+#     under a directory that does not exist could not even open the log, so the `2>`
+#     redirect failed and NOTHING was recorded anywhere. The fixed path always exists, and
+#     naming the db in the line is what makes a typo visible rather than invisible.
+#
+# Cwd-relative because the harness already runs from the repo root — b_migration! reads
+# tests/fixtures/db/ the same way. Gitignored. Safe to share across drivers because they
+# run sequentially and each resets it on entry.
+sqlfail_log : Str
+sqlfail_log = ".e2e-sqlfail"
+
+# Truncate before the first fixture write of a run. The cleanup at the end of a scenario
+# chain is skipped when a check aborts, so without this a log left by a previously FAILED
+# run would fail every later run at a write that never happened — and a guard that cries
+# wolf about someone else's run is a guard that gets deleted.
+reset_sqlite_errors! : {} => {}
+reset_sqlite_errors! = |{}| {
+    _ = sh!("rm -f '${sqlfail_log}' '${sqlfail_log}.err'")
+    {}
+}
+
+# sqlite3's own words for every fixture write that ERRORED in this run, or "" if none did.
 #
 # "errored", not "happened": a syntactically valid statement whose WHERE matches nothing
 # exits 0 and is invisible here. That shape is real in this file — there are UPDATEs
 # against config rows that may be absent — so the name says what an exit code can prove
 # and no more.
-sqlite_errors! : Str => Str
-sqlite_errors! = |db| Str.trim(sh!("cat '${db}.sqlfail' 2>/dev/null"))
+sqlite_errors! : {} => Str
+sqlite_errors! = |{}| Str.trim(sh!("cat '${sqlfail_log}' 2>/dev/null"))
 
-# Report on the path that ABORTED, not only the clean one.
-#
-# The first cut checked this once, after the last scenario. `check!` ends the run at the
-# first failure, so the single case the guard exists for — a fixture write fails and
-# surfaces as an unrelated assertion later — aborted before reaching it. Review proved
-# it: breaking the activity-101 seed killed the run at check 71 of 561 on a name about
-# derived-FTP convergence, with `no such table` sitting unread in the sidecar, and the
-# `rm -rf` skipped so the evidence was stranded in an unnamed temp directory.
-#
-# So this runs on BOTH paths, and prints the sandbox too — without it the sidecar
-# survives an abort in a directory whose path the harness never says out loud.
-report_sqlite_errors! : Str, Str => {}
-report_sqlite_errors! = |db, home| {
-    errs = sqlite_errors!(db)
+# `check!` already printed sqlite3's words; this adds the one thing it cannot know, the
+# sandbox HOME. An abort skips the `rm -rf`, so the whole database is still on disk — but
+# in a `mktemp -d` directory whose path the harness otherwise never says out loud, which
+# is what made the first version of this guard undebuggable even when it had recorded the
+# cause. Only speaks when there IS a fixture error, so an ordinary assertion failure is
+# not buried under paths nobody needs.
+report_sandbox! : Str => {}
+report_sandbox! = |home| {
+    errs = sqlite_errors!({})
     say! = |line|
         match Stdout.line!(line) {
             Ok(_) => {}
@@ -2528,8 +2555,6 @@ report_sqlite_errors! = |db, home| {
     if Str.is_empty(errs) {
         {}
     } else {
-        say!("  ↳ a fixture write ERRORED during this run — likely the real cause of the failure above:")
-        say!(errs)
         say!("  ↳ sandbox kept for inspection: ${home}")
     }
 }
@@ -2722,12 +2747,25 @@ is_nonempty : Str -> Bool
 is_nonempty = |s| !(Str.is_empty(Str.trim(s))) and Str.trim(s) != "null"
 
 # print a check result; abort the run on the first failure
+#
+# #226: the failing check is where a botched fixture write SURFACES, so it is where the
+# real cause has to be printed. Reporting here rather than in each driver's Err path is
+# what makes the run-scoped log worth having: `check!` knows no db and no HOME, and with
+# one fixed path it does not need to — so every driver, including run_sync! and any added
+# later, gets the report without its own wrapper.
 check! : Str, Bool => Try({}, _)
 check! = |name, cond|
     if cond {
         Stdout.line!("  ok   ${name}")
     } else {
         Stdout.line!("  FAIL ${name}")?
+        errs = sqlite_errors!({})
+        _ =
+            if Str.is_empty(errs) {
+                Ok({})
+            } else {
+                Stdout.line!("  ↳ a fixture write ERRORED during this run — likely the real cause:\n${errs}")
+            }
         Err(CheckFailed(name))
     }
 
