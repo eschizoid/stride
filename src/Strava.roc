@@ -636,13 +636,39 @@ Strava :: [].{
     # Backfill.stopped_label is the one place it becomes the string that ships.
     BackfillOutcome : { stored : I64, skipped : I64, pending : I64, stopped : Backfill.StopReason }
 
+    # Report durable progress before an error escapes the drain (#225). The rows already
+    # stored are committed and the next run WILL see them — `streams_pending` is measured
+    # from the database, so the machine contract stays honest without carrying partial
+    # state in the error envelope, and a caller's action is the same either way: run it
+    # again. What was actually lost was the human's picture: a run that died on read 900
+    # and one that died on read 2 produced byte-identical output, because the error
+    # envelope carries no counts and the per-50 heartbeat can be up to 49 reads stale.
+    #
+    # Stderr, so no contract changes and no command outside backfill is touched. Its own
+    # failure is swallowed deliberately: this runs on the way out of a failure that is
+    # already being reported, and a broken stderr must not replace that error with this
+    # one.
+    say_partial! : DrainState => {}
+    say_partial! = |st|
+        match Output.say!("backfill stopped on an error — the ${I64.to_str(st.stored)} streams stored this run are saved; re-run `stride backfill` to continue from there") {
+            Ok(_) => {}
+            Err(_) => {}
+        }
+
     drain_streams! : Str, Str, List(I64), DrainState => Try(BackfillOutcome, _)
     drain_streams! = |path, token, ids, st|
         match ids {
             [] => Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: Complete })
             [id, .. as rest] => {
                 uri = "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
-                resp = send_bearer!(uri, token)?
+                resp =
+                    match send_bearer!(uri, token) {
+                        Ok(r) => Ok(r)
+                        Err(e) => {
+                            say_partial!(st)
+                            Err(e)
+                        }
+                    }?
                 match Backfill.decide({ status: Response.status(resp), done: st.done, window: st.window, retries: st.retries }, read_limits!({})) {
                     Refresh => {
                         # multi-hour runs outlive the ~6h access token; refresh once and
@@ -668,7 +694,15 @@ Strava :: [].{
                         # retries next run. Counting it as fetched reported rows that were
                         # never stored and let a lossy run present itself as a clean one.
                         counted =
-                            match store_stream_response!(path, id, resp)? {
+                            match (
+                                match store_stream_response!(path, id, resp) {
+                                    Ok(v) => Ok(v)
+                                    Err(e) => {
+                                        say_partial!(st)
+                                        Err(e)
+                                    }
+                                }
+                            )? {
                                 Stored => { stored: st.stored + 1, skipped: st.skipped }
                                 SkippedNonUtf8 => {
                                     Output.say!("  activity ${I64.to_str(id)}: stream data would not decode — skipped, retries next run")?

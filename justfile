@@ -12,6 +12,8 @@ mock_port := env("MOCK_PORT", "8799")
 bad_stream_port := env("BAD_STREAM_PORT", "8798")
 # third instance, 429ing forever on one id (backfill's rate_limited stop reason)
 rate_limit_port := env("RATE_LIMIT_PORT", "8797")
+# fourth instance, 500ing on one id (partial-progress reporting, #225)
+http500_port := env("HTTP500_PORT", "8796")
 
 default: test
 
@@ -156,7 +158,12 @@ e2e-sync: build
     E2E_MODE=mock E2E_RATE_LIMIT=1 MOCK_PORT={{rate_limit_port}} ./e2e &
     RLMOCK=$!
     trap 'kill $MOCK $BADMOCK $RLMOCK 2>/dev/null' EXIT
-    E2E_MODE=stops E2E_EXPECT_RATE_LIMIT=1 STRIDE_API_BASE=http://127.0.0.1:{{rate_limit_port}} ./e2e
+    E2E_MODE=stops E2E_EXPECT_RATE_LIMIT=1 STRIDE_API_BASE=http://127.0.0.1:{{rate_limit_port}} ./e2e || exit 1
+    # a mid-drain failure with work already stored
+    E2E_MODE=mock E2E_HTTP500=1 MOCK_PORT={{http500_port}} ./e2e &
+    P5MOCK=$!
+    trap 'kill $MOCK $BADMOCK $RLMOCK $P5MOCK 2>/dev/null' EXIT
+    E2E_MODE=stops E2E_EXPECT_PARTIAL=1 STRIDE_API_BASE=http://127.0.0.1:{{http500_port}} ./e2e
 
 # build + refresh the ~/.local/bin symlink
 install: build

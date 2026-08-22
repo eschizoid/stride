@@ -117,7 +117,12 @@ respond! = |req, _ctx| {
             Ok(mock_json("[]"))
         }
     } else if Str.contains(uri, "/streams") {
-        if Str.contains(uri, "/activities/501/") and env_or!("E2E_RATE_LIMIT", "") == "1" {
+        if Str.contains(uri, "/activities/501/") and env_or!("E2E_HTTP500", "") == "1" {
+            # 500 on 501 ONLY. 502 drains first (ORDER BY start_local DESC) and stores its
+            # marker, so the error arrives with work already committed — which is the whole
+            # point: a run that dies having stored nothing looks the same otherwise (#225).
+            Ok(Server.respond(Response.from_status(500).with_body(Str.to_utf8("boom"))))
+        } else if Str.contains(uri, "/activities/501/") and env_or!("E2E_RATE_LIMIT", "") == "1" {
             # 429 forever on 501 ONLY. It has to be 501 rather than 502: missing_ids is
             # ORDER BY start_local DESC, so 502 drains first and stores its marker, and
             # the resulting streams_fetched:1 is what proves the counters survived the
@@ -514,11 +519,39 @@ run_stops! = || {
     #   budget: one read per run, so the second queued id is never requested.
     #   rate:   the real budget, so the drain DOES reach 501 — only the window sleep is
     #           shortened, turning two Backoff rounds from ~30 minutes into 10ms.
-    envs = if rate_limited "STRIDE_WINDOW_SLEEP_MS=5" else "STRIDE_READS_PER_RUN=1"
+    #   partial: NO cap at all. A budget of 1 stops the run after the first id, so the
+    #           drain never reaches the id that fails and the error never happens.
+    envs =
+        if env_or!("E2E_EXPECT_PARTIAL", "") == "1" {
+            ""
+        } else if rate_limited {
+            "STRIDE_WINDOW_SLEEP_MS=5"
+        } else {
+            "STRIDE_READS_PER_RUN=1"
+        }
     run_bf! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' ${envs} '${bin}' backfill >'${bo}' 2>/dev/null")
     _ = run_bf!("json")
 
-    if rate_limited {
+    if env_or!("E2E_EXPECT_PARTIAL", "") == "1" {
+        # 502 stores its marker, then 501 returns 500 and the error escapes the drain.
+        # The envelope carries no counts by design (the rows are durable and the next
+        # run measures `streams_pending` from the database, so a caller's action is
+        # unchanged) — but a human watching had no way to tell a run that died after
+        # 900 reads from one that died on the first (#225).
+        # a clean queue, so the count in the message reflects work done by THIS run.
+        # The setup sync already stored 502 (its 404 writes a marker) before dying on
+        # 501, and a message reading "0 streams stored" would pass while proving nothing.
+        _ = sql!(db, "DELETE FROM streams;")
+        be = "${home}/bf.err"
+        _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' ${envs} '${bin}' backfill >'${bo}' 2>'${be}'")
+        err_txt = sh!("cat '${be}'")
+        check!("the error still arrives as an error envelope", bfq!(".error.code") == "strava_error")?
+        check!("...and stdout carries nothing else", List.len(Str.split_on(Str.trim(sh!("cat '${bo}'")), "\n")) == 1)?
+        check!("the work already stored is reported on stderr", Str.contains(err_txt, "the 1 streams stored this run are saved"))?
+        check!("...telling the athlete how to continue", Str.contains(err_txt, "re-run `stride backfill`"))?
+        # and the rows really are durable — the claim the message makes
+        check!("...and it is true: the row survived the failed run", Str.trim(sql!(db, "SELECT count(*) FROM streams;")) == "1")?
+    } else if rate_limited {
         # 501 429s forever. 502 drains first (ORDER BY start_local DESC) and stores its
         # 404 marker, so a surviving counter reads 1 and a reset one reads 0.
         check!("a 429 past the retry limit stops the run", bfq!(".data.stopped") == "rate_limited")?
