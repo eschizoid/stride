@@ -64,7 +64,8 @@
             "unscorable",
             "unzip_failed",
             "usage"
-          ]
+          ],
+          "description": "why the command failed. NOTE rate_limited also appears as sync's `stopped` value inside a SUCCESS payload at exit 0, where it means the drain did real work and then hit Strava's cap; as an error code here it means the command made no progress and exits 1. Discriminate on the envelope shape, not on the token (#227)."
         },
         "message": {
           "type": "string"

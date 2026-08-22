@@ -135,7 +135,16 @@ respond! = |req, _ctx| {
             Ok(mock_json("[]"))
         }
     } else if Str.contains(uri, "/streams") {
-        if Str.contains(uri, "/activities/501/") and env_or!("E2E_STREAM_401", "") == "1" {
+        if Str.contains(uri, "/activities/501/") and env_or!("E2E_HTTP500", "") == "1" {
+            # 500 on 501 ONLY, so the drain reaches store_stream_response!'s `else` arm and
+            # raises HttpStatus(500) into the generic strava_error boundary — a production
+            # path nothing else here exercises (the other drivers cover 401, 429 and an
+            # undecodable body). 502 drains first (ORDER BY start_local DESC) and stores its
+            # marker, so the error arrives with work already committed, which is the whole
+            # point: it is what makes "everything already stored is saved" a claim rather
+            # than a platitude. Salvaged from #225.
+            Ok(Server.respond(Response.from_status(500).with_body(Str.to_utf8("boom"))))
+        } else if Str.contains(uri, "/activities/501/") and env_or!("E2E_STREAM_401", "") == "1" {
             # 401 forever on 501 ONLY, so the drain enters the token-refresh arm. That arm
             # recurses on the SAME id with unchanged state; before #232 bounded it, review
             # measured ~113 requests per second with no terminal state at all — 4,500 reads
@@ -581,7 +590,30 @@ run_stops! = || {
     _ = run_sync_bf!("json")
     bf_elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - bf_start
 
-    if env_or!("E2E_EXPECT_401", "") == "1" {
+    if env_or!("E2E_EXPECT_500", "") == "1" {
+        # A drain that dies with rows already committed. Salvaged from #225, minus its
+        # stored-count assertion: #233 reports the queue total at the boundary, and the
+        # per-id progress frame above it carries "how far did it get" at finer resolution.
+        # a clean queue: the shared run above this if-chain already drained, so without
+        # this the branch sees one id, dies on it immediately, and the frame never advances
+        # past 0/1 — which would make the progress assertion below pass for the wrong
+        # reason or not at all.
+        _ = sql!(db, "DELETE FROM streams;")
+        be500 = "${home}/500.err"
+        _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>'${be500}'")
+        err500 = sh!("cat '${be500}'")
+        check!("a 5xx mid-drain arrives as an error envelope", bfq!(".error.code") == "strava_error")?
+        check!("...and stdout carries nothing else", List.len(Str.split_on(Str.trim(sh!("cat '${bo}'")), "\n")) == 1)?
+        check!("...with the partial-progress report naming how to continue", Str.contains(err500, "run `stride sync` again to continue"))?
+        # the only assertion anywhere that verifies the CLAIM that message makes
+        check!("...and a row really did survive the failed run", Str.trim(sql!(db, "SELECT count(*) FROM streams;")) == "1")?
+        # the bar is the only carrier of "how far did it get" on the error path, so
+        # deleting narrate! would otherwise pass the whole suite
+        # "1/2", not merely "fetching streams" — the opening 0/total frame is emitted by a
+        # DIFFERENT call, so matching the label alone passes with the per-id frame deleted.
+        # That frame is the only carrier of "how far did it get" on the error path.
+        check!("...and the progress frame recorded the id it retired", Str.contains(err500, "1/2"))?
+    } else if env_or!("E2E_EXPECT_401", "") == "1" {
         # The refresh arm recurses on the SAME id. Seed a token the mock will not hand
         # back, so get_valid_token! genuinely rotates once and the arm is entered rather
         # than short-circuiting on `fresh == token`.
@@ -632,6 +664,13 @@ run_stops! = || {
         # assertion in an earlier commit message and it was never actually in the file.
         check!("a rate-limited sync returns at once instead of sleeping", bf_elapsed < 10)?
         check!("a 429 stops the run outright", bfq!(".data.stopped") == "rate_limited")?
+        # Salvaged from #227. A rate-limited run is a PARTIAL SUCCESS: it did real work
+        # before Strava capped it, so it exits 0 while the identically-named error code
+        # exits 1. Nothing else in this suite asserts sync's exit code at all — sh! and
+        # stride_env! both discard it — so a regression emitting the right payload and
+        # exiting 1, which is the tempting reading of "something went wrong", would pass
+        # every other check green.
+        check!("...as a partial success: exit 0, unlike the error code of the same name", stride_status_env!(bin, home, ["sync"], [("STRIDE_FORMAT", "json"), ("STRIDE_API_BASE", base)]) == 0)?
         check!("...counting what it stored before the 429", bfq!(".data.streams_fetched") == "1")?
         check!("...leaving the 429'd id pending", bfq!(".data.pending_streams") == "1")?
         check!("...and resumable, because waiting will help", bfq!(".data.resumable") == "true")?
@@ -675,10 +714,12 @@ run_stops! = || {
     # has to be the smallest of them — which makes it loosest where the branch is biggest.
     # At a shared floor of 8 the budget branch could lose a third of its checks unseen.
     checks_ran_at_least!(
-        if env_or!("E2E_EXPECT_401", "") == "1" {
+        if env_or!("E2E_EXPECT_500", "") == "1" {
+            7
+        } else if env_or!("E2E_EXPECT_401", "") == "1" {
             8
         } else if rate_limited {
-            9
+            10
         } else {
             12
         },
@@ -3041,6 +3082,22 @@ stride_env! = |bin, home, sargs, extra| {
 # exit STATUS of a stride invocation (#163): 0 on success, 1 on any error
 # envelope. Separate from the output helpers so a check can assert the process
 # contract without re-deriving it from text.
+# stride_status! cannot reach the mock — it sets only HOME and STRIDE_FORMAT — so no
+# exit code has ever been asserted against a mock-backed run. This mirrors stride_env!'s
+# extra-env fold so any driver can pin one.
+stride_status_env! : Str, Str, List(Str), List((Str, Str)) => I32
+stride_status_env! = |bin, home, sargs, extra| {
+    base = Cmd.new(OsStr.from_str(bin))
+        .args(List.map(sargs, OsStr.from_str))
+        .env(OsStr.from_str("HOME"), OsStr.from_str(home))
+    cmd = List.fold(extra, base, |c, pair| c.env(OsStr.from_str(pair.0), OsStr.from_str(pair.1)))
+    match cmd.exec_output!() {
+        Ok(_) => 0
+        Err(NonZeroExitCode(e)) => e.exit_code
+        Err(_) => -1
+    }
+}
+
 stride_status! : Str, Str, List(Str) => I32
 stride_status! = |bin, home, sargs| {
     cmd = Cmd.new(OsStr.from_str(bin))

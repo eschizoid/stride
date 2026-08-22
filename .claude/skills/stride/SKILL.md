@@ -152,9 +152,13 @@ in-band error names used throughout this file (`unknown_command`, `missing_confi
 `derived_key`, …), with the human text nested in `error.message`. An error
 envelope is ALSO an exit status: stride exits 1 whenever it emits one (0 on
 success; a bare `stride` prints help and exits 0) — read either channel, they
-never disagree. `sync` and `analyze`
+never disagree. **`rate_limited` is the one code that appears on both sides (#227):** as
+an ERROR code it means the command made no progress and exits 1; as `sync`'s `stopped`
+value it means the drain did real work before Strava capped it, so it is a success
+envelope at exit 0 with `resumable` telling you whether anything is still missing.
+Discriminate on the envelope shape, never on the token. `sync` and `analyze`
 emit JSON results too (`{synced, new_activities, updated_activities, pruned, streams_fetched,
-pending_streams}` / `{computed, stream_errors, form_tsb, form_tsb_known, form_state,
+streams_skipped, pending_streams, stopped, resumable}` / `{computed, stream_errors, form_tsb, form_tsb_known, form_state,
 form_delta_7d, form_delta_known, converged}`), and `stride config get <key> --json` emits `{key, value}` (or the `not_set`
 error envelope) — that is how you read `timezone` back, which governs what "today"
 means for every date below.

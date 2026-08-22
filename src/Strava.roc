@@ -397,9 +397,16 @@ Strava :: [].{
     # on every path that returns one.
     say_partial_stored! : U64 => {}
     say_partial_stored! = |total| {
-        _ = match Output.narrate_done!({}) {
-            Ok(_) => {}
-            Err(_) => {}
+        # guarded like bar_done!, which has the same job: at total 0 no bar was ever
+        # opened, so closing one emits a stray blank line and the sentence below would
+        # read "partway through 0 activities"
+        _ = if total > 0 {
+            match Output.narrate_done!({}) {
+                Ok(_) => {}
+                Err(_) => {}
+            }
+        } else {
+            {}
         }
         match Output.say!("sync stopped on an error partway through ${U64.to_str(total)} activities — everything already stored is saved; run `stride sync` again to continue") {
             Ok(_) => {}
