@@ -7,8 +7,10 @@ import Metrics
 Command := [
 	Init,
 	Auth,
-	Sync,
-	Backfill,
+	## `--all` forces a full re-list: the watermark is ignored so every activity is
+	## re-listed and old deletions propagate. Mostly a dev-mode start-from-scratch;
+	## normal use never needs it, because a plain `sync` converges on its own (#232).
+	Sync(Bool),
 	Analyze,
 	Summary,
 	Stats,
@@ -86,8 +88,12 @@ Command := [
 		match args {
 			[_, "init"] => Ok(Init)
 			[_, "auth"] => Ok(Auth)
-			[_, "sync"] => Ok(Sync)
-			[_, "backfill"] => Ok(Backfill)
+			[_, "sync"] => Ok(Sync(False))
+			[_, "sync", "--all"] => Ok(Sync(True))
+			## Retired in #232, with a pointer rather than a bare unknown_command. Every
+			## README, skill and shell history said `stride backfill` until that commit,
+			## and the plan->week rename beside it sets the precedent for redirecting.
+			[_, "backfill", ..] => Err(Usage("sync — `backfill` is retired; `stride sync` drains all missing streams, and `stride sync --all` re-lists from scratch"))
 			[_, "analyze"] => Ok(Analyze)
 			[_, "summary"] => Ok(Summary)
 			[_, "stats"] => Ok(Stats)
@@ -186,7 +192,7 @@ Command := [
 	## expect below that fails if it stops parsing to its own form.
 	command_names : List(Str)
 	command_names = [
-		"init", "auth", "sync", "backfill", "analyze", "summary", "stats", "doctor",
+		"init", "auth", "sync", "analyze", "summary", "stats", "doctor",
 		"zones", "pz", "compare", "activities", "activity", "top", "import", "rate",
 		"load", "power-curve", "pc", "progress", "week", "plan", "complete", "skip",
 		"config", "tte", "reps", "season", "--version", "--help", "-h", "help",
@@ -495,8 +501,8 @@ expect {
 # name then falls through to the wrong-arguments usage error rather than its command.
 expect match Command.parse(["stride", "init"]) { Ok(Init) => True  _ => False }
 expect match Command.parse(["stride", "auth"]) { Ok(Auth) => True  _ => False }
-expect match Command.parse(["stride", "sync"]) { Ok(Sync) => True  _ => False }
-expect match Command.parse(["stride", "backfill"]) { Ok(Backfill) => True  _ => False }
+expect match Command.parse(["stride", "sync"]) { Ok(Sync(False)) => True  _ => False }
+expect match Command.parse(["stride", "sync", "--all"]) { Ok(Sync(True)) => True  _ => False }
 expect match Command.parse(["stride", "analyze"]) { Ok(Analyze) => True  _ => False }
 expect match Command.parse(["stride", "summary"]) { Ok(Summary) => True  _ => False }
 expect match Command.parse(["stride", "stats"]) { Ok(Stats) => True  _ => False }

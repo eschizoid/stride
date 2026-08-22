@@ -72,7 +72,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for m in Config Command Csv Backfill Metrics Render Sports Streams; do
+          for m in Config Command Csv Drain Metrics Render Sports Streams; do
             echo "--- roc test src/$m.roc ---"
             roc test "src/$m.roc"
           done
@@ -120,7 +120,7 @@ jobs:
       # The mocks bind loopback, STRIDE_API_BASE points stride at them (Config
       # .api_base_allowed permits http to loopback for exactly this), and the token is a
       # fake row written into a sandboxed HOME. This was left out on the belief that it
-      # "needs a token and a live API" — it does not, and that belief cost `backfill`
+      # "needs a token and a live API" — it does not, and that belief cost the stream drain
       # its only payload-vs-schema check in CI.
       - name: Run mock-backed e2e suite
         run: ROC=roc just e2e-sync

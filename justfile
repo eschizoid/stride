@@ -8,10 +8,14 @@ roc := env("ROC", "roc")
 linker := env("STRIDE_LINKER", "")
 # port the e2e-sync mock binds and the driver targets; overridable when 8799 is occupied
 mock_port := env("MOCK_PORT", "8799")
-# second mock instance, serving undecodable stream bodies (backfill's skip path)
+# second mock instance, serving undecodable stream bodies (sync's undecodable-stream skip path)
 bad_stream_port := env("BAD_STREAM_PORT", "8798")
-# third instance, 429ing forever on one id (backfill's rate_limited stop reason)
+# third instance, 429ing forever on one id (sync's rate_limited stop reason)
 rate_limit_port := env("RATE_LIMIT_PORT", "8797")
+# fifth instance, 500ing on one id (the 5xx boundary arm, salvaged from #225)
+http500_port := env("HTTP500_PORT", "8795")
+# fourth instance, 401ing forever on one id (the token-refresh retry bound, #232)
+auth401_port := env("AUTH401_PORT", "8796")
 
 default: test
 
@@ -31,7 +35,7 @@ test:
     {{roc}} test src/Metrics.roc
     {{roc}} test src/Sports.roc
     {{roc}} test src/Render.roc
-    {{roc}} test src/Backfill.roc
+    {{roc}} test src/Drain.roc
     {{roc}} test src/Csv.roc
     {{roc}} test src/Command.roc
     {{roc}} test src/Config.roc
@@ -149,14 +153,24 @@ e2e-sync: build
     E2E_MODE=mock E2E_BAD_STREAM=1 MOCK_PORT={{bad_stream_port}} ./e2e &
     BADMOCK=$!
     trap 'kill $MOCK $BADMOCK 2>/dev/null' EXIT
-    E2E_MODE=backfill STRIDE_API_BASE=http://127.0.0.1:{{bad_stream_port}} ./e2e || exit 1
+    E2E_MODE=skips STRIDE_API_BASE=http://127.0.0.1:{{bad_stream_port}} ./e2e || exit 1
     # budget_reached needs no special mock — just a read budget of 1 against the main one
     E2E_MODE=stops STRIDE_API_BASE=http://127.0.0.1:{{mock_port}} ./e2e || exit 1
     # rate_limited needs a mock that 429s forever on one id
     E2E_MODE=mock E2E_RATE_LIMIT=1 MOCK_PORT={{rate_limit_port}} ./e2e &
     RLMOCK=$!
     trap 'kill $MOCK $BADMOCK $RLMOCK 2>/dev/null' EXIT
-    E2E_MODE=stops E2E_EXPECT_RATE_LIMIT=1 STRIDE_API_BASE=http://127.0.0.1:{{rate_limit_port}} ./e2e
+    E2E_MODE=stops E2E_EXPECT_RATE_LIMIT=1 STRIDE_API_BASE=http://127.0.0.1:{{rate_limit_port}} ./e2e || exit 1
+    # a persistent 401, to prove the token-refresh retry is bounded
+    E2E_MODE=mock E2E_STREAM_401=1 E2E_ROTATING_TOKEN=1 MOCK_PORT={{auth401_port}} ./e2e &
+    A401MOCK=$!
+    trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK 2>/dev/null' EXIT
+    E2E_MODE=stops E2E_EXPECT_401=1 STRIDE_API_BASE=http://127.0.0.1:{{auth401_port}} ./e2e || exit 1
+    # a 5xx mid-drain, with rows already committed
+    E2E_MODE=mock E2E_HTTP500=1 MOCK_PORT={{http500_port}} ./e2e &
+    P5MOCK=$!
+    trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK 2>/dev/null' EXIT
+    E2E_MODE=stops E2E_EXPECT_500=1 STRIDE_API_BASE=http://127.0.0.1:{{http500_port}} ./e2e
 
 # build + refresh the ~/.local/bin symlink
 install: build

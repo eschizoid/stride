@@ -1,6 +1,6 @@
 {
   "title": "commands",
-  "description": "Answer to a bare `stride --json` (or `--help`/`-h`/`help` under --json): what this binary accepts. Sourced from the parser's own command table, so the answer cannot drift from what actually parses. Flags are excluded \u2014 these are subcommands.",
+  "description": "Answer to a bare `stride --json` (or `--help`/`-h`/`help` under --json): what this binary accepts. Sourced from the parser's own command table, so the answer cannot drift from what actually parses. Flags are excluded — these are subcommands.",
   "type": "object",
   "required": [
     "commands",
@@ -18,7 +18,8 @@
       "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "description": "flags this build accepts. --json, --human, --help and --version are GLOBAL; --all is accepted only by sync, where it forces a full re-list from scratch. The list does not encode that distinction, so a caller should not assume every flag works on every command."
     }
   }
 }

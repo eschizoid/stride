@@ -16,7 +16,7 @@ app [main!] {
 #
 # The logic worth testing lives in pure modules — Metrics (training math),
 # Sports (sport vocabulary), Render (tables/formatting), Command (argv parsing),
-# Config, Csv, Streams and Backfill. Schema (DDL) is pure but carries no expects;
+# Config, Csv, Streams and Drain. Schema (DDL) is pure but carries no expects;
 # it is type-checked only, and is not in the `just test` recipe.
 #
 # Two consumers, one contract: humans get tables (with legends and a verdict),
@@ -45,7 +45,7 @@ import Command
 import Config
 import Schema
 import Render
-import Backfill
+import Drain
 import Db
 import Output
 import Strava
@@ -80,7 +80,7 @@ help_text =
         \\
         \\GET DATA
         \\    sync        pull new activities + streams (rolling 30d self-heal)
-        \\    backfill    re-pull the full activity list + ALL missing streams
+        \\    sync --all  force a full re-list from scratch (dev escape hatch)
         \\    import <zip|dir>  load a Strava account export — no API creds needed
         \\    analyze     compute training metrics (TSS, zones, CTL/ATL/TSB)
         \\
@@ -171,7 +171,7 @@ main! = |raw_args| {
                         # --version included (review found it unreachable)
                         Output.emit_ok!({
                             commands: List.keep_if(Command.command_names, |c| !(Str.starts_with(c, "-")) and c != "help"),
-                            flags: ["--json", "--human", "--help", "--version"],
+                            flags: ["--json", "--human", "--help", "--version", "--all"],
                         })
                     } else {
                         Stdout.line!(help_text)
@@ -268,7 +268,15 @@ run_command! = |cmd|
         # internal_error, telling users to file an issue for an expired token.
         Err(HttpStatus(status, body)) =>
             if status == 401 or status == 403 {
-                Output.err_out!("not_authenticated", "Strava rejected the credentials (HTTP ${(status).to_str()}) — run `stride auth` again")
+                # `body` was bound and DISCARDED here, unlike the strava_error arm two
+                # lines down. That flattened two 401s with different causes and different
+                # remedies into one message: a dead credential, where `stride auth` is
+                # right, and a resource that keeps 401ing after the token was successfully
+                # refreshed twice — a missing scope or a clock skew, where re-authing with
+                # the same scope will not help. This arm's justification for flattening is
+                # that the remedy is identical for all of them; that premise fails here,
+                # so pass the diagnosis through rather than printing a fix that does not fit.
+                Output.err_out!("not_authenticated", "Strava rejected the credentials (HTTP ${(status).to_str()}): ${clip_msg(body)}")
             } else if status == 429 {
                 Output.err_out!("rate_limited", "Strava rate limit reached (HTTP 429) — wait for the window to reset and retry")
             } else {
@@ -308,8 +316,7 @@ dispatch! = |cmd|
     match cmd {
         Command.Init => init!({})
         Command.Auth => Strava.auth!({})
-        Command.Sync => Strava.sync!({})
-        Command.Backfill => Strava.backfill!({})
+        Command.Sync(all) => Strava.sync!(all)
         Command.Analyze => Analyze.analyze!({})
         Command.Summary => Report.summary!({})
         Command.Stats => ReportHealth.stats!({})

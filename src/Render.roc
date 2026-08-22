@@ -1,5 +1,5 @@
 import Metrics
-import Backfill
+import Drain
 
 Render :: [].{
     # ── pure text-rendering helpers for human CLI output ────────────────
@@ -679,23 +679,23 @@ Render :: [].{
         }
     }
 
-    # ── backfill screen ─────────────────────────────────────────────────
+    # ── stream-drain note, used by sync's human line ─────────────────────────────────────────────────
 
     # `stopped` arrives as a string because that is what ships in the payload, but the
-    # set is closed at the producer by Backfill.StopReason and turned into these exact
-    # three strings by Backfill.stopped_label. Matched by `==` and never by
+    # set is closed at the producer by Drain.StopReason and turned into these exact
+    # three strings by Drain.stopped_label. Matched by `==` and never by
     # `Str.contains`, which accepts every superstring — "complete" would match
     # "completely broken" (ADR 0012, and the trend_label/#165 bug that taught it).
     # The catch-all cannot be reached through stopped_label; it exists so that if some
     # future producer bypasses it, the tag shows up verbatim instead of being displayed
     # as one of these three.
-    backfill_note : Str, I64 -> Str
-    backfill_note = |stopped, pending|
+    drain_note : Str, I64 -> Str
+    drain_note = |stopped, pending|
         # `pending` is tested FIRST, before the reason. Nothing is left to do regardless
         # of why the run ended, and a budget stop that happened to empty the queue is
-        # reachable (StopRun fires on the read just stored, without inspecting the rest
+        # reachable (the window fills on the read just stored, without inspecting the rest
         # of the list). Keying this on `stopped` instead printed "0 to go, run `stride
-        # backfill` again tomorrow" beside a payload saying resumable: false — the human
+        # sync` again tomorrow" beside a payload saying resumable: false — the human
         # and machine surfaces contradicting each other about the same run.
         if pending == 0 {
             "all streams present"
@@ -706,18 +706,43 @@ Render :: [].{
                 # run. A 404 is NOT this case — it stores a `{}` marker and leaves the
                 # pending set at once, which is why "Strava has no streams for these" is
                 # the wrong sentence here however plausible it sounds.
-                "complete" => "${I64.to_str(pending)} had unreadable stream data — they retry next run"
-                "budget_reached" => "stopped at today's Strava read budget — ${I64.to_str(pending)} to go, run `stride backfill` again tomorrow"
-                "rate_limited" => "stopped on Strava's read cap — ${I64.to_str(pending)} to go, try again tomorrow"
+                "complete" => "${I64.to_str(pending)} had unreadable stream data — they retry next sync"
+                "budget_reached" => "filled Strava's 15-minute read window — ${I64.to_str(pending)} to go, run `stride sync` again in ~15 minutes"
+                "rate_limited" => "Strava rate-limited this run — ${I64.to_str(pending)} to go, try again in ~15 minutes"
                 other => "${other} — ${I64.to_str(pending)} to go"
             }
         }
 
-    backfill_screen : { activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, streams_pending : I64, stopped : Str, resumable : Bool } -> Str
-    backfill_screen = |p| {
-        pruned_note = if p.pruned > 0 ", pruned ${U64.to_str(p.pruned)} removed on Strava" else ""
-        skipped_note = if p.streams_skipped > 0 ", ${I64.to_str(p.streams_skipped)} unreadable" else ""
-        "backfill: ${U64.to_str(p.activities)} activities${pruned_note}, ${I64.to_str(p.streams_fetched)} streams stored this run${skipped_note} — ${backfill_note(p.stopped, p.streams_pending)}"
+    # sync's human line. Extracted from an inline closure in Strava.roc so pure expects
+    # can reach it (#232): the four full-string equality expects that used to pin the
+    # retired backfill_screen died with it, the replacement lived inside an effectful
+    # module where no `expect` can go, and its one e2e check then asserted two
+    # unconditional literals — review deleted every NUMBER from the line and the check
+    # still passed.
+    sync_screen : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }, Bool -> Str
+    sync_screen = |p, all| {
+        prune_note = if p.pruned > 0 " (pruned ${U64.to_str(p.pruned)} removed on Strava)" else ""
+        # Said plainly rather than folded into the pending count: unreadable is not the
+        # same as not-yet-fetched, and only the first is worth chasing. Suppressed when
+        # `stopped` is complete, because drain_note's complete arm is ONLY reachable with
+        # pending > 0 — precisely the skip case — so both clauses would state one fact
+        # twice, in two wordings, on every affected run.
+        skip_note =
+            if p.streams_skipped > 0 and p.stopped != "complete" {
+                " (${I64.to_str(p.streams_skipped)} had unreadable stream data)"
+            } else {
+                ""
+            }
+        # WHY it stopped, not merely that work remains.
+        tail = if p.pending_streams > 0 " — ${drain_note(p.stopped, p.pending_streams)}" else ""
+        # `--all` re-listed the ENTIRE account, so naming the rolling window there would
+        # describe a bound the run did not have.
+        window_note = if all "" else " in the 30-day window"
+        # New and updated FIRST, re-checked in parentheses behind them: the old line led
+        # with the re-listed count, which is a function of how often you train rather than
+        # of this sync, and reading "synced 22 activities" as 22 NEW ones is the question
+        # it kept provoking (#112).
+        "synced ${U64.to_str(p.new_activities)} new, ${U64.to_str(p.updated_activities)} updated (${U64.to_str(p.synced)} re-checked${window_note})${prune_note}, fetched streams for ${I64.to_str(p.streams_fetched)}${skip_note}${tail}"
     }
 
     # ── load command screen ─────────────────────────────────────────────
@@ -1796,72 +1821,81 @@ expect {
 
 expect !(Metrics.has_coaching_language(Render.warming_up_note(True, 12))) and !(Metrics.has_coaching_language(Render.warming_up_note(False, 90)))
 
-# ── backfill (#218) ──────────────────────────────────────────────────
+# ── the stream-drain note (#218, #232) ───────────────────────────────
 # Every arm pinned by full-string equality, and the SCREEN pinned on both of the
 # inputs it forwards. The first cut of these expects tested only `pruned_note`:
-# replacing the whole `backfill_note(...)` call with the literal "all streams
+# replacing the whole `drain_note(...)` call with the literal "all streams
 # present" left all of them green, so a rate-limited run would have told a human
 # every stream was present. Each expect below fails on at least one mutation that
 # the previous set accepted.
-expect Render.backfill_note("complete", 0) == "all streams present"
+expect Render.drain_note("complete", 0) == "all streams present"
 
 # `pending` outranks the reason. A budget stop that happened to empty the queue is
-# done — StopRun fires on the read just stored without inspecting the rest of the
+# done — the window fills on the read just stored, without inspecting the rest of the
 # list, so this is reachable — and keying the note on `stopped` printed "0 to go, run
-# `stride backfill` again tomorrow" next to a payload saying resumable: false. The
+# `stride sync` again tomorrow" next to a payload saying resumable: false. The
 # human and machine surfaces must not contradict each other about the same run.
-expect Render.backfill_note("budget_reached", 0) == "all streams present"
-expect Render.backfill_note("rate_limited", 0) == "all streams present"
-expect Render.backfill_note("complete", 5) == "5 had unreadable stream data — they retry next run"
-expect Render.backfill_note("budget_reached", 40) == "stopped at today's Strava read budget — 40 to go, run `stride backfill` again tomorrow"
-expect Render.backfill_note("rate_limited", 40) == "stopped on Strava's read cap — 40 to go, try again tomorrow"
+expect Render.drain_note("budget_reached", 0) == "all streams present"
+expect Render.drain_note("rate_limited", 0) == "all streams present"
+expect Render.drain_note("complete", 5) == "5 had unreadable stream data — they retry next sync"
+expect Render.drain_note("budget_reached", 40) == "filled Strava's 15-minute read window — 40 to go, run `stride sync` again in ~15 minutes"
+expect Render.drain_note("rate_limited", 40) == "Strava rate-limited this run — 40 to go, try again in ~15 minutes"
 
-# an outcome that did not come through Backfill.stopped_label renders verbatim
+# an outcome that did not come through Drain.stopped_label renders verbatim
 # rather than being guessed into one of the three
-expect Render.backfill_note("throttled_by_proxy", 7) == "throttled_by_proxy — 7 to go"
+expect Render.drain_note("throttled_by_proxy", 7) == "throttled_by_proxy — 7 to go"
 
 # PRODUCER to CONSUMER. The expects above hand-type their strings, so on their own
 # they check Render against itself: renaming "complete" in the producer left them
 # all passing. These compose the two, so a rename on either side fails here.
-expect Render.backfill_note(Backfill.stopped_label(Complete), 0) == "all streams present"
-expect Str.starts_with(Render.backfill_note(Backfill.stopped_label(BudgetReached), 40), "stopped at today's Strava read budget")
-expect Str.starts_with(Render.backfill_note(Backfill.stopped_label(RateLimited), 40), "stopped on Strava's read cap")
+expect Render.drain_note(Drain.stopped_label(Complete), 0) == "all streams present"
+expect Str.starts_with(Render.drain_note(Drain.stopped_label(BudgetReached), 40), "filled Strava's 15-minute read window")
+expect Str.starts_with(Render.drain_note(Drain.stopped_label(RateLimited), 40), "Strava rate-limited this run")
 
 # no label the producer can emit may fall through to the catch-all
 expect {
-    produced = [Backfill.stopped_label(Complete), Backfill.stopped_label(BudgetReached), Backfill.stopped_label(RateLimited)]
-    List.all(produced, |s| Render.backfill_note(s, 9) != "${s} — 9 to go")
+    produced = [Drain.stopped_label(Complete), Drain.stopped_label(BudgetReached), Drain.stopped_label(RateLimited)]
+    List.all(produced, |s| Render.drain_note(s, 9) != "${s} — 9 to go")
 }
 
-# ── the screen, pinned on BOTH forwarded inputs ──────────────────────
-# `stopped` is forwarded: hardcoding it to "complete" in backfill_screen must fail
-expect
-    Render.backfill_screen({ activities: 9, pruned: 0, streams_fetched: 12, streams_skipped: 0, streams_pending: 40, stopped: "rate_limited", resumable: True })
-    == "backfill: 9 activities, 12 streams stored this run — stopped on Strava's read cap — 40 to go, try again tomorrow"
-
-# `streams_pending` is forwarded: hardcoding it to 0 must fail
-expect
-    Render.backfill_screen({ activities: 3, pruned: 0, streams_fetched: 2, streams_skipped: 1, streams_pending: 1, stopped: "complete", resumable: True })
-    == "backfill: 3 activities, 2 streams stored this run, 1 unreadable — 1 had unreadable stream data — they retry next run"
-
-expect
-    Render.backfill_screen({ activities: 3, pruned: 0, streams_fetched: 2, streams_skipped: 0, streams_pending: 0, stopped: "complete", resumable: False })
-    == "backfill: 3 activities, 2 streams stored this run — all streams present"
-
-expect
-    Render.backfill_screen({ activities: 3, pruned: 1, streams_fetched: 2, streams_skipped: 0, streams_pending: 0, stopped: "complete", resumable: False })
-    == "backfill: 3 activities, pruned 1 removed on Strava, 2 streams stored this run — all streams present"
-
 # ADR 0012's boundary rule: a new prose surface joins the denylist sweep. These are
-# tool instructions ("run `stride backfill` again tomorrow"), not training advice, but
+# tool instructions ("run `stride sync` again tomorrow"), not training advice, but
 # the rule is about surfaces rather than intent — and a sweep that skips a surface
 # because someone judged it exempt is how the gap recurs.
 expect {
     notes = [
-        Render.backfill_note("complete", 0),
-        Render.backfill_note("complete", 5),
-        Render.backfill_note("budget_reached", 40),
-        Render.backfill_note("rate_limited", 40),
+        Render.drain_note("complete", 0),
+        Render.drain_note("complete", 5),
+        Render.drain_note("budget_reached", 40),
+        Render.drain_note("rate_limited", 40),
     ]
     List.all(notes, |p| !(Metrics.has_coaching_language(p)))
 }
+
+# ── sync's human line (#232) ─────────────────────────────────────────
+# Full-string equality, because the e2e check on this line asserts two unconditional
+# literals: review deleted EVERY number from the format string and it still passed.
+# These pin each forwarded value, so a hardcoded or dropped field fails here.
+expect
+    Render.sync_screen({ synced: 22, new_activities: 2, updated_activities: 1, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 0, stopped: "complete", resumable: False }, False)
+    == "synced 2 new, 1 updated (22 re-checked in the 30-day window), fetched streams for 5"
+
+# `--all` re-listed everything, so the window clause must be absent
+expect
+    Render.sync_screen({ synced: 22, new_activities: 2, updated_activities: 1, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 0, stopped: "complete", resumable: False }, True)
+    == "synced 2 new, 1 updated (22 re-checked), fetched streams for 5"
+
+expect
+    Render.sync_screen({ synced: 3, new_activities: 0, updated_activities: 0, pruned: 2, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, stopped: "complete", resumable: False }, False)
+    == "synced 0 new, 0 updated (3 re-checked in the 30-day window) (pruned 2 removed on Strava), fetched streams for 0"
+
+# a budget stop states the reason AND supplements it with the skip count
+expect
+    Render.sync_screen({ synced: 9, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 12, streams_skipped: 1, pending_streams: 40, stopped: "budget_reached", resumable: True }, False)
+    == "synced 0 new, 0 updated (9 re-checked in the 30-day window), fetched streams for 12 (1 had unreadable stream data) — filled Strava's 15-minute read window — 40 to go, run `stride sync` again in ~15 minutes"
+
+# a COMPLETE run with skips states the fact ONCE — drain_note owns it there, and
+# stating it twice in two wordings is what shipped before review caught it
+expect
+    Render.sync_screen({ synced: 2, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 1, streams_skipped: 1, pending_streams: 1, stopped: "complete", resumable: True }, False)
+    == "synced 0 new, 0 updated (2 re-checked in the 30-day window), fetched streams for 1 — 1 had unreadable stream data — they retry next sync"

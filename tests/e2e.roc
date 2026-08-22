@@ -7,9 +7,11 @@ app [Context, program] {
 #   • (default / "e2e") run the offline check suite in init!, then exit
 #   • "sync"            drive the real sync path (token refresh + activity/stream pull)
 #                       against a running mock, then exit
-#   • "mock"            serve the four Strava endpoints the sync test hits, and listen
-# One binary, three roles — `just e2e` runs the offline suite; `just e2e-sync` starts a
-# mock instance and points a sync-driver instance at it.
+#   • "skips"           drive the undecodable-stream skip path against a mock serving one
+#   • "stops"           drive the budget_reached / rate_limited stop reasons
+#   • "mock"            serve the four Strava endpoints the drivers hit, and listen
+# One binary, FIVE roles — `just e2e` runs the offline suite; `just e2e-sync` starts three
+# mock instances and points each driver at the one it needs.
 #
 # It shells out to the built `stride` binary plus `sqlite3`/`jq`/`mktemp`/`date`/`awk`
 # via Cmd. It deliberately does NO Roc-side JSON DECODING: every value assertion
@@ -67,9 +69,9 @@ init! = ||
                 Ok(_) => Err(Exit(0))
                 Err(_) => Err(Exit(1))
             }
-        # drive the backfill skip-path test against a mock started with E2E_BAD_STREAM=1
-        "backfill" =>
-            match run_backfill!() {
+        # drive the undecodable-stream skip path against a mock started with E2E_BAD_STREAM=1
+        "skips" =>
+            match run_skips!() {
                 Ok(_) => Err(Exit(0))
                 Err(_) => Err(Exit(1))
             }
@@ -104,9 +106,25 @@ respond! = |req, _ctx| {
         }
 
     if Str.contains(uri, "/oauth/token") {
-        body =
-            \\{"access_token":"mock-access","refresh_token":"mock-refresh","expires_at":9999999999}
-        Ok(mock_json(body))
+        if env_or!("E2E_ROTATING_TOKEN", "") == "1" {
+            # A NEW access token every call, already expired. Models a provider that
+            # rotates on every refresh — which real Strava does. Without it the drain's
+            # refresh arm exits on `fresh == token` after one call and the retry BOUND is
+            # never reached, so a test can pin termination while the counter it exists to
+            # prove is dead code. Review demonstrated exactly that: with the bound removed
+            # the suite stayed green here, and 700 token requests in 12s against a
+            # rotating mock.
+            #
+            # `expires_at: 0` is the load-bearing half — a future expiry lets
+            # get_valid_token! serve from cache and the arm is never re-entered.
+            stamp = Str.trim(sh!("date +%s%N"))
+            body = "{\"access_token\":\"rot-${stamp}\",\"refresh_token\":\"mock-refresh\",\"expires_at\":0}"
+            Ok(mock_json(body))
+        } else {
+            body =
+                \\{"access_token":"mock-access","refresh_token":"mock-refresh","expires_at":9999999999}
+            Ok(mock_json(body))
+        }
     } else if Str.contains(uri, "/api/v3/athlete/activities") {
         if Str.contains(uri, "page=1") {
             body =
@@ -117,7 +135,23 @@ respond! = |req, _ctx| {
             Ok(mock_json("[]"))
         }
     } else if Str.contains(uri, "/streams") {
-        if Str.contains(uri, "/activities/501/") and env_or!("E2E_RATE_LIMIT", "") == "1" {
+        if Str.contains(uri, "/activities/501/") and env_or!("E2E_HTTP500", "") == "1" {
+            # 500 on 501 ONLY, so the drain reaches store_stream_response!'s `else` arm and
+            # raises HttpStatus(500) into the generic strava_error boundary — a production
+            # path nothing else here exercises (the other drivers cover 401, 429 and an
+            # undecodable body). 502 drains first (ORDER BY start_local DESC) and stores its
+            # marker, so the error arrives with work already committed, which is the whole
+            # point: it is what makes "everything already stored is saved" a claim rather
+            # than a platitude. Salvaged from #225.
+            Ok(Server.respond(Response.from_status(500).with_body(Str.to_utf8("boom"))))
+        } else if Str.contains(uri, "/activities/501/") and env_or!("E2E_STREAM_401", "") == "1" {
+            # 401 forever on 501 ONLY, so the drain enters the token-refresh arm. That arm
+            # recurses on the SAME id with unchanged state; before #232 bounded it, review
+            # measured ~113 requests per second with no terminal state at all — 4,500 reads
+            # against a 1000/day cap in under a minute. 502 drains first (ORDER BY
+            # start_local DESC) and stores its marker, so a bounded run still did work.
+            Ok(Server.respond(Response.from_status(401).with_body(Str.to_utf8("unauthorized"))))
+        } else if Str.contains(uri, "/activities/501/") and env_or!("E2E_RATE_LIMIT", "") == "1" {
             # 429 forever on 501 ONLY. It has to be 501 rather than 502: missing_ids is
             # ORDER BY start_local DESC, so 502 drains first and stores its marker, and
             # the resulting streams_fetched:1 is what proves the counters survived the
@@ -175,6 +209,7 @@ shutdown! = |_reason, _ctx| Ok({})
 
 run_all! : () => Try({}, _)
 run_all! = || {
+    reset_checks!({})?
     reset_sqlite_errors!({})
     bin = env_or!("STRIDE_BIN", "./stride")
     home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
@@ -229,6 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
+    checks_ran_at_least!(550)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -274,6 +310,7 @@ run_scenarios! = |ctx| {
 # has no power, so it falls to HR. ───────────────────────────────────────────────────
 run_sync! : () => Try({}, _)
 run_sync! = || {
+    reset_checks!({})?
     reset_sqlite_errors!({})
     bin = env_or!("STRIDE_BIN", "./stride")
     base = env_or!("STRIDE_API_BASE", "http://127.0.0.1:8799")
@@ -326,35 +363,35 @@ run_sync! = || {
     # Pin the exact value (not just >0) so the whole stream->best20->deriveFTP->NP->TSS path is checked.
     check_near!("501 power streams score ~110.8 TSS (NP200 @ derived FTP190)", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 110.8, 1.0)?
 
-    # ── backfill's machine contract (#218) ────────────────────────────────────
-    # backfill used to print prose on STDOUT and emit no envelope at all, so it
+    # ── sync's machine contract (#218, #232) ──────────────────────────────────
+    # the stream drain used to print prose on STDOUT and emit no envelope at all, so it
     # was, besides the interactive `auth`, the command `--json` could not deliver:
     # an agent asking for JSON
     # got unparseable text. It now goes through out! like every other query
     # command, with progress narrating on stderr (ADR 0007).
     #
-    # These live HERE rather than in the offline suite because backfill needs a
+    # These live HERE rather than in the offline suite because sync needs a
     # token AND an API to talk to, which means the mock. That means they run
     # under `just e2e-sync`, which runs in CI. Stated plainly rather than
     # left to be discovered.
     bo = "${home}/bf.out"
     be = "${home}/bf.err"
-    backfill! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' '${bin}' backfill >'${bo}' 2>'${be}'")
+    sync_run! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>'${be}'")
     bfq! = |filter| Str.trim(sh!("jq -r '${filter}' '${bo}' 2>&1"))
 
-    _ = backfill!("json")
+    _ = sync_run!("json")
     bf_out = Str.trim(sh!("cat '${bo}'"))
     # pin BOTH ends and the line count: starts_with alone would still accept
     # prose appended after the envelope, which is the exact shape of the bug.
     check!(
-        "backfill's stdout is the envelope and nothing else",
+        "sync's stdout is the envelope and nothing else",
         Str.starts_with(bf_out, "{\"schema_version\"")
         and Str.ends_with(bf_out, "}")
         and List.len(Str.split_on(bf_out, "\n")) == 1,
     )?
-    check!("...while its progress narrates on stderr", Str.contains(sh!("cat '${be}'"), "refreshing the activity list"))?
-    check!("...and that narration never reaches stdout", !(Str.contains(bf_out, "refreshing the activity list")))?
-    check!("backfill conforms to its schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/backfill.json -f tools/validate.jq 2>&1")) == "")?
+    check!("...while its progress narrates on stderr", Str.contains(sh!("cat '${be}'"), "fetching activity list"))?
+    check!("...and that narration never reaches stdout", !(Str.contains(bf_out, "fetching activity list")))?
+    check!("sync conforms to its schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
 
     # sync already drained both activities' streams, so this run has nothing to
     # fetch. `resumable` is the field a caller acts on -- pin it directly rather
@@ -365,29 +402,45 @@ run_sync! = || {
     # 502's streams 404 here, which STORES a `{}` marker — so it is not pending, and
     # "an activity Strava has no streams for stays pending" is false. That wrong story
     # shipped in four docs before review caught it; this pins the true behaviour.
-    check!("...with a 404-marked activity counted as done, not pending", bfq!(".data.streams_pending") == "0")?
+    check!("...with a 404-marked activity counted as done, not pending", bfq!(".data.pending_streams") == "0")?
     check!("...nothing pruned, since the mock still lists both", bfq!(".data.pruned") == "0")?
     check!("...and nothing skipped on a clean run", bfq!(".data.streams_skipped") == "0")?
 
     # drop one stored stream and re-run, so the count has to MOVE. Without this
-    # every check above would pass just as well against a backfill that never
+    # every check above would pass just as well against a sync that never
     # fetched anything at all.
     _ = sql!(db, "DELETE FROM streams WHERE activity_id=501;")
-    _ = backfill!("json")
+    _ = sync_run!("json")
     check!("a run with work to do fetches it", bfq!(".data.streams_fetched") == "1")?
     check!("...and reports complete once drained", bfq!(".data.stopped") == "complete")?
     check!("...still not resumable, having finished the queue", bfq!(".data.resumable") == "false")?
 
-    _ = backfill!("human")
+    _ = sync_run!("human")
     bf_human = Str.trim(sh!("cat '${bo}'"))
-    check!("humans get the rendered line", Str.contains(bf_human, "backfill: 2 activities") and Str.contains(bf_human, "all streams present"))?
+    check!("humans get the rendered line", Str.contains(bf_human, "re-checked in the 30-day window") and Str.contains(bf_human, "fetched streams for"))?
     check!("...with no envelope in it", !(Str.contains(bf_human, "schema_version")))?
     # refetching 501's streams above ran invalidate_metrics!, dropping its metrics row.
     # Nothing later in this scenario reads them today, which is exactly why it is worth
     # restoring: a future check placed after this block would otherwise fail for a
     # reason that has nothing to do with what it is testing.
     _ = sync_stride!(bin, home, base, ["analyze"])
-    check_near!("501's metrics are restored after the backfill block", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 110.8, 1.0)?
+    # ── `sync --all` (#232) ────────────────────────────────────────────────────
+    # The flag's entire job is the UNBOUNDED prune: an incremental run only prunes inside
+    # the window it re-listed, so a deletion in old history is invisible to it forever.
+    # Review made the flag a no-op (`Sync(_) => sync!(False)`) and every driver still
+    # passed, so nothing observed it at all. `synced_at` is load-bearing here —
+    # prune_deleted! exempts NULL, so a raw insert without it passes for the wrong reason.
+    _ = sql!(db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) VALUES (777,'deleted upstream','Ride','2020-01-01T10:00:00Z',3600,30000.0,0.0,1);")
+    _ = sync_run!("json")
+    check!("an incremental sync leaves old history alone", bfq!(".data.pruned") == "0")?
+    check!("...so a row outside the window survives it", Str.trim(sql!(db, "SELECT count(*) FROM activities WHERE id=777;")) == "1")?
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync --all >'${bo}' 2>/dev/null")
+    check!("--all re-lists everything, so the stale row is pruned", bfq!(".data.pruned") == "1")?
+    check!("...and it is really gone from the database", Str.trim(sql!(db, "SELECT count(*) FROM activities WHERE id=777;")) == "0")?
+    all_human = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' sync --all 2>/dev/null"))
+    check!("...and --all does not claim it checked only the 30-day window", !(Str.contains(all_human, "30-day window")))?
+
+    check_near!("501's metrics are restored after the drain block", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 110.8, 1.0)?
 
     # #208: the two config reads on the SYNC path. Both used to swallow an unreadable
     # value -- last_sync_epoch by folding it into "never synced" (a silent full re-pull,
@@ -412,10 +465,11 @@ run_sync! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
+    checks_ran_at_least!(34)?
     Stdout.line!("SYNC E2E CHECKS PASS")
 }
 
-# ── backfill against a mock whose stream bodies do not decode (#218) ─────────
+# ── sync against a mock whose stream bodies do not decode (#218, #232) ───────
 # The one state run_sync! cannot reach: a run that DRAINS its queue and still has
 # work left. store_stream_response! deliberately does not store a non-UTF-8 body
 # ("storing would mark it done forever"), so that id stays pending and retries next
@@ -427,8 +481,9 @@ run_sync! = || {
 # every run there ends with pending == 0. `resumable` is the one field SKILL.md
 # tells agents to branch on, so an unobservable value is not an acceptable gap.
 # Runs under `just e2e-sync`, like every mock-backed check — and that recipe is in CI.
-run_backfill! : () => Try({}, _)
-run_backfill! = || {
+run_skips! : () => Try({}, _)
+run_skips! = || {
+    reset_checks!({})?
     # Every driver resets the run-scoped failure log on entry and asserts it empty before
     # finishing (#226). Adding a driver without both is SILENT: the rebase that brought
     # this scenario onto a main carrying that log merged cleanly and left it with neither,
@@ -445,7 +500,7 @@ run_backfill! = || {
     _ = sync_stride!(bin, home, base, ["init"])
     _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','mock-access'),('strava_refresh_token','mock-refresh'),('strava_expires_at','9999999999');")
     # sync pulls both activities; 501's streams store, 502's body does not decode.
-    # #224: sync takes the same skip path backfill does and used to report NOTHING —
+    # #224: this skip path used to report NOTHING under sync —
     # no counter, no line, no payload field. It is the command that runs daily, so it
     # is where the loss actually happens; the only trace was `pending_streams` failing
     # to move, which is indistinguishable from a rate-limited partial.
@@ -462,25 +517,25 @@ run_backfill! = || {
     bo = "${home}/bf.out"
     be = "${home}/bf.err"
     bfq! = |filter| Str.trim(sh!("jq -r '${filter}' '${bo}' 2>&1"))
-    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' backfill >'${bo}' 2>'${be}'")
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>'${be}'")
 
     check!("an undecodable body is COUNTED, not silently dropped", bfq!(".data.streams_skipped") == "1")?
     # the counter alone is a number nobody reads; the run must SAY it, naming the id
     check!("...and named on stderr, with the activity id", Str.contains(sh!("cat '${be}'"), "502: stream data would not decode"))?
     check!("...and stores nothing", bfq!(".data.streams_fetched") == "0")?
-    check!("...so the activity stays pending", bfq!(".data.streams_pending") == "1")?
+    check!("...so the activity stays pending", bfq!(".data.pending_streams") == "1")?
     # the queue emptied, so the drain IS complete — and there is still work to do.
     # These two assertions together are the whole point: deriving `resumable` from
     # `stopped` reports false here, about a row stride itself intends to retry.
     check!("the queue drained, so stopped is complete", bfq!(".data.stopped") == "complete")?
     check!("...yet the run is resumable, because that id retries next run", bfq!(".data.resumable") == "true")?
-    check!("the skip payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/backfill.json -f tools/validate.jq 2>&1")) == "")?
+    check!("the skip payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
 
     # re-running really does re-attempt it — the claim `resumable: true` makes
-    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' backfill >'${bo}' 2>/dev/null")
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null")
     check!("a second run re-attempts the skipped id rather than retiring it", bfq!(".data.streams_skipped") == "1")?
 
-    _ = sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' backfill >'${bo}' 2>/dev/null")
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null")
     human = Str.trim(sh!("cat '${bo}'"))
     check!("humans are told the data was unreadable", Str.contains(human, "unreadable stream data"))?
     check!("...nor that everything is present", !(Str.contains(human, "all streams present")))?
@@ -488,7 +543,8 @@ run_backfill! = || {
     _ = sh!("rm -rf '${home}'")
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     reset_sqlite_errors!({})
-    Stdout.line!("BACKFILL E2E CHECKS PASS")
+    checks_ran_at_least!(16)?
+    Stdout.line!("SKIPS E2E CHECKS PASS")
 }
 
 # ── the two non-complete stop reasons (#218) ─────────────────────────────────
@@ -496,10 +552,12 @@ run_backfill! = || {
 # cost 940 reads and `rate_limited` cost two 15-minute sleeps — so of the three
 # StopReason values only `complete` was ever observed, and review proved a
 # transposition in BOTH the StopRun and GiveUp arms (`stored: counted.skipped`)
-# passed the entire suite. These two runs are the only thing that catches it.
+# passed the entire suite. These two runs are what catches THAT (the check-count floor
+# below catches a whole branch going dead, which is a different failure).
 run_stops! : () => Try({}, _)
 run_stops! = || {
-    # same contract as every other driver — see run_backfill!
+    reset_checks!({})?
+    # same contract as every other driver — see run_skips!
     reset_sqlite_errors!({})
     bin = env_or!("STRIDE_BIN", "./stride")
     base = env_or!("STRIDE_API_BASE", "http://127.0.0.1:8797")
@@ -512,8 +570,8 @@ run_stops! = || {
 
     _ = sync_stride!(bin, home, base, ["init"])
     _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','mock-access'),('strava_refresh_token','mock-refresh'),('strava_expires_at','9999999999');")
-    # list the activities WITHOUT draining streams, so backfill has a full queue.
-    # STRIDE_READS_PER_RUN=0 is rejected by the parser (must be > 0), so sync would
+    # list the activities WITHOUT draining streams, so the drain has a full queue.
+    # STRIDE_READS_PER_WINDOW=0 is rejected by the parser (must be > 0), so sync would
     # still drain; instead seed via sync and delete the rows it stored.
     _ = sync_stride!(bin, home, base, ["sync"])
     _ = sql!(db, "DELETE FROM streams;")
@@ -524,41 +582,148 @@ run_stops! = || {
     # with a budget of 1 the drain stops after 502 and never reaches 501's 429, so the
     # run reports budget_reached and the 429 arm is never entered.
     #   budget: one read per run, so the second queued id is never requested.
-    #   rate:   the real budget, so the drain DOES reach 501 — only the window sleep is
-    #           shortened, turning two Backoff rounds from ~30 minutes into 10ms.
-    envs = if rate_limited "STRIDE_WINDOW_SLEEP_MS=5" else "STRIDE_READS_PER_RUN=1"
-    run_bf! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' ${envs} '${bin}' backfill >'${bo}' 2>/dev/null")
-    _ = run_bf!("json")
+    #   rate:   the real window, so the drain DOES reach 501 and meets its 429.
+    #           Nothing sleeps any more, so this costs milliseconds.
+    envs = if rate_limited "" else "STRIDE_READS_PER_WINDOW=1"
+    run_sync_bf! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' ${envs} '${bin}' sync >'${bo}' 2>/dev/null")
+    bf_start = str_to_i64(Str.trim(sh!("date +%s")))
+    _ = run_sync_bf!("json")
+    bf_elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - bf_start
 
-    if rate_limited {
+    if env_or!("E2E_EXPECT_500", "") == "1" {
+        # A drain that dies with rows already committed. Salvaged from #225, minus its
+        # stored-count assertion: #233 reports the queue total at the boundary, and the
+        # per-id progress frame above it carries "how far did it get" at finer resolution.
+        # a clean queue: the shared run above this if-chain already drained, so without
+        # this the branch sees one id, dies on it immediately, and the frame never advances
+        # past 0/1 — which would make the progress assertion below pass for the wrong
+        # reason or not at all.
+        _ = sql!(db, "DELETE FROM streams;")
+        be500 = "${home}/500.err"
+        _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>'${be500}'")
+        err500 = sh!("cat '${be500}'")
+        check!("a 5xx mid-drain arrives as an error envelope", bfq!(".error.code") == "strava_error")?
+        check!("...and stdout carries nothing else", List.len(Str.split_on(Str.trim(sh!("cat '${bo}'")), "\n")) == 1)?
+        check!("...with the partial-progress report naming how to continue", Str.contains(err500, "run `stride sync` again to continue"))?
+        # the only assertion anywhere that verifies the CLAIM that message makes
+        check!("...and a row really did survive the failed run", Str.trim(sql!(db, "SELECT count(*) FROM streams;")) == "1")?
+        # the bar is the only carrier of "how far did it get" on the error path, so
+        # deleting narrate! would otherwise pass the whole suite
+        # "1/2", not merely "fetching streams" — the opening 0/total frame is emitted by a
+        # DIFFERENT call, so matching the label alone passes with the per-id frame deleted.
+        # That frame is the only carrier of "how far did it get" on the error path.
+        check!("...and the progress frame recorded the id it retired", Str.contains(err500, "1/2"))?
+    } else if env_or!("E2E_EXPECT_401", "") == "1" {
+        # The refresh arm recurses on the SAME id. Seed a token the mock will not hand
+        # back, so get_valid_token! genuinely rotates once and the arm is entered rather
+        # than short-circuiting on `fresh == token`.
+        _ = sql!(db, "UPDATE config SET value='stale-access' WHERE key='strava_access_token'; UPDATE config SET value='1' WHERE key='strava_expires_at';")
+        started_at = str_to_i64(Str.trim(sh!("date +%s")))
+        # HARD kill-after on the invocation itself (`timeout` is not on macOS). Without
+        # it an unbounded loop never returns, the elapsed check below is never evaluated,
+        # and the harness HANGS instead of failing — review's exact criticism of a latency
+        # assertion that only manifests as CI looking slow. With it the run is killed, the
+        # envelope is empty, and the checks go red.
+        be401 = "${home}/401.err"
+        _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>'${be401}' & p=$!; (sleep 25; kill -9 $p) >/dev/null 2>&1 & w=$!; wait $p >/dev/null 2>&1; kill $w >/dev/null 2>&1")
+        elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - started_at
+        out401 = Str.trim(sh!("cat '${bo}'"))
+        # TERMINATION is the invariant. Unbounded, review measured ~113 requests/second
+        # with no terminal state — a wall-clock check turns that into a failing assertion
+        # instead of a hung job that reads as infrastructure flake.
+        check!("a persistent 401 terminates instead of hammering Strava", elapsed < 20)?
+        check!("...as an auth error", bfq!(".error.code") == "not_authenticated")?
+        # NOT "run `stride auth`". Refreshing worked — twice, with genuinely new tokens —
+        # and Strava still refused, so the credential is not the problem and re-authing
+        # with the same scope will not fix it. The boundary used to flatten this into the
+        # dead-credential message; the diagnosis now reaches the user, and this pins that
+        # it names a cause rather than offering a fix that does not fit.
+        check!("...naming the real cause, not the wrong remedy", Str.contains(out401, "activity:read_all scope") and !(Str.contains(out401, "run `stride auth`")))?
+        check!("...not as a success envelope", bfq!(".data") == "null")?
+        # THE bound, in both directions. Every assertion above reads stdout, and both 401
+        # exits — "refresh did not help" and "kept getting 401 after refreshing" — are
+        # flattened by the boundary into the same envelope, so stdout cannot tell a
+        # bounded run from one that never refreshed at all. Review proved it: setting the
+        # bound to 0, which disables refreshing entirely, passed every check. The stderr
+        # count is what discriminates, and it tracks max_refreshes exactly.
+        # The literal 2 is `max_refreshes` in src/Strava.roc, coupled across a module
+        # boundary with nothing linking them — bump the bound and this reds like a
+        # regression. The count is in the NAME so the red explains itself, the way the
+        # floor guard does; without it, 0 means "no refreshes" and "no file" alike.
+        refreshes_seen = str_to_i64(Str.trim(sh!("grep -c 'refreshed, continuing' '${be401}' 2>/dev/null")))
+        check!("...having spent exactly the bounded number of refreshes (${I64.to_str(refreshes_seen)} == 2)", refreshes_seen == 2)?
+        # the boundary reporter fires on this path; nothing asserted it, so deleting it
+        # passed the whole suite
+        check!("...and the partial-progress report names the run", Str.contains(sh!("cat '${be401}'"), "everything already stored is saved"))?
+    } else if rate_limited {
         # 501 429s forever. 502 drains first (ORDER BY start_local DESC) and stores its
         # 404 marker, so a surviving counter reads 1 and a reset one reads 0.
-        check!("a 429 past the retry limit stops the run", bfq!(".data.stopped") == "rate_limited")?
-        check!("...counting what it stored BEFORE backing off", bfq!(".data.streams_fetched") == "1")?
-        check!("...leaving the 429'd id pending", bfq!(".data.streams_pending") == "1")?
+        # WALL CLOCK. The no-sleep fix is only observable as latency: review reintroduced
+        # a 3s sleep here and every driver passed, so a return to the ~30-minute block
+        # would read as CI being slow rather than as a failing check. I claimed this
+        # assertion in an earlier commit message and it was never actually in the file.
+        check!("a rate-limited sync returns at once instead of sleeping", bf_elapsed < 10)?
+        check!("a 429 stops the run outright", bfq!(".data.stopped") == "rate_limited")?
+        # Salvaged from #227. A rate-limited run is a PARTIAL SUCCESS: it did real work
+        # before Strava capped it, so it exits 0 while the identically-named error code
+        # exits 1. Nothing else in this suite asserts sync's exit code at all — sh! and
+        # stride_env! both discard it — so a regression emitting the right payload and
+        # exiting 1, which is the tempting reading of "something went wrong", would pass
+        # every other check green.
+        check!("...as a partial success: exit 0, unlike the error code of the same name", stride_status_env!(bin, home, ["sync"], [("STRIDE_FORMAT", "json"), ("STRIDE_API_BASE", base)]) == 0)?
+        check!("...counting what it stored before the 429", bfq!(".data.streams_fetched") == "1")?
+        check!("...leaving the 429'd id pending", bfq!(".data.pending_streams") == "1")?
         check!("...and resumable, because waiting will help", bfq!(".data.resumable") == "true")?
-        check!("the rate-limited payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/backfill.json -f tools/validate.jq 2>&1")) == "")?
+        check!("the rate-limited payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
         # fresh queue: the JSON run above already stored one, so without this the human
         # run drains what is left and renders "all streams present" instead
         _ = sql!(db, "DELETE FROM streams;")
-        _ = run_bf!("human")
-        check!("humans are told to try again tomorrow", Str.contains(Str.trim(sh!("cat '${bo}'")), "stopped on Strava's read cap"))?
+        _ = run_sync_bf!("human")
+        check!("humans are told to try again in ~15 minutes", Str.contains(Str.trim(sh!("cat '${bo}'")), "in ~15 minutes"))?
     } else {
         # one read, two ids queued: stores the first, stops on the budget with one left
-        check!("the per-run read budget stops the run", bfq!(".data.stopped") == "budget_reached")?
+        check!("filling the 15-minute read window stops the run", bfq!(".data.stopped") == "budget_reached")?
         check!("...having stored exactly the one read it spent", bfq!(".data.streams_fetched") == "1")?
-        check!("...with the untouched id still pending", bfq!(".data.streams_pending") == "1")?
+        check!("...with the untouched id still pending", bfq!(".data.pending_streams") == "1")?
         check!("...and resumable, because work remains", bfq!(".data.resumable") == "true")?
-        check!("the budget-stopped payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/backfill.json -f tools/validate.jq 2>&1")) == "")?
+
+        # THE convergence proof, and the reason `backfill` could be deleted (#232): a
+        # first run that stops on the read budget is not a dead end. Run it again and it
+        # finishes, with no flag, no second command, and nothing for the user to know.
+        # Without this, every other check here is satisfied by a sync that stops forever.
+        _ = run_sync_bf!("json")
+        check!("running it again converges — nothing left pending", bfq!(".data.pending_streams") == "0")?
+        # it still reports `budget_reached` — it DID stop on the budget, and the queue
+        # happened to empty on that same read. This is the case that proves `resumable`
+        # must be measured (pending > 0) rather than derived from `stopped`: derived, this
+        # run would claim work remains and the caller would loop forever on an empty queue.
+        check!("...still reporting the budget stop, honestly", bfq!(".data.stopped") == "budget_reached")?
+        check!("...yet NOT resumable, because nothing is left", bfq!(".data.resumable") == "false")?
+        check!("...having stored the id the first run could not reach", bfq!(".data.streams_fetched") == "1")?
+        check!("the budget-stopped payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
         # fresh queue, same reason as the rate-limited branch above
         _ = sql!(db, "DELETE FROM streams;")
-        _ = run_bf!("human")
-        check!("humans are told to run it again tomorrow", Str.contains(Str.trim(sh!("cat '${bo}'")), "stopped at today's Strava read budget"))?
+        _ = run_sync_bf!("human")
+        check!("humans are told when to run it again, and it is not tomorrow", Str.contains(Str.trim(sh!("cat '${bo}'")), "in ~15 minutes"))?
     }
 
     _ = sh!("rm -rf '${home}'")
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     reset_sqlite_errors!({})
+    # Per MODE. run_stops! has three branches of very different size, and a single floor
+    # has to be the smallest of them — which makes it loosest where the branch is biggest.
+    # At a shared floor of 8 the budget branch could lose a third of its checks unseen.
+    checks_ran_at_least!(
+        if env_or!("E2E_EXPECT_500", "") == "1" {
+            7
+        } else if env_or!("E2E_EXPECT_401", "") == "1" {
+            8
+        } else if rate_limited {
+            10
+        } else {
+            12
+        },
+    )?
     Stdout.line!("STOP-REASON E2E CHECKS PASS")
 }
 
@@ -625,14 +790,15 @@ b_init_config! = |ctx| {
     inband = sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' sync 2>/dev/null")
     check!("in-band errors still arrive as themselves", Str.contains(inband, "not_authenticated"))?
     check!("...exactly once — the boundary must not re-wrap Exit", Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' sync 2>/dev/null | grep -c schema_version")) == "1")?
-    # #218: backfill answers `--json` with an envelope like every other command.
-    # This is the REFUSAL path only -- it is what CI can reach without a token or
-    # a network. The success envelope, the schema conformance, and the
-    # stdout/stderr split are covered in run_sync! against the mock, which is
-    # `just e2e-sync`, which runs in CI.
-    bf_unauth = Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' backfill 2>/dev/null"))
-    check!("backfill refuses in-band, as one envelope", Str.contains(bf_unauth, "not_authenticated") and List.len(Str.split_on(bf_unauth, "\n")) == 1)?
-    check!("...and exits non-zero", stride_status!(ctx.bin, nodb, ["backfill"]) == 1)?
+    # #232: `backfill` is retired — `sync` is the only command that pulls data, and
+    # it answers `--json` with an envelope on every path including refusal. Asserting the
+    # command is GONE rather than merely unused: a dispatch left behind would still run.
+    bf_gone = Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' backfill 2>/dev/null"))
+    check!("the retired backfill command is refused, with a pointer at its replacement", Str.contains(bf_gone, "usage") and Str.contains(bf_gone, "`stride sync` drains all missing streams"))?
+    check!("...and it is absent from the machine command list", !(Str.contains(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' --help 2>/dev/null"), "\"backfill\"")))?
+    sync_unauth = Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' sync 2>/dev/null"))
+    check!("sync refuses in-band, as one envelope", Str.contains(sync_unauth, "not_authenticated") and List.len(Str.split_on(sync_unauth, "\n")) == 1)?
+    check!("...and exits non-zero", stride_status!(ctx.bin, nodb, ["sync"]) == 1)?
     _ = sh!("mkdir -p '${ctx.home}/freshinit'")
     check!("...and init on a fresh home still succeeds", stride_status!(ctx.bin, "${ctx.home}/freshinit", ["init"]) == 0)?
     _ = sh!("rm -rf '${nodb}' '${corrupt}' '${ctx.home}/freshinit'")
@@ -2916,6 +3082,22 @@ stride_env! = |bin, home, sargs, extra| {
 # exit STATUS of a stride invocation (#163): 0 on success, 1 on any error
 # envelope. Separate from the output helpers so a check can assert the process
 # contract without re-deriving it from text.
+# stride_status! cannot reach the mock — it sets only HOME and STRIDE_FORMAT — so no
+# exit code has ever been asserted against a mock-backed run. This mirrors stride_env!'s
+# extra-env fold so any driver can pin one.
+stride_status_env! : Str, Str, List(Str), List((Str, Str)) => I32
+stride_status_env! = |bin, home, sargs, extra| {
+    base = Cmd.new(OsStr.from_str(bin))
+        .args(List.map(sargs, OsStr.from_str))
+        .env(OsStr.from_str("HOME"), OsStr.from_str(home))
+    cmd = List.fold(extra, base, |c, pair| c.env(OsStr.from_str(pair.0), OsStr.from_str(pair.1)))
+    match cmd.exec_output!() {
+        Ok(_) => 0
+        Err(NonZeroExitCode(e)) => e.exit_code
+        Err(_) => -1
+    }
+}
+
 stride_status! : Str, Str, List(Str) => I32
 stride_status! = |bin, home, sargs| {
     cmd = Cmd.new(OsStr.from_str(bin))
@@ -3007,9 +3189,64 @@ is_nonempty = |s| !(Str.is_empty(Str.trim(s))) and Str.trim(s) != "null"
 # what makes the run-scoped log worth having: `check!` knows no db and no HOME, and with
 # one fixed path it does not need to — so every driver, including run_sync! and any added
 # later, gets the report without its own wrapper.
+# ONE line per check that PASSED — check! appends inside the success branch, and a failing
+# check aborts the driver anyway. So a driver can assert it ran the checks it contains.
+#
+# Costs a subprocess per assertion: measured at ~12ms each, +15% on the offline suite
+# (44s -> 50s). Accepted rather than optimised, because it caught a real silent-coverage
+# bug and the suite is not on anyone's critical path. If it ever is, check! already prints
+# one `  ok   ` line per pass, so the same population is countable without a spawn.
+# A whole `else if` branch went dead in this file — a duplicated fragment made an EMPTY
+# branch match first — and its six assertions silently stopped running while the driver
+# still printed PASS and exited 0. Nothing observed that, because every other guard here
+# asserts on VALUES, and a check that never runs has no value to be wrong. Counting is
+# the only thing that catches it IN THIS SHAPE. `if/else if` on a Bool gets no redundancy
+# analysis from the compiler; the same dispatch written as a `match` on a tag would have
+# been a build-failing warning. Worth restructuring if this file grows another scenario.
+# PER PROCESS, not a fixed path. `sh` is a child of this binary, so $PPID inside the
+# script is this driver's own pid — each e2e invocation gets its own tally with no env
+# plumbing. A shared path was worse than no guard: two drivers in one checkout inflate
+# each other's counts, so a driver whose branch had gone dead PASSED its floor; and a
+# second driver's reset wipes the first's tally mid-run, producing a false red that looks
+# exactly like a real regression. Review reproduced both with nothing artificial, and the
+# false-red construction explains failures previously blamed on port collisions.
+checks_log! : {} => Str
+checks_log! = |{}| ".e2e-checks.${env_or!("E2E_MODE", "e2e")}"
+
+# Fails LOUDLY. sh! swallows exit codes, and a reset that silently does not happen leaves
+# a stale tally that makes the floor pass for a driver that ran nothing — the guard
+# failing in the one direction it exists to prevent. So verify the file is gone.
+reset_checks! : {} => Try({}, _)
+reset_checks! = |{}| {
+    _ = sh!("rm -f ${checks_log!({})}")
+    left = Str.trim(sh!("wc -l 2>/dev/null < ${checks_log!({})} || echo 0"))
+    if left == "0" {
+        Ok({})
+    } else {
+        Stdout.line!("  FAIL could not reset the check tally — the floor guard would be meaningless")?
+        Err(CheckFailed("could not reset the check tally"))
+    }
+}
+
+# A floor, not an exact count: an exact number fails on every check ADDED and gets bumped
+# reflexively, which is how a guard stops guarding. But it must be TIGHT — the first cut
+# set run_all to 400 against 564 actual, so 164 checks could vanish silently, and the stops
+# budget branch could lose SIX, the same magnitude as the dead branch that motivated this.
+# A tight floor only needs touching when checks are REMOVED, which is exactly the event
+# that should force a conversation. Each is set just under its smallest real run.
+#
+# A driver that forgets reset_checks! or this call gets NO guard, silently — the same
+# hazard the sqlite failure log carries, and documents.
+checks_ran_at_least! : I64 => Try({}, _)
+checks_ran_at_least! = |floor| {
+    ran = str_to_i64(Str.trim(sh!("wc -l 2>/dev/null < ${checks_log!({})} || echo 0")))
+    check!("this driver ran its checks (${I64.to_str(ran)} >= ${I64.to_str(floor)})", ran >= floor)
+}
+
 check! : Str, Bool => Try({}, _)
 check! = |name, cond|
     if cond {
+        _ = sh!("echo x >> ${checks_log!({})}")
         Stdout.line!("  ok   ${name}")
     } else {
         Stdout.line!("  FAIL ${name}")?
