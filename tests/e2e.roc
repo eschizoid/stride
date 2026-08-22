@@ -415,6 +415,27 @@ run_sync! = || {
     check!("...and reports complete once drained", bfq!(".data.stopped") == "complete")?
     check!("...still not resumable, having finished the queue", bfq!(".data.resumable") == "false")?
 
+    # ── the drain has NO per-run cap (#234) ────────────────────────────────────
+    # This is the invariant that justified retiring `backfill`: before #232 the queue
+    # query carried `LIMIT 60`, and the whole argument for one command was that sync no
+    # longer needs a second one to get past it. Restoring that LIMIT passed every driver,
+    # because the fixture has two activities and any residual cap of 2 or more is
+    # structurally invisible. Seed past it.
+    #
+    # The mock 404s unknown ids, which stores an empty marker without a real fetch, so the
+    # rows cost milliseconds. SEVENTY of them, deliberately: the cap being guarded against
+    # was 60, so a shorter queue cannot observe it — a 22-row seed passed the mutation.
+    # The streams wipe above puts the two real fixture activities back in the queue too,
+    # which is why the expected store count is 72 rather than 70. Deleted at the end of
+    # the block: id assertions in this file are positional, and AGENTS.md's rule is to add
+    # fixtures LAST and remove whatever you add.
+    _ = sql!(db, "DELETE FROM streams;")
+    _ = sql!(db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) WITH RECURSIVE seq(x) AS (SELECT 901 UNION ALL SELECT x+1 FROM seq WHERE x<970) SELECT x,'seed','Ride','2026-08-01T10:00:00Z',3600,1000.0,0.0,NULL FROM seq;")
+    _ = sync_run!("json")
+    check!("the drain has no per-run cap — it clears a queue past any old LIMIT", bfq!(".data.pending_streams") == "0")?
+    check!("...having stored every one of them in a single run", bfq!(".data.streams_fetched") == "72")?
+    _ = sql!(db, "DELETE FROM streams WHERE activity_id >= 901; DELETE FROM activities WHERE id >= 901;")
+
     _ = sync_run!("human")
     bf_human = Str.trim(sh!("cat '${bo}'"))
     check!("humans get the rendered line", Str.contains(bf_human, "re-checked in the 30-day window") and Str.contains(bf_human, "fetched streams for"))?
@@ -465,7 +486,7 @@ run_sync! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_at_least!(34)?
+    checks_ran_at_least!(38)?
     Stdout.line!("SYNC E2E CHECKS PASS")
 }
 
