@@ -9,14 +9,14 @@ Drain :: [].{
     # control-flow action. (Counting our own reads by choice, so pacing does not depend
     # on any endpoint sending rate-limit headers.)
 
-    # ONE limit, because there is only one stop mechanism now (#232). A run drains until
+    # ONE limit: the collapse in #232 left a single stop mechanism. A run drains until
     # Strava's 15-minute read window is full, then stops and asks to be re-run. It does
     # NOT sleep to the next window — that made a routine sync block ~30 minutes in the
     # foreground — and it does not carry a separate per-run budget either: `window` is
     # never reset within a run, so a per-run cap of 940 against a window of 95 could
     # never fire. Review proved both arms dead by evaluating `decide` at production
     # limits. The DAILY cap is respected by arithmetic rather than by a counter: ~95
-    # reads per window × ~10 windows a day lands just under Strava's 1000.
+    # reads per window × ~10 windows a day sits just under Strava's 1000.
     Limits : { reads_per_window : I64 }
 
     # what to do after a successful fetch has been stored. WindowFull, not SleepWindow —
