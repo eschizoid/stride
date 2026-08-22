@@ -1570,8 +1570,8 @@ b_seed_analyze! = |ctx| {
     # while the reasoning that makes last_sync the primary signal goes silently dead.
     # Truncating daily_load is what "analyze has not run since" looks like to a reader.
     _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day > '${ctx.d1}';")
+    check!("d1 is not today, so the next check cannot pass by the two dates coinciding", ctx.d1 != ctx.today)?
     check!("as_of is pinned to the last analyze, not recomputed from the clock", Str.trim(strjq!(ctx, ["plan"], ".data.summary.as_of")) == ctx.d1)?
-    check!("...so the gap can read smaller than the real staleness", ctx.d1 != ctx.today)?
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("...and analyze puts it back on today", Str.trim(strjq!(ctx, ["plan"], ".data.summary.as_of")) == ctx.today)?
     # Bumping every stored metrics_rev is precisely what a release that changes the metric
