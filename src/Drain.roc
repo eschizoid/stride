@@ -36,13 +36,13 @@ Drain :: [].{
     Action : [
         Refresh, # 401: refresh the access token, retry the same id (bounded by the caller)
         RateLimited, # 429: stop and report; the caller does not sleep or retry
-        Store({ done : I64, window : I64, after : PostStore }), # success: store, then advance
+        Store({ window : I64, after : PostStore }), # success: store, then advance
     ]
 
     # Counting our own reads BY CHOICE, so pacing never depends on an endpoint sending
     # rate-limit headers. A 429 is a backstop for when our count and Strava's disagree,
     # not the mechanism.
-    decide : { status : U16, done : I64, window : I64 }, Limits -> Action
+    decide : { status : U16, window : I64 }, Limits -> Action
     decide = |s, lim|
         if s.status == 429 {
             RateLimited
@@ -51,10 +51,9 @@ Drain :: [].{
         } else {
             # any other status is handled by the store step (404 → empty marker,
             # 2xx → body, other → error propagated there); here we just advance counters
-            done2 = s.done + 1
             window2 = s.window + 1
             after = if window2 >= lim.reads_per_window WindowFull else Continue
-            Store({ done: done2, window: window2, after })
+            Store({ window: window2, after })
         }
 
     # the ONE tag -> wire-string conversion. These three strings are also the enum in
@@ -75,44 +74,44 @@ Drain :: [].{
 
 # a 429 stops the run outright. It does NOT sleep and retry: that made a routine sync
 # block ~30 minutes in the foreground, measured, on a two-activity queue.
-expect match Drain.decide({ status: 429, done: 0, window: 0 }, Drain.test_lim) {
+expect match Drain.decide({ status: 429, window: 0 }, Drain.test_lim) {
     RateLimited => True
     _ => False
 }
-expect match Drain.decide({ status: 429, done: 99, window: 2 }, Drain.test_lim) {
+expect match Drain.decide({ status: 429, window: 2 }, Drain.test_lim) {
     RateLimited => True
     _ => False
 }
 
 # 401 asks for a token refresh; the CALLER bounds how many it will spend
-expect match Drain.decide({ status: 401, done: 0, window: 0 }, Drain.test_lim) {
+expect match Drain.decide({ status: 401, window: 0 }, Drain.test_lim) {
     Refresh => True
     _ => False
 }
 
 # a normal fetch stores and continues, advancing both counters
-expect match Drain.decide({ status: 200, done: 0, window: 0 }, Drain.test_lim) {
-    Store({ done: 1, window: 1, after: Continue }) => True
+expect match Drain.decide({ status: 200, window: 0 }, Drain.test_lim) {
+    Store({ window: 1, after: Continue }) => True
     _ => False
 }
 
 # 404 takes the same store path (the marker write happens in the drain)
-expect match Drain.decide({ status: 404, done: 0, window: 0 }, Drain.test_lim) {
-    Store({ done: 1, window: 1, after: Continue }) => True
+expect match Drain.decide({ status: 404, window: 0 }, Drain.test_lim) {
+    Store({ window: 1, after: Continue }) => True
     _ => False
 }
 
 # filling the window stores, then ends the run. This is the arm production actually
 # takes — `window` is never reset inside a run, so it is the only way a drain stops
 # short, and the previous model's per-run cap could never fire ahead of it.
-expect match Drain.decide({ status: 200, done: 1, window: 2 }, Drain.test_lim) {
-    Store({ done: 2, window: 3, after: WindowFull }) => True
+expect match Drain.decide({ status: 200, window: 2 }, Drain.test_lim) {
+    Store({ window: 3, after: WindowFull }) => True
     _ => False
 }
 
 # and it stays WindowFull past the boundary rather than wrapping back to Continue
-expect match Drain.decide({ status: 200, done: 9, window: 9 }, Drain.test_lim) {
-    Store({ done: 10, window: 10, after: WindowFull }) => True
+expect match Drain.decide({ status: 200, window: 9 }, Drain.test_lim) {
+    Store({ window: 10, after: WindowFull }) => True
     _ => False
 }
 

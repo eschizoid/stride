@@ -21,7 +21,8 @@ Never do training math yourself: read stride's numbers, add judgment.
    `stopped` for why it ended (`complete` / `budget_reached` / `rate_limited` — both
    non-complete reasons stop on Strava's 15-MINUTE window, so both mean run it again in
    about fifteen minutes, NOT tomorrow).
-   A first sync on a large history may take several runs across days; each one says
+   A first sync on a large history takes one run per 15-minute window — roughly ten a
+   day against Strava's cap, so a few thousand activities spans a day or two. Each says
    how far it got and every stored stream is permanent, so re-running is never wasted.
    `complete` can still leave work: a stream body that does not
    decode is skipped WITHOUT storing, so it retries next run and shows up in
@@ -32,7 +33,7 @@ Never do training math yourself: read stride's numbers, add judgment.
    run can do nothing and still ask for another: unreadable bodies
    (`streams_skipped > 0`, which will keep returning the identical envelope), and
    a rate limit (`stopped: "rate_limited"`, where the wait is ~15 minutes and the
-   command now returns in well under a second). The earlier rule keyed on
+   command returns immediately rather than blocking). The earlier rule keyed on
    `streams_skipped > 0` alone and did NOT fire on the rate-limited shape, where
    a loop can issue dozens of Strava requests per second.
    `stride sync --all` forces a full re-list from scratch — a dev-mode escape hatch

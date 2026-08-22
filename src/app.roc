@@ -268,7 +268,15 @@ run_command! = |cmd|
         # internal_error, telling users to file an issue for an expired token.
         Err(HttpStatus(status, body)) =>
             if status == 401 or status == 403 {
-                Output.err_out!("not_authenticated", "Strava rejected the credentials (HTTP ${(status).to_str()}) — run `stride auth` again")
+                # `body` was bound and DISCARDED here, unlike the strava_error arm two
+                # lines down. That flattened two 401s with different causes and different
+                # remedies into one message: a dead credential, where `stride auth` is
+                # right, and a resource that keeps 401ing after the token was successfully
+                # refreshed twice — a missing scope or a clock skew, where re-authing with
+                # the same scope will not help. This arm's justification for flattening is
+                # that the remedy is identical for all of them; that premise fails here,
+                # so pass the diagnosis through rather than printing a fix that does not fit.
+                Output.err_out!("not_authenticated", "Strava rejected the credentials (HTTP ${(status).to_str()}): ${clip_msg(body)}")
             } else if status == 429 {
                 Output.err_out!("rate_limited", "Strava rate limit reached (HTTP 429) — wait for the window to reset and retry")
             } else {

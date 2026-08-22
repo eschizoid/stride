@@ -372,7 +372,7 @@ Strava :: [].{
             {}
         }
 
-        match drain_streams!(path, token, ids, { done: 0, window: 0, stored: 0, skipped: 0, total, refreshes: 0 }) {
+        match drain_streams!(path, token, ids, { window: 0, stored: 0, skipped: 0, total, refreshes: 0 }) {
             Ok(o) => Ok(o)
             Err(e) => {
                 # ONE place, covering every propagating `?` in the drain rather than the
@@ -464,7 +464,7 @@ Strava :: [].{
     # Strava's disagree, not the mechanism.
     # ── test seams, same species as STRIDE_API_BASE ─────────────────────
     # These three constants made two of the three StopReason values untestable: reaching
-    # `budget_reached` honestly costs 940 reads, and `rate_limited` costs two 15-minute
+    # a stop reason honestly costs a full 95-read window
     # sleeps. So a transposed counter in either terminal arm shipped with the whole suite
     # green — review demonstrated exactly that. Overriding them from the environment
     # reaches both arms in milliseconds against the mock. Humans never set these; the
@@ -526,7 +526,7 @@ Strava :: [].{
             text = Str.from_utf8(Response.body(resp)).ok_or("<non-utf8 body>")
             Err(HttpStatus(Response.status(resp), text))
         }
-    # Per-run drain state: `done` = reads this run (vs the daily cap), `window` = reads
+    # Per-run drain state: `window` = reads
     # this run (vs the 15-min cap; never reset, because a run does not span windows),
     # `stored`/`skipped` = what those reads actually produced.
     #
@@ -539,7 +539,7 @@ Strava :: [].{
     # real progress bar rather than a spinner: a first-time sync can spend a long time
     # here, and narrating only after a response returns shows nothing for exactly as
     # long as a stall lasts. It is NOT a counter — nothing decrements it.
-    DrainState : { done : I64, window : I64, stored : I64, skipped : I64, total : U64, refreshes : I64 }
+    DrainState : { window : I64, stored : I64, skipped : I64, total : U64, refreshes : I64 }
 
     # Walk the missing-streams list once per run. Walking a LIST (not re-querying
     # "next missing") means an unstorable body is skipped, not refetched forever.
@@ -565,7 +565,7 @@ Strava :: [].{
             [id, .. as rest] => {
                 uri = "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
                 resp = send_bearer!(uri, token)?
-                match Drain.decide({ status: Response.status(resp), done: st.done, window: st.window }, read_limits!({})) {
+                match Drain.decide({ status: Response.status(resp), window: st.window }, read_limits!({})) {
                     Refresh => {
                         # Long runs outlive the ~6h access token; refresh and retry the same
                         # id. BOUNDED, like the 429 retry beside it: this arm recurses on the
@@ -581,7 +581,7 @@ Strava :: [].{
                             # no bar_done! here: this propagates, and the boundary reporter
                             # closes the bar on the way out. Closing twice leaves a stray
                             # blank line on stderr.
-                            Err(HttpStatus(401, "kept getting 401 after refreshing the token — re-run `stride auth`"))
+                            Err(HttpStatus(401, "refreshed the token twice and Strava still returned 401 for this activity — the credential is working, so this is likely a missing activity:read_all scope or a clock skew rather than a dead login"))
                         } else {
                             fresh = get_valid_token!(path)?
                             if fresh == token {
@@ -601,7 +601,7 @@ Strava :: [].{
                         bar_done!(st)
                         Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: RateLimited })
                     }
-                    Store({ done, window, after }) => {
+                    Store({ window, after }) => {
                         # 404 => empty marker, 2xx => body, other => error propagated.
                         # MATCHED, not discarded: SkippedNonUtf8 writes no row, so that id
                         # stays pending and retries next run. Counting it as fetched reported
@@ -630,7 +630,7 @@ Strava :: [].{
                                 Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_streams!(path)?, stopped: BudgetReached })
                             }
                             Continue =>
-                                drain_streams!(path, token, rest, { ..st, done, window, stored: counted.stored, skipped: counted.skipped })
+                                drain_streams!(path, token, rest, { ..st, window, stored: counted.stored, skipped: counted.skipped })
 
                         }
                     }

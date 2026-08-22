@@ -200,7 +200,7 @@ shutdown! = |_reason, _ctx| Ok({})
 
 run_all! : () => Try({}, _)
 run_all! = || {
-    reset_checks!({})
+    reset_checks!({})?
     reset_sqlite_errors!({})
     bin = env_or!("STRIDE_BIN", "./stride")
     home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
@@ -255,7 +255,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_at_least!(400)?
+    checks_ran_at_least!(550)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -301,7 +301,7 @@ run_scenarios! = |ctx| {
 # has no power, so it falls to HR. ───────────────────────────────────────────────────
 run_sync! : () => Try({}, _)
 run_sync! = || {
-    reset_checks!({})
+    reset_checks!({})?
     reset_sqlite_errors!({})
     bin = env_or!("STRIDE_BIN", "./stride")
     base = env_or!("STRIDE_API_BASE", "http://127.0.0.1:8799")
@@ -456,7 +456,7 @@ run_sync! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_at_least!(30)?
+    checks_ran_at_least!(34)?
     Stdout.line!("SYNC E2E CHECKS PASS")
 }
 
@@ -474,7 +474,7 @@ run_sync! = || {
 # Runs under `just e2e-sync`, like every mock-backed check — and that recipe is in CI.
 run_skips! : () => Try({}, _)
 run_skips! = || {
-    reset_checks!({})
+    reset_checks!({})?
     # Every driver resets the run-scoped failure log on entry and asserts it empty before
     # finishing (#226). Adding a driver without both is SILENT: the rebase that brought
     # this scenario onto a main carrying that log merged cleanly and left it with neither,
@@ -534,7 +534,7 @@ run_skips! = || {
     _ = sh!("rm -rf '${home}'")
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     reset_sqlite_errors!({})
-    checks_ran_at_least!(10)?
+    checks_ran_at_least!(16)?
     Stdout.line!("SKIPS E2E CHECKS PASS")
 }
 
@@ -543,10 +543,11 @@ run_skips! = || {
 # cost 940 reads and `rate_limited` cost two 15-minute sleeps — so of the three
 # StopReason values only `complete` was ever observed, and review proved a
 # transposition in BOTH the StopRun and GiveUp arms (`stored: counted.skipped`)
-# passed the entire suite. These two runs are the only thing that catches it.
+# passed the entire suite. These two runs are what catches THAT (the check-count floor
+# below catches a whole branch going dead, which is a different failure).
 run_stops! : () => Try({}, _)
 run_stops! = || {
-    reset_checks!({})
+    reset_checks!({})?
     # same contract as every other driver — see run_skips!
     reset_sqlite_errors!({})
     bin = env_or!("STRIDE_BIN", "./stride")
@@ -598,7 +599,12 @@ run_stops! = || {
         # instead of a hung job that reads as infrastructure flake.
         check!("a persistent 401 terminates instead of hammering Strava", elapsed < 20)?
         check!("...as an auth error", bfq!(".error.code") == "not_authenticated")?
-        check!("...naming the fix", Str.contains(out401, "stride auth"))?
+        # NOT "run `stride auth`". Refreshing worked — twice, with genuinely new tokens —
+        # and Strava still refused, so the credential is not the problem and re-authing
+        # with the same scope will not fix it. The boundary used to flatten this into the
+        # dead-credential message; the diagnosis now reaches the user, and this pins that
+        # it names a cause rather than offering a fix that does not fit.
+        check!("...naming the real cause, not the wrong remedy", Str.contains(out401, "activity:read_all scope") and !(Str.contains(out401, "run `stride auth`")))?
         check!("...not as a success envelope", bfq!(".data") == "null")?
         # THE bound, in both directions. Every assertion above reads stdout, and both 401
         # exits — "refresh did not help" and "kept getting 401 after refreshing" — are
@@ -606,7 +612,12 @@ run_stops! = || {
         # bounded run from one that never refreshed at all. Review proved it: setting the
         # bound to 0, which disables refreshing entirely, passed every check. The stderr
         # count is what discriminates, and it tracks max_refreshes exactly.
-        check!("...having spent exactly the bounded number of refreshes", str_to_i64(Str.trim(sh!("grep -c 'refreshed, continuing' '${be401}' 2>/dev/null"))) == 2)?
+        # The literal 2 is `max_refreshes` in src/Strava.roc, coupled across a module
+        # boundary with nothing linking them — bump the bound and this reds like a
+        # regression. The count is in the NAME so the red explains itself, the way the
+        # floor guard does; without it, 0 means "no refreshes" and "no file" alike.
+        refreshes_seen = str_to_i64(Str.trim(sh!("grep -c 'refreshed, continuing' '${be401}' 2>/dev/null")))
+        check!("...having spent exactly the bounded number of refreshes (${I64.to_str(refreshes_seen)} == 2)", refreshes_seen == 2)?
         # the boundary reporter fires on this path; nothing asserted it, so deleting it
         # passed the whole suite
         check!("...and the partial-progress report names the run", Str.contains(sh!("cat '${be401}'"), "everything already stored is saved"))?
@@ -660,7 +671,7 @@ run_stops! = || {
     _ = sh!("rm -rf '${home}'")
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     reset_sqlite_errors!({})
-    checks_ran_at_least!(6)?
+    checks_ran_at_least!(8)?
     Stdout.line!("STOP-REASON E2E CHECKS PASS")
 }
 
@@ -3110,33 +3121,59 @@ is_nonempty = |s| !(Str.is_empty(Str.trim(s))) and Str.trim(s) != "null"
 # what makes the run-scoped log worth having: `check!` knows no db and no HOME, and with
 # one fixed path it does not need to — so every driver, including run_sync! and any added
 # later, gets the report without its own wrapper.
-# ONE line per check that ran, so a driver can assert it ran the checks it contains.
+# ONE line per check that PASSED — check! appends inside the success branch, and a failing
+# check aborts the driver anyway. So a driver can assert it ran the checks it contains.
 # A whole `else if` branch went dead in this file — a duplicated fragment made an EMPTY
 # branch match first — and its six assertions silently stopped running while the driver
 # still printed PASS and exited 0. Nothing observed that, because every other guard here
 # asserts on VALUES, and a check that never runs has no value to be wrong. Counting is
-# the only thing that catches it.
+# the only thing that catches it IN THIS SHAPE. `if/else if` on a Bool gets no redundancy
+# analysis from the compiler; the same dispatch written as a `match` on a tag would have
+# been a build-failing warning. Worth restructuring if this file grows another scenario.
+# PER PROCESS, not a fixed path. `sh` is a child of this binary, so $PPID inside the
+# script is this driver's own pid — each e2e invocation gets its own tally with no env
+# plumbing. A shared path was worse than no guard: two drivers in one checkout inflate
+# each other's counts, so a driver whose branch had gone dead PASSED its floor; and a
+# second driver's reset wipes the first's tally mid-run, producing a false red that looks
+# exactly like a real regression. Review reproduced both with nothing artificial, and the
+# false-red construction explains failures previously blamed on port collisions.
 checks_log : Str
-checks_log = ".e2e-checks"
+checks_log = "'.e2e-checks.'$PPID"
 
-reset_checks! : {} => {}
+# Fails LOUDLY. sh! swallows exit codes, and a reset that silently does not happen leaves
+# a stale tally that makes the floor pass for a driver that ran nothing — the guard
+# failing in the one direction it exists to prevent. So verify the file is gone.
+reset_checks! : {} => Try({}, _)
 reset_checks! = |{}| {
-    _ = sh!("rm -f '${checks_log}'")
-    {}
+    _ = sh!("rm -f ${checks_log}")
+    left = Str.trim(sh!("wc -l < ${checks_log} 2>/dev/null || echo 0"))
+    if left == "0" {
+        Ok({})
+    } else {
+        Stdout.line!("  FAIL could not reset the check tally — the floor guard would be meaningless")?
+        Err(CheckFailed("could not reset the check tally"))
+    }
 }
 
-# a driver's floor, not its exact count — an exact number would fail on every added
-# check and get bumped without thought, which is how a guard stops guarding.
+# A floor, not an exact count: an exact number fails on every check ADDED and gets bumped
+# reflexively, which is how a guard stops guarding. But it must be TIGHT — the first cut
+# set run_all to 400 against 564 actual, so 164 checks could vanish silently, and the stops
+# budget branch could lose SIX, the same magnitude as the dead branch that motivated this.
+# A tight floor only needs touching when checks are REMOVED, which is exactly the event
+# that should force a conversation. Each is set just under its smallest real run.
+#
+# A driver that forgets reset_checks! or this call gets NO guard, silently — the same
+# hazard the sqlite failure log carries, and documents.
 checks_ran_at_least! : I64 => Try({}, _)
 checks_ran_at_least! = |floor| {
-    ran = str_to_i64(Str.trim(sh!("wc -l < '${checks_log}' 2>/dev/null || echo 0")))
+    ran = str_to_i64(Str.trim(sh!("wc -l < ${checks_log} 2>/dev/null || echo 0")))
     check!("this driver ran its checks (${I64.to_str(ran)} >= ${I64.to_str(floor)})", ran >= floor)
 }
 
 check! : Str, Bool => Try({}, _)
 check! = |name, cond|
     if cond {
-        _ = sh!("echo x >> '${checks_log}'")
+        _ = sh!("echo x >> ${checks_log}")
         Stdout.line!("  ok   ${name}")
     } else {
         Stdout.line!("  FAIL ${name}")?
