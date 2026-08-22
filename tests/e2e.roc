@@ -119,7 +119,14 @@ respond! = |req, _ctx| {
             Ok(mock_json("[]"))
         }
     } else if Str.contains(uri, "/streams") {
-        if Str.contains(uri, "/activities/501/") and env_or!("E2E_RATE_LIMIT", "") == "1" {
+        if Str.contains(uri, "/activities/501/") and env_or!("E2E_STREAM_401", "") == "1" {
+            # 401 forever on 501 ONLY, so the drain enters the token-refresh arm. That arm
+            # recurses on the SAME id with unchanged state; before #232 bounded it, review
+            # measured ~113 requests per second with no terminal state at all — 4,500 reads
+            # against a 1000/day cap in under a minute. 502 drains first (ORDER BY
+            # start_local DESC) and stores its marker, so a bounded run still did work.
+            Ok(Server.respond(Response.from_status(401).with_body(Str.to_utf8("unauthorized"))))
+        } else if Str.contains(uri, "/activities/501/") and env_or!("E2E_RATE_LIMIT", "") == "1" {
             # 429 forever on 501 ONLY. It has to be 501 rather than 502: missing_ids is
             # ORDER BY start_local DESC, so 502 drains first and stores its marker, and
             # the resulting streams_fetched:1 is what proves the counters survived the
@@ -389,6 +396,22 @@ run_sync! = || {
     # restoring: a future check placed after this block would otherwise fail for a
     # reason that has nothing to do with what it is testing.
     _ = sync_stride!(bin, home, base, ["analyze"])
+    # ── `sync --all` (#232) ────────────────────────────────────────────────────
+    # The flag's entire job is the UNBOUNDED prune: an incremental run only prunes inside
+    # the window it re-listed, so a deletion in old history is invisible to it forever.
+    # Review made the flag a no-op (`Sync(_) => sync!(False)`) and every driver still
+    # passed, so nothing observed it at all. `synced_at` is load-bearing here —
+    # prune_deleted! exempts NULL, so a raw insert without it passes for the wrong reason.
+    _ = sql!(db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) VALUES (777,'deleted upstream','Ride','2020-01-01T10:00:00Z',3600,30000.0,0.0,1);")
+    _ = sync_run!("json")
+    check!("an incremental sync leaves old history alone", bfq!(".data.pruned") == "0")?
+    check!("...so a row outside the window survives it", Str.trim(sql!(db, "SELECT count(*) FROM activities WHERE id=777;")) == "1")?
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync --all >'${bo}' 2>/dev/null")
+    check!("--all re-lists everything, so the stale row is pruned", bfq!(".data.pruned") == "1")?
+    check!("...and it is really gone from the database", Str.trim(sql!(db, "SELECT count(*) FROM activities WHERE id=777;")) == "0")?
+    all_human = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' sync --all 2>/dev/null"))
+    check!("...and --all does not claim it checked only the 30-day window", !(Str.contains(all_human, "30-day window")))?
+
     check_near!("501's metrics are restored after the drain block", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 110.8, 1.0)?
 
     # #208: the two config reads on the SYNC path. Both used to swallow an unreadable
@@ -532,7 +555,23 @@ run_stops! = || {
     run_sync_bf! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' ${envs} '${bin}' sync >'${bo}' 2>/dev/null")
     _ = run_sync_bf!("json")
 
-    if rate_limited {
+    if env_or!("E2E_EXPECT_401", "") == "1" {
+        # The refresh arm recurses on the SAME id. Seed a token the mock will not hand
+        # back, so get_valid_token! genuinely rotates once and the arm is entered rather
+        # than short-circuiting on `fresh == token`.
+        _ = sql!(db, "UPDATE config SET value='stale-access' WHERE key='strava_access_token'; UPDATE config SET value='1' WHERE key='strava_expires_at';")
+        started_at = str_to_i64(Str.trim(sh!("date +%s")))
+        _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null")
+        elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - started_at
+        out401 = Str.trim(sh!("cat '${bo}'"))
+        # TERMINATION is the invariant. Unbounded, review measured ~113 requests/second
+        # with no terminal state — a wall-clock check turns that into a failing assertion
+        # instead of a hung job that reads as infrastructure flake.
+        check!("a persistent 401 terminates instead of hammering Strava", elapsed < 20)?
+        check!("...as an auth error", bfq!(".error.code") == "not_authenticated")?
+        check!("...naming the fix", Str.contains(out401, "stride auth"))?
+        check!("...not as a success envelope", bfq!(".data") == "null")?
+    } else if rate_limited {    } else if rate_limited {
         # 501 429s forever. 502 drains first (ORDER BY start_local DESC) and stores its
         # 404 marker, so a surviving counter reads 1 and a reset one reads 0.
         check!("a 429 past the retry limit stops the run", bfq!(".data.stopped") == "rate_limited")?

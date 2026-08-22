@@ -12,6 +12,8 @@ mock_port := env("MOCK_PORT", "8799")
 bad_stream_port := env("BAD_STREAM_PORT", "8798")
 # third instance, 429ing forever on one id (sync's rate_limited stop reason)
 rate_limit_port := env("RATE_LIMIT_PORT", "8797")
+# fourth instance, 401ing forever on one id (the token-refresh retry bound, #232)
+auth401_port := env("AUTH401_PORT", "8796")
 
 default: test
 
@@ -156,7 +158,12 @@ e2e-sync: build
     E2E_MODE=mock E2E_RATE_LIMIT=1 MOCK_PORT={{rate_limit_port}} ./e2e &
     RLMOCK=$!
     trap 'kill $MOCK $BADMOCK $RLMOCK 2>/dev/null' EXIT
-    E2E_MODE=stops E2E_EXPECT_RATE_LIMIT=1 STRIDE_API_BASE=http://127.0.0.1:{{rate_limit_port}} ./e2e
+    E2E_MODE=stops E2E_EXPECT_RATE_LIMIT=1 STRIDE_API_BASE=http://127.0.0.1:{{rate_limit_port}} ./e2e || exit 1
+    # a persistent 401, to prove the token-refresh retry is bounded
+    E2E_MODE=mock E2E_STREAM_401=1 MOCK_PORT={{auth401_port}} ./e2e &
+    A401MOCK=$!
+    trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK 2>/dev/null' EXIT
+    E2E_MODE=stops E2E_EXPECT_401=1 STRIDE_API_BASE=http://127.0.0.1:{{auth401_port}} ./e2e
 
 # build + refresh the ~/.local/bin symlink
 install: build

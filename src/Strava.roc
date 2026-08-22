@@ -298,34 +298,7 @@ Strava :: [].{
                 # `additionalKeys: false` exists to catch (ADR 0000 section 9c).
                 payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
                 payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: pull.pending, stopped: Drain.stopped_label(pull.stopped), resumable: pull.pending > 0 }
-                Output.out!(payload, |p| {
-                    prune_note = if p.pruned > 0 " (pruned ${U64.to_str(p.pruned)} removed on Strava)" else ""
-                    # Said plainly rather than folded into the pending count: unreadable is
-                    # not the same as not-yet-fetched, and only the first is worth chasing.
-                    # Suppressed when `stopped` is complete, because drain_note's complete
-                    # arm is ONLY reachable with pending > 0 — which is precisely the skip
-                    # case — so both clauses would state the same fact in different words.
-                    skip_note =
-                        if p.streams_skipped > 0 and p.stopped != "complete" {
-                            " (${I64.to_str(p.streams_skipped)} had unreadable stream data)"
-                        } else {
-                            ""
-                        }
-                    # WHY it stopped, not just that work remains. Render.drain_note carries
-                    # the vocabulary the retired `backfill` used to print, so a human still
-                    # learns the difference between "Strava's cap, come back tomorrow" and
-                    # "these bodies would not decode" (#232).
-                    tail = if p.pending_streams > 0 " — ${Render.drain_note(p.stopped, p.pending_streams)}" else ""
-                    # New and updated FIRST, re-checked in parentheses behind them. The old
-                    # line led with the re-listed count, which is a function of how often you
-                    # train rather than of this sync, and reading "synced 22 activities" as 22
-                    # NEW ones is the question it kept provoking (#112). On a typical day the
-                    # leading numbers are 0 and 0, which is the honest answer.
-                    # `--all` re-listed the ENTIRE account, so naming the rolling window there
-                    # would describe a bound the run did not have
-                    window_note = if all "" else " in the 30-day window"
-                    "synced ${U64.to_str(p.new_activities)} new, ${U64.to_str(p.updated_activities)} updated (${U64.to_str(p.synced)} re-checked${window_note})${prune_note}, fetched streams for ${I64.to_str(p.streams_fetched)}${skip_note}${tail}"
-                })
+                Output.out!(payload, |p| Render.sync_screen(p, all))
             }
         }
     }

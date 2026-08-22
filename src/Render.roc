@@ -706,12 +706,44 @@ Render :: [].{
                 # run. A 404 is NOT this case — it stores a `{}` marker and leaves the
                 # pending set at once, which is why "Strava has no streams for these" is
                 # the wrong sentence here however plausible it sounds.
-                "complete" => "${I64.to_str(pending)} had unreadable stream data — they retry next run"
+                "complete" => "${I64.to_str(pending)} had unreadable stream data — they retry next sync"
                 "budget_reached" => "stopped at today's Strava read budget — ${I64.to_str(pending)} to go, run `stride sync` again tomorrow"
                 "rate_limited" => "stopped on Strava's read cap — ${I64.to_str(pending)} to go, try again tomorrow"
                 other => "${other} — ${I64.to_str(pending)} to go"
             }
         }
+
+    # sync's human line. Extracted from an inline closure in Strava.roc so pure expects
+    # can reach it (#232): the four full-string equality expects that used to pin the
+    # retired backfill_screen died with it, the replacement lived inside an effectful
+    # module where no `expect` can go, and its one e2e check then asserted two
+    # unconditional literals — review deleted every NUMBER from the line and the check
+    # still passed.
+    sync_screen : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }, Bool -> Str
+    sync_screen = |p, all| {
+        prune_note = if p.pruned > 0 " (pruned ${U64.to_str(p.pruned)} removed on Strava)" else ""
+        # Said plainly rather than folded into the pending count: unreadable is not the
+        # same as not-yet-fetched, and only the first is worth chasing. Suppressed when
+        # `stopped` is complete, because drain_note's complete arm is ONLY reachable with
+        # pending > 0 — precisely the skip case — so both clauses would state one fact
+        # twice, in two wordings, on every affected run.
+        skip_note =
+            if p.streams_skipped > 0 and p.stopped != "complete" {
+                " (${I64.to_str(p.streams_skipped)} had unreadable stream data)"
+            } else {
+                ""
+            }
+        # WHY it stopped, not merely that work remains.
+        tail = if p.pending_streams > 0 " — ${drain_note(p.stopped, p.pending_streams)}" else ""
+        # `--all` re-listed the ENTIRE account, so naming the rolling window there would
+        # describe a bound the run did not have.
+        window_note = if all "" else " in the 30-day window"
+        # New and updated FIRST, re-checked in parentheses behind them: the old line led
+        # with the re-listed count, which is a function of how often you train rather than
+        # of this sync, and reading "synced 22 activities" as 22 NEW ones is the question
+        # it kept provoking (#112).
+        "synced ${U64.to_str(p.new_activities)} new, ${U64.to_str(p.updated_activities)} updated (${U64.to_str(p.synced)} re-checked${window_note})${prune_note}, fetched streams for ${I64.to_str(p.streams_fetched)}${skip_note}${tail}"
+    }
 
     # ── load command screen ─────────────────────────────────────────────
 
@@ -1805,7 +1837,7 @@ expect Render.drain_note("complete", 0) == "all streams present"
 # human and machine surfaces must not contradict each other about the same run.
 expect Render.drain_note("budget_reached", 0) == "all streams present"
 expect Render.drain_note("rate_limited", 0) == "all streams present"
-expect Render.drain_note("complete", 5) == "5 had unreadable stream data — they retry next run"
+expect Render.drain_note("complete", 5) == "5 had unreadable stream data — they retry next sync"
 expect Render.drain_note("budget_reached", 40) == "stopped at today's Strava read budget — 40 to go, run `stride sync` again tomorrow"
 expect Render.drain_note("rate_limited", 40) == "stopped on Strava's read cap — 40 to go, try again tomorrow"
 
@@ -1839,3 +1871,31 @@ expect {
     ]
     List.all(notes, |p| !(Metrics.has_coaching_language(p)))
 }
+
+# ── sync's human line (#232) ─────────────────────────────────────────
+# Full-string equality, because the e2e check on this line asserts two unconditional
+# literals: review deleted EVERY number from the format string and it still passed.
+# These pin each forwarded value, so a hardcoded or dropped field fails here.
+expect
+    Render.sync_screen({ synced: 22, new_activities: 2, updated_activities: 1, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 0, stopped: "complete", resumable: False }, False)
+    == "synced 2 new, 1 updated (22 re-checked in the 30-day window), fetched streams for 5"
+
+# `--all` re-listed everything, so the window clause must be absent
+expect
+    Render.sync_screen({ synced: 22, new_activities: 2, updated_activities: 1, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 0, stopped: "complete", resumable: False }, True)
+    == "synced 2 new, 1 updated (22 re-checked), fetched streams for 5"
+
+expect
+    Render.sync_screen({ synced: 3, new_activities: 0, updated_activities: 0, pruned: 2, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, stopped: "complete", resumable: False }, False)
+    == "synced 0 new, 0 updated (3 re-checked in the 30-day window) (pruned 2 removed on Strava), fetched streams for 0"
+
+# a budget stop states the reason AND supplements it with the skip count
+expect
+    Render.sync_screen({ synced: 9, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 12, streams_skipped: 1, pending_streams: 40, stopped: "budget_reached", resumable: True }, False)
+    == "synced 0 new, 0 updated (9 re-checked in the 30-day window), fetched streams for 12 (1 had unreadable stream data) — stopped at today's Strava read budget — 40 to go, run `stride sync` again tomorrow"
+
+# a COMPLETE run with skips states the fact ONCE — drain_note owns it there, and
+# stating it twice in two wordings is what shipped before review caught it
+expect
+    Render.sync_screen({ synced: 2, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 1, streams_skipped: 1, pending_streams: 1, stopped: "complete", resumable: True }, False)
+    == "synced 0 new, 0 updated (2 re-checked in the 30-day window), fetched streams for 1 — 1 had unreadable stream data — they retry next sync"
