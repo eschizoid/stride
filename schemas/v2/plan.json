@@ -247,11 +247,11 @@
       "properties": {
         "newest_activity": {
           "type": "string",
-          "description": "Date of the newest activity in the database, YYYY-MM-DD, or \"\" when there are none. Read alongside summary.as_of: as_of is floored at local today whenever `analyze` runs, so the gap is days since the last activity. When neither `sync` nor `analyze` has run for a while both dates age together and the gap goes to zero on stale data, which is why last_sync is the primary staleness signal and this is the secondary one."
+          "description": "Date of the newest activity in the database, YYYY-MM-DD, or \"\" when there are none. Read alongside summary.as_of, minding what that gap measures: as_of is pinned to the day `analyze` last ran, not to now, so the gap is last-activity-to-last-analyze. It equals days since the last ride only when analyze ran today; otherwise it simply stops growing. No value of it distinguishes a current install from a stale one, which is why last_sync is the primary staleness signal and this is the secondary one."
         },
         "last_sync": {
           "type": "string",
-          "description": "When the last successful `sync` BEGAN, as a UTC ISO timestamp \u2014 the stamp is taken before any network work \u2014 or \"\" when sync has never run, when the stored value will not parse, and when it is negative. This is the payload's only full timestamp and its only UTC value; every date beside it is a local YYYY-MM-DD derived from start_local. Compare it against the current date: that is the one field that detects an install where nothing has run in days."
+          "description": "When the last successful `sync` BEGAN, as a UTC ISO timestamp \u2014 the stamp is taken before the activity listing \u2014 or \"\" when sync has never run, when the stored value will not parse, and when it is negative. This is the payload's only full timestamp and its only UTC value; every other date here is a bare local YYYY-MM-DD. Compare it against the current date: that is the one field that detects an install where nothing has run in days."
         },
         "activities_awaiting_metrics": {
           "type": "integer",

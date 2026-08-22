@@ -732,9 +732,15 @@ Render :: [].{
         # quiet would render it as "nothing to do" — the ambiguous zero this payload
         # reports `*_known` alongside precisely to avoid. `analyze` is named because it is
         # the command that fails with the underlying reason; `doctor` does not report it.
+        #
+        # "count", not "queue": what could not be read is the zone config, not the pending
+        # work. An earlier wording said "awaiting-metrics count unreadable", which sends a reader
+        # looking for database damage — the same class of plausible-but-wrong sentence the
+        # drain_note comment below rejects. It also matches the sibling arm and the field
+        # name, where "queue" appeared in no other rendered string in the binary.
         metrics_note =
             if !(f.activities_awaiting_metrics_known) {
-                ["metrics queue unreadable (stride analyze says why)"]
+                ["awaiting-metrics count unreadable (stride analyze says why)"]
             } else if f.activities_awaiting_metrics > 0 {
                 ["${U64.to_str(f.activities_awaiting_metrics)} awaiting metrics (stride analyze)"]
             } else {
@@ -1951,12 +1957,12 @@ expect
 # the pair that proves the line keys on `known` and not on the number beside it.
 expect
     Render.freshness_note({ activities_awaiting_metrics: 0, activities_awaiting_metrics_known: False, activities_awaiting_streams: 0 })
-    == "DATA: metrics queue unreadable (stride analyze says why)"
+    == "DATA: awaiting-metrics count unreadable (stride analyze says why)"
 
 # ...and it still composes with the streams arm rather than replacing the whole line.
 expect
     Render.freshness_note({ activities_awaiting_metrics: 0, activities_awaiting_metrics_known: False, activities_awaiting_streams: 4 })
-    == "DATA: metrics queue unreadable (stride analyze says why) · 4 awaiting streams (stride sync)"
+    == "DATA: awaiting-metrics count unreadable (stride analyze says why) · 4 awaiting streams (stride sync)"
 
 # ── sync's human line (#232) ─────────────────────────────────────────
 # Full-string equality, because the e2e check on this line asserts two unconditional

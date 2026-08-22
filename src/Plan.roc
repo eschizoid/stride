@@ -962,9 +962,14 @@ Plan :: [].{
                 # load_zone_config! above validates only the four global ones. Propagating
                 # made an unparseable per-sport override kill `plan` outright — no summary,
                 # no sessions, no adherence — for a database that planned fine before this
-                # feature existed. A count we cannot compute is reported as unknown, in the
-                # `*_known` idiom this payload already uses for power and decoupling: 0
-                # with known false, never a bare 0 that reads as "nothing to do".
+                # feature existed. A count we cannot compute is reported as unknown,
+                # EXTENDING the `*_known` idiom (ADR 0009) rather than following it: every
+                # existing flag — power, intensity, hr, zones on recent_activities_14d —
+                # decodes a stored NULL, an absent measurement, a normal state. This one
+                # decodes an Err from a computation that could not run, which means
+                # something is broken. Same shape, new meaning, said plainly here because a
+                # maintainer reading ADR 0009 will otherwise hunt for the NULL column behind
+                # it. 0 with known false, never a bare 0 that reads as "nothing to do".
                 awaiting : { count : U64, known : Bool }
                 awaiting = match Analyze.pending_metrics_count!(path, zb) {
                     Ok(n) => { count: n, known: True }
@@ -972,13 +977,16 @@ Plan :: [].{
                 }
                 awaiting_metrics = awaiting.count
                 awaiting_streams = Strava.pending_streams!(path)?
-                # Date only, so it lines up with summary.as_of. Read the two together and
-                # mind what as_of is: rebuild_daily_load! floors the series at local today,
-                # so as_of is today WHENEVER analyze has run, and the gap is then days since
-                # the last activity. If neither sync nor analyze has run for a while, both
-                # dates age together and the gap goes to ZERO on stale data — measured. So
-                # last_sync against the real clock is the primary staleness signal and this
-                # gap is the secondary one. "" when there are no activities.
+                # Date only, so it lines up with summary.as_of — but mind exactly what
+                # that gap measures. rebuild_daily_load! floors the series at local today,
+                # so as_of is pinned to the day analyze LAST RAN, not to now. The gap is
+                # therefore last-activity-to-last-analyze, never last-activity-to-today: it
+                # equals days since the last ride only when analyze ran TODAY, and otherwise
+                # simply stops growing. Measured — last activity Aug 12, analyze last run
+                # Aug 15, today Aug 22 gives a frozen gap of 3 on an install a week stale.
+                # So no value of the gap separates a current install from a stale one, which
+                # is why last_sync against the real clock is the primary signal and this is
+                # the secondary one. "" when there are no activities.
                 newest_activity = Sqlite.query!({
                     path: Path.utf8(path),
                     query: "SELECT COALESCE(MAX(substr(start_local, 1, 10)), '') AS d FROM activities",
@@ -986,8 +994,10 @@ Plan :: [].{
                     row: Sqlite.str("d"),
                 })?
                 # UTC ISO rather than the raw epoch it is stored as. Note this is the
-                # payload's only full timestamp and its only UTC value — every date beside
-                # it is a local YYYY-MM-DD derived from start_local.
+                # payload's only full timestamp and its only UTC value — every other date
+                # here is a bare local YYYY-MM-DD. Deliberately not claiming they all come
+                # from start_local: as_of is written by the day-walk from the clock, and
+                # target_date is typed by the user through `week add`.
                 #
                 # "" when sync has never run, which is itself the answer on a fresh install.
                 last_sync =
@@ -999,9 +1009,11 @@ Plan :: [].{
                                 # accepts them, and epoch_to_iso's `% 86400` then yields a
                                 # malformed string like "1970-01-01T00:00:0-1Z" — a
                                 # confident, fake timestamp, which is worse than either
-                                # failing or saying nothing. Strava.roc clamps the same key
-                                # with .max(0); clamping here would assert "synced at the
-                                # epoch", so unknown is the honest bucket.
+                                # failing or saying nothing. That exact output is pinned by
+                                # an expect on epoch_to_iso rather than asserted here.
+                                # Strava.roc clamps a value DERIVED from this key with
+                                # .max(0); clamping the stamp itself would assert "synced at
+                                # the epoch", so unknown is the honest bucket.
                                 Ok(e) => if e >= 0 Metrics.epoch_to_iso(e) else ""
                                 # A corrupt value is not a freshness signal, and a planning
                                 # read should not die on a key it only wants for display.

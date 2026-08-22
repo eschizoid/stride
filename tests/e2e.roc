@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_at_least!(583)?
+    checks_ran_at_least!(595)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1527,11 +1527,22 @@ b_seed_analyze! = |ctx| {
     # then returns.
     pf! = |q| Str.trim(strjq!(ctx, ["plan"], ".data.data_freshness.${q}"))
     check!("a current database is awaiting no metrics", pf!("activities_awaiting_metrics") == "0")?
-    # The fixture seeds id 99 (the baseline probe) with no streams row, so 1 is the
-    # RESTING value here, not a bug — pinning it to 0 would have been pinning a wish.
-    # It matters that this is non-zero: the checks below move it to 2 and back, which a
-    # field hardcoded to any single constant cannot survive.
-    check!("...and awaiting streams only for the fixture's one activity that has none", pf!("activities_awaiting_streams") == "1")?
+    # 1 is the RESTING value here, not a bug — pinning it to 0 would have been pinning a
+    # wish. It matters that this is non-zero: the checks below move it to 2 and back, which
+    # a field hardcoded to any single constant cannot survive.
+    #
+    # WHICH row is named by assertion rather than by comment. An earlier draft said "id 99,
+    # the baseline probe"; 99 is deleted four hundred lines above this, so that comment sent
+    # the next reader to a row which no longer exists. The real one is 102, the HR-only
+    # Rowing row deliberately seeded without streams. Asserting it means anyone who adds an
+    # unstreamed activity earlier in the seed gets told exactly what changed, instead of
+    # three checks failing with a message about the wrong id.
+    unstreamed = Str.trim(sh!("sqlite3 '${ctx.db}' \"SELECT COALESCE(group_concat(a.id),'') FROM activities a LEFT JOIN streams s ON s.activity_id = a.id WHERE s.activity_id IS NULL AND a.moving_time > 0;\""))
+    check!("exactly one fixture activity has no streams, and it is 102", unstreamed == "102")?
+    check!("...so awaiting streams rests at 1", pf!("activities_awaiting_streams") == "1")?
+    # ...and it is the same count doctor reports, which is what the schema claims and
+    # nothing checked. A cross-COMMAND oracle, so a shared bug in one is visible.
+    check!("...the same count doctor reports as pending_streams", pf!("activities_awaiting_streams") == Str.trim(strjq!(ctx, ["doctor"], ".data.pending_streams")))?
     # newest_activity read a second way, so a hardcoded date, the wrong column or a full
     # timestamp all fail — the schema's "string" accepts every one of those.
     newest_sql = Str.trim(sh!("sqlite3 '${ctx.db}' \"SELECT COALESCE(MAX(substr(start_local,1,10)),'') FROM activities;\""))
@@ -1539,6 +1550,10 @@ b_seed_analyze! = |ctx| {
     # reports green on a field that was never computed.
     check!("the fixture has activities, so the next check is not \"\" == \"\"", newest_sql != "")?
     check!("newest_activity agrees with the database", pf!("newest_activity") == newest_sql)?
+    # The oracle above is byte-identical SQL, so it catches plumbing errors and nothing the
+    # two share. This anchors the oracle ITSELF to a date the harness computed independently
+    # of any query.
+    check!("...and that date is the fixture's own d2, not merely what sqlite agrees to", newest_sql == ctx.d2)?
     # Bumping every stored metrics_rev is precisely what a release that changes the metric
     # definitions does, and it is the case doctor's `unanalyzed` CANNOT see: the rows still
     # have metrics, so `m.activity_id IS NULL` counts none of them.
@@ -1578,9 +1593,47 @@ b_seed_analyze! = |ctx| {
     check!("...and `plan` still exits 0", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' plan >/dev/null 2>&1; echo $?")) == "0")?
     # ...and the human line SPEAKS on that state rather than staying silent, which is the
     # whole point of the known flag: the count is 0 there.
-    check!("...and the human line names it instead of going quiet", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' plan 2>/dev/null"), "metrics queue unreadable"))?
+    check!("...and the human line names it instead of going quiet", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' plan 2>/dev/null"), "awaiting-metrics count unreadable"))?
     _ = sql!(ctx.db, "DELETE FROM config WHERE key = 'hr_z2_max_ride';")
     check!("...and removing the bad override restores the count", pf!("activities_awaiting_metrics_known") == "true")?
+    check!("...to a real zero, not merely a known one", pf!("activities_awaiting_metrics") == "0")?
+    # ── last_sync (#221) ────────────────────────────────────────────────
+    # This driver never syncs, so the CORRECT value here is "" — which is also what every
+    # broken implementation produces. Asserting "" would be the vacuous absence check this
+    # file warns about, and it showed: deleting the whole lookup, and returning the raw
+    # stored epoch unconverted, BOTH passed the entire suite. The only real test is to
+    # write the key, which costs one line.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key,value) VALUES ('last_sync_epoch','1700000000');")
+    check!("last_sync is the stored epoch as UTC ISO, not the raw value", pf!("last_sync") == "2023-11-14T22:13:20Z")?
+    # arg_i64 takes plain integers only, so exponent notation is the unparseable case.
+    _ = sql!(ctx.db, "UPDATE config SET value = '1e9' WHERE key = 'last_sync_epoch';")
+    check!("...an unparseable one reads empty rather than failing plan", pf!("last_sync") == "")?
+    # Negative is a THIRD arm, and the one that used to emit "1970-01-01T00:00:0-1Z" — a
+    # malformed string the schema's bare "string" type accepts without complaint.
+    _ = sql!(ctx.db, "UPDATE config SET value = '-1' WHERE key = 'last_sync_epoch';")
+    check!("...and a negative one does not become a malformed timestamp", pf!("last_sync") == "")?
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key = 'last_sync_epoch';")
+    check!("...and with the key gone it is empty again", pf!("last_sync") == "")?
+    # ── the human line (#221) ───────────────────────────────────────────
+    # Render.freshness_note is called ONLY from the human path, so the pure expects prove
+    # the formatting and nothing proves the wiring. Deleting the print block outright
+    # passed the whole suite. The block already sits on non-zero state, so this costs one
+    # line and pins the separator, the arm order and the call itself end to end.
+    _ = sql!(ctx.db, "UPDATE activity_metrics SET metrics_rev = 0;")
+    check!("the human line carries both arms, in order, with the separator", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' plan 2>/dev/null"), "DATA: 3 awaiting metrics (stride analyze) · 1 awaiting streams (stride sync)"))?
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # ...and it goes SILENT once there is nothing to say — the arm that runs on almost
+    # every real invocation, and the one no "contains" check can see. Reaching it means
+    # retiring the fixture's resting 1: giving 102 a streams row moves BOTH counts (an
+    # arrived stream changes stream_len_used, so the row goes pending), hence the analyze.
+    # Both sides are then undone, and the resting state is re-asserted rather than assumed.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (102, '{}');")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("...and says nothing at all once both counts are zero", !(Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' plan 2>/dev/null"), "DATA:")))?
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 102;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("...and the fixture is back to its resting 1 awaiting stream", pf!("activities_awaiting_streams") == "1")?
+    check!("...with nothing awaiting metrics", pf!("activities_awaiting_metrics") == "0")?
 
     # ── season: blocks bounded by absence (#139, ADR 0011) ──────────────
     # The fixture's activities sit in a handful of dates, so this exercises the
