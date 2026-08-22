@@ -945,36 +945,69 @@ Plan :: [].{
                 # the coach's side of the line, and what counts as stale depends on the
                 # question being asked.
                 #
-                # awaiting_metrics reuses Analyze.pending_metrics_count!, which is built
-                # on the same pending_where clause `analyze` selects rows with, so it is
-                # the count of rows analyze WOULD recompute right now rather than a
-                # second predicate that could drift from it. That is stricter than
-                # doctor's `unanalyzed`, which is only `m.activity_id IS NULL` and so
-                # reads 0 while a changed FTP, changed zones or a bumped metrics_rev
-                # leaves every row due for recomputation.
-                awaiting_metrics = Analyze.pending_metrics_count!(path, zb)?
+                # awaiting_metrics reuses Analyze.pending_metrics_count!, which is built on
+                # the same pending_where clause `analyze` selects rows with, so it is the
+                # count of rows analyze WOULD recompute right now rather than a second
+                # predicate that could drift from it. Never FEWER than doctor's
+                # `unanalyzed`, and more whenever an already-scored row has been
+                # invalidated: `unanalyzed` is only `m.activity_id IS NULL`, so it reads 0
+                # while a changed FTP, a changed threshold pace, changed zones, a bumped
+                # metrics_rev, or any of the stored `*_used` input columns moving — a
+                # newly arrived stream is the commonest of those — leaves rows due for
+                # recomputation. The two counts are EQUAL in the ordinary case, which is
+                # why this is a superset rather than a different measurement.
+                #
+                # Not `?`. pending_metrics_count! calls load_config!, which validates EVERY
+                # `hr_z*` key including the per-sport overrides, where plan's own
+                # load_zone_config! above validates only the four global ones. Propagating
+                # made an unparseable per-sport override kill `plan` outright — no summary,
+                # no sessions, no adherence — for a database that planned fine before this
+                # feature existed. A count we cannot compute is reported as unknown, in the
+                # `*_known` idiom this payload already uses for power and decoupling: 0
+                # with known false, never a bare 0 that reads as "nothing to do".
+                awaiting : { count : U64, known : Bool }
+                awaiting = match Analyze.pending_metrics_count!(path, zb) {
+                    Ok(n) => { count: n, known: True }
+                    Err(_) => { count: 0, known: False }
+                }
+                awaiting_metrics = awaiting.count
                 awaiting_streams = Strava.pending_streams!(path)?
-                # date only, so it compares directly against summary.as_of — the gap
-                # between the two IS the "am I missing rides?" answer, with no epoch
-                # arithmetic and no need to know what today is. "" when there are none.
+                # Date only, so it lines up with summary.as_of. Read the two together and
+                # mind what as_of is: rebuild_daily_load! floors the series at local today,
+                # so as_of is today WHENEVER analyze has run, and the gap is then days since
+                # the last activity. If neither sync nor analyze has run for a while, both
+                # dates age together and the gap goes to ZERO on stale data — measured. So
+                # last_sync against the real clock is the primary staleness signal and this
+                # gap is the secondary one. "" when there are no activities.
                 newest_activity = Sqlite.query!({
                     path: Path.utf8(path),
                     query: "SELECT COALESCE(MAX(substr(start_local, 1, 10)), '') AS d FROM activities",
                     bindings: [],
                     row: Sqlite.str("d"),
                 })?
-                # UTC ISO rather than the raw epoch it is stored as: one representation of
-                # one fact, in the same shape as every other timestamp the payload carries.
+                # UTC ISO rather than the raw epoch it is stored as. Note this is the
+                # payload's only full timestamp and its only UTC value — every date beside
+                # it is a local YYYY-MM-DD derived from start_local.
+                #
                 # "" when sync has never run, which is itself the answer on a fresh install.
                 last_sync =
                     match Db.config_opt!(path, "last_sync_epoch")? {
                         NotFound => ""
                         Found(raw) =>
                             match Metrics.arg_i64(raw) {
-                                Ok(e) => Metrics.epoch_to_iso(e)
-                                # a corrupt value is not a freshness signal, and `plan` is
-                                # the wrong command to fail over it — `doctor` is where a
-                                # broken config gets reported
+                                # Negatives are rejected rather than formatted. arg_i64
+                                # accepts them, and epoch_to_iso's `% 86400` then yields a
+                                # malformed string like "1970-01-01T00:00:0-1Z" — a
+                                # confident, fake timestamp, which is worse than either
+                                # failing or saying nothing. Strava.roc clamps the same key
+                                # with .max(0); clamping here would assert "synced at the
+                                # epoch", so unknown is the honest bucket.
+                                Ok(e) => if e >= 0 Metrics.epoch_to_iso(e) else ""
+                                # A corrupt value is not a freshness signal, and a planning
+                                # read should not die on a key it only wants for display.
+                                # `sync` is the command that DOES fail on it
+                                # (UnreadableConfig, Strava.roc) — that divergence is
+                                # deliberate. `doctor` does not report it at all.
                                 Err(_) => ""
                             }
                     }
@@ -999,6 +1032,9 @@ Plan :: [].{
                             newest_activity,
                             last_sync,
                             activities_awaiting_metrics: awaiting_metrics,
+                            # false when the count could not be computed at all, so a
+                            # consumer never reads an unknowable 0 as "nothing to do"
+                            activities_awaiting_metrics_known: awaiting.known,
                             activities_awaiting_streams: awaiting_streams,
                         },
                     })
@@ -1009,6 +1045,7 @@ Plan :: [].{
                     # database rather than a row of zeros before every planning session.
                     fresh_line = Render.freshness_note({
                         activities_awaiting_metrics: awaiting_metrics,
+                        activities_awaiting_metrics_known: awaiting.known,
                         activities_awaiting_streams: awaiting_streams,
                     })
                     if fresh_line != "" {

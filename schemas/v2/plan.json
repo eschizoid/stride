@@ -240,21 +240,26 @@
         "newest_activity",
         "last_sync",
         "activities_awaiting_metrics",
+        "activities_awaiting_metrics_known",
         "activities_awaiting_streams"
       ],
       "additionalKeys": false,
       "properties": {
         "newest_activity": {
           "type": "string",
-          "description": "Date of the newest activity in the database, YYYY-MM-DD, or \"\" when there are none. Comparable directly against summary.as_of; the gap between the two is how far behind the data is."
+          "description": "Date of the newest activity in the database, YYYY-MM-DD, or \"\" when there are none. Read alongside summary.as_of: as_of is floored at local today whenever `analyze` runs, so the gap is days since the last activity. When neither `sync` nor `analyze` has run for a while both dates age together and the gap goes to zero on stale data, which is why last_sync is the primary staleness signal and this is the secondary one."
         },
         "last_sync": {
           "type": "string",
-          "description": "When `sync` last ran, as a UTC ISO timestamp, or \"\" when it never has \u2014 which is itself the answer on a fresh install, and also what an unparseable stored value reports rather than failing the command."
+          "description": "When the last successful `sync` BEGAN, as a UTC ISO timestamp \u2014 the stamp is taken before any network work \u2014 or \"\" when sync has never run, when the stored value will not parse, and when it is negative. This is the payload's only full timestamp and its only UTC value; every date beside it is a local YYYY-MM-DD derived from start_local. Compare it against the current date: that is the one field that detects an install where nothing has run in days."
         },
         "activities_awaiting_metrics": {
           "type": "integer",
-          "description": "How many rows `analyze` would recompute right now. Shares the predicate `analyze` selects on, so it counts changed FTP, changed zones and a bumped metrics_rev as well as rows never scored \u2014 strictly more than doctor's `unanalyzed`, which only counts rows with no metrics at all."
+          "description": "How many rows `analyze` would recompute right now. Shares the predicate `analyze` selects on, so beyond rows never scored it counts rows whose FTP, threshold pace, zones, metrics_rev or underlying activity inputs have changed since they were scored \u2014 a newly arrived stream being the commonest. Never fewer than doctor's `unanalyzed`, which counts only rows with no metrics at all, and equal to it in the ordinary case. Meaningless unless activities_awaiting_metrics_known is true."
+        },
+        "activities_awaiting_metrics_known": {
+          "type": "boolean",
+          "description": "False when the count could not be computed at all \u2014 the metrics predicate needs the full zone config, and an unparseable per-sport HR-zone override makes it unreadable. The count is 0 in that case and must NOT be read as \"nothing to do\". `plan` deliberately degrades here rather than failing, so one bad optional config key cannot cost the whole planning bundle; `analyze` is the command that reports the underlying error."
         },
         "activities_awaiting_streams": {
           "type": "integer",

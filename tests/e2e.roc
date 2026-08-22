@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_at_least!(575)?
+    checks_ran_at_least!(583)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1521,9 +1521,10 @@ b_seed_analyze! = |ctx| {
 
     # ── data freshness (#221) ───────────────────────────────────────────
     # The schema check above proves SHAPE, and shape is exactly what a hardcoded zero
-    # satisfies. These pin the two counts to state the test controls, in both directions,
-    # so a constant fails: the fixture is analyzed here, so both must read 0 now, then
-    # move when the underlying condition is created, then return.
+    # satisfies. These pin the counts to state the test controls, in both directions, so a
+    # constant fails: the fixture is analyzed here, so metrics reads 0 and streams reads
+    # its resting 1 (see below), then each moves when its underlying condition is created,
+    # then returns.
     pf! = |q| Str.trim(strjq!(ctx, ["plan"], ".data.data_freshness.${q}"))
     check!("a current database is awaiting no metrics", pf!("activities_awaiting_metrics") == "0")?
     # The fixture seeds id 99 (the baseline probe) with no streams row, so 1 is the
@@ -1560,6 +1561,26 @@ b_seed_analyze! = |ctx| {
     check!("the freshness probe left the fixture current", pf!("activities_awaiting_metrics") == "0")?
     check!("...on both counts", pf!("activities_awaiting_streams") == "1")?
     check!("...and newest_activity is back where it started", pf!("newest_activity") == newest_sql)?
+    # The count needs the FULL zone config, including per-sport overrides, where the rest
+    # of `plan` needs only the four global keys. Propagating that stricter read killed the
+    # whole command — no summary, no sessions, no adherence — on a database that planned
+    # fine before this feature existed. `config set` refuses this value today, but the
+    # write gate is newer than the key, so a database written earlier can still hold one.
+    check!("the metrics count is known on a healthy config", pf!("activities_awaiting_metrics_known") == "true")?
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key,value) VALUES ('hr_z2_max_ride','1.6e2');")
+    # Compared against `summary`, which is unaffected by this key, rather than merely
+    # asserted non-empty: on an error envelope `.data.summary.as_of` is absent and `jq -r`
+    # prints "null", so a `!= ""` test passes on exactly the failure it is meant to catch.
+    check!("an unparseable per-sport zone override does not cost the planning bundle", strjq!(ctx, ["plan"], ".data.summary.as_of") == Str.trim(strjq!(ctx, ["summary"], ".data.as_of")))?
+    check!("...and that comparison is against a real date, not null == null", !(Str.contains(Str.trim(strjq!(ctx, ["summary"], ".data.as_of")), "null")))?
+    check!("...with the rest of the bundle intact", strjq!(ctx, ["plan"], ".data.adherence_28d.planned | type") == "number")?
+    check!("...it reports the metrics count as UNKNOWN rather than a bare zero", pf!("activities_awaiting_metrics_known") == "false")?
+    check!("...and `plan` still exits 0", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' plan >/dev/null 2>&1; echo $?")) == "0")?
+    # ...and the human line SPEAKS on that state rather than staying silent, which is the
+    # whole point of the known flag: the count is 0 there.
+    check!("...and the human line names it instead of going quiet", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' plan 2>/dev/null"), "metrics queue unreadable"))?
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key = 'hr_z2_max_ride';")
+    check!("...and removing the bad override restores the count", pf!("activities_awaiting_metrics_known") == "true")?
 
     # ── season: blocks bounded by absence (#139, ADR 0011) ──────────────
     # The fixture's activities sit in a handful of dates, so this exercises the
