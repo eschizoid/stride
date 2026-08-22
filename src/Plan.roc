@@ -965,11 +965,14 @@ Plan :: [].{
                 # feature existed. A count we cannot compute is reported as unknown,
                 # EXTENDING the `*_known` idiom (ADR 0009) rather than following it: every
                 # existing flag — power, intensity, hr, zones on recent_activities_14d —
-                # decodes a stored NULL, an absent measurement, a normal state. This one
-                # decodes an Err from a computation that could not run, which means
-                # something is broken. Same shape, new meaning, said plainly here because a
-                # maintainer reading ADR 0009 will otherwise hunt for the NULL column behind
-                # it. 0 with known false, never a bare 0 that reads as "nothing to do".
+                # marks an absent measurement in a normal state. Two mechanisms already sit
+                # behind that: the first three decode a stored NULL, while zones_known tests
+                # `hr_samples_total > 0`, which ADR 0009 files separately as an ambiguous
+                # zero. This is a third — it decodes an Err from a computation that could
+                # not run, which means something is BROKEN rather than merely absent. Said
+                # plainly here because a maintainer reading ADR 0009's NULL rule will
+                # otherwise hunt for the column behind this flag. 0 with known false, never
+                # a bare 0 that reads as "nothing to do".
                 awaiting : { count : U64, known : Bool }
                 awaiting = match Analyze.pending_metrics_count!(path, zb) {
                     Ok(n) => { count: n, known: True }
@@ -980,7 +983,7 @@ Plan :: [].{
                 # Date only, so it lines up with summary.as_of — but mind exactly what
                 # that gap measures. rebuild_daily_load! floors the series at local today,
                 # so as_of is pinned to the day analyze LAST RAN, not to now. The gap is
-                # therefore last-activity-to-last-analyze, never last-activity-to-today: it
+                # therefore last-activity-to-last-analyze, not, in general, last-activity-to-now: it
                 # equals days since the last ride only when analyze ran TODAY, and otherwise
                 # simply stops growing. Measured — last activity Aug 12, analyze last run
                 # Aug 15, today Aug 22 gives a frozen gap of 3 on an install a week stale.

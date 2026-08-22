@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_at_least!(595)?
+    checks_ran_at_least!(597)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1541,7 +1541,10 @@ b_seed_analyze! = |ctx| {
     check!("exactly one fixture activity has no streams, and it is 102", unstreamed == "102")?
     check!("...so awaiting streams rests at 1", pf!("activities_awaiting_streams") == "1")?
     # ...and it is the same count doctor reports, which is what the schema claims and
-    # nothing checked. A cross-COMMAND oracle, so a shared bug in one is visible.
+    # nothing checked. A cross-COMMAND oracle: it catches one side drifting from the other —
+    # a field wired to the wrong query, a stale copy, a type slip — and is blind BY
+    # CONSTRUCTION to a bug inside the Strava.pending_streams! they both call, since both
+    # payloads would move together and the equality would still hold.
     check!("...the same count doctor reports as pending_streams", pf!("activities_awaiting_streams") == Str.trim(strjq!(ctx, ["doctor"], ".data.pending_streams")))?
     # newest_activity read a second way, so a hardcoded date, the wrong column or a full
     # timestamp all fail — the schema's "string" accepts every one of those.
@@ -1554,6 +1557,13 @@ b_seed_analyze! = |ctx| {
     # two share. This anchors the oracle ITSELF to a date the harness computed independently
     # of any query.
     check!("...and that date is the fixture's own d2, not merely what sqlite agrees to", newest_sql == ctx.d2)?
+    # as_of and newest_activity pinned side by side, as DIFFERENT dates with different
+    # provenance. Three rounds of prose on this PR described their relationship wrongly —
+    # "the gap is days since the last ride", "the gap goes to zero on stale data" — and a
+    # comment cannot catch the fourth. analyze has just run, so as_of is floored at today
+    # while newest_activity stays on the last activity's own date, one day earlier.
+    check!("analyze floors as_of at today...", Str.trim(strjq!(ctx, ["plan"], ".data.summary.as_of")) == ctx.today)?
+    check!("...while newest_activity stays on the last activity's date, a different day", pf!("newest_activity") == ctx.d2 and ctx.today != ctx.d2)?
     # Bumping every stored metrics_rev is precisely what a release that changes the metric
     # definitions does, and it is the case doctor's `unanalyzed` CANNOT see: the rows still
     # have metrics, so `m.activity_id IS NULL` counts none of them.
@@ -1624,8 +1634,10 @@ b_seed_analyze! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # ...and it goes SILENT once there is nothing to say — the arm that runs on almost
     # every real invocation, and the one no "contains" check can see. Reaching it means
-    # retiring the fixture's resting 1: giving 102 a streams row moves BOTH counts (an
-    # arrived stream changes stream_len_used, so the row goes pending), hence the analyze.
+    # retiring the fixture's resting 1: giving 102 an empty-streams marker moves BOTH counts
+    # — it leaves the `s.activity_id IS NULL` set, and stream_len_used goes 0 -> 2 so the row
+    # goes pending — hence the analyze. `{}` is this codebase's 404 marker, not a real
+    # stream, which is why it is written directly rather than fetched.
     # Both sides are then undone, and the resting state is re-asserted rather than assumed.
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (102, '{}');")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])

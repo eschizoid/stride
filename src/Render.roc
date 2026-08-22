@@ -734,10 +734,11 @@ Render :: [].{
         # the command that fails with the underlying reason; `doctor` does not report it.
         #
         # "count", not "queue": what could not be read is the zone config, not the pending
-        # work. An earlier wording said "awaiting-metrics count unreadable", which sends a reader
+        # work. An earlier wording said "metrics queue unreadable", which sends a reader
         # looking for database damage — the same class of plausible-but-wrong sentence the
-        # drain_note comment below rejects. It also matches the sibling arm and the field
-        # name, where "queue" appeared in no other rendered string in the binary.
+        # drain_note comment above rejects. The wording that shipped also matches the sibling
+        # arm and the field name, where "queue" appeared in no other rendered string in the
+        # binary.
         metrics_note =
             if !(f.activities_awaiting_metrics_known) {
                 ["awaiting-metrics count unreadable (stride analyze says why)"]
