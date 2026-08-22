@@ -6,6 +6,11 @@
 # test binary (built on demand from tests/e2e.roc)
 /e2e
 
+# e2e fixture-write failure log (#226): truncated at the start of every run and removed
+# on a clean finish, so it is only ever present after a run that aborted
+/.e2e-sqlfail
+/.e2e-sqlfail.err
+
 # scratch build binaries from build/debug cycles (only /stride is kept)
 /stride-*
 
