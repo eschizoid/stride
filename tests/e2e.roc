@@ -200,6 +200,7 @@ shutdown! = |_reason, _ctx| Ok({})
 
 run_all! : () => Try({}, _)
 run_all! = || {
+    reset_checks!({})
     reset_sqlite_errors!({})
     bin = env_or!("STRIDE_BIN", "./stride")
     home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
@@ -254,6 +255,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
+    checks_ran_at_least!(400)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -299,6 +301,7 @@ run_scenarios! = |ctx| {
 # has no power, so it falls to HR. ───────────────────────────────────────────────────
 run_sync! : () => Try({}, _)
 run_sync! = || {
+    reset_checks!({})
     reset_sqlite_errors!({})
     bin = env_or!("STRIDE_BIN", "./stride")
     base = env_or!("STRIDE_API_BASE", "http://127.0.0.1:8799")
@@ -453,6 +456,7 @@ run_sync! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
+    checks_ran_at_least!(30)?
     Stdout.line!("SYNC E2E CHECKS PASS")
 }
 
@@ -470,6 +474,7 @@ run_sync! = || {
 # Runs under `just e2e-sync`, like every mock-backed check — and that recipe is in CI.
 run_skips! : () => Try({}, _)
 run_skips! = || {
+    reset_checks!({})
     # Every driver resets the run-scoped failure log on entry and asserts it empty before
     # finishing (#226). Adding a driver without both is SILENT: the rebase that brought
     # this scenario onto a main carrying that log merged cleanly and left it with neither,
@@ -529,6 +534,7 @@ run_skips! = || {
     _ = sh!("rm -rf '${home}'")
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     reset_sqlite_errors!({})
+    checks_ran_at_least!(10)?
     Stdout.line!("SKIPS E2E CHECKS PASS")
 }
 
@@ -540,6 +546,7 @@ run_skips! = || {
 # passed the entire suite. These two runs are the only thing that catches it.
 run_stops! : () => Try({}, _)
 run_stops! = || {
+    reset_checks!({})
     # same contract as every other driver — see run_skips!
     reset_sqlite_errors!({})
     bin = env_or!("STRIDE_BIN", "./stride")
@@ -577,17 +584,13 @@ run_stops! = || {
         # than short-circuiting on `fresh == token`.
         _ = sql!(db, "UPDATE config SET value='stale-access' WHERE key='strava_access_token'; UPDATE config SET value='1' WHERE key='strava_expires_at';")
         started_at = str_to_i64(Str.trim(sh!("date +%s")))
-        # HARD timeout on the invocation itself. Without it an unbounded loop never
-        # returns, so the elapsed check below is never evaluated and the harness HANGS
-        # instead of failing — review's exact criticism of a latency assertion that only
-        # manifests as CI looking slow. With it, the run is killed, the envelope is empty,
-        # and three checks go red.
         # HARD kill-after on the invocation itself (`timeout` is not on macOS). Without
         # it an unbounded loop never returns, the elapsed check below is never evaluated,
         # and the harness HANGS instead of failing — review's exact criticism of a latency
         # assertion that only manifests as CI looking slow. With it the run is killed, the
         # envelope is empty, and the checks go red.
-        _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null & p=$!; (sleep 25; kill -9 $p) >/dev/null 2>&1 & w=$!; wait $p >/dev/null 2>&1; kill $w >/dev/null 2>&1")
+        be401 = "${home}/401.err"
+        _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>'${be401}' & p=$!; (sleep 25; kill -9 $p) >/dev/null 2>&1 & w=$!; wait $p >/dev/null 2>&1; kill $w >/dev/null 2>&1")
         elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - started_at
         out401 = Str.trim(sh!("cat '${bo}'"))
         # TERMINATION is the invariant. Unbounded, review measured ~113 requests/second
@@ -597,9 +600,26 @@ run_stops! = || {
         check!("...as an auth error", bfq!(".error.code") == "not_authenticated")?
         check!("...naming the fix", Str.contains(out401, "stride auth"))?
         check!("...not as a success envelope", bfq!(".data") == "null")?
+        # THE bound, in both directions. Every assertion above reads stdout, and both 401
+        # exits — "refresh did not help" and "kept getting 401 after refreshing" — are
+        # flattened by the boundary into the same envelope, so stdout cannot tell a
+        # bounded run from one that never refreshed at all. Review proved it: setting the
+        # bound to 0, which disables refreshing entirely, passed every check. The stderr
+        # count is what discriminates, and it tracks max_refreshes exactly.
+        check!("...having spent exactly the bounded number of refreshes", str_to_i64(Str.trim(sh!("grep -c 'refreshed, continuing' '${be401}' 2>/dev/null"))) == 2)?
+        # the boundary reporter fires on this path; nothing asserted it, so deleting it
+        # passed the whole suite
+        check!("...and the partial-progress report names the run", Str.contains(sh!("cat '${be401}'"), "everything already stored is saved"))?
     } else if rate_limited {
+        rl_start = str_to_i64(Str.trim(sh!("date +%s")))
         # 501 429s forever. 502 drains first (ORDER BY start_local DESC) and stores its
         # 404 marker, so a surviving counter reads 1 and a reset one reads 0.
+        # WALL CLOCK. The no-sleep fix is only observable as latency: review reintroduced
+        # a 3s sleep here and every driver passed, so a return to the ~30-minute block
+        # would read as CI being slow rather than as a failing check. I claimed this
+        # assertion in an earlier commit message and it was never actually in the file.
+        rl_elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - rl_start
+        check!("a rate-limited sync returns at once instead of sleeping", rl_elapsed < 10)?
         check!("a 429 stops the run outright", bfq!(".data.stopped") == "rate_limited")?
         check!("...counting what it stored before the 429", bfq!(".data.streams_fetched") == "1")?
         check!("...leaving the 429'd id pending", bfq!(".data.pending_streams") == "1")?
@@ -640,6 +660,7 @@ run_stops! = || {
     _ = sh!("rm -rf '${home}'")
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     reset_sqlite_errors!({})
+    checks_ran_at_least!(6)?
     Stdout.line!("STOP-REASON E2E CHECKS PASS")
 }
 
@@ -3089,9 +3110,33 @@ is_nonempty = |s| !(Str.is_empty(Str.trim(s))) and Str.trim(s) != "null"
 # what makes the run-scoped log worth having: `check!` knows no db and no HOME, and with
 # one fixed path it does not need to — so every driver, including run_sync! and any added
 # later, gets the report without its own wrapper.
+# ONE line per check that ran, so a driver can assert it ran the checks it contains.
+# A whole `else if` branch went dead in this file — a duplicated fragment made an EMPTY
+# branch match first — and its six assertions silently stopped running while the driver
+# still printed PASS and exited 0. Nothing observed that, because every other guard here
+# asserts on VALUES, and a check that never runs has no value to be wrong. Counting is
+# the only thing that catches it.
+checks_log : Str
+checks_log = ".e2e-checks"
+
+reset_checks! : {} => {}
+reset_checks! = |{}| {
+    _ = sh!("rm -f '${checks_log}'")
+    {}
+}
+
+# a driver's floor, not its exact count — an exact number would fail on every added
+# check and get bumped without thought, which is how a guard stops guarding.
+checks_ran_at_least! : I64 => Try({}, _)
+checks_ran_at_least! = |floor| {
+    ran = str_to_i64(Str.trim(sh!("wc -l < '${checks_log}' 2>/dev/null || echo 0")))
+    check!("this driver ran its checks (${I64.to_str(ran)} >= ${I64.to_str(floor)})", ran >= floor)
+}
+
 check! : Str, Bool => Try({}, _)
 check! = |name, cond|
     if cond {
+        _ = sh!("echo x >> '${checks_log}'")
         Stdout.line!("  ok   ${name}")
     } else {
         Stdout.line!("  FAIL ${name}")?
