@@ -71,8 +71,13 @@ just install   # build + symlink to ~/.local/bin/stride
   in the versioned envelope by `emit_ok!`/`emit_err!` (`{schema_version, data}` /
   `{schema_version, error:{code,message}}`), humans get a pure `Render.<cmd>_screen`
   (or inline closure). A payload field you ADD must also be added to
-  `schemas/v2/<command>.json` — `additionalKeys: false` means CI fails on an
-  undeclared key, which is the point (`just schema-check` runs the same
+  `schemas/v2/<command>.json` — `additionalKeys: false` means an undeclared key
+  fails validation, which is the point. Say CI only where CI validates that
+  payload — ADR §9c enumerates which pass covers which command, and it is not all
+  of them. Do NOT reach for
+  the compiler as a substitute where the validator is absent: the closed record on
+  the screen function pins payload↔SCREEN, so widening both ships a green build
+  with the schema stale. Different invariant (`just schema-check` runs the same
   validator against your own database; `tools/schema-lint.jq` keeps schemas
   inside the subset `tools/validate.jq` actually reads — `title` included, since the
   validator uses it as the violation path's prefix — plus `description` for humans).
@@ -84,12 +89,23 @@ just install   # build + symlink to ~/.local/bin/stride
   failure and exits 0 — humans get the help screen, machines get the command list —
   and an unknown command is an error). New commands are born on this
   pattern; older ones migrate as touched.
-- `tests/e2e.roc` is ONE binary in two roles: a mock Strava server (`E2E_MODE=mock`) and
-  the offline e2e driver (`E2E_MODE=sync` runs real sync + token refresh against it).
-  `STRIDE_API_BASE` points stride at the mock for network-free sync testing (`just
-  e2e-sync`, local-only, single-shot — the 5× retry that absorbed bug C's ~50% flake was
+- `tests/e2e.roc` is ONE binary in FOUR roles, picked by `E2E_MODE`: the offline suite
+  (default, no mode set), a mock Strava server (`mock`), and three drivers that run
+  against it — `sync` (real sync + token refresh), `backfill` (the undecodable-body skip
+  path), and `stops` (the `budget_reached` / `rate_limited` outcomes). `just e2e-sync`
+  starts three mock instances on three ports (`mock_port`, `bad_stream_port`,
+  `rate_limit_port`) and runs all three drivers; the mock's behaviour is varied by
+  `E2E_BAD_STREAM` / `E2E_RATE_LIMIT`. `STRIDE_API_BASE` points stride at the mock, and
+  `STRIDE_READS_PER_RUN` / `STRIDE_WINDOW_SLEEP_MS` / `STRIDE_READS_PER_WINDOW` /
+  `STRIDE_MAX_429` shrink the rate-limit pacing so terminal arms that cost 940 reads or
+  two 15-minute sleeps are reachable in milliseconds. Same species of seam as
+  `STRIDE_API_BASE`; humans never set any of them. They can only LOWER a limit — an
+  override able to RAISE one would let a typo or a copied command line hammer Strava and
+  get the athlete's own API app suspended, and lowering is all a test needs. This recipe DOES run in CI — it needs
+  no network and no credential (loopback mocks, a fake token row in a sandboxed HOME).
+  It runs single-shot — the 5× retry that absorbed bug C's ~50% flake was
   deleted when the bug was fixed; a new flake here deserves a new investigation, not
-  absorption). Standing caveat that OUTLIVES bug C: every string in the mock fixture is
+  absorption. Standing caveat that OUTLIVES bug C: every string in the mock fixture is
   short enough to live inline in a RocStr, so this suite is structurally blind to
   heap-string bugs — a change to the sync decode/bind path must be run against real
   Strava data before it is called working. That mistake has shipped once.

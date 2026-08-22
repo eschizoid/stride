@@ -90,7 +90,7 @@ jobs:
   # current pin carries the fix — so the reason is spent and the placement is now just
   # untested. macOS is the dev platform and the suite is green there; the cross-platform
   # gate is `check` + pure `test` above (all three OSes). Moving e2e to linux now needs a
-  # trial run, not a comment change. e2e-sync (network) is still local-only.
+  # trial run, not a comment change. e2e-sync also runs here now — it needs no network.
   e2e:
     needs: check-and-test
     runs-on: macos-latest
@@ -116,6 +116,14 @@ jobs:
         run: roc build src/app.roc --output=stride --opt=dev   # new compiler uses --output=
       - name: Run offline e2e suite
         run: ROC=roc just e2e
+      # Runs in CI despite the "sync" name: it needs no network and no credential.
+      # The mocks bind loopback, STRIDE_API_BASE points stride at them (Config
+      # .api_base_allowed permits http to loopback for exactly this), and the token is a
+      # fake row written into a sandboxed HOME. This was left out on the belief that it
+      # "needs a token and a live API" — it does not, and that belief cost `backfill`
+      # its only payload-vs-schema check in CI.
+      - name: Run mock-backed e2e suite
+        run: ROC=roc just e2e-sync
       # Cheap, and it guards a class that has rotted twice: a comment asserting an issue
       # is still open when the tracker says closed (#165 found `#105 remains open` sitting
       # 560 lines above the same file saying it was fixed). GITHUB_TOKEN is enough — it

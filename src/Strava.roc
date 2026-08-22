@@ -16,6 +16,7 @@ import Streams
 import Backfill
 import Metrics
 import Config
+import Render
 
 Strava :: [].{
     # push a new FTP to Strava (PUT /athlete?ftp=). Best-effort: any failure just
@@ -400,8 +401,9 @@ Strava :: [].{
                     # envelope at the end, so a plain line on stdout would sit in front of
                     # that JSON and break every machine consumer parsing it. It is
                     # narration about how the run went, which is exactly what stderr is
-                    # for. (`backfill` prints its own progress on stdout legitimately —
-                    # that command emits no envelope, so its lines ARE its output.)
+                    # for. `backfill` holds to the same rule for the same reason (#218):
+                    # it emits an envelope too, so its progress is narration on stderr and
+                    # the envelope's `stopped` field carries the outcome this line reports.
                     _ = if total > 0 { Output.narrate_done!({})? } else { {} }
                     Output.say!("rate limited by Strava — stopping streams backfill for now (will resume next sync)")?
                     Ok(acc)
@@ -472,13 +474,49 @@ Strava :: [].{
     # So we count our own reads against
     # Strava's known limits (100 reads / 15 min, 1000 / day) and pace proactively,
     # with 429 as a bounded backstop.
-    window_sleep_ms = 905_000 # ~15 min + margin past the window reset
+    # ── test seams, same species as STRIDE_API_BASE ─────────────────────
+    # These three constants made two of the three StopReason values untestable: reaching
+    # `budget_reached` honestly costs 940 reads, and `rate_limited` costs two 15-minute
+    # sleeps. So a transposed counter in either terminal arm shipped with the whole suite
+    # green — review demonstrated exactly that. Overriding them from the environment
+    # reaches both arms in milliseconds against the mock. Humans never set these; the
+    # defaults are the real limits and are what every non-test run uses.
+    # An override may only LOWER a limit, never raise it. These bound requests against
+    # Strava's real caps, and an env var that could raise them would let a typo — or a
+    # copied command line — hammer the API and get the athlete's own API app suspended.
+    # Lowering is all a test needs, so the useful direction is the safe one.
+    env_i64! : Str, I64 => I64
+    env_i64! = |name, fallback|
+        match Env.var_str!(OsStr.from_str(name)) {
+            Ok(v) =>
+                match I64.from_str(v) {
+                    Ok(n) if n > 0 and n < fallback => n
+                    _ => fallback
+                }
+            Err(_) => fallback
+        }
+
+    # U64 rather than reusing env_i64!: Sleep.millis! takes U64, and a conversion
+    # helper does not exist in this compiler (I64.to_u64 / .to_u64() both fail).
+    window_sleep_ms! : {} => U64
+    window_sleep_ms! = |{}|
+        match Env.var_str!(OsStr.from_str("STRIDE_WINDOW_SLEEP_MS")) {
+            # shorter only, same one-directional rule as env_i64! — a LONGER sleep is
+            # harmless to Strava but would hang a run for as long as the value says
+            Ok(v) =>
+                match U64.from_str(v) {
+                    Ok(n) if n > 0 and n < 905_000 => n
+                    _ => 905_000 # ~15 min + margin past the window reset
+                }
+            Err(_) => 905_000
+        }
+
     # the read-count limits the pure Backfill.decide reasons about (see Backfill.roc)
-    read_limits : Backfill.Limits
-    read_limits = {
-        reads_per_window: 95, # sleep before the 100/15-min read window fills
-        reads_per_run: 940, # stop before the 1000/day cap (room for list pages + slack)
-        max_consecutive_429: 2, # this many 429s after a sleep => assume daily cap, stop
+    read_limits! : {} => Backfill.Limits
+    read_limits! = |{}| {
+        reads_per_window: env_i64!("STRIDE_READS_PER_WINDOW", 95), # sleep before the 100/15-min read window fills
+        reads_per_run: env_i64!("STRIDE_READS_PER_RUN", 940), # stop before the 1000/day cap (room for list pages + slack)
+        max_consecutive_429: env_i64!("STRIDE_MAX_429", 2), # this many 429s after a sleep => assume daily cap, stop
     }
 
     send_bearer! = |uri, token|
@@ -520,13 +558,13 @@ Strava :: [].{
             Ok(token) => {
                 # pull the full activity list first so backfill is self-sufficient —
                 # no need to run `sync` beforehand (that's what made it two commands)
-                Stdout.line!("backfill: refreshing the activity list...")?
+                Output.say!("backfill: refreshing the activity list...")?
                 started = Db.now_secs!({})
                 # backfill reports neither counts, so it skips the per-row classify SELECT
                 counts = fetch_pages!(path, token, "", started, 1, { relisted: 0, new_n: 0, updated_n: 0 }, False, False)?
                 # full re-pull: window_start "" prunes every activity Strava no longer lists
                 pruned = prune_deleted!(path, started, "")?
-                (if pruned > 0 Stdout.line!("backfill: pruned ${U64.to_str(pruned)} activities removed on Strava") else Ok({}))?
+                (if pruned > 0 Output.say!("backfill: pruned ${U64.to_str(pruned)} activities removed on Strava") else Ok({}))?
                 Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
                 missing_ids = Sqlite.query_many!({
                     path: Path.utf8(path),
@@ -540,32 +578,72 @@ Strava :: [].{
                     rows: Sqlite.i64("id"),
                 })?
                 missing = List.len(missing_ids)
-                if missing == 0 {
-                    Stdout.line!("backfill: ${U64.to_str(counts.relisted)} activities, all streams already present — nothing to do")
-                } else {
-                    Stdout.line!("backfill: ${U64.to_str(counts.relisted)} activities, ${U64.to_str(missing)} need streams. Strava allows ~1000 reads/day, so a large first pull can span a few days — this run drains as far as today's limit allows and is resumable (just run `stride backfill` again).")?
-                    drain_streams!(path, token, missing_ids, { done: 0, window: 0, retries: 0 })
-                }
+                outcome : BackfillOutcome
+                outcome =
+                    if missing == 0 {
+                        { stored: 0, skipped: 0, pending: 0, stopped: Complete }
+                    } else {
+                        Output.say!("backfill: ${U64.to_str(counts.relisted)} activities, ${U64.to_str(missing)} need streams. Strava allows ~1000 reads/day, so a large first pull can span a few days — this run drains as far as today's limit allows and is resumable (just run `stride backfill` again).")?
+                        drain_streams!(path, token, missing_ids, { done: 0, window: 0, retries: 0, stored: 0, skipped: 0 })?
+                    }
+                # `resumable` is the question a caller acts on, and it is simply "is
+                # anything still missing?". Deriving it from `stopped` instead was wrong in
+                # BOTH directions: a run ending `complete` with an undecodable body still
+                # has work (that id stored nothing and retries next run), and a run that
+                # stops exactly on the read budget with an empty queue has none.
+                # `pending` is measured from the database after the last store in every
+                # arm that ran a drain. The no-work short-circuit below reads no database:
+                # it derives 0 from `missing_ids`, whose WHERE clause is identical to
+                # `pending_streams!`'s, so the value is right by the same query.
+                Output.out!(
+                    {
+                        activities: counts.relisted,
+                        pruned,
+                        streams_fetched: outcome.stored,
+                        streams_skipped: outcome.skipped,
+                        streams_pending: outcome.pending,
+                        stopped: Backfill.stopped_label(outcome.stopped),
+                        resumable: outcome.pending > 0,
+                    },
+                    Render.backfill_screen,
+                )
             }
         }
     }
     # Per-run drain state: `done` = reads this run (vs the daily cap), `window` = reads
     # since the last window sleep (vs the 15-min cap), `retries` = consecutive 429s
-    # after a sleep (to detect the daily cap without headers).
-    DrainState : { done : I64, window : I64, retries : I64 }
+    # after a sleep (to detect the daily cap without headers), `stored`/`skipped` = what
+    # those reads actually produced.
+    #
+    # `done` and `stored` are deliberately different numbers and must stay so. Pacing is
+    # about READS — a 404 spends a read and stores a marker, an undecodable body spends a
+    # read and stores nothing — while the payload reports WORK. Publishing `done` as
+    # `streams_fetched` (as the first cut of #218 did) reports rows that do not exist and
+    # disagrees with `sync`'s identically-named field, which counts stores.
+    DrainState : { done : I64, window : I64, retries : I64, stored : I64, skipped : I64 }
 
     # Walk the missing-streams list once per run. Walking a LIST (not re-querying
     # "next missing") means an unstorable body is skipped, not refetched forever.
     # The pacing DECISION is pure (Backfill.decide, unit-tested); this is the thin
     # effectful skin that dispatches on it: fetch, then act.
-    drain_streams! : Str, Str, List(I64), DrainState => Try({}, _)
+    # The THREE ways a drain ends, RETURNED rather than printed, because "why did it
+    # stop?" is not derivable from the counts. (A fourth exit exists and is deliberately
+    # not an outcome: a token refresh that does not help raises Err(HttpStatus(401, …)),
+    # which is a failure, not a stopping reason.) Both non-complete reasons stop against
+    # Strava's DAILY cap — `reads_per_run` is 940 against 1000 — so both mean tomorrow.
+    #
+    # `stopped` is a Backfill.StopReason tag, so the compiler enforces the set here;
+    # Backfill.stopped_label is the one place it becomes the string that ships.
+    BackfillOutcome : { stored : I64, skipped : I64, pending : I64, stopped : Backfill.StopReason }
+
+    drain_streams! : Str, Str, List(I64), DrainState => Try(BackfillOutcome, _)
     drain_streams! = |path, token, ids, st|
         match ids {
-            [] => Stdout.line!("backfill complete — ${I64.to_str(st.done)} streams fetched this run; ${I64.to_str(pending_streams!(path)?)} still missing")
+            [] => Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: Complete })
             [id, .. as rest] => {
                 uri = "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
                 resp = send_bearer!(uri, token)?
-                match Backfill.decide({ status: Response.status(resp), done: st.done, window: st.window, retries: st.retries }, read_limits) {
+                match Backfill.decide({ status: Response.status(resp), done: st.done, window: st.window, retries: st.retries }, read_limits!({})) {
                     Refresh => {
                         # multi-hour runs outlive the ~6h access token; refresh once and
                         # retry the same id. Same token back => real auth problem, stop.
@@ -573,38 +651,43 @@ Strava :: [].{
                         if fresh == token {
                             Err(HttpStatus(401, "token refresh did not help — re-run `stride auth`"))
                         } else {
-                            Stdout.line!("  access token expired — refreshed, continuing...")?
+                            Output.say!("  access token expired — refreshed, continuing...")?
                             drain_streams!(path, fresh, ids, st)
                         }
                     }
                     Backoff(retries) => {
-                        Stdout.line!("  rate limited — pausing ~15 min, then resuming...")?
-                        Sleep.millis!(window_sleep_ms)
+                        Output.say!("  rate limited — pausing ~15 min, then resuming...")?
+                        Sleep.millis!(window_sleep_ms!({}))
                         drain_streams!(path, token, ids, { ..st, window: 0, retries })
                     }
-                    GiveUp => {
-                        left = pending_streams!(path)?
-                        Stdout.line!("still rate-limited after backing off — likely today's Strava read cap (${I64.to_str(st.done)} fetched this run, ${I64.to_str(left)} to go). Run `stride backfill` again later or tomorrow.")
-                    }
+                    GiveUp => Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: RateLimited })
                     Store({ done, window, after }) => {
-                        # 404 => empty marker, 2xx => body, other => error propagated
-                        _stored = store_stream_response!(path, id, resp)?
+                        # 404 => empty marker, 2xx => body, other => error propagated.
+                        # MATCHED, not discarded, exactly as the sibling fetch_streams_all!
+                        # does: SkippedNonUtf8 writes no row, so that id stays pending and
+                        # retries next run. Counting it as fetched reported rows that were
+                        # never stored and let a lossy run present itself as a clean one.
+                        counted =
+                            match store_stream_response!(path, id, resp)? {
+                                Stored => { stored: st.stored + 1, skipped: st.skipped }
+                                SkippedNonUtf8 => {
+                                    Output.say!("  activity ${I64.to_str(id)}: stream data would not decode — skipped, retries next run")?
+                                    { stored: st.stored, skipped: st.skipped + 1 }
+                                }
+                            }
                         (if done % 50 == 0
-                            Stdout.line!("  ...${I64.to_str(done)} fetched this run")
+                            Output.say!("  ...${I64.to_str(done)} reads this run, ${I64.to_str(counted.stored)} stored")
                         else
                             Ok({}))?
                         match after {
-                            StopRun => {
-                                left = pending_streams!(path)?
-                                Stdout.line!("reached this run's safe read budget — ${I64.to_str(done)} fetched, ${I64.to_str(left)} still to go. Run `stride backfill` again tomorrow to continue.")
-                            }
+                            StopRun => Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_streams!(path)?, stopped: BudgetReached })
                             SleepWindow => {
-                                Stdout.line!("  15-min read window nearly full (${I64.to_str(window)}) — sleeping ~15 min...")?
-                                Sleep.millis!(window_sleep_ms)
-                                drain_streams!(path, token, rest, { done, window: 0, retries: 0 })
+                                Output.say!("  15-min read window nearly full (${I64.to_str(window)}) — sleeping ~15 min...")?
+                                Sleep.millis!(window_sleep_ms!({}))
+                                drain_streams!(path, token, rest, { ..st, done, window: 0, retries: 0, stored: counted.stored, skipped: counted.skipped })
                             }
                             Continue =>
-                                drain_streams!(path, token, rest, { done, window, retries: 0 })
+                                drain_streams!(path, token, rest, { ..st, done, window, retries: 0, stored: counted.stored, skipped: counted.skipped })
 
                         }
                     }

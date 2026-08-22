@@ -72,7 +72,7 @@ differ:
 - **Reproducible recomputation.** Every metric records the inputs it was computed from,
   so a changed input recomputes exactly the affected history. Edit a ride on Strava and
   the metrics self-heal.
-- **Scriptable.** Every *query* command emits JSON for tools and agents when passed `--json`, tables otherwise; `--human` forces tables back. Either flag beats the `STRIDE_FORMAT` environment variable. (`auth` and `backfill` are interactive or long-running, so they always print progress text.)
+- **Scriptable.** Every *query* command emits JSON for tools and agents when passed `--json`, tables otherwise; `--human` forces tables back. Either flag beats the `STRIDE_FORMAT` environment variable. (`auth` is an interactive browser flow, so it always prints text; `backfill` is long-running and narrates on stderr, but ends in a JSON envelope like everything else.)
 - **An honest data model.** A session with no usable data shows `-`, not an invented
   number. Junk HR samples are filtered, and it says so. Strength, HIIT and yoga score
   through your own effort rating (`stride rate`) rather than pretending an aerobic model

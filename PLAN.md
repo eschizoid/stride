@@ -16,9 +16,11 @@ last plan file survived because deleting it was a request nobody was holding.
    adding a key is non-breaking; every schema carries `additionalKeys: false`, so a
    consumer validating against one breaks on an added key. #221 adds keys and #219
    retypes `commands`. Deciding the policy after shipping either is backwards.
-2. **File contention.** #216 and #217 both edit `docs/adr/0000-architecture.md`. #218,
-   #219 and #138 all touch `src/app.roc`, and #219 and #138 both touch `src/Command.roc`.
-   That is why the code steps are sequential rather than parallel PRs.
+2. **File contention.** #216 and #217 both edit `docs/adr/0000-architecture.md`. #219
+   and #138 both touch `src/app.roc` and `src/Command.roc`. That is why those code steps
+   are sequential rather than parallel PRs. (#218 was listed here as touching
+   `src/app.roc` too; it shipped without touching that file at all, so the constraint
+   was asserted rather than checked. Check before adding a name to this list.)
 
 ## Order
 
