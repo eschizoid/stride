@@ -429,6 +429,11 @@ run_sync! = || {
 # Runs under `just e2e-sync`, like every mock-backed check — and that recipe is in CI.
 run_backfill! : () => Try({}, _)
 run_backfill! = || {
+    # Every driver resets the run-scoped failure log on entry and asserts it empty before
+    # finishing (#226). Adding a driver without both is SILENT: the rebase that brought
+    # this scenario onto a main carrying that log merged cleanly and left it with neither,
+    # which is the guard's own hole reopened by new code that git had no way to see.
+    reset_sqlite_errors!({})
     bin = env_or!("STRIDE_BIN", "./stride")
     base = env_or!("STRIDE_API_BASE", "http://127.0.0.1:8798")
     home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
@@ -469,6 +474,8 @@ run_backfill! = || {
     check!("...nor that everything is present", !(Str.contains(human, "all streams present")))?
 
     _ = sh!("rm -rf '${home}'")
+    check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
+    reset_sqlite_errors!({})
     Stdout.line!("BACKFILL E2E CHECKS PASS")
 }
 
@@ -480,6 +487,8 @@ run_backfill! = || {
 # passed the entire suite. These two runs are the only thing that catches it.
 run_stops! : () => Try({}, _)
 run_stops! = || {
+    # same contract as every other driver — see run_backfill!
+    reset_sqlite_errors!({})
     bin = env_or!("STRIDE_BIN", "./stride")
     base = env_or!("STRIDE_API_BASE", "http://127.0.0.1:8797")
     rate_limited = env_or!("E2E_EXPECT_RATE_LIMIT", "") == "1"
@@ -536,6 +545,8 @@ run_stops! = || {
     }
 
     _ = sh!("rm -rf '${home}'")
+    check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
+    reset_sqlite_errors!({})
     Stdout.line!("STOP-REASON E2E CHECKS PASS")
 }
 
