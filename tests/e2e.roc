@@ -205,6 +205,10 @@ run_all! = || {
     b_human!(ctx)?
     b_concurrency!(ctx)?
     b_migration!(ctx)?
+    # #226: every fixture write above actually happened. A silently-failed sqlite3 write
+    # would otherwise surface as an unrelated assertion in whichever LATER check happens
+    # to read the state it should have created -- which is exactly how this was seen.
+    check!("no fixture write failed silently", no_failed_writes!(ctx.db) == "")?
     _ = sh!("rm -rf '${home}'")
     Stdout.line!("ALL E2E CHECKS PASS")
 }
@@ -288,6 +292,7 @@ run_sync! = || {
     check!("an unreadable strava_expires_at is named, not internal_error", Str.contains(bad_exp, "unreadable_config") and Str.contains(bad_exp, "strava_expires_at"))?
     check!("...and never tells the athlete to open an issue", !(Str.contains(bad_exp, "please open an issue")))?
 
+    check!("no fixture write failed silently", no_failed_writes!(db) == "")?
     _ = sh!("rm -rf '${home}'")
     Stdout.line!("SYNC E2E CHECKS PASS")
 }
@@ -2439,9 +2444,29 @@ sh! = |script|
 # run SQL against the db. The query is fed via a quoted heredoc so it can contain
 # BOTH single quotes (SQL string literals) and double quotes (e.g. embedded JSON
 # stream fixtures) without any shell-quoting breakage.
+# Two guards, both for #226 — the suite failed twice in ~18 runs at two unrelated checks.
+#
+# `.timeout 5000`: the sqlite3 CLI defaults to busy_timeout 0, so ANY lock contention
+# fails instantly instead of waiting. stride's own connections set a timeout (Db.roc,
+# "busy_timeout FIRST"); these fixture writes were the one path in the system without
+# one, and both observed failures were under `just test`, which runs a build and eight
+# test invocations alongside.
+#
+# The sidecar log: a failing write used to be invisible three times over. sqlite3 reports
+# on stderr, sh! discards stderr AND the exit code, and ~276 call sites discard the
+# return with `_ = sql!(...)`. So the write silently did not happen and surfaced later as
+# an unrelated-looking assertion about state. Recording failures to `<db>.sqlfail`, which
+# each scenario asserts is absent, turns a silent skip into a named failure. That half is
+# worth having whether or not the timeout was the cause: a harness that ignores failed
+# setup writes will mislead again.
 sql! : Str, Str => Str
 sql! = |db, query|
-    sh!("sqlite3 '${db}' <<'SQLHEREDOC'\n${query}\nSQLHEREDOC")
+    sh!("sqlite3 -cmd '.timeout 5000' '${db}' 2>'${db}.sqlerr' <<'SQLHEREDOC' || { echo \"sqlite3 failed:\" >> '${db}.sqlfail'; cat '${db}.sqlerr' >> '${db}.sqlfail'; }\n${query}\nSQLHEREDOC")
+
+# every fixture write in this scenario succeeded. Named rather than a bare boolean so a
+# failure prints what sqlite3 actually said instead of just "false".
+no_failed_writes! : Str => Str
+no_failed_writes! = |db| Str.trim(sh!("cat '${db}.sqlfail' 2>/dev/null"))
 
 # seed a constant-power stream (n 1 Hz samples at w watts) as Strava-style raw_json so an
 # analyzed ride computes best_20min_w -> a derived per-sport FTP. Post-#26 FTP is derived
