@@ -425,25 +425,44 @@ run_sync! = || {
     # The mock 404s unknown ids, which stores an empty marker without a real fetch, so the
     # rows cost milliseconds. SEVENTY of them, deliberately: the cap being guarded against
     # was 60, so a shorter queue cannot observe it — a 22-row seed passed the mutation.
-    # The streams wipe above puts the two real fixture activities back in the queue too,
-    # which is why the expected store count is 72 rather than 70. Deleted at the end of
-    # the block: id assertions in this file are positional, and AGENTS.md's rule is to add
-    # fixtures LAST and remove whatever you add.
+    # The wipe that OPENS this block puts the two real fixture activities back in the queue
+    # too, which is why the expected store count is 72 rather than 70. Deleted at the end
+    # of the block: id assertions in this file are positional, and AGENTS.md's rule is to
+    # add fixtures LAST and remove whatever you add.
+    #
+    # `synced_at NULL` is load-bearing, and is the mirror of the deliberate `synced_at 1`
+    # on the `--all` fixture below: NULL exempts these rows from prune_deleted!, which the
+    # block's own sync would otherwise delete before the drain ever saw them.
     _ = sql!(db, "DELETE FROM streams;")
     _ = sql!(db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) WITH RECURSIVE seq(x) AS (SELECT 901 UNION ALL SELECT x+1 FROM seq WHERE x<970) SELECT x,'seed','Ride','2026-08-01T10:00:00Z',3600,1000.0,0.0,NULL FROM seq;")
+    # The seed asserted BEFORE the run, because `pending_streams == 0` below is a pure
+    # absence and a seed that silently did nothing satisfies it perfectly. Review proved
+    # that: replacing this INSERT with a no-op left the cap check itself green.
+    check!("the 70 seed rows landed", Str.trim(sql!(db, "SELECT count(*) FROM activities WHERE id BETWEEN 901 AND 970;")) == "70")?
     _ = sync_run!("json")
     check!("the drain has no per-run cap — it clears a queue past any old LIMIT", bfq!(".data.pending_streams") == "0")?
     check!("...having stored every one of them in a single run", bfq!(".data.streams_fetched") == "72")?
+    # 72 reads has to sit UNDER the window budget, or the run stops on the budget and the
+    # two checks above would be measuring that instead of the absence of a cap. Pinned so
+    # that lowering reads_per_window fails here with a reason rather than a mystery.
+    check!("...within one window, so the budget is not what ended the run", bfq!(".data.stopped") == "complete")?
     _ = sql!(db, "DELETE FROM streams WHERE activity_id >= 901; DELETE FROM activities WHERE id >= 901;")
+    # Nothing else asserts this block tidies up. It looks like the `--all` prune check
+    # below would catch a leak, and it cannot: prune_deleted! skips `synced_at IS NULL`,
+    # which is exactly what these rows carry, so they would survive every later run
+    # invisibly. Disabling the DELETE above passed all 38 checks and leaked 70 activities,
+    # 70 metrics rows and 70 streams rows into the rest of the scenario.
+    check!("...and the seeded fixtures left nothing behind", Str.trim(sql!(db, "SELECT count(*) FROM activities WHERE id >= 901;")) == "0")?
 
     _ = sync_run!("human")
     bf_human = Str.trim(sh!("cat '${bo}'"))
     check!("humans get the rendered line", Str.contains(bf_human, "re-checked in the 30-day window") and Str.contains(bf_human, "fetched streams for"))?
     check!("...with no envelope in it", !(Str.contains(bf_human, "schema_version")))?
-    # refetching 501's streams above ran invalidate_metrics!, dropping its metrics row.
-    # Nothing later in this scenario reads them today, which is exactly why it is worth
-    # restoring: a future check placed after this block would otherwise fail for a
-    # reason that has nothing to do with what it is testing.
+    # refetching streams above ran invalidate_metrics!, dropping the metrics rows for BOTH
+    # 501 and 502 — the wipe that opens the cap block is unscoped, where the earlier one
+    # took only 501. Nothing later in this scenario reads them today, which is exactly why
+    # it is worth restoring: a future check placed after this block would otherwise fail
+    # for a reason that has nothing to do with what it is testing.
     _ = sync_stride!(bin, home, base, ["analyze"])
     # ── `sync --all` (#232) ────────────────────────────────────────────────────
     # The flag's entire job is the UNBOUNDED prune: an incremental run only prunes inside
@@ -486,7 +505,7 @@ run_sync! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_at_least!(38)?
+    checks_ran_at_least!(41)?
     Stdout.line!("SYNC E2E CHECKS PASS")
 }
 
