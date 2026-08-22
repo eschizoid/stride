@@ -1,4 +1,4 @@
-Backfill :: [].{
+Drain :: [].{
     # ── the stream drain's pure half ────────────────────────────────────
     # Two things, both pure and both belonging to the drain loop in Strava.drain_streams!:
     # the rate-pacing DECISION (`decide`), and the vocabulary its outcome ships in
@@ -73,57 +73,57 @@ Backfill :: [].{
 # ── tests ───────────────────────────────────────────────────────────
 
 # 429 under the limit backs off with an incremented retry count
-expect match Backfill.decide({ status: 429, done: 0, window: 0, retries: 0 }, Backfill.test_lim) {
+expect match Drain.decide({ status: 429, done: 0, window: 0, retries: 0 }, Drain.test_lim) {
     Backoff(1) => True
     _ => False
 }
-expect match Backfill.decide({ status: 429, done: 1, window: 1, retries: 1 }, Backfill.test_lim) {
+expect match Drain.decide({ status: 429, done: 1, window: 1, retries: 1 }, Drain.test_lim) {
     Backoff(2) => True
     _ => False
 }
 
 # 429 at/over the limit gives up (assume daily cap — sleeping won't help)
-expect match Backfill.decide({ status: 429, done: 3, window: 1, retries: 2 }, Backfill.test_lim) {
+expect match Drain.decide({ status: 429, done: 3, window: 1, retries: 2 }, Drain.test_lim) {
     GiveUp => True
     _ => False
 }
 
 # 401 asks for a token refresh
-expect match Backfill.decide({ status: 401, done: 0, window: 0, retries: 0 }, Backfill.test_lim) {
+expect match Drain.decide({ status: 401, done: 0, window: 0, retries: 0 }, Drain.test_lim) {
     Refresh => True
     _ => False
 }
 
 # a normal fetch stores and continues, advancing both counters
-expect match Backfill.decide({ status: 200, done: 0, window: 0, retries: 0 }, Backfill.test_lim) {
+expect match Drain.decide({ status: 200, done: 0, window: 0, retries: 0 }, Drain.test_lim) {
     Store({ done: 1, window: 1, after: Continue }) => True
     _ => False
 }
 
 # 404 takes the same store path (the marker write happens in app.roc)
-expect match Backfill.decide({ status: 404, done: 0, window: 0, retries: 0 }, Backfill.test_lim) {
+expect match Drain.decide({ status: 404, done: 0, window: 0, retries: 0 }, Drain.test_lim) {
     Store({ done: 1, window: 1, after: Continue }) => True
     _ => False
 }
 
 # hitting the window cap stores, then sleeps
-expect match Backfill.decide({ status: 200, done: 0, window: 2, retries: 0 }, Backfill.test_lim) {
+expect match Drain.decide({ status: 200, done: 0, window: 2, retries: 0 }, Drain.test_lim) {
     Store({ done: 1, window: 3, after: SleepWindow }) => True
     _ => False
 }
 
 # hitting the run budget stores, then stops (budget takes priority over a window sleep)
-expect match Backfill.decide({ status: 200, done: 4, window: 0, retries: 0 }, Backfill.test_lim) {
+expect match Drain.decide({ status: 200, done: 4, window: 0, retries: 0 }, Drain.test_lim) {
     Store({ done: 5, window: 1, after: StopRun }) => True
     _ => False
 }
-expect match Backfill.decide({ status: 200, done: 4, window: 2, retries: 0 }, Backfill.test_lim) {
+expect match Drain.decide({ status: 200, done: 4, window: 2, retries: 0 }, Drain.test_lim) {
     Store({ done: 5, window: 3, after: StopRun }) => True
     _ => False
 }
 
 # a retry count on a successful fetch is irrelevant to the decision
-expect match Backfill.decide({ status: 200, done: 0, window: 0, retries: 1 }, Backfill.test_lim) {
+expect match Drain.decide({ status: 200, done: 0, window: 0, retries: 1 }, Drain.test_lim) {
     Store({ done: 1, window: 1, after: Continue }) => True
     _ => False
 }
@@ -131,6 +131,6 @@ expect match Backfill.decide({ status: 200, done: 0, window: 0, retries: 1 }, Ba
 # the wire strings, pinned by equality. These must equal the enum in
 # schemas/v2/sync.json; Render.drain_note matches on the same three, and a
 # composed expect there ties producer to consumer so a rename cannot pass either side.
-expect Backfill.stopped_label(Complete) == "complete"
-expect Backfill.stopped_label(BudgetReached) == "budget_reached"
-expect Backfill.stopped_label(RateLimited) == "rate_limited"
+expect Drain.stopped_label(Complete) == "complete"
+expect Drain.stopped_label(BudgetReached) == "budget_reached"
+expect Drain.stopped_label(RateLimited) == "rate_limited"

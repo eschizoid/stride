@@ -7,9 +7,11 @@ app [Context, program] {
 #   • (default / "e2e") run the offline check suite in init!, then exit
 #   • "sync"            drive the real sync path (token refresh + activity/stream pull)
 #                       against a running mock, then exit
-#   • "mock"            serve the four Strava endpoints the sync test hits, and listen
-# One binary, three roles — `just e2e` runs the offline suite; `just e2e-sync` starts a
-# mock instance and points a sync-driver instance at it.
+#   • "skips"           drive the undecodable-stream skip path against a mock serving one
+#   • "stops"           drive the budget_reached / rate_limited stop reasons
+#   • "mock"            serve the four Strava endpoints the drivers hit, and listen
+# One binary, FIVE roles — `just e2e` runs the offline suite; `just e2e-sync` starts three
+# mock instances and points each driver at the one it needs.
 #
 # It shells out to the built `stride` binary plus `sqlite3`/`jq`/`mktemp`/`date`/`awk`
 # via Cmd. It deliberately does NO Roc-side JSON DECODING: every value assertion
@@ -326,23 +328,23 @@ run_sync! = || {
     # Pin the exact value (not just >0) so the whole stream->best20->deriveFTP->NP->TSS path is checked.
     check_near!("501 power streams score ~110.8 TSS (NP200 @ derived FTP190)", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 110.8, 1.0)?
 
-    # ── backfill's machine contract (#218) ────────────────────────────────────
-    # backfill used to print prose on STDOUT and emit no envelope at all, so it
+    # ── sync's machine contract (#218, #232) ──────────────────────────────────
+    # the stream drain used to print prose on STDOUT and emit no envelope at all, so it
     # was, besides the interactive `auth`, the command `--json` could not deliver:
     # an agent asking for JSON
     # got unparseable text. It now goes through out! like every other query
     # command, with progress narrating on stderr (ADR 0007).
     #
-    # These live HERE rather than in the offline suite because backfill needs a
+    # These live HERE rather than in the offline suite because sync needs a
     # token AND an API to talk to, which means the mock. That means they run
     # under `just e2e-sync`, which runs in CI. Stated plainly rather than
     # left to be discovered.
     bo = "${home}/bf.out"
     be = "${home}/bf.err"
-    backfill! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>'${be}'")
+    sync_run! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>'${be}'")
     bfq! = |filter| Str.trim(sh!("jq -r '${filter}' '${bo}' 2>&1"))
 
-    _ = backfill!("json")
+    _ = sync_run!("json")
     bf_out = Str.trim(sh!("cat '${bo}'"))
     # pin BOTH ends and the line count: starts_with alone would still accept
     # prose appended after the envelope, which is the exact shape of the bug.
@@ -370,15 +372,15 @@ run_sync! = || {
     check!("...and nothing skipped on a clean run", bfq!(".data.streams_skipped") == "0")?
 
     # drop one stored stream and re-run, so the count has to MOVE. Without this
-    # every check above would pass just as well against a backfill that never
+    # every check above would pass just as well against a sync that never
     # fetched anything at all.
     _ = sql!(db, "DELETE FROM streams WHERE activity_id=501;")
-    _ = backfill!("json")
+    _ = sync_run!("json")
     check!("a run with work to do fetches it", bfq!(".data.streams_fetched") == "1")?
     check!("...and reports complete once drained", bfq!(".data.stopped") == "complete")?
     check!("...still not resumable, having finished the queue", bfq!(".data.resumable") == "false")?
 
-    _ = backfill!("human")
+    _ = sync_run!("human")
     bf_human = Str.trim(sh!("cat '${bo}'"))
     check!("humans get the rendered line", Str.contains(bf_human, "re-checked in the 30-day window") and Str.contains(bf_human, "fetched streams for"))?
     check!("...with no envelope in it", !(Str.contains(bf_human, "schema_version")))?
@@ -387,7 +389,7 @@ run_sync! = || {
     # restoring: a future check placed after this block would otherwise fail for a
     # reason that has nothing to do with what it is testing.
     _ = sync_stride!(bin, home, base, ["analyze"])
-    check_near!("501's metrics are restored after the backfill block", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 110.8, 1.0)?
+    check_near!("501's metrics are restored after the drain block", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 110.8, 1.0)?
 
     # #208: the two config reads on the SYNC path. Both used to swallow an unreadable
     # value -- last_sync_epoch by folding it into "never synced" (a silent full re-pull,
@@ -415,7 +417,7 @@ run_sync! = || {
     Stdout.line!("SYNC E2E CHECKS PASS")
 }
 
-# ── backfill against a mock whose stream bodies do not decode (#218) ─────────
+# ── sync against a mock whose stream bodies do not decode (#218, #232) ───────
 # The one state run_sync! cannot reach: a run that DRAINS its queue and still has
 # work left. store_stream_response! deliberately does not store a non-UTF-8 body
 # ("storing would mark it done forever"), so that id stays pending and retries next
@@ -445,7 +447,7 @@ run_skips! = || {
     _ = sync_stride!(bin, home, base, ["init"])
     _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','mock-access'),('strava_refresh_token','mock-refresh'),('strava_expires_at','9999999999');")
     # sync pulls both activities; 501's streams store, 502's body does not decode.
-    # #224: sync takes the same skip path backfill does and used to report NOTHING —
+    # #224: this skip path used to report NOTHING under sync —
     # no counter, no line, no payload field. It is the command that runs daily, so it
     # is where the loss actually happens; the only trace was `pending_streams` failing
     # to move, which is indistinguishable from a rate-limited partial.
@@ -512,7 +514,7 @@ run_stops! = || {
 
     _ = sync_stride!(bin, home, base, ["init"])
     _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','mock-access'),('strava_refresh_token','mock-refresh'),('strava_expires_at','9999999999');")
-    # list the activities WITHOUT draining streams, so backfill has a full queue.
+    # list the activities WITHOUT draining streams, so the drain has a full queue.
     # STRIDE_READS_PER_RUN=0 is rejected by the parser (must be > 0), so sync would
     # still drain; instead seed via sync and delete the rows it stored.
     _ = sync_stride!(bin, home, base, ["sync"])
@@ -526,9 +528,9 @@ run_stops! = || {
     #   budget: one read per run, so the second queued id is never requested.
     #   rate:   the real budget, so the drain DOES reach 501 — only the window sleep is
     #           shortened, turning two Backoff rounds from ~30 minutes into 10ms.
-    envs = if rate_limited "STRIDE_WINDOW_SLEEP_MS=5" else "STRIDE_READS_PER_RUN=1"
-    run_bf! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' ${envs} '${bin}' sync >'${bo}' 2>/dev/null")
-    _ = run_bf!("json")
+    envs = if rate_limited "" else "STRIDE_READS_PER_RUN=1"
+    run_sync_bf! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' ${envs} '${bin}' sync >'${bo}' 2>/dev/null")
+    _ = run_sync_bf!("json")
 
     if rate_limited {
         # 501 429s forever. 502 drains first (ORDER BY start_local DESC) and stores its
@@ -541,7 +543,7 @@ run_stops! = || {
         # fresh queue: the JSON run above already stored one, so without this the human
         # run drains what is left and renders "all streams present" instead
         _ = sql!(db, "DELETE FROM streams;")
-        _ = run_bf!("human")
+        _ = run_sync_bf!("human")
         check!("humans are told to try again tomorrow", Str.contains(Str.trim(sh!("cat '${bo}'")), "stopped on Strava's read cap"))?
     } else {
         # one read, two ids queued: stores the first, stops on the budget with one left
@@ -554,7 +556,7 @@ run_stops! = || {
         # first run that stops on the read budget is not a dead end. Run it again and it
         # finishes, with no flag, no second command, and nothing for the user to know.
         # Without this, every other check here is satisfied by a sync that stops forever.
-        _ = run_bf!("json")
+        _ = run_sync_bf!("json")
         check!("running it again converges — nothing left pending", bfq!(".data.pending_streams") == "0")?
         # it still reports `budget_reached` — it DID stop on the budget, and the queue
         # happened to empty on that same read. This is the case that proves `resumable`
@@ -566,7 +568,7 @@ run_stops! = || {
         check!("the budget-stopped payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
         # fresh queue, same reason as the rate-limited branch above
         _ = sql!(db, "DELETE FROM streams;")
-        _ = run_bf!("human")
+        _ = run_sync_bf!("human")
         check!("humans are told to run it again tomorrow", Str.contains(Str.trim(sh!("cat '${bo}'")), "stopped at today's Strava read budget"))?
     }
 
@@ -639,7 +641,7 @@ b_init_config! = |ctx| {
     inband = sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' sync 2>/dev/null")
     check!("in-band errors still arrive as themselves", Str.contains(inband, "not_authenticated"))?
     check!("...exactly once — the boundary must not re-wrap Exit", Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' sync 2>/dev/null | grep -c schema_version")) == "1")?
-    # #232: `backfill` is retired — `sync` is the only command that talks to Strava, and
+    # #232: `backfill` is retired — `sync` is the only command that pulls data, and
     # it answers `--json` with an envelope on every path including refusal. Asserting the
     # command is GONE rather than merely unused: a dispatch left behind would still run.
     bf_gone = Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' backfill 2>/dev/null"))

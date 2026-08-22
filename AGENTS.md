@@ -64,7 +64,7 @@ just install   # build + symlink to ~/.local/bin/stride
   Pure logic goes in `Metrics.roc` / `Sports.roc` (sport vocabulary: the four sport-varying policies — family filters, load-model class, pace routing, the pace-TSS exponent — gathered in one module rather than scattered through others; only the family filter is a table of rows, the class reads a list literal inside its own function, and the last two are name-substring predicates) / `Render.roc` / `Command.roc` (argv → typed
   `Command` union, `parse` is pure + unit-tested; `main!` is thin parse-then-dispatch)
   / `Config.roc` (`is_secret` secret-key policy) / `Csv.roc` / `Streams.roc` /
-  `Backfill.roc`, with `expect` tests (`Schema.roc` is pure DDL and carries none). When adding logic: pure
+  `Drain.roc`, with `expect` tests (`Schema.roc` is pure DDL and carries none). When adding logic: pure
   function + expects first, thin effectful skin. Add new pure modules to the
   `just test` recipe so their expects run.
 - **Query-command output goes through `out!`** (payload + render fn): JSON is wrapped
@@ -89,16 +89,16 @@ just install   # build + symlink to ~/.local/bin/stride
   failure and exits 0 — humans get the help screen, machines get the command list —
   and an unknown command is an error). New commands are born on this
   pattern; older ones migrate as touched.
-- `tests/e2e.roc` is ONE binary in FOUR roles, picked by `E2E_MODE`: the offline suite
+- `tests/e2e.roc` is ONE binary in FIVE roles, picked by `E2E_MODE`: the offline suite
   (default, no mode set), a mock Strava server (`mock`), and three drivers that run
   against it — `sync` (real sync + token refresh), `skips` (the undecodable-body skip
   path), and `stops` (the `budget_reached` / `rate_limited` outcomes). `just e2e-sync`
   starts three mock instances on three ports (`mock_port`, `bad_stream_port`,
   `rate_limit_port`) and runs all three drivers; the mock's behaviour is varied by
   `E2E_BAD_STREAM` / `E2E_RATE_LIMIT`. `STRIDE_API_BASE` points stride at the mock, and
-  `STRIDE_READS_PER_RUN` / `STRIDE_WINDOW_SLEEP_MS` / `STRIDE_READS_PER_WINDOW` /
+  `STRIDE_READS_PER_RUN` / `STRIDE_READS_PER_WINDOW` /
   `STRIDE_MAX_429` shrink the rate-limit pacing so terminal arms that cost 940 reads or
-  two 15-minute sleeps are reachable in milliseconds. Same species of seam as
+  940 reads are reachable in milliseconds. Same species of seam as
   `STRIDE_API_BASE`; humans never set any of them. They can only LOWER a limit — an
   override able to RAISE one would let a typo or a copied command line hammer Strava and
   get the athlete's own API app suspended, and lowering is all a test needs. This recipe DOES run in CI — it needs

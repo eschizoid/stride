@@ -1,5 +1,5 @@
 import Metrics
-import Backfill
+import Drain
 
 Render :: [].{
     # ── pure text-rendering helpers for human CLI output ────────────────
@@ -682,8 +682,8 @@ Render :: [].{
     # ── stream-drain note, used by sync's human line ─────────────────────────────────────────────────
 
     # `stopped` arrives as a string because that is what ships in the payload, but the
-    # set is closed at the producer by Backfill.StopReason and turned into these exact
-    # three strings by Backfill.stopped_label. Matched by `==` and never by
+    # set is closed at the producer by Drain.StopReason and turned into these exact
+    # three strings by Drain.stopped_label. Matched by `==` and never by
     # `Str.contains`, which accepts every superstring — "complete" would match
     # "completely broken" (ADR 0012, and the trend_label/#165 bug that taught it).
     # The catch-all cannot be reached through stopped_label; it exists so that if some
@@ -1809,20 +1809,20 @@ expect Render.drain_note("complete", 5) == "5 had unreadable stream data — the
 expect Render.drain_note("budget_reached", 40) == "stopped at today's Strava read budget — 40 to go, run `stride sync` again tomorrow"
 expect Render.drain_note("rate_limited", 40) == "stopped on Strava's read cap — 40 to go, try again tomorrow"
 
-# an outcome that did not come through Backfill.stopped_label renders verbatim
+# an outcome that did not come through Drain.stopped_label renders verbatim
 # rather than being guessed into one of the three
 expect Render.drain_note("throttled_by_proxy", 7) == "throttled_by_proxy — 7 to go"
 
 # PRODUCER to CONSUMER. The expects above hand-type their strings, so on their own
 # they check Render against itself: renaming "complete" in the producer left them
 # all passing. These compose the two, so a rename on either side fails here.
-expect Render.drain_note(Backfill.stopped_label(Complete), 0) == "all streams present"
-expect Str.starts_with(Render.drain_note(Backfill.stopped_label(BudgetReached), 40), "stopped at today's Strava read budget")
-expect Str.starts_with(Render.drain_note(Backfill.stopped_label(RateLimited), 40), "stopped on Strava's read cap")
+expect Render.drain_note(Drain.stopped_label(Complete), 0) == "all streams present"
+expect Str.starts_with(Render.drain_note(Drain.stopped_label(BudgetReached), 40), "stopped at today's Strava read budget")
+expect Str.starts_with(Render.drain_note(Drain.stopped_label(RateLimited), 40), "stopped on Strava's read cap")
 
 # no label the producer can emit may fall through to the catch-all
 expect {
-    produced = [Backfill.stopped_label(Complete), Backfill.stopped_label(BudgetReached), Backfill.stopped_label(RateLimited)]
+    produced = [Drain.stopped_label(Complete), Drain.stopped_label(BudgetReached), Drain.stopped_label(RateLimited)]
     List.all(produced, |s| Render.drain_note(s, 9) != "${s} — 9 to go")
 }
 

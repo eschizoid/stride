@@ -31,7 +31,7 @@ test:
     {{roc}} test src/Metrics.roc
     {{roc}} test src/Sports.roc
     {{roc}} test src/Render.roc
-    {{roc}} test src/Backfill.roc
+    {{roc}} test src/Drain.roc
     {{roc}} test src/Csv.roc
     {{roc}} test src/Command.roc
     {{roc}} test src/Config.roc

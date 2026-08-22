@@ -185,7 +185,8 @@ stride config set hr_z1_max 120                # + the rest of the HR zones + ti
 stride analyze
 ```
 
-`sync` is the only command that talks to Strava, and the first one is the whole initial
+`sync` is the only command that pulls data from Strava (`auth` talks to it too, for the
+OAuth exchange), and the first one is the whole initial
 pull: it fetches your complete activity list, then drains every activity's raw streams,
 pacing itself well inside Strava's rate limits (95 reads per 15-minute window against a
 cap of 100, then sleeps to the next window; stops cleanly at 940 reads per run against a

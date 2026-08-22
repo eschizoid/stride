@@ -1,7 +1,6 @@
 import Db
 import Output
 import pf.Http
-import pf.Sleep
 import pf.Sqlite
 import pf.Stdout
 import pf.Stdin
@@ -13,45 +12,12 @@ import http.Request
 import http.Method
 import http.Response
 import Streams
-import Backfill
+import Drain
 import Metrics
 import Config
 import Render
 
 Strava :: [].{
-    # push a new FTP to Strava (PUT /athlete?ftp=). Best-effort: any failure just
-    # warns — the local `config set` has already succeeded and been reported.
-    sync_ftp_to_strava! : Str, Str => Try({}, _)
-    sync_ftp_to_strava! = |path, ftp_str|
-        match F64.from_str(ftp_str) {
-            Err(_) => Stdout.line!("  (\"${ftp_str}\" isn't a number — not synced to Strava)")
-            Ok(_) =>
-                match get_valid_token!(path) {
-                    Err(NotAuthed) => Stdout.line!("  (not synced to Strava — run `stride auth` first)")
-                    # HttpStatus here can only come from the token-refresh POST: a 4xx
-                    # means the stored token is dead, and retrying won't fix it
-                    Err(HttpStatus(status, _)) if status >= 400 and status < 500 =>
-                        Stdout.line!("  (Strava rejected the stored token — re-run `stride auth`)")
-
-                    Err(_) => Stdout.line!("  (couldn't sync FTP to Strava this time)")
-                    Ok(token) => {
-                        resp = Http.send!(
-                            Request.from_method(Method.PUT)
-                            .with_uri("${api_base!({})}/api/v3/athlete?ftp=${ftp_str}")
-                            .add_header("Authorization", "Bearer ${token}")
-                            .with_body([])
-                            .with_timeout(TimeoutMilliseconds(30000)),
-                        )
-                        match resp {
-                            Ok(r) if Response.status(r) < 300 => Stdout.line!("  → synced to Strava (athlete FTP = ${ftp_str})")
-                            Ok(r) => Stdout.line!("  (Strava FTP sync failed: HTTP ${(Response.status(r)).to_str()} — re-run `stride auth` to grant profile:write, or set it at strava.com/settings)")
-                            Err(_) => Stdout.line!("  (couldn't reach Strava to sync FTP — set it at strava.com/settings)")
-
-                        }
-                    }
-                }
-        }
-
     # ── strava oauth ─────────────────────────────────────────────────────
 
     TokenResp : { access_token : Str, refresh_token : Str, expires_at : I64 }
@@ -319,13 +285,32 @@ Strava :: [].{
                 # `stopped` and `resumable` moved here from the retired `backfill` (#232): a sync
                 # that drains the whole history can now stop on Strava's read budget, and
                 # "should I run it again?" has to be answerable without parsing prose.
-                # `resumable` is `pending_streams > 0` — measured from the database after the
-                # last store, which is why it is right in every terminal arm.
-                Output.out!({ synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: pull.pending, stopped: Backfill.stopped_label(pull.stopped), resumable: pull.pending > 0 }, |p| {
+                # `resumable` is `pending_streams > 0`, re-measured from the database after
+                # the last store in every arm that ran a drain. The no-work short-circuit
+                # reads no database: it derives 0 from the queue query, whose WHERE clause is
+                # character-identical to `pending_streams!`'s, so the value is right by the
+                # same query. Edit either query alone and this silently breaks.
+                #
+                # ANNOTATED, and closed on purpose. An added, removed or retyped key fails
+                # `roc check` here. The renderer below is an inline closure, which infers an
+                # OPEN record — so without this line a new payload key compiles clean and
+                # ships undeclared in schemas/v2/sync.json, which is exactly the drift
+                # `additionalKeys: false` exists to catch (ADR 0000 section 9c).
+                payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
+                payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: pull.pending, stopped: Drain.stopped_label(pull.stopped), resumable: pull.pending > 0 }
+                Output.out!(payload, |p| {
                     prune_note = if p.pruned > 0 " (pruned ${U64.to_str(p.pruned)} removed on Strava)" else ""
-                    # said plainly rather than folded into the pending count: unreadable is
-                    # not the same as not-yet-fetched, and only the first is worth chasing
-                    skip_note = if p.streams_skipped > 0 " (${I64.to_str(p.streams_skipped)} had unreadable stream data — they retry next sync)" else ""
+                    # Said plainly rather than folded into the pending count: unreadable is
+                    # not the same as not-yet-fetched, and only the first is worth chasing.
+                    # Suppressed when `stopped` is complete, because drain_note's complete
+                    # arm is ONLY reachable with pending > 0 — which is precisely the skip
+                    # case — so both clauses would state the same fact in different words.
+                    skip_note =
+                        if p.streams_skipped > 0 and p.stopped != "complete" {
+                            " (${I64.to_str(p.streams_skipped)} had unreadable stream data)"
+                        } else {
+                            ""
+                        }
                     # WHY it stopped, not just that work remains. Render.drain_note carries
                     # the vocabulary the retired `backfill` used to print, so a human still
                     # learns the difference between "Strava's cap, come back tomorrow" and
@@ -336,13 +321,16 @@ Strava :: [].{
                     # train rather than of this sync, and reading "synced 22 activities" as 22
                     # NEW ones is the question it kept provoking (#112). On a typical day the
                     # leading numbers are 0 and 0, which is the honest answer.
-                    "synced ${U64.to_str(p.new_activities)} new, ${U64.to_str(p.updated_activities)} updated (${U64.to_str(p.synced)} re-checked in the 30-day window)${prune_note}, fetched streams for ${I64.to_str(p.streams_fetched)}${skip_note}${tail}"
+                    # `--all` re-listed the ENTIRE account, so naming the rolling window there
+                    # would describe a bound the run did not have
+                    window_note = if all "" else " in the 30-day window"
+                    "synced ${U64.to_str(p.new_activities)} new, ${U64.to_str(p.updated_activities)} updated (${U64.to_str(p.synced)} re-checked${window_note})${prune_note}, fetched streams for ${I64.to_str(p.streams_fetched)}${skip_note}${tail}"
                 })
             }
         }
     }
     # fetch time/HR/watts/altitude/distance streams for activities that don't have them
-    # yet, newest first, capped per run to respect Strava's rate limits (~100 reads/15min).
+    # yet, newest first. Not capped per run — pacing bounds the run (see read_limits!).
     # altitude + distance are requested EXPLICITLY (not relying on Strava's implicit base
     # streams) — together they feed grade-adjusted pace / NGP (ADR 0003). To re-pull for
     # pre-existing streams, DELETE FROM streams (mirror tier — re-pullable) and let the
@@ -362,9 +350,11 @@ Strava :: [].{
     # No per-run cap any more. `sync` drains what is missing, paced against Strava's
     # own limits, and stops on the read budget reporting `resumable: true` so the next
     # run continues. Steady state is a handful of reads — nobody rides 95 times a day —
-    # so the long run only happens on a fresh install, which is exactly when a long run
-    # is the thing you want.
-    drain_missing_streams! : Str, Str => Try(BackfillOutcome, _)
+    # so the long run is not the daily case. It is NOT only a fresh install, though:
+    # `stride import` creates activities with no streams at all, and deleting stream rows
+    # is the documented way to force a re-pull — both walk into a full drain, which at the
+    # default budget can mean hours of window sleeps in the foreground.
+    drain_missing_streams! : Str, Str => Try(DrainOutcome, _)
     drain_missing_streams! = |path, token| {
         ids = Sqlite.query_many!({
             path: Path.utf8(path),
@@ -385,7 +375,7 @@ Strava :: [].{
             # response returns shows nothing for exactly as long as a stall lasts, which
             # is the "it looks hung" failure this bar exists to prevent
             _ = Output.narrate!("fetching streams", 0, total)?
-            match drain_streams!(path, token, ids, { done: 0, window: 0, retries: 0, stored: 0, skipped: 0, total }) {
+            match drain_streams!(path, token, ids, { done: 0, window: 0, retries: 0, stored: 0, skipped: 0, total, refreshes: 0 }) {
                 Ok(o) => Ok(o)
                 Err(e) => {
                     # every non-terminal exit is an error propagating from the HTTP call,
@@ -448,19 +438,10 @@ Strava :: [].{
         })
     }
 
-    # ── backfill (pull ALL stream history, rate-limit-aware) ─────────────
-    # For a new user with thousands of activities, the 60/run sync cap means dozens
-    # of manual runs. `backfill` drains streams hands-off: it fills each 15-min read
-    # window, sleeps to the next, and stops cleanly at Strava's daily read cap
-    # (resume by re-running). Paces by COUNTING its own reads (see the next paragraph).
-
-    # Rate pacing is COUNT-BASED, not header-based -- by choice, so it does not depend
-    # on any endpoint choosing to send rate-limit headers. (An earlier version of this
-    # comment blamed the platform for hiding them. That is false: basic-cli's
-    # InternalHttp.from_host_headers is an unfiltered pass-through, so stride sees
-    # whatever the server sends. The claim survived three doc-audit rounds and reached
-    # user-facing docs because it was 'verified' by reading this comment.)
-    # So we count our own reads against
+    # ── read pacing (Strava's limits, counted by us) ─────────────────────
+    # Strava publishes rate-limit headers but does not always send them, so pacing counts
+    # OUR OWN reads instead: it fills each 15-min window, sleeps to the next, and stops
+    # cleanly at the daily cap, with 429 as a bounded backstop rather than the mechanism.
     # Strava's known limits (100 reads / 15 min, 1000 / day) and pace proactively,
     # with 429 as a bounded backstop.
     # ── test seams, same species as STRIDE_API_BASE ─────────────────────
@@ -485,27 +466,14 @@ Strava :: [].{
             Err(_) => fallback
         }
 
-    # U64 rather than reusing env_i64!: Sleep.millis! takes U64, and a conversion
-    # helper does not exist in this compiler (I64.to_u64 / .to_u64() both fail).
-    window_sleep_ms! : {} => U64
-    window_sleep_ms! = |{}|
-        match Env.var_str!(OsStr.from_str("STRIDE_WINDOW_SLEEP_MS")) {
-            # shorter only, same one-directional rule as env_i64! — a LONGER sleep is
-            # harmless to Strava but would hang a run for as long as the value says
-            Ok(v) =>
-                match U64.from_str(v) {
-                    Ok(n) if n > 0 and n < 905_000 => n
-                    _ => 905_000 # ~15 min + margin past the window reset
-                }
-            Err(_) => 905_000
-        }
+    # how many token refreshes one run may spend before calling it an auth problem
+    max_refreshes = 2
 
-    # the read-count limits the pure Backfill.decide reasons about (see Backfill.roc)
-    read_limits! : {} => Backfill.Limits
+    read_limits! : {} => Drain.Limits
     read_limits! = |{}| {
         reads_per_window: env_i64!("STRIDE_READS_PER_WINDOW", 95), # sleep before the 100/15-min read window fills
         reads_per_run: env_i64!("STRIDE_READS_PER_RUN", 940), # stop before the 1000/day cap (room for list pages + slack)
-        max_consecutive_429: env_i64!("STRIDE_MAX_429", 2), # this many 429s after a sleep => assume daily cap, stop
+        max_consecutive_429: env_i64!("STRIDE_MAX_429", 1), # a 429 stops the run; the drain no longer sleeps
     }
 
     send_bearer! = |uri, token|
@@ -552,11 +520,11 @@ Strava :: [].{
     # real progress bar rather than a spinner: a first-time sync can spend a long time
     # here, and narrating only after a response returns shows nothing for exactly as
     # long as a stall lasts. It is NOT a counter — nothing decrements it.
-    DrainState : { done : I64, window : I64, retries : I64, stored : I64, skipped : I64, total : U64 }
+    DrainState : { done : I64, window : I64, retries : I64, stored : I64, skipped : I64, total : U64, refreshes : I64 }
 
     # Walk the missing-streams list once per run. Walking a LIST (not re-querying
     # "next missing") means an unstorable body is skipped, not refetched forever.
-    # The pacing DECISION is pure (Backfill.decide, unit-tested); this is the thin
+    # The pacing DECISION is pure (Drain.decide, unit-tested); this is the thin
     # effectful skin that dispatches on it: fetch, then act.
     # The THREE ways a drain ends, RETURNED rather than printed, because "why did it
     # stop?" is not derivable from the counts. (A fourth exit exists and is deliberately
@@ -564,9 +532,9 @@ Strava :: [].{
     # which is a failure, not a stopping reason.) Both non-complete reasons stop against
     # Strava's DAILY cap — `reads_per_run` is 940 against 1000 — so both mean tomorrow.
     #
-    # `stopped` is a Backfill.StopReason tag, so the compiler enforces the set here;
-    # Backfill.stopped_label is the one place it becomes the string that ships.
-    BackfillOutcome : { stored : I64, skipped : I64, pending : I64, stopped : Backfill.StopReason }
+    # `stopped` is a Drain.StopReason tag, so the compiler enforces the set here;
+    # Drain.stopped_label is the one place it becomes the string that ships.
+    DrainOutcome : { stored : I64, skipped : I64, pending : I64, stopped : Drain.StopReason }
 
     # Report durable progress before an error escapes the drain (#225). The rows already
     # stored are committed and the next run measures `pending_streams` from the database,
@@ -586,7 +554,7 @@ Strava :: [].{
         }
     }
 
-    drain_streams! : Str, Str, List(I64), DrainState => Try(BackfillOutcome, _)
+    drain_streams! : Str, Str, List(I64), DrainState => Try(DrainOutcome, _)
     drain_streams! = |path, token, ids, st|
         match ids {
             [] => {
@@ -603,24 +571,43 @@ Strava :: [].{
                             Err(e)
                         }
                     }?
-                match Backfill.decide({ status: Response.status(resp), done: st.done, window: st.window, retries: st.retries }, read_limits!({})) {
+                match Drain.decide({ status: Response.status(resp), done: st.done, window: st.window, retries: st.retries }, read_limits!({})) {
                     Refresh => {
-                        # multi-hour runs outlive the ~6h access token; refresh once and
-                        # retry the same id. Same token back => real auth problem, stop.
-                        fresh = get_valid_token!(path)?
-                        if fresh == token {
-                            Err(HttpStatus(401, "token refresh did not help — re-run `stride auth`"))
-                        } else {
+                        # Long runs outlive the ~6h access token; refresh and retry the same
+                        # id. BOUNDED, like the 429 retry beside it: this arm recurses on the
+                        # same id with the same state, so without a counter a persistently
+                        # 401ing activity (revoked scope, a private activity without
+                        # activity:read_all, a skewed clock) spins forever. Review measured
+                        # the unbounded version at ~113 requests/second — 4,500 reads against
+                        # a 1000/day cap in under a minute, which is exactly the API-app
+                        # suspension the env-override guard exists to prevent. `decide` does
+                        # not charge a 401 against `done` either, so the read budget never
+                        # ended it. Same token back is still a real auth problem.
+                        if st.refreshes >= max_refreshes {
                             bar_done!(st)?
-                            Output.say!("  access token expired — refreshed, continuing...")?
-                            drain_streams!(path, fresh, ids, st)
+                            Err(HttpStatus(401, "kept getting 401 after refreshing the token — re-run `stride auth`"))
+                        } else {
+                            fresh = get_valid_token!(path)?
+                            if fresh == token {
+                                bar_done!(st)?
+                                Err(HttpStatus(401, "token refresh did not help — re-run `stride auth`"))
+                            } else {
+                                bar_done!(st)?
+                                Output.say!("  access token expired — refreshed, continuing...")?
+                                drain_streams!(path, fresh, ids, { ..st, refreshes: st.refreshes + 1 })
+                            }
                         }
                     }
-                    Backoff(retries) => {
+                    # STOP, do not sleep. This is the DAILY command now, and sleeping
+                    # through Strava's window meant a routine `stride sync` blocking ~30
+                    # minutes in the foreground (two 905s rounds) where it used to return in
+                    # zero. Review measured a 2-activity sync doing exactly that. The rows
+                    # already stored are durable and `resumable` says there is more, so the
+                    # honest move is to hand the terminal back and let the next run continue
+                    # — which is the whole reason `backfill` could be deleted.
+                    Backoff(_) => {
                         bar_done!(st)?
-                        Output.say!("  rate limited — pausing ~15 min, then resuming...")?
-                        Sleep.millis!(window_sleep_ms!({}))
-                        drain_streams!(path, token, ids, { ..st, window: 0, retries })
+                        Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: RateLimited })
                     }
                     GiveUp => {
                         bar_done!(st)?
@@ -659,11 +646,13 @@ Strava :: [].{
                                 bar_done!(st)?
                                 Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_streams!(path)?, stopped: BudgetReached })
                             }
+                            # same policy as Backoff: the window is full, so stop rather
+                            # than sleep to the next one. A caller who wants the whole
+                            # history runs sync again; a caller who wanted today's ride
+                            # already has it.
                             SleepWindow => {
                                 bar_done!(st)?
-                                Output.say!("  15-min read window nearly full (${I64.to_str(window)}) — sleeping ~15 min...")?
-                                Sleep.millis!(window_sleep_ms!({}))
-                                drain_streams!(path, token, rest, { ..st, done, window: 0, retries: 0, stored: counted.stored, skipped: counted.skipped })
+                                Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_streams!(path)?, stopped: BudgetReached })
                             }
                             Continue =>
                                 drain_streams!(path, token, rest, { ..st, done, window, retries: 0, stored: counted.stored, skipped: counted.skipped })

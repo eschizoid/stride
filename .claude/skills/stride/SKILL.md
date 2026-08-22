@@ -12,7 +12,7 @@ Never do training math yourself: read stride's numbers, add judgment.
 
 ## Coaching workflow
 
-1. `stride sync --json` — the ONE command that talks to Strava (#232). It re-lists a
+1. `stride sync --json` — the ONE command that pulls data from Strava (#232). It re-lists a
    rolling 30-day window so recent edits self-heal, then drains every activity still
    missing streams, paced against Strava's limits. There is no `backfill` command any
    more; a first run on a fresh install is the whole history pull.

@@ -1,6 +1,6 @@
 {
   "title": "sync",
-  "description": "One sync run: what it re-listed, what it stored, and why it stopped. Since #232 this is the only command that talks to Strava — it drains missing streams paced against Strava's limits and stops on the per-run read budget, so a first run on a fresh install may need repeating. Read `resumable` to decide.",
+  "description": "One sync run: what it re-listed, what it stored, and why it stopped. Since #232 this is the only command that pulls data from Strava — it drains missing streams paced against Strava's limits and stops on the per-run read budget, so a first run on a fresh install may need repeating. Read `resumable` to decide.",
   "type": "object",
   "additionalKeys": false,
   "required": [

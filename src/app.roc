@@ -16,7 +16,7 @@ app [main!] {
 #
 # The logic worth testing lives in pure modules — Metrics (training math),
 # Sports (sport vocabulary), Render (tables/formatting), Command (argv parsing),
-# Config, Csv, Streams and Backfill. Schema (DDL) is pure but carries no expects;
+# Config, Csv, Streams and Drain. Schema (DDL) is pure but carries no expects;
 # it is type-checked only, and is not in the `just test` recipe.
 #
 # Two consumers, one contract: humans get tables (with legends and a verdict),
@@ -45,7 +45,7 @@ import Command
 import Config
 import Schema
 import Render
-import Backfill
+import Drain
 import Db
 import Output
 import Strava
@@ -80,6 +80,7 @@ help_text =
         \\
         \\GET DATA
         \\    sync        pull new activities + streams (rolling 30d self-heal)
+        \\    sync --all  force a full re-list from scratch (dev escape hatch)
         \\    import <zip|dir>  load a Strava account export — no API creds needed
         \\    analyze     compute training metrics (TSS, zones, CTL/ATL/TSB)
         \\
