@@ -31,7 +31,7 @@ SQL queries next to their row decoders** (the adjacency guard the compiler still
 |---|---|---|
 | `Output.roc` | `out!`/`emit_ok!`/`emit_err!`/`json_mode!`/`err_out!`/`usage!`/`narrate!` | Stdout |
 | `Db.roc` | `open_db!`, `secure_perms!`, `run_migrations!`, config get/set, `sport_ftp!`, time-anchor | Sqlite, Cmd, Env |
-| `Strava.roc` | `auth!`, token refresh, `sync!`, `backfill!`, stream fetch, ftp→Strava | Http, Sqlite |
+| `Strava.roc` | `auth!`, token refresh, `sync!`, stream drain, ftp→Strava | Http, Sqlite |
 | `Analyze.roc` | `analyze!`, `compute_one!`, `rebuild_daily_load!`, invalidation CASE | Sqlite |
 | `Report.roc` | where do I stand: summary/load/compare, plus the helpers shared across the report family | Sqlite |
 | `ReportSessions.roc` | what happened: activity/activities/top/progress/reps | Sqlite |

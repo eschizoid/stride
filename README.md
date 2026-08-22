@@ -72,7 +72,7 @@ differ:
 - **Reproducible recomputation.** Every metric records the inputs it was computed from,
   so a changed input recomputes exactly the affected history. Edit a ride on Strava and
   the metrics self-heal.
-- **Scriptable.** Every *query* command emits JSON for tools and agents when passed `--json`, tables otherwise; `--human` forces tables back. Either flag beats the `STRIDE_FORMAT` environment variable. (`auth` is an interactive browser flow, so it always prints text; `backfill` is long-running and narrates on stderr, but ends in a JSON envelope like everything else.)
+- **Scriptable.** Every *query* command emits JSON for tools and agents when passed `--json`, tables otherwise; `--human` forces tables back. Either flag beats the `STRIDE_FORMAT` environment variable. (`auth` is an interactive browser flow, so it always prints text; `sync` narrates progress on stderr while it runs, but ends in a JSON envelope like everything else.)
 - **An honest data model.** A session with no usable data shows `-`, not an invented
   number. Junk HR samples are filtered, and it says so. Strength, HIIT and yoga score
   through your own effort rating (`stride rate`) rather than pretending an aerobic model
@@ -171,11 +171,11 @@ stride config set timezone America/Chicago    # optional: anchor "today" to your
                                               #   stride config set utc_offset_minutes -300
                                               # Precedence: timezone > offset > UTC.
                                               # `stride doctor` shows which is active.
-stride backfill                               # pull all activities + all stream history
+stride sync                                   # pull all activities + all stream history
 stride analyze                                # compute everything
 ```
 
-**On the free path (no API app)?** Replace `auth` + `backfill` with a one-shot import
+**On the free path (no API app)?** Replace `auth` + `sync` with a one-shot import
 of your Strava account export — `config` and `analyze` are identical:
 
 ```bash
@@ -185,11 +185,15 @@ stride config set hr_z1_max 120                # + the rest of the HR zones + ti
 stride analyze
 ```
 
-`backfill` (API path) is the whole first-time pull: it fetches your complete activity
-list, then drains every activity's raw streams, pacing itself well inside Strava's rate
-limits (95 reads per 15-minute window against a cap of 100, then sleeps to the next
-window; stops cleanly at 940 reads per run against a daily cap of 1000). It's resumable — a multi-thousand-activity history spans a few days of
-`stride backfill` re-runs, hands-off.
+`sync` is the only command that talks to Strava, and the first one is the whole initial
+pull: it fetches your complete activity list, then drains every activity's raw streams,
+pacing itself well inside Strava's rate limits (95 reads per 15-minute window against a
+cap of 100, then sleeps to the next window; stops cleanly at 940 reads per run against a
+daily cap of 1000). When it stops on that budget it says so and sets `resumable`, and you
+just run it again — a multi-thousand-activity history converges over a few days of plain
+`stride sync`, hands-off. After that the same command is a two-second incremental. There
+is no separate backfill command to know about; `stride sync --all` exists only to force a
+full re-list from scratch.
 
 After `auth`, credentials live in the db — no env vars ever again. Day-to-day:
 
@@ -213,7 +217,6 @@ stride plan                                       # everything needed to plan a 
 | Command | What it does |
 | --- | --- |
 | `sync` | Pulls new activities + the next batch of HR/power streams. Re-pulls a rolling 30-day window so edits made on Strava self-heal. The fast daily command. |
-| `backfill` | Re-pulls the **full** activity list, then drains **all** missing stream history — hands-off, resumable, and paced by counting its own reads, so it never depends on an endpoint sending rate-limit headers — against self-imposed budgets of 95 reads per 15-minute window (Strava's cap is 100) and 940 per run (Strava's daily cap is 1000). First-time imports and deep reconciles (~after bulk edits older than 30 days). |
 | `rate <activity_id\|latest> <1-10>` | *How hard did it feel?* Session-RPE (Borg): you are the sensor for strength, HIIT, and yoga. `load = hours × RPE × 10`, so an hour at RPE 10 = 100, TSS-comparable. For strength-class sports your rating outranks HR; for endurance, measured power/HR always win. |
 | `import <zip\|dir>` | Loads a **Strava account export** (the ZIP from Settings → My Account → Download or Delete Your Account) — **no API credentials or subscription needed**. Summary-level data (no streams yet, so zone breakdowns stay honestly absent); re-import is idempotent. English-language exports only. |
 | `analyze` | Computes metrics for new (or invalidated) activities — TSS, time-in-zone, normalized power — then rebuilds the daily fitness/fatigue/form series through today. Prints what it did plus a one-line form verdict. |
@@ -225,7 +228,7 @@ stride plan                                       # everything needed to plan a 
 | `summary` | *Where do I stand today?* Form (with verdict), 7-day and 28-day zone mix + polarization, your derived FTP and the 20-min best behind it, date of your last hard session, per-sport breakdown. |
 | `activities [n] [sport]` | *What did each session actually contain?* Last *n* sessions (default 30), optionally filtered by sport family (human words widen: `bike` = Ride/VirtualRide/GravelRide/MountainBikeRide, `run` = Run/VirtualRun/TrailRun; e-bikes excluded; other sport_types filter exactly) (`activities 10 rowing`). Per session: load, intensity vs FTP, and minutes actually spent hard — measured against the sport's threshold by *power* where power exists, else by the *pace* split where a threshold speed exists, else HR Z4+Z5. |
 | `top <metric> [n] [sport]` | *What were my best sessions?* Ranks activities (default top 10) by a metric — `hr`, `tss`, `power`, `intensity`, `distance`, `time`, or `output` (kJ) — optionally filtered by sport (`top tss 5 ride`). The leaderboard to `activities`' timeline. |
-| `doctor` | *Can I trust my data?* Coverage (HR/power/streams/ratings), how each activity was scored and the **measured-vs-estimated confidence split**, config gaps (HR zones), pending backfill, and the active time anchor. Every gap says what, why, and the fix. |
+| `doctor` | *Can I trust my data?* Coverage (HR/power/streams/ratings), how each activity was scored and the **measured-vs-estimated confidence split**, config gaps (HR zones), streams still pending, and the active time anchor. Every gap says what, why, and the fix. |
 | `zones` (alias `pz`) | *What watts is each power zone for me?* The 7 Coggan/Peloton power zones as watt ranges derived from your FTP (they shift when FTP changes). The targets you'd set on a Power Zone ride. |
 | `reps [date]` | *Am I riding the same workout harder?* One level below `progress`: the anchor session's detected interval blocks beside the same-shaped blocks of earlier sessions — per-rep watts, the within-session fade, and the first-to-last HR rise. Comparability is stated in the payload rather than assumed: same sport family, same rep count, same rep-duration band, same signal, never later than the anchor. Each row also reports its OWN rep spread, because whether an uneven session counts as "the same workout" is a judgment stride leaves to you. A session whose blocks vary too much to be one repeated shape is refused as an anchor rather than compared against. |
 | `progress [date] [asc\|desc]` | *Am I improving on this workout?* Every past instance of a workout, compared with a **sport-aware lens** — Efficiency Factor (NP ÷ HR) for power rides, speed ÷ HR for distance sports, RPE for rated strength/HIIT — with a trend verdict and last-vs-best. Bare `progress` uses your latest session; `Metrics.anchor_filter` carries the exact matching rules (exact-named workouts compare every instance; auto-named sessions — Morning/Lunch/Afternoon/Evening/Night, any sport — compare only within ±10% of the anchor distance, and an auto-named anchor with no distance recorded shows alone). Sessions list oldest-first (`asc`, the default) so the trend reads left to right; `desc` puts the newest first when you only want the last few. The verdict is computed chronologically either way. |
@@ -328,7 +331,7 @@ flowchart TD
     strava["Strava REST v3"]
     export["Account export .zip"]
     auth["auth — OAuth paste flow"]
-    sync["sync / backfill"]
+    sync["sync"]
 
     subgraph db["SQLite — ~/.stride/db.sqlite"]
         direction LR

@@ -1,5 +1,5 @@
 Backfill :: [].{
-    # ── the streams backfill's pure half ────────────────────────────────
+    # ── the stream drain's pure half ────────────────────────────────────
     # Two things, both pure and both belonging to the drain loop in Strava.drain_streams!:
     # the rate-pacing DECISION (`decide`), and the vocabulary its outcome ships in
     # (`StopReason` + `stopped_label`). The loop is a thin effectful skin dispatching on
@@ -57,7 +57,7 @@ Backfill :: [].{
         }
 
     # the ONE tag -> wire-string conversion. These three strings are also the enum in
-    # schemas/v2/backfill.json; changing one without the other is a contract break.
+    # schemas/v2/sync.json; changing one without the other is a contract break.
     stopped_label : StopReason -> Str
     stopped_label = |r|
         match r {
@@ -129,7 +129,7 @@ expect match Backfill.decide({ status: 200, done: 0, window: 0, retries: 1 }, Ba
 }
 
 # the wire strings, pinned by equality. These must equal the enum in
-# schemas/v2/backfill.json; Render.backfill_note matches on the same three, and a
+# schemas/v2/sync.json; Render.drain_note matches on the same three, and a
 # composed expect there ties producer to consumer so a rename cannot pass either side.
 expect Backfill.stopped_label(Complete) == "complete"
 expect Backfill.stopped_label(BudgetReached) == "budget_reached"

@@ -80,7 +80,6 @@ help_text =
         \\
         \\GET DATA
         \\    sync        pull new activities + streams (rolling 30d self-heal)
-        \\    backfill    re-pull the full activity list + ALL missing streams
         \\    import <zip|dir>  load a Strava account export — no API creds needed
         \\    analyze     compute training metrics (TSS, zones, CTL/ATL/TSB)
         \\
@@ -308,8 +307,7 @@ dispatch! = |cmd|
     match cmd {
         Command.Init => init!({})
         Command.Auth => Strava.auth!({})
-        Command.Sync => Strava.sync!({})
-        Command.Backfill => Strava.backfill!({})
+        Command.Sync(all) => Strava.sync!(all)
         Command.Analyze => Analyze.analyze!({})
         Command.Summary => Report.summary!({})
         Command.Stats => ReportHealth.stats!({})

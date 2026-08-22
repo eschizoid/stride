@@ -249,8 +249,12 @@ Strava :: [].{
             Err(_) => Null
 
         }
-    sync! : {} => Try({}, _)
-    sync! = |{}| {
+    # `all` forces a full re-list: the watermark is ignored, every activity is re-listed
+    # and the prune is unbounded, so a deletion in old history propagates. That is the one
+    # thing an incremental run can never see, and the only reason the flag exists — mostly
+    # a dev-mode start-from-scratch (#232).
+    sync! : Bool => Try({}, _)
+    sync! = |all| {
         path = Db.open_db!({})?
         match get_valid_token!(path) {
             Err(NotAuthed) =>
@@ -260,7 +264,7 @@ Strava :: [].{
             Ok(token) => {
                 started = Db.now_secs!({})
                 # Incremental with a rolling 30-day overlap so recent edits on Strava
-                # self-heal (`backfill` is the full re-pull when needed).
+                # self-heal. `--all` is the full re-pull when one is wanted.
                 #
                 # THREE outcomes, not two. Absent means never synced and a full pull is
                 # right. A db read error propagates rather than silently burning the rate
@@ -269,6 +273,12 @@ Strava :: [].{
                 # invisible forever (#208). arg_i64 rather than I64.from_str, so the
                 # shape accepted here matches what `config set` enforces.
                 after_epoch =
+                    if all {
+                        # --all: behave exactly as a never-synced install does. No special
+                        # path, so the full-pull case stays the one that is exercised on
+                        # every fresh install rather than a rarely-run branch of its own.
+                        None
+                    } else
                     match Db.config_opt!(path, "last_sync_epoch")? {
                         NotFound => None
                         Found(epoch_str) =>
@@ -291,38 +301,42 @@ Strava :: [].{
                 # `after` window — still present upstream, only older — as a deletion and prune
                 # it. A full day exceeds any offset, so only rows definitely in the response are
                 # eligible. A deletion in that one-day sliver at the far edge is caught by the
-                # next `backfill` (full pull), which prunes all unseen ("" window_start). NULL
+                # next `sync --all` (full pull), which prunes all unseen ("" window_start). NULL
                 # synced_at rows (imports, pre-migration) are exempt regardless of the window.
                 window_start =
                     match after_epoch {
                         Some(a) => Metrics.epoch_to_iso(a + 86400)
                         None => ""
                     }
-                counts = fetch_pages!(path, token, after_param, started, 1, { relisted: 0, new_n: 0, updated_n: 0 }, True, True)?
+                counts = fetch_pages!(path, token, after_param, started, 1, { relisted: 0, new_n: 0, updated_n: 0 })?
                 pruned = prune_deleted!(path, started, window_start)?
                 Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
-                pull = backfill_streams!(path, token)?
-                remaining = pending_streams!(path)?
+                pull = drain_missing_streams!(path, token)?
                 # `synced` keeps its original meaning (rows re-listed) so existing consumers
                 # are untouched; new_activities/updated_activities are ADDITIVE, so the
                 # envelope version stays put. `streams_skipped` is additive for the same
-                # reason (#224) and matches backfill's field of that name.
-                Output.out!({ synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: remaining }, |p| {
+                # reason (#224).
+                # `stopped` and `resumable` moved here from the retired `backfill` (#232): a sync
+                # that drains the whole history can now stop on Strava's read budget, and
+                # "should I run it again?" has to be answerable without parsing prose.
+                # `resumable` is `pending_streams > 0` — measured from the database after the
+                # last store, which is why it is right in every terminal arm.
+                Output.out!({ synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: pull.pending, stopped: Backfill.stopped_label(pull.stopped), resumable: pull.pending > 0 }, |p| {
                     prune_note = if p.pruned > 0 " (pruned ${U64.to_str(p.pruned)} removed on Strava)" else ""
                     # said plainly rather than folded into the pending count: unreadable is
                     # not the same as not-yet-fetched, and only the first is worth chasing
-                    skip_note = if p.streams_skipped > 0 " (${U64.to_str(p.streams_skipped)} had unreadable stream data — they retry next sync)" else ""
-                    tail =
-                        if p.pending_streams > 0
-                            " (${I64.to_str(p.pending_streams)} still need streams — run `stride backfill` to pull them all)"
-                        else
-                            ""
+                    skip_note = if p.streams_skipped > 0 " (${I64.to_str(p.streams_skipped)} had unreadable stream data — they retry next sync)" else ""
+                    # WHY it stopped, not just that work remains. Render.drain_note carries
+                    # the vocabulary the retired `backfill` used to print, so a human still
+                    # learns the difference between "Strava's cap, come back tomorrow" and
+                    # "these bodies would not decode" (#232).
+                    tail = if p.pending_streams > 0 " — ${Render.drain_note(p.stopped, p.pending_streams)}" else ""
                     # New and updated FIRST, re-checked in parentheses behind them. The old
                     # line led with the re-listed count, which is a function of how often you
                     # train rather than of this sync, and reading "synced 22 activities" as 22
                     # NEW ones is the question it kept provoking (#112). On a typical day the
                     # leading numbers are 0 and 0, which is the honest answer.
-                    "synced ${U64.to_str(p.new_activities)} new, ${U64.to_str(p.updated_activities)} updated (${U64.to_str(p.synced)} re-checked in the 30-day window)${prune_note}, fetched streams for ${U64.to_str(p.streams_fetched)}${skip_note}${tail}"
+                    "synced ${U64.to_str(p.new_activities)} new, ${U64.to_str(p.updated_activities)} updated (${U64.to_str(p.synced)} re-checked in the 30-day window)${prune_note}, fetched streams for ${I64.to_str(p.streams_fetched)}${skip_note}${tail}"
                 })
             }
         }
@@ -331,12 +345,27 @@ Strava :: [].{
     # yet, newest first, capped per run to respect Strava's rate limits (~100 reads/15min).
     # altitude + distance are requested EXPLICITLY (not relying on Strava's implicit base
     # streams) — together they feed grade-adjusted pace / NGP (ADR 0003). To re-pull for
-    # pre-existing streams, DELETE FROM streams (mirror tier — re-pullable) and let this
-    # backfill refetch them.
-    streams_per_run = 60
+    # pre-existing streams, DELETE FROM streams (mirror tier — re-pullable) and let the
+    # next sync refetch them.
 
-    backfill_streams! : Str, Str => Try(StreamPull, _)
-    backfill_streams! = |path, token| {
+    # close the bar before anything else prints, or the line lands on the bar's row
+    bar_done! : DrainState => Try({}, _)
+    bar_done! = |st| if st.total > 0 { Output.narrate_done!({}) } else { Ok({}) }
+
+    # ONE stream loop for the whole engine (#232). There used to be two — a capped,
+    # unpaced one here for `sync` and a paced one for `backfill` — doing the same job.
+    # They drifted, and every rate-limit inconsistency in stride came out of that: the
+    # same 429 behaved three different ways depending on which loop and which request
+    # hit it, and #218's counting bug had to be fixed a second time (#224) purely
+    # because the loop existed twice.
+    #
+    # No per-run cap any more. `sync` drains what is missing, paced against Strava's
+    # own limits, and stops on the read budget reporting `resumable: true` so the next
+    # run continues. Steady state is a handful of reads — nobody rides 95 times a day —
+    # so the long run only happens on a fresh install, which is exactly when a long run
+    # is the thing you want.
+    drain_missing_streams! : Str, Str => Try(BackfillOutcome, _)
+    drain_missing_streams! = |path, token| {
         ids = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
@@ -344,34 +373,33 @@ Strava :: [].{
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\WHERE s.activity_id IS NULL AND a.moving_time > 0
                 \\ORDER BY a.start_local DESC
-                \\LIMIT ${(streams_per_run).to_str()}
             ,
             bindings: [],
             rows: Sqlite.i64("id"),
         })?
-        # the stream backfill is the long half of a sync and its total IS knowable — the
-        # id list is already in hand — so this half gets a real bar rather than a spinner.
-        #
-        # The completion and rate-limit paths close the bar themselves, because each prints
-        # something straight after. Every OTHER way out is an error propagating from the
-        # HTTP call, the status check or the store — none of which can close it on the way
-        # past — so the error case is closed here, once, instead of at each `?`.
-        # An immediate 0/total frame BEFORE the first request. Narrating only after a
-        # response returns means a stalled network call shows nothing for exactly as long
-        # as the stall lasts — which is the "it looks hung" failure this whole change
-        # exists to prevent, reintroduced at the one moment it matters most.
-        _ = if !(List.is_empty(ids)) { Output.narrate!("fetching streams", 0, List.len(ids))? } else { {} }
-        res = fetch_streams_all!(path, token, ids, { stored: 0, skipped: 0 }, List.len(ids))
-        match res {
-            Ok(n) => Ok(n)
-            Err(e) => {
-                _ = if !(List.is_empty(ids)) { Output.narrate_done!({})? } else { {} }
-                Err(e)
+        total = List.len(ids)
+        if total == 0 {
+            Ok({ stored: 0, skipped: 0, pending: 0, stopped: Complete })
+        } else {
+            # an immediate 0/total frame BEFORE the first request: narrating only after a
+            # response returns shows nothing for exactly as long as a stall lasts, which
+            # is the "it looks hung" failure this bar exists to prevent
+            _ = Output.narrate!("fetching streams", 0, total)?
+            match drain_streams!(path, token, ids, { done: 0, window: 0, retries: 0, stored: 0, skipped: 0, total }) {
+                Ok(o) => Ok(o)
+                Err(e) => {
+                    # every non-terminal exit is an error propagating from the HTTP call,
+                    # the status check or the store — none of which closes the bar on the
+                    # way past, so it is closed here once instead of at each `?`
+                    _ = Output.narrate_done!({})?
+                    Err(e)
+                }
             }
         }
     }
-    # count activities still lacking streams (so sync can report incomplete backfill
-    # honestly instead of letting the 60/run cap look like completion)
+
+    # count activities still lacking streams, so a run that stopped on the read budget
+    # reports the shortfall honestly instead of looking like completion
     pending_streams! : Str => Try(I64, _)
     pending_streams! = |path|
         Sqlite.query!({
@@ -385,65 +413,6 @@ Strava :: [].{
             row: Sqlite.i64("n"),
         })
 
-    # Returns BOTH counts. `stored` is rows written; `skipped` is reads whose body would
-    # not decode as UTF-8, which store nothing and stay pending so they retry next run.
-    # They were folded together before (#224): the skip incremented nothing and said
-    # nothing, so a sync that silently dropped stream data reported a clean run and the
-    # only trace was `pending_streams` failing to move — indistinguishable from a
-    # rate-limited partial. `backfill` grew the same counter in #218; this is the command
-    # it actually matters on, because it is the one that runs daily.
-    StreamPull : { stored : U64, skipped : U64 }
-
-    fetch_streams_all! : Str, Str, List(I64), StreamPull, U64 => Try(StreamPull, _)
-    fetch_streams_all! = |path, token, ids, acc, total|
-        match ids {
-            [] => {
-                # close the bar before sync's stdout summary prints, or the summary lands
-                # on the same terminal row as the last frame
-                _ = if total > 0 { Output.narrate_done!({})? } else { {} }
-                Ok(acc)
-            }
-
-            [id, .. as rest] => {
-                id_str = (id).to_str()
-                uri = "${api_base!({})}/api/v3/activities/${id_str}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
-                resp = send_bearer!(uri, token)?
-                if Response.status(resp) == 429 {
-                    # rate limited — stop gracefully, next sync continues the backfill.
-                    # STDERR, not stdout: this runs inside `sync`, which emits a JSON
-                    # envelope at the end, so a plain line on stdout would sit in front of
-                    # that JSON and break every machine consumer parsing it. It is
-                    # narration about how the run went, which is exactly what stderr is
-                    # for. `backfill` holds to the same rule for the same reason (#218):
-                    # it emits an envelope too, so its progress is narration on stderr and
-                    # the envelope's `stopped` field carries the outcome this line reports.
-                    _ = if total > 0 { Output.narrate_done!({})? } else { {} }
-                    Output.say!("rate limited by Strava — stopping streams backfill for now (will resume next sync)")?
-                    Ok(acc)
-                } else if Response.status(resp) >= 300 and Response.status(resp) != 404 {
-                    Err(HttpStatus(Response.status(resp), Str.from_utf8(Response.body(resp)).ok_or("<non-utf8 body>")))
-                } else {
-                    # narrate on the id just RETIRED, counting attempts rather than stores:
-                    # a 404 or non-utf8 body is progress through the queue too, so counting
-                    # only stored rows would stall the bar on a run full of skips.
-                    done = total - List.len(rest)
-                    _ = if total > 0 { Output.narrate!("fetching streams", done, total)? } else { {} }
-                    # 404/2xx/non-utf8 policy lives in store_stream_response! (shared with backfill)
-                    match store_stream_response!(path, id, resp)? {
-                        Stored => fetch_streams_all!(path, token, rest, { ..acc, stored: acc.stored + 1 }, total)
-                        SkippedNonUtf8 => {
-                            # close the bar first: this line would otherwise land on the
-                            # bar's row, the same corruption the completion and rate-limit
-                            # paths already close it for.
-                            _ = if total > 0 { Output.narrate_done!({})? } else { {} }
-                            Output.say!("  activity ${id_str}: stream data would not decode — skipped, retries next sync")?
-                            _ = if total > 0 { Output.narrate!("fetching streams", done, total)? } else { {} }
-                            fetch_streams_all!(path, token, rest, { ..acc, skipped: acc.skipped + 1 }, total)
-                        }
-                    }
-                }
-            }
-        }
     store_streams! : Str, I64, Str => Try({}, _)
     store_streams! = |path, id, text| {
         Sqlite.execute!({
@@ -550,7 +519,7 @@ Strava :: [].{
 
     # store a streams response like the sync path: 404 => honest empty marker,
     # 2xx => body (skip if non-utf8 so it retries), other => propagate the error
-    # THE stream-response policy, shared by sync and backfill: 404 => "{}" marker
+    # THE stream-response policy: 404 => "{}" marker
     # (no streams recorded; don't refetch), 2xx => store, non-utf8 => skip WITHOUT
     # storing (storing would mark it done forever; it retries next run).
     store_stream_response! = |path, id, resp|
@@ -569,67 +538,6 @@ Strava :: [].{
             text = Str.from_utf8(Response.body(resp)).ok_or("<non-utf8 body>")
             Err(HttpStatus(Response.status(resp), text))
         }
-    backfill! : {} => Try({}, _)
-    backfill! = |{}| {
-        path = Db.open_db!({})?
-        match get_valid_token!(path) {
-            Err(NotAuthed) => Output.err_out!("not_authenticated", "not authenticated — run `stride auth` first")
-            Err(other) => Err(other)
-            Ok(token) => {
-                # pull the full activity list first so backfill is self-sufficient —
-                # no need to run `sync` beforehand (that's what made it two commands)
-                Output.say!("backfill: refreshing the activity list...")?
-                started = Db.now_secs!({})
-                # backfill reports neither counts, so it skips the per-row classify SELECT
-                counts = fetch_pages!(path, token, "", started, 1, { relisted: 0, new_n: 0, updated_n: 0 }, False, False)?
-                # full re-pull: window_start "" prunes every activity Strava no longer lists
-                pruned = prune_deleted!(path, started, "")?
-                (if pruned > 0 Output.say!("backfill: pruned ${U64.to_str(pruned)} activities removed on Strava") else Ok({}))?
-                Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
-                missing_ids = Sqlite.query_many!({
-                    path: Path.utf8(path),
-                    query:
-                        \\SELECT a.id AS id FROM activities a
-                        \\LEFT JOIN streams s ON s.activity_id = a.id
-                        \\WHERE s.activity_id IS NULL AND a.moving_time > 0
-                        \\ORDER BY a.start_local DESC
-                    ,
-                    bindings: [],
-                    rows: Sqlite.i64("id"),
-                })?
-                missing = List.len(missing_ids)
-                outcome : BackfillOutcome
-                outcome =
-                    if missing == 0 {
-                        { stored: 0, skipped: 0, pending: 0, stopped: Complete }
-                    } else {
-                        Output.say!("backfill: ${U64.to_str(counts.relisted)} activities, ${U64.to_str(missing)} need streams. Strava allows ~1000 reads/day, so a large first pull can span a few days — this run drains as far as today's limit allows and is resumable (just run `stride backfill` again).")?
-                        drain_streams!(path, token, missing_ids, { done: 0, window: 0, retries: 0, stored: 0, skipped: 0 })?
-                    }
-                # `resumable` is the question a caller acts on, and it is simply "is
-                # anything still missing?". Deriving it from `stopped` instead was wrong in
-                # BOTH directions: a run ending `complete` with an undecodable body still
-                # has work (that id stored nothing and retries next run), and a run that
-                # stops exactly on the read budget with an empty queue has none.
-                # `pending` is measured from the database after the last store in every
-                # arm that ran a drain. The no-work short-circuit below reads no database:
-                # it derives 0 from `missing_ids`, whose WHERE clause is identical to
-                # `pending_streams!`'s, so the value is right by the same query.
-                Output.out!(
-                    {
-                        activities: counts.relisted,
-                        pruned,
-                        streams_fetched: outcome.stored,
-                        streams_skipped: outcome.skipped,
-                        streams_pending: outcome.pending,
-                        stopped: Backfill.stopped_label(outcome.stopped),
-                        resumable: outcome.pending > 0,
-                    },
-                    Render.backfill_screen,
-                )
-            }
-        }
-    }
     # Per-run drain state: `done` = reads this run (vs the daily cap), `window` = reads
     # since the last window sleep (vs the 15-min cap), `retries` = consecutive 429s
     # after a sleep (to detect the daily cap without headers), `stored`/`skipped` = what
@@ -640,7 +548,11 @@ Strava :: [].{
     # read and stores nothing — while the payload reports WORK. Publishing `done` as
     # `streams_fetched` (as the first cut of #218 did) reports rows that do not exist and
     # disagrees with `sync`'s identically-named field, which counts stores.
-    DrainState : { done : I64, window : I64, retries : I64, stored : I64, skipped : I64 }
+    # `total` is the queue length this run started with, carried so the loop can draw a
+    # real progress bar rather than a spinner: a first-time sync can spend a long time
+    # here, and narrating only after a response returns shows nothing for exactly as
+    # long as a stall lasts. It is NOT a counter — nothing decrements it.
+    DrainState : { done : I64, window : I64, retries : I64, stored : I64, skipped : I64, total : U64 }
 
     # Walk the missing-streams list once per run. Walking a LIST (not re-querying
     # "next missing") means an unstorable body is skipped, not refetched forever.
@@ -656,13 +568,41 @@ Strava :: [].{
     # Backfill.stopped_label is the one place it becomes the string that ships.
     BackfillOutcome : { stored : I64, skipped : I64, pending : I64, stopped : Backfill.StopReason }
 
+    # Report durable progress before an error escapes the drain (#225). The rows already
+    # stored are committed and the next run measures `pending_streams` from the database,
+    # so the machine contract stays honest without carrying partial state in the error
+    # envelope — a caller's action is the same either way: run it again. What was lost was
+    # the human's picture: a run that died on read 900 and one that died on read 2 produced
+    # identical output, because the error envelope carries no counts.
+    #
+    # Its own failure is swallowed deliberately: this runs on the way out of a failure that
+    # is already being reported, and a broken stderr must not replace that error with this.
+    say_partial! : DrainState => {}
+    say_partial! = |st| {
+        _ = bar_done!(st)
+        match Output.say!("sync stopped on an error — the ${I64.to_str(st.stored)} streams stored this run are saved; run `stride sync` again to continue from there") {
+            Ok(_) => {}
+            Err(_) => {}
+        }
+    }
+
     drain_streams! : Str, Str, List(I64), DrainState => Try(BackfillOutcome, _)
     drain_streams! = |path, token, ids, st|
         match ids {
-            [] => Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: Complete })
+            [] => {
+                bar_done!(st)?
+                Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: Complete })
+            }
             [id, .. as rest] => {
                 uri = "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
-                resp = send_bearer!(uri, token)?
+                resp =
+                    match send_bearer!(uri, token) {
+                        Ok(r) => Ok(r)
+                        Err(e) => {
+                            say_partial!(st)
+                            Err(e)
+                        }
+                    }?
                 match Backfill.decide({ status: Response.status(resp), done: st.done, window: st.window, retries: st.retries }, read_limits!({})) {
                     Refresh => {
                         # multi-hour runs outlive the ~6h access token; refresh once and
@@ -671,37 +611,56 @@ Strava :: [].{
                         if fresh == token {
                             Err(HttpStatus(401, "token refresh did not help — re-run `stride auth`"))
                         } else {
+                            bar_done!(st)?
                             Output.say!("  access token expired — refreshed, continuing...")?
                             drain_streams!(path, fresh, ids, st)
                         }
                     }
                     Backoff(retries) => {
+                        bar_done!(st)?
                         Output.say!("  rate limited — pausing ~15 min, then resuming...")?
                         Sleep.millis!(window_sleep_ms!({}))
                         drain_streams!(path, token, ids, { ..st, window: 0, retries })
                     }
-                    GiveUp => Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: RateLimited })
+                    GiveUp => {
+                        bar_done!(st)?
+                        Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: RateLimited })
+                    }
                     Store({ done, window, after }) => {
                         # 404 => empty marker, 2xx => body, other => error propagated.
-                        # MATCHED, not discarded, exactly as the sibling fetch_streams_all!
-                        # does: SkippedNonUtf8 writes no row, so that id stays pending and
-                        # retries next run. Counting it as fetched reported rows that were
-                        # never stored and let a lossy run present itself as a clean one.
+                        # MATCHED, not discarded: SkippedNonUtf8 writes no row, so that id
+                        # stays pending and retries next run. Counting it as fetched reported
+                        # rows that were never stored and let a lossy run present itself as a
+                        # clean one — a bug that had to be fixed twice (#218, #224) back when
+                        # this loop had a twin.
                         counted =
-                            match store_stream_response!(path, id, resp)? {
+                            match (
+                                match store_stream_response!(path, id, resp) {
+                                    Ok(v) => Ok(v)
+                                    Err(e) => {
+                                        say_partial!(st)
+                                        Err(e)
+                                    }
+                                }
+                            )? {
                                 Stored => { stored: st.stored + 1, skipped: st.skipped }
                                 SkippedNonUtf8 => {
+                                    bar_done!(st)?
                                     Output.say!("  activity ${I64.to_str(id)}: stream data would not decode — skipped, retries next run")?
                                     { stored: st.stored, skipped: st.skipped + 1 }
                                 }
                             }
-                        (if done % 50 == 0
-                            Output.say!("  ...${I64.to_str(done)} reads this run, ${I64.to_str(counted.stored)} stored")
-                        else
-                            Ok({}))?
+                        # narrate on the id just RETIRED, counting attempts: a 404 or an
+                        # undecodable body is progress through the queue too, so counting
+                        # only stores would stall the bar on a run full of skips.
+                        _ = if st.total > 0 { Output.narrate!("fetching streams", st.total - List.len(rest), st.total)? } else { {} }
                         match after {
-                            StopRun => Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_streams!(path)?, stopped: BudgetReached })
+                            StopRun => {
+                                bar_done!(st)?
+                                Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_streams!(path)?, stopped: BudgetReached })
+                            }
                             SleepWindow => {
+                                bar_done!(st)?
                                 Output.say!("  15-min read window nearly full (${I64.to_str(window)}) — sleeping ~15 min...")?
                                 Sleep.millis!(window_sleep_ms!({}))
                                 drain_streams!(path, token, rest, { ..st, done, window: 0, retries: 0, stored: counted.stored, skipped: counted.skipped })
@@ -718,37 +677,35 @@ Strava :: [].{
 
     # acc carries the re-listed total AND the new/updated split (#112): the first is a
     # function of training frequency, the second is what actually happened this run.
-    # `classify` is SEPARATE from `narrate` on purpose. They happen to agree today (sync
-    # narrates and counts; backfill does neither), but they answer different questions, and
-    # one flag doing double duty is how the next caller silently gets the wrong behaviour.
-    fetch_pages! : Str, Str, Str, I64, U64, { relisted : U64, new_n : U64, updated_n : U64 }, Bool, Bool => Try({ relisted : U64, new_n : U64, updated_n : U64 }, _)
-    fetch_pages! = |path, token, after_param, stamp, page, acc, narrate, classify| {
+    # The `narrate` and `classify` flags are gone with #232. They existed so `backfill`
+    # could pass False, False; `sync` is the only caller now and always wants both, so
+    # they were two dead parameters and a branch nothing took.
+    fetch_pages! : Str, Str, Str, I64, U64, { relisted : U64, new_n : U64, updated_n : U64 } => Try({ relisted : U64, new_n : U64, updated_n : U64 }, _)
+    fetch_pages! = |path, token, after_param, stamp, page, acc| {
         page_str = (page).to_str()
         per_str = (per_page).to_str()
         uri = "${api_base!({})}/api/v3/athlete/activities?per_page=${per_str}&page=${page_str}${after_param}"
         # page 1 only, and BEFORE the request: the per-page lines below report pages that
         # already landed, so a stalled first request would otherwise print nothing at all.
         # Later pages need no such line — by then the reader has seen output.
-        _ = if narrate and page == 1 { Output.say!("fetching activity list…")? } else { {} }
+        _ = if page == 1 { Output.say!("fetching activity list…")? } else { {} }
         body = get_bearer!(uri, token)?
         text = Str.from_utf8(body).map_err(|_| ActivityDecodeFailed(page))?
         decoded : Try(List(ActivitySummary), _)
         decoded = Json.parse(text)
         acts = decoded.map_err(|_| ActivityDecodeFailed(page))?
-        counts = upsert_all!(path, stamp, acts, { new_n: acc.new_n, updated_n: acc.updated_n }, classify)?
+        counts = upsert_all!(path, stamp, acts, { new_n: acc.new_n, updated_n: acc.updated_n })?
         got = List.len(acts)
         total = acc.relisted + got
         # a plain line per page, not a bar: Strava's activity list is paged and its length
         # is unknowable until the short page arrives, so any denominator here would be
         # invented. Pages are few at `per_page` (100) a page, so the lines stay countable.
-        # Gated because `backfill!` shares this function and ALREADY reports its own
-        # progress on stdout — narrating here too would duplicate it in a second stream.
-        _ = if narrate { Output.say!("fetched activities page ${(page).to_str()} — ${(total).to_str()} so far")? } else { {} }
+        _ = Output.say!("fetched activities page ${(page).to_str()} — ${(total).to_str()} so far")?
         next = { relisted: total, new_n: counts.new_n, updated_n: counts.updated_n }
         if got < per_page
             Ok(next)
         else
-            fetch_pages!(path, token, after_param, stamp, page + 1, next, narrate, classify)
+            fetch_pages!(path, token, after_param, stamp, page + 1, next)
     }
     # What a sync did to one row. Most rows on most days are Unchanged: sync re-lists a
     # rolling 30-day window every run, so the re-listed count is a function of how often
@@ -757,12 +714,14 @@ Strava :: [].{
 
     SyncCounts : { new_n : U64, updated_n : U64 }
 
-    # `classify` off skips the per-row SELECT entirely and leaves the counts at zero.
-    # backfill! re-lists the WHOLE account (thousands of rows) and never reads them, so
-    # paying a query each would be a real cost for nothing — the same mistake as running
-    # the classify inside upsert_activity!, where CSV import paid it.
-    upsert_all! : Str, I64, List(ActivitySummary), SyncCounts, Bool => Try(SyncCounts, _)
-    upsert_all! = |path, stamp, acts, acc, classify|
+    # The classify SELECT runs per row. It used to be skippable, because `backfill!`
+    # re-listed the whole account and never read the counts — paying a query each would
+    # have been a real cost for nothing, the same mistake as running classify inside
+    # upsert_activity! where CSV import paid it. With one caller that wants the counts,
+    # the skip is gone; if a future caller does not want them, bring the flag back rather
+    # than making this function guess.
+    upsert_all! : Str, I64, List(ActivitySummary), SyncCounts => Try(SyncCounts, _)
+    upsert_all! = |path, stamp, acts, acc|
         match acts {
             [] => Ok(acc)
             [a, .. as rest] => {
@@ -772,7 +731,7 @@ Strava :: [].{
                 # extra per-row query in the import loop made the offline e2e flaky
                 # (import checks failing ~1 run in 3). The counts are a sync concern; keep
                 # the cost on the sync path, and only when someone will read them.
-                outcome = if classify { classify_activity!(path, a)? } else { Unchanged }
+                outcome = classify_activity!(path, a)?
                 _ = upsert_activity!(path, stamp, a)?
                 next =
                     match outcome {
@@ -780,7 +739,7 @@ Strava :: [].{
                         Updated => { new_n: acc.new_n, updated_n: acc.updated_n + 1 }
                         Unchanged => acc
                     }
-                upsert_all!(path, stamp, rest, next, classify)
+                upsert_all!(path, stamp, rest, next)
             }
 
         }

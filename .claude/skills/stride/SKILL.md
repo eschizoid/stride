@@ -12,26 +12,26 @@ Never do training math yourself: read stride's numbers, add judgment.
 
 ## Coaching workflow
 
-1. `stride sync --json` — pull new activities + backfill streams (creds live in the db after
-   `auth`). Re-pulls a rolling 30-day window so recent Strava edits self-heal. Streams
-   backfill is capped at 60/run; sync reports how many activities still need streams.
-   **First-time import or deep reconcile** (bulk edits older than 30 days): use
-   `stride backfill` — it re-pulls the full activity list + ALL missing streams,
-   rate-limit-aware and resumable across days (Strava caps reads at ~1000/day).
-   It ends in the usual envelope (`schemas/v2/backfill.json`) with progress on
-   stderr: read `resumable` (= `streams_pending > 0`) to decide whether to run it
-   again, and `stopped` for why it ended (`complete` / `budget_reached` /
-   `rate_limited` — both non-complete reasons mean tomorrow, they stop against the
-   daily read cap). `complete` can still leave work: a stream body that does not
+1. `stride sync --json` — the ONE command that talks to Strava (#232). It re-lists a
+   rolling 30-day window so recent edits self-heal, then drains every activity still
+   missing streams, paced against Strava's limits. There is no `backfill` command any
+   more; a first run on a fresh install is the whole history pull.
+   It ends in the usual envelope (`schemas/v2/sync.json`) with progress on stderr.
+   Read `resumable` (= `pending_streams > 0`) to decide whether to run it again, and
+   `stopped` for why it ended (`complete` / `budget_reached` / `rate_limited` — both
+   non-complete reasons stop against the DAILY read cap, so both mean tomorrow).
+   A first sync on a large history may take several runs across days; each one says
+   how far it got and every stored stream is permanent, so re-running is never wasted.
+   `complete` can still leave work: a stream body that does not
    decode is skipped WITHOUT storing, so it retries next run and shows up in
    `streams_skipped`. An activity Strava has no streams for is NOT that case — a
    404 stores an empty marker and retires it permanently (#218).
    **Do not loop on `resumable` alone.** `streams_fetched: 0` with
    `streams_skipped > 0` and `resumable: true` means the run did nothing and is
    still asking: those bodies are unreadable, not late, and re-running will keep
-   returning that identical envelope. Stop and report it. `sync` takes the same
-   skip path and now reports the same way (#224): it carries `streams_skipped`
-   too, so the same rule applies there.
+   returning that identical envelope. Stop and report it.
+   `stride sync --all` forces a full re-list from scratch — a dev-mode escape hatch
+   and the only way a deletion in OLD history propagates; normal use never needs it.
    **No API credentials** (Strava requires a subscription for API access since
    June 2026): `stride import <export.zip|dir> --json` loads a Strava account export —
    summary-level activities (no streams), idempotent, English exports only.
@@ -123,8 +123,8 @@ wanted data, you left `--json` off. Every machine response you will
 consume is a versioned envelope — including usage errors (`{"error":{"code":"usage",…}}`) and a
 bare `stride --json`, which answers with `{"data":{"commands":[…]}}` rather than the
 human help screen (#180). One thing is NOT enveloped: `stride auth`, an interactive browser
-flow you run by hand. `stride backfill` narrates progress too, but on stderr — its stdout is
-the envelope, so you can read it (#218). Platform failures ARE enveloped now (#183): `no_database` (absent — run `init`),
+flow you run by hand. `stride sync` narrates progress on stderr while it runs — its stdout is
+the envelope, so you can read it (#218, #232). Platform failures ARE enveloped now (#183): `no_database` (absent — run `init`),
 `unreadable_database` (present but unopenable — permissions or a directory in its
 place, which `init` will NOT fix), `corrupt_database`, `database_error` (SQLite
 refused the operation, e.g. a lock), `network_unreachable` (Strava never
@@ -234,7 +234,7 @@ means for every date below.
   zero effort. Weigh strength by session count, not TSS. `avg_hr` in `activities` output
   is raw (unfiltered).
 - `created_at` in planned sessions is an ISO datetime string (UTC, e.g. `2026-07-27T18:04:22Z`).
-- Streams backfill is rate-capped at 60/sync; older activities gain zone data over
+- Streams are drained by `sync` until the read budget stops it; older activities gain zone data over
   repeated syncs. `sqlite3 ~/.stride/db.sqlite "SELECT COUNT(*) FROM streams"` shows progress.
 
 ## Setup & credentials

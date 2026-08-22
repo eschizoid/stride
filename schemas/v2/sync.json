@@ -1,6 +1,6 @@
 {
   "title": "sync",
-  "description": "Result of `stride sync`. Counts are activities touched in the rolling window; `pruned` are rows Strava no longer returns.",
+  "description": "One sync run: what it re-listed, what it stored, and why it stopped. Since #232 this is the only command that talks to Strava — it drains missing streams paced against Strava's limits and stops on the per-run read budget, so a first run on a fresh install may need repeating. Read `resumable` to decide.",
   "type": "object",
   "additionalKeys": false,
   "required": [
@@ -10,7 +10,9 @@
     "pruned",
     "streams_fetched",
     "streams_skipped",
-    "pending_streams"
+    "pending_streams",
+    "stopped",
+    "resumable"
   ],
   "properties": {
     "synced": {
@@ -26,15 +28,29 @@
       "type": "integer"
     },
     "streams_fetched": {
-      "description": "stream rows STORED this run. Not the number of reads spent: a read whose body will not decode stores nothing and is counted in streams_skipped instead",
+      "description": "stream rows STORED this run. Not reads spent: a read whose body will not decode stores nothing and is counted in streams_skipped, and a 404 stores an empty marker rather than streams",
       "type": "integer"
     },
     "streams_skipped": {
-      "description": "reads whose body would not decode as UTF-8. Nothing was stored, so these stay pending and retry next sync. A value that repeats across syncs means the data is unreadable rather than merely late",
+      "description": "reads whose body would not decode as UTF-8. Nothing was stored, so these stay pending and retry next run. A value that repeats across runs means the data is unreadable rather than merely late",
       "type": "integer"
     },
     "pending_streams": {
-      "type": "integer"
+      "type": "integer",
+      "description": "activities still without any streams row after this run. An activity Strava has no streams for does NOT count: its 404 stores an empty marker, which retires it permanently"
+    },
+    "stopped": {
+      "type": "string",
+      "description": "why the stream drain ended. complete = the queue emptied; budget_reached = stopped at the self-imposed per-run read budget; rate_limited = Strava's cap, still limited after backing off. Both non-complete reasons stop against the DAILY cap, so both mean try again tomorrow. NOTE rate_limited here is a partial success in a SUCCESS envelope at exit 0 — the run did real work before stopping — whereas the identically-named error code means the command made no progress and exits 1 (#227)",
+      "enum": [
+        "complete",
+        "budget_reached",
+        "rate_limited"
+      ]
+    },
+    "resumable": {
+      "type": "boolean",
+      "description": "whether anything is still missing — exactly pending_streams > 0. True after a complete run when a body would not decode; false after a budget stop that happened to empty the queue"
     }
   }
 }

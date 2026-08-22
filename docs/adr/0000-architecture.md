@@ -109,7 +109,7 @@ mixed contexts and instead records, per metrics row:
   schema v8 and was dropped for being derivable. Surfaced as a distribution by `doctor`.
 
 `doctor` is the trust center: coverage, provenance, the confidence distribution,
-config completeness, pending stream backfill, and the active time anchor — every
+config completeness, streams still pending, and the active time anchor — every
 gap stated as what / why / fix.
 
 ## 5. Metric invalidation is explicit
@@ -289,14 +289,14 @@ enforcement is `just e2e`, which runs `tools/validate.jq` against seeded fixture
 "does MY data conform" pass, local and not part of CI. Coverage is not total, and it now has three tiers rather than two. Five
 payloads (`complete`, `import`, `init`, `rate`, `sync`) are validated by neither pass, so
 a key added to THOSE is currently caught by nothing. `tte` is covered by the local recipe
-but not by CI. `backfill` is covered by a third pass: `just e2e-sync`, which drives it against loopback
+but not by CI. `sync` is covered by a third pass: `just e2e-sync`, which drives it against loopback
 mocks and now runs in CI. That recipe was assumed to need a token and a live API and so
 was left out of CI for a long time; it needs neither — the mocks bind loopback, and the
-token is a fake row in a sandboxed HOME — and the assumption cost `backfill` its only
+token is a fake row in a sandboxed HOME — and the assumption cost the stream drain its only
 payload-vs-schema check.
 
 Worth stating because the near-miss is tempting: the COMPILER does not substitute for
-the validator. `Render.backfill_screen` takes a closed record, so an added, removed or
+the validator. `Render.sync`'s payload record is closed, so an added, removed or
 retyped payload key fails `roc check` until that annotation and its expects are widened.
 That guards payload↔SCREEN. Widen both and the build is green with the schema untouched
 — payload↔schema is a different invariant, and the compiler error never mentions the

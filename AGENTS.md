@@ -91,7 +91,7 @@ just install   # build + symlink to ~/.local/bin/stride
   pattern; older ones migrate as touched.
 - `tests/e2e.roc` is ONE binary in FOUR roles, picked by `E2E_MODE`: the offline suite
   (default, no mode set), a mock Strava server (`mock`), and three drivers that run
-  against it — `sync` (real sync + token refresh), `backfill` (the undecodable-body skip
+  against it — `sync` (real sync + token refresh), `skips` (the undecodable-body skip
   path), and `stops` (the `budget_reached` / `rate_limited` outcomes). `just e2e-sync`
   starts three mock instances on three ports (`mock_port`, `bad_stream_port`,
   `rate_limit_port`) and runs all three drivers; the mock's behaviour is varied by

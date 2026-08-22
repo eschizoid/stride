@@ -319,7 +319,7 @@ ReportHealth :: [].{
                         "  junk samples dropped (30d): ${Render.fmt1(p.junk_filtered_pct_30d)}% overall · worst session ${Render.fmt1(p.junk_worst_session_pct_30d)}%",
                         "  zero load (no usable data): ${(p.zero_load).to_str()}",
                         "  not yet analyzed: ${(p.unanalyzed).to_str()}",
-                        "  pending stream backfill: ${(p.pending_streams).to_str()}",
+                        "  streams still pending: ${(p.pending_streams).to_str()}",
                         "  config: hr zones ${if p.zones_set "set" else "incomplete"}, ${(p.sport_zone_overrides).to_str()} per-sport zone key(s) set · ${(p.ftp_derived_sports).to_str()} sport(s) have a derived FTP (FTP is never configured — see summary)",
                         "  time: ${p.time}",
                     ],

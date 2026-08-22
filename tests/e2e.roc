@@ -67,9 +67,9 @@ init! = ||
                 Ok(_) => Err(Exit(0))
                 Err(_) => Err(Exit(1))
             }
-        # drive the backfill skip-path test against a mock started with E2E_BAD_STREAM=1
-        "backfill" =>
-            match run_backfill!() {
+        # drive the undecodable-stream skip path against a mock started with E2E_BAD_STREAM=1
+        "skips" =>
+            match run_skips!() {
                 Ok(_) => Err(Exit(0))
                 Err(_) => Err(Exit(1))
             }
@@ -339,7 +339,7 @@ run_sync! = || {
     # left to be discovered.
     bo = "${home}/bf.out"
     be = "${home}/bf.err"
-    backfill! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' '${bin}' backfill >'${bo}' 2>'${be}'")
+    backfill! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>'${be}'")
     bfq! = |filter| Str.trim(sh!("jq -r '${filter}' '${bo}' 2>&1"))
 
     _ = backfill!("json")
@@ -347,14 +347,14 @@ run_sync! = || {
     # pin BOTH ends and the line count: starts_with alone would still accept
     # prose appended after the envelope, which is the exact shape of the bug.
     check!(
-        "backfill's stdout is the envelope and nothing else",
+        "sync's stdout is the envelope and nothing else",
         Str.starts_with(bf_out, "{\"schema_version\"")
         and Str.ends_with(bf_out, "}")
         and List.len(Str.split_on(bf_out, "\n")) == 1,
     )?
-    check!("...while its progress narrates on stderr", Str.contains(sh!("cat '${be}'"), "refreshing the activity list"))?
-    check!("...and that narration never reaches stdout", !(Str.contains(bf_out, "refreshing the activity list")))?
-    check!("backfill conforms to its schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/backfill.json -f tools/validate.jq 2>&1")) == "")?
+    check!("...while its progress narrates on stderr", Str.contains(sh!("cat '${be}'"), "fetching activity list"))?
+    check!("...and that narration never reaches stdout", !(Str.contains(bf_out, "fetching activity list")))?
+    check!("sync conforms to its schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
 
     # sync already drained both activities' streams, so this run has nothing to
     # fetch. `resumable` is the field a caller acts on -- pin it directly rather
@@ -365,7 +365,7 @@ run_sync! = || {
     # 502's streams 404 here, which STORES a `{}` marker — so it is not pending, and
     # "an activity Strava has no streams for stays pending" is false. That wrong story
     # shipped in four docs before review caught it; this pins the true behaviour.
-    check!("...with a 404-marked activity counted as done, not pending", bfq!(".data.streams_pending") == "0")?
+    check!("...with a 404-marked activity counted as done, not pending", bfq!(".data.pending_streams") == "0")?
     check!("...nothing pruned, since the mock still lists both", bfq!(".data.pruned") == "0")?
     check!("...and nothing skipped on a clean run", bfq!(".data.streams_skipped") == "0")?
 
@@ -380,7 +380,7 @@ run_sync! = || {
 
     _ = backfill!("human")
     bf_human = Str.trim(sh!("cat '${bo}'"))
-    check!("humans get the rendered line", Str.contains(bf_human, "backfill: 2 activities") and Str.contains(bf_human, "all streams present"))?
+    check!("humans get the rendered line", Str.contains(bf_human, "re-checked in the 30-day window") and Str.contains(bf_human, "fetched streams for"))?
     check!("...with no envelope in it", !(Str.contains(bf_human, "schema_version")))?
     # refetching 501's streams above ran invalidate_metrics!, dropping its metrics row.
     # Nothing later in this scenario reads them today, which is exactly why it is worth
@@ -427,8 +427,8 @@ run_sync! = || {
 # every run there ends with pending == 0. `resumable` is the one field SKILL.md
 # tells agents to branch on, so an unobservable value is not an acceptable gap.
 # Runs under `just e2e-sync`, like every mock-backed check — and that recipe is in CI.
-run_backfill! : () => Try({}, _)
-run_backfill! = || {
+run_skips! : () => Try({}, _)
+run_skips! = || {
     # Every driver resets the run-scoped failure log on entry and asserts it empty before
     # finishing (#226). Adding a driver without both is SILENT: the rebase that brought
     # this scenario onto a main carrying that log merged cleanly and left it with neither,
@@ -462,25 +462,25 @@ run_backfill! = || {
     bo = "${home}/bf.out"
     be = "${home}/bf.err"
     bfq! = |filter| Str.trim(sh!("jq -r '${filter}' '${bo}' 2>&1"))
-    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' backfill >'${bo}' 2>'${be}'")
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>'${be}'")
 
     check!("an undecodable body is COUNTED, not silently dropped", bfq!(".data.streams_skipped") == "1")?
     # the counter alone is a number nobody reads; the run must SAY it, naming the id
     check!("...and named on stderr, with the activity id", Str.contains(sh!("cat '${be}'"), "502: stream data would not decode"))?
     check!("...and stores nothing", bfq!(".data.streams_fetched") == "0")?
-    check!("...so the activity stays pending", bfq!(".data.streams_pending") == "1")?
+    check!("...so the activity stays pending", bfq!(".data.pending_streams") == "1")?
     # the queue emptied, so the drain IS complete — and there is still work to do.
     # These two assertions together are the whole point: deriving `resumable` from
     # `stopped` reports false here, about a row stride itself intends to retry.
     check!("the queue drained, so stopped is complete", bfq!(".data.stopped") == "complete")?
     check!("...yet the run is resumable, because that id retries next run", bfq!(".data.resumable") == "true")?
-    check!("the skip payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/backfill.json -f tools/validate.jq 2>&1")) == "")?
+    check!("the skip payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
 
     # re-running really does re-attempt it — the claim `resumable: true` makes
-    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' backfill >'${bo}' 2>/dev/null")
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null")
     check!("a second run re-attempts the skipped id rather than retiring it", bfq!(".data.streams_skipped") == "1")?
 
-    _ = sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' backfill >'${bo}' 2>/dev/null")
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null")
     human = Str.trim(sh!("cat '${bo}'"))
     check!("humans are told the data was unreadable", Str.contains(human, "unreadable stream data"))?
     check!("...nor that everything is present", !(Str.contains(human, "all streams present")))?
@@ -488,7 +488,7 @@ run_backfill! = || {
     _ = sh!("rm -rf '${home}'")
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     reset_sqlite_errors!({})
-    Stdout.line!("BACKFILL E2E CHECKS PASS")
+    Stdout.line!("SKIPS E2E CHECKS PASS")
 }
 
 # ── the two non-complete stop reasons (#218) ─────────────────────────────────
@@ -499,7 +499,7 @@ run_backfill! = || {
 # passed the entire suite. These two runs are the only thing that catches it.
 run_stops! : () => Try({}, _)
 run_stops! = || {
-    # same contract as every other driver — see run_backfill!
+    # same contract as every other driver — see run_skips!
     reset_sqlite_errors!({})
     bin = env_or!("STRIDE_BIN", "./stride")
     base = env_or!("STRIDE_API_BASE", "http://127.0.0.1:8797")
@@ -527,7 +527,7 @@ run_stops! = || {
     #   rate:   the real budget, so the drain DOES reach 501 — only the window sleep is
     #           shortened, turning two Backoff rounds from ~30 minutes into 10ms.
     envs = if rate_limited "STRIDE_WINDOW_SLEEP_MS=5" else "STRIDE_READS_PER_RUN=1"
-    run_bf! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' ${envs} '${bin}' backfill >'${bo}' 2>/dev/null")
+    run_bf! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' ${envs} '${bin}' sync >'${bo}' 2>/dev/null")
     _ = run_bf!("json")
 
     if rate_limited {
@@ -535,9 +535,9 @@ run_stops! = || {
         # 404 marker, so a surviving counter reads 1 and a reset one reads 0.
         check!("a 429 past the retry limit stops the run", bfq!(".data.stopped") == "rate_limited")?
         check!("...counting what it stored BEFORE backing off", bfq!(".data.streams_fetched") == "1")?
-        check!("...leaving the 429'd id pending", bfq!(".data.streams_pending") == "1")?
+        check!("...leaving the 429'd id pending", bfq!(".data.pending_streams") == "1")?
         check!("...and resumable, because waiting will help", bfq!(".data.resumable") == "true")?
-        check!("the rate-limited payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/backfill.json -f tools/validate.jq 2>&1")) == "")?
+        check!("the rate-limited payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
         # fresh queue: the JSON run above already stored one, so without this the human
         # run drains what is left and renders "all streams present" instead
         _ = sql!(db, "DELETE FROM streams;")
@@ -547,9 +547,23 @@ run_stops! = || {
         # one read, two ids queued: stores the first, stops on the budget with one left
         check!("the per-run read budget stops the run", bfq!(".data.stopped") == "budget_reached")?
         check!("...having stored exactly the one read it spent", bfq!(".data.streams_fetched") == "1")?
-        check!("...with the untouched id still pending", bfq!(".data.streams_pending") == "1")?
+        check!("...with the untouched id still pending", bfq!(".data.pending_streams") == "1")?
         check!("...and resumable, because work remains", bfq!(".data.resumable") == "true")?
-        check!("the budget-stopped payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/backfill.json -f tools/validate.jq 2>&1")) == "")?
+
+        # THE convergence proof, and the reason `backfill` could be deleted (#232): a
+        # first run that stops on the read budget is not a dead end. Run it again and it
+        # finishes, with no flag, no second command, and nothing for the user to know.
+        # Without this, every other check here is satisfied by a sync that stops forever.
+        _ = run_bf!("json")
+        check!("running it again converges — nothing left pending", bfq!(".data.pending_streams") == "0")?
+        # it still reports `budget_reached` — it DID stop on the budget, and the queue
+        # happened to empty on that same read. This is the case that proves `resumable`
+        # must be measured (pending > 0) rather than derived from `stopped`: derived, this
+        # run would claim work remains and the caller would loop forever on an empty queue.
+        check!("...still reporting the budget stop, honestly", bfq!(".data.stopped") == "budget_reached")?
+        check!("...yet NOT resumable, because nothing is left", bfq!(".data.resumable") == "false")?
+        check!("...having stored the id the first run could not reach", bfq!(".data.streams_fetched") == "1")?
+        check!("the budget-stopped payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
         # fresh queue, same reason as the rate-limited branch above
         _ = sql!(db, "DELETE FROM streams;")
         _ = run_bf!("human")
@@ -625,14 +639,15 @@ b_init_config! = |ctx| {
     inband = sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' sync 2>/dev/null")
     check!("in-band errors still arrive as themselves", Str.contains(inband, "not_authenticated"))?
     check!("...exactly once — the boundary must not re-wrap Exit", Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' sync 2>/dev/null | grep -c schema_version")) == "1")?
-    # #218: backfill answers `--json` with an envelope like every other command.
-    # This is the REFUSAL path only -- it is what CI can reach without a token or
-    # a network. The success envelope, the schema conformance, and the
-    # stdout/stderr split are covered in run_sync! against the mock, which is
-    # `just e2e-sync`, which runs in CI.
-    bf_unauth = Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' backfill 2>/dev/null"))
-    check!("backfill refuses in-band, as one envelope", Str.contains(bf_unauth, "not_authenticated") and List.len(Str.split_on(bf_unauth, "\n")) == 1)?
-    check!("...and exits non-zero", stride_status!(ctx.bin, nodb, ["backfill"]) == 1)?
+    # #232: `backfill` is retired — `sync` is the only command that talks to Strava, and
+    # it answers `--json` with an envelope on every path including refusal. Asserting the
+    # command is GONE rather than merely unused: a dispatch left behind would still run.
+    bf_gone = Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' backfill 2>/dev/null"))
+    check!("the retired backfill command is unknown, not silently accepted", Str.contains(bf_gone, "unknown_command"))?
+    check!("...and it is absent from the machine command list", !(Str.contains(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' --help 2>/dev/null"), "\"backfill\"")))?
+    sync_unauth = Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' sync 2>/dev/null"))
+    check!("sync refuses in-band, as one envelope", Str.contains(sync_unauth, "not_authenticated") and List.len(Str.split_on(sync_unauth, "\n")) == 1)?
+    check!("...and exits non-zero", stride_status!(ctx.bin, nodb, ["sync"]) == 1)?
     _ = sh!("mkdir -p '${ctx.home}/freshinit'")
     check!("...and init on a fresh home still succeeds", stride_status!(ctx.bin, "${ctx.home}/freshinit", ["init"]) == 0)?
     _ = sh!("rm -rf '${nodb}' '${corrupt}' '${ctx.home}/freshinit'")
