@@ -431,28 +431,55 @@ run_sync! = || {
     # add fixtures LAST and remove whatever you add.
     #
     # `synced_at NULL` is load-bearing, and is the mirror of the deliberate `synced_at 1`
-    # on the `--all` fixture below: NULL exempts these rows from prune_deleted!, which the
-    # block's own sync would otherwise delete before the drain ever saw them.
+    # on the `--all` fixture below: NULL exempts these rows from prune_deleted!, which runs
+    # BEFORE the drain, so a stamped row inside the re-listed window would be deleted before
+    # the drain ever saw it. The exemption is what makes the seed date a free choice — the
+    # queue query carries no date predicate, so nothing here depends on the literal below
+    # falling inside or outside any window. Add a date predicate to either side and that
+    # stops being true.
     _ = sql!(db, "DELETE FROM streams;")
     _ = sql!(db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) WITH RECURSIVE seq(x) AS (SELECT 901 UNION ALL SELECT x+1 FROM seq WHERE x<970) SELECT x,'seed','Ride','2026-08-01T10:00:00Z',3600,1000.0,0.0,NULL FROM seq;")
     # The seed asserted BEFORE the run, because `pending_streams == 0` below is a pure
     # absence and a seed that silently did nothing satisfies it perfectly. Review proved
     # that: replacing this INSERT with a no-op left the cap check itself green.
+    #
+    # It moves that failure to where it happens; it does not close the absence hole.
+    # `streams_fetched == 72` remains the one load-bearing assertion here — seeding rows
+    # with `moving_time = 0` still passes both this check and the cap check, because the
+    # queue query cannot see them. Closing that properly would mean re-encoding the
+    # production WHERE clause in the fixture, which is the hazard the queue query's own
+    # comment warns about, so it is left alone knowingly.
     check!("the 70 seed rows landed", Str.trim(sql!(db, "SELECT count(*) FROM activities WHERE id BETWEEN 901 AND 970;")) == "70")?
     _ = sync_run!("json")
-    check!("the drain has no per-run cap — it clears a queue past any old LIMIT", bfq!(".data.pending_streams") == "0")?
+    # Ordered FIRST of the three deliberately. 72 reads has to sit UNDER the window budget
+    # or the run stops on the budget, and the two checks below would then be measuring the
+    # budget rather than the absence of a cap. Asserting it last did not work: the harness
+    # aborts on the first failure, so a lowered reads_per_window failed at the cap check
+    # with a message blaming a cap that was not there. A real cap does NOT trip this one —
+    # drain_streams!'s empty-list arm returns Complete once the capped queue is exhausted,
+    # measured at `stopped: "complete"` with `pending_streams: 12` under a restored
+    # LIMIT 60 — so putting it first costs the cap checks nothing.
+    check!("the drain finished inside one window, so the read budget is not what ended it", bfq!(".data.stopped") == "complete")?
+    check!("...and it has no per-run cap — it clears a queue past any old LIMIT", bfq!(".data.pending_streams") == "0")?
     check!("...having stored every one of them in a single run", bfq!(".data.streams_fetched") == "72")?
-    # 72 reads has to sit UNDER the window budget, or the run stops on the budget and the
-    # two checks above would be measuring that instead of the absence of a cap. Pinned so
-    # that lowering reads_per_window fails here with a reason rather than a mystery.
-    check!("...within one window, so the budget is not what ended the run", bfq!(".data.stopped") == "complete")?
     _ = sql!(db, "DELETE FROM streams WHERE activity_id >= 901; DELETE FROM activities WHERE id >= 901;")
     # Nothing else asserts this block tidies up. It looks like the `--all` prune check
     # below would catch a leak, and it cannot: prune_deleted! skips `synced_at IS NULL`,
     # which is exactly what these rows carry, so they would survive every later run
-    # invisibly. Disabling the DELETE above passed all 38 checks and leaked 70 activities,
-    # 70 metrics rows and 70 streams rows into the rest of the scenario.
-    check!("...and the seeded fixtures left nothing behind", Str.trim(sql!(db, "SELECT count(*) FROM activities WHERE id >= 901;")) == "0")?
+    # invisibly. Disabling the DELETE above passed every check then present (38) and leaked
+    # 70 activities and 70 streams rows into the rest of the scenario.
+    #
+    # BOTH tables, because deleting only the activities half also passes: the declared
+    # `REFERENCES activities(id)` on streams is decorative without `PRAGMA foreign_keys=ON`,
+    # which nothing sets, so the child rows are orphaned rather than cascaded. That is the
+    # same reason prune_txn! deletes from its tables by hand. activity_metrics needs no
+    # clause — no analyze runs while the seeds exist, so there is nothing there to leak,
+    # and asserting its absence would assert something the block never does.
+    #
+    # Compared as STRINGS, not through str_to_i64: that helper maps "" to 0, so a swallowed
+    # sqlite error would read as a passing zero on the one check whose whole job is to
+    # detect leftover state. "" == "0" is False, which is the answer we want.
+    check!("...and the seeded fixtures left nothing behind, in either table", Str.trim(sql!(db, "SELECT (SELECT count(*) FROM activities WHERE id >= 901) + (SELECT count(*) FROM streams WHERE activity_id >= 901);")) == "0")?
 
     _ = sync_run!("human")
     bf_human = Str.trim(sh!("cat '${bo}'"))
@@ -3416,10 +3443,14 @@ reset_checks! = |{}| {
 # set run_all to 400 against 564 actual, so 164 checks could vanish silently, and the stops
 # budget branch could lose SIX, the same magnitude as the dead branch that motivated this.
 # A tight floor only needs touching when checks are REMOVED, which is exactly the event
-# that should force a conversation. The mock drivers are each set just under their smallest
-# real run; run_all uses checks_ran_exactly! instead, for the reason recorded on that
-# function — a floor set to an exact count is not enforced as exact, and quietly stops being
-# one.
+# that should force a conversation. run_all uses checks_ran_exactly! instead, for the reason
+# recorded on that function — a floor set to an exact count is not enforced as exact, and
+# quietly stops being one. The mock drivers keep floors: skips and stops sit just under
+# their smallest real run, while run_sync is set to its current count, which makes it tight
+# rather than enforced. That is deliberate for now — the failure this guard exists for is
+# silent REMOVAL, which a tight floor catches, and moving a fourth driver onto the exact
+# gate is a change to shared tally semantics that belongs in its own PR rather than one
+# about a drain cap.
 #
 # A driver that forgets reset_checks! or this call gets NO guard, silently — the same
 # hazard the sqlite failure log carries, and documents.
