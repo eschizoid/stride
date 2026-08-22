@@ -89,7 +89,7 @@ Strava :: [].{
     }
     auth_flow! : Str, Str, Str => Try({}, _)
     auth_flow! = |path, client_id, client_secret| {
-        url = "https://www.strava.com/oauth/authorize?client_id=${client_id}&response_type=code&redirect_uri=http://localhost&approval_prompt=auto&scope=read,activity:read_all,profile:read_all"
+        url = "https://www.strava.com/oauth/authorize?client_id=${client_id}&response_type=code&redirect_uri=http://localhost&approval_prompt=auto&scope=read,activity:read_all"
         Stdout.line!("1) Click Authorize in the browser tab that just opened (URL below if it didn't):")?
         Stdout.line!("")?
         Stdout.line!("   ${url}")?

@@ -671,7 +671,18 @@ run_stops! = || {
     _ = sh!("rm -rf '${home}'")
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     reset_sqlite_errors!({})
-    checks_ran_at_least!(8)?
+    # Per MODE. run_stops! has three branches of very different size, and a single floor
+    # has to be the smallest of them — which makes it loosest where the branch is biggest.
+    # At a shared floor of 8 the budget branch could lose a third of its checks unseen.
+    checks_ran_at_least!(
+        if env_or!("E2E_EXPECT_401", "") == "1" {
+            8
+        } else if rate_limited {
+            9
+        } else {
+            12
+        },
+    )?
     Stdout.line!("STOP-REASON E2E CHECKS PASS")
 }
 
@@ -3123,6 +3134,11 @@ is_nonempty = |s| !(Str.is_empty(Str.trim(s))) and Str.trim(s) != "null"
 # later, gets the report without its own wrapper.
 # ONE line per check that PASSED — check! appends inside the success branch, and a failing
 # check aborts the driver anyway. So a driver can assert it ran the checks it contains.
+#
+# Costs a subprocess per assertion: measured at ~12ms each, +15% on the offline suite
+# (44s -> 50s). Accepted rather than optimised, because it caught a real silent-coverage
+# bug and the suite is not on anyone's critical path. If it ever is, check! already prints
+# one `  ok   ` line per pass, so the same population is countable without a spawn.
 # A whole `else if` branch went dead in this file — a duplicated fragment made an EMPTY
 # branch match first — and its six assertions silently stopped running while the driver
 # still printed PASS and exited 0. Nothing observed that, because every other guard here
@@ -3146,7 +3162,7 @@ checks_log = "'.e2e-checks.'$PPID"
 reset_checks! : {} => Try({}, _)
 reset_checks! = |{}| {
     _ = sh!("rm -f ${checks_log}")
-    left = Str.trim(sh!("wc -l < ${checks_log} 2>/dev/null || echo 0"))
+    left = Str.trim(sh!("wc -l 2>/dev/null < ${checks_log} || echo 0"))
     if left == "0" {
         Ok({})
     } else {
@@ -3166,7 +3182,7 @@ reset_checks! = |{}| {
 # hazard the sqlite failure log carries, and documents.
 checks_ran_at_least! : I64 => Try({}, _)
 checks_ran_at_least! = |floor| {
-    ran = str_to_i64(Str.trim(sh!("wc -l < ${checks_log} 2>/dev/null || echo 0")))
+    ran = str_to_i64(Str.trim(sh!("wc -l 2>/dev/null < ${checks_log} || echo 0")))
     check!("this driver ran its checks (${I64.to_str(ran)} >= ${I64.to_str(floor)})", ran >= floor)
 }
 
