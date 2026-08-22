@@ -3438,8 +3438,10 @@ reset_checks! = |{}| {
     }
 }
 
-# A floor, not an exact count: an exact number fails on every check ADDED and gets bumped
-# reflexively, which is how a guard stops guarding. But it must be TIGHT — the first cut
+# A floor, NOT an exact count — and note the comparison is `>=`, so setting one to today's
+# count does not make it exact: adding checks never fails it, so a number set to the real
+# count quietly drifts back into slack the first time someone adds without bumping. But it
+# must be TIGHT — the first cut
 # set run_all to 400 against 564 actual, so 164 checks could vanish silently, and the stops
 # budget branch could lose SIX, the same magnitude as the dead branch that motivated this.
 # A tight floor only needs touching when checks are REMOVED, which is exactly the event
@@ -3450,7 +3452,10 @@ reset_checks! = |{}| {
 # rather than enforced. That is deliberate for now — the failure this guard exists for is
 # silent REMOVAL, which a tight floor catches, and moving a fourth driver onto the exact
 # gate is a change to shared tally semantics that belongs in its own PR rather than one
-# about a drain cap.
+# about a drain cap. A tight floor does cost something: with no margin a single lost tally
+# append — check!'s `echo x >>` going missing under sh!'s swallowed exit code, the failure
+# mode documented above — reddens the run instead of being absorbed. Loud is the right
+# default for a guard, but it is a behaviour change rather than a free tightening.
 #
 # A driver that forgets reset_checks! or this call gets NO guard, silently — the same
 # hazard the sqlite failure log carries, and documents.
