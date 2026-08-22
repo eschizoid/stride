@@ -29,9 +29,9 @@ Never do training math yourself: read stride's numbers, add judgment.
    **Do not loop on `resumable` alone.** `streams_fetched: 0` with
    `streams_skipped > 0` and `resumable: true` means the run did nothing and is
    still asking: those bodies are unreadable, not late, and re-running will keep
-   returning that identical envelope. Stop and report it. (`sync` takes the same
-   skip path and reports no equivalent — its `pending_streams` moving nowhere is
-   the only hint there.)
+   returning that identical envelope. Stop and report it. `sync` takes the same
+   skip path and now reports the same way (#224): it carries `streams_skipped`
+   too, so the same rule applies there.
    **No API credentials** (Strava requires a subscription for API access since
    June 2026): `stride import <export.zip|dir> --json` loads a Strava account export —
    summary-level activities (no streams), idempotent, English exports only.

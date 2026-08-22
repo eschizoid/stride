@@ -9,6 +9,7 @@
     "updated_activities",
     "pruned",
     "streams_fetched",
+    "streams_skipped",
     "pending_streams"
   ],
   "properties": {
@@ -25,6 +26,11 @@
       "type": "integer"
     },
     "streams_fetched": {
+      "description": "stream rows STORED this run. Not the number of reads spent: a read whose body will not decode stores nothing and is counted in streams_skipped instead",
+      "type": "integer"
+    },
+    "streams_skipped": {
+      "description": "reads whose body would not decode as UTF-8. Nothing was stored, so these stay pending and retry next sync. A value that repeats across syncs means the data is unreadable rather than merely late",
       "type": "integer"
     },
     "pending_streams": {
