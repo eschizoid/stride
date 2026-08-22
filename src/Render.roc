@@ -693,7 +693,7 @@ Render :: [].{
     drain_note = |stopped, pending|
         # `pending` is tested FIRST, before the reason. Nothing is left to do regardless
         # of why the run ended, and a budget stop that happened to empty the queue is
-        # reachable (StopRun fires on the read just stored, without inspecting the rest
+        # reachable (the window fills on the read just stored, without inspecting the rest
         # of the list). Keying this on `stopped` instead printed "0 to go, run `stride
         # sync` again tomorrow" beside a payload saying resumable: false — the human
         # and machine surfaces contradicting each other about the same run.
@@ -1831,7 +1831,7 @@ expect !(Metrics.has_coaching_language(Render.warming_up_note(True, 12))) and !(
 expect Render.drain_note("complete", 0) == "all streams present"
 
 # `pending` outranks the reason. A budget stop that happened to empty the queue is
-# done — StopRun fires on the read just stored without inspecting the rest of the
+# done — the window fills on the read just stored, without inspecting the rest of the
 # list, so this is reachable — and keying the note on `stopped` printed "0 to go, run
 # `stride sync` again tomorrow" next to a payload saying resumable: false. The
 # human and machine surfaces must not contradict each other about the same run.

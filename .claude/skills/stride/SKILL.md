@@ -27,10 +27,14 @@ Never do training math yourself: read stride's numbers, add judgment.
    decode is skipped WITHOUT storing, so it retries next run and shows up in
    `streams_skipped`. An activity Strava has no streams for is NOT that case — a
    404 stores an empty marker and retires it permanently (#218).
-   **Do not loop on `resumable` alone.** `streams_fetched: 0` with
-   `streams_skipped > 0` and `resumable: true` means the run did nothing and is
-   still asking: those bodies are unreadable, not late, and re-running will keep
-   returning that identical envelope. Stop and report it.
+   **Do not loop on `resumable` alone. The rule is `streams_fetched == 0` with
+   `resumable: true` — stop and report.** That one condition covers both ways a
+   run can do nothing and still ask for another: unreadable bodies
+   (`streams_skipped > 0`, which will keep returning the identical envelope), and
+   a rate limit (`stopped: "rate_limited"`, where the wait is ~15 minutes and the
+   command now returns in well under a second). The earlier rule keyed on
+   `streams_skipped > 0` alone and did NOT fire on the rate-limited shape, where
+   a loop can issue dozens of Strava requests per second.
    `stride sync --all` forces a full re-list from scratch — a dev-mode escape hatch
    and the only way a deletion in OLD history propagates; normal use never needs it.
    **No API credentials** (Strava requires a subscription for API access since

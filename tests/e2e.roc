@@ -106,9 +106,25 @@ respond! = |req, _ctx| {
         }
 
     if Str.contains(uri, "/oauth/token") {
-        body =
-            \\{"access_token":"mock-access","refresh_token":"mock-refresh","expires_at":9999999999}
-        Ok(mock_json(body))
+        if env_or!("E2E_ROTATING_TOKEN", "") == "1" {
+            # A NEW access token every call, already expired. Models a provider that
+            # rotates on every refresh — which real Strava does. Without it the drain's
+            # refresh arm exits on `fresh == token` after one call and the retry BOUND is
+            # never reached, so a test can pin termination while the counter it exists to
+            # prove is dead code. Review demonstrated exactly that: with the bound removed
+            # the suite stayed green here, and 700 token requests in 12s against a
+            # rotating mock.
+            #
+            # `expires_at: 0` is the load-bearing half — a future expiry lets
+            # get_valid_token! serve from cache and the arm is never re-entered.
+            stamp = Str.trim(sh!("date +%s%N"))
+            body = "{\"access_token\":\"rot-${stamp}\",\"refresh_token\":\"mock-refresh\",\"expires_at\":0}"
+            Ok(mock_json(body))
+        } else {
+            body =
+                \\{"access_token":"mock-access","refresh_token":"mock-refresh","expires_at":9999999999}
+            Ok(mock_json(body))
+        }
     } else if Str.contains(uri, "/api/v3/athlete/activities") {
         if Str.contains(uri, "page=1") {
             body =
@@ -561,7 +577,17 @@ run_stops! = || {
         # than short-circuiting on `fresh == token`.
         _ = sql!(db, "UPDATE config SET value='stale-access' WHERE key='strava_access_token'; UPDATE config SET value='1' WHERE key='strava_expires_at';")
         started_at = str_to_i64(Str.trim(sh!("date +%s")))
-        _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null")
+        # HARD timeout on the invocation itself. Without it an unbounded loop never
+        # returns, so the elapsed check below is never evaluated and the harness HANGS
+        # instead of failing — review's exact criticism of a latency assertion that only
+        # manifests as CI looking slow. With it, the run is killed, the envelope is empty,
+        # and three checks go red.
+        # HARD kill-after on the invocation itself (`timeout` is not on macOS). Without
+        # it an unbounded loop never returns, the elapsed check below is never evaluated,
+        # and the harness HANGS instead of failing — review's exact criticism of a latency
+        # assertion that only manifests as CI looking slow. With it the run is killed, the
+        # envelope is empty, and the checks go red.
+        _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null & p=$!; (sleep 25; kill -9 $p) >/dev/null 2>&1 & w=$!; wait $p >/dev/null 2>&1; kill $w >/dev/null 2>&1")
         elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - started_at
         out401 = Str.trim(sh!("cat '${bo}'"))
         # TERMINATION is the invariant. Unbounded, review measured ~113 requests/second
@@ -571,11 +597,11 @@ run_stops! = || {
         check!("...as an auth error", bfq!(".error.code") == "not_authenticated")?
         check!("...naming the fix", Str.contains(out401, "stride auth"))?
         check!("...not as a success envelope", bfq!(".data") == "null")?
-    } else if rate_limited {    } else if rate_limited {
+    } else if rate_limited {
         # 501 429s forever. 502 drains first (ORDER BY start_local DESC) and stores its
         # 404 marker, so a surviving counter reads 1 and a reset one reads 0.
-        check!("a 429 past the retry limit stops the run", bfq!(".data.stopped") == "rate_limited")?
-        check!("...counting what it stored BEFORE backing off", bfq!(".data.streams_fetched") == "1")?
+        check!("a 429 stops the run outright", bfq!(".data.stopped") == "rate_limited")?
+        check!("...counting what it stored before the 429", bfq!(".data.streams_fetched") == "1")?
         check!("...leaving the 429'd id pending", bfq!(".data.pending_streams") == "1")?
         check!("...and resumable, because waiting will help", bfq!(".data.resumable") == "true")?
         check!("the rate-limited payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?

@@ -160,7 +160,7 @@ e2e-sync: build
     trap 'kill $MOCK $BADMOCK $RLMOCK 2>/dev/null' EXIT
     E2E_MODE=stops E2E_EXPECT_RATE_LIMIT=1 STRIDE_API_BASE=http://127.0.0.1:{{rate_limit_port}} ./e2e || exit 1
     # a persistent 401, to prove the token-refresh retry is bounded
-    E2E_MODE=mock E2E_STREAM_401=1 MOCK_PORT={{auth401_port}} ./e2e &
+    E2E_MODE=mock E2E_STREAM_401=1 E2E_ROTATING_TOKEN=1 MOCK_PORT={{auth401_port}} ./e2e &
     A401MOCK=$!
     trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK 2>/dev/null' EXIT
     E2E_MODE=stops E2E_EXPECT_401=1 STRIDE_API_BASE=http://127.0.0.1:{{auth401_port}} ./e2e
