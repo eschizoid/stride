@@ -937,6 +937,47 @@ Plan :: [].{
                     row: Sqlite.i64("n"),
                 })?
                 completion_pct = if adh.planned > 0 (((adh.completed).to_f64() / (adh.planned).to_f64()) * 100.0).round_to_i64_try().ok_or(0) else 0
+                # ── data freshness (#221) ────────────────────────────────────────────
+                # A coach reading this payload could not tell whether the facts were
+                # current without a second call to `doctor`, so it either spent a turn on
+                # that every time or planned from a week of unsynced rides it could not
+                # see. Four MEASUREMENTS — no verdict; ADR 0012 puts "is this stale?" on
+                # the coach's side of the line, and what counts as stale depends on the
+                # question being asked.
+                #
+                # awaiting_metrics reuses Analyze.pending_metrics_count!, which is built
+                # on the same pending_where clause `analyze` selects rows with, so it is
+                # the count of rows analyze WOULD recompute right now rather than a
+                # second predicate that could drift from it. That is stricter than
+                # doctor's `unanalyzed`, which is only `m.activity_id IS NULL` and so
+                # reads 0 while a changed FTP, changed zones or a bumped metrics_rev
+                # leaves every row due for recomputation.
+                awaiting_metrics = Analyze.pending_metrics_count!(path, zb)?
+                awaiting_streams = Strava.pending_streams!(path)?
+                # date only, so it compares directly against summary.as_of — the gap
+                # between the two IS the "am I missing rides?" answer, with no epoch
+                # arithmetic and no need to know what today is. "" when there are none.
+                newest_activity = Sqlite.query!({
+                    path: Path.utf8(path),
+                    query: "SELECT COALESCE(MAX(substr(start_local, 1, 10)), '') AS d FROM activities",
+                    bindings: [],
+                    row: Sqlite.str("d"),
+                })?
+                # UTC ISO rather than the raw epoch it is stored as: one representation of
+                # one fact, in the same shape as every other timestamp the payload carries.
+                # "" when sync has never run, which is itself the answer on a fresh install.
+                last_sync =
+                    match Db.config_opt!(path, "last_sync_epoch")? {
+                        NotFound => ""
+                        Found(raw) =>
+                            match Metrics.arg_i64(raw) {
+                                Ok(e) => Metrics.epoch_to_iso(e)
+                                # a corrupt value is not a freshness signal, and `plan` is
+                                # the wrong command to fail over it — `doctor` is where a
+                                # broken config gets reported
+                                Err(_) => ""
+                            }
+                    }
                 if Output.json_mode!({}) {
                     Output.emit_ok!({
                         summary: s,
@@ -954,10 +995,26 @@ Plan :: [].{
                             completion_pct,
                             unplanned_activities: unplanned_n,
                         },
+                        data_freshness: {
+                            newest_activity,
+                            last_sync,
+                            activities_awaiting_metrics: awaiting_metrics,
+                            activities_awaiting_streams: awaiting_streams,
+                        },
                     })
                 } else {
                     Stdout.line!(Render.summary_screen(s))?
                     Stdout.line!("")?
+                    # "" when nothing is outstanding, so this prints nothing on a current
+                    # database rather than a row of zeros before every planning session.
+                    fresh_line = Render.freshness_note({
+                        activities_awaiting_metrics: awaiting_metrics,
+                        activities_awaiting_streams: awaiting_streams,
+                    })
+                    if fresh_line != "" {
+                        Stdout.line!(fresh_line)?
+                        Stdout.line!("")?
+                    } else {}
                     # one descriptive line of plan memory (#158) — raw counts only
                     Stdout.line!("28d PLAN: ${I64.to_str(adh.planned)} planned · ${I64.to_str(adh.completed)} done · ${I64.to_str(adh.skipped)} skipped (${I64.to_str(adh.substituted)} substituted) · ${I64.to_str(unplanned_n)} unplanned activities")?
                     Stdout.line!("")?

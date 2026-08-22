@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_at_least!(550)?
+    checks_ran_at_least!(575)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1518,6 +1518,48 @@ b_seed_analyze! = |ctx| {
     sch_open = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d2}", "threshold", "schema probe open", "r"], ".data.id"))
     check!("plan arrays are populated for this check", strjq!(ctx, ["plan"], "(.data.open_sessions | length > 0) and (.data.plan_history_28d | length > 0)") == "true")?
     check!("plan with populated arrays conforms", validate!("plan", "plan") == "")?
+
+    # ── data freshness (#221) ───────────────────────────────────────────
+    # The schema check above proves SHAPE, and shape is exactly what a hardcoded zero
+    # satisfies. These pin the two counts to state the test controls, in both directions,
+    # so a constant fails: the fixture is analyzed here, so both must read 0 now, then
+    # move when the underlying condition is created, then return.
+    pf! = |q| Str.trim(strjq!(ctx, ["plan"], ".data.data_freshness.${q}"))
+    check!("a current database is awaiting no metrics", pf!("activities_awaiting_metrics") == "0")?
+    # The fixture seeds id 99 (the baseline probe) with no streams row, so 1 is the
+    # RESTING value here, not a bug — pinning it to 0 would have been pinning a wish.
+    # It matters that this is non-zero: the checks below move it to 2 and back, which a
+    # field hardcoded to any single constant cannot survive.
+    check!("...and awaiting streams only for the fixture's one activity that has none", pf!("activities_awaiting_streams") == "1")?
+    # newest_activity read a second way, so a hardcoded date, the wrong column or a full
+    # timestamp all fail — the schema's "string" accepts every one of those.
+    newest_sql = Str.trim(sh!("sqlite3 '${ctx.db}' \"SELECT COALESCE(MAX(substr(start_local,1,10)),'') FROM activities;\""))
+    # ...and the fixture must actually HAVE activities, or the line above is "" == "" and
+    # reports green on a field that was never computed.
+    check!("the fixture has activities, so the next check is not \"\" == \"\"", newest_sql != "")?
+    check!("newest_activity agrees with the database", pf!("newest_activity") == newest_sql)?
+    # Bumping every stored metrics_rev is precisely what a release that changes the metric
+    # definitions does, and it is the case doctor's `unanalyzed` CANNOT see: the rows still
+    # have metrics, so `m.activity_id IS NULL` counts none of them.
+    _ = sql!(ctx.db, "UPDATE activity_metrics SET metrics_rev = 0;")
+    n_stale = pf!("activities_awaiting_metrics")
+    check!("a stale metrics_rev puts every scored row back in the queue", n_stale != "0")?
+    check!("...a count doctor cannot see, since every row still HAS a metrics row", Str.trim(strjq!(ctx, ["doctor"], ".data.unanalyzed")) == "0")?
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("...and running analyze returns it to zero", pf!("activities_awaiting_metrics") == "0")?
+    # Same again for streams: a different predicate, on a different table. Done by ADDING a
+    # row rather than deleting 101's, because 101's stored streams are what its power
+    # metrics are computed from — dropping them, or restoring them as an empty marker,
+    # would silently change every number the checks after this one read. This driver is
+    # OFFLINE, so the row cannot be restored by re-syncing it.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9221,'freshness probe','Ride','2019-01-01T10:00:00Z',3600,20000);")
+    check!("a second activity with no streams row raises the count", pf!("activities_awaiting_streams") == "2")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 9221;")
+    # The probe must leave the fixture exactly as it found it: id assertions in this file
+    # are positional and every later check reads the analyzed fixture.
+    check!("the freshness probe left the fixture current", pf!("activities_awaiting_metrics") == "0")?
+    check!("...on both counts", pf!("activities_awaiting_streams") == "1")?
+    check!("...and newest_activity is back where it started", pf!("newest_activity") == newest_sql)?
 
     # ── season: blocks bounded by absence (#139, ADR 0011) ──────────────
     # The fixture's activities sit in a handful of dates, so this exercises the

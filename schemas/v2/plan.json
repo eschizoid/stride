@@ -8,7 +8,8 @@
     "recent_activities_14d",
     "open_sessions",
     "plan_history_28d",
-    "adherence_28d"
+    "adherence_28d",
+    "data_freshness"
   ],
   "properties": {
     "summary": {
@@ -229,6 +230,35 @@
         },
         "unplanned_activities": {
           "type": "integer"
+        }
+      }
+    },
+    "data_freshness": {
+      "description": "Whether the facts in this payload are current, as four measurements rather than a verdict \u2014 what counts as too stale depends on the question being asked, and ADR 0012 puts that judgement on the coach's side of the line. Present so a planning turn need not spend a second call on `doctor`.",
+      "type": "object",
+      "required": [
+        "newest_activity",
+        "last_sync",
+        "activities_awaiting_metrics",
+        "activities_awaiting_streams"
+      ],
+      "additionalKeys": false,
+      "properties": {
+        "newest_activity": {
+          "type": "string",
+          "description": "Date of the newest activity in the database, YYYY-MM-DD, or \"\" when there are none. Comparable directly against summary.as_of; the gap between the two is how far behind the data is."
+        },
+        "last_sync": {
+          "type": "string",
+          "description": "When `sync` last ran, as a UTC ISO timestamp, or \"\" when it never has \u2014 which is itself the answer on a fresh install, and also what an unparseable stored value reports rather than failing the command."
+        },
+        "activities_awaiting_metrics": {
+          "type": "integer",
+          "description": "How many rows `analyze` would recompute right now. Shares the predicate `analyze` selects on, so it counts changed FTP, changed zones and a bumped metrics_rev as well as rows never scored \u2014 strictly more than doctor's `unanalyzed`, which only counts rows with no metrics at all."
+        },
+        "activities_awaiting_streams": {
+          "type": "integer",
+          "description": "How many activities `sync` would still fetch streams for. Same count doctor reports as pending_streams."
         }
       }
     }
