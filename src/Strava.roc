@@ -89,7 +89,7 @@ Strava :: [].{
     }
     auth_flow! : Str, Str, Str => Try({}, _)
     auth_flow! = |path, client_id, client_secret| {
-        url = "https://www.strava.com/oauth/authorize?client_id=${client_id}&response_type=code&redirect_uri=http://localhost&approval_prompt=auto&scope=read,activity:read_all,profile:read_all,profile:write"
+        url = "https://www.strava.com/oauth/authorize?client_id=${client_id}&response_type=code&redirect_uri=http://localhost&approval_prompt=auto&scope=read,activity:read_all,profile:read_all"
         Stdout.line!("1) Click Authorize in the browser tab that just opened (URL below if it didn't):")?
         Stdout.line!("")?
         Stdout.line!("   ${url}")?
@@ -358,17 +358,20 @@ Strava :: [].{
         # MEASURES pending instead of asserting it, and `bar_done!` is a no-op at total 0,
         # so the branch bought nothing but a way to silently zero an absence.
         _ = if total > 0 {
-            # An immediate 0/total frame BEFORE the first request: narrating only after a
-            # response returns shows nothing for exactly as long as a stall lasts.
-            Output.narrate!("fetching streams", 0, total)?
-            # Said up front, because this run may not finish the job and the retired
-            # command said so before spending a read. Strava's daily cap means a large
-            # first pull spans days; every stored stream is permanent, so re-running is
-            # never wasted work.
+            # ORDER MATTERS. Say the sentence FIRST, then open the bar. narrate! writes a
+            # bar frame with no trailing newline, so a say! after it lands on the bar's row
+            # — and since the next frame's \r rewrites only the frame's own width, the tail
+            # of a 138-character message stays welded to the right of a 33-character bar
+            # for the whole drain. That is the failure bar_done!'s comment names, and it
+            # shipped because nothing asserts on stderr framing.
             Output.say!("draining ${U64.to_str(total)} activities' streams — Strava caps reads per 15-minute window, so a large first pull takes several runs; every stream stored is kept")?
+            # an immediate 0/total frame BEFORE the first request: narrating only after a
+            # response returns shows nothing for exactly as long as a stall lasts
+            Output.narrate!("fetching streams", 0, total)?
         } else {
             {}
         }
+
         match drain_streams!(path, token, ids, { done: 0, window: 0, stored: 0, skipped: 0, total, refreshes: 0 }) {
             Ok(o) => Ok(o)
             Err(e) => {
@@ -575,12 +578,13 @@ Strava :: [].{
                         # not charge a 401 against `done` either, so the read budget never
                         # ended it. Same token back is still a real auth problem.
                         if st.refreshes >= max_refreshes {
-                            bar_done!(st)
+                            # no bar_done! here: this propagates, and the boundary reporter
+                            # closes the bar on the way out. Closing twice leaves a stray
+                            # blank line on stderr.
                             Err(HttpStatus(401, "kept getting 401 after refreshing the token — re-run `stride auth`"))
                         } else {
                             fresh = get_valid_token!(path)?
                             if fresh == token {
-                                bar_done!(st)
                                 Err(HttpStatus(401, "token refresh did not help — re-run `stride auth`"))
                             } else {
                                 bar_done!(st)
