@@ -538,7 +538,7 @@ run_stops! = || {
     _ = sync_stride!(bin, home, base, ["init"])
     _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','mock-access'),('strava_refresh_token','mock-refresh'),('strava_expires_at','9999999999');")
     # list the activities WITHOUT draining streams, so the drain has a full queue.
-    # STRIDE_READS_PER_RUN=0 is rejected by the parser (must be > 0), so sync would
+    # STRIDE_READS_PER_WINDOW=0 is rejected by the parser (must be > 0), so sync would
     # still drain; instead seed via sync and delete the rows it stored.
     _ = sync_stride!(bin, home, base, ["sync"])
     _ = sql!(db, "DELETE FROM streams;")
@@ -549,9 +549,9 @@ run_stops! = || {
     # with a budget of 1 the drain stops after 502 and never reaches 501's 429, so the
     # run reports budget_reached and the 429 arm is never entered.
     #   budget: one read per run, so the second queued id is never requested.
-    #   rate:   the real budget, so the drain DOES reach 501 — only the window sleep is
-    #           shortened, turning two Backoff rounds from ~30 minutes into 10ms.
-    envs = if rate_limited "" else "STRIDE_READS_PER_RUN=1"
+    #   rate:   the real window, so the drain DOES reach 501 and meets its 429.
+    #           Nothing sleeps any more, so this costs milliseconds.
+    envs = if rate_limited "" else "STRIDE_READS_PER_WINDOW=1"
     run_sync_bf! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' ${envs} '${bin}' sync >'${bo}' 2>/dev/null")
     _ = run_sync_bf!("json")
 
@@ -583,10 +583,10 @@ run_stops! = || {
         # run drains what is left and renders "all streams present" instead
         _ = sql!(db, "DELETE FROM streams;")
         _ = run_sync_bf!("human")
-        check!("humans are told to try again tomorrow", Str.contains(Str.trim(sh!("cat '${bo}'")), "stopped on Strava's read cap"))?
+        check!("humans are told to try again in ~15 minutes", Str.contains(Str.trim(sh!("cat '${bo}'")), "in ~15 minutes"))?
     } else {
         # one read, two ids queued: stores the first, stops on the budget with one left
-        check!("the per-run read budget stops the run", bfq!(".data.stopped") == "budget_reached")?
+        check!("filling the 15-minute read window stops the run", bfq!(".data.stopped") == "budget_reached")?
         check!("...having stored exactly the one read it spent", bfq!(".data.streams_fetched") == "1")?
         check!("...with the untouched id still pending", bfq!(".data.pending_streams") == "1")?
         check!("...and resumable, because work remains", bfq!(".data.resumable") == "true")?
@@ -608,7 +608,7 @@ run_stops! = || {
         # fresh queue, same reason as the rate-limited branch above
         _ = sql!(db, "DELETE FROM streams;")
         _ = run_sync_bf!("human")
-        check!("humans are told to run it again tomorrow", Str.contains(Str.trim(sh!("cat '${bo}'")), "stopped at today's Strava read budget"))?
+        check!("humans are told when to run it again, and it is not tomorrow", Str.contains(Str.trim(sh!("cat '${bo}'")), "in ~15 minutes"))?
     }
 
     _ = sh!("rm -rf '${home}'")

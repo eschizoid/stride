@@ -9,10 +9,20 @@ Drain :: [].{
     # control-flow action. (Counting our own reads by choice, so pacing does not depend
     # on any endpoint sending rate-limit headers.)
 
-    Limits : { reads_per_window : I64, reads_per_run : I64, max_consecutive_429 : I64 }
+    # ONE limit, because there is only one stop mechanism now (#232). A run drains until
+    # Strava's 15-minute read window is full, then stops and asks to be re-run. It does
+    # NOT sleep to the next window — that made a routine sync block ~30 minutes in the
+    # foreground — and it does not carry a separate per-run budget either: `window` is
+    # never reset within a run, so a per-run cap of 940 against a window of 95 could
+    # never fire. Review proved both arms dead by evaluating `decide` at production
+    # limits. The DAILY cap is respected by arithmetic rather than by a counter: ~95
+    # reads per window × ~10 windows a day lands just under Strava's 1000.
+    Limits : { reads_per_window : I64 }
 
-    # what to do after a successful fetch has been stored
-    PostStore : [Continue, SleepWindow, StopRun]
+    # what to do after a successful fetch has been stored. WindowFull, not SleepWindow —
+    # nothing sleeps, and a tag named for behaviour the code does not have is how the
+    # next reader gets it wrong.
+    PostStore : [Continue, WindowFull]
 
     # Why a drain run ended — the value that ships as the payload's `stopped`.
     # A TAG, not a Str, so the COMPILER enforces the set at the producer: drain_streams!
@@ -24,20 +34,18 @@ Drain :: [].{
     StopReason : [Complete, BudgetReached, RateLimited]
 
     Action : [
-        Refresh, # 401: refresh the access token, retry the same id
-        Backoff(I64), # 429 under the retry limit: sleep, retry same id, with this new retry count
-        GiveUp, # 429 past the retry limit: a 15-min sleep won't clear a daily cap → stop
+        Refresh, # 401: refresh the access token, retry the same id (bounded by the caller)
+        RateLimited, # 429: stop and report; the caller does not sleep or retry
         Store({ done : I64, window : I64, after : PostStore }), # success: store, then advance
     ]
 
-    decide : { status : U16, done : I64, window : I64, retries : I64 }, Limits -> Action
+    # Counting our own reads BY CHOICE, so pacing never depends on an endpoint sending
+    # rate-limit headers. A 429 is a backstop for when our count and Strava's disagree,
+    # not the mechanism.
+    decide : { status : U16, done : I64, window : I64 }, Limits -> Action
     decide = |s, lim|
         if s.status == 429 {
-            if s.retries >= lim.max_consecutive_429 {
-                GiveUp
-            } else {
-                Backoff(s.retries + 1)
-            }
+            RateLimited
         } else if s.status == 401 {
             Refresh
         } else {
@@ -45,14 +53,7 @@ Drain :: [].{
             # 2xx → body, other → error propagated there); here we just advance counters
             done2 = s.done + 1
             window2 = s.window + 1
-            after =
-                if done2 >= lim.reads_per_run {
-                    StopRun
-                } else if window2 >= lim.reads_per_window {
-                    SleepWindow
-                } else {
-                    Continue
-                }
+            after = if window2 >= lim.reads_per_window WindowFull else Continue
             Store({ done: done2, window: window2, after })
         }
 
@@ -67,64 +68,51 @@ Drain :: [].{
         }
 
     test_lim : Limits
-    test_lim = { reads_per_window: 3, reads_per_run: 5, max_consecutive_429: 2 }
+    test_lim = { reads_per_window: 3 }
 }
 
 # ── tests ───────────────────────────────────────────────────────────
 
-# 429 under the limit backs off with an incremented retry count
-expect match Drain.decide({ status: 429, done: 0, window: 0, retries: 0 }, Drain.test_lim) {
-    Backoff(1) => True
+# a 429 stops the run outright. It does NOT sleep and retry: that made a routine sync
+# block ~30 minutes in the foreground, measured, on a two-activity queue.
+expect match Drain.decide({ status: 429, done: 0, window: 0 }, Drain.test_lim) {
+    RateLimited => True
     _ => False
 }
-expect match Drain.decide({ status: 429, done: 1, window: 1, retries: 1 }, Drain.test_lim) {
-    Backoff(2) => True
-    _ => False
-}
-
-# 429 at/over the limit gives up (assume daily cap — sleeping won't help)
-expect match Drain.decide({ status: 429, done: 3, window: 1, retries: 2 }, Drain.test_lim) {
-    GiveUp => True
+expect match Drain.decide({ status: 429, done: 99, window: 2 }, Drain.test_lim) {
+    RateLimited => True
     _ => False
 }
 
-# 401 asks for a token refresh
-expect match Drain.decide({ status: 401, done: 0, window: 0, retries: 0 }, Drain.test_lim) {
+# 401 asks for a token refresh; the CALLER bounds how many it will spend
+expect match Drain.decide({ status: 401, done: 0, window: 0 }, Drain.test_lim) {
     Refresh => True
     _ => False
 }
 
 # a normal fetch stores and continues, advancing both counters
-expect match Drain.decide({ status: 200, done: 0, window: 0, retries: 0 }, Drain.test_lim) {
+expect match Drain.decide({ status: 200, done: 0, window: 0 }, Drain.test_lim) {
     Store({ done: 1, window: 1, after: Continue }) => True
     _ => False
 }
 
-# 404 takes the same store path (the marker write happens in app.roc)
-expect match Drain.decide({ status: 404, done: 0, window: 0, retries: 0 }, Drain.test_lim) {
+# 404 takes the same store path (the marker write happens in the drain)
+expect match Drain.decide({ status: 404, done: 0, window: 0 }, Drain.test_lim) {
     Store({ done: 1, window: 1, after: Continue }) => True
     _ => False
 }
 
-# hitting the window cap stores, then sleeps
-expect match Drain.decide({ status: 200, done: 0, window: 2, retries: 0 }, Drain.test_lim) {
-    Store({ done: 1, window: 3, after: SleepWindow }) => True
+# filling the window stores, then ends the run. This is the arm production actually
+# takes — `window` is never reset inside a run, so it is the only way a drain stops
+# short, and the previous model's per-run cap could never fire ahead of it.
+expect match Drain.decide({ status: 200, done: 1, window: 2 }, Drain.test_lim) {
+    Store({ done: 2, window: 3, after: WindowFull }) => True
     _ => False
 }
 
-# hitting the run budget stores, then stops (budget takes priority over a window sleep)
-expect match Drain.decide({ status: 200, done: 4, window: 0, retries: 0 }, Drain.test_lim) {
-    Store({ done: 5, window: 1, after: StopRun }) => True
-    _ => False
-}
-expect match Drain.decide({ status: 200, done: 4, window: 2, retries: 0 }, Drain.test_lim) {
-    Store({ done: 5, window: 3, after: StopRun }) => True
-    _ => False
-}
-
-# a retry count on a successful fetch is irrelevant to the decision
-expect match Drain.decide({ status: 200, done: 0, window: 0, retries: 1 }, Drain.test_lim) {
-    Store({ done: 1, window: 1, after: Continue }) => True
+# and it stays WindowFull past the boundary rather than wrapping back to Continue
+expect match Drain.decide({ status: 200, done: 9, window: 9 }, Drain.test_lim) {
+    Store({ done: 10, window: 10, after: WindowFull }) => True
     _ => False
 }
 

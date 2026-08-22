@@ -188,11 +188,11 @@ stride analyze
 `sync` is the only command that pulls data from Strava (`auth` talks to it too, for the
 OAuth exchange), and the first one is the whole initial
 pull: it fetches your complete activity list, then drains every activity's raw streams,
-pacing itself well inside Strava's rate limits (95 reads per 15-minute window against a
-cap of 100, then sleeps to the next window; stops cleanly at 940 reads per run against a
-daily cap of 1000). When it stops on that budget it says so and sets `resumable`, and you
-just run it again — a multi-thousand-activity history converges over a few days of plain
-`stride sync`, hands-off. After that the same command is a two-second incremental. There
+pacing itself well inside Strava's rate limits: it drains up to 95 reads against the
+100-per-15-minute window, then STOPS rather than sleeping, says so, and sets `resumable`.
+Run it again in about fifteen minutes and it continues. Strava's daily cap is 1000, so
+roughly ten runs a day is the ceiling and a multi-thousand-activity history converges over
+a few days of that — hands-off, and never holding your terminal. After that the same command is a two-second incremental. There
 is no separate backfill command to know about; `stride sync --all` exists only to force a
 full re-list from scratch.
 

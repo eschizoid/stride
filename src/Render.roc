@@ -707,8 +707,8 @@ Render :: [].{
                 # pending set at once, which is why "Strava has no streams for these" is
                 # the wrong sentence here however plausible it sounds.
                 "complete" => "${I64.to_str(pending)} had unreadable stream data — they retry next sync"
-                "budget_reached" => "stopped at today's Strava read budget — ${I64.to_str(pending)} to go, run `stride sync` again tomorrow"
-                "rate_limited" => "stopped on Strava's read cap — ${I64.to_str(pending)} to go, try again tomorrow"
+                "budget_reached" => "filled Strava's 15-minute read window — ${I64.to_str(pending)} to go, run `stride sync` again in ~15 minutes"
+                "rate_limited" => "Strava rate-limited this run — ${I64.to_str(pending)} to go, try again in ~15 minutes"
                 other => "${other} — ${I64.to_str(pending)} to go"
             }
         }
@@ -1838,8 +1838,8 @@ expect Render.drain_note("complete", 0) == "all streams present"
 expect Render.drain_note("budget_reached", 0) == "all streams present"
 expect Render.drain_note("rate_limited", 0) == "all streams present"
 expect Render.drain_note("complete", 5) == "5 had unreadable stream data — they retry next sync"
-expect Render.drain_note("budget_reached", 40) == "stopped at today's Strava read budget — 40 to go, run `stride sync` again tomorrow"
-expect Render.drain_note("rate_limited", 40) == "stopped on Strava's read cap — 40 to go, try again tomorrow"
+expect Render.drain_note("budget_reached", 40) == "filled Strava's 15-minute read window — 40 to go, run `stride sync` again in ~15 minutes"
+expect Render.drain_note("rate_limited", 40) == "Strava rate-limited this run — 40 to go, try again in ~15 minutes"
 
 # an outcome that did not come through Drain.stopped_label renders verbatim
 # rather than being guessed into one of the three
@@ -1849,8 +1849,8 @@ expect Render.drain_note("throttled_by_proxy", 7) == "throttled_by_proxy — 7 t
 # they check Render against itself: renaming "complete" in the producer left them
 # all passing. These compose the two, so a rename on either side fails here.
 expect Render.drain_note(Drain.stopped_label(Complete), 0) == "all streams present"
-expect Str.starts_with(Render.drain_note(Drain.stopped_label(BudgetReached), 40), "stopped at today's Strava read budget")
-expect Str.starts_with(Render.drain_note(Drain.stopped_label(RateLimited), 40), "stopped on Strava's read cap")
+expect Str.starts_with(Render.drain_note(Drain.stopped_label(BudgetReached), 40), "filled Strava's 15-minute read window")
+expect Str.starts_with(Render.drain_note(Drain.stopped_label(RateLimited), 40), "Strava rate-limited this run")
 
 # no label the producer can emit may fall through to the catch-all
 expect {
@@ -1892,7 +1892,7 @@ expect
 # a budget stop states the reason AND supplements it with the skip count
 expect
     Render.sync_screen({ synced: 9, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 12, streams_skipped: 1, pending_streams: 40, stopped: "budget_reached", resumable: True }, False)
-    == "synced 0 new, 0 updated (9 re-checked in the 30-day window), fetched streams for 12 (1 had unreadable stream data) — stopped at today's Strava read budget — 40 to go, run `stride sync` again tomorrow"
+    == "synced 0 new, 0 updated (9 re-checked in the 30-day window), fetched streams for 12 (1 had unreadable stream data) — filled Strava's 15-minute read window — 40 to go, run `stride sync` again in ~15 minutes"
 
 # a COMPLETE run with skips states the fact ONCE — drain_note owns it there, and
 # stating it twice in two wordings is what shipped before review caught it

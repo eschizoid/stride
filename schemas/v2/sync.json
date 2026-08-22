@@ -41,7 +41,7 @@
     },
     "stopped": {
       "type": "string",
-      "description": "why the stream drain ended. complete = the queue emptied; budget_reached = stopped at the self-imposed per-run read budget; rate_limited = Strava's cap, still limited after backing off. Both non-complete reasons stop against the DAILY cap, so both mean try again tomorrow. NOTE rate_limited here is a partial success in a SUCCESS envelope at exit 0 — the run did real work before stopping — whereas the identically-named error code means the command made no progress and exits 1 (#227)",
+      "description": "why the stream drain ended. complete = the queue emptied; budget_reached = Strava's 15-minute read window filled, so run again in ~15 minutes; rate_limited = Strava returned 429, same remedy. Neither non-complete reason means waiting until tomorrow: a run drains at most one window's worth of reads and stops rather than sleeping, so repeated runs across the day are how a large history converges. NOTE rate_limited here is a partial success in a SUCCESS envelope at exit 0 — the run did real work before stopping — whereas the identically-named error code means the command made no progress and exits 1 (#227)",
       "enum": [
         "complete",
         "budget_reached",

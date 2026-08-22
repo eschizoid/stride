@@ -19,7 +19,8 @@ Never do training math yourself: read stride's numbers, add judgment.
    It ends in the usual envelope (`schemas/v2/sync.json`) with progress on stderr.
    Read `resumable` (= `pending_streams > 0`) to decide whether to run it again, and
    `stopped` for why it ended (`complete` / `budget_reached` / `rate_limited` — both
-   non-complete reasons stop against the DAILY read cap, so both mean tomorrow).
+   non-complete reasons stop on Strava's 15-MINUTE window, so both mean run it again in
+   about fifteen minutes, NOT tomorrow).
    A first sync on a large history may take several runs across days; each one says
    how far it got and every stored stream is permanent, so re-running is never wasted.
    `complete` can still leave work: a stream body that does not

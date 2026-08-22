@@ -93,12 +93,11 @@ just install   # build + symlink to ~/.local/bin/stride
   (default, no mode set), a mock Strava server (`mock`), and three drivers that run
   against it — `sync` (real sync + token refresh), `skips` (the undecodable-body skip
   path), and `stops` (the `budget_reached` / `rate_limited` outcomes). `just e2e-sync`
-  starts three mock instances on three ports (`mock_port`, `bad_stream_port`,
+  starts four mock instances on four ports (`mock_port`, `bad_stream_port`, `auth401_port`,
   `rate_limit_port`) and runs all three drivers; the mock's behaviour is varied by
-  `E2E_BAD_STREAM` / `E2E_RATE_LIMIT`. `STRIDE_API_BASE` points stride at the mock, and
-  `STRIDE_READS_PER_RUN` / `STRIDE_READS_PER_WINDOW` /
-  `STRIDE_MAX_429` shrink the rate-limit pacing so terminal arms that cost 940 reads or
-  940 reads are reachable in milliseconds. Same species of seam as
+  `E2E_BAD_STREAM` / `E2E_RATE_LIMIT` / `E2E_STREAM_401`. `STRIDE_API_BASE` points stride at the mock, and
+  `STRIDE_READS_PER_WINDOW` shrinks the rate-limit pacing so a terminal arm that would
+  otherwise cost a full 95-read window is reachable in milliseconds. Same species of seam as
   `STRIDE_API_BASE`; humans never set any of them. They can only LOWER a limit — an
   override able to RAISE one would let a typo or a copied command line hammer Strava and
   get the athlete's own API app suspended, and lowering is all a test needs. This recipe DOES run in CI — it needs
