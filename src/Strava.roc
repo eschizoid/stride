@@ -301,13 +301,17 @@ Strava :: [].{
                 counts = fetch_pages!(path, token, after_param, started, 1, { relisted: 0, new_n: 0, updated_n: 0 }, True, True)?
                 pruned = prune_deleted!(path, started, window_start)?
                 Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
-                streams_n = backfill_streams!(path, token)?
+                pull = backfill_streams!(path, token)?
                 remaining = pending_streams!(path)?
                 # `synced` keeps its original meaning (rows re-listed) so existing consumers
                 # are untouched; new_activities/updated_activities are ADDITIVE, so the
-                # envelope version stays put.
-                Output.out!({ synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: streams_n, pending_streams: remaining }, |p| {
+                # envelope version stays put. `streams_skipped` is additive for the same
+                # reason (#224) and matches backfill's field of that name.
+                Output.out!({ synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: remaining }, |p| {
                     prune_note = if p.pruned > 0 " (pruned ${U64.to_str(p.pruned)} removed on Strava)" else ""
+                    # said plainly rather than folded into the pending count: unreadable is
+                    # not the same as not-yet-fetched, and only the first is worth chasing
+                    skip_note = if p.streams_skipped > 0 " (${U64.to_str(p.streams_skipped)} had unreadable stream data — they retry next sync)" else ""
                     tail =
                         if p.pending_streams > 0
                             " (${I64.to_str(p.pending_streams)} still need streams — run `stride backfill` to pull them all)"
@@ -318,7 +322,7 @@ Strava :: [].{
                     # train rather than of this sync, and reading "synced 22 activities" as 22
                     # NEW ones is the question it kept provoking (#112). On a typical day the
                     # leading numbers are 0 and 0, which is the honest answer.
-                    "synced ${U64.to_str(p.new_activities)} new, ${U64.to_str(p.updated_activities)} updated (${U64.to_str(p.synced)} re-checked in the 30-day window)${prune_note}, fetched streams for ${U64.to_str(p.streams_fetched)}${tail}"
+                    "synced ${U64.to_str(p.new_activities)} new, ${U64.to_str(p.updated_activities)} updated (${U64.to_str(p.synced)} re-checked in the 30-day window)${prune_note}, fetched streams for ${U64.to_str(p.streams_fetched)}${skip_note}${tail}"
                 })
             }
         }
@@ -331,7 +335,7 @@ Strava :: [].{
     # backfill refetch them.
     streams_per_run = 60
 
-    backfill_streams! : Str, Str => Try(U64, _)
+    backfill_streams! : Str, Str => Try(StreamPull, _)
     backfill_streams! = |path, token| {
         ids = Sqlite.query_many!({
             path: Path.utf8(path),
@@ -357,7 +361,7 @@ Strava :: [].{
         # as the stall lasts — which is the "it looks hung" failure this whole change
         # exists to prevent, reintroduced at the one moment it matters most.
         _ = if !(List.is_empty(ids)) { Output.narrate!("fetching streams", 0, List.len(ids))? } else { {} }
-        res = fetch_streams_all!(path, token, ids, 0, List.len(ids))
+        res = fetch_streams_all!(path, token, ids, { stored: 0, skipped: 0 }, List.len(ids))
         match res {
             Ok(n) => Ok(n)
             Err(e) => {
@@ -381,7 +385,16 @@ Strava :: [].{
             row: Sqlite.i64("n"),
         })
 
-    fetch_streams_all! : Str, Str, List(I64), U64, U64 => Try(U64, _)
+    # Returns BOTH counts. `stored` is rows written; `skipped` is reads whose body would
+    # not decode as UTF-8, which store nothing and stay pending so they retry next run.
+    # They were folded together before (#224): the skip incremented nothing and said
+    # nothing, so a sync that silently dropped stream data reported a clean run and the
+    # only trace was `pending_streams` failing to move — indistinguishable from a
+    # rate-limited partial. `backfill` grew the same counter in #218; this is the command
+    # it actually matters on, because it is the one that runs daily.
+    StreamPull : { stored : U64, skipped : U64 }
+
+    fetch_streams_all! : Str, Str, List(I64), StreamPull, U64 => Try(StreamPull, _)
     fetch_streams_all! = |path, token, ids, acc, total|
         match ids {
             [] => {
@@ -417,9 +430,16 @@ Strava :: [].{
                     _ = if total > 0 { Output.narrate!("fetching streams", done, total)? } else { {} }
                     # 404/2xx/non-utf8 policy lives in store_stream_response! (shared with backfill)
                     match store_stream_response!(path, id, resp)? {
-                        Stored => fetch_streams_all!(path, token, rest, acc + 1, total)
-                        SkippedNonUtf8 => fetch_streams_all!(path, token, rest, acc, total)
-
+                        Stored => fetch_streams_all!(path, token, rest, { ..acc, stored: acc.stored + 1 }, total)
+                        SkippedNonUtf8 => {
+                            # close the bar first: this line would otherwise land on the
+                            # bar's row, the same corruption the completion and rate-limit
+                            # paths already close it for.
+                            _ = if total > 0 { Output.narrate_done!({})? } else { {} }
+                            Output.say!("  activity ${id_str}: stream data would not decode — skipped, retries next sync")?
+                            _ = if total > 0 { Output.narrate!("fetching streams", done, total)? } else { {} }
+                            fetch_streams_all!(path, token, rest, { ..acc, skipped: acc.skipped + 1 }, total)
+                        }
                     }
                 }
             }

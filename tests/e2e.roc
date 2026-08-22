@@ -444,8 +444,20 @@ run_backfill! = || {
 
     _ = sync_stride!(bin, home, base, ["init"])
     _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','mock-access'),('strava_refresh_token','mock-refresh'),('strava_expires_at','9999999999');")
-    # sync pulls both activities; 501's streams store, 502's body does not decode
-    _ = sync_stride!(bin, home, base, ["sync"])
+    # sync pulls both activities; 501's streams store, 502's body does not decode.
+    # #224: sync takes the same skip path backfill does and used to report NOTHING —
+    # no counter, no line, no payload field. It is the command that runs daily, so it
+    # is where the loss actually happens; the only trace was `pending_streams` failing
+    # to move, which is indistinguishable from a rate-limited partial.
+    sync_err = "${home}/sync.err"
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${home}/sync.out' 2>'${sync_err}'")
+    syncq! = |filter| Str.trim(sh!("jq -r '${filter}' '${home}/sync.out' 2>&1"))
+    check!("sync counts the undecodable body", syncq!(".data.streams_skipped") == "1")?
+    check!("...and stores only the one that decoded", syncq!(".data.streams_fetched") == "1")?
+    check!("...naming it on stderr, with the activity id", Str.contains(sh!("cat '${sync_err}'"), "502: stream data would not decode"))?
+    check!("...while its stdout stays exactly the envelope", Str.starts_with(Str.trim(sh!("cat '${home}/sync.out'")), "{\"schema_version\"") and List.len(Str.split_on(Str.trim(sh!("cat '${home}/sync.out'")), "\n")) == 1)?
+    check!("sync conforms to its schema with the new key", Str.trim(sh!("jq '.data' '${home}/sync.out' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
+    check!("humans are told too, not just machines", Str.contains(Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' sync 2>/dev/null")), "unreadable stream data"))?
 
     bo = "${home}/bf.out"
     be = "${home}/bf.err"
