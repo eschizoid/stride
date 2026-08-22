@@ -577,7 +577,9 @@ run_stops! = || {
     #           Nothing sleeps any more, so this costs milliseconds.
     envs = if rate_limited "" else "STRIDE_READS_PER_WINDOW=1"
     run_sync_bf! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' ${envs} '${bin}' sync >'${bo}' 2>/dev/null")
+    bf_start = str_to_i64(Str.trim(sh!("date +%s")))
     _ = run_sync_bf!("json")
+    bf_elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - bf_start
 
     if env_or!("E2E_EXPECT_401", "") == "1" {
         # The refresh arm recurses on the SAME id. Seed a token the mock will not hand
@@ -622,15 +624,13 @@ run_stops! = || {
         # passed the whole suite
         check!("...and the partial-progress report names the run", Str.contains(sh!("cat '${be401}'"), "everything already stored is saved"))?
     } else if rate_limited {
-        rl_start = str_to_i64(Str.trim(sh!("date +%s")))
         # 501 429s forever. 502 drains first (ORDER BY start_local DESC) and stores its
         # 404 marker, so a surviving counter reads 1 and a reset one reads 0.
         # WALL CLOCK. The no-sleep fix is only observable as latency: review reintroduced
         # a 3s sleep here and every driver passed, so a return to the ~30-minute block
         # would read as CI being slow rather than as a failing check. I claimed this
         # assertion in an earlier commit message and it was never actually in the file.
-        rl_elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - rl_start
-        check!("a rate-limited sync returns at once instead of sleeping", rl_elapsed < 10)?
+        check!("a rate-limited sync returns at once instead of sleeping", bf_elapsed < 10)?
         check!("a 429 stops the run outright", bfq!(".data.stopped") == "rate_limited")?
         check!("...counting what it stored before the 429", bfq!(".data.streams_fetched") == "1")?
         check!("...leaving the 429'd id pending", bfq!(".data.pending_streams") == "1")?
@@ -3153,16 +3153,16 @@ is_nonempty = |s| !(Str.is_empty(Str.trim(s))) and Str.trim(s) != "null"
 # second driver's reset wipes the first's tally mid-run, producing a false red that looks
 # exactly like a real regression. Review reproduced both with nothing artificial, and the
 # false-red construction explains failures previously blamed on port collisions.
-checks_log : Str
-checks_log = "'.e2e-checks.'$PPID"
+checks_log! : {} => Str
+checks_log! = |{}| ".e2e-checks.${env_or!("E2E_MODE", "e2e")}"
 
 # Fails LOUDLY. sh! swallows exit codes, and a reset that silently does not happen leaves
 # a stale tally that makes the floor pass for a driver that ran nothing — the guard
 # failing in the one direction it exists to prevent. So verify the file is gone.
 reset_checks! : {} => Try({}, _)
 reset_checks! = |{}| {
-    _ = sh!("rm -f ${checks_log}")
-    left = Str.trim(sh!("wc -l 2>/dev/null < ${checks_log} || echo 0"))
+    _ = sh!("rm -f ${checks_log!({})}")
+    left = Str.trim(sh!("wc -l 2>/dev/null < ${checks_log!({})} || echo 0"))
     if left == "0" {
         Ok({})
     } else {
@@ -3182,14 +3182,14 @@ reset_checks! = |{}| {
 # hazard the sqlite failure log carries, and documents.
 checks_ran_at_least! : I64 => Try({}, _)
 checks_ran_at_least! = |floor| {
-    ran = str_to_i64(Str.trim(sh!("wc -l 2>/dev/null < ${checks_log} || echo 0")))
+    ran = str_to_i64(Str.trim(sh!("wc -l 2>/dev/null < ${checks_log!({})} || echo 0")))
     check!("this driver ran its checks (${I64.to_str(ran)} >= ${I64.to_str(floor)})", ran >= floor)
 }
 
 check! : Str, Bool => Try({}, _)
 check! = |name, cond|
     if cond {
-        _ = sh!("echo x >> ${checks_log}")
+        _ = sh!("echo x >> ${checks_log!({})}")
         Stdout.line!("  ok   ${name}")
     } else {
         Stdout.line!("  FAIL ${name}")?
