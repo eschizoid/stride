@@ -131,6 +131,13 @@ refused the operation, e.g. a lock), `network_unreachable` (Strava never
 answered), `strava_error` / `rate_limited` (it answered with a status),
 `stdin_closed`, and `internal_error` for anything unforeseen, carrying the
 clipped tag in its message — so a failure without a code is a bug, not a shrug.
+**`rate_limited` is the one token that appears in both envelopes, and the
+distinction is deliberate (#227).** As an ERROR code it means the command made
+no progress and exits 1. As `backfill`'s `stopped` value it means the drain hit
+Strava's cap after doing real work, so the run is a partial success: success
+envelope, exit 0, with `resumable` carrying what to do next. Branch on the
+envelope shape, not on the token — a consumer that learns "`rate_limited` means
+exit 1" from the error enum will be wrong about `backfill`.
 An expired token still arrives as `not_authenticated`, from the boundary as well
 as from sync. Success →
 `{"schema_version":2,"data":{…}}`, error →

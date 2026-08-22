@@ -20,6 +20,7 @@
       "properties": {
         "code": {
           "type": "string",
+          "description": "why the command failed. Note `rate_limited` also appears as backfill's `stopped` value inside a SUCCESS payload, where it means the drain did work and then hit the cap; the two are told apart by the envelope shape, not the token (#227).",
           "enum": [
             "activity_already_linked",
             "activity_not_found",

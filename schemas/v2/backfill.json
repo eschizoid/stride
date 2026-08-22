@@ -12,7 +12,7 @@
     "streams_pending": { "type": "integer", "description": "activities still without any streams row after this run. An activity Strava has no streams for does NOT count here: a 404 stores an empty marker, which retires it permanently" },
     "stopped": {
       "type": "string",
-      "description": "why the run ended. complete = the queue emptied; budget_reached = stopped at the self-imposed per-run read budget; rate_limited = Strava's cap, still limited after backing off. Both non-complete reasons stop against the DAILY cap, so both mean try again tomorrow",
+      "description": "why the run ended. complete = the queue emptied; budget_reached = stopped at the self-imposed per-run read budget; rate_limited = Strava's cap, still limited after backing off. Both non-complete reasons stop against the DAILY cap, so both mean try again tomorrow. Note rate_limited here is a PARTIAL SUCCESS in a success envelope with exit 0 — the drain did work before stopping — whereas the identically-named error code means the command made no progress and exits 1",
       "enum": ["complete", "budget_reached", "rate_limited"]
     },
     "resumable": { "type": "boolean", "description": "whether anything is still missing — exactly streams_pending > 0. True after a complete run when a body would not decode; false after a budget stop that happened to empty the queue" }

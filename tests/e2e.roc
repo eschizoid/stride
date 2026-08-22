@@ -526,6 +526,14 @@ run_stops! = || {
         check!("...leaving the 429'd id pending", bfq!(".data.streams_pending") == "1")?
         check!("...and resumable, because waiting will help", bfq!(".data.resumable") == "true")?
         check!("the rate-limited payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/backfill.json -f tools/validate.jq 2>&1")) == "")?
+        # #227: `rate_limited` is the one token that appears in BOTH envelopes. Here it is
+        # a partial success -- the drain did work, then hit the cap -- so it must stay a
+        # success envelope at exit 0, unlike the error code of the same name which means
+        # no progress and exits 1. Pinned rather than merely documented: the distinction
+        # is invisible from the token, so a consumer branching on it needs the shape to
+        # be stable, and doc-only decisions in this repo have a habit of rotting.
+        check!("...as a partial SUCCESS, carrying no error key", bfq!(".error") == "null")?
+        check!("...and exiting 0, unlike the error code of the same name", Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' ${envs} '${bin}' backfill >/dev/null 2>&1; echo $?")) == "0")?
         # fresh queue: the JSON run above already stored one, so without this the human
         # run drains what is left and renders "all streams present" instead
         _ = sql!(db, "DELETE FROM streams;")
