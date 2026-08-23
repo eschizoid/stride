@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(680)?
+    checks_ran_exactly!(684)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2567,6 +2567,7 @@ b_agent_loop! = |ctx| {
     base_open = str_to_i64(pj!(".data.adherence_28d.still_open"))
     base_unplanned = str_to_i64(pj!(".data.adherence_28d.unplanned_activities"))
     base_open_len = str_to_i64(pj!(".data.open_sessions | length"))
+    base_skipped_plain = str_to_i64(pj!(".data.adherence_28d.skipped")) - str_to_i64(pj!(".data.adherence_28d.substituted"))
     base_hist_len = str_to_i64(pj!(".data.plan_history_28d | length"))
     # The invariant SKILL.md states to the coach, asserted before anything moves so a
     # later failure is attributable to this scenario rather than inherited.
@@ -2583,6 +2584,13 @@ b_agent_loop! = |ctx| {
     check!("...and still_open by exactly one", str_to_i64(pj!(".data.adherence_28d.still_open")) == base_open + 1)?
     check!("...while completed did not move — planning is not completing", str_to_i64(pj!(".data.adherence_28d.completed")) == base_completed)?
     check!("...and both lists grew by one", str_to_i64(pj!(".data.open_sessions | length")) == base_open_len + 1 and str_to_i64(pj!(".data.plan_history_28d | length")) == base_hist_len + 1)?
+    # The identity asserted HERE, which is the only moment in this scenario where all four
+    # terms are non-trivial — still_open is 1. Review proved the other two assertions of it
+    # measure nothing: at the baseline and at the end still_open is 0, so both reduce to
+    # `planned == skipped`, and a payload hardwiring still_open to 0 passed the whole suite
+    # with only the two delta checks removed. Those deltas carry all of the still_open
+    # signal; the identity only earns its place at this point.
+    check!("...and the adherence identity holds with still_open actually non-zero", str_to_i64(pj!(".data.adherence_28d.still_open")) > 0 and str_to_i64(pj!(".data.adherence_28d.planned")) == str_to_i64(pj!(".data.adherence_28d.completed")) + str_to_i64(pj!(".data.adherence_28d.skipped")) + str_to_i64(pj!(".data.adherence_28d.still_open")))?
 
     # ── leg 2: reconcile against real training ──────────────────────────
     # Asserted, not fired and forgotten: if the link is REFUSED — 101 already told another
@@ -2590,7 +2598,7 @@ b_agent_loop! = |ctx| {
     # and the failures would point at the assertions rather than at the cause.
     done_out = stride!(ctx.bin, ctx.home, ["complete", sid, "9220"])
     check!("the session completes against a real activity (got ${Str.trim(done_out)})", Str.contains(done_out, "\"activity\":9220") and Str.contains(done_out, "\"completed_session\":${sid}"))?
-    # The four assertions that a per-command test cannot make, because each of these
+    # The assertions a per-command test cannot make, because each of these
     # payload fields is computed by a DIFFERENT query and only their agreement is the
     # contract.
     check!("completing removes the session from open_sessions", pj!("[.data.open_sessions[].id] | index(${sid})") == "null")?
@@ -2599,7 +2607,10 @@ b_agent_loop! = |ctx| {
     check!("...but keeps it in plan_history_28d, now done", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .status]") == "[\n  \"done\"\n]")?
     check!("...linked to the activity it was completed against", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .completed_activity_id]") == "[\n  9220\n]")?
     check!("...and dated by that activity, not by the session's target", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .completed_on]") == "[\n  \"${ctx.d2}\"\n]")?
-    check!("...which is a different day from the target, so that check can tell them apart", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .target_date]") == "[\n  \"${ctx.d1}\"\n]" and ctx.d1 != ctx.d2)?
+    check!("...which is a different day from the target, so that check can tell them apart", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .target_date]") == "[\n  \"${ctx.d1}\"\n]")?
+    # `d1` is today-3 and `d2` today-1 by construction, so they can never coincide — the
+    # guard that used to ride along here could not fail and read like it could. What makes
+    # the check above discriminating is that completed_on is d2 while target_date is d1.
     check!("...moving completed up by one", str_to_i64(pj!(".data.adherence_28d.completed")) == base_completed + 1)?
     check!("...and still_open back down to where it started", str_to_i64(pj!(".data.adherence_28d.still_open")) == base_open)?
     check!("...while planned stays put — a completion is not a new plan", str_to_i64(pj!(".data.adherence_28d.planned")) == base_planned + 1)?
@@ -2607,6 +2618,18 @@ b_agent_loop! = |ctx| {
     # separate query over `activities`, counting those NOT linked to any session. Linking
     # 101 has to move it, and nothing in a per-command test relates the two.
     check!("...and the activity stops counting as unplanned, a fact from another query", str_to_i64(pj!(".data.adherence_28d.unplanned_activities")) == base_unplanned - 1)?
+    # ...and the OTHER link. The comment above claims unplanned excludes activities
+    # referenced by EITHER link, and only the completion half was tested — deleting the
+    # substitute clause from the query passed the entire suite, this scenario included.
+    # A substitution is `skip <id> "<reason>" <activity>`: the session did not happen, the
+    # activity did, and it stops being unplanned just the same.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (9221,'agent loop substitute','Ride','${ctx.d2}T08:00:00Z',3600,20000,180,180,140);")
+    sub_unplanned = str_to_i64(pj!(".data.adherence_28d.unplanned_activities"))
+    sid2 = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "agent loop substitute probe", "closing the other half"], ".data.id"))
+    _ = stride!(ctx.bin, ctx.home, ["skip", sid2, "did something else instead", "9221"])
+    check!("...and a SUBSTITUTED activity stops counting as unplanned too", str_to_i64(pj!(".data.adherence_28d.unplanned_activities")) == sub_unplanned - 1)?
+    check!("...counted as skipped, not completed", str_to_i64(pj!(".data.adherence_28d.skipped")) == str_to_i64(pj!(".data.adherence_28d.substituted")) + base_skipped_plain)?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${sid2}; DELETE FROM activity_metrics WHERE activity_id = 9221; DELETE FROM activities WHERE id = 9221;")
     check!("...with the identity still holding after all of it", str_to_i64(pj!(".data.adherence_28d.planned")) == str_to_i64(pj!(".data.adherence_28d.completed")) + str_to_i64(pj!(".data.adherence_28d.skipped")) + str_to_i64(pj!(".data.adherence_28d.still_open")))?
     # completion_pct is derived from two of the counts above; asserted against them rather
     # than against a literal, so it cannot drift from its own inputs.
@@ -2618,18 +2641,30 @@ b_agent_loop! = |ctx| {
     # habit nobody enforced". Nothing enforced it. In machine mode no handled failure may
     # exit non-zero with empty stdout — that shape is what an agent cannot recover from,
     # because there is nothing to branch on.
-    err_probe! = |args, label| {
+    # The EXPECTED CODE, not merely that a code exists. Asserting only the shape cannot
+    # tell "reached the failure this probe names" from "fell off the command table": review
+    # ran these six through a shell that does not word-split, so each arrived as one
+    # argument, and ALL SIX came back `unknown_command` with a non-zero exit and a
+    # non-empty code — satisfying the old assertion while five of the six never reached the
+    # path their label named. The harness splices `${args}` unquoted, so any future
+    # argument containing a space reroutes a probe the same way and it stays green.
+    err_probe! = |args, want, label| {
         out = "${ctx.home}/.err-probe.out"
         st = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${args} > '${out}' 2>/dev/null; echo $?"))
         code = Str.trim(sh!("jq -r '.error.code // \"\"' '${out}' 2>/dev/null"))
-        check!("${label}: non-zero exit carries a coded envelope on stdout (exit ${st}, code '${code}')", st != "0" and code != "" and code != "null")
+        check!("${label}: exits non-zero with `${want}` on stdout (exit ${st}, code '${code}')", st != "0" and code == want)
     }
-    err_probe!("activity 99999999", "unknown activity")?
-    err_probe!("tte notanumber", "unparseable watts")?
-    err_probe!("config get nosuchkey", "absent config key")?
-    err_probe!("top notametric", "unknown metric")?
-    err_probe!("reps notadate", "unparseable date")?
-    err_probe!("frobnicate", "unknown command")?
+    err_probe!("activity 99999999", "activity_not_found", "unknown activity")?
+    err_probe!("tte notanumber", "bad_watts", "unparseable watts")?
+    err_probe!("config get nosuchkey", "not_set", "absent config key")?
+    err_probe!("top notametric", "bad_metric", "unknown metric")?
+    err_probe!("reps notadate", "usage", "unparseable date")?
+    err_probe!("frobnicate", "unknown_command", "unknown command")?
+    # The code alone does not pin the MESSAGE, and for `reps` the message is the point:
+    # the arm exists because `reps asc` once answered "no detected interval structure on
+    # asc" — a data fact about a date that does not exist. Gutting it to a bare "reps"
+    # leaves the code `usage` and passed. So this names the offending value.
+    check!("...and the date-refusal message names what it refused", Str.contains(stride!(ctx.bin, ctx.home, ["reps", "notadate"]), "notadate"))?
     _ = sh!("rm -f '${ctx.home}/.err-probe.out'")
 
     # ── cleanup: the loop leaves no trace ───────────────────────────────
