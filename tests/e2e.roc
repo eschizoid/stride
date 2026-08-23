@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(609)?
+    checks_ran_exactly!(615)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -839,6 +839,10 @@ b_init_config! = |ctx| {
     # IS a shape change, and the envelope version is how a caller detects one
     check!("summary envelope is versioned", strjq!(ctx, ["summary"], ".schema_version") == "2")?
     check!("missing-config error code", Str.contains(stride!(ctx.bin, ctx.home, ["summary"]), "missing_config"))?
+    # doctor's MissingConfig arm, reached here because the harness is already in exactly
+    # that state — no zones set. This is the first screen a new user sees, and until this
+    # check the arm could be garbled with nothing noticing.
+    check!("doctor names the absent zone bounds rather than reporting a count", Str.contains(stride!(ctx.bin, ctx.home, ["doctor"]), "hr zone bounds are not set"))?
     # ── platform failures reach the caller as the contract (#183) ────────
     # A query before `stride init` used to die with `Program exited with error:
     # SqliteErr(CanNotOpen, …)` on stderr and EMPTY stdout — no code, no
@@ -986,6 +990,10 @@ b_config_ftp! = |ctx| {
     # echoes it, so telling the athlete to set it sends them to the wrong place
     _ = sql!(ctx.db, "DELETE FROM config WHERE key='utc_offset_minutes'; UPDATE config SET value='1.18e2' WHERE key='hr_z1_max';")
     check!("an unreadable zone bound says unreadable, not missing", Str.contains(stride!(ctx.bin, ctx.home, ["analyze"]), "unreadable_config"))?
+    # ...and doctor's GLOBAL-key arm, the third of its three, reached from the same state.
+    # `plan` exits 1 here; doctor degrades and names the key, which is the asymmetry the
+    # schema describes.
+    check!("doctor degrades on an unreadable GLOBAL zone key too", Str.contains(stride!(ctx.bin, ctx.home, ["doctor"]), "hr_z1_max is set to '1.18e2'"))?
     _ = sql!(ctx.db, "UPDATE config SET value='118' WHERE key='hr_z1_max';")
     # the PER-SPORT variant: an unreadable override silently used the global ceiling, so
     # the athlete's sport zones were ignored with nothing to see. Absent still falls back
@@ -1661,8 +1669,15 @@ b_seed_analyze! = |ctx| {
     check!("...while doctor's awaiting_metrics sees it, agreeing with plan exactly", Str.trim(strjq!(ctx, ["doctor"], ".data.awaiting_metrics")) == n_stale)?
     check!("...and reports the count as known", Str.trim(strjq!(ctx, ["doctor"], ".data.awaiting_metrics_known")) == "true")?
     check!("...with no config error to report", Str.trim(strjq!(ctx, ["doctor"], ".data.config_error")) == "")?
+    # The HUMAN line too, against the same oracle. Review collapsed the known/unknown `if`
+    # to its else branch — so the screen read "unknown" on every healthy install — and
+    # nothing failed, because the only human check ran in the corrupt state.
+    check!("...and doctor's human screen carries the same number", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' doctor 2>/dev/null"), "would be recomputed by analyze: ${n_stale}"))?
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("...and running analyze returns it to zero", pf!("activities_awaiting_metrics") == "0")?
+    # doctor's SECOND measurement point. One point let the count be hardcoded to the
+    # fixture's value and survive; two, with different values, cannot be met by a constant.
+    check!("...doctor's count returning with it", Str.trim(strjq!(ctx, ["doctor"], ".data.awaiting_metrics")) == "0")?
     # Same again for streams: a different predicate, on a different table. Done by ADDING a
     # row rather than deleting 101's, because 101's stored streams are what its power
     # metrics are computed from — dropping them, or restoring them as an empty marker,
@@ -1706,7 +1721,14 @@ b_seed_analyze! = |ctx| {
     check!("...and names the offending key, its value and the fix", Str.trim(strjq!(ctx, ["doctor"], ".data.config_error")) == "hr_z2_max_ride is set to '1.6e2', which is not a number — fix it with `stride config set hr_z2_max_ride <value>`")?
     check!("...while still reporting everything else it knows", Str.trim(strjq!(ctx, ["doctor"], ".data.activities | type")) == "number")?
     check!("...and exits 0, because a diagnosis is not a failure", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' doctor >/dev/null 2>&1; echo $?")) == "0")?
-    check!("...and its human screen says so too", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' doctor 2>/dev/null"), "would be recomputed by analyze: unknown"))?
+    # The WHOLE line, reason included. A `contains` on the "unknown" prefix let the
+    # `— ${config_error}` suffix be deleted silently, and that suffix is the entire
+    # justification for surfacing this in the diagnostic command.
+    check!("...and its human screen says so too, with the reason attached", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' doctor 2>/dev/null"), "would be recomputed by analyze: unknown — hr_z2_max_ride is set to '1.6e2', which is not a number — fix it with `stride config set hr_z2_max_ride <value>`"))?
+    # The schema says the count is 0 whenever the flag is false. Nothing asserted it, so a
+    # degraded arm returning a stale or invented number passed.
+    check!("...and the count really is zero, as the schema promises", Str.trim(strjq!(ctx, ["doctor"], ".data.awaiting_metrics")) == "0")?
+    check!("...with the degraded payload still conforming", validate!("doctor", "doctor") == "")?
     _ = sql!(ctx.db, "DELETE FROM config WHERE key = 'hr_z2_max_ride';")
     check!("...and removing it restores doctor's count too", Str.trim(strjq!(ctx, ["doctor"], ".data.awaiting_metrics_known")) == "true")?
     check!("...and removing the bad override restores the count", pf!("activities_awaiting_metrics_known") == "true")?
