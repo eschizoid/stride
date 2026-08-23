@@ -445,8 +445,8 @@ run_sync! = || {
     #
     # It moves that failure to where it happens; it does not close the absence hole.
     # `streams_fetched == 72` remains the one load-bearing assertion here — seeding rows
-    # with `moving_time = 0` still passes both this check and the cap check, because the
-    # queue query cannot see them. Closing that properly would mean re-encoding the
+    # with `moving_time = 0` passes THREE checks (this one, the budget pin and the cap
+    # check) before dying at the store count, because the queue query cannot see them. Closing that properly would mean re-encoding the
     # production WHERE clause in the fixture, which is the hazard the queue query's own
     # comment warns about, so it is left alone knowingly.
     check!("the 70 seed rows landed", Str.trim(sql!(db, "SELECT count(*) FROM activities WHERE id BETWEEN 901 AND 970;")) == "70")?
@@ -467,14 +467,21 @@ run_sync! = || {
     # below would catch a leak, and it cannot: prune_deleted! skips `synced_at IS NULL`,
     # which is exactly what these rows carry, so they would survive every later run
     # invisibly. Disabling the DELETE above passed every check then present (38) and leaked
-    # 70 activities and 70 streams rows into the rest of the scenario.
+    # 70 activities and 70 streams rows into the rest of the scenario — and, once the
+    # downstream analyze ran, 70 activity_metrics rows scored from fake rides.
     #
-    # BOTH tables, because deleting only the activities half also passes: the declared
-    # `REFERENCES activities(id)` on streams is decorative without `PRAGMA foreign_keys=ON`,
-    # which nothing sets, so the child rows are orphaned rather than cascaded. That is the
-    # same reason prune_txn! deletes from its tables by hand. activity_metrics needs no
-    # clause — no analyze runs while the seeds exist, so there is nothing there to leak,
-    # and asserting its absence would assert something the block never does.
+    # BOTH tables, because deleting either half alone still passes. The declared
+    # `REFERENCES activities(id)` on streams is unenforced — nothing sets
+    # `PRAGMA foreign_keys=ON` — and it declares no ON DELETE action, so it would not
+    # cascade even if something did: with the pragma on, the parent delete ERRORS instead.
+    # Either way the child rows never go with the parent, which is the same reason
+    # prune_txn! deletes from its tables by hand.
+    #
+    # activity_metrics needs no clause, but only because of WHERE this sits: no analyze runs
+    # between the seed and this line, so at the cleanup instant there is nothing there to
+    # leak, and asserting its absence would assert something the block never does. The
+    # leaked metrics rows in the history above were created afterwards, by the downstream
+    # analyze, which could only see the seeds because the activities half had failed.
     #
     # Compared as STRINGS, not through str_to_i64: that helper maps "" to 0, so a swallowed
     # sqlite error would read as a passing zero on the one check whose whole job is to
