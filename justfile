@@ -14,6 +14,8 @@ bad_stream_port := env("BAD_STREAM_PORT", "8798")
 rate_limit_port := env("RATE_LIMIT_PORT", "8797")
 # fifth instance, 500ing on one id (the 5xx boundary arm, salvaged from #225)
 http500_port := env("HTTP500_PORT", "8795")
+# sixth instance, 429ing on the LISTING (the list-429 stop, #235)
+list429_port := env("LIST429_PORT", "8794")
 # fourth instance, 401ing forever on one id (the token-refresh retry bound, #232)
 auth401_port := env("AUTH401_PORT", "8796")
 
@@ -171,6 +173,11 @@ e2e-sync: build
     P5MOCK=$!
     trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK 2>/dev/null' EXIT
     E2E_MODE=stops E2E_EXPECT_500=1 STRIDE_API_BASE=http://127.0.0.1:{{http500_port}} ./e2e
+    # a 429 on the LISTING, which nothing exercised before #235
+    E2E_MODE=mock E2E_LIST_RATE_LIMIT=1 MOCK_PORT={{list429_port}} ./e2e &
+    L429MOCK=$!
+    trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK $L429MOCK 2>/dev/null' EXIT
+    E2E_MODE=stops E2E_EXPECT_LIST_429=1 STRIDE_API_BASE=http://127.0.0.1:{{list429_port}} ./e2e
 
 # build + refresh the ~/.local/bin symlink
 install: build

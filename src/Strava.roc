@@ -274,7 +274,27 @@ Strava :: [].{
                         Some(a) => Metrics.epoch_to_iso(a + 86400)
                         None => ""
                     }
-                counts = fetch_pages!(path, token, after_param, started, 1, { relisted: 0, new_n: 0, updated_n: 0 })?
+                counts = fetch_pages!(path, token, after_param, started, 1, { relisted: 0, new_n: 0, updated_n: 0, rate_limited: False })?
+                # A rate-limited list stops the run HERE, before pruning and before the
+                # drain (#235). Three reasons, and the first is the one that matters:
+                #
+                #   • PRUNE. prune_deleted! removes what the listing did not re-list, so
+                #     running it against a PARTIAL list would delete activities that exist
+                #     and simply were not reached. That is destructive and unrecoverable
+                #     from the mirror side; everything else here is merely wasted.
+                #   • the watermark. last_sync_epoch must not advance on a partial list, or
+                #     the next run starts after activities it never saw.
+                #   • the drain. It reads from the same budget that just refused us, so it
+                #     would spend the run's remaining requests failing.
+                #
+                # The pages already upserted are kept — upsert_all! ran per page — and are
+                # reported below, so the caller sees what landed rather than nothing.
+                if counts.rate_limited {
+                    pending = pending_streams!(path)?
+                    rl_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
+                    rl_payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pending, stopped: Drain.stopped_label(RateLimited), resumable: True }
+                    Output.out!(rl_payload, |p| Render.sync_screen(p, all))
+                } else {
                 pruned = prune_deleted!(path, started, window_start)?
                 Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
                 pull = drain_missing_streams!(path, token)?
@@ -298,6 +318,7 @@ Strava :: [].{
                 payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
                 payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: pull.pending, stopped: Drain.stopped_label(pull.stopped), resumable: pull.pending > 0 }
                 Output.out!(payload, |p| Render.sync_screen(p, all))
+                }
             }
         }
     }
@@ -651,7 +672,23 @@ Strava :: [].{
     # The `narrate` and `classify` flags are gone with #232. They existed so `backfill`
     # could pass False, False; `sync` is the only caller now and always wants both, so
     # they were two dead parameters and a branch nothing took.
-    fetch_pages! : Str, Str, Str, I64, U64, { relisted : U64, new_n : U64, updated_n : U64 } => Try({ relisted : U64, new_n : U64, updated_n : U64 }, _)
+    # A 429 on the LIST stops the run the way a 429 on a stream does (#235): the pages
+    # already upserted are kept and reported, `rate_limited` rides out in the accumulator,
+    # and the caller reports it as a successful partial run rather than an error.
+    #
+    # It used to propagate. That made the same upstream condition behave two ways inside
+    # one invocation — a hard exit 1 if it landed on the list, a success envelope with
+    # `stopped: "rate_limited"` and exit 0 if it landed twenty lines later on a stream —
+    # and the first of those breaks every cron and shell wrapper for a run that did its
+    # job up to the cap. Since #232 made `sync` the first-run command too, it also aborted
+    # the run that issues the most list reads.
+    #
+    # Partial progress is REPORTED, not just kept. `fetch_pages!` upserts page by page and
+    # `last_sync_epoch` is only stamped after a complete list, so the work self-heals on
+    # the next run — but a caller that is told nothing cannot tell a rate-limited partial
+    # from a run that found nothing. That was the same complaint the drain's boundary
+    # reporter fixed, with no equivalent on this side.
+    fetch_pages! : Str, Str, Str, I64, U64, { relisted : U64, new_n : U64, updated_n : U64, rate_limited : Bool } => Try({ relisted : U64, new_n : U64, updated_n : U64, rate_limited : Bool }, _)
     fetch_pages! = |path, token, after_param, stamp, page, acc| {
         page_str = (page).to_str()
         per_str = (per_page).to_str()
@@ -660,7 +697,14 @@ Strava :: [].{
         # already landed, so a stalled first request would otherwise print nothing at all.
         # Later pages need no such line — by then the reader has seen output.
         _ = if page == 1 { Output.say!("fetching activity list…")? } else { {} }
-        body = get_bearer!(uri, token)?
+        body =
+            match get_bearer!(uri, token) {
+                Ok(b) => b
+                # Only 429. Every other status still propagates — a 401 has its own refresh
+                # arm and a 500 is not something to report as a successful partial run.
+                Err(HttpStatus(429, _)) => return Ok({ ..acc, rate_limited: True })
+                Err(e) => return Err(e)
+            }
         text = Str.from_utf8(body).map_err(|_| ActivityDecodeFailed(page))?
         decoded : Try(List(ActivitySummary), _)
         decoded = Json.parse(text)
@@ -672,7 +716,7 @@ Strava :: [].{
         # is unknowable until the short page arrives, so any denominator here would be
         # invented. Pages are few at `per_page` (100) a page, so the lines stay countable.
         _ = Output.say!("fetched activities page ${(page).to_str()} — ${(total).to_str()} so far")?
-        next = { relisted: total, new_n: counts.new_n, updated_n: counts.updated_n }
+        next = { relisted: total, new_n: counts.new_n, updated_n: counts.updated_n, rate_limited: False }
         if got < per_page
             Ok(next)
         else

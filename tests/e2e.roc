@@ -126,7 +126,13 @@ respond! = |req, _ctx| {
             Ok(mock_json(body))
         }
     } else if Str.contains(uri, "/api/v3/athlete/activities") {
-        if Str.contains(uri, "page=1") {
+        # 429 on the LISTING (#235). Nothing exercised this before — the rate-limit arm
+        # below refuses a STREAM read only, which is how the list path could abort the run
+        # at exit 1 while a 429 twenty lines later stopped gracefully at exit 0, with no
+        # test able to tell the two apart.
+        if env_or!("E2E_LIST_RATE_LIMIT", "") == "1" {
+            Ok(Server.respond(Response.from_status(429).with_body(Str.to_utf8("rate limited"))))
+        } else if Str.contains(uri, "page=1") {
             body =
                 \\[{"id":501,"name":"Mock Power Ride","sport_type":"Ride","start_date_local":"2026-07-28T10:00:00Z","moving_time":3600,"distance":30000.0,"total_elevation_gain":100.0,"average_watts":200.0,"weighted_average_watts":205.0},
                 \\ {"id":502,"name":"Mock HR Row","sport_type":"Rowing","start_date_local":"2026-07-29T10:00:00Z","moving_time":1800,"distance":5000.0,"total_elevation_gain":0.0,"average_heartrate":150.0}]
@@ -665,7 +671,31 @@ run_stops! = || {
     _ = run_sync_bf!("json")
     bf_elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - bf_start
 
-    if env_or!("E2E_EXPECT_500", "") == "1" {
+    if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
+        # A 429 on the LISTING (#235). Before this, the same upstream condition behaved two
+        # ways inside one invocation: a hard exit 1 if it landed on the list, a success
+        # envelope with `stopped: "rate_limited"` and exit 0 if it landed on a stream. The
+        # first breaks every cron and shell wrapper for a run that did its job up to the cap.
+        #
+        # The envelope assertions are the contract. The two after them are the ones that
+        # matter most, because they are about damage rather than reporting: `prune_deleted!`
+        # removes what the listing did NOT re-list, so running it against a partial list
+        # would delete activities that exist and were simply never reached — and the
+        # watermark must not advance past activities the run never saw.
+        before_epoch = Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='last_sync_epoch'),'none');"))
+        before_acts = Str.trim(sql!(db, "SELECT count(*) FROM activities;"))
+        st429 = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null; echo $?"))
+        check!("a 429 on the activity list exits 0, like a 429 on a stream", st429 == "0")?
+        check!("...reporting rate_limited rather than an error envelope", bfq!(".data.stopped") == "rate_limited")?
+        check!("...and resumable, so a caller knows to run it again", bfq!(".data.resumable") == "true")?
+        check!("...with no error field at all", bfq!(".error") == "null")?
+        # THE destructive one: a partial list must not drive a prune.
+        check!("...pruning nothing, because a partial list is not evidence of deletion", bfq!(".data.pruned") == "0")?
+        check!("...and deleting no activities", Str.trim(sql!(db, "SELECT count(*) FROM activities;")) == before_acts)?
+        # ...and the watermark must not move past what was never listed.
+        check!("...leaving last_sync_epoch where it was", Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='last_sync_epoch'),'none');")) == before_epoch)?
+        check!("...and the human screen says so too, not just the envelope", Str.contains(sh!("HOME='${home}' STRIDE_API_BASE='${base}' '${bin}' sync 2>&1"), "Strava rate-limited this run"))?
+    } else if env_or!("E2E_EXPECT_500", "") == "1" {
         # A drain that dies with rows already committed. Salvaged from #225, minus its
         # stored-count assertion: #233 reports the queue total at the boundary, and the
         # per-id progress frame above it carries "how far did it get" at finer resolution.
@@ -789,7 +819,11 @@ run_stops! = || {
     # has to be the smallest of them — which makes it loosest where the branch is biggest.
     # At a shared floor of 8 the budget branch could lose a third of its checks unseen.
     checks_ran_at_least!(
-        if env_or!("E2E_EXPECT_500", "") == "1" {
+        if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
+            # its own floor: this branch returns before the shared drain assertions, so the
+            # 12 the default arm expects would never be reachable here
+            9
+        } else if env_or!("E2E_EXPECT_500", "") == "1" {
             7
         } else if env_or!("E2E_EXPECT_401", "") == "1" {
             8

@@ -778,7 +778,21 @@ Render :: [].{
                 ""
             }
         # WHY it stopped, not merely that work remains.
-        tail = if p.pending_streams > 0 " — ${drain_note(p.stopped, p.pending_streams)}" else ""
+        # A rate limit is a RUN-level fact, so it is stated whether or not anything is
+        # pending. drain_note speaks only when pending > 0, which is right for the drain —
+        # but since #235 the LIST can stop the run too, and there the queue is usually
+        # empty. That combination printed "all streams present" beside a payload saying
+        # `stopped: "rate_limited"`, with a re-listed count of 0 that reads like a quiet
+        # no-op rather than a run that was refused. Found by the e2e for the list stop,
+        # which asserted the human screen says what the envelope says.
+        tail =
+            if p.pending_streams > 0 {
+                " — ${drain_note(p.stopped, p.pending_streams)}"
+            } else if p.stopped == "rate_limited" {
+                " — Strava rate-limited this run; try again in ~15 minutes"
+            } else {
+                ""
+            }
         # `--all` re-listed the ENTIRE account, so naming the rolling window there would
         # describe a bound the run did not have.
         window_note = if all "" else " in the 30-day window"
@@ -1972,6 +1986,19 @@ expect
 expect
     Render.sync_screen({ synced: 22, new_activities: 2, updated_activities: 1, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 0, stopped: "complete", resumable: False }, False)
     == "synced 2 new, 1 updated (22 re-checked in the 30-day window), fetched streams for 5"
+
+# A rate-limited run says so even with nothing pending — the list can stop the run now
+# (#235), and there the queue is typically empty. Full-string, because the point is that
+# the sentence exists at all: a `contains` on "rate" would pass on the drain_note arm.
+expect
+    Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, stopped: "rate_limited", resumable: True }, False)
+    == "synced 0 new, 0 updated (0 re-checked in the 30-day window), fetched streams for 0 — Strava rate-limited this run; try again in ~15 minutes"
+
+# ...and a COMPLETE run with nothing pending still says nothing, which is the arm the
+# clause above must not have swallowed.
+expect
+    Render.sync_screen({ synced: 3, new_activities: 1, updated_activities: 0, pruned: 0, streams_fetched: 2, streams_skipped: 0, pending_streams: 0, stopped: "complete", resumable: False }, False)
+    == "synced 1 new, 0 updated (3 re-checked in the 30-day window), fetched streams for 2"
 
 # `--all` re-listed everything, so the window clause must be absent
 expect
