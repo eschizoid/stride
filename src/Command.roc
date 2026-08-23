@@ -132,9 +132,12 @@ Command := [
 			# named "desc" — the opposite of what the comment above promises.
 			[_, "progress", "asc", ..] => Err(Usage("progress [date] [asc|desc]"))
 			[_, "progress", "desc", ..] => Err(Usage("progress [date] [asc|desc]"))
-			[_, "progress", name] => Ok(Progress(name, Asc))
-			[_, "progress", name, "asc"] => Ok(Progress(name, Asc))
-			[_, "progress", name, "desc"] => Ok(Progress(name, Desc))
+			# bound as `date`, not `name`: the handler queries it as a date and answers
+			# `no_workout_on_date`. Called `name` once, and the command table copied that
+			# into its public argument shape, where an agent read it.
+			[_, "progress", date] => Ok(Progress(date, Asc))
+			[_, "progress", date, "asc"] => Ok(Progress(date, Asc))
+			[_, "progress", date, "desc"] => Ok(Progress(date, Desc))
 			[_, "progress", ..] => Err(Usage("progress [date] [asc|desc]"))
 			[_, "activity", id_str] => Ok(Activity(id_str))
 			[_, "load"] => Ok(Load(90))
@@ -190,8 +193,10 @@ Command := [
 	## REAL command reports a usage error instead of claiming the command does not
 	## exist. Kept beside `parse` because it is the same fact; every name here has an
 	## expect below that fails if it stops parsing to its own form.
-	## the VERBS, deduped — `week add` and `week` are two callable forms but one token to
-	## the unknown-vs-wrong-arguments branch above.
+	##
+	## The VERBS from `specs`, deduped — `week` and `week add` are two callable forms but
+	## one token to the unknown-vs-wrong-arguments branch above. Derived rather than kept
+	## as a second list, so the two cannot disagree about which names exist.
 	command_names : List(Str)
 	command_names =
 		List.fold(specs, [], |acc, s| {
@@ -199,7 +204,11 @@ Command := [
 			if List.contains(acc, v) acc else List.append(acc, v)
 		})
 
-	## What a caller needs to invoke a command, not merely to name it (#219).
+	## One positional argument. `name` is the placeholder as it appears in usage text;
+	## a value without angle brackets must be passed verbatim.
+	Arg : { name : Str, required : Bool }
+
+	## What a caller needs to INVOKE a command, not merely to name it (#219).
 	##
 	## `stride --json` used to answer with bare strings, which lets an agent enumerate
 	## and nothing more: it could not learn the argument shape, whether a call writes to
@@ -210,25 +219,32 @@ Command := [
 	## ONE ENTRY PER CALLABLE FORM, not per verb: `week` reads and `week add` writes, so
 	## a single `week` entry could not answer `mutates` honestly for either.
 	##
-	## `verb` is the first token, which is what the unknown-vs-wrong-arguments branch
-	## above compares against. It is DERIVED rather than stored so the two cannot drift —
-	## storing both is how a list like this starts lying.
-	Arg : { name : Str, required : Bool }
+	## The table is HAND-WRITTEN and cross-checked, not generated. What is enforced, and
+	## what is not, stated plainly because a reader who assumes the whole record is
+	## machine-derived will trust the unchecked half:
+	##   name (verb)  — compared against the parser's own arms, both directions, with a
+	##                  count gate. Adding a command without an entry fails.
+	##   name (form)  — every multi-word name must be one the parser reaches.
+	##   schema       — must exist; every file in schemas/v2 must be claimed or pinned.
+	##   mutates      — run against a fixture copy; the database contents must not move.
+	##   network      — the set must equal the commands that can reach Strava.
+	##   args         — NOT enforced beyond being present. Names and arity are declared.
+	##   interactive  — NOT enforced. Declared.
 	Spec : {
 		name : Str,
 		args : List(Arg),
-		## writes to the database. Verified against behaviour rather than trusted: the
-		## e2e agent-contract driver runs every `mutates: False` form against a snapshot
-		## and fails if the database is not byte-identical afterwards.
+		## writes to the database. Checked against behaviour rather than trusted: the
+		## offline e2e suite runs every `mutates: False` form against a copy of the
+		## fixture and fails if the database CONTENTS move. Contents, not file bytes —
+		## WAL means a committed write can leave db.sqlite untouched.
 		mutates : Bool,
-		## talks to Strava. Since #232 that is `auth` and `sync` and nothing else, which
-		## the sync driver already pins independently.
+		## talks to Strava. Since #232 that is `auth` and `sync` and nothing else.
 		network : Bool,
-		## blocks on a human. `auth` opens a browser and waits for a paste.
+		## blocks on a human. `auth` opens a browser and waits for a paste, so it is the
+		## one form an unattended agent must not call.
 		interactive : Bool,
 		## the file under schemas/v2 its success payload validates against, "" when the
-		## command has no machine payload of its own. Checked to exist, and every schema
-		## in that directory is checked to be claimed by some form.
+		## command has no machine payload of its own.
 		schema : Str,
 	}
 
@@ -268,13 +284,24 @@ Command := [
 		reads("zones", [], "zones.json"),
 		reads("pz", [], "zones.json"),
 		reads("compare", [opt("<week|month>")], "compare.json"),
-		reads("activities", [opt("<n>"), opt("<sport>")], "activities.json"),
+		reads("activities", [opt("<limit>"), opt("<sport>")], "activities.json"),
 		reads("activity", [req("<activity_id>")], "activity.json"),
-		reads("top", [req("<metric>"), opt("<n>"), opt("<sport>")], "top.json"),
-		reads("load", [opt("<n>")], "load.json"),
-		reads("power-curve", [opt("<n>"), opt("<sport>")], "power_curve.json"),
-		reads("pc", [opt("<n>"), opt("<sport>")], "power_curve.json"),
-		reads("progress", [opt("<name>"), opt("<asc|desc>")], "progress.json"),
+		## the metric set is CLOSED, so it is spelled out. A caller reading only this
+		## payload cannot guess it, and it is the one required argument here whose
+		## wrong value costs a round trip (`bad_metric`).
+		reads("top", [req("<hr|tss|power|intensity|distance|time|output>"), opt("<limit>"), opt("<sport>")], "top.json"),
+		## DAYS of lookback, not a row count — `power-curve` returns a fixed set of
+		## points regardless, so `<n>` beside `activities`' `<n>` left two identical
+		## shapes meaning different things.
+		reads("load", [opt("<days>")], "load.json"),
+		reads("power-curve", [opt("<days>"), opt("<sport>")], "power_curve.json"),
+		reads("pc", [opt("<days>"), opt("<sport>")], "power_curve.json"),
+		## A DATE, not a workout name. The parse arm binds this to a variable called
+		## `name`, which is where an earlier draft of this table got `<name>` from — the
+		## handler queries `substr(a.start_local,1,10) = :date` and answers
+		## `no_workout_on_date`. Every other document in the repo says `[date]`; only
+		## this table said otherwise, and this table is the one an agent reads.
+		reads("progress", [opt("<YYYY-MM-DD>"), opt("<asc|desc>")], "progress.json"),
 		reads("tte", [req("<watts>")], "tte.json"),
 		reads("reps", [opt("<YYYY-MM-DD>")], "reps.json"),
 		reads("season", [], "season.json"),

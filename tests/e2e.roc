@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(615)?
+    checks_ran_exactly!(622)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -950,47 +950,97 @@ b_init_config! = |ctx| {
     # subcommand in the arm patterns (`week all` is an argument, `week add` is a form),
     # so comparing full forms would demand a rule that guesses. The sub-form direction
     # is covered by the check below instead.
-    parser_verbs = "grep -oE '\\[_, \"[a-z-]+\"(, \"[a-z-]+\")*[^]]*\\] => (Ok|count)' src/Command.roc | sed 's/ => .*//; s/\\[_, //; s/,[^\"].*//' | tr -d '\"[]' | sed 's/, / /' | cut -d' ' -f1 | grep -v '^-' | grep -vx help | sort -u"
+    # NO PROCESS SUBSTITUTION. `sh!` spawns `sh`, which on macOS is bash 3.2 in POSIX
+    # mode, where `<(...)` is a SYNTAX ERROR. The first version of these two checks used
+    # it, so `comm` never ran, both variables were always "" and both comparisons were
+    # "" == "" — they had never executed a single comparison since the day they were
+    # written. Review found it by mutating `pz` to `pzz` and watching the whole suite go
+    # green while the table advertised a command the parser does not have. Temp files.
+    #
+    # The character class is [A-Za-z0-9_-], not [a-z-]. The narrow version could not see
+    # an arm named `zone2`, `power_curve` or `Doctor2`, each of which would leave the
+    # parser side at 27 and slip past the count pin as well.
+    verbs_dir = "${ctx.home}/.verbs"
+    parser_verbs = "grep -oE '\\[_, \"[A-Za-z0-9_-]+\"(, \"[A-Za-z0-9_-]+\")*[^]]*\\] => (Ok|count)' src/Command.roc | sed 's/ => .*//; s/\\[_, //; s/,[^\"].*//' | tr -d '\"[]' | sed 's/, / /' | cut -d' ' -f1 | grep -v '^-' | grep -vx help | sort -u"
     spec_verbs = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].name | split(\" \")[0]' | sort -u"
-    undescribed = Str.trim(sh!("comm -23 <(${parser_verbs}) <(${spec_verbs})"))
-    check!("every command the parser accepts is described in the table", undescribed == "")?
-    unparsed = Str.trim(sh!("comm -13 <(${parser_verbs}) <(${spec_verbs})"))
-    check!("...and every described command is one the parser accepts", unparsed == "")?
-    # Non-vacuity: both comparisons above are "" == "", so an extraction that silently
-    # produced nothing would pass both. Pin the count on each side.
-    check!("...and neither side of that comparison was empty", Str.trim(sh!("${parser_verbs} | wc -l")) == Str.trim(sh!("${spec_verbs} | wc -l")) and Str.trim(sh!("${spec_verbs} | wc -l | tr -d ' '")) == "27")?
+    _ = sh!("rm -rf '${verbs_dir}' && mkdir -p '${verbs_dir}' && ${parser_verbs} > '${verbs_dir}/parser' && ${spec_verbs} > '${verbs_dir}/spec'")
+    undescribed = Str.trim(sh!("comm -23 '${verbs_dir}/parser' '${verbs_dir}/spec' | tr '\\n' ' '"))
+    check!("every command the parser accepts is described in the table (extra: ${undescribed})", undescribed == "")?
+    unparsed = Str.trim(sh!("comm -13 '${verbs_dir}/parser' '${verbs_dir}/spec' | tr '\\n' ' '"))
+    check!("...and every described command is one the parser accepts (extra: ${unparsed})", unparsed == "")?
+    # Non-vacuity pinned on the INTERSECTION, not on the two inputs. Pinning the inputs
+    # was the mistake that let the broken `comm` through: 27 lines existed on each side
+    # and the guard could not see that no comparison had happened. The intersection drops
+    # on drift in either direction AND cannot be satisfied by a comm that never ran.
+    overlap = Str.trim(sh!("comm -12 '${verbs_dir}/parser' '${verbs_dir}/spec' | wc -l | tr -d ' '"))
+    check!("...and the two lists genuinely overlap on all 27 verbs (got ${overlap})", overlap == "27")?
+    _ = sh!("rm -rf '${verbs_dir}'")
 
-    # The sub-form direction the verb comparison cannot see: a form the table names
-    # must actually be callable. Each multi-word name is invoked with no arguments and
-    # must NOT come back `unknown_command` — a wrong-arity `usage` is the expected
-    # answer and proves the form reached its own arm.
-    bad_forms = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].name | select(test(\" \"))' | while read -r n; do code=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"unknown_command\" ] && echo \"$n\"; done; true"))
-    check!("every multi-word form the table names is one the parser reaches", bad_forms == "")?
+    # The sub-form direction. `unknown_command` was the wrong discriminator: it can only
+    # come from an unknown FIRST token, which the verb comparison already covers, so
+    # `week frobnicate` and `week add` were indistinguishable and renaming a sub-form went
+    # undetected. Invoke each multi-word form WITH its declared required arguments and
+    # require an answer that is not `usage` — that is what distinguishes a form the parser
+    # has from one it does not.
+    subform_cmds = "jq -r '.data.commands[] | select(.name | test(\" \")) | [.name] + [.args[] | select(.required) | .name | if test(\"YYYY-MM-DD\") then \"${ctx.d1}\" else \"1\" end] | join(\" \")'"
+    bad_forms = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | ${subform_cmds} | while read -r line; do code=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true | tr '\\n' ' '"))
+    check!("every multi-word form the table names is one the parser reaches (bad: ${bad_forms})", bad_forms == "")?
     check!("...and there were multi-word forms to check", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[].name | select(test(\" \"))] | length'")) == "3")?
 
-    # `mutates` DERIVED FROM BEHAVIOUR, not trusted. Every form declaring mutates:false
-    # is run against a copy of the fixture and the database must come back byte-for-byte
-    # identical. Without this the flag is a comment: an agent told a command is read-only
-    # would act on a declaration nobody checked, and `init` shipped in this very PR
-    # declaring network:true until it was actually looked at.
+    # `mutates` CHECKED AGAINST BEHAVIOUR, not trusted. Every form declaring
+    # mutates:false runs against a copy of the fixture and the database CONTENTS must not
+    # move. Without this the flag is a comment, and an agent told a command is read-only
+    # would be acting on a declaration nobody checked.
     #
-    # A copy, not the live fixture, precisely because a form that DOES write would
-    # otherwise corrupt every check after this one. Required arguments get a plausible
-    # value; a form that errors on them still proves the point, since an error path must
-    # not write either.
+    # Contents, not file bytes. Hashed through `sqlite3 .dump`: the database runs in WAL
+    # mode, so a committed write can leave db.sqlite byte-identical and land in the -wal
+    # sidecar. The first version of this sweep hashed the file and would have passed with
+    # every command writing; the proof at the end is what caught it.
     #
-    # Hashed through `sqlite3 .dump`, NOT by hashing db.sqlite. The database runs in WAL
-    # mode, so a committed write leaves the main file byte-identical and lands in the
-    # -wal sidecar: the first version of this sweep hashed the file, and would have
-    # passed with every command writing. The proof at the end is what caught that, which
-    # is why it is there rather than assumed.
+    # Arguments come from the TABLE'S OWN `args`, one filler per required argument,
+    # optional ones omitted. An earlier version appended a blanket `1 1` to every form,
+    # which made 15 of the 19 forms a wrong arity — `parse` rejected them before dispatch
+    # ever ran, so the hash comparison was a tautology for all but four. That is the
+    # failure this repo keeps hitting: the check was green and measuring nothing, and its
+    # own "did the sweep run" guard counted the jq list rather than the executions.
+    #
+    # The filler is chosen from the placeholder text, because a wrong-TYPE value is
+    # rejected by the parser just as an arity error is: `reps 1` answers "not a date" and
+    # never dispatches. A wrong-VALUE argument is fine and still exercises the command —
+    # `activity 1` reaching activity_not_found has run the handler, which is the point.
+    # The probe database is SEEDED, not just copied. This block runs before the fixture
+    # scenarios, so the copy is empty, and a command that writes only when there is data
+    # to write cannot be caught on an empty database however good its arguments are.
+    # Review demonstrated it: mislabelling `rate` as read-only left the sweep green,
+    # because `rate` on an empty database finds no activity and returns rather than
+    # writing. One activity closes that.
     ro_probe = "${ctx.home}/.ro-probe"
     _ = sh!("rm -rf '${ro_probe}' && mkdir -p '${ro_probe}' && cp -R '${ctx.home}/.stride' '${ro_probe}/.stride'")
-    dirty = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.mutates == false) | .name' | while read -r n; do before=$(sqlite3 '${ro_probe}/.stride/db.sqlite' .dump | shasum | cut -d' ' -f1); HOME='${ro_probe}' STRIDE_FORMAT=json '${ctx.bin}' $n 1 1 >/dev/null 2>&1; after=$(sqlite3 '${ro_probe}/.stride/db.sqlite' .dump | shasum | cut -d' ' -f1); [ \"$before\" = \"$after\" ] || echo \"$n\"; done; true"))
-    check!("every form declaring mutates:false leaves the database byte-identical", dirty == "")?
-    # ...and that sweep actually ran something. A typo in the jq would produce an empty
-    # loop and a passing check on nothing.
-    check!("...having swept every read-only form", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select(.mutates == false)] | length'")) == "19")?
+    _ = sql!("${ro_probe}/.stride/db.sqlite", "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (1,'ro probe','Ride','${ctx.d1}T10:00:00Z',3600,20000,180,180,140);")
+    fillers = "jq -r '.data.commands[] | select(.mutates == false) | [.name] + [.args[] | select(.required) | .name | if test(\"YYYY-MM-DD\") then \"${ctx.d1}\" elif test(\"hr\\\\|tss\") then \"tss\" elif test(\"week\\\\|month\") then \"week\" elif test(\"1-10\") then \"5\" else \"1\" end] | join(\" \")'"
+    dirty = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | ${fillers} | while read -r line; do before=$(sqlite3 '${ro_probe}/.stride/db.sqlite' .dump | shasum | cut -d' ' -f1); HOME='${ro_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line >/dev/null 2>&1; after=$(sqlite3 '${ro_probe}/.stride/db.sqlite' .dump | shasum | cut -d' ' -f1); [ \"$before\" = \"$after\" ] || echo \"$line\"; done; true"))
+    check!("every form declaring mutates:false leaves the database contents unmoved", dirty == "")?
+    # The guard that matters: how many forms REACHED their handler. Counting the jq list
+    # instead — which is what this used to do — reports green on a sweep where every
+    # invocation bounced off the parser.
+    reached = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | ${fillers} | while read -r line; do code=$(HOME='${ro_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] || echo x; done | wc -l | tr -d ' '"))
+    check!("...and every read-only form actually reached its handler", reached == "19")?
+    check!("...which is every form the table declares read-only", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select(.mutates == false)] | length'")) == "19")?
+
+    # `network` against the SOURCE, not against itself. An earlier version of the schema
+    # description claimed a test pinned this set; none did, which is worse than saying
+    # nothing — a reader trusts an enforcement that is not there. Http.send! is the only
+    # way out to Strava, and it lives in exactly two functions, both in Strava.roc: the
+    # token exchange and the bearer GET. The commands that can reach them are auth and
+    # sync, so that is what the table must say.
+    check!("the network set is exactly auth and sync", cmdq!("[.data.commands[] | select(.network) | .name] | sort") == "[\n  \"auth\",\n  \"sync\"\n]")?
+    check!("...and Strava is still reachable from exactly two call sites", Str.trim(sh!("grep -c 'Http.send!' src/Strava.roc")) == "2")?
+    check!("...with no other module able to reach one", Str.trim(sh!("grep -l 'Http.send!' src/*.roc | tr -d ' '")) == "src/Strava.roc")?
+    # `interactive` the same way: Stdin is what blocking on a human looks like, and it
+    # appears once in the whole source, inside the auth flow.
+    check!("the interactive set is exactly auth", cmdq!("[.data.commands[] | select(.interactive) | .name]") == "[\n  \"auth\"\n]")?
+    check!("...and stdin is read from exactly one place", Str.trim(sh!("grep -c 'Stdin\\.' src/Strava.roc")) == "1")?
+    check!("...which is the only module that reads it", Str.trim(sh!("grep -l 'Stdin\\.' src/*.roc | tr -d ' '")) == "src/Strava.roc")?
     # The mutation-proof for the sweep itself: a form that DOES write, run the same way,
     # must be caught. `week add` is declared mutates:true so it is not in the sweep, and
     # it is chosen over `rate` because it writes unconditionally — `rate` depends on the

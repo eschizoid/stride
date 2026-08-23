@@ -178,8 +178,11 @@ main! = |raw_args| {
                         # grounds that the CLI plus versioned JSON already IS the agent
                         # interface; this is that claim made true.
                         #
-                        # `help` and the bare flag forms are filtered as before: they
-                        # answer WITH this list, so listing them invites a loop.
+                        # Filtered as before, for two different reasons: `help`, `--help`
+                        # and `-h` answer WITH this list, so listing them invites a loop;
+                        # `--version` is a flag and belongs in `flags` beside the others.
+                        # Only the first reason is a loop, and an earlier wording gave it
+                        # for all four.
                         Output.emit_ok!({
                             commands: List.keep_if(Command.specs, |s| !(Str.starts_with(s.name, "-")) and s.name != "help"),
                             flags: ["--json", "--human", "--help", "--version", "--all"],

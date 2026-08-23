@@ -136,8 +136,11 @@ each carrying `{name, args:[{name,required}], mutates, network, interactive, sch
 you can determine argument shape, whether a call writes, whether it needs Strava, and
 which file under `schemas/v2` the answer validates against, without reading this document.
 `interactive: true` marks the one form you must never call unattended (`auth`). Prefer
-that table over anything written here if the two ever disagree — it is generated from the
-parser and drift-tested, this file is not. One thing is NOT enveloped: `stride auth`, an interactive browser
+that table over anything written here if the two ever disagree — it is cross-checked
+against the parser in CI, this file is not. It is hand-written, not generated: the verb
+set, the schema names, `mutates`, `network` and `interactive` are each checked against
+the source or against behaviour, while the argument NAMES are declared and only checked
+to be present. One thing is NOT enveloped: `stride auth`, an interactive browser
 flow you run by hand. `stride sync` narrates progress on stderr while it runs — its stdout is
 the envelope, so you can read it (#218, #232). Platform failures ARE enveloped now (#183): `no_database` (absent — run `init`),
 `unreadable_database` (present but unopenable — permissions or a directory in its
