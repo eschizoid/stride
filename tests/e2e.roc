@@ -1002,9 +1002,9 @@ b_init_config! = |ctx| {
     # instead of a command (#232), so it must NOT be advertised — and pinning it as a
     # value means a second undescribed command changes this string and fails, where a
     # filter rule would have quietly absorbed it.
-    undescribed = Str.trim(sh!("comm -23 '${verbs_dir}/parser' '${verbs_dir}/spec' | tr '\\n' ' '"))
+    undescribed = Str.trim(sh!("LC_ALL=C comm -23 '${verbs_dir}/parser' '${verbs_dir}/spec' | tr '\\n' ' '"))
     check!("the parser accepts nothing the table omits, beyond deliberately retired names (got: ${undescribed})", undescribed == "backfill")?
-    unparsed = Str.trim(sh!("comm -13 '${verbs_dir}/parser' '${verbs_dir}/spec' | tr '\\n' ' '"))
+    unparsed = Str.trim(sh!("LC_ALL=C comm -13 '${verbs_dir}/parser' '${verbs_dir}/spec' | tr '\\n' ' '"))
     check!("...and every described command is one the parser accepts (extra: ${unparsed})", unparsed == "")?
     # This pins the SIZE of the command set, and that is now its only unique job. It was
     # added as the non-vacuity guard — pinning the two inputs was the mistake that let a
@@ -1012,7 +1012,7 @@ b_init_config! = |ctx| {
     # rather than on emptiness, it catches every vacuity mode on its own. What survives
     # here is the deliberate-bump discipline: adding a properly described command still
     # has to change a number a reader sees.
-    overlap = Str.trim(sh!("comm -12 '${verbs_dir}/parser' '${verbs_dir}/spec' | wc -l | tr -d ' '"))
+    overlap = Str.trim(sh!("LC_ALL=C comm -12 '${verbs_dir}/parser' '${verbs_dir}/spec' | wc -l | tr -d ' '"))
     check!("...and the two lists genuinely overlap on all 27 verbs (got ${overlap})", overlap == "27")?
     _ = sh!("rm -rf '${verbs_dir}'")
 
@@ -1055,12 +1055,29 @@ b_init_config! = |ctx| {
     # fifth entry appearing here means a real sub-form was added without a table entry,
     # and the failure prints it.
     pair_dir = "${ctx.home}/.pairs"
-    parser_pairs = "sed 's/#.*//' src/Command.roc | grep -oE '\\[[[:space:]]*_[[:space:]]*,[[:space:]]*\"[A-Za-z0-9_-]+\"[[:space:]]*,[[:space:]]*\"[A-Za-z0-9_-]+\"' | sed 's/.*\"\\([A-Za-z0-9_-]*\\)\"[^\"]*\"\\([A-Za-z0-9_-]*\\)\"/\\1 \\2/' | LC_ALL=C sort -u"
-    table_pairs = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '(.data.commands[] | select(.name|test(\" \")) | .name), (.data.commands[] | . as $c | .args[]? | select(.name|test(\"^<\")|not) | \"\\($c.name) \\(.name)\")' | LC_ALL=C sort -u"
+    # The arm's FULL leading literal run, not its first two. A two-literal capture set the
+    # depth rather than removing it: `[_, "week", "add", "bulk", p]` contributed `week add`,
+    # which is already accounted for, so a real three-token form was invisible. Measured to
+    # yield the identical nine paths on pristine source, so this is depth-independence at
+    # no cost to the pinned value.
+    parser_pairs = "sed 's/#.*//' src/Command.roc | grep -oE '\\[[[:space:]]*_([[:space:]]*,[[:space:]]*\"[A-Za-z0-9_-]+\")+' | sed 's/\\[[[:space:]]*_[[:space:]]*,[[:space:]]*//; s/\"//g; s/[[:space:]]*,[[:space:]]*/ /g' | grep ' ' | LC_ALL=C sort -u"
+    # Enum placeholders are EXPANDED, so `<asc|desc>` accounts for `progress asc` and
+    # `progress desc`. Without that they landed in the leftover list and the comment called
+    # them "not commands" — but `[_, "progress", "asc"] => Ok(...)` dispatches, so they are
+    # commands the jq simply could not match. The list was conflating "not a command" with
+    # "a command this extraction cannot see", and hard-coding the second as excused.
+    table_pairs = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '(.data.commands[] | select(.name|test(\" \")) | .name), (.data.commands[] | . as $c | .args[]? | .name | (if test(\"^<\") then (ltrimstr(\"<\")|rtrimstr(\">\")|split(\"|\")[]) else . end) | select(test(\"^[A-Za-z0-9_-]+$\")) | \"\\($c.name) \\(.)\")' | LC_ALL=C sort -u"
     _ = sh!("rm -rf '${pair_dir}' && mkdir -p '${pair_dir}' && ${parser_pairs} > '${pair_dir}/parser' && ${table_pairs} > '${pair_dir}/table'")
-    unaccounted = Str.trim(sh!("comm -23 '${pair_dir}/parser' '${pair_dir}/table' | tr '\\n' '|'"))
-    check!("every sub-form the parser has is accounted for, bar the redirects and sort hints (got: ${unaccounted})", unaccounted == "plan add|plan all|progress asc|progress desc|")?
-    check!("...and the table accounted for some of them, so that was not a comparison against nothing", Str.trim(sh!("wc -l < '${pair_dir}/table' | tr -d ' '")) == "5")?
+    unaccounted = Str.trim(sh!("LC_ALL=C comm -23 '${pair_dir}/parser' '${pair_dir}/table' | tr '\\n' '|'"))
+    # Two leftovers now, not four: the plan/week redirect arms. Those genuinely are not
+    # commands — they answer a retired name with a pointer. The sort hints left the list
+    # when the enum expansion started accounting for them.
+    check!("every sub-form the parser has is accounted for, bar the two redirect arms (got: ${unaccounted})", unaccounted == "plan add|plan all|")?
+    # Non-zero, not a literal count. A literal here is bump-bait: it changed the moment
+    # enum expansion started accounting for two more paths, and its failure could not say
+    # which direction to look. What this guards is that the accounted side produced
+    # SOMETHING, so the comm above is not comparing against an empty file.
+    check!("...and the table accounted for some of them, so that was not a comparison against nothing", Str.trim(sh!("wc -l < '${pair_dir}/table' | tr -d ' '")) != "0")?
     _ = sh!("rm -rf '${pair_dir}'")
     # The fixture must be untouched by the probe above — that is the property the earlier
     # version broke, so it is asserted rather than assumed.
