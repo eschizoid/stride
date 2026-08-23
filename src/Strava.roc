@@ -290,9 +290,16 @@ Strava :: [].{
                 # The pages already upserted are kept — upsert_all! ran per page — and are
                 # reported below, so the caller sees what landed rather than nothing.
                 if counts.rate_limited {
+                    # `resumable: True` unconditionally, and that is a DEPARTURE from the
+                    # rule stated below — "resumable is pending_streams > 0, re-measured in
+                    # every arm". Here the thing left undone is the LIST, not the queue: a
+                    # run refused on page one has zero pending streams and absolutely must
+                    # be repeated. The field's definition widens to "something is still
+                    # missing — pending streams, or a list that was cut short", and the
+                    # schema and SKILL.md say so rather than the old equality.
                     pending = pending_streams!(path)?
                     rl_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
-                    rl_payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pending, stopped: Drain.stopped_label(RateLimited), resumable: True }
+                    rl_payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pending, stopped: Drain.stopped_label(ListRateLimited), resumable: True }
                     Output.out!(rl_payload, |p| Render.sync_screen(p, all))
                 } else {
                 pruned = prune_deleted!(path, started, window_start)?
@@ -700,8 +707,12 @@ Strava :: [].{
         body =
             match get_bearer!(uri, token) {
                 Ok(b) => b
-                # Only 429. Every other status still propagates — a 401 has its own refresh
-                # arm and a 500 is not something to report as a successful partial run.
+                # Only 429. Every other status propagates, including a 401 — this function
+                # has NO refresh arm, and does not need one: get_valid_token! refreshes
+                # proactively at run start with a 60-second margin, and the listing takes
+                # seconds where the drain takes fifteen minutes, so a mid-list expiry is not
+                # the case drain_streams!'s arm was built for. A 500 is not something to
+                # report as a successful partial run.
                 Err(HttpStatus(429, _)) => return Ok({ ..acc, rate_limited: True })
                 Err(e) => return Err(e)
             }
@@ -716,7 +727,7 @@ Strava :: [].{
         # is unknowable until the short page arrives, so any denominator here would be
         # invented. Pages are few at `per_page` (100) a page, so the lines stay countable.
         _ = Output.say!("fetched activities page ${(page).to_str()} — ${(total).to_str()} so far")?
-        next = { relisted: total, new_n: counts.new_n, updated_n: counts.updated_n, rate_limited: False }
+        next = { ..acc, relisted: total, new_n: counts.new_n, updated_n: counts.updated_n }
         if got < per_page
             Ok(next)
         else

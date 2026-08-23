@@ -682,11 +682,25 @@ run_stops! = || {
         # removes what the listing did NOT re-list, so running it against a partial list
         # would delete activities that exist and were simply never reached — and the
         # watermark must not advance past activities the run never saw.
+        # SEEDED first, and this is the whole point. The mock 429s EVERY list request,
+        # including the driver's own setup sync, so this branch ran against an empty
+        # database — `pruned == 0` and `activities unchanged` were comparing 0 to 0 and
+        # were structurally incapable of failing. The destructive property this branch
+        # exists to protect was the one thing it did not test.
+        #
+        # `synced_at` is set to a DIFFERENT value from any run stamp, and `start_local` is
+        # inside the 30-day window, which is exactly what makes a row a prune victim: the
+        # predicate is `synced_at <> :stamp AND start_local >= :window_start`. If the early
+        # return were removed, these rows would be deleted.
+        bait_day = Str.trim(sh!("date +%F"))
+        _ = sql!(db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,synced_at) VALUES (7001,'prune bait a','Ride','${bait_day}T10:00:00Z',3600,20000,1),(7002,'prune bait b','Ride','${bait_day}T11:00:00Z',3600,20000,1);")
+        _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('last_sync_epoch','1700000000');")
         before_epoch = Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='last_sync_epoch'),'none');"))
         before_acts = Str.trim(sql!(db, "SELECT count(*) FROM activities;"))
+        check!("the prune-bait rows are really there, so the next checks are not 0 == 0", before_acts != "0" and before_epoch != "none")?
         st429 = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null; echo $?"))
         check!("a 429 on the activity list exits 0, like a 429 on a stream", st429 == "0")?
-        check!("...reporting rate_limited rather than an error envelope", bfq!(".data.stopped") == "rate_limited")?
+        check!("...reporting list_rate_limited, naming the LIST rather than the drain", bfq!(".data.stopped") == "list_rate_limited")?
         check!("...and resumable, so a caller knows to run it again", bfq!(".data.resumable") == "true")?
         check!("...with no error field at all", bfq!(".error") == "null")?
         # THE destructive one: a partial list must not drive a prune.
@@ -694,7 +708,7 @@ run_stops! = || {
         check!("...and deleting no activities", Str.trim(sql!(db, "SELECT count(*) FROM activities;")) == before_acts)?
         # ...and the watermark must not move past what was never listed.
         check!("...leaving last_sync_epoch where it was", Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='last_sync_epoch'),'none');")) == before_epoch)?
-        check!("...and the human screen says so too, not just the envelope", Str.contains(sh!("HOME='${home}' STRIDE_API_BASE='${base}' '${bin}' sync 2>&1"), "Strava rate-limited this run"))?
+        check!("...and the human screen blames the LIST too, not the drain", Str.contains(sh!("HOME='${home}' STRIDE_API_BASE='${base}' '${bin}' sync 2>&1"), "rate-limited the activity list"))?
     } else if env_or!("E2E_EXPECT_500", "") == "1" {
         # A drain that dies with rows already committed. Salvaged from #225, minus its
         # stored-count assertion: #233 reports the queue total at the boundary, and the
@@ -822,7 +836,7 @@ run_stops! = || {
         if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
             # its own floor: this branch returns before the shared drain assertions, so the
             # 12 the default arm expects would never be reachable here
-            9
+            10
         } else if env_or!("E2E_EXPECT_500", "") == "1" {
             7
         } else if env_or!("E2E_EXPECT_401", "") == "1" {

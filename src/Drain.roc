@@ -27,11 +27,18 @@ Drain :: [].{
     # Why a drain run ended — the value that ships as the payload's `stopped`.
     # A TAG, not a Str, so the COMPILER enforces the set at the producer: drain_streams!
     # cannot invent a fourth reason or typo an existing one. `stopped_label` below is the
-    # single place it becomes a string, and its three arms are pinned by equality expects.
+    # single place it becomes a string, and its arms are pinned by equality expects.
     # This shape was chosen after the Str version shipped pinned by nothing: Render's
     # expects hand-type their own literals, so they check Render against itself, and
     # renaming a literal in the producer left every test green.
-    StopReason : [Complete, BudgetReached, RateLimited]
+    # ListRateLimited is NOT a drain reason — the drain never ran. It lives here because
+    # `stopped` is one field with one vocabulary, and the alternative was reusing
+    # RateLimited for both: that made the payload unable to say WHICH request was refused,
+    # and left Render physically unable to write the right sentence, because the only
+    # distinction available to it was `pending_streams > 0` — which is true on precisely
+    # the first-run sync this case exists for. A drain that 429s on its first id and a list
+    # that 429s on page one are otherwise identical in the envelope.
+    StopReason : [Complete, BudgetReached, RateLimited, ListRateLimited]
 
     Action : [
         Refresh, # 401: refresh the access token, retry the same id (bounded by the caller)
@@ -64,6 +71,7 @@ Drain :: [].{
             Complete => "complete"
             BudgetReached => "budget_reached"
             RateLimited => "rate_limited"
+            ListRateLimited => "list_rate_limited"
         }
 
     test_lim : Limits
@@ -118,6 +126,7 @@ expect match Drain.decide({ status: 200, window: 9 }, Drain.test_lim) {
 # the wire strings, pinned by equality. These must equal the enum in
 # schemas/v2/sync.json; Render.drain_note matches on the same three, and a
 # composed expect there ties producer to consumer so a rename cannot pass either side.
+expect Drain.stopped_label(ListRateLimited) == "list_rate_limited"
 expect Drain.stopped_label(Complete) == "complete"
 expect Drain.stopped_label(BudgetReached) == "budget_reached"
 expect Drain.stopped_label(RateLimited) == "rate_limited"

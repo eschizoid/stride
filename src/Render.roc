@@ -778,18 +778,20 @@ Render :: [].{
                 ""
             }
         # WHY it stopped, not merely that work remains.
-        # A rate limit is a RUN-level fact, so it is stated whether or not anything is
-        # pending. drain_note speaks only when pending > 0, which is right for the drain —
-        # but since #235 the LIST can stop the run too, and there the queue is usually
-        # empty. That combination printed "all streams present" beside a payload saying
-        # `stopped: "rate_limited"`, with a re-listed count of 0 that reads like a quiet
-        # no-op rather than a run that was refused. Found by the e2e for the list stop,
-        # which asserted the human screen says what the envelope says.
+        # A refused LIST is tested FIRST, and unconditionally. The first version of this
+        # put it after `pending_streams > 0` and reasoned that "the list stops the run, and
+        # there the queue is usually empty" — which is false in exactly the case the
+        # feature exists for. A first-run sync lists a full page of stream-less activities
+        # and is refused on the next, so pending is at its MAXIMUM there; drain_note won,
+        # and told the user "N to go, try again in ~15 minutes" about STREAMS when what was
+        # refused was the activity list, implying a drain that had run and got partway when
+        # it never started. The queue is only empty in the steady state, which is the one
+        # shape the e2e happened to construct.
         tail =
-            if p.pending_streams > 0 {
+            if p.stopped == "list_rate_limited" {
+                " — Strava rate-limited the activity list, so it is incomplete; nothing was pruned. Run `stride sync` again in ~15 minutes"
+            } else if p.pending_streams > 0 {
                 " — ${drain_note(p.stopped, p.pending_streams)}"
-            } else if p.stopped == "rate_limited" {
-                " — Strava rate-limited this run; try again in ~15 minutes"
             } else {
                 ""
             }
@@ -1987,12 +1989,25 @@ expect
     Render.sync_screen({ synced: 22, new_activities: 2, updated_activities: 1, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 0, stopped: "complete", resumable: False }, False)
     == "synced 2 new, 1 updated (22 re-checked in the 30-day window), fetched streams for 5"
 
-# A rate-limited run says so even with nothing pending — the list can stop the run now
-# (#235), and there the queue is typically empty. Full-string, because the point is that
-# the sentence exists at all: a `contains` on "rate" would pass on the drain_note arm.
+# A refused LIST says so, and says it about the LIST. Full-string, because a `contains`
+# on "rate" passes on drain_note's wording too — which is exactly how the first version of
+# this arm looked correct while never running.
 expect
-    Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, stopped: "rate_limited", resumable: True }, False)
-    == "synced 0 new, 0 updated (0 re-checked in the 30-day window), fetched streams for 0 — Strava rate-limited this run; try again in ~15 minutes"
+    Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, stopped: "list_rate_limited", resumable: True }, False)
+    == "synced 0 new, 0 updated (0 re-checked in the 30-day window), fetched streams for 0 — Strava rate-limited the activity list, so it is incomplete; nothing was pruned. Run `stride sync` again in ~15 minutes"
+
+# ...and it still says it with a FULL queue, which is the first-run shape the earlier
+# version got wrong: pending at its maximum, drain_note winning, and the sentence blaming
+# the drain for a list refusal.
+expect
+    Render.sync_screen({ synced: 100, new_activities: 100, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 100, stopped: "list_rate_limited", resumable: True }, False)
+    == "synced 100 new, 0 updated (100 re-checked in the 30-day window), fetched streams for 0 — Strava rate-limited the activity list, so it is incomplete; nothing was pruned. Run `stride sync` again in ~15 minutes"
+
+# ...while a DRAIN rate limit still gets drain_note's wording, so the new arm did not
+# swallow the case it sits in front of.
+expect
+    Render.sync_screen({ synced: 3, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 7, stopped: "rate_limited", resumable: True }, False)
+    == "synced 0 new, 0 updated (3 re-checked in the 30-day window), fetched streams for 5 — Strava rate-limited this run — 7 to go, try again in ~15 minutes"
 
 # ...and a COMPLETE run with nothing pending still says nothing, which is the arm the
 # clause above must not have swallowed.

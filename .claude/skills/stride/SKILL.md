@@ -17,8 +17,8 @@ Never do training math yourself: read stride's numbers, add judgment.
    missing streams, paced against Strava's limits. There is no `backfill` command any
    more; a first run on a fresh install is the whole history pull.
    It ends in the usual envelope (`schemas/v2/sync.json`) with progress on stderr.
-   Read `resumable` (= `pending_streams > 0`) to decide whether to run it again, and
-   `stopped` for why it ended (`complete` / `budget_reached` / `rate_limited` — both
+   Read `resumable` to decide whether to run it again — usually `pending_streams > 0`, but also true when the LISTING was cut short and the queue is empty — and
+   `stopped` for why it ended (`complete` / `budget_reached` / `rate_limited` / `list_rate_limited`, the last being a 429 on the ACTIVITY LIST rather than a stream, which leaves the listing incomplete and prunes nothing — all
    non-complete reasons stop on Strava's 15-MINUTE window, so both mean run it again in
    about fifteen minutes, NOT tomorrow).
    A first sync on a large history takes one run per 15-minute window — roughly ten a
