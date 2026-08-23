@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(644)?
+    checks_ran_exactly!(645)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2418,15 +2418,24 @@ b_command_schemas! = |ctx| {
     # are validated: a form that errors returns an error envelope, which conforms to no
     # success schema and would report a failure that is not about `schema` at all.
     #
+    # READ-ONLY and OFFLINE, both stated. Filtering on `mutates` alone happens to exclude
+    # the networked forms today only because `auth` and `sync` both write — a future
+    # read-only networked command would be swept straight back into the offline driver.
     # READ-ONLY forms only. The first version of this loop selected on schema and arity
     # alone, which swept in `init` and `sync` — one writes to the fixture and the other
     # would reach for the network from the OFFLINE driver. A check written to close a gap
     # about the table was quietly writing to the database the rest of the suite reads.
-    schema_mismatch = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select([.args[] | select(.required)] | length == 0) | \"\\(.name)\\t\\(.schema)\"' | while IFS=$'\\t' read -r n sc; do out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null); echo \"$out\" | jq -e '.data' >/dev/null 2>&1 || continue; bad=$(echo \"$out\" | jq '.data' | jq -r --slurpfile schema schemas/v2/$sc -f tools/validate.jq 2>&1 | head -1); [ -z \"$bad\" ] || echo \"$n->$sc\"; done | tr '\\n' ' '"))
+    schema_mismatch = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select(.network == false) | select([.args[] | select(.required)] | length == 0) | \"\\(.name)\\t\\(.schema)\"' | while IFS=$'\\t' read -r n sc; do out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null); echo \"$out\" | jq -e '.data' >/dev/null 2>&1 || continue; bad=$(echo \"$out\" | jq '.data' | jq -r --slurpfile schema schemas/v2/$sc -f tools/validate.jq 2>&1 | head -1); [ -z \"$bad\" ] || echo \"$n->$sc\"; done | tr '\\n' ' '"))
     check!("every form's payload conforms to the schema the TABLE names for it (bad: ${schema_mismatch})", schema_mismatch == "")?
     # ...and that loop validated a real number of forms rather than skipping them all.
-    schema_checked = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select([.args[] | select(.required)] | length == 0) | \"\\(.name)\\t\\(.schema)\"' | while IFS=$'\\t' read -r n sc; do HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null | jq -e '.data' >/dev/null 2>&1 && echo x; done | wc -l | tr -d ' '"))
-    check!("...having validated ${schema_checked} of them, not zero", schema_checked != "0")?
+    # Selected minus validated, NAMED. The guard was `validated != "0"`, which cannot see
+    # the difference between 15 selected and 13 validated — the `|| continue` drops any
+    # form whose call errors, so its schema goes unverified and swapping two skipped forms'
+    # schemas passed. `reps` is the one legitimate skip: it has no detected intervals on
+    # this fixture, so there is no payload to validate, and it is pinned by name rather
+    # than absorbed into a count.
+    schema_skipped = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select(.network == false) | select([.args[] | select(.required)] | length == 0) | .name' | while read -r n; do HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null | jq -e '.data' >/dev/null 2>&1 || printf '%s ' \"$n\"; done"))
+    check!("...and the only form with no payload to validate is the one with no intervals (got: ${schema_skipped})", schema_skipped == "reps")?
     Ok({})
 }
 
@@ -2829,6 +2838,16 @@ b_junk_filter! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_hr) VALUES (103,'bad date','Ride','0000-0z-01T10:00:00Z',3600,150);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("malformed date does not explode daily_load", str_to_i64(Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM daily_load"))) < 400)?
+    # ...and remove it, as the neighbours below remove theirs. It was inserted to exercise
+    # the refusal and then left in the fixture, which broke `stride season` for the whole
+    # rest of every offline run — season is the one command that walks every activity date,
+    # so it met the bad row and returned internal_error. Nothing noticed because nothing
+    # called season after this point, until #219's schema loop did and silently skipped it.
+    # The product half of that — a malformed date reaching the boundary as the catch-all
+    # instead of a named error — is #243, and is unchanged by this cleanup.
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 103; DELETE FROM activities WHERE id = 103;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("...and removing it lets season run again, which is how the leak was found", Str.contains(stride!(ctx.bin, ctx.home, ["season"]), "blocks"))?
     # restore 101's good stream so downstream tests (import, doctor) still see a clean
     # measured-power ride — the corruption above was only to exercise the unreadable flag,
     # and power now needs a derivable FTP to score as measured.
