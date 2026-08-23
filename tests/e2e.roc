@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(645)?
+    checks_ran_exactly!(648)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2436,6 +2436,36 @@ b_command_schemas! = |ctx| {
     # than absorbed into a count.
     schema_skipped = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select(.network == false) | select([.args[] | select(.required)] | length == 0) | .name' | while read -r n; do HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null | jq -e '.data' >/dev/null 2>&1 || printf '%s ' \"$n\"; done"))
     check!("...and the only form with no payload to validate is the one with no intervals (got: ${schema_skipped})", schema_skipped == "reps")?
+
+    # ── args arity, both bounds (#219) ──────────────────────────────────
+    # The only dimension of the six with no derivation check until now, and the one with
+    # the demonstrated defect history. Both probes run against a THROWAWAY COPY, because a
+    # form filled to its declared arity may write — `week add` does.
+    #
+    # Networked forms are excluded: filling `sync`'s arguments would reach Strava from the
+    # OFFLINE driver. Their arity is unchecked here, stated rather than quietly skipped.
+    #
+    # UPPER bound: filling every declared argument must not be a usage error. Without it
+    # the table could advertise an argument the parser refuses — giving `activities` a
+    # third `<since>` tells an agent to pass three, and `stride activities 1 Ride X`
+    # answers usage.
+    arity_probe = "${ctx.home}/.arity-probe"
+    _ = sh!("rm -rf '${arity_probe}' && mkdir -p '${arity_probe}' && cp -R '${ctx.home}/.stride' '${arity_probe}/.stride'")
+    # A LITERAL argument is passed verbatim — `sync --all` and `week all` are tokens the
+    # user types, not slots to fill, and substituting "1" for them makes a usage error out
+    # of a correct invocation.
+    fill = "| .name | if test(\"^<\") then (if test(\"YYYY-MM-DD\") then \"${ctx.d1}\" elif test(\"hr[|]tss\") then \"tss\" elif test(\"week[|]month\") then \"week\" elif test(\"1-10\") then \"5\" elif test(\"asc[|]desc\") then \"asc\" else \"1\" end) else . end"
+    over = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | [.name] + [.args[] ${fill}] | join(\" \")' | while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true | tr '\\n' '|'"))
+    check!("filling every argument the table declares is never a usage error (bad: ${over})", over == "")?
+    # LOWER bound: one FEWER than the declared required count must BE a usage error.
+    # Declaring an optional argument required is the mutation this catches — and it is
+    # worse than it looks, because the schema loop selects on "no required args", so
+    # marking one required drops a form out of validation entirely and `schema_skipped`
+    # never mentions it, since that only reports forms selected and then errored.
+    under = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required)] | length > 0) | [.name] + ([.args[] | select(.required) ${fill}] | .[0:-1]) | join(\" \")' | while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] || echo \"$line\"; done; true | tr '\\n' '|'"))
+    check!("...and one short of the required count always is (bad: ${under})", under == "")?
+    check!("...with forms on both sides of that, so neither swept nothing", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[] | select(.required)] | length > 0)] | length'")) != "0")?
+    _ = sh!("rm -rf '${arity_probe}'")
     Ok({})
 }
 
