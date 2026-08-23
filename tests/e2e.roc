@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(648)?
+    checks_ran_exactly!(649)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2454,17 +2454,25 @@ b_command_schemas! = |ctx| {
     # A LITERAL argument is passed verbatim — `sync --all` and `week all` are tokens the
     # user types, not slots to fill, and substituting "1" for them makes a usage error out
     # of a correct invocation.
-    fill = "| .name | if test(\"^<\") then (if test(\"YYYY-MM-DD\") then \"${ctx.d1}\" elif test(\"hr[|]tss\") then \"tss\" elif test(\"week[|]month\") then \"week\" elif test(\"1-10\") then \"5\" elif test(\"asc[|]desc\") then \"asc\" else \"1\" end) else . end"
-    over = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | [.name] + [.args[] ${fill}] | join(\" \")' | while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true | tr '\\n' '|'"))
+    fill = "| .name | if test(\"^<\") then (if test(\"YYYY-MM-DD\") then \"${ctx.d1}\" elif test(\"hr[|]tss\") then \"tss\" elif test(\"week[|]month\") then \"week\" elif test(\"1-10\") then \"5\" elif test(\"asc[|]desc\") then \"asc\" elif test(\"zip[|]dir\") then \"/nonexistent/1\" else \"1\" end) else . end"
+    over = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | [.name] + [.args[] ${fill}] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true; } | tr '\\n' '|'"))
     check!("filling every argument the table declares is never a usage error (bad: ${over})", over == "")?
     # LOWER bound: one FEWER than the declared required count must BE a usage error.
     # Declaring an optional argument required is the mutation this catches — and it is
     # worse than it looks, because the schema loop selects on "no required args", so
     # marking one required drops a form out of validation entirely and `schema_skipped`
     # never mentions it, since that only reports forms selected and then errored.
-    under = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required)] | length > 0) | [.name] + ([.args[] | select(.required) ${fill}] | .[0:-1]) | join(\" \")' | while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] || echo \"$line\"; done; true | tr '\\n' '|'"))
+    under = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required)] | length > 0) | [.name] + ([.args[] | select(.required) ${fill}] | .[0:-1]) | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] || echo \"$line\"; done; true; } | tr '\\n' '|'"))
     check!("...and one short of the required count always is (bad: ${under})", under == "")?
     check!("...with forms on both sides of that, so neither swept nothing", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[] | select(.required)] | length > 0)] | length'")) != "0")?
+    # The two NETWORK forms, which both probes skip — pinned as a value rather than
+    # probed, because reaching them means coupling this check to the mock and losing the
+    # purely-offline property, for a two-form and near-static exposure. `sync --all` is
+    # already verified as a parser path by the literal-argument check above, and `auth`
+    # takes nothing; the only uncovered case is a PLACEHOLDER argument appearing on one of
+    # them, which changes this string.
+    netargs = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select(.network) | \"\\(.name)[\\([.args[].name] | join(\",\"))]\"] | sort | join(\"|\")'"))
+    check!("the two networked forms declare exactly what they always have (got: ${netargs})", netargs == "auth[]|sync[--all]")?
     _ = sh!("rm -rf '${arity_probe}'")
     Ok({})
 }
