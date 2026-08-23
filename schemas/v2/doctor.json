@@ -4,11 +4,14 @@
   "type": "object",
   "required": [
     "activities",
+    "awaiting_metrics",
+    "awaiting_metrics_known",
     "concurrent_reads_ok",
     "conf_high",
     "conf_low",
     "conf_medium",
     "conf_none",
+    "config_error",
     "estimated_power_count_30d",
     "ftp_derived_sports",
     "hr_missing_streak",
@@ -34,6 +37,14 @@
     "activities": {
       "type": "integer"
     },
+    "awaiting_metrics": {
+      "type": "integer",
+      "description": "How many rows `analyze` would recompute right now \u2014 a lower bound, since a pass can re-invalidate rows as it runs. Shares Analyze.pending_metrics_count! with `plan`'s activities_awaiting_metrics, so the two commands cannot disagree, and it is the same predicate `analyze` selects on \u2014 beyond rows never scored it counts a changed FTP, a changed threshold pace, changed zones, a bumped metrics_rev, or any stored input column moving. Meaningless unless awaiting_metrics_known is true."
+    },
+    "awaiting_metrics_known": {
+      "type": "boolean",
+      "description": "False when the count could not be computed at all, in which case awaiting_metrics is 0 and must NOT be read as \"nothing to do\". config_error says why."
+    },
     "concurrent_reads_ok": {
       "type": "boolean"
     },
@@ -48,6 +59,10 @@
     },
     "conf_none": {
       "type": "integer"
+    },
+    "config_error": {
+      "type": "string",
+      "description": "Why awaiting_metrics could not be computed, or \"\" when it could. Three conditions block it: the global HR zones absent, a global zone key unparseable, or a per-sport override unparseable. `doctor` degrades on all three and reports the reason, because a command that exists to diagnose a broken installation must not die on what it is diagnosing. `plan` survives only the third \u2014 it propagates the other two and exits non-zero. `analyze` reports the same condition and is the command to run for the remedy."
     },
     "estimated_power_count_30d": {
       "type": "integer"
@@ -105,7 +120,8 @@
       "type": "boolean"
     },
     "unanalyzed": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Activities with no metrics row at all \u2014 never scored. A COVERAGE number, matching its neighbours here, which all report what the data has rather than whether it is current. It is NOT what `analyze` would recompute: see awaiting_metrics, which is never smaller WHENEVER awaiting_metrics_known is true. When that flag is false this field can exceed it, because the other count is 0 and means nothing."
     },
     "with_hr": {
       "type": "number"

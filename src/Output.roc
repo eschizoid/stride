@@ -172,9 +172,17 @@ Output :: [].{
     # The value is THERE and cannot be parsed -- naming the key and echoing the stored
     # text is the whole point, because `config get` will happily show it back and the
     # athlete has no other way to see why it is being ignored.
+    ## The pure half, so a caller that must NOT exit can render the same sentence.
+    ## `doctor` reports this condition in its payload rather than dying on it, and
+    ## carried a truncated copy of the string until this was extracted — one that had
+    ## dropped the remedy, which README describes as the thing every gap states.
+    unreadable_config_msg : Str, Str -> Str
+    unreadable_config_msg = |key, raw|
+        "${key} is set to '${raw}', which is not a number — fix it with `stride config set ${key} <value>`"
+
     unreadable_config! : Str, Str => Try({}, _)
     unreadable_config! = |key, raw| {
-        msg = "${key} is set to '${raw}', which is not a number — fix it with `stride config set ${key} <value>`"
+        msg = unreadable_config_msg(key, raw)
         (if json_mode!({})
             emit_err!("unreadable_config", msg)
         else
