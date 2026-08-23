@@ -169,8 +169,19 @@ main! = |raw_args| {
                         # envelope tells a machine to "run `stride` for the
                         # list", so that list must lead to everything runnable —
                         # --version included (review found it unreachable)
+                        # Records, not bare names (#219). A name list lets an agent
+                        # enumerate and nothing more — it cannot learn the argument
+                        # shape, whether a call writes, whether it needs the network,
+                        # or which schema the answer follows, so it needs outside
+                        # documentation to drive an interface that looks
+                        # self-describing. ADR 0000 §10 declines an MCP server on the
+                        # grounds that the CLI plus versioned JSON already IS the agent
+                        # interface; this is that claim made true.
+                        #
+                        # `help` and the bare flag forms are filtered as before: they
+                        # answer WITH this list, so listing them invites a loop.
                         Output.emit_ok!({
-                            commands: List.keep_if(Command.command_names, |c| !(Str.starts_with(c, "-")) and c != "help"),
+                            commands: List.keep_if(Command.specs, |s| !(Str.starts_with(s.name, "-")) and s.name != "help"),
                             flags: ["--json", "--human", "--help", "--version", "--all"],
                         })
                     } else {

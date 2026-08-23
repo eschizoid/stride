@@ -902,8 +902,106 @@ b_init_config! = |ctx| {
     # asking what stride can do is a QUESTION, not a failure: same exit 0 in
     # both modes, answered as data for machines and as the help screen for
     # humans — and `--help` is the same request, so it gets the same answer
-    check!("a bare call answers with the command list, as data", strjq!(ctx, [], ".data.commands | index(\"summary\") != null") == "true")?
-    check!("--help answers identically for machines", strjq!(ctx, ["--help"], ".data.commands | index(\"plan\") != null") == "true")?
+    check!("a bare call answers with the command list, as data", strjq!(ctx, [], "[.data.commands[].name] | index(\"summary\") != null") == "true")?
+    check!("--help answers identically for machines", strjq!(ctx, ["--help"], "[.data.commands[].name] | index(\"plan\") != null") == "true")?
+
+    # ── the command table describes, it does not merely name (#219) ─────
+    # A name list lets an agent enumerate and nothing more. These pin the four facts
+    # it needs to CALL, and — more importantly — pin them against something other
+    # than the table itself, because a table checked only against itself is a
+    # restatement, not a test.
+    cmdq! = |q| Str.trim(strjq!(ctx, [], q))
+    check!("every form carries an argument shape", cmdq!("[.data.commands[] | select(.args == null)] | length") == "0")?
+    check!("...and a schema or an explicit blank", cmdq!("[.data.commands[] | select(.schema == null)] | length") == "0")?
+    # `week add` writes and `week` reads, which is the whole reason entries are per
+    # callable FORM rather than per verb. If these ever collapse into one entry, the
+    # payload starts answering `mutates` wrongly for one of them.
+    check!("a verb with two forms is two entries", cmdq!("[.data.commands[].name] | (index(\"week\") != null) and (index(\"week add\") != null)") == "true")?
+    check!("...that disagree about mutation, which is why they are separate", cmdq!("[.data.commands[] | select(.name == \"week\") | .mutates] == [false] and [.data.commands[] | select(.name == \"week add\") | .mutates] == [true]") == "true")?
+
+    # Every schema a form names must EXIST. Read from the directory, so deleting a
+    # schema file without updating the table fails here rather than at some caller.
+    missing_schemas = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].schema | select(. != \"\")' | sort -u | while read -r f; do [ -f schemas/v2/\"$f\" ] || echo \"$f\"; done"))
+    check!("every schema a form names exists in schemas/v2", missing_schemas == "")?
+    # ...and the reverse: a schema nobody claims is a payload no agent can find its
+    # way to. envelope.json is the wrapper every response shares, so it is claimed by
+    # all of them and named by none.
+    unclaimed = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].schema' | sort -u > /tmp/e2e-claimed.$$; ls schemas/v2 | grep -v '^envelope.json$' | while read -r f; do grep -qx \"$f\" /tmp/e2e-claimed.$$ || echo \"$f\"; done; rm -f /tmp/e2e-claimed.$$"))
+    # Pinned as a VALUE, not waved through by an exclusion list: these two are reached
+    # by flag rather than by subcommand — `--version` is listed under `flags`, and
+    # commands.json is the schema of this very payload — so no command form names
+    # them. Stating the exact set means a genuinely unclaimed schema changes the
+    # string and fails, where an exclusion list would quietly absorb it.
+    check!("the only schemas no command form claims are the two reached by flag", unclaimed == "commands.json\nversion.json")?
+    # The guard that makes the two lines above non-vacuous: if the jq produced nothing
+    # at all, both comparisons are "" == "" and pass on an empty payload.
+    check!("...and that pair was not comparing two empty lists", cmdq!("[.data.commands[] | select(.schema != \"\")] | length > 20") == "true")?
+
+    # THE acceptance check: adding a command without describing it fails here.
+    #
+    # Read from the PARSER rather than from the table, so the two are compared against
+    # each other instead of the table being compared to itself. Every arm that yields a
+    # real command — `=> Ok(` or `=> count(` — contributes its verb; arms yielding
+    # Err(Usage) are excluded on purpose, because those are arity hints and retired
+    # names like `backfill`, which must NOT be advertised. Flag and `help` forms are
+    # dropped from both sides, matching what the payload itself filters.
+    #
+    # Verb level, not form level: an argument literal is indistinguishable from a
+    # subcommand in the arm patterns (`week all` is an argument, `week add` is a form),
+    # so comparing full forms would demand a rule that guesses. The sub-form direction
+    # is covered by the check below instead.
+    parser_verbs = "grep -oE '\\[_, \"[a-z-]+\"(, \"[a-z-]+\")*[^]]*\\] => (Ok|count)' src/Command.roc | sed 's/ => .*//; s/\\[_, //; s/,[^\"].*//' | tr -d '\"[]' | sed 's/, / /' | cut -d' ' -f1 | grep -v '^-' | grep -vx help | sort -u"
+    spec_verbs = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].name | split(\" \")[0]' | sort -u"
+    undescribed = Str.trim(sh!("comm -23 <(${parser_verbs}) <(${spec_verbs})"))
+    check!("every command the parser accepts is described in the table", undescribed == "")?
+    unparsed = Str.trim(sh!("comm -13 <(${parser_verbs}) <(${spec_verbs})"))
+    check!("...and every described command is one the parser accepts", unparsed == "")?
+    # Non-vacuity: both comparisons above are "" == "", so an extraction that silently
+    # produced nothing would pass both. Pin the count on each side.
+    check!("...and neither side of that comparison was empty", Str.trim(sh!("${parser_verbs} | wc -l")) == Str.trim(sh!("${spec_verbs} | wc -l")) and Str.trim(sh!("${spec_verbs} | wc -l | tr -d ' '")) == "27")?
+
+    # The sub-form direction the verb comparison cannot see: a form the table names
+    # must actually be callable. Each multi-word name is invoked with no arguments and
+    # must NOT come back `unknown_command` — a wrong-arity `usage` is the expected
+    # answer and proves the form reached its own arm.
+    bad_forms = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].name | select(test(\" \"))' | while read -r n; do code=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"unknown_command\" ] && echo \"$n\"; done; true"))
+    check!("every multi-word form the table names is one the parser reaches", bad_forms == "")?
+    check!("...and there were multi-word forms to check", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[].name | select(test(\" \"))] | length'")) == "3")?
+
+    # `mutates` DERIVED FROM BEHAVIOUR, not trusted. Every form declaring mutates:false
+    # is run against a copy of the fixture and the database must come back byte-for-byte
+    # identical. Without this the flag is a comment: an agent told a command is read-only
+    # would act on a declaration nobody checked, and `init` shipped in this very PR
+    # declaring network:true until it was actually looked at.
+    #
+    # A copy, not the live fixture, precisely because a form that DOES write would
+    # otherwise corrupt every check after this one. Required arguments get a plausible
+    # value; a form that errors on them still proves the point, since an error path must
+    # not write either.
+    #
+    # Hashed through `sqlite3 .dump`, NOT by hashing db.sqlite. The database runs in WAL
+    # mode, so a committed write leaves the main file byte-identical and lands in the
+    # -wal sidecar: the first version of this sweep hashed the file, and would have
+    # passed with every command writing. The proof at the end is what caught that, which
+    # is why it is there rather than assumed.
+    ro_probe = "${ctx.home}/.ro-probe"
+    _ = sh!("rm -rf '${ro_probe}' && mkdir -p '${ro_probe}' && cp -R '${ctx.home}/.stride' '${ro_probe}/.stride'")
+    dirty = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.mutates == false) | .name' | while read -r n; do before=$(sqlite3 '${ro_probe}/.stride/db.sqlite' .dump | shasum | cut -d' ' -f1); HOME='${ro_probe}' STRIDE_FORMAT=json '${ctx.bin}' $n 1 1 >/dev/null 2>&1; after=$(sqlite3 '${ro_probe}/.stride/db.sqlite' .dump | shasum | cut -d' ' -f1); [ \"$before\" = \"$after\" ] || echo \"$n\"; done; true"))
+    check!("every form declaring mutates:false leaves the database byte-identical", dirty == "")?
+    # ...and that sweep actually ran something. A typo in the jq would produce an empty
+    # loop and a passing check on nothing.
+    check!("...having swept every read-only form", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select(.mutates == false)] | length'")) == "19")?
+    # The mutation-proof for the sweep itself: a form that DOES write, run the same way,
+    # must be caught. `week add` is declared mutates:true so it is not in the sweep, and
+    # it is chosen over `rate` because it writes unconditionally — `rate` depends on the
+    # fixture holding the activity id it is given, which makes a silent no-op possible
+    # and would leave this proof asserting nothing.
+    rate_before = Str.trim(sh!("sqlite3 '${ro_probe}/.stride/db.sqlite' .dump | shasum | cut -d' ' -f1"))
+    _ = sh!("HOME='${ro_probe}' STRIDE_FORMAT=json '${ctx.bin}' week add '${ctx.d2}' endurance 'ro probe' 'ro probe' >/dev/null 2>&1")
+    rate_after = Str.trim(sh!("sqlite3 '${ro_probe}/.stride/db.sqlite' .dump | shasum | cut -d' ' -f1"))
+    check!("...and the sweep's method detects a write, so passing it means something", rate_before != rate_after)?
+    _ = sh!("rm -rf '${ro_probe}'")
+
     check!("-h and help answer the same way", strjq!(ctx, ["-h"], ".data.commands | length > 0") == "true" and strjq!(ctx, ["help"], ".data.commands | length > 0") == "true")?
     check!("...and all four stay exit 0", stride_status!(ctx.bin, ctx.home, []) == 0 and stride_status!(ctx.bin, ctx.home, ["--help"]) == 0 and stride_status!(ctx.bin, ctx.home, ["-h"]) == 0 and stride_status!(ctx.bin, ctx.home, ["help"]) == 0)?
     check!("humans still get the help screen", Str.contains(stride_human!(ctx.bin, ctx.home, []), "USAGE") and !(Str.contains(stride_human!(ctx.bin, ctx.home, []), "schema_version")))?

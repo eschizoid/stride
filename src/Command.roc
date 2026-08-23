@@ -190,12 +190,100 @@ Command := [
 	## REAL command reports a usage error instead of claiming the command does not
 	## exist. Kept beside `parse` because it is the same fact; every name here has an
 	## expect below that fails if it stops parsing to its own form.
+	## the VERBS, deduped — `week add` and `week` are two callable forms but one token to
+	## the unknown-vs-wrong-arguments branch above.
 	command_names : List(Str)
-	command_names = [
-		"init", "auth", "sync", "analyze", "summary", "stats", "doctor",
-		"zones", "pz", "compare", "activities", "activity", "top", "import", "rate",
-		"load", "power-curve", "pc", "progress", "week", "plan", "complete", "skip",
-		"config", "tte", "reps", "season", "--version", "--help", "-h", "help",
+	command_names =
+		List.fold(specs, [], |acc, s| {
+			v = verb_of(s.name)
+			if List.contains(acc, v) acc else List.append(acc, v)
+		})
+
+	## What a caller needs to invoke a command, not merely to name it (#219).
+	##
+	## `stride --json` used to answer with bare strings, which lets an agent enumerate
+	## and nothing more: it could not learn the argument shape, whether a call writes to
+	## the database, whether it needs the network, or which schema the answer follows.
+	## ADR 0000 §10 declines an MCP server on the grounds that the CLI plus versioned
+	## JSON already IS the agent interface. This is that claim taken seriously.
+	##
+	## ONE ENTRY PER CALLABLE FORM, not per verb: `week` reads and `week add` writes, so
+	## a single `week` entry could not answer `mutates` honestly for either.
+	##
+	## `verb` is the first token, which is what the unknown-vs-wrong-arguments branch
+	## above compares against. It is DERIVED rather than stored so the two cannot drift —
+	## storing both is how a list like this starts lying.
+	Arg : { name : Str, required : Bool }
+	Spec : {
+		name : Str,
+		args : List(Arg),
+		## writes to the database. Verified against behaviour rather than trusted: the
+		## e2e agent-contract driver runs every `mutates: False` form against a snapshot
+		## and fails if the database is not byte-identical afterwards.
+		mutates : Bool,
+		## talks to Strava. Since #232 that is `auth` and `sync` and nothing else, which
+		## the sync driver already pins independently.
+		network : Bool,
+		## blocks on a human. `auth` opens a browser and waits for a paste.
+		interactive : Bool,
+		## the file under schemas/v2 its success payload validates against, "" when the
+		## command has no machine payload of its own. Checked to exist, and every schema
+		## in that directory is checked to be claimed by some form.
+		schema : Str,
+	}
+
+	verb_of : Str -> Str
+	verb_of = |name| (List.first(Str.split_on(name, " "))).ok_or(name)
+
+	req : Str -> Arg
+	req = |name| { name, required: True }
+
+	opt : Str -> Arg
+	opt = |name| { name, required: False }
+
+	## read-only, offline, non-interactive — the shape most commands have, so the table
+	## below states only the exceptions and each exception is visible at a glance.
+	reads : Str, List(Arg), Str -> Spec
+	reads = |name, args, schema| { name, args, mutates: False, network: False, interactive: False, schema }
+
+	writes : Str, List(Arg), Str -> Spec
+	writes = |name, args, schema| { ..reads(name, args, schema), mutates: True }
+
+	specs : List(Spec)
+	specs = [
+		writes("init", [], "init.json"),
+		{ ..writes("auth", [], ""), network: True, interactive: True },
+		{ ..writes("sync", [opt("--all")], "sync.json"), network: True },
+		writes("analyze", [], "analyze.json"),
+		writes("import", [req("<export.zip|dir>")], "import.json"),
+		writes("rate", [req("<activity_id|latest>"), req("<1-10>")], "rate.json"),
+		writes("week add", [req("<YYYY-MM-DD>"), req("<type>"), req("<detail>"), req("<rationale>")], "week_add.json"),
+		writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"),
+		writes("skip", [req("<session_id>"), req("<reason>"), opt("<activity_id|none>")], "skip.json"),
+		writes("config set", [req("<key>"), req("<value>")], "config.json"),
+		reads("summary", [], "summary.json"),
+		reads("plan", [], "plan.json"),
+		reads("stats", [], "stats.json"),
+		reads("doctor", [], "doctor.json"),
+		reads("zones", [], "zones.json"),
+		reads("pz", [], "zones.json"),
+		reads("compare", [opt("<week|month>")], "compare.json"),
+		reads("activities", [opt("<n>"), opt("<sport>")], "activities.json"),
+		reads("activity", [req("<activity_id>")], "activity.json"),
+		reads("top", [req("<metric>"), opt("<n>"), opt("<sport>")], "top.json"),
+		reads("load", [opt("<n>")], "load.json"),
+		reads("power-curve", [opt("<n>"), opt("<sport>")], "power_curve.json"),
+		reads("pc", [opt("<n>"), opt("<sport>")], "power_curve.json"),
+		reads("progress", [opt("<name>"), opt("<asc|desc>")], "progress.json"),
+		reads("tte", [req("<watts>")], "tte.json"),
+		reads("reps", [opt("<YYYY-MM-DD>")], "reps.json"),
+		reads("season", [], "season.json"),
+		reads("week", [opt("all")], "week.json"),
+		reads("config get", [req("<key>")], "config.json"),
+		reads("--version", [], "version.json"),
+		reads("--help", [], "commands.json"),
+		reads("-h", [], "commands.json"),
+		reads("help", [], "commands.json"),
 	]
 
 	count : Str, (U64 -> Command) -> Try(Command, ParseErr)

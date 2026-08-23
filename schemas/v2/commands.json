@@ -1,6 +1,6 @@
 {
   "title": "commands",
-  "description": "Answer to a bare `stride --json` (or `--help`/`-h`/`help` under --json): what this binary accepts. Sourced from the parser's own command table, so the answer cannot drift from what actually parses. Flags are excluded — these are subcommands.",
+  "description": "Answer to a bare `stride --json` (or `--help`/`-h`/`help` under --json): what this binary accepts, and enough about each form to CALL it rather than merely name it (#219). Sourced from the parser's own table, so the answer cannot drift from what actually parses. ADR 0000 §10 declines an MCP server on the grounds that the CLI plus versioned JSON already is the agent interface; this payload is what makes that true. Flags are listed separately — these are subcommands.",
   "type": "object",
   "required": [
     "commands",
@@ -10,8 +10,61 @@
   "properties": {
     "commands": {
       "type": "array",
+      "description": "One entry per CALLABLE FORM, not per verb. `week` and `week add` are separate entries because they differ in the facts below — one reads and one writes — so a single `week` entry could not answer honestly for either. `help` and the bare flag forms are omitted: they answer with this list, so listing them invites a loop.",
       "items": {
-        "type": "string"
+        "type": "object",
+        "required": [
+          "name",
+          "args",
+          "mutates",
+          "network",
+          "interactive",
+          "schema"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The full callable form, space-separated, exactly as it is typed after `stride` — e.g. \"week add\", \"config set\"."
+          },
+          "args": {
+            "type": "array",
+            "description": "Positional arguments in order. Optional ones always follow required ones; an entry with no arguments is an empty array.",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "required"
+              ],
+              "additionalKeys": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Placeholder as it appears in usage text, e.g. \"<session_id>\" or \"<asc|desc>\". A literal (no angle brackets) must be passed verbatim."
+                },
+                "required": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "mutates": {
+            "type": "boolean",
+            "description": "Writes to the database. Verified against behaviour rather than declared: the e2e suite runs every form with mutates false against a snapshot and fails if the database is not byte-identical afterwards."
+          },
+          "network": {
+            "type": "boolean",
+            "description": "Talks to Strava. Since #232 that is exactly `auth` and `sync`; the sync driver pins that invariant independently, and a test fails if this set stops matching it."
+          },
+          "interactive": {
+            "type": "boolean",
+            "description": "Blocks waiting on a human. `auth` opens a browser and waits for a paste, so it is the one form an unattended agent must not call."
+          },
+          "schema": {
+            "type": "string",
+            "description": "The file under schemas/v2 this form's success payload validates against, or \"\" when it has no machine payload of its own. Every named file is checked to exist, and every schema in that directory is checked to be claimed by some form, so neither side can drift."
+          }
+        }
       }
     },
     "flags": {
@@ -19,7 +72,7 @@
       "items": {
         "type": "string"
       },
-      "description": "flags this build accepts. --json, --human, --help and --version are GLOBAL; --all is accepted only by sync, where it forces a full re-list from scratch. The list does not encode that distinction, so a caller should not assume every flag works on every command."
+      "description": "flags this build accepts. --json, --human, --help and --version are GLOBAL; --all is accepted only by sync, where it forces a full re-list from scratch. The list does not encode that distinction, so a caller should not assume every flag works on every command — a command's own `args` is the authority on what it takes."
     }
   }
 }
