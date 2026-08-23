@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(625)?
+    checks_ran_exactly!(640)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
