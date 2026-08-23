@@ -12,6 +12,7 @@
 # into a tangle.
 import Strava
 import Report
+import Analyze
 import Db
 import Output
 import Metrics
@@ -253,6 +254,27 @@ ReportHealth :: [].{
                 BadOffset(_) => 1 == 0
                 _ => 1 == 1
             }
+        # Not `?`. doctor's job is to diagnose a broken installation, so it is the one
+        # command that must not die on the thing it is meant to report. An unparseable
+        # per-sport zone override makes the count uncomputable; the count degrades and the
+        # reason is carried in the payload instead of killing the report.
+        # ANNOTATED. Without it `known` infers as a bare [False, True] tag union rather
+        # than Bool, and the JSON encoder writes it as the string "False" — which the
+        # schema catches, but only because the schema says boolean. Same trap as the
+        # payload records elsewhere in the tree.
+        awaiting : { count : U64, known : Bool, problem : Str }
+        awaiting =
+            match Analyze.load_zone_config!(path) {
+                Err(MissingConfig) => { count: 0, known: False, problem: "hr zone bounds are not set — run `stride config set hr_z1_max <bpm>` through hr_z4_max" }
+                Err(UnreadableConfig(key, raw)) => { count: 0, known: False, problem: "${key} is set to '${raw}', which is not a number" }
+                Err(_) => { count: 0, known: False, problem: "the zone config could not be read" }
+                Ok(zb) =>
+                    match Analyze.pending_metrics_count!(path, zb) {
+                        Ok(n) => { count: n, known: True, problem: "" }
+                        Err(UnreadableConfig(key, raw)) => { count: 0, known: False, problem: "${key} is set to '${raw}', which is not a number" }
+                        Err(_) => { count: 0, known: False, problem: "the pending-metrics count could not be computed" }
+                    }
+            }
         payload = {
             activities: cov.total,
             with_hr: cov.with_hr,
@@ -268,6 +290,23 @@ ReportHealth :: [].{
             conf_low: conf.lo,
             conf_none: conf.non,
             pending_streams: pending,
+            # What `analyze` would recompute right now, beside what it has never scored
+            # at all (#238). `unanalyzed` above is `m.activity_id IS NULL` and nothing
+            # else, which is the right answer for a COVERAGE field — its neighbours all
+            # report presence — but it meant doctor read 0 on a database where every row
+            # was due. Measured on a real database with metrics_rev bumped, the shape a
+            # metrics-definition release produces: unanalyzed 0, this field 735.
+            #
+            # Shares Analyze.pending_metrics_count! with `plan`'s
+            # activities_awaiting_metrics, so the two commands cannot disagree about the
+            # same question, and it is the same predicate `analyze` selects rows with.
+            awaiting_metrics: awaiting.count,
+            awaiting_metrics_known: awaiting.known,
+            # WHY the count is unknown, which is the whole point of surfacing it in the
+            # DIAGNOSTIC command: `plan` degrades silently and correctly, but a bare
+            # `known: false` with no reason would just move the question here. "" when
+            # the count was computed.
+            config_error: awaiting.problem,
             ftp_derived_sports: cfg.derived_ftp_sports,
             zones_set: cfg.zones_set >= 4,
             sport_zone_overrides: cfg.sport_zone_overrides,
@@ -319,6 +358,16 @@ ReportHealth :: [].{
                         "  junk samples dropped (30d): ${Render.fmt1(p.junk_filtered_pct_30d)}% overall · worst session ${Render.fmt1(p.junk_worst_session_pct_30d)}%",
                         "  zero load (no usable data): ${(p.zero_load).to_str()}",
                         "  not yet analyzed: ${(p.unanalyzed).to_str()}",
+                        # Beside "not yet analyzed", not replacing it: one is what has
+                        # never been scored, the other is what `analyze` would rescore.
+                        # They are equal in the ordinary case and diverge exactly when it
+                        # matters — a changed FTP or a bumped metrics_rev leaves the first
+                        # at 0 while the second is the whole history.
+                        if p.awaiting_metrics_known {
+                            "  would be recomputed by analyze: ${(p.awaiting_metrics).to_str()}"
+                        } else {
+                            "  would be recomputed by analyze: unknown — ${p.config_error}"
+                        },
                         "  streams still pending: ${(p.pending_streams).to_str()} — run `stride sync` to keep draining them",
                         "  config: hr zones ${if p.zones_set "set" else "incomplete"}, ${(p.sport_zone_overrides).to_str()} per-sport zone key(s) set · ${(p.ftp_derived_sports).to_str()} sport(s) have a derived FTP (FTP is never configured — see summary)",
                         "  time: ${p.time}",

@@ -27,7 +27,10 @@
     "with_power",
     "with_streams",
     "zero_load",
-    "zones_set"
+    "zones_set",
+    "awaiting_metrics",
+    "awaiting_metrics_known",
+    "config_error"
   ],
   "additionalKeys": false,
   "properties": {
@@ -70,6 +73,18 @@
     "pending_streams": {
       "type": "integer"
     },
+    "awaiting_metrics": {
+      "type": "integer",
+      "description": "How many rows `analyze` would recompute right now. Shares Analyze.pending_metrics_count! with `plan`'s activities_awaiting_metrics, so the two commands cannot disagree, and it is the same predicate `analyze` selects on \u2014 beyond rows never scored it counts a changed FTP, a changed threshold pace, changed zones, a bumped metrics_rev, or any stored input column moving. Meaningless unless awaiting_metrics_known is true."
+    },
+    "awaiting_metrics_known": {
+      "type": "boolean",
+      "description": "False when the count could not be computed at all, in which case awaiting_metrics is 0 and must NOT be read as \"nothing to do\". config_error says why."
+    },
+    "config_error": {
+      "type": "string",
+      "description": "Why awaiting_metrics could not be computed, or \"\" when it could. `doctor` is the command whose job is to diagnose a broken installation, so it degrades and reports the reason rather than failing \u2014 this is the one place a config problem that blocks `analyze` is named. `plan` degrades silently on the same condition."
+    },
     "rated": {
       "type": "integer"
     },
@@ -105,7 +120,8 @@
       "type": "boolean"
     },
     "unanalyzed": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Activities with no metrics row at all \u2014 never scored. A COVERAGE number, matching its neighbours here, which all report what the data has rather than whether it is current. It is NOT what `analyze` would recompute: see awaiting_metrics, which is never smaller."
     },
     "with_hr": {
       "type": "number"

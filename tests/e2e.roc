@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(600)?
+    checks_ran_exactly!(609)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1649,12 +1649,18 @@ b_seed_analyze! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("...and analyze puts it back on today", Str.trim(strjq!(ctx, ["plan"], ".data.summary.as_of")) == ctx.today)?
     # Bumping every stored metrics_rev is precisely what a release that changes the metric
-    # definitions does, and it is the case doctor's `unanalyzed` CANNOT see: the rows still
+    # definitions does, and it is the case doctor's `unanalyzed` cannot see: the rows still
     # have metrics, so `m.activity_id IS NULL` counts none of them.
     _ = sql!(ctx.db, "UPDATE activity_metrics SET metrics_rev = 0;")
     n_stale = pf!("activities_awaiting_metrics")
     check!("a stale metrics_rev puts every scored row back in the queue", n_stale != "0")?
-    check!("...a count doctor cannot see, since every row still HAS a metrics row", Str.trim(strjq!(ctx, ["doctor"], ".data.unanalyzed")) == "0")?
+    check!("...which doctor's `unanalyzed` still reads as 0, being a coverage number", Str.trim(strjq!(ctx, ["doctor"], ".data.unanalyzed")) == "0")?
+    # ...and doctor's own awaiting_metrics DOES see it (#238). Asserted equal to plan's,
+    # not merely non-zero: the two commands answer the same question through the same
+    # function, and a check that only said "> 0" would pass while they disagreed.
+    check!("...while doctor's awaiting_metrics sees it, agreeing with plan exactly", Str.trim(strjq!(ctx, ["doctor"], ".data.awaiting_metrics")) == n_stale)?
+    check!("...and reports the count as known", Str.trim(strjq!(ctx, ["doctor"], ".data.awaiting_metrics_known")) == "true")?
+    check!("...with no config error to report", Str.trim(strjq!(ctx, ["doctor"], ".data.config_error")) == "")?
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("...and running analyze returns it to zero", pf!("activities_awaiting_metrics") == "0")?
     # Same again for streams: a different predicate, on a different table. Done by ADDING a
@@ -1688,7 +1694,17 @@ b_seed_analyze! = |ctx| {
     # ...and the human line SPEAKS on that state rather than staying silent, which is the
     # whole point of the known flag: the count is 0 there.
     check!("...and the human line names it instead of going quiet", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' plan 2>/dev/null"), "awaiting-metrics count unreadable"))?
+    # ...and doctor NAMES THE KEY (#238). `plan` degrades silently and correctly — a
+    # planning read should not lecture about config — but that left the condition
+    # reported nowhere, which review of #221 established and this closes. doctor is the
+    # command whose job is to say what is wrong with the installation.
+    check!("doctor degrades on the same config rather than failing", Str.trim(strjq!(ctx, ["doctor"], ".data.awaiting_metrics_known")) == "false")?
+    check!("...and names the offending key and its value", Str.trim(strjq!(ctx, ["doctor"], ".data.config_error")) == "hr_z2_max_ride is set to '1.6e2', which is not a number")?
+    check!("...while still reporting everything else it knows", Str.trim(strjq!(ctx, ["doctor"], ".data.activities | type")) == "number")?
+    check!("...and exits 0, because a diagnosis is not a failure", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' doctor >/dev/null 2>&1; echo $?")) == "0")?
+    check!("...and its human screen says so too", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' doctor 2>/dev/null"), "would be recomputed by analyze: unknown"))?
     _ = sql!(ctx.db, "DELETE FROM config WHERE key = 'hr_z2_max_ride';")
+    check!("...and removing it restores doctor's count too", Str.trim(strjq!(ctx, ["doctor"], ".data.awaiting_metrics_known")) == "true")?
     check!("...and removing the bad override restores the count", pf!("activities_awaiting_metrics_known") == "true")?
     check!("...to a real zero, not merely a known one", pf!("activities_awaiting_metrics") == "0")?
     # ── last_sync (#221) ────────────────────────────────────────────────
