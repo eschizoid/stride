@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(640)?
+    checks_ran_exactly!(644)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -297,6 +297,7 @@ run_scenarios! = |ctx| {
     b_device_watts!(ctx)?
     b_doctor!(ctx)?
     b_human!(ctx)?
+    b_command_schemas!(ctx)?
     b_concurrency!(ctx)?
     b_migration!(ctx)?
     Ok({})
@@ -1066,7 +1067,7 @@ b_init_config! = |ctx| {
     # them "not commands" — but `[_, "progress", "asc"] => Ok(...)` dispatches, so they are
     # commands the jq simply could not match. The list was conflating "not a command" with
     # "a command this extraction cannot see", and hard-coding the second as excused.
-    table_pairs = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '(.data.commands[] | select(.name|test(\" \")) | .name), (.data.commands[] | . as $c | .args[]? | .name | (if test(\"^<\") then (ltrimstr(\"<\")|rtrimstr(\">\")|split(\"|\")[]) else . end) | select(test(\"^[A-Za-z0-9_-]+$\")) | \"\\($c.name) \\(.)\")' | LC_ALL=C sort -u"
+    table_pairs = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '(.data.commands[] | select(.name|test(\" \")) | .name), (.data.commands[] | . as $c | .args[]? | .name | (if test(\"^<\") then (if test(\"[|]\") then (ltrimstr(\"<\")|rtrimstr(\">\")|split(\"|\")[]) else empty end) else . end) | select(test(\"^[A-Za-z0-9_-]+$\")) | \"\\($c.name) \\(.)\")' | LC_ALL=C sort -u"
     _ = sh!("rm -rf '${pair_dir}' && mkdir -p '${pair_dir}' && ${parser_pairs} > '${pair_dir}/parser' && ${table_pairs} > '${pair_dir}/table'")
     unaccounted = Str.trim(sh!("LC_ALL=C comm -23 '${pair_dir}/parser' '${pair_dir}/table' | tr '\\n' '|'"))
     # Two leftovers now, not four: the plan/week redirect arms. Those genuinely are not
@@ -1078,6 +1079,19 @@ b_init_config! = |ctx| {
     # which direction to look. What this guards is that the accounted side produced
     # SOMETHING, so the comm above is not comparing against an empty file.
     check!("...and the table accounted for some of them, so that was not a comparison against nothing", Str.trim(sh!("wc -l < '${pair_dir}/table' | tr -d ' '")) != "0")?
+    # The REVERSE direction. `comm -23` is parser-minus-table, so a token the TABLE invents
+    # is invisible to it: giving `week` an `opt("recent")` advertises a literal a user is
+    # told to type verbatim and the parser refuses, with nothing failing. The size pin that
+    # used to sit here caught that incidentally, and I removed it on a premise I had
+    # mis-measured by a factor of six. This is what it was carrying, as a property rather
+    # than a count — it pins as empty, names the offender, and needs no bump when a command
+    # is added.
+    _ = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | . as $c | .args[]? | select(.name|test(\"^<\")|not) | \"\\($c.name) \\(.name)\"' | LC_ALL=C sort -u > '${pair_dir}/literals'")
+    unaccepted = Str.trim(sh!("LC_ALL=C comm -23 '${pair_dir}/literals' '${pair_dir}/parser' | tr '\\n' '|'"))
+    check!("every literal argument the table advertises is one the parser accepts (got: ${unaccepted})", unaccepted == "")?
+    check!("...and there were literal arguments to check", Str.trim(sh!("wc -l < '${pair_dir}/literals' | tr -d ' '")) != "0")?
+    _ = sh!("rm -rf '${pair_dir}'")
+
     _ = sh!("rm -rf '${pair_dir}'")
     # The fixture must be untouched by the probe above — that is the property the earlier
     # version broke, so it is asserted rather than assumed.
@@ -2387,6 +2401,35 @@ b_invalidation! = |ctx| {
 }
 
 # ── plan lifecycle: revise-in-place, skip, re-plan, done ─────────────
+## The `schema` field's VALUE, checked by running each form (#219). Its own scenario, and
+## registered LATE, because it has to run where the fixture has data: sitting inside
+## b_init_config! it validated only the seven commands that succeed on an empty database,
+## and neither `pz` nor `stats` was among them — so pointing either at the wrong existing
+## schema passed.
+b_command_schemas! : Ctx => Try({}, _)
+b_command_schemas! = |ctx| {
+    # Not merely that the file exists. Both existing checks
+    # pass with `pz` pointed at activities.json: the file is there, and zones.json is still
+    # claimed by `zones`. So of the six fields, schema was the one that was purely asserted
+    # — and a wrong-but-existing filename looks exactly like a right one.
+    #
+    # Driven from the TABLE rather than a hardcoded list, so the value is verified by the
+    # same act that validates the payload. Only argument-free forms that actually succeed
+    # are validated: a form that errors returns an error envelope, which conforms to no
+    # success schema and would report a failure that is not about `schema` at all.
+    #
+    # READ-ONLY forms only. The first version of this loop selected on schema and arity
+    # alone, which swept in `init` and `sync` — one writes to the fixture and the other
+    # would reach for the network from the OFFLINE driver. A check written to close a gap
+    # about the table was quietly writing to the database the rest of the suite reads.
+    schema_mismatch = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select([.args[] | select(.required)] | length == 0) | \"\\(.name)\\t\\(.schema)\"' | while IFS=$'\\t' read -r n sc; do out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null); echo \"$out\" | jq -e '.data' >/dev/null 2>&1 || continue; bad=$(echo \"$out\" | jq '.data' | jq -r --slurpfile schema schemas/v2/$sc -f tools/validate.jq 2>&1 | head -1); [ -z \"$bad\" ] || echo \"$n->$sc\"; done | tr '\\n' ' '"))
+    check!("every form's payload conforms to the schema the TABLE names for it (bad: ${schema_mismatch})", schema_mismatch == "")?
+    # ...and that loop validated a real number of forms rather than skipping them all.
+    schema_checked = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select([.args[] | select(.required)] | length == 0) | \"\\(.name)\\t\\(.schema)\"' | while IFS=$'\\t' read -r n sc; do HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null | jq -e '.data' >/dev/null 2>&1 && echo x; done | wc -l | tr -d ' '"))
+    check!("...having validated ${schema_checked} of them, not zero", schema_checked != "0")?
+    Ok({})
+}
+
 b_plan! : Ctx => Try({}, _)
 b_plan! = |ctx| {
     # #100: a bad date is refused at the door. planned_sessions is judgment tier, so a
