@@ -255,23 +255,35 @@ ReportHealth :: [].{
                 _ => 1 == 1
             }
         # Not `?`. doctor's job is to diagnose a broken installation, so it is the one
-        # command that must not die on the thing it is meant to report. An unparseable
-        # per-sport zone override makes the count uncomputable; the count degrades and the
-        # reason is carried in the payload instead of killing the report.
-        # ANNOTATED. Without it `known` infers as a bare [False, True] tag union rather
-        # than Bool, and the JSON encoder writes it as the string "False" — which the
-        # schema catches, but only because the schema says boolean. Same trap as the
-        # payload records elsewhere in the tree.
+        # command that must not die on the thing it is meant to report. Three conditions
+        # block the count — the global zones absent, a global key unparseable, or a
+        # per-sport override unparseable — and `plan` only survives the last of them,
+        # because it propagates everything from load_zone_config! and degrades only inside
+        # pending_metrics_count!. That is why doctor needs three arms where plan needs one.
+        #
+        # Annotated so the Bool guarantee is LOCAL. Worth being precise about what the
+        # annotation does and does not do: removing it alone changes nothing, because
+        # `if p.awaiting_metrics_known` in the human screen already forces Bool. It is that
+        # `if` which is load-bearing today. Rewrite it as a `match` with the annotation
+        # gone and `known` infers a bare [False, True] tag union, the encoder emits the
+        # string "False", and only the schema catches it. The annotation is here so that
+        # refactor cannot reach across two functions to break the payload.
+        #
+        # The Err arms carry the inspected error rather than discarding it: a transient
+        # SQLITE_BUSY under a concurrent analyze would otherwise be reported as "could not
+        # be computed", which is the worst diagnosis the diagnostic command could give.
         awaiting : { count : U64, known : Bool, problem : Str }
         awaiting =
             match Analyze.load_zone_config!(path) {
                 Err(MissingConfig) => { count: 0, known: False, problem: "hr zone bounds are not set — run `stride config set hr_z1_max <bpm>` through hr_z4_max" }
-                Err(UnreadableConfig(key, raw)) => { count: 0, known: False, problem: "${key} is set to '${raw}', which is not a number" }
+                Err(UnreadableConfig(key, raw)) => { count: 0, known: False, problem: Output.unreadable_config_msg(key, raw) }
+                Err(SqliteErr(code, msg)) => { count: 0, known: False, problem: "the database refused the zone-config read (${Str.inspect(code)}): ${msg}" }
                 Err(_) => { count: 0, known: False, problem: "the zone config could not be read" }
                 Ok(zb) =>
                     match Analyze.pending_metrics_count!(path, zb) {
                         Ok(n) => { count: n, known: True, problem: "" }
-                        Err(UnreadableConfig(key, raw)) => { count: 0, known: False, problem: "${key} is set to '${raw}', which is not a number" }
+                        Err(UnreadableConfig(key, raw)) => { count: 0, known: False, problem: Output.unreadable_config_msg(key, raw) }
+                        Err(SqliteErr(code, msg)) => { count: 0, known: False, problem: "the database refused the pending-metrics count (${Str.inspect(code)}): ${msg}" }
                         Err(_) => { count: 0, known: False, problem: "the pending-metrics count could not be computed" }
                     }
             }
@@ -302,6 +314,13 @@ ReportHealth :: [].{
             # same question, and it is the same predicate `analyze` selects rows with.
             awaiting_metrics: awaiting.count,
             awaiting_metrics_known: awaiting.known,
+            # Measured at ~89ms on a 735-activity, 35MB-of-streams database, roughly
+            # doubling doctor. It is `LENGTH(s.raw_json)` in the shared predicate forcing
+            # a decode of every stored blob, so it scales with stream BYTES rather than
+            # activity count. Paid deliberately: the only way to make it cheaper is a
+            # narrower predicate than `analyze` uses, which would forfeit the property
+            # that this and `plan` cannot disagree — and doctor is run by hand.
+            #
             # WHY the count is unknown, which is the whole point of surfacing it in the
             # DIAGNOSTIC command: `plan` degrades silently and correctly, but a bare
             # `known: false` with no reason would just move the question here. "" when

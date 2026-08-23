@@ -1699,7 +1699,11 @@ b_seed_analyze! = |ctx| {
     # reported nowhere, which review of #221 established and this closes. doctor is the
     # command whose job is to say what is wrong with the installation.
     check!("doctor degrades on the same config rather than failing", Str.trim(strjq!(ctx, ["doctor"], ".data.awaiting_metrics_known")) == "false")?
-    check!("...and names the offending key and its value", Str.trim(strjq!(ctx, ["doctor"], ".data.config_error")) == "hr_z2_max_ride is set to '1.6e2', which is not a number")?
+    # The FULL sentence, remedy included. doctor carried a truncated copy of this string
+    # until the pure half was extracted from Output.unreadable_config! — one that had
+    # dropped the "fix it with" clause, which README says every gap states. Pinned whole
+    # so the two renderings cannot drift apart again.
+    check!("...and names the offending key, its value and the fix", Str.trim(strjq!(ctx, ["doctor"], ".data.config_error")) == "hr_z2_max_ride is set to '1.6e2', which is not a number — fix it with `stride config set hr_z2_max_ride <value>`")?
     check!("...while still reporting everything else it knows", Str.trim(strjq!(ctx, ["doctor"], ".data.activities | type")) == "number")?
     check!("...and exits 0, because a diagnosis is not a failure", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' doctor >/dev/null 2>&1; echo $?")) == "0")?
     check!("...and its human screen says so too", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' doctor 2>/dev/null"), "would be recomputed by analyze: unknown"))?
