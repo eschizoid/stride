@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(622)?
+    checks_ran_exactly!(623)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -957,15 +957,35 @@ b_init_config! = |ctx| {
     # written. Review found it by mutating `pz` to `pzz` and watching the whole suite go
     # green while the table advertised a command the parser does not have. Temp files.
     #
-    # The character class is [A-Za-z0-9_-], not [a-z-]. The narrow version could not see
-    # an arm named `zone2`, `power_curve` or `Doctor2`, each of which would leave the
-    # parser side at 27 and slip past the count pin as well.
+    # The extraction takes the FIRST LITERAL of every arm, and does not look at what the
+    # arm yields. Keying on `=> Ok(` or `=> count(` seemed right — it excludes the arity
+    # hints — but it cannot see an arm that VALIDATES its argument, because that yields an
+    # `if` and spans several lines. Review built one:
+    #
+    #     [_, "hrv", date] =>
+    #         if Metrics.is_canonical_date(date) { Ok(Zones) } else { Err(Usage(...)) }
+    #
+    # `stride hrv <date>` dispatched, the table did not describe it, and the whole suite
+    # was green. That is not a hypothetical shape: `reps` at the top of this file is
+    # written exactly that way, and only survives because a second single-line arm happens
+    # to contribute the same verb.
+    #
+    # Yield-blind extraction means retired names come back too, so the ONE name the table
+    # deliberately does not advertise is pinned as a value below rather than filtered by a
+    # rule — retiring a command becomes a stated act instead of a silent one.
+    #
+    # The character class is [A-Za-z0-9_-], not [a-z-]. The narrow version could not see an
+    # arm named `zone2`, `power_curve` or `Doctor2`.
     verbs_dir = "${ctx.home}/.verbs"
-    parser_verbs = "grep -oE '\\[_, \"[A-Za-z0-9_-]+\"(, \"[A-Za-z0-9_-]+\")*[^]]*\\] => (Ok|count)' src/Command.roc | sed 's/ => .*//; s/\\[_, //; s/,[^\"].*//' | tr -d '\"[]' | sed 's/, / /' | cut -d' ' -f1 | grep -v '^-' | grep -vx help | sort -u"
+    parser_verbs = "grep -oE '\\[_, \"[A-Za-z0-9_-]+\"' src/Command.roc | sed 's/.*\"\\([A-Za-z0-9_-]*\\)\"/\\1/' | grep -v '^-' | grep -vx help | sort -u"
     spec_verbs = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].name | split(\" \")[0]' | sort -u"
     _ = sh!("rm -rf '${verbs_dir}' && mkdir -p '${verbs_dir}' && ${parser_verbs} > '${verbs_dir}/parser' && ${spec_verbs} > '${verbs_dir}/spec'")
+    # `backfill` and nothing else. It is the one arm that answers a name with a pointer
+    # instead of a command (#232), so it must NOT be advertised — and pinning it as a
+    # value means a second undescribed command changes this string and fails, where a
+    # filter rule would have quietly absorbed it.
     undescribed = Str.trim(sh!("comm -23 '${verbs_dir}/parser' '${verbs_dir}/spec' | tr '\\n' ' '"))
-    check!("every command the parser accepts is described in the table (extra: ${undescribed})", undescribed == "")?
+    check!("the only command the parser accepts and the table omits is the retired one (got: ${undescribed})", undescribed == "backfill")?
     unparsed = Str.trim(sh!("comm -13 '${verbs_dir}/parser' '${verbs_dir}/spec' | tr '\\n' ' '"))
     check!("...and every described command is one the parser accepts (extra: ${unparsed})", unparsed == "")?
     # Non-vacuity pinned on the INTERSECTION, not on the two inputs. Pinning the inputs
@@ -982,10 +1002,29 @@ b_init_config! = |ctx| {
     # undetected. Invoke each multi-word form WITH its declared required arguments and
     # require an answer that is not `usage` — that is what distinguishes a form the parser
     # has from one it does not.
+    # Run against a DISCARDED COPY, not the fixture. Two of the three multi-word forms
+    # write — `week add` and `config set` — and an earlier version invoked them against
+    # ctx.home. That inserted the suite's first planned_sessions row, taking id 1, which
+    # collides with a stray-write guard 1500 lines below that asserts "the very next add
+    # must still be id 1". The suite passed anyway, by luck: the probe landed on ctx.d1
+    # and the next add on that date REVISED it in place rather than inserting. Change
+    # either date and the suite breaks far from the cause.
+    #
+    # An initialised copy, not a bare temp dir: the discriminator is "not usage", and an
+    # empty HOME answers `no_database` to everything, which is also not usage — the check
+    # would pass on nothing.
+    sub_probe = "${ctx.home}/.sub-probe"
+    _ = sh!("rm -rf '${sub_probe}' && mkdir -p '${sub_probe}' && cp -R '${ctx.home}/.stride' '${sub_probe}/.stride'")
     subform_cmds = "jq -r '.data.commands[] | select(.name | test(\" \")) | [.name] + [.args[] | select(.required) | .name | if test(\"YYYY-MM-DD\") then \"${ctx.d1}\" else \"1\" end] | join(\" \")'"
-    bad_forms = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | ${subform_cmds} | while read -r line; do code=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true | tr '\\n' ' '"))
+    bad_forms = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | ${subform_cmds} | { while read -r line; do code=$(HOME='${sub_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true; } | tr '\\n' ' '"))
     check!("every multi-word form the table names is one the parser reaches (bad: ${bad_forms})", bad_forms == "")?
-    check!("...and there were multi-word forms to check", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[].name | select(test(\" \"))] | length'")) == "3")?
+    n_multi = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[].name | select(test(\" \"))] | length'"))
+    n_probed = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | ${subform_cmds} | wc -l | tr -d ' '"))
+    check!("...and every multi-word form was probed (${n_probed} of ${n_multi})", n_probed == n_multi and n_multi != "0")?
+    _ = sh!("rm -rf '${sub_probe}'")
+    # The fixture must be untouched by the probe above — that is the property the earlier
+    # version broke, so it is asserted rather than assumed.
+    check!("...leaving the fixture's session log empty, as it was", Str.trim(sql!(ctx.db, "SELECT count(*) FROM planned_sessions;")) == "0")?
 
     # `mutates` CHECKED AGAINST BEHAVIOUR, not trusted. Every form declaring
     # mutates:false runs against a copy of the fixture and the database CONTENTS must not
@@ -1023,9 +1062,15 @@ b_init_config! = |ctx| {
     # The guard that matters: how many forms REACHED their handler. Counting the jq list
     # instead — which is what this used to do — reports green on a sweep where every
     # invocation bounced off the parser.
-    reached = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | ${fillers} | while read -r line; do code=$(HOME='${ro_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] || echo x; done | wc -l | tr -d ' '"))
-    check!("...and every read-only form actually reached its handler", reached == "19")?
-    check!("...which is every form the table declares read-only", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select(.mutates == false)] | length'")) == "19")?
+    # Compared to the OTHER COUNT measured in the same run, not to a literal. A literal
+    # here was bump-bait: its failure message could not say which direction to look, so
+    # the natural repair was to edit the number — which is the repair that removes the
+    # guard. Two counts cannot be reconciled that way, and adding a read-only command
+    # needs no edit at all. The loop names the forms that did not arrive.
+    stalled = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | ${fillers} | { while read -r line; do code=$(HOME='${ro_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true; } | tr '\\n' ' '"))
+    declared_ro = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select(.mutates == false)] | length'"))
+    check!("...and every read-only form actually reached its handler (stalled: ${stalled})", stalled == "")?
+    check!("...with ${declared_ro} of them declared, and at least one to sweep", declared_ro != "0")?
 
     # `network` against the SOURCE, not against itself. An earlier version of the schema
     # description claimed a test pinned this set; none did, which is worse than saying
