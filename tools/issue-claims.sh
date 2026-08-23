@@ -42,6 +42,20 @@ REPO="${GH_REPO:-eschizoid/stride}"
 CACHE=$(mktemp); BLOCKS=$(mktemp); trap 'rm -f "$CACHE" "$BLOCKS"' EXIT
 fail=0; checked=0; blocks=0; quoting=0
 # every `issue-claims: quoting` marker in the repo, pinned so a new one is deliberate
+# PLAN.md is listed through `ls` so its ABSENCE is not an error while its PRESENCE is
+# still scanned. AGENTS.md and ADR 0000 both permit a root PLAN.md only on the condition
+# that this tool reads it — that scan is the load-bearing half of the permission, and the
+# self-deletion trigger only ever worked because of it. A literal entry would fail whenever
+# no sequence is in flight; naming nothing at all would leave the permission standing with
+# its enforcement quietly gone.
+#
+# The `||` matters more than it looks. macOS awk ABORTS the rest of its argument list on a
+# missing file rather than skipping it, and this invocation's exit status was discarded, so
+# one absent entry silently truncated the scan — losing every file listed after it. That is
+# how deleting PLAN.md reported "1 quoting markers" instead of 4 and nearly had the expected
+# count "corrected" to a number a broken run produced. It only surfaced at all because the
+# marker-bearing files happened to sit downstream; remove one from the end and the
+# truncation is invisible.
 EXPECTED_QUOTING=4
 
 # one line per comment block: file<TAB>startline<TAB>joined text
@@ -84,7 +98,8 @@ awk '
   /^[[:space:]]*$/ { if (n) { print f"\t"s"\t"t; n=0 } next }
   { if (!n) { f=FILENAME; s=FNR; t="" } n++; t=t" "$0 }
   END { if (n) print f"\t"s"\t"t }
-' README.md AGENTS.md docs/*.md docs/adr/*.md .claude/skills/stride/SKILL.md >> "$BLOCKS"
+' README.md AGENTS.md $(ls PLAN.md 2>/dev/null) docs/*.md docs/adr/*.md .claude/skills/stride/SKILL.md >> "$BLOCKS" \
+  || { echo "issue-claims: markdown extraction failed — a listed file is missing" >&2; exit 5; }
 
 while IFS=$'\t' read -r f s txt; do
   blocks=$((blocks + 1))
