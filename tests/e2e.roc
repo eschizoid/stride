@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(684)?
+    checks_ran_exactly!(685)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2525,6 +2525,9 @@ b_command_schemas! = |ctx| {
     check!("...and there were flags to check", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.flags | length'")) != "0")?
     _ = sh!("rm -rf '${flag_dir}'")
     _ = sh!("rm -rf '${arity_probe}'")
+    Ok({})
+}
+
 ## The closed agent loop (#220): observe state, write intent, reconcile against real
 ## training, observe again — with the reconciliation reflected.
 ##
@@ -2545,7 +2548,8 @@ b_agent_loop! = |ctx| {
     # is permanent, and the fixture's 101 is linked by an earlier scenario. Seeded here
     # rather than borrowed, so this scenario does not depend on which activities earlier
     # ones happened to leave free — that dependency is invisible until it breaks, and it
-    # broke on the first run of this test. Dated d1 so it lands inside the 28-day window.
+    # broke on the first run of this test. Dated d2, one day AFTER the session it will be
+    # completed against, so `completed_on` can be told apart from `target_date`.
     # Id 9220 is clear of the fixture's range and is deleted at the end.
     #
     # Dated d2 while the session below targets d1 — DELIBERATELY different days. With both
@@ -2574,8 +2578,9 @@ b_agent_loop! = |ctx| {
     check!("the adherence identity holds at the start", base_planned == base_completed + str_to_i64(pj!(".data.adherence_28d.skipped")) + base_open)?
 
     # ── leg 1: write intent ─────────────────────────────────────────────
-    # Dated d1 so it lands inside the 28-day adherence window AND has a real activity
-    # (101) on the same day to complete against — the loop needs both.
+    # Dated d1: inside the 28-day adherence window, and a DIFFERENT day from the probe
+    # activity above, which is what lets `completed_on` prove it comes from the activity
+    # rather than from the session's own target.
     sid = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "agent loop probe", "closing the loop"], ".data.id"))
     check!("the loop's session was created", sid != "" and sid != "null")?
     check!("...and appears in open_sessions", pj!("[.data.open_sessions[].id] | index(${sid}) != null") == "true")?
@@ -2584,8 +2589,12 @@ b_agent_loop! = |ctx| {
     check!("...and still_open by exactly one", str_to_i64(pj!(".data.adherence_28d.still_open")) == base_open + 1)?
     check!("...while completed did not move — planning is not completing", str_to_i64(pj!(".data.adherence_28d.completed")) == base_completed)?
     check!("...and both lists grew by one", str_to_i64(pj!(".data.open_sessions | length")) == base_open_len + 1 and str_to_i64(pj!(".data.plan_history_28d | length")) == base_hist_len + 1)?
-    # The identity asserted HERE, which is the only moment in this scenario where all four
-    # terms are non-trivial — still_open is 1. Review proved the other two assertions of it
+    # The identity asserted HERE, the only moment `still_open` is non-zero — measured at
+    # planned=3, completed=0, skipped=2, still_open=1. Not all four terms: `completed` is
+    # necessarily 0 in leg 1, and there is no point in this scenario where all four are
+    # non-zero at once. This assertion is correct and cheap; it is NOT load-bearing —
+    # review could construct no mutation for which it is the unique catcher, because every
+    # delta check fires first. Review proved the other two assertions of it
     # measure nothing: at the baseline and at the end still_open is 0, so both reduce to
     # `planned == skipped`, and a payload hardwiring still_open to 0 passed the whole suite
     # with only the two delta checks removed. Those deltas carry all of the still_open
@@ -2593,7 +2602,7 @@ b_agent_loop! = |ctx| {
     check!("...and the adherence identity holds with still_open actually non-zero", str_to_i64(pj!(".data.adherence_28d.still_open")) > 0 and str_to_i64(pj!(".data.adherence_28d.planned")) == str_to_i64(pj!(".data.adherence_28d.completed")) + str_to_i64(pj!(".data.adherence_28d.skipped")) + str_to_i64(pj!(".data.adherence_28d.still_open")))?
 
     # ── leg 2: reconcile against real training ──────────────────────────
-    # Asserted, not fired and forgotten: if the link is REFUSED — 101 already told another
+    # Asserted, not fired and forgotten: if the link is REFUSED — the activity already told another
     # session's story, say — every delta below would compare against an unchanged payload
     # and the failures would point at the assertions rather than at the cause.
     done_out = stride!(ctx.bin, ctx.home, ["complete", sid, "9220"])
@@ -2616,9 +2625,9 @@ b_agent_loop! = |ctx| {
     check!("...while planned stays put — a completion is not a new plan", str_to_i64(pj!(".data.adherence_28d.planned")) == base_planned + 1)?
     # The strongest coherence assertion here: unplanned_activities comes from an entirely
     # separate query over `activities`, counting those NOT linked to any session. Linking
-    # 101 has to move it, and nothing in a per-command test relates the two.
+    # 9220 has to move it, and nothing in a per-command test relates the two.
     check!("...and the activity stops counting as unplanned, a fact from another query", str_to_i64(pj!(".data.adherence_28d.unplanned_activities")) == base_unplanned - 1)?
-    # ...and the OTHER link. The comment above claims unplanned excludes activities
+    # ...and the OTHER link. `Plan.roc`'s unplanned query excludes activities
     # referenced by EITHER link, and only the completion half was tested — deleting the
     # substitute clause from the query passed the entire suite, this scenario included.
     # A substitution is `skip <id> "<reason>" <activity>`: the session did not happen, the
@@ -2626,9 +2635,20 @@ b_agent_loop! = |ctx| {
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (9221,'agent loop substitute','Ride','${ctx.d2}T08:00:00Z',3600,20000,180,180,140);")
     sub_unplanned = str_to_i64(pj!(".data.adherence_28d.unplanned_activities"))
     sid2 = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "agent loop substitute probe", "closing the other half"], ".data.id"))
-    _ = stride!(ctx.bin, ctx.home, ["skip", sid2, "did something else instead", "9221"])
+    # Asserted, for the same reason the completion above is: `skip` has five refusal paths,
+    # and every one of them leaves `unplanned` unchanged — so the next check would fail
+    # pointing at the assertion rather than at the cause, which is what the comment twenty
+    # lines above forbids. Fired and forgotten is house style elsewhere in this file; the
+    # block that sets the stricter standard should not be the one breaking it.
+    sub_out = stride!(ctx.bin, ctx.home, ["skip", sid2, "did something else instead", "9221"])
+    check!("...the substitution is accepted, not refused (got ${Str.trim(sub_out)})", Str.contains(sub_out, "\"substitute_activity\":9221") and Str.contains(sub_out, "\"skipped_session\":${sid2}"))?
     check!("...and a SUBSTITUTED activity stops counting as unplanned too", str_to_i64(pj!(".data.adherence_28d.unplanned_activities")) == sub_unplanned - 1)?
-    check!("...counted as skipped, not completed", str_to_i64(pj!(".data.adherence_28d.skipped")) == str_to_i64(pj!(".data.adherence_28d.substituted")) + base_skipped_plain)?
+    # Named for what it asserts. It was "counted as skipped, not completed" and contains no
+    # `completed` term — and review aimed four mutations at the completed half, all of
+    # which pre-existing checks caught first, so the name promised coverage that lives
+    # elsewhere. What this actually pins is that the PLAIN-skip count did not move: the
+    # new skip is a substitution, so `skipped` and `substituted` must rise together.
+    check!("...and the plain-skip count is unmoved, so the new skip is a substitution", str_to_i64(pj!(".data.adherence_28d.skipped")) == str_to_i64(pj!(".data.adherence_28d.substituted")) + base_skipped_plain)?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${sid2}; DELETE FROM activity_metrics WHERE activity_id = 9221; DELETE FROM activities WHERE id = 9221;")
     check!("...with the identity still holding after all of it", str_to_i64(pj!(".data.adherence_28d.planned")) == str_to_i64(pj!(".data.adherence_28d.completed")) + str_to_i64(pj!(".data.adherence_28d.skipped")) + str_to_i64(pj!(".data.adherence_28d.still_open")))?
     # completion_pct is derived from two of the counts above; asserted against them rather
@@ -2660,10 +2680,12 @@ b_agent_loop! = |ctx| {
     err_probe!("top notametric", "bad_metric", "unknown metric")?
     err_probe!("reps notadate", "usage", "unparseable date")?
     err_probe!("frobnicate", "unknown_command", "unknown command")?
-    # The code alone does not pin the MESSAGE, and for `reps` the message is the point:
+    # The code alone does not pin the MESSAGE, and for `reps` the value is the point:
     # the arm exists because `reps asc` once answered "no detected interval structure on
-    # asc" — a data fact about a date that does not exist. Gutting it to a bare "reps"
-    # leaves the code `usage` and passed. So this names the offending value.
+    # asc" — a data fact about a date that does not exist. Gutting the message to a bare
+    # "reps" is NOT what this catches: three expects in Command.roc assert it contains
+    # "not a date", and they abort `just test` before e2e runs. What this catches is a
+    # message that still says "not a date" and drops the VALUE, which passes all three.
     check!("...and the date-refusal message names what it refused", Str.contains(stride!(ctx.bin, ctx.home, ["reps", "notadate"]), "notadate"))?
     _ = sh!("rm -f '${ctx.home}/.err-probe.out'")
 
