@@ -976,22 +976,38 @@ b_init_config! = |ctx| {
     #
     # The character class is [A-Za-z0-9_-], not [a-z-]. The narrow version could not see an
     # arm named `zone2`, `power_curve` or `Doctor2`.
+    #
+    # COMMENTS ARE STRIPPED FIRST. grep reads the file as text, and a comment elsewhere in
+    # this repo quotes `[_, "stats"] => Ok(Stats)` while describing a past regression — so
+    # that comment fed `stats` into the parser side, and deleting the real arm left every
+    # verb check green. The comment documenting the class of bug had become a vector for
+    # it. Verified safe: no arm pattern contains a `#`, and the strip leaves the verb set
+    # on pristine source identical.
+    #
+    # Whitespace INSIDE the pattern is tolerated. `[_,"hrv"]` with no space after the comma
+    # is a real, callable, undescribed command that the tight pattern could not see, and
+    # nothing normalises spacing here — `roc fmt` is blocked upstream (#27).
+    #
+    # LC_ALL=C so the retired-name pin below compares against a stable collation rather
+    # than the runner's locale.
     verbs_dir = "${ctx.home}/.verbs"
-    parser_verbs = "grep -oE '\\[_, \"[A-Za-z0-9_-]+\"' src/Command.roc | sed 's/.*\"\\([A-Za-z0-9_-]*\\)\"/\\1/' | grep -v '^-' | grep -vx help | sort -u"
-    spec_verbs = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].name | split(\" \")[0]' | sort -u"
+    parser_verbs = "sed 's/#.*//' src/Command.roc | grep -oE '\\[[[:space:]]*_[[:space:]]*,[[:space:]]*\"[A-Za-z0-9_-]+\"' | sed 's/.*\"\\([A-Za-z0-9_-]*\\)\"/\\1/' | grep -v '^-' | grep -vx help | LC_ALL=C sort -u"
+    spec_verbs = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].name | split(\" \")[0]' | LC_ALL=C sort -u"
     _ = sh!("rm -rf '${verbs_dir}' && mkdir -p '${verbs_dir}' && ${parser_verbs} > '${verbs_dir}/parser' && ${spec_verbs} > '${verbs_dir}/spec'")
     # `backfill` and nothing else. It is the one arm that answers a name with a pointer
     # instead of a command (#232), so it must NOT be advertised — and pinning it as a
     # value means a second undescribed command changes this string and fails, where a
     # filter rule would have quietly absorbed it.
     undescribed = Str.trim(sh!("comm -23 '${verbs_dir}/parser' '${verbs_dir}/spec' | tr '\\n' ' '"))
-    check!("the only command the parser accepts and the table omits is the retired one (got: ${undescribed})", undescribed == "backfill")?
+    check!("the parser accepts nothing the table omits, beyond deliberately retired names (got: ${undescribed})", undescribed == "backfill")?
     unparsed = Str.trim(sh!("comm -13 '${verbs_dir}/parser' '${verbs_dir}/spec' | tr '\\n' ' '"))
     check!("...and every described command is one the parser accepts (extra: ${unparsed})", unparsed == "")?
-    # Non-vacuity pinned on the INTERSECTION, not on the two inputs. Pinning the inputs
-    # was the mistake that let the broken `comm` through: 27 lines existed on each side
-    # and the guard could not see that no comparison had happened. The intersection drops
-    # on drift in either direction AND cannot be satisfied by a comm that never ran.
+    # This pins the SIZE of the command set, and that is now its only unique job. It was
+    # added as the non-vacuity guard — pinning the two inputs was the mistake that let a
+    # silently-broken `comm` through — but once `undescribed` became a pin on a VALUE
+    # rather than on emptiness, it catches every vacuity mode on its own. What survives
+    # here is the deliberate-bump discipline: adding a properly described command still
+    # has to change a number a reader sees.
     overlap = Str.trim(sh!("comm -12 '${verbs_dir}/parser' '${verbs_dir}/spec' | wc -l | tr -d ' '"))
     check!("...and the two lists genuinely overlap on all 27 verbs (got ${overlap})", overlap == "27")?
     _ = sh!("rm -rf '${verbs_dir}'")
