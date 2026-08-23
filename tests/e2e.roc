@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(653)?
+    checks_ran_exactly!(680)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -298,6 +298,10 @@ run_scenarios! = |ctx| {
     b_doctor!(ctx)?
     b_human!(ctx)?
     b_command_schemas!(ctx)?
+    # LAST of the substantive scenarios: the loop needs a rich, analyzed fixture — real
+    # activities to complete against and a populated adherence window — so it runs after
+    # everything that builds one, and before the two that rebuild the database.
+    b_agent_loop!(ctx)?
     b_concurrency!(ctx)?
     b_migration!(ctx)?
     Ok({})
@@ -2521,6 +2525,118 @@ b_command_schemas! = |ctx| {
     check!("...and there were flags to check", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.flags | length'")) != "0")?
     _ = sh!("rm -rf '${flag_dir}'")
     _ = sh!("rm -rf '${arity_probe}'")
+## The closed agent loop (#220): observe state, write intent, reconcile against real
+## training, observe again — with the reconciliation reflected.
+##
+## Every leg of this is already covered by a per-command check. What is NOT covered, and
+## what this exists for, is that the legs COMPOSE: that completing a session moves
+## adherence in the direction it should, that the history row and the open-session list
+## agree afterwards, and that a count derived from a DIFFERENT query moves with them. A
+## per-command test cannot see a break there, because each payload is individually
+## correct while the pair contradicts.
+##
+## Every expectation is computed from a baseline read at the top rather than hardcoded,
+## so the scenario asserts DELTAS. Hardcoding would make it a second, weaker copy of the
+## per-command checks and would rot the first time an earlier scenario adds a session.
+b_agent_loop! : Ctx => Try({}, _)
+b_agent_loop! = |ctx| {
+    pj! = |q| Str.trim(strjq!(ctx, ["plan"], q))
+    # The loop needs an activity NOT already telling another session's story: a completion
+    # is permanent, and the fixture's 101 is linked by an earlier scenario. Seeded here
+    # rather than borrowed, so this scenario does not depend on which activities earlier
+    # ones happened to leave free — that dependency is invisible until it breaks, and it
+    # broke on the first run of this test. Dated d1 so it lands inside the 28-day window.
+    # Id 9220 is clear of the fixture's range and is deleted at the end.
+    #
+    # Dated d2 while the session below targets d1 — DELIBERATELY different days. With both
+    # on the same date, `completed_on` could not tell "the date of the activity it was
+    # completed against" from "the session's own target date", and the assertion that it
+    # comes from the activity would have passed against either. Found by asking what
+    # mutation it would catch, which was none.
+    # Read BEFORE the seed as well as after: the cleanup deletes the probe activity, so
+    # the state to return to is the one from before it existed, not the baseline the
+    # deltas are measured against. Getting that wrong is a check that fails on its own
+    # tidying rather than on anything the loop did.
+    pre_unplanned = str_to_i64(Str.trim(strjq!(ctx, ["plan"], ".data.adherence_28d.unplanned_activities")))
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (9220,'agent loop ride','Ride','${ctx.d2}T07:00:00Z',3600,25000,190,190,145);")
+    # ── leg 0: observe ──────────────────────────────────────────────────
+    # Baselines read AFTER the seed, so the deltas below are the loop's own and not the
+    # seed's — unplanned_activities in particular counts this new row.
+    base_planned = str_to_i64(pj!(".data.adherence_28d.planned"))
+    base_completed = str_to_i64(pj!(".data.adherence_28d.completed"))
+    base_open = str_to_i64(pj!(".data.adherence_28d.still_open"))
+    base_unplanned = str_to_i64(pj!(".data.adherence_28d.unplanned_activities"))
+    base_open_len = str_to_i64(pj!(".data.open_sessions | length"))
+    base_hist_len = str_to_i64(pj!(".data.plan_history_28d | length"))
+    # The invariant SKILL.md states to the coach, asserted before anything moves so a
+    # later failure is attributable to this scenario rather than inherited.
+    check!("the adherence identity holds at the start", base_planned == base_completed + str_to_i64(pj!(".data.adherence_28d.skipped")) + base_open)?
+
+    # ── leg 1: write intent ─────────────────────────────────────────────
+    # Dated d1 so it lands inside the 28-day adherence window AND has a real activity
+    # (101) on the same day to complete against — the loop needs both.
+    sid = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "agent loop probe", "closing the loop"], ".data.id"))
+    check!("the loop's session was created", sid != "" and sid != "null")?
+    check!("...and appears in open_sessions", pj!("[.data.open_sessions[].id] | index(${sid}) != null") == "true")?
+    check!("...and in plan_history_28d, as open", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .status]") == "[\n  \"open\"\n]")?
+    check!("...raising planned by exactly one", str_to_i64(pj!(".data.adherence_28d.planned")) == base_planned + 1)?
+    check!("...and still_open by exactly one", str_to_i64(pj!(".data.adherence_28d.still_open")) == base_open + 1)?
+    check!("...while completed did not move — planning is not completing", str_to_i64(pj!(".data.adherence_28d.completed")) == base_completed)?
+    check!("...and both lists grew by one", str_to_i64(pj!(".data.open_sessions | length")) == base_open_len + 1 and str_to_i64(pj!(".data.plan_history_28d | length")) == base_hist_len + 1)?
+
+    # ── leg 2: reconcile against real training ──────────────────────────
+    # Asserted, not fired and forgotten: if the link is REFUSED — 101 already told another
+    # session's story, say — every delta below would compare against an unchanged payload
+    # and the failures would point at the assertions rather than at the cause.
+    done_out = stride!(ctx.bin, ctx.home, ["complete", sid, "9220"])
+    check!("the session completes against a real activity (got ${Str.trim(done_out)})", Str.contains(done_out, "\"activity\":9220") and Str.contains(done_out, "\"completed_session\":${sid}"))?
+    # The four assertions that a per-command test cannot make, because each of these
+    # payload fields is computed by a DIFFERENT query and only their agreement is the
+    # contract.
+    check!("completing removes the session from open_sessions", pj!("[.data.open_sessions[].id] | index(${sid})") == "null")?
+    # `done`, not `completed` — the status enum is open|done|skipped. Pinned against the
+    # schema's own vocabulary, which is what a coach branches on.
+    check!("...but keeps it in plan_history_28d, now done", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .status]") == "[\n  \"done\"\n]")?
+    check!("...linked to the activity it was completed against", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .completed_activity_id]") == "[\n  9220\n]")?
+    check!("...and dated by that activity, not by the session's target", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .completed_on]") == "[\n  \"${ctx.d2}\"\n]")?
+    check!("...which is a different day from the target, so that check can tell them apart", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .target_date]") == "[\n  \"${ctx.d1}\"\n]" and ctx.d1 != ctx.d2)?
+    check!("...moving completed up by one", str_to_i64(pj!(".data.adherence_28d.completed")) == base_completed + 1)?
+    check!("...and still_open back down to where it started", str_to_i64(pj!(".data.adherence_28d.still_open")) == base_open)?
+    check!("...while planned stays put — a completion is not a new plan", str_to_i64(pj!(".data.adherence_28d.planned")) == base_planned + 1)?
+    # The strongest coherence assertion here: unplanned_activities comes from an entirely
+    # separate query over `activities`, counting those NOT linked to any session. Linking
+    # 101 has to move it, and nothing in a per-command test relates the two.
+    check!("...and the activity stops counting as unplanned, a fact from another query", str_to_i64(pj!(".data.adherence_28d.unplanned_activities")) == base_unplanned - 1)?
+    check!("...with the identity still holding after all of it", str_to_i64(pj!(".data.adherence_28d.planned")) == str_to_i64(pj!(".data.adherence_28d.completed")) + str_to_i64(pj!(".data.adherence_28d.skipped")) + str_to_i64(pj!(".data.adherence_28d.still_open")))?
+    # completion_pct is derived from two of the counts above; asserted against them rather
+    # than against a literal, so it cannot drift from its own inputs.
+    check!("...and completion_pct agrees with the counts it is derived from", str_to_i64(pj!(".data.adherence_28d.completion_pct")) == ((str_to_i64(pj!(".data.adherence_28d.completed"))).to_f64() / (str_to_i64(pj!(".data.adherence_28d.planned"))).to_f64() * 100.0).round_to_i64_try().ok_or(-1))?
+
+    # ── leg 3: the machine-mode error invariant ─────────────────────────
+    # `run_command!` is the single boundary converting platform failures into envelopes,
+    # and its comment calls an uncoded failure "a missing arm in this match rather than a
+    # habit nobody enforced". Nothing enforced it. In machine mode no handled failure may
+    # exit non-zero with empty stdout — that shape is what an agent cannot recover from,
+    # because there is nothing to branch on.
+    err_probe! = |args, label| {
+        out = "${ctx.home}/.err-probe.out"
+        st = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${args} > '${out}' 2>/dev/null; echo $?"))
+        code = Str.trim(sh!("jq -r '.error.code // \"\"' '${out}' 2>/dev/null"))
+        check!("${label}: non-zero exit carries a coded envelope on stdout (exit ${st}, code '${code}')", st != "0" and code != "" and code != "null")
+    }
+    err_probe!("activity 99999999", "unknown activity")?
+    err_probe!("tte notanumber", "unparseable watts")?
+    err_probe!("config get nosuchkey", "absent config key")?
+    err_probe!("top notametric", "unknown metric")?
+    err_probe!("reps notadate", "unparseable date")?
+    err_probe!("frobnicate", "unknown command")?
+    _ = sh!("rm -f '${ctx.home}/.err-probe.out'")
+
+    # ── cleanup: the loop leaves no trace ───────────────────────────────
+    # Deleted by id, and the deletion asserted — every counter this scenario moved has to
+    # come back, or a later scenario inherits a session it never created.
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${sid}; DELETE FROM activity_metrics WHERE activity_id = 9220; DELETE FROM activities WHERE id = 9220;")
+    check!("the loop left the plan exactly as it found it", str_to_i64(pj!(".data.adherence_28d.planned")) == base_planned and str_to_i64(pj!(".data.adherence_28d.completed")) == base_completed and str_to_i64(pj!(".data.adherence_28d.unplanned_activities")) == pre_unplanned)?
     Ok({})
 }
 
