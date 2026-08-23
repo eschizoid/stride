@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_at_least!(550)?
+    checks_ran_exactly!(600)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1518,6 +1518,149 @@ b_seed_analyze! = |ctx| {
     sch_open = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d2}", "threshold", "schema probe open", "r"], ".data.id"))
     check!("plan arrays are populated for this check", strjq!(ctx, ["plan"], "(.data.open_sessions | length > 0) and (.data.plan_history_28d | length > 0)") == "true")?
     check!("plan with populated arrays conforms", validate!("plan", "plan") == "")?
+
+    # ── data freshness (#221) ───────────────────────────────────────────
+    # The schema check above proves SHAPE, and shape is exactly what a hardcoded zero
+    # satisfies. These pin the counts to state the test controls, in both directions, so a
+    # constant fails: the fixture is analyzed here, so metrics reads 0 and streams reads
+    # its resting 1 (see below), then each moves when its underlying condition is created,
+    # then returns.
+    pf! = |q| Str.trim(strjq!(ctx, ["plan"], ".data.data_freshness.${q}"))
+    check!("a current database is awaiting no metrics", pf!("activities_awaiting_metrics") == "0")?
+    # 1 is the RESTING value here, not a bug — pinning it to 0 would have been pinning a
+    # wish. It matters that this is non-zero: the checks below move it to 2 and back, which
+    # a field hardcoded to any single constant cannot survive.
+    #
+    # WHICH row is named by assertion rather than by comment. An earlier draft said "id 99,
+    # the baseline probe"; 99 is deleted four hundred lines above this, so that comment sent
+    # the next reader to a row which no longer exists. The real one is 102, the HR-only
+    # Rowing row deliberately seeded without streams. Asserting it means anyone who adds an
+    # unstreamed activity earlier in the seed gets told exactly what changed, instead of
+    # three checks failing with a message about the wrong id.
+    unstreamed = Str.trim(sh!("sqlite3 '${ctx.db}' \"SELECT COALESCE(group_concat(a.id),'') FROM activities a LEFT JOIN streams s ON s.activity_id = a.id WHERE s.activity_id IS NULL AND a.moving_time > 0;\""))
+    check!("exactly one fixture activity has no streams, and it is 102 (got ${unstreamed})", unstreamed == "102")?
+    check!("...so awaiting streams rests at 1", pf!("activities_awaiting_streams") == "1")?
+    # ...and it is the same count doctor reports, which is what the schema claims and
+    # nothing checked. A cross-COMMAND oracle: it catches one side drifting from the other —
+    # a field wired to the wrong query, a stale copy, a type slip — and is blind BY
+    # CONSTRUCTION to a bug inside the Strava.pending_streams! they both call, since both
+    # payloads would move together and the equality would still hold.
+    check!("...the same count doctor reports as pending_streams", pf!("activities_awaiting_streams") == Str.trim(strjq!(ctx, ["doctor"], ".data.pending_streams")))?
+    # newest_activity read a second way, so a hardcoded date or a full timestamp fail — the
+    # schema's "string" accepts both. Not "the wrong column": `activities` has exactly one
+    # date column, so that is not a case this fixture can express.
+    newest_sql = Str.trim(sh!("sqlite3 '${ctx.db}' \"SELECT COALESCE(MAX(substr(start_local,1,10)),'') FROM activities;\""))
+    # ...and the fixture must actually HAVE activities, or the line above is "" == "" and
+    # reports green on a field that was never computed.
+    check!("the fixture has activities, so the next check is not \"\" == \"\"", newest_sql != "")?
+    check!("newest_activity agrees with the database", pf!("newest_activity") == newest_sql)?
+    # The oracle above is byte-identical SQL, so it catches plumbing errors and nothing the
+    # two share. This anchors the oracle ITSELF to a date the harness computed independently
+    # of any query.
+    check!("...and that date is the fixture's own d2, not merely what sqlite agrees to", newest_sql == ctx.d2)?
+    # as_of and newest_activity pinned side by side, as DIFFERENT dates with different
+    # provenance. Three rounds of prose on this PR described their relationship wrongly —
+    # "the gap is days since the last ride", "the gap goes to zero on stale data" — and a
+    # comment cannot catch the fourth. analyze has just run, so as_of is floored at today
+    # while newest_activity stays on the last activity's own date, one day earlier.
+    check!("analyze floors as_of at today...", Str.trim(strjq!(ctx, ["plan"], ".data.summary.as_of")) == ctx.today)?
+    check!("...while newest_activity stays on the last activity's date, a different day", pf!("newest_activity") == ctx.d2 and ctx.today != ctx.d2)?
+    # ...and that as_of FREEZES when analyze does not run, which is the half the pair above
+    # cannot see: recompute as_of from the clock at read time and both checks still pass,
+    # while the reasoning that makes last_sync the primary signal goes silently dead.
+    # Truncating daily_load is what "analyze has not run since" looks like to a reader.
+    _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day > '${ctx.d1}';")
+    check!("d1 is not today, so the next check cannot pass by the two dates coinciding", ctx.d1 != ctx.today)?
+    check!("as_of is pinned to the last analyze, not recomputed from the clock", Str.trim(strjq!(ctx, ["plan"], ".data.summary.as_of")) == ctx.d1)?
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("...and analyze puts it back on today", Str.trim(strjq!(ctx, ["plan"], ".data.summary.as_of")) == ctx.today)?
+    # Bumping every stored metrics_rev is precisely what a release that changes the metric
+    # definitions does, and it is the case doctor's `unanalyzed` CANNOT see: the rows still
+    # have metrics, so `m.activity_id IS NULL` counts none of them.
+    _ = sql!(ctx.db, "UPDATE activity_metrics SET metrics_rev = 0;")
+    n_stale = pf!("activities_awaiting_metrics")
+    check!("a stale metrics_rev puts every scored row back in the queue", n_stale != "0")?
+    check!("...a count doctor cannot see, since every row still HAS a metrics row", Str.trim(strjq!(ctx, ["doctor"], ".data.unanalyzed")) == "0")?
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("...and running analyze returns it to zero", pf!("activities_awaiting_metrics") == "0")?
+    # Same again for streams: a different predicate, on a different table. Done by ADDING a
+    # row rather than deleting 101's, because 101's stored streams are what its power
+    # metrics are computed from — dropping them, or restoring them as an empty marker,
+    # would silently change every number the checks after this one read. This driver is
+    # OFFLINE, so the row cannot be restored by re-syncing it.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9221,'freshness probe','Ride','2019-01-01T10:00:00Z',3600,20000);")
+    check!("a second activity with no streams row raises the count", pf!("activities_awaiting_streams") == "2")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 9221;")
+    # The probe must leave the fixture exactly as it found it: id assertions in this file
+    # are positional and every later check reads the analyzed fixture.
+    check!("the freshness probe left the fixture current", pf!("activities_awaiting_metrics") == "0")?
+    check!("...on both counts", pf!("activities_awaiting_streams") == "1")?
+    check!("...and newest_activity is back where it started", pf!("newest_activity") == newest_sql)?
+    # The count needs the FULL zone config, including per-sport overrides, where the rest
+    # of `plan` needs only the four global keys. Propagating that stricter read killed the
+    # whole command — no summary, no sessions, no adherence — on a database that planned
+    # fine before this feature existed. `config set` refuses this value today, but the
+    # write gate is newer than the key, so a database written earlier can still hold one.
+    check!("the metrics count is known on a healthy config", pf!("activities_awaiting_metrics_known") == "true")?
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key,value) VALUES ('hr_z2_max_ride','1.6e2');")
+    # Compared against `summary`, which is unaffected by this key, rather than merely
+    # asserted non-empty: on an error envelope `.data.summary.as_of` is absent and `jq -r`
+    # prints "null", so a `!= ""` test passes on exactly the failure it is meant to catch.
+    check!("an unparseable per-sport zone override does not cost the planning bundle", strjq!(ctx, ["plan"], ".data.summary.as_of") == Str.trim(strjq!(ctx, ["summary"], ".data.as_of")))?
+    check!("...and that comparison is against a real date, not null == null", !(Str.contains(Str.trim(strjq!(ctx, ["summary"], ".data.as_of")), "null")))?
+    check!("...with the rest of the bundle intact", strjq!(ctx, ["plan"], ".data.adherence_28d.planned | type") == "number")?
+    check!("...it reports the metrics count as UNKNOWN rather than a bare zero", pf!("activities_awaiting_metrics_known") == "false")?
+    check!("...and `plan` still exits 0", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' plan >/dev/null 2>&1; echo $?")) == "0")?
+    # ...and the human line SPEAKS on that state rather than staying silent, which is the
+    # whole point of the known flag: the count is 0 there.
+    check!("...and the human line names it instead of going quiet", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' plan 2>/dev/null"), "awaiting-metrics count unreadable"))?
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key = 'hr_z2_max_ride';")
+    check!("...and removing the bad override restores the count", pf!("activities_awaiting_metrics_known") == "true")?
+    check!("...to a real zero, not merely a known one", pf!("activities_awaiting_metrics") == "0")?
+    # ── last_sync (#221) ────────────────────────────────────────────────
+    # This driver never syncs, so the CORRECT value here is "" — which is also what every
+    # broken implementation produces. Asserting "" would be the vacuous absence check this
+    # file warns about, and it showed: deleting the whole lookup, and returning the raw
+    # stored epoch unconverted, BOTH passed the entire suite. The only real test is to
+    # write the key, which costs one line.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key,value) VALUES ('last_sync_epoch','1700000000');")
+    check!("last_sync is the stored epoch as UTC ISO, not the raw value", pf!("last_sync") == "2023-11-14T22:13:20Z")?
+    # arg_i64 takes plain integers only, so exponent notation is the unparseable case.
+    _ = sql!(ctx.db, "UPDATE config SET value = '1e9' WHERE key = 'last_sync_epoch';")
+    check!("...an unparseable one reads empty rather than failing plan", pf!("last_sync") == "")?
+    # Negative is a THIRD arm, and the one that used to emit "1970-01-01T00:00:0-1Z" — a
+    # malformed string the schema's bare "string" type accepts without complaint.
+    _ = sql!(ctx.db, "UPDATE config SET value = '-1' WHERE key = 'last_sync_epoch';")
+    check!("...and a negative one does not become a malformed timestamp", pf!("last_sync") == "")?
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key = 'last_sync_epoch';")
+    check!("...and with the key gone it is empty again", pf!("last_sync") == "")?
+    # ── the human line (#221) ───────────────────────────────────────────
+    # Render.freshness_note is called ONLY from the human path, so the pure expects prove
+    # the formatting and nothing proves the wiring. Deleting the print block outright
+    # passed the whole suite. The block already sits on non-zero state, so this costs one
+    # line and pins the separator, the arm order and the call itself end to end.
+    _ = sql!(ctx.db, "UPDATE activity_metrics SET metrics_rev = 0;")
+    check!("the human line carries both arms, in order, with the separator", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' plan 2>/dev/null"), "DATA: 3 awaiting metrics (stride analyze) · 1 awaiting streams (stride sync)"))?
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # ...and it goes SILENT once there is nothing to say — the arm that runs on almost
+    # every real invocation, and the one no "contains" check can see. Reaching it means
+    # retiring the fixture's resting 1: giving 102 an empty-streams marker moves BOTH counts
+    # — it leaves the `s.activity_id IS NULL` set, and stream_len_used goes 0 -> 2 so the row
+    # goes pending — hence the analyze. `{}` is this codebase's 404 marker, not a real
+    # stream, which is why it is written directly rather than fetched.
+    # Both sides are then undone, and the resting state is re-asserted rather than assumed.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (102, '{}');")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # Paired with a POSITIVE marker. On its own this was a pure absence assertion and it was
+    # vacuous: deleting the HR zone bounds makes `plan` print the missing-config screen,
+    # which contains no "DATA:" either, so the check reported ok on a command that produced
+    # no bundle at all. "OPEN PLAN" is a heading only the real human bundle emits.
+    plan_silent = sh!("HOME='${ctx.home}' '${ctx.bin}' plan 2>/dev/null")
+    check!("...and says nothing at all once both counts are zero", !(Str.contains(plan_silent, "DATA:")) and Str.contains(plan_silent, "OPEN PLAN"))?
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 102;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("...and the fixture is back to its resting 1 awaiting stream", pf!("activities_awaiting_streams") == "1")?
+    check!("...with nothing awaiting metrics", pf!("activities_awaiting_metrics") == "0")?
 
     # ── season: blocks bounded by absence (#139, ADR 0011) ──────────────
     # The fixture's activities sit in a handful of dates, so this exercises the
@@ -3233,7 +3376,10 @@ reset_checks! = |{}| {
 # set run_all to 400 against 564 actual, so 164 checks could vanish silently, and the stops
 # budget branch could lose SIX, the same magnitude as the dead branch that motivated this.
 # A tight floor only needs touching when checks are REMOVED, which is exactly the event
-# that should force a conversation. Each is set just under its smallest real run.
+# that should force a conversation. The mock drivers are each set just under their smallest
+# real run; run_all uses checks_ran_exactly! instead, for the reason recorded on that
+# function — a floor set to an exact count is not enforced as exact, and quietly stops being
+# one.
 #
 # A driver that forgets reset_checks! or this call gets NO guard, silently — the same
 # hazard the sqlite failure log carries, and documents.
@@ -3241,6 +3387,27 @@ checks_ran_at_least! : I64 => Try({}, _)
 checks_ran_at_least! = |floor| {
     ran = str_to_i64(Str.trim(sh!("wc -l 2>/dev/null < ${checks_log!({})} || echo 0")))
     check!("this driver ran its checks (${I64.to_str(ran)} >= ${I64.to_str(floor)})", ran >= floor)
+}
+
+# The EXACT variant, for a driver whose count is meant to be pinned rather than floored.
+#
+# A tight `>=` floor is not the same thing as an exact one, and the difference is invisible
+# until it matters: `>=` never fails on a check ADDED, so a driver set to its exact count
+# drifts back into slack the first time someone adds checks without bumping the number, and
+# nothing says so. Review demonstrated it on this very file — two checks added against a
+# floor of 595 ran 597 and passed. That is the same silent decay a slack floor has, arriving
+# by a slower road.
+#
+# `==` costs a deliberate bump on every added check. That is the objection the note above
+# records, and it is real — but a forgotten bump FAILS THE RUN, where decay is silent. The
+# cost is enforced, not merely visible, and the distinction matters: this branch bumped the
+# number in every one of its six commits and no review round ever checked it against the
+# checks actually added. Relying on someone reading the diff was the weaker argument, and
+# the evidence against it is this file's own history.
+checks_ran_exactly! : I64 => Try({}, _)
+checks_ran_exactly! = |expected| {
+    ran = str_to_i64(Str.trim(sh!("wc -l 2>/dev/null < ${checks_log!({})} || echo 0")))
+    check!("this driver ran exactly its checks (${I64.to_str(ran)} == ${I64.to_str(expected)})", ran == expected)
 }
 
 check! : Str, Bool => Try({}, _)

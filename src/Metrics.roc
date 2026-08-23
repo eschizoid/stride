@@ -3363,6 +3363,11 @@ expect Metrics.day_of_week(0) == "Thu" # epoch day 0 = 1970-01-01 = Thursday
 
 # epoch -> ISO datetime (UTC)
 expect Metrics.epoch_to_iso(0) == "1970-01-01T00:00:00Z"
+# The negative case, pinned rather than asserted in a comment elsewhere: Plan.roc rejects a
+# negative last_sync_epoch specifically because this formatter mangles one, and a claim
+# about an exact output string with no expect behind it is the kind that rots. `%` truncates
+# toward zero, so tod is -1 and pad2 renders "0-1" rather than borrowing a second.
+expect Metrics.epoch_to_iso(-1) == "1970-01-01T00:00:0-1Z"
 expect Metrics.epoch_to_iso(1000000000) == "2001-09-09T01:46:40Z"
 
 # grade-adjusted running (Minetti 2002): flat = 1.0x, +10% grade ~1.66x, -10% ~0.60x

@@ -713,6 +713,50 @@ Render :: [].{
             }
         }
 
+    # `plan`'s data-freshness line (#221). "" when there is nothing to say, on the same
+    # reasoning as sync_screen's tail below: for a human the absence of the line IS the
+    # clean signal, and printing two zeros before every planning session trains the eye to
+    # skip the row that matters on the day it is not zero.
+    #
+    # Deliberately NOT triggered by newest_activity lagging as_of. That is true most
+    # mornings — the day's ride has not happened yet — so it would fire almost daily and
+    # become the noise this guards against. The machine payload carries both dates and a
+    # coach can compare them; a human already knows whether they rode today.
+    #
+    # Each clause names the command that clears it. A count with no next action is the
+    # thing the reader has to go look up, which is where a freshness signal stops being
+    # used at all.
+    freshness_note : { activities_awaiting_metrics : U64, activities_awaiting_metrics_known : Bool, activities_awaiting_streams : I64 } -> Str
+    freshness_note = |f| {
+        # An unknowable count is NOT silence. The count is 0 in that case, and staying
+        # quiet would render it as "nothing to do" — the ambiguous zero this payload
+        # reports `*_known` alongside precisely to avoid. `analyze` is named because it is
+        # the command that fails with the underlying reason; `doctor` does not report it.
+        #
+        # "count", not "queue": what could not be read is the zone config, not the pending
+        # work. An earlier wording said "metrics queue unreadable", which sends a reader
+        # looking for database damage — the same class of plausible-but-wrong sentence the
+        # drain_note comment above rejects. The wording that shipped also matches the sibling
+        # arm and the field name, where "queue" appeared in no other rendered string in the
+        # binary.
+        metrics_note =
+            if !(f.activities_awaiting_metrics_known) {
+                ["awaiting-metrics count unreadable (stride analyze says why)"]
+            } else if f.activities_awaiting_metrics > 0 {
+                ["${U64.to_str(f.activities_awaiting_metrics)} awaiting metrics (stride analyze)"]
+            } else {
+                []
+            }
+        streams_note =
+            if f.activities_awaiting_streams > 0 {
+                ["${I64.to_str(f.activities_awaiting_streams)} awaiting streams (stride sync)"]
+            } else {
+                []
+            }
+        parts = List.concat(metrics_note, streams_note)
+        if List.is_empty(parts) "" else "DATA: ${Str.join_with(parts, " · ")}"
+    }
+
     # sync's human line. Extracted from an inline closure in Strava.roc so pure expects
     # can reach it (#232): the four full-string equality expects that used to pin the
     # retired backfill_screen died with it, the replacement lived inside an effectful
@@ -1868,9 +1912,58 @@ expect {
         Render.drain_note("complete", 5),
         Render.drain_note("budget_reached", 40),
         Render.drain_note("rate_limited", 40),
+        # freshness_note is a prose surface too, and ADR 0012's own consequences say the
+        # sweep is where a new one joins. Every arm, including the empty one: an arm that
+        # is only exercised on a broken config is exactly the one nobody would think to
+        # add later.
+        Render.freshness_note({ activities_awaiting_metrics: 0, activities_awaiting_metrics_known: True, activities_awaiting_streams: 0 }),
+        Render.freshness_note({ activities_awaiting_metrics: 12, activities_awaiting_metrics_known: True, activities_awaiting_streams: 0 }),
+        Render.freshness_note({ activities_awaiting_metrics: 0, activities_awaiting_metrics_known: True, activities_awaiting_streams: 40 }),
+        Render.freshness_note({ activities_awaiting_metrics: 12, activities_awaiting_metrics_known: True, activities_awaiting_streams: 40 }),
+        Render.freshness_note({ activities_awaiting_metrics: 0, activities_awaiting_metrics_known: False, activities_awaiting_streams: 4 }),
     ]
     List.all(notes, |p| !(Metrics.has_coaching_language(p)))
 }
+
+# ── plan's data-freshness line (#221) ────────────────────────────────
+# Full-string equality throughout, for the reason the sync_screen block below records:
+# an expect that only asserts a substring, or only asserts the "" case, passes with every
+# number deleted from the format string.
+#
+# Silence when there is nothing to report. Asserted FIRST and separately from the rest,
+# because this is the arm that runs on almost every real invocation — if it were the only
+# case covered, the whole line could be dead and the suite would still be green.
+expect Render.freshness_note({ activities_awaiting_metrics: 0, activities_awaiting_metrics_known: True, activities_awaiting_streams: 0 }) == ""
+
+expect
+    Render.freshness_note({ activities_awaiting_metrics: 12, activities_awaiting_metrics_known: True, activities_awaiting_streams: 0 })
+    == "DATA: 12 awaiting metrics (stride analyze)"
+
+expect
+    Render.freshness_note({ activities_awaiting_metrics: 0, activities_awaiting_metrics_known: True, activities_awaiting_streams: 40 })
+    == "DATA: 40 awaiting streams (stride sync)"
+
+# Both arms at once: pins the separator AND the order, neither of which any single-arm
+# case above can see.
+expect
+    Render.freshness_note({ activities_awaiting_metrics: 12, activities_awaiting_metrics_known: True, activities_awaiting_streams: 40 })
+    == "DATA: 12 awaiting metrics (stride analyze) · 40 awaiting streams (stride sync)"
+
+# The counts are forwarded, not hardcoded — distinct values, distinct from the case above.
+expect
+    Render.freshness_note({ activities_awaiting_metrics: 1, activities_awaiting_metrics_known: True, activities_awaiting_streams: 7 })
+    == "DATA: 1 awaiting metrics (stride analyze) · 7 awaiting streams (stride sync)"
+
+# An unknowable count SPEAKS, where a zero stays silent. The count is 0 in both, so this is
+# the pair that proves the line keys on `known` and not on the number beside it.
+expect
+    Render.freshness_note({ activities_awaiting_metrics: 0, activities_awaiting_metrics_known: False, activities_awaiting_streams: 0 })
+    == "DATA: awaiting-metrics count unreadable (stride analyze says why)"
+
+# ...and it still composes with the streams arm rather than replacing the whole line.
+expect
+    Render.freshness_note({ activities_awaiting_metrics: 0, activities_awaiting_metrics_known: False, activities_awaiting_streams: 4 })
+    == "DATA: awaiting-metrics count unreadable (stride analyze says why) · 4 awaiting streams (stride sync)"
 
 # ── sync's human line (#232) ─────────────────────────────────────────
 # Full-string equality, because the e2e check on this line asserts two unconditional

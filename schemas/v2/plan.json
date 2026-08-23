@@ -8,7 +8,8 @@
     "recent_activities_14d",
     "open_sessions",
     "plan_history_28d",
-    "adherence_28d"
+    "adherence_28d",
+    "data_freshness"
   ],
   "properties": {
     "summary": {
@@ -229,6 +230,40 @@
         },
         "unplanned_activities": {
           "type": "integer"
+        }
+      }
+    },
+    "data_freshness": {
+      "description": "Whether the facts in this payload are current, as four measurements rather than a verdict \u2014 what counts as too stale depends on the question being asked, and ADR 0012 puts that judgement on the coach's side of the line. Present so a planning turn need not spend a second call on `doctor`.",
+      "type": "object",
+      "required": [
+        "newest_activity",
+        "last_sync",
+        "activities_awaiting_metrics",
+        "activities_awaiting_metrics_known",
+        "activities_awaiting_streams"
+      ],
+      "additionalKeys": false,
+      "properties": {
+        "newest_activity": {
+          "type": "string",
+          "description": "Date of the newest activity in the database, YYYY-MM-DD, or \"\" when there are none. Read alongside summary.as_of, minding what that gap measures: as_of is pinned to the day `analyze` last ran, not to now, so the gap is last-activity-to-last-analyze. It equals days since the last ride only when analyze ran today; otherwise it simply stops growing. No value of it distinguishes a current install from a stale one, which is why last_sync is the primary staleness signal and this is the secondary one."
+        },
+        "last_sync": {
+          "type": "string",
+          "description": "When the last successful `sync` BEGAN, as a UTC ISO timestamp \u2014 the stamp is taken before the activity listing \u2014 or \"\" when sync has never run, when the stored value will not parse, and when it is negative. This is the payload's only full timestamp and its only UTC value; every other date here is a bare local YYYY-MM-DD. Compare it against the current date: that is the one field that detects an install where nothing has run in days."
+        },
+        "activities_awaiting_metrics": {
+          "type": "integer",
+          "description": "How many rows `analyze` would recompute right now. Shares the predicate `analyze` selects on, so beyond rows never scored it counts rows whose FTP, threshold pace, zones, metrics_rev or underlying activity inputs have changed since they were scored \u2014 a newly arrived stream being the commonest. Never fewer than doctor's `unanalyzed`, which counts only rows with no metrics at all, and equal to it in the ordinary case. Meaningless unless activities_awaiting_metrics_known is true."
+        },
+        "activities_awaiting_metrics_known": {
+          "type": "boolean",
+          "description": "False when the count could not be computed at all \u2014 the metrics predicate needs the full zone config, and an unparseable per-sport HR-zone override makes it unreadable. The count is 0 in that case and must NOT be read as \"nothing to do\". `plan` deliberately degrades here rather than failing, so one bad optional config key cannot cost the whole planning bundle; `analyze` is the command that reports the underlying error."
+        },
+        "activities_awaiting_streams": {
+          "type": "integer",
+          "description": "How many activities `sync` would still fetch streams for. Same count doctor reports as pending_streams."
         }
       }
     }
