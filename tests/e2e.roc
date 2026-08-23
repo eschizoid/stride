@@ -3399,9 +3399,11 @@ checks_ran_at_least! = |floor| {
 # by a slower road.
 #
 # `==` costs a deliberate bump on every added check. That is the objection the note above
-# records, and it is real — but a bump is a line in a diff someone reads, where decay is
-# nothing at all. So the trade is a visible cost against an invisible one, and it is only
-# worth taking where the count is small enough to keep honest.
+# records, and it is real — but a forgotten bump FAILS THE RUN, where decay is silent. The
+# cost is enforced, not merely visible, and the distinction matters: this branch bumped the
+# number in every one of its six commits and no review round ever checked it against the
+# checks actually added. Relying on someone reading the diff was the weaker argument, and
+# the evidence against it is this file's own history.
 checks_ran_exactly! : I64 => Try({}, _)
 checks_ran_exactly! = |expected| {
     ran = str_to_i64(Str.trim(sh!("wc -l 2>/dev/null < ${checks_log!({})} || echo 0")))
