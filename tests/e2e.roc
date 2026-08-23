@@ -1672,7 +1672,9 @@ b_seed_analyze! = |ctx| {
     # The HUMAN line too, against the same oracle. Review collapsed the known/unknown `if`
     # to its else branch — so the screen read "unknown" on every healthy install — and
     # nothing failed, because the only human check ran in the corrupt state.
-    check!("...and doctor's human screen carries the same number", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' doctor 2>/dev/null"), "would be recomputed by analyze: ${n_stale}"))?
+    # Terminated at end-of-line. Without the \n this is a prefix match, so appending a
+    # digit to the rendered number — "…analyze: 37" against an expected 3 — passed.
+    check!("...and doctor's human screen carries the same number", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' doctor 2>/dev/null"), "would be recomputed by analyze: ${n_stale}\n"))?
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("...and running analyze returns it to zero", pf!("activities_awaiting_metrics") == "0")?
     # doctor's SECOND measurement point. One point let the count be hardcoded to the
@@ -1724,6 +1726,11 @@ b_seed_analyze! = |ctx| {
     # The WHOLE line, reason included. A `contains` on the "unknown" prefix let the
     # `— ${config_error}` suffix be deleted silently, and that suffix is the entire
     # justification for surfacing this in the diagnostic command.
+    #
+    # The remedy half of this literal is OWNED BY Output.unreadable_config_msg and pinned
+    # by three checks across this file. Reword it for `analyze`'s benefit and this one
+    # fails under a name pointing at doctor's rendering, which is a module away from the
+    # cause. That misdirection is the price of the guard, not a reason to drop it.
     check!("...and its human screen says so too, with the reason attached", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' doctor 2>/dev/null"), "would be recomputed by analyze: unknown — hr_z2_max_ride is set to '1.6e2', which is not a number — fix it with `stride config set hr_z2_max_ride <value>`"))?
     # The schema says the count is 0 whenever the flag is false. Nothing asserted it, so a
     # degraded arm returning a stale or invented number passed.
