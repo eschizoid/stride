@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(623)?
+    checks_ran_exactly!(625)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -946,10 +946,14 @@ b_init_config! = |ctx| {
     # names like `backfill`, which must NOT be advertised. Flag and `help` forms are
     # dropped from both sides, matching what the payload itself filters.
     #
-    # Verb level, not form level: an argument literal is indistinguishable from a
-    # subcommand in the arm patterns (`week all` is an argument, `week add` is a form),
-    # so comparing full forms would demand a rule that guesses. The sub-form direction
-    # is covered by the check below instead.
+    # Verb level. The FORM level is a separate comparison, below — and it has to be, in
+    # both directions. The check that follows this one walks the table's forms and asks
+    # whether the parser reaches them; that is table→parser. Nothing asked the reverse
+    # until the sub-form pin further down, and without it `[_, "week", "remove", id]`
+    # dispatched as a real callable sub-form with no table entry and the suite stayed
+    # green. This PR gives `week add` its own entry, its own `mutates` and its own
+    # schema — by that standard `week remove` is a command, and "adding a command
+    # without describing it fails a test" has to hold for it too.
     # NO PROCESS SUBSTITUTION. `sh!` spawns `sh`, which on macOS is bash 3.2 in POSIX
     # mode, where `<(...)` is a SYNTAX ERROR. The first version of these two checks used
     # it, so `comm` never ran, both variables were always "" and both comparisons were
@@ -1038,6 +1042,26 @@ b_init_config! = |ctx| {
     n_probed = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | ${subform_cmds} | wc -l | tr -d ' '"))
     check!("...and every multi-word form was probed (${n_probed} of ${n_multi})", n_probed == n_multi and n_multi != "0")?
     _ = sh!("rm -rf '${sub_probe}'")
+
+    # parser→table at the FORM level. Every two-literal arm the parser has must be
+    # accounted for by the table: either as a multi-word form name, or as a literal
+    # argument of its verb — the table already distinguishes the two, modelling `week all`
+    # as `week`'s optional literal arg and `week add` as a form of its own, so no rule has
+    # to guess.
+    #
+    # What is left over is pinned as a VALUE. The four survivors are the redirect arms
+    # (`plan add`, `plan all` — the plan/week rename's muscle-memory pointers) and the
+    # sort-word hints (`progress asc`, `progress desc`), none of which is a command. A
+    # fifth entry appearing here means a real sub-form was added without a table entry,
+    # and the failure prints it.
+    pair_dir = "${ctx.home}/.pairs"
+    parser_pairs = "sed 's/#.*//' src/Command.roc | grep -oE '\\[[[:space:]]*_[[:space:]]*,[[:space:]]*\"[A-Za-z0-9_-]+\"[[:space:]]*,[[:space:]]*\"[A-Za-z0-9_-]+\"' | sed 's/.*\"\\([A-Za-z0-9_-]*\\)\"[^\"]*\"\\([A-Za-z0-9_-]*\\)\"/\\1 \\2/' | LC_ALL=C sort -u"
+    table_pairs = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '(.data.commands[] | select(.name|test(\" \")) | .name), (.data.commands[] | . as $c | .args[]? | select(.name|test(\"^<\")|not) | \"\\($c.name) \\(.name)\")' | LC_ALL=C sort -u"
+    _ = sh!("rm -rf '${pair_dir}' && mkdir -p '${pair_dir}' && ${parser_pairs} > '${pair_dir}/parser' && ${table_pairs} > '${pair_dir}/table'")
+    unaccounted = Str.trim(sh!("comm -23 '${pair_dir}/parser' '${pair_dir}/table' | tr '\\n' '|'"))
+    check!("every sub-form the parser has is accounted for, bar the redirects and sort hints (got: ${unaccounted})", unaccounted == "plan add|plan all|progress asc|progress desc|")?
+    check!("...and the table accounted for some of them, so that was not a comparison against nothing", Str.trim(sh!("wc -l < '${pair_dir}/table' | tr -d ' '")) == "5")?
+    _ = sh!("rm -rf '${pair_dir}'")
     # The fixture must be untouched by the probe above — that is the property the earlier
     # version broke, so it is asserted rather than assumed.
     check!("...leaving the fixture's session log empty, as it was", Str.trim(sql!(ctx.db, "SELECT count(*) FROM planned_sessions;")) == "0")?
