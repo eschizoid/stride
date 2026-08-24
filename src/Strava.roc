@@ -300,7 +300,7 @@ Strava :: [].{
                     pending = pending_streams!(path)?
                     rl_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
                     rl_payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pending, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }
-                    Output.out!(rl_payload, |p| Render.sync_screen(p, all))
+                    Output.out!(rl_payload, |p| Render.sync_screen(p, ListRateLimited, all))
                 } else {
                 pruned = prune_deleted!(path, started, window_start)?
                 Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
@@ -324,7 +324,7 @@ Strava :: [].{
                 # `additionalKeys: false` exists to catch (ADR 0000 section 9c).
                 payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
                 payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: pull.pending, stopped: Drain.sync_stopped_label(FromDrain(pull.stopped)), resumable: pull.pending > 0 }
-                Output.out!(payload, |p| Render.sync_screen(p, all))
+                Output.out!(payload, |p| Render.sync_screen(p, FromDrain(pull.stopped), all))
                 }
             }
         }
