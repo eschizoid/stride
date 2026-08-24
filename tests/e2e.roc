@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(651)?
+    checks_ran_exactly!(653)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2499,6 +2499,23 @@ b_command_schemas! = |ctx| {
     misordered = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[].required] | . != (sort | reverse)) | .name] | join(\"|\")'"))
     check!("required arguments form a prefix — no optional one precedes a required one (bad: ${misordered})", misordered == "")?
     check!("...and there were forms with required arguments to order", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[] | select(.required)] | length > 0)] | length'")) != "0")?
+    # The OTHER array. Twelve rounds of this PR derived every field of `commands` from the
+    # parser, the schema directory, the database and the payloads — and `flags` sat beside
+    # it in the same `.data`, described by the same schema, read by the same agent, still
+    # exactly what `commands` was before any of it: a hand-written literal nothing checked.
+    # Adding "--verbose" to it advertised a flag that answers unknown_command, and the
+    # whole suite stayed green.
+    #
+    # A listed flag must be EITHER accepted bare, OR a literal argument of some form —
+    # and literal arguments are already verified against the parser by the check above, so
+    # this leans on that rather than re-deriving. `--all` is the second case: sync-only, so
+    # bare `--all` is unknown_command, which is what the schema says. No exception list.
+    flag_dir = "${ctx.home}/.flags"
+    _ = sh!("rm -rf '${flag_dir}' && mkdir -p '${flag_dir}' && HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | . as $c | .args[]? | select(.name|test(\"^<\")|not) | .name' | LC_ALL=C sort -u > '${flag_dir}/literals'")
+    unaccounted_flags = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.flags[]' | while read -r fl; do code=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $fl 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" != \"unknown_command\" ] && continue; grep -qx -- \"$fl\" '${flag_dir}/literals' && continue; printf '%s ' \"$fl\"; done"))
+    check!("every flag the table advertises is one the binary accepts (bad: ${unaccounted_flags})", unaccounted_flags == "")?
+    check!("...and there were flags to check", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.flags | length'")) != "0")?
+    _ = sh!("rm -rf '${flag_dir}'")
     _ = sh!("rm -rf '${arity_probe}'")
     Ok({})
 }
