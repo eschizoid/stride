@@ -932,15 +932,10 @@ Analyze :: [].{
             query:
                 \\SELECT substr(a.start_local, 1, 10) AS day, SUM(m.tss) AS t,
                 \\       -- carried ONLY so an unreadable day can name a row the user can
-                \\       -- act on, on the branch below where no day parses at all. Same
-                \\       -- reasoning as ReportSeason's example_id (#243) for MIN: a date is
-                \\       -- not something you can delete or re-fetch, an id is. NOT the same
-                \\       -- reasoning for the secondary sort key — there the group is
-                \\       -- (date, fam) and `fam` decides which group is met first, whereas
-                \\       -- here the group is `day` alone, so it is already unique per output
-                \\       -- row and example_id can never tie-break. Belt-and-braces; removing
-                \\       -- it is safe, and a reader coming from that block would otherwise
-                \\       -- assume it is load-bearing.
+                \\       -- act on (#243): a date is not something you can delete or re-fetch,
+                \\       -- an id is. example_id cannot tie-break here — GROUP BY day already
+                \\       -- makes day unique — so it is belt-and-braces, unlike ReportSeason
+                \\       -- where `fam` decides which group is met first.
                 \\       MIN(m.activity_id) AS example_id
                 \\FROM activity_metrics m
                 \\JOIN activities a ON a.id = m.activity_id
@@ -973,8 +968,14 @@ Analyze :: [].{
         by_day = List.fold(
             day_rows,
             Dict.empty(),
+            # calls usable_day rather than restating it. One predicate written twice in one
+            # function is the hazard Report.roc's guard comment warns about, at the smallest
+            # possible scale: a day excluded here but not counted `unusable` is dropped
+            # silently — the #243 bug itself — and one accepted here but counted `unusable`
+            # makes the run refuse over data it did use. They agreed only because both were
+            # typed correctly, and nothing held them together.
             |dict, r|
-                if Metrics.is_canonical_date(r.day) {
+                if usable_day(r.day) {
                     match Metrics.date_str_to_days(r.day) {
                         Ok(d) => Dict.insert(dict, d, r.t)
                         Err(_) => dict,

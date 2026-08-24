@@ -192,32 +192,41 @@ Report :: [].{
         })?
         Ok(n > 0)
     }
-    # The daily_load.day guard, used by every read of that column in this module — the two
-    # anchors AND the ramp series. NOT the only copy in the tree: ReportSeason has its own
-    # inline equivalent for daily_load.day and a second for activity dates, and those two
-    # must not drift from this one. Two implementations of one rule is how this class
-    # reopened twice already.
+    # The daily_load.day guard. BOTH halves — canonical and parseable — because the
+    # non-canonical day is the dangerous one, not the harmless one: `ORDER BY day DESC` is
+    # a string sort, so "2026-3-05" beats every "2026-08-xx" and becomes `latest`.
     #
-    # The ramp series matters separately from the anchors, and the anchor guard does not
-    # cover it: a non-canonical day only has to BE the anchor when it sorts highest. Give
-    # the table a canonical day that sorts above it and the poisoned row slips into the
-    # 30-day window untested — '2026-3-05' >= '2026-12-06' is true under byte order, and
-    # so is '2026-3-05' < '2027-01-05'. Review measured what that published: a ramp_7d of
-    # -49 and a form_delta of -79 against an honest 0, with form_delta_known: true
-    # certifying it, at exit 0. That is the fabricated ramp the fold's own comment warns
-    # about, arriving through the guard that had just been upgraded to catch it. `date_str_to_days` alone accepts "2026-3-05" — and a
-    # non-canonical day is the DANGEROUS one, not the harmless one: `ORDER BY day DESC` is
-    # a string sort, so "2026-3-05" beats every "2026-08-xx" and becomes `latest`. Measured
-    # on a two-row table before this: `summary` reported as_of 2026-3-05, `compare`
-    # published an all-zero 28-day window at exit 0, and only `season` refused — because
-    # season was the one site testing is_canonical_date as well.
+    # Used by every read of that column here that must not ABSORB: the two anchors and the
+    # ramp series. The ramp series needs it separately, because a bad day only has to BE
+    # the anchor when it sorts highest — put a canonical day above it and the poisoned row
+    # slips into the 30-day window with the anchor guard none the wiser, publishing a
+    # ramp_7d of -49 and a form_delta of -79 under `form_delta_known: true`, at exit 0.
+    # `load_series!` below deliberately does NOT go through it; `load` absorbs, which is a
+    # known open defect (#249) rather than an oversight.
     #
+    # Scoped to the property rather than the count on purpose: every quantifier written
+    # over these sites has been false. Other implementations of this rule live in
+    # ReportSeason (two) and Analyze (`usable_day`, on the write side) and must not drift
+    # from it — two implementations of one rule is how this class reopened twice.
     canonical_day : Str -> Try(I64, _)
     canonical_day = |d|
         if Metrics.is_canonical_date(d) {
             (Metrics.date_str_to_days(d)).map_err(|_| BadDailyLoadDay(d))
         } else {
             Err(BadDailyLoadDay(d))
+        }
+
+    # Same rule, different table, so a different tag: an activity date is repaired by
+    # re-fetching or deleting the ROW, a daily_load day by rebuilding the table, and the
+    # boundary picks the message from the tag. Takes the id rather than inventing one:
+    # naming the date alone is what #243 was opened about, and "activity -1" would be that
+    # defect wearing a number.
+    canonical_activity_day : Str, I64 -> Try(I64, _)
+    canonical_activity_day = |d, id|
+        if Metrics.is_canonical_date(d) {
+            (Metrics.date_str_to_days(d)).map_err(|_| BadActivityDate(d, id))
+        } else {
+            Err(BadActivityDate(d, id))
         }
 
     pct_num : I64, I64 -> I64
@@ -255,6 +264,9 @@ Report :: [].{
         # 5+ min either way.
         # last_hard previously used HR zones alone, which missed power-only rides
         # with junk HR straps; consolidated rather than grown a second definition.
+        # MAX(substr(...)) is a STRING max and reached the payload with no Roc-side parse
+        # at all, so a malformed start_local shipped verbatim into a field the schema calls
+        # a date — measured: last_hard_session_date: "2026-3-05T". Guarded below.
         hard_expr = "COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) >= 300"
         last_hard = Sqlite.query!({
             path: Path.utf8(path),
@@ -273,14 +285,34 @@ Report :: [].{
         hard_days = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT DISTINCT substr(a.start_local, 1, 10) AS d
+                \\SELECT substr(a.start_local, 1, 10) AS d,
+                \\       -- carried so a refused date can name a row, as everywhere else in
+                \\       -- #243. MIN because DISTINCT on the date collapses several
+                \\       -- activities onto one day and the id has to be reproducible;
+                \\       -- ORDER BY makes "first" a stated property rather than SQLite's.
+                \\       MIN(a.id) AS example_id
                 \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
                 \\WHERE ${hard_expr} AND a.start_local >= :cutoff
+                \\GROUP BY d ORDER BY d, example_id
             ,
             bindings: [{ name: ":cutoff", value: String(cutoff28) }],
-            rows: Sqlite.str("d"),
+            rows: |cols| |stmt| {
+                d = Sqlite.str("d")(cols)(stmt)?
+                example_id = Sqlite.i64("example_id")(cols)(stmt)?
+                Ok({ d, example_id })
+            },
         })?
-        hard_day_nums = List.keep_oks(hard_days, |d| Metrics.date_str_to_days(d))
+        # PROPAGATE, on the same rule and for the same reason as the daily_load reads
+        # above — this is the fifth site of the same class and the last one in this module.
+        # `keep_oks` was doing both jobs badly: it dropped an unparseable date SILENTLY and
+        # it ACCEPTED a non-canonical one, so the fold both under-counted and mis-dated.
+        # Measured on one row changed to '2026-3-05T10:00:00Z', the value season refuses:
+        # hard_days.d14 fell 1 -> 0, days_since_last rose 3 -> 172, and
+        # days_since_known stayed TRUE — a fabricated number with a flag certifying it,
+        # which is the shape the ramp fix removed one screen up in this same file. 172 days
+        # versus 3 is "badly overdue for intensity" versus "recovering", and it is the
+        # number a coach acts on.
+        hard_day_nums = List.map_try(hard_days, |r| canonical_activity_day(r.d, r.example_id))?
         # Str has no ordering — count on parsed day numbers, same anchor math
         hard_d14 = List.len(List.keep_if(hard_day_nums, |d| d >= anchor - 13))
         spacing = Metrics.median_gap_days(hard_day_nums)

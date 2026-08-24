@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(721)?
+    checks_ran_exactly!(725)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2487,6 +2487,36 @@ b_seed_analyze! = |ctx| {
     an_lndr = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' analyze 2>/dev/null")
     check!("a non-canonical activity date is refused by the WRITER, not laundered into a real-looking day", Str.contains(an_lndr, "unreadable_activity_date") and Str.contains(an_lndr, "activity 803"))?
     check!("...so no invented day reaches daily_load", Str.trim(sql!(an_db, "SELECT count(*) FROM daily_load WHERE day = '2026-03-05';")) == "0")?
+    # ...and `summary`'s hard-session statistics refuse it too — the fifth site of this
+    # class and the last one in Report.roc. It read activity dates with `keep_oks`, which
+    # dropped an unparseable date silently AND accepted a non-canonical one, so the fold
+    # both under-counted and mis-dated. Review measured one poisoned hard session:
+    # hard_sessions.d14 fell 1 -> 0 and days_since_last rose 3 -> 172 with
+    # days_since_known still TRUE — a fabricated number carrying a flag that certifies it,
+    # and 172 days versus 3 is "badly overdue for intensity" versus "recovering".
+    # pi_hard_s, not pi_easy_s: the row has to qualify as HARD or the fold never sees it.
+    # Constructed, not a literal — same reasoning as the daily_load block below, plus one
+    # more constraint: this row has to land inside summary's 28-day window or the fold
+    # never sees it, so the date must be BOTH non-canonical AND recent.
+    #
+    # A single-digit DAY, not month. An unpadded month is only non-canonical from January
+    # to September, so a test built on it would quietly stop testing anything for the last
+    # quarter of every year. Every month has a 1st through a 9th, so stepping back to the
+    # 5th (or the 1st, when today is earlier than the 5th) is always single-digit and
+    # always within 28 days.
+    hard_off = "D=$(TZ='${ctx.tz}' date +%-d); if [ \"$D\" -ge 5 ]; then echo $((D-5)); else echo $((D-1)); fi"
+    hard_bad = Str.trim(sh!("TZ='${ctx.tz}' date -v-$(${hard_off})d '+%Y-%m-%-d' 2>/dev/null || TZ='${ctx.tz}' date -d \"$(${hard_off}) days ago\" '+%Y-%m-%-d'"))
+    hard_pad = Str.trim(sh!("TZ='${ctx.tz}' date -v-$(${hard_off})d +%F 2>/dev/null || TZ='${ctx.tz}' date -d \"$(${hard_off}) days ago\" +%F"))
+    # non-canonical BY CONSTRUCTION means it differs from the padded spelling of the same
+    # day — asserted rather than assumed, because if the shell ever pads it anyway the row
+    # becomes a perfectly ordinary activity and the two checks below pass on nothing.
+    check!("the constructed hard-session date is genuinely non-canonical (got ${hard_bad} vs ${hard_pad})", hard_bad != hard_pad and hard_bad != "")?
+    _ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (804,'hard non-canonical','Ride','Ride','${hard_bad}T10:00:00Z',3600);")
+    _ = sql!(an_db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_hard_s,metrics_rev) VALUES (804,40.0,111.0,3600,1);")
+    an_hard = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>/dev/null")
+    check!("a non-canonical date on a HARD session refuses in summary rather than skewing its stats", Str.contains(an_hard, "unreadable_activity_date"))?
+    check!("...naming that row, not just the date", Str.contains(an_hard, "activity 804"))?
+    _ = sql!(an_db, "DELETE FROM activity_metrics WHERE activity_id = 804; DELETE FROM activities WHERE id = 804;")
     _ = sh!("rm -rf '${an_home}'")
     _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = 'not-a-date';")
     # ...and the SAME rule on the other date-parsing site. Absorbing this one
@@ -2552,11 +2582,28 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 931; DELETE FROM activities WHERE id = 931;")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 932; DELETE FROM activities WHERE id = 932;")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 934; DELETE FROM activities WHERE id = 934;")
-    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day,tss,ctl,atl,tsb) VALUES ('2026-3-05', 30.0, 5.0, 5.0, 0.0);")
+    # CONSTRUCTED, not written as a literal. These checks only work because the bad day
+    # outranks every fixture day under byte order, and the fixture's max daily_load day is
+    # roughly TODAY — rebuild_daily_load! extends the series through today regardless of
+    # activity dates. So a hardcoded '2026-3-05' stops outranking anything on 1 Jan 2027,
+    # and review measured what that looks like: `summary` and `compare` SUCCEED at exit 0
+    # and both checks go red. Failing by the command succeeding reads as the guard being
+    # broken, and whoever hits it starts by debugging canonical_day.
+    #
+    # Next year with an unpadded month is always non-canonical and always above any day in
+    # the current year. The two tempting shortcuts both fail: an unpadded month of TODAY
+    # breaks every December ('2026-1-05' < '2026-12-24'), and an unpadded DAY only works on
+    # the 1st through the 9th.
+    late_day = "${Str.trim(sh!("TZ=${ctx.tz} date -v+1y +%Y 2>/dev/null || TZ=${ctx.tz} date -d '1 year' +%Y"))}-1-05"
+    # asserted, not assumed: both properties this fixture depends on. The comparison runs
+    # in SQL because Str has no ordering in Roc — and byte order is the property under
+    # test anyway, so doing it in SQLite is the honest place for it.
+    check!("the constructed day is non-canonical and really does sort above every fixture day", !(Str.contains(late_day, "-01-")) and Str.trim(sql!(ctx.db, "SELECT CASE WHEN '${late_day}' > COALESCE((SELECT MAX(day) FROM daily_load),'') THEN 'yes' ELSE 'no' END;")) == "yes")?
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day,tss,ctl,atl,tsb) VALUES ('${late_day}', 30.0, 5.0, 5.0, 0.0);")
     unpadded_day = stride!(ctx.bin, ctx.home, ["season"])
     check!("a non-canonical daily_load day is refused too", Str.contains(unpadded_day, "error") and !(Str.contains(unpadded_day, "span_weeks")))?
     check!("...with the daily_load code, not the activity one", strjq!(ctx, ["season"], ".error.code") == "unreadable_daily_load_day")?
-    check!("...quoting the day it refused", Str.contains(strjq!(ctx, ["season"], ".error.message"), "'2026-3-05'"))?
+    check!("...quoting the day it refused", Str.contains(strjq!(ctx, ["season"], ".error.message"), "'${late_day}'"))?
     # ...and so do the other two, which is what "close the class" has to mean. Both guarded
     # with `date_str_to_days` alone, and that ACCEPTS "2026-3-05" — while a non-canonical
     # day is the dangerous one, not the harmless one: `ORDER BY day DESC` is a string sort,
@@ -2567,7 +2614,7 @@ b_seed_analyze! = |ctx| {
     # the class was still open, inside the sentence declaring it closed.
     check!("...and so does `summary`, on the non-canonical day and not just the unparseable one", strjq!(ctx, ["summary"], ".error.code") == "unreadable_daily_load_day")?
     check!("...and `compare` too, rather than anchoring on a day that sorts last", strjq!(ctx, ["compare", "month"], ".error.code") == "unreadable_daily_load_day")?
-    _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = '2026-3-05';")
+    _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = '${late_day}';")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 933; DELETE FROM activities WHERE id = 933;")
     # A CONTROLLED block, because the fixture's own data does not discriminate:
     # asserting "end_date is not in the future" and "ftp_family is non-empty"

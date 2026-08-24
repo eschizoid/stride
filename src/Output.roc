@@ -187,10 +187,6 @@ Output :: [].{
     # than an accident: `plan_add!` rejects a non-canonical date with `bad_date` before
     # the database is opened, and it is the only writer of that column.
     #
-    # An earlier version of this comment said the opposite — that `week add` "stores
-    # whatever string it is handed" — and cited Plan.roc's own note as evidence. That note
-    # has been false since the day the guard landed beside it, and citing it is prose
-    # sourced from prose, which is the mechanism #243 came from in the first place.
     #
     # Separate codes rather than one, because the remedies are genuinely different: the
     # mirror row is repaired by re-fetching it, the derived row by rebuilding the table.
@@ -217,12 +213,8 @@ Output :: [].{
     # order of the two remedies is not cosmetic either: `sync --all` was measured to
     # SILENTLY no-op on a row Strava does not list — an imported one, where `synced_at` is
     # NULL — returning `updated_activities: 0` at exit 0 and leaving the same error. So
-    # `sync --all` will not repair an imported row, and the id-based remedy leads.
-    # (Two earlier versions of this paragraph explained the mechanism and got it wrong
-    # both times, the second in the dangerous direction — it said stamping imports "would
-    # change nothing", when Strava.prune_deleted! exempts exactly the NULL rows and
-    # stamping them would move them INTO the victim set. The mechanism is documented where
-    # it lives; this comment only needs the consequence.)
+    # `sync --all` will not repair an imported row, which is why the id-based remedy leads
+    # and the sync one is stated as conditional.
     unreadable_activity_date_msg : Str, I64 -> Str
     unreadable_activity_date_msg = |raw, id|
         "activity ${(id).to_str()} has an unreadable start_local beginning '${raw}' — delete that row by id and re-sync, or run `stride sync --all` if Strava still lists the activity"
