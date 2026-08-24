@@ -75,13 +75,13 @@ jobs:
         continue-on-error: true
         with:
           version: nightly-new-compiler
-          nightly-tag: nightly-2026-08-17-b9ca140
+          nightly-tag: nightly-2026-08-23-fb208ba
       - name: Install Roc (retry — the first attempt hit a transient download failure)
         if: ${{ steps.roc.outcome == 'failure' }}
         uses: roc-lang/setup-roc@v0.3.0
         with:
           version: nightly-new-compiler
-          nightly-tag: nightly-2026-08-17-b9ca140
+          nightly-tag: nightly-2026-08-23-fb208ba
       - name: Build
         run: |
           set -euo pipefail

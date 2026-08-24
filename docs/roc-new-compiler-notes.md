@@ -4,10 +4,17 @@ Working reference for the new (Zig) compiler + basic-cli 0.22, learned empirical
 against the compiler and roc-lang/roc source during the migration (completed
 2026-08-02). The migration's progress log is gone — this is the part worth keeping.
 
-## Toolchain pin: `nightly-2026-08-17-b9ca140` (the hold below is LIFTED)
+## Toolchain pin: `nightly-2026-08-23-fb208ba` (the hold below is LIFTED)
+
+**Bumped 2026-08-24**, from `nightly-2026-08-17-b9ca140`. No migration cost this time —
+no source change of any kind. Verified on x86_64 macOS before bumping: `roc check` clean,
+`just build` clean, `just test` → `653 == 653` and ALL E2E CHECKS PASS, and every arm of
+`just e2e-sync` green (41, 18, 12, 10, 8, 7). The arm64 job is CI's to prove; it was not
+run locally, because this machine is x86_64 and the apple_silicon nightly will not
+execute on it ("bad CPU type in executable").
 
 **Resolved 2026-08-17.** The segfault described in this section is fixed upstream, and
-the pin has moved from `nightly-2026-August-04-1cb06bc` to `nightly-2026-08-17-b9ca140`.
+the pin moved from `nightly-2026-August-04-1cb06bc` to `nightly-2026-08-17-b9ca140`.
 Verified on the new pin: all eight modules green under `roc test`, `just e2e` → ALL E2E
 CHECKS PASS. It was still broken on
 2026-08-10 (`roc test` SIGSEGV on both `Render` and `Streams`), so the fix landed between
