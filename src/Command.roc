@@ -204,7 +204,8 @@ Command := [
 			if List.contains(acc, v) acc else List.append(acc, v)
 		})
 
-	## One positional argument. `name` is the placeholder as it appears in usage text;
+	## One argument. Positional, with one exception: `sync`'s `--all` is a literal flag
+	## accepted in an argument position, so it lives here rather than only in `flags`. `name` is the placeholder as it appears in usage text;
 	## a value without angle brackets must be passed verbatim.
 	Arg : { name : Str, required : Bool }
 
@@ -224,12 +225,25 @@ Command := [
 	## machine-derived will trust the unchecked half:
 	##   name (verb)  — compared against the parser's own arms, both directions, with a
 	##                  count gate. Adding a command without an entry fails.
-	##   name (form)  — every multi-word name must be one the parser reaches.
-	##   schema       — must exist; every file in schemas/v2 must be claimed or pinned.
+	##   name (form)  — both directions: every multi-word name must be one the parser
+	##                  reaches, and every two-literal arm the parser has must be
+	##                  accounted for, with the leftovers pinned as a value.
+	##   schema       — must exist, every file in schemas/v2 must be claimed or pinned, AND
+	##                  each form is run and its payload validated against the file it
+	##                  names. A wrong-but-existing filename looks exactly like a right one.
 	##   mutates      — run against a fixture copy; the database contents must not move.
-	##   network      — the set must equal the commands that can reach Strava.
-	##   args         — NOT enforced beyond being present. Names and arity are declared.
-	##   interactive  — NOT enforced. Declared.
+	##   network      — the declared set is pinned as a value, and `Http.send!` is pinned to
+	##                  two functions in one module. NOT a derivation: nothing walks the
+	##                  call graph, so a command that newly reaches those functions would
+	##                  keep all three checks green while declaring `network: false`.
+	##   interactive  — the same three-check shape, against `Stdin`, with the same gap.
+	##   args         — enforced in both arity directions AND in order: filling every
+	##                  declared argument is never a usage error, one short of the required
+	##                  count always is, and required arguments must form a prefix. Literal
+	##                  arguments and enum members are matched against the parser's arms.
+	##                  What is NOT enforced is the free placeholder TEXT — `<days>` versus
+	##                  `<limit>` versus `<n>` — which is exactly where this table's first
+	##                  defects were, and the only part a reader should treat as declared.
 	Spec : {
 		name : Str,
 		args : List(Arg),
@@ -296,8 +310,9 @@ Command := [
 		reads("load", [opt("<days>")], "load.json"),
 		reads("power-curve", [opt("<days>"), opt("<sport>")], "power_curve.json"),
 		reads("pc", [opt("<days>"), opt("<sport>")], "power_curve.json"),
-		## A DATE, not a workout name. The parse arm binds this to a variable called
-		## `name`, which is where an earlier draft of this table got `<name>` from — the
+		## A DATE, not a workout name. The parse arm BOUND this to a variable called
+		## `name` until this commit renamed it, and that binder is where an earlier draft
+		## of this table got `<name>` from — the
 		## handler queries `substr(a.start_local,1,10) = :date` and answers
 		## `no_workout_on_date`. Every other document in the repo says `[date]`; only
 		## this table said otherwise, and this table is the one an agent reads.

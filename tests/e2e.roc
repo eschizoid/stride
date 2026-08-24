@@ -933,7 +933,7 @@ b_init_config! = |ctx| {
     # commands.json is the schema of this very payload — so no command form names
     # them. Stating the exact set means a genuinely unclaimed schema changes the
     # string and fails, where an exclusion list would quietly absorb it.
-    check!("the only schemas no command form claims are the two reached by flag", unclaimed == "commands.json\nversion.json")?
+    check!("the only schemas no command form claims are the two no SUBCOMMAND claims", unclaimed == "commands.json\nversion.json")?
     # The guard that makes the two lines above non-vacuous: if the jq produced nothing
     # at all, both comparisons are "" == "" and pass on an empty payload.
     check!("...and that pair was not comparing two empty lists", cmdq!("[.data.commands[] | select(.schema != \"\")] | length > 20") == "true")?
@@ -971,7 +971,7 @@ b_init_config! = |ctx| {
     #         if Metrics.is_canonical_date(date) { Ok(Zones) } else { Err(Usage(...)) }
     #
     # `stride hrv <date>` dispatched, the table did not describe it, and the whole suite
-    # was green. That is not a hypothetical shape: `reps` at the top of this file is
+    # was green. That is not a hypothetical shape: `reps` in src/Command.roc is
     # written exactly that way, and only survives because a second single-line arm happens
     # to contribute the same verb.
     #
@@ -1050,11 +1050,9 @@ b_init_config! = |ctx| {
     # as `week`'s optional literal arg and `week add` as a form of its own, so no rule has
     # to guess.
     #
-    # What is left over is pinned as a VALUE. The four survivors are the redirect arms
-    # (`plan add`, `plan all` — the plan/week rename's muscle-memory pointers) and the
-    # sort-word hints (`progress asc`, `progress desc`), none of which is a command. A
-    # fifth entry appearing here means a real sub-form was added without a table entry,
-    # and the failure prints it.
+    # What is left over is pinned as a VALUE — see the note beside the accounted side for
+    # which leftovers survive and why. A new entry appearing there means a real sub-form
+    # was added without a table entry, and the failure prints it.
     pair_dir = "${ctx.home}/.pairs"
     # The arm's FULL leading literal run, not its first two. A two-literal capture set the
     # depth rather than removing it: `[_, "week", "add", "bulk", p]` contributed `week add`,
@@ -1143,6 +1141,12 @@ b_init_config! = |ctx| {
     check!("...and every read-only form actually reached its handler (stalled: ${stalled})", stalled == "")?
     check!("...with ${declared_ro} of them declared, and at least one to sweep", declared_ro != "0")?
 
+    # COMMENTS STRIPPED FIRST. These grep the source, and a comment naming `Http.send!`
+    # counts as a call site — a doc comment added in this very PR said "Http.send! is
+    # pinned to two functions" and turned `Command.roc` into a second module that reaches
+    # Strava. Same defect the verb extraction had, in a different check, found the same
+    # way: by a comment breaking it.
+    #
     # `network` against the SOURCE, not against itself. An earlier version of the schema
     # description claimed a test pinned this set; none did, which is worse than saying
     # nothing — a reader trusts an enforcement that is not there. Http.send! is the only
@@ -1150,13 +1154,13 @@ b_init_config! = |ctx| {
     # token exchange and the bearer GET. The commands that can reach them are auth and
     # sync, so that is what the table must say.
     check!("the network set is exactly auth and sync", cmdq!("[.data.commands[] | select(.network) | .name] | sort") == "[\n  \"auth\",\n  \"sync\"\n]")?
-    check!("...and Strava is still reachable from exactly two call sites", Str.trim(sh!("grep -c 'Http.send!' src/Strava.roc")) == "2")?
-    check!("...with no other module able to reach one", Str.trim(sh!("grep -l 'Http.send!' src/*.roc | tr -d ' '")) == "src/Strava.roc")?
+    check!("...and Strava is still reachable from exactly two call sites", Str.trim(sh!("sed 's/#.*//' src/Strava.roc | grep -c 'Http.send!'")) == "2")?
+    check!("...with no other module able to reach one", Str.trim(sh!("for f in src/*.roc; do sed 's/#.*//' $f | grep -q 'Http.send!' && printf '%s' $f; done")) == "src/Strava.roc")?
     # `interactive` the same way: Stdin is what blocking on a human looks like, and it
     # appears once in the whole source, inside the auth flow.
     check!("the interactive set is exactly auth", cmdq!("[.data.commands[] | select(.interactive) | .name]") == "[\n  \"auth\"\n]")?
-    check!("...and stdin is read from exactly one place", Str.trim(sh!("grep -c 'Stdin\\.' src/Strava.roc")) == "1")?
-    check!("...which is the only module that reads it", Str.trim(sh!("grep -l 'Stdin\\.' src/*.roc | tr -d ' '")) == "src/Strava.roc")?
+    check!("...and stdin is read from exactly one place", Str.trim(sh!("sed 's/#.*//' src/Strava.roc | grep -c 'Stdin\\.'")) == "1")?
+    check!("...which is the only module that reads it", Str.trim(sh!("for f in src/*.roc; do sed 's/#.*//' $f | grep -q 'Stdin\\.' && printf '%s' $f; done")) == "src/Strava.roc")?
     # The mutation-proof for the sweep itself: a form that DOES write, run the same way,
     # must be caught. `week add` is declared mutates:true so it is not in the sweep, and
     # it is chosen over `rate` because it writes unconditionally — `rate` depends on the

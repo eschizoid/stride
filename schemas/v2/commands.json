@@ -1,6 +1,6 @@
 {
   "title": "commands",
-  "description": "Answer to a bare `stride --json` (or `--help`/`-h`/`help` under --json): what this binary accepts, and enough about each form to CALL it rather than merely name it (#219). Sourced from the parser's own table, so the answer cannot drift from what actually parses. ADR 0000 §10 declines an MCP server on the grounds that the CLI plus versioned JSON already is the agent interface; this payload is what makes that true. Flags are listed separately — these are subcommands.",
+  "description": "Answer to a bare `stride --json` (or `--help`/`-h`/`help` under --json): what this binary accepts, and enough about each form to CALL it rather than merely name it (#219). Sourced from the parser's own table, so the answer cannot drift from what actually parses. ADR 0000 \u00a710 declines an MCP server on the grounds that the CLI plus versioned JSON already is the agent interface; this payload is what makes that true. Flags are listed separately \u2014 these are subcommands.",
   "type": "object",
   "required": [
     "commands",
@@ -10,7 +10,7 @@
   "properties": {
     "commands": {
       "type": "array",
-      "description": "One entry per CALLABLE FORM, not per verb. `week` and `week add` are separate entries because they differ in the facts below — one reads and one writes — so a single `week` entry could not answer honestly for either. Subcommands only: `help`, `--help` and `-h` are omitted because they answer WITH this list, and `--version` because it is a flag, listed under `flags`.",
+      "description": "One entry per CALLABLE FORM, not per verb. `week` and `week add` are separate entries because they differ in the facts below \u2014 one reads and one writes \u2014 so a single `week` entry could not answer honestly for either. Subcommands only: `help`, `--help` and `-h` are omitted because they answer WITH this list, and `--version` because it is a flag, listed under `flags`.",
       "items": {
         "type": "object",
         "required": [
@@ -25,11 +25,11 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "The full callable form, space-separated, exactly as it is typed after `stride` — e.g. \"week add\", \"config set\"."
+            "description": "The full callable form, space-separated, exactly as it is typed after `stride` \u2014 e.g. \"week add\", \"config set\"."
           },
           "args": {
             "type": "array",
-            "description": "This form's own arguments, in the order they are typed, optional ones last; an empty array means it takes none. Almost all are positional — `sync`'s `--all` is the one literal flag a command accepts in an argument position, which is why it appears here rather than only in the top-level `flags`. Global flags (--json, --human, --help, --version) are NOT listed here and work regardless.",
+            "description": "This form's own arguments, in the order they are typed, required ones first; an empty array means it takes none. Almost all are positional \u2014 `sync`'s `--all` is the one literal flag a command accepts in an argument position, which is why it appears here rather than only in the top-level `flags`. `--json` and `--human` are position-independent and work after any command. `--help` and `--version` are NOT: they parse only as bare invocations, and after a command they are either a usage error or, for a form taking a count, swallowed as that positional \u2014 `stride activities --help` answers bad_count.",
             "items": {
               "type": "object",
               "required": [
@@ -50,19 +50,19 @@
           },
           "mutates": {
             "type": "boolean",
-            "description": "Writes to the database. Checked against behaviour rather than declared: the offline e2e suite runs every form with mutates false against a copy of the fixture, at a valid arity taken from this same args list, and fails if the database CONTENTS move. Contents, not file bytes — WAL means a committed write can leave the main file untouched."
+            "description": "Writes to the database. Checked against behaviour rather than declared: the offline e2e suite runs every form with mutates false against a copy of the fixture, at a valid arity taken from this same args list, and fails if the database CONTENTS move. Contents, not file bytes \u2014 WAL means a committed write can leave the main file untouched."
           },
           "network": {
             "type": "boolean",
-            "description": "Talks to Strava. Since #232 that is exactly `auth` and `sync`. Checked against the source rather than declared: the e2e suite asserts this set matches the commands that can reach the two call sites Strava traffic goes through."
+            "description": "Talks to Strava. Since #232 that is exactly `auth` and `sync`. Checked against the source rather than declared, though not by a call-graph analysis: the e2e pins this set as a value, pins `Http.send!` to two functions, and pins those to one module. A command that newly reached them would keep all three green."
           },
           "interactive": {
             "type": "boolean",
-            "description": "Blocks waiting on a human. `auth` opens a browser and waits for a paste, so it is the one form an unattended agent must not call. Checked against the source: the e2e suite asserts this set matches the commands that can reach the one place stdin is read."
+            "description": "Blocks waiting on a human. `auth` opens a browser and waits for a paste, so it is the one form an unattended agent must not call. Checked against the source the same way `network` is, with the same limit: the set, the `Stdin` call count and its module are each pinned, but nothing walks the call graph."
           },
           "schema": {
             "type": "string",
-            "description": "The file under schemas/v2 this form's success payload validates against, or \"\" when it has no machine payload of its own. Every named file is checked to exist, and every schema in that directory is accounted for — claimed by a form, or pinned by name as one of the three that cannot be (the shared envelope, this payload, and the version payload, which is reached by flag)."
+            "description": "The file under schemas/v2 this form's success payload validates against, or \"\" when it has no machine payload of its own. Every named file is checked to exist, and every schema in that directory is accounted for \u2014 claimed by a form, or pinned by name as one of the three that cannot be (the shared envelope, this payload, and the version payload, which is reached by flag)."
           }
         }
       }
@@ -72,7 +72,7 @@
       "items": {
         "type": "string"
       },
-      "description": "flags this build accepts. --json, --human, --help and --version are GLOBAL; --all is accepted only by sync, where it forces a full re-list from scratch. The list does not encode that distinction, so a caller should not assume every flag works on every command — a command's own `args` is the authority on its positional arguments and on any flag it accepts in an argument position."
+      "description": "flags this build accepts. --json, --human, --help and --version are GLOBAL; --all is accepted only by sync, where it forces a full re-list from scratch. The list does not encode that distinction, so a caller should not assume every flag works on every command \u2014 a command's own `args` is the authority on its positional arguments and on any flag it accepts in an argument position."
     }
   }
 }
