@@ -44,7 +44,7 @@ ReportSeason :: [].{
     # ONE fold for blocks and months. They diverged the first time months got
     # their own query: it aliased ftp_first/ftp_last to MIN/MAX, so every month
     # was non-decreasing by construction and a falling threshold rendered as a
-    # rise. pol_rows arrives ORDER BY date, so folding it in order is what makes
+    # rise. pol_rows arrives ORDER BY date, fam, so folding it in order is what makes
     # first/last chronological.
     FamRow : { fam : Str, n : I64, ftp_lo : F64, ftp_hi : F64, ftp_first : F64, ftp_last : F64 }
     fold_families : List({ days : I64, fam : Str, n : I64, easy_s : F64, mod_s : F64, hard_s : F64, ftp_lo : F64, ftp_hi : F64 }) -> List(FamRow)
@@ -123,13 +123,20 @@ ReportSeason :: [].{
                     \\       CAST(COALESCE(MAX(m.ftp_used), 0) AS REAL) AS ftp_hi,
                     \\       -- an id from the group, carried ONLY so a refused date can name a row
                     \\       -- the user can act on. The envelope used to carry the date alone, and a
-                    \\       -- date is not something you can delete or re-fetch (#243). MIN rather
-                    \\       -- than any: an unreadable date groups every row that shares it, so the
-                    \\       -- group can hold more than one — naming the lowest id is deterministic,
-                    \\       -- which a test can pin and a bug report can quote.
+                    \\       -- date is not something you can delete or re-fetch (#243).
+                    \\       -- MIN, and `fam` in the ORDER BY, because neither gives alone what it
+                    \\       -- looks like it gives. The grouping is (date, fam), NOT date alone: one
+                    \\       -- unreadable date shared by a Run and a Ride is TWO groups, so MIN picks
+                    \\       -- the lowest id WITHIN the group the walk reaches first — which is not
+                    \\       -- the lowest id for that date. Review measured it: 900 (Run) and 901
+                    \\       -- (Ride) on one bad date named 901.
+                    \\       -- What `fam` in the ORDER BY buys is that "first" is OUR statement and
+                    \\       -- not SQLite's. The property is that one database names one row every
+                    \\       -- time, so a bug report reproduces; it is NOT that the id is globally
+                    \\       -- smallest, and two bad rows still take two repairs.
                     \\       MIN(a.id) AS example_id
                     \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
-                    \\GROUP BY date, fam ORDER BY date
+                    \\GROUP BY date, fam ORDER BY date, fam
                 ,
                 bindings: [],
                 rows: |cols| |stmt| {
@@ -145,9 +152,15 @@ ReportSeason :: [].{
                     # Same rule as daily_load.day: absorbing this silently drops
                     # the activity from sessions, polarization AND the threshold
                     # range with no trace at exit 0. And a merely-PARSEABLE date
-                    # is not enough: "2026-3-01" sorts last, so it became
+                    # is not enough: "2026-3-01T" sorts last, so it became
                     # ftp_end for its month and its block and published the
                     # threshold running backwards.
+                    #
+                    # "2026-3-01T", with the T: `d` is substr(start_local, 1, 10), so
+                    # every value named in these comments and in the error message is a
+                    # ten-character PREFIX of the column, never the column. Three separate
+                    # comments here quoted the pre-substr value, and that slip is what put
+                    # a string no row contains into a user-facing "delete this" message.
                     days =
                         if Metrics.is_canonical_date(d) {
                             (Metrics.date_str_to_days(d)).map_err(|_| BadActivityDate(d, example_id))?

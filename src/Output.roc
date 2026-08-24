@@ -180,21 +180,41 @@ Output :: [].{
     unreadable_config_msg = |key, raw|
         "${key} is set to '${raw}', which is not a number — fix it with `stride config set ${key} <value>`"
 
-    # A stored DATE the engine cannot read, from one of the two tables that hold dates:
-    # `activities.start_local`, which stride mirrors from Strava, and `daily_load.day`,
-    # which stride derives itself. Separate codes rather than one, because the remedies
-    # are genuinely different and the boundary's own 401 arm records what flattening two
-    # remedies into one message costs: the mirror row is repaired by re-fetching it, and
-    # the derived row by rebuilding the table. A caller told only "a date is bad" cannot
-    # pick between them.
+    # A stored DATE the engine cannot read, from the two tables these two errors are
+    # raised for: `activities.start_local`, which stride mirrors from Strava, and
+    # `daily_load.day`, which stride derives itself. NOT the only date columns in the
+    # schema — `planned_sessions.target_date` is a third, and the one a user can poison
+    # without touching SQLite, since `week add` stores whatever string it is handed. It
+    # has no code here because nothing raises a tag for it yet; see Plan.roc's own note.
+    #
+    # Separate codes rather than one, because the remedies are genuinely different: the
+    # mirror row is repaired by re-fetching it, the derived row by rebuilding the table.
+    # A caller told only "a date is bad" cannot pick between them. (The boundary's 401 arm
+    # is the precedent for CHECKING that, not for splitting — it kept one code and widened
+    # the message instead, which is the right call when the remedy really is identical.)
     #
     # These are NOT internal_error. That arm's message asks the user to open an issue,
     # which is the wrong instruction for both: nothing here is unanticipated — the code
     # constructs BadActivityDate and BadDailyLoadDay on purpose, at a date it deliberately
     # refuses to guess at. It just never reached the boundary as itself (#243).
+    # "BEGINS", not "is". `raw` is `substr(a.start_local, 1, 10)` — the day the engine
+    # reads, not the column. Saying "has start_local 'garbage-da'" sent the user to
+    # `DELETE FROM activities WHERE start_local='garbage-da'`, which matches zero rows,
+    # and made every bug report quoting it unreproducible. Measured against this PR's own
+    # fixtures: '2026-3-01T06:00:00Z' printed as '2026-3-01T'. Carrying the whole column
+    # out of the query was the other option and it is not available — SQLite's bare-column
+    # rule only pins a value to the min/max row when there is ONE min/max aggregate, and
+    # this query has three.
+    #
+    # The ID is therefore the only handle that works, so the remedy leads with it. The
+    # order of the two remedies is not cosmetic either: `sync --all` was measured to
+    # SILENTLY no-op on a row Strava does not list — an imported one, where `synced_at` is
+    # NULL — returning `updated_activities: 0` at exit 0 and leaving the same error. An
+    # error whose first suggestion reports success while changing nothing is the defect
+    # this whole change exists to remove.
     unreadable_activity_date_msg : Str, I64 -> Str
     unreadable_activity_date_msg = |raw, id|
-        "activity ${(id).to_str()} has start_local '${raw}', which is not a readable date — re-fetch it with `stride sync --all`, or delete the row and re-sync"
+        "activity ${(id).to_str()} has an unreadable start_local beginning '${raw}' — delete that row by id and re-sync, or run `stride sync --all` if Strava still lists the activity"
 
     unreadable_activity_date! : Str, I64 => Try({}, _)
     unreadable_activity_date! = |raw, id| {
@@ -208,10 +228,17 @@ Output :: [].{
 
     # `stride analyze`, NOT `stride analyze --all` — that form does not exist and exits
     # with `usage`, which is the same defect this whole change is about: an error whose
-    # remedy does not work. Measured: plain `analyze` calls rebuild_daily_load!, which
-    # DELETEs the table and rewrites it, so the unreadable day is gone afterwards and
-    # `season` succeeds. Verified end to end against a poisoned snapshot, not read off
-    # the code.
+    # remedy does not work. Measured: `analyze --all` answers
+    # `usage: stride analyze — wrong arguments for this command`, exit 1.
+    #
+    # The remedy itself did not work either, in a state this error is reachable from.
+    # rebuild_daily_load! only reached its DELETE when at least one activity date parsed;
+    # with none, it returned Ok({}) and left the table exactly as it was — so `analyze`
+    # answered `converged: true` at exit 0 and `season` answered this error again,
+    # verbatim, forever. Fixed in Analyze.roc by clearing on that branch too. Recorded
+    # here because the comment that stood in this spot said "verified end to end against
+    # a poisoned snapshot", and it had been — against a snapshot that happened to hold
+    # parseable activities. The evidence was real and the sentence generalized past it.
     unreadable_daily_load_day_msg : Str -> Str
     unreadable_daily_load_day_msg = |raw|
         "daily_load holds the day '${raw}', which is not a readable date — rebuild the table with `stride analyze`"

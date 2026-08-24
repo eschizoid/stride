@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(702)?
+    checks_ran_exactly!(712)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2381,15 +2381,75 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES ('not-a-date', 30.0, 5.0, 5.0, 0.0);")
     bad_day = stride!(ctx.bin, ctx.home, ["season"])
     # `contains "error"` was the whole assertion here, and internal_error satisfies it —
-    # so this check passed for two releases while `season` was answering "unhandled
-    # failure: BadDailyLoadDay(...) — please open an issue" (#243). Asserting the CODE is
-    # the difference between "it refused" and "it refused for the reason it names", and
-    # this is the second time in this file a `contains` accepted the failure it was
-    # written to catch.
+    # so this check shipped in v0.7.0 while `season` was answering "unhandled failure:
+    # BadDailyLoadDay(...) — please open an issue" (#243). Asserting the CODE is the
+    # difference between "it refused" and "it refused for the reason it names".
+    #
+    # No ordinal here on purpose. This was written as "the second time in this file a
+    # `contains` accepted the failure it was written to catch"; review found at least
+    # seven already recorded, and nobody adding the eighth would come here to update a
+    # number. The rule is the durable part: a `contains` accepts every superstring, so it
+    # cannot distinguish the failure it names from the one it got.
     check!("a malformed daily_load day is refused, not absorbed", !(Str.contains(bad_day, "span_weeks")) and Str.contains(bad_day, "error"))?
     check!("...naming the code, not internal_error", strjq!(ctx, ["season"], ".error.code") == "unreadable_daily_load_day")?
     check!("...and quoting the unreadable day back", Str.contains(strjq!(ctx, ["season"], ".error.message"), "'not-a-date'"))?
     check!("...with a remedy that is a real command form", Str.contains(strjq!(ctx, ["season"], ".error.message"), "`stride analyze`"))?
+    # ...and EVERY command that anchors on that day refuses it, not just the ones that
+    # happened to have a guard. `compare` ran the identical
+    # `SELECT day FROM daily_load ORDER BY day DESC LIMIT 1` and collapsed the failure to
+    # epoch day 0 — which does not fail, it ANSWERS. Review measured a real 28-day block
+    # (138 TSS, 2 sessions, 58% easy) coming back as `has_data: false` with every figure 0
+    # at exit 0, and the human line "no load recorded either 28d · fitness holding", while
+    # `summary` refused on the same database in the same run.
+    #
+    # Pinned here, against `not-a-date`, and NOT against the non-canonical `2026-3-05`
+    # below: that one PARSES. `date_str_to_days` accepts it, so this guard cannot fire on
+    # it and a check placed there would have been asserting the wrong mechanism —
+    # `season` refuses it through a separate `is_canonical_date` test. First draft did
+    # exactly that and went red, which is the only reason the distinction is written down.
+    check!("...and `compare` refuses the same anchor rather than answering with an empty month", strjq!(ctx, ["compare", "month"], ".error.code") == "unreadable_daily_load_day")?
+    # the error code alone is not the assertion. A confident all-zero window is the
+    # failure; the code is just how it surfaces.
+    check!("...publishing no all-zero window as if it had been measured", strjq!(ctx, ["compare", "month"], ".data.current.has_data") == "null")?
+    check!("...while `summary` refuses it too, which is where this guard already was", strjq!(ctx, ["summary"], ".error.code") == "unreadable_daily_load_day")?
+    # ...and the remedy the message names actually clears it. rebuild_daily_load! only
+    # reached its DELETE when at least one activity date parsed; with none it returned
+    # Ok({}) and left the poisoned row in place, so `analyze` answered converged: true at
+    # exit 0 and `season` answered the same error forever. Asserted as a LOOP: run the
+    # remedy, then re-run the command that named it, and require the second answer to
+    # differ. Checking only that `analyze` exits 0 is what let this ship — it exited 0
+    # throughout.
+    #
+    # Its OWN database, and that is the whole point. rebuild_daily_load! reaches its
+    # DELETE on the branch where at least one activity date parsed — and this fixture has
+    # hundreds that do, so running `analyze` here clears the row through the branch that
+    # was never broken. Written that way first and mutation-proved: reverting the fix left
+    # the check green. The broken branch is the one with NO parseable date, which cannot
+    # be constructed in a shared fixture without destroying it for every check after.
+    an_home = Str.trim(sh!("mktemp -d"))
+    an_db = "${an_home}/.stride/db.sqlite"
+    _ = sh!("HOME='${an_home}' '${ctx.bin}' init >/dev/null 2>&1")
+    # zones first: `analyze` refuses with missing_config BEFORE it reaches the rebuild, so
+    # without these the remedy never runs and every check below would pass or fail for a
+    # reason that has nothing to do with the branch under test. That refusal is itself the
+    # second way the printed remedy can fail to work, and it is why this seeds a real
+    # config rather than the bare `init` default.
+    _ = sql!(an_db, "INSERT OR REPLACE INTO config (key,value) VALUES ('hr_z1_max','123'),('hr_z2_max','150'),('hr_z3_max','165'),('hr_z4_max','175');")
+    _ = sql!(an_db, "INSERT OR REPLACE INTO daily_load (day,tss,ctl,atl,tsb) VALUES ('not-a-date', 30.0, 5.0, 5.0, 0.0);")
+    check!("a poisoned daily_load with no readable activity date is refused", Str.contains(sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' season 2>/dev/null"), "unreadable_daily_load_day"))?
+    an_out = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' analyze 2>/dev/null")
+    # `analyze` exiting 0 is NOT the assertion — it exited 0 throughout the bug, reporting
+    # converged: true while changing nothing. The assertion is that the row is gone and
+    # the command that named this remedy stops naming it.
+    check!("...and `stride analyze`, the remedy it names, really does clear the row", Str.trim(sql!(an_db, "SELECT count(*) FROM daily_load WHERE day = 'not-a-date';")) == "0")?
+    check!("...so re-running the command that sent you there no longer refuses", !(Str.contains(sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' season 2>/dev/null"), "unreadable_daily_load_day")))?
+    # guards the two checks above against passing for the wrong reason: a row that
+    # vanished because `analyze` errored out would satisfy both. This pins that it
+    # SUCCEEDED, which is also the state the bug shipped in — exit 0, converged: true,
+    # nothing changed. All four zone keys are needed to get here; seeding three left
+    # `analyze` answering missing_config and the clear never ran.
+    check!("...having actually run, not errored out before touching the table", Str.contains(an_out, "\"converged\":true"))?
+    _ = sh!("rm -rf '${an_home}'")
     _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = 'not-a-date';")
     # ...and the SAME rule on the other date-parsing site. Absorbing this one
     # dropped the activity from sessions, polarization AND the threshold range
@@ -2401,6 +2461,16 @@ b_seed_analyze! = |ctx| {
     check!("...naming the code, not internal_error", strjq!(ctx, ["season"], ".error.code") == "unreadable_activity_date")?
     # THE point of the issue: a date is not something a caller can act on. The id is.
     check!("...and naming the ROW, so a caller can repair or delete it", Str.contains(strjq!(ctx, ["season"], ".error.message"), "activity 933"))?
+    # The quoted value, asserted — and asserted as a PREFIX claim. The query reads
+    # `substr(start_local, 1, 10)`, so the message can only speak about the first ten
+    # characters; it said "has start_local 'garbage-da'" and sent the user to a DELETE
+    # matching zero rows. The daily_load arm quotes its column whole and has always been
+    # asserted; this one was not, which is how the sentence stayed false.
+    check!("...quoting the ten characters it actually read", Str.contains(strjq!(ctx, ["season"], ".error.message"), "beginning 'garbage-da'"))?
+    # and the remedy leads with the one that always works. `sync --all` silently no-ops on
+    # an imported row (synced_at NULL, so the upsert never sees it and prune exempts it),
+    # so it is stated as conditional and second.
+    check!("...leading with the remedy that does not depend on Strava still listing it", Str.contains(strjq!(ctx, ["season"], ".error.message"), "delete that row by id and re-sync"))?
     # ...and PARSEABLE is not enough. "2026-3-01" parses fine and sorts after
     # every 2026-1x date, so it became ftp_end for its month AND its block and
     # published the threshold running backwards -- at exit 0, which is the
@@ -2411,7 +2481,9 @@ b_seed_analyze! = |ctx| {
     check!("a non-canonical activity date is refused too", Str.contains(unpadded, "error") and !(Str.contains(unpadded, "blocks")))?
     check!("...with the same code as the unparseable one", strjq!(ctx, ["season"], ".error.code") == "unreadable_activity_date")?
     # 934, not 933, and that is the assertion: both bad rows are in the table here, and
-    # "2026-3-01" sorts before "garbage-da", so the row named must be the one the walk
+    # "2026-3-01T" sorts before "garbage-da" (ten-character prefixes — the query reads
+    # substr(start_local, 1, 10), so those are the values compared), so the row named
+    # must be the one the walk
     # actually met first. Naming a row that is merely bad, rather than the one that
     # stopped the run, sends the user to repair the wrong activity.
     check!("...naming the row the walk met FIRST, not merely a bad one", Str.contains(strjq!(ctx, ["season"], ".error.message"), "activity 934"))?
@@ -2424,6 +2496,22 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (932,'same bad day','Ride','Ride','2026-3-01T06:00:00Z',3600);")
     _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (932,40.0,111.0,3600,1);")
     check!("...and the LOWEST id when one bad date groups several rows", Str.contains(strjq!(ctx, ["season"], ".error.message"), "activity 932"))?
+    # ...and NOT the globally lowest id, which is the claim the first draft of this made
+    # and had backwards. The grouping is (date, fam), so one bad date shared by a Run and
+    # a Ride is TWO groups, and MIN picks inside whichever the walk reaches first — with
+    # `fam` in the ORDER BY that is the alphabetically first family, and "Ride" < "Run".
+    # So 931, a Run with a LOWER id on the same bad date, must NOT displace 932.
+    #
+    # The guarantee this pins is DETERMINISM, not global minimality: the same database
+    # names the same row every time, which is what makes a bug report reproducible. Two
+    # bad rows still take two repairs, and no single id can change that. Direct probe of
+    # the query returned `2026-3-01T|Ride|932` then `2026-3-01T|Run|931`, in that order.
+    # Dropping `fam` from the ORDER BY hands the choice back to SQLite; dropping it from
+    # the GROUP BY makes the answer 931 and fails here.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (931,'same day other sport','Run','Run','2026-3-01T06:00:00Z',3600);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (931,40.0,111.0,3600,1);")
+    check!("...and a lower id in a later-sorting family does not displace it", Str.contains(strjq!(ctx, ["season"], ".error.message"), "activity 932"))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 931; DELETE FROM activities WHERE id = 931;")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 932; DELETE FROM activities WHERE id = 932;")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 934; DELETE FROM activities WHERE id = 934;")
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day,tss,ctl,atl,tsb) VALUES ('2026-3-05', 30.0, 5.0, 5.0, 0.0);")

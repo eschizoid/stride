@@ -145,7 +145,15 @@ Report :: [].{
                 Err(NoRowsReturned) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
                 Err(e) => Err(e)
                 Ok(latest_day) => {
-                    anchor = Metrics.date_str_to_days(latest_day).ok_or(0)
+                    # PROPAGATE, exactly as summary_payload! does 140 lines below with the
+                    # identical read. Collapsing to epoch day 0 here does not fail loudly —
+                    # it answers. Measured on one poisoned row: a real 28-day block (138
+                    # TSS, 2 sessions, 58% easy) came back as `has_data: false`, every
+                    # figure 0, exit 0, and the human line said "no load recorded either 28d
+                    # · fitness holding". `summary` refused on the same database in the same
+                    # run. An athlete told their fitness is holding, by a command that could
+                    # not read the day it anchored on, is the worst shape this class has.
+                    anchor = (Metrics.date_str_to_days(latest_day)).map_err(|_| BadDailyLoadDay(latest_day))?
                     cur_from = Metrics.days_to_date_str(anchor - (days - 1))
                     cur_to = Metrics.days_to_date_str(anchor + 1)
                     pri_from = Metrics.days_to_date_str(anchor - (2 * days - 1))

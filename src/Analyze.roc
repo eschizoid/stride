@@ -943,7 +943,16 @@ Analyze :: [].{
         )
         valid_days = Dict.keys(by_day)
         match List.first(valid_days) {
-            Err(_) => Ok({}) # nothing computed yet (or no parseable dates)
+            # No parseable day means the derived table should be EMPTY, not left as it was.
+            # Returning Ok({}) here without clearing made `stride analyze` a no-op that
+            # reports `converged: true` at exit 0 while an unreadable row survives in
+            # daily_load — and that row is what `summary`, `season`, `plan` and `compare`
+            # refuse on, each naming `stride analyze` as the remedy. Review measured the
+            # loop: analyze, exit 0, converged; season, same error, verbatim; forever.
+            # The other branch DELETEs unconditionally, so this is the same rule applied
+            # to the case where the walk has nothing to write, not a new behaviour.
+            # (Fresh database: the DELETE hits an empty table and costs nothing.)
+            Err(_) => Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM daily_load", bindings: [] })
             Ok(seed) => {
                 bounds = List.fold(valid_days, { lo: seed, hi: seed }, |b, d| { lo: (b.lo).min(d), hi: (b.hi).max(d) })
                 # extend through today so rest days decay ATL/CTL and TSB is true as-of-now

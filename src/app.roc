@@ -298,9 +298,13 @@ run_command! = |cmd|
         # all of them -- name the key, echo the stored text (#206).
         Err(UnreadableConfig(key, raw)) => Output.unreadable_config!(key, raw)
         # A stored date the engine refuses to guess at. Same reasoning as the config arm
-        # above -- converted HERE because three commands walk these two tables (`season`
-        # reaches both, `summary` and `plan` reach daily_load through the ramp anchor),
-        # and the remedy depends on the TABLE rather than on which command met the row.
+        # above -- converted HERE, at the one boundary, because four commands can RAISE
+        # these tags (`season` both, `summary` and `plan` through the ramp anchor,
+        # `compare` through its own), and the remedy depends on the TABLE rather than on
+        # which command met the row. "Can raise the tag" is the property this arm depends
+        # on and the one worth checking; more commands than that merely READ the tables --
+        # `load`, `stats` and `doctor` do, and still absorb (`load` collapses an unreadable
+        # day to epoch 0 and prints a 1969 row).
         Err(BadActivityDate(raw, id)) => Output.unreadable_activity_date!(raw, id)
         Err(BadDailyLoadDay(raw)) => Output.unreadable_daily_load_day!(raw)
         Err(SqliteErr(NotADatabase, _)) =>
