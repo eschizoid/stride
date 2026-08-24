@@ -681,14 +681,17 @@ Render :: [].{
 
     # ── stream-drain note, used by sync's human line ─────────────────────────────────────────────────
 
-    # `stopped` arrives as a string because that is what ships in the payload, but the
-    # set is closed at the producer by Drain.StopReason and turned into these exact
-    # three strings by Drain.stopped_label. Matched by `==` and never by
-    # `Str.contains`, which accepts every superstring — "complete" would match
-    # "completely broken" (ADR 0012, and the trend_label/#165 bug that taught it).
-    # The catch-all cannot be reached through stopped_label; it exists so that if some
-    # future producer bypasses it, the tag shows up verbatim instead of being displayed
-    # as one of these three.
+    # `stopped` arrives as a string because that is what ships in the payload. The set is
+    # closed at the producer by Drain.SyncStop, which has FOUR labels, not three — this
+    # function sees only the three drain reasons because sync_screen's match claims the
+    # fourth first, which is a fact about sync_screen and not about the producer. Saying
+    # otherwise here is what this comment did until #235's review, and it is the same
+    # sentence-shape that review was opened by: a comment naming a narrower producer than
+    # the code has.
+    # Matched by `==` and never by `Str.contains`, which accepts every superstring —
+    # "complete" would match "completely broken" (ADR 0012, and the trend_label/#165 bug
+    # that taught it). The catch-all is reachable: any label this function is handed that
+    # is not one of its three renders verbatim rather than being guessed into one.
     drain_note : Str, I64 -> Str
     drain_note = |stopped, pending|
         # `pending` is tested FIRST, before the reason. Nothing is left to do regardless
@@ -788,18 +791,28 @@ Render :: [].{
         # it never started. The queue is only empty in the steady state, which is the one
         # shape the e2e happened to construct.
         tail =
-            if p.stopped == "list_rate_limited" {
-                # read from `pruned`, not from `stopped`. Prune is unreachable on this
-                # path today — sync! returns before it — but that is a fact about
-                # Strava.sync!, and this function can only see the payload. Asserting it
-                # from here would be Render vouching for a caller it never observes, and
-                # the sentence would go quietly false the day the early return moves.
-                prune_claim = if p.pruned == 0 "; nothing was pruned" else ""
-                " — Strava rate-limited the activity list, so it is incomplete${prune_claim}. Run `stride sync` again in ~15 minutes"
-            } else if p.pending_streams > 0 {
-                " — ${drain_note(p.stopped, p.pending_streams)}"
-            } else {
-                ""
+            match Drain.stop_of_label(p.stopped) {
+                Known(ListRateLimited) => {
+                    # read from `pruned`, not from `stopped`. Prune is unreachable on this
+                    # path today — sync! returns before it — but that is a fact about
+                    # Strava.sync!, and this function can only see the payload. Asserting
+                    # it from here would be Render vouching for a caller it never
+                    # observes, and the sentence would go quietly false the day the early
+                    # return moves.
+                    prune_claim = if p.pruned == 0 "; nothing was pruned" else ""
+                    " — Strava rate-limited the activity list, so it is incomplete${prune_claim}. Run `stride sync` again in ~15 minutes"
+                }
+                # A MATCH, not an `==` chain, and that is the enforcement: add a fifth arm
+                # to Drain.SyncStop and this stops compiling. The `==` this replaced was
+                # the single line standing between a new stop reason and the user seeing
+                # its raw wire token, and the test that claimed to guard it enumerated the
+                # labels by hand — so it kept passing while the type grew past it.
+                Known(FromDrain(_)) | Unknown(_) =>
+                    if p.pending_streams > 0 {
+                        " — ${drain_note(p.stopped, p.pending_streams)}"
+                    } else {
+                        ""
+                    }
             }
         # `--all` re-listed the ENTIRE account, so naming the rolling window there would
         # describe a bound the run did not have.
@@ -1927,13 +1940,14 @@ expect {
     List.all(produced, |s| Render.drain_note(s, 9) != "${s} — 9 to go")
 }
 
-# EVERY label the producer can emit, checked where the user reads it: none of them may
-# appear raw in the human line. Enumerated over SyncStop rather than StopReason, which
-# is the whole reason the wider type exists — a sweep keyed on the drain's three arms
-# cannot see the fourth, and the fourth is the one whose handling is a single `==` in
-# sync_screen's tail. Delete that branch and "list_rate_limited" falls through to
-# drain_note's catch-all and ships to the user verbatim; this fails when it does.
-# Both `pending` shapes, because the tail dispatches on pending_streams too.
+# The four labels that exist TODAY, checked where the user reads them: none may appear
+# raw in the human line. Deliberately not claiming to cover every label the producer can
+# emit — this is a hand-written list, and review proved a hand-written list does not grow
+# when the type does: a fifth SyncStop arm shipped its raw token to the user with this
+# guard green. What closes that hole is sync_screen matching on Drain.stop_of_label, so a
+# fifth arm fails to COMPILE; this expect is the value check underneath it, and the
+# round-trip expect below pins the parser to the producer. Both `pending` shapes, because
+# the tail dispatches on pending_streams too.
 expect {
     labels = [FromDrain(Complete), FromDrain(BudgetReached), FromDrain(RateLimited), ListRateLimited]
     List.all(
@@ -1946,6 +1960,19 @@ expect {
         },
     )
 }
+
+# PARSER to PRODUCER. stop_of_label is what makes the tail's match exhaustive, so it has
+# to agree with sync_stopped_label about all four spellings — a typo in one of its four
+# comparisons silently sends that reason down the FromDrain branch, where a list refusal
+# would be described as a drain stop.
+expect {
+    all = [FromDrain(Complete), FromDrain(BudgetReached), FromDrain(RateLimited), ListRateLimited]
+    List.all(all, |t| Drain.stop_of_label(Drain.sync_stopped_label(t)) == Known(t))
+}
+
+# ...and a label from some other build is carried through rather than guessed into one of
+# the four. This is the arm that keeps the tail's `Unknown` branch honest.
+expect Drain.stop_of_label("throttled_by_proxy") == Unknown("throttled_by_proxy")
 
 # ADR 0012's boundary rule: a new prose surface joins the denylist sweep. These are
 # tool instructions ("run `stride sync` again tomorrow"), not training advice, but

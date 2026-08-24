@@ -744,6 +744,14 @@ run_stops! = || {
         # ...and the watermark must not move past what was never listed.
         check!("...leaving last_sync_epoch where it was", Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='last_sync_epoch'),'none');")) == before_epoch)?
         check!("...and the human screen blames the LIST too, not the drain", Str.contains(sh!("HOME='${home}' STRIDE_API_BASE='${base}' '${bin}' sync 2>&1"), "rate-limited the activity list"))?
+        # The three sibling stop-reason arms each validate their payload and this one did
+        # not, which mattered more here than anywhere else: this is the only arm in the
+        # suite that ADDS a value to an enum in schemas/v2. Review deleted
+        # "list_rate_limited" from sync.json's `stopped` enum and all 19 checks stayed
+        # green — a contract break shipping under a green suite, and no other driver could
+        # have caught it, because emitting the value at all needs a list-429 mock and only
+        # these two halves have one.
+        check!("the list-refused payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
         # PARTIAL progress, against a second mock that serves a full page and then refuses.
         # Everything above runs on a page-one refusal, where nothing was ever upserted — so
         # `synced` is 0 whether the run carries its accumulator out or throws it away.
@@ -771,6 +779,15 @@ run_stops! = || {
         check!("...and those rows really are in the database", Str.trim(sql!(part_db, "SELECT count(*) FROM activities;")) == "200")?
         check!("...spanning BOTH pages, so the second one was stored and not just counted", Str.trim(sql!(part_db, "SELECT count(*) FROM activities WHERE id BETWEEN 20101 AND 20200;")) == "100")?
         check!("...still reporting the list stop, and still pruning nothing", pq!(".data.stopped") == "list_rate_limited" and pq!(".data.pruned") == "0")?
+        # The queue at its MAXIMUM, which is the shape Render's tail comment is written
+        # about and the reason the list arm is tested before pending_streams. The consumer
+        # side pins it (Render's sync_screen expect carries pending_streams: 100); the
+        # PRODUCER was unpinned, and zeroing this field passed all 19 checks.
+        check!("...reporting the whole listed backlog as pending, not zero", pq!(".data.pending_streams") == "200")?
+        # nothing was updated on a first run, and `updated_activities` survived being
+        # replaced by `synced` because no check read it
+        check!("...and nothing updated, because every row was new", pq!(".data.updated_activities") == "0")?
+        check!("the partial-list payload conforms to the schema too", Str.trim(sh!("jq '.data' '${part_home}/out.json' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
         # Run it AGAIN against the same mock. `synced` is what was re-listed and
         # `new_activities` is what was inserted, and on the first run both are 200 — so
         # either one hardcoded to the other passes. The second run separates them: the same
@@ -908,7 +925,7 @@ run_stops! = || {
         if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
             # its own floor: this branch returns before the shared drain assertions, so the
             # 12 the default arm expects would never be reachable here
-            19
+            23
         } else if env_or!("E2E_EXPECT_500", "") == "1" {
             7
         } else if env_or!("E2E_EXPECT_401", "") == "1" {
