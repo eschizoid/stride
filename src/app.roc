@@ -169,9 +169,40 @@ main! = |raw_args| {
                         # envelope tells a machine to "run `stride` for the
                         # list", so that list must lead to everything runnable —
                         # --version included (review found it unreachable)
+                        # Records, not bare names (#219). A name list lets an agent
+                        # enumerate and nothing more — it cannot learn the argument
+                        # shape, whether a call writes, whether it needs the network,
+                        # or which schema the answer follows, so it needs outside
+                        # documentation to drive an interface that looks
+                        # self-describing. ADR 0000 §10 declines an MCP server on the
+                        # grounds that the CLI plus versioned JSON already IS the agent
+                        # interface; this is that claim made true.
+                        #
+                        # `--` and `-h` are listed because the binary accepts them and an
+                        # agent reading only this payload could not otherwise discover
+                        # them. `--` is the load-bearing one: it ends flag parsing, and it
+                        # is the ONLY way to pass an argument whose value begins with
+                        # `--json` or `--human`. It was documented in help_text and nowhere
+                        # a machine reads.
+                        #
+                        # These are bare strings where `commands` entries are records, and
+                        # that asymmetry is known rather than endorsed: the payload cannot
+                        # say that `--all` is sync-only, that `--json`/`--human` are
+                        # last-one-wins, or that `--` is a terminator rather than a flag.
+                        # All of that lives in the schema's prose, which is the
+                        # "needs outside documentation to drive an interface that looks
+                        # self-describing" problem this whole change exists to fix, one
+                        # array over. Widening it to records is #246; deriving it is not
+                        # available, because flags are handled in three unrelated places.
+                        #
+                        # Filtered as before, for two different reasons: `help`, `--help`
+                        # and `-h` answer WITH this list, so listing them invites a loop;
+                        # `--version` is a flag and belongs in `flags` beside the others.
+                        # Only the first reason is a loop, and an earlier wording gave it
+                        # for all four.
                         Output.emit_ok!({
-                            commands: List.keep_if(Command.command_names, |c| !(Str.starts_with(c, "-")) and c != "help"),
-                            flags: ["--json", "--human", "--help", "--version", "--all"],
+                            commands: List.keep_if(Command.specs, |s| !(Str.starts_with(s.name, "-")) and s.name != "help"),
+                            flags: ["--json", "--human", "--help", "-h", "--version", "--all", "--"],
                         })
                     } else {
                         Stdout.line!(help_text)

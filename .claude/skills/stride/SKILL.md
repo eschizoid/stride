@@ -129,8 +129,19 @@ reason and still returns JSON — note the flag is present BEFORE the terminator
 because `--` stops flag parsing for everything after it. If output ever looks like a table when you
 wanted data, you left `--json` off. Every machine response you will
 consume is a versioned envelope — including usage errors (`{"error":{"code":"usage",…}}`) and a
-bare `stride --json`, which answers with `{"data":{"commands":[…]}}` rather than the
-human help screen (#180). One thing is NOT enveloped: `stride auth`, an interactive browser
+bare `stride --json`, which answers with the command table rather than the
+human help screen (#180). That table DESCRIBES rather than names (#219): one entry per
+callable form — `week` and `week add` are separate, because one reads and one writes —
+each carrying `{name, args:[{name,required}], mutates, network, interactive, schema}`. So
+you can determine argument shape, whether a call writes, whether it needs Strava, and
+which file under `schemas/v2` the answer validates against, without reading this document.
+`interactive: true` marks the one form you must never call unattended (`auth`). Prefer
+that table over anything written here if the two ever disagree — it is cross-checked
+against the parser in CI, this file is not. It is hand-written, not generated: the verb
+set, the schema names, `mutates`, `network` and `interactive` are each checked against
+the source or against behaviour, while the free placeholder TEXT — `<days>` versus `<limit>` — is declared. Literal
+argument names, both arity bounds and the required-arguments-first ordering are all
+checked against the parser. One thing is NOT enveloped: `stride auth`, an interactive browser
 flow you run by hand. `stride sync` narrates progress on stderr while it runs — its stdout is
 the envelope, so you can read it (#218, #232). Platform failures ARE enveloped now (#183): `no_database` (absent — run `init`),
 `unreadable_database` (present but unopenable — permissions or a directory in its
