@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(649)?
+    checks_ran_exactly!(651)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2473,6 +2473,20 @@ b_command_schemas! = |ctx| {
     # them, which changes this string.
     netargs = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select(.network) | \"\\(.name)[\\([.args[].name] | join(\",\"))]\"] | sort | join(\"|\")'"))
     check!("the two networked forms declare exactly what they always have (got: ${netargs})", netargs == "auth[]|sync[--all]")?
+    # ORDERING. Both probes verify the required COUNT and neither verifies its position,
+    # so swapping a required and an optional argument preserves both counts and passes:
+    # `top [opt(<metric>), req(<limit>), opt(<sport>)]` tells an agent the metric is
+    # optional, and `stride top 10` answers bad_metric.
+    #
+    # This is not only a lie about the contract. schemas/v2/commands.json states
+    # "optional ones last" as an invariant, and THREE probes rely on it — subform_cmds,
+    # the arity fillers, and the lower-bound line all build command lines with
+    # `select(.required)`, which silently drops any optional argument sitting between
+    # required ones. Asserting it makes those three sound rather than lucky, which is the
+    # same lesson as the justfile line that was safe only by being last.
+    misordered = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[].required] | index(true) != null and (index(false) != null) and (index(false) < (index(true)))) | .name] | join(\"|\")'"))
+    check!("no form declares an optional argument before a required one (bad: ${misordered})", misordered == "")?
+    check!("...and there were forms with required arguments to order", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[] | select(.required)] | length > 0)] | length'")) != "0")?
     _ = sh!("rm -rf '${arity_probe}'")
     Ok({})
 }
