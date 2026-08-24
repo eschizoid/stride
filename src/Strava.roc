@@ -321,9 +321,18 @@ Strava :: [].{
                     # one endpoint over. Review measured it with the counter one below the
                     # cap, which is exactly where a run lands after the list read.
                     #
-                    # `FromDrain(DailyCapReached)` rather than a list-specific arm: the
-                    # remedy is what differs, and it is the same remedy. The listing being
-                    # incomplete is already carried by `resumable` and by the counts.
+                    # `FromDrain(DailyCapReached)` rather than a sixth enum value: what
+                    # differs between these two stops is the REMEDY, and it is the same
+                    # remedy. A new value for a one-fact difference is a poor trade.
+                    #
+                    # It DOES cost a fact, and the cost is real rather than absorbed
+                    # elsewhere: on this path a consumer can no longer tell that the
+                    # listing was incomplete. `resumable` is True on both paths so it
+                    # carries nothing here, and `synced: 0` is indistinguishable from a
+                    # complete listing over an empty window — the exact ambiguity #235
+                    # exists to remove. An earlier version of this comment claimed
+                    # `resumable` and the counts carried it; review measured that false.
+                    # schemas/v2/sync.json says so where a consumer will read it.
                     rl_stop = if day_spent!(path)? FromDrain(DailyCapReached) else ListRateLimited
                     rl_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
                     rl_payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pending, stopped: Drain.sync_stopped_label(rl_stop), resumable: True }
@@ -433,8 +442,8 @@ Strava :: [].{
         # the day's read count, carried in from the database. Stored per UTC day, so a
         # stale stamp means a new day and the count starts over — that is the reset, and
         # it needs no scheduled job.
-        today0 = reads_today!(path)?
         day0 = Db.utc_today_days!({})
+        today0 = reads_today!(path, day0)?
         match drain_streams!(path, token, ids, { window: 0, day: day0, today: today0, stored: 0, skipped: 0, total, refreshes: 0 }) {
             Ok(o) => Ok(o)
             Err(e) => {
@@ -570,8 +579,9 @@ Strava :: [].{
     # to compare; the listing has no such loop, so it charges directly.
     charge_read! : Str => Try({}, _)
     charge_read! = |path| {
-        n = reads_today!(path)?
-        save_reads_today!(path, n + 1)
+        day = Db.utc_today_days!({})
+        n = reads_today!(path, day)?
+        save_reads_for_day!(path, day, n + 1)
     }
 
     # is the allowance already spent, WITHOUT spending anything to find out? `decide` is
@@ -581,11 +591,15 @@ Strava :: [].{
     # burned against an allowance that is already gone, with the counter climbing past the
     # cap all day. The day is knowable from the database with zero requests.
     day_spent! : Str => Try(Bool, _)
-    day_spent! = |path| Ok(reads_today!(path)? >= (read_limits!({})).reads_per_day)
+    day_spent! = |path| Ok(reads_today!(path, Db.utc_today_days!({}))? >= (read_limits!({})).reads_per_day)
 
-    reads_today! : Str => Try(I64, _)
-    reads_today! = |path| {
-        day_now = Db.utc_today_days!({})
+    # takes the day rather than reading its own clock. There were three independent
+    # utc_today_days! calls per run, all silently assuming they agree — and the one bug
+    # this feature spent two rounds on was exactly two of them disagreeing. Passing the
+    # captured day makes that unrepresentable rather than merely fixed, and it REMOVES a
+    # clock read rather than adding a parameter's worth of cost.
+    reads_today! : Str, I64 => Try(I64, _)
+    reads_today! = |path, day_now| {
         stored_day = config_i64!(path, "strava_reads_day")?
         if stored_day != day_now {
             Ok(0)
@@ -678,10 +692,18 @@ Strava :: [].{
     read_limits! = |{}| {
         # stop before Strava's 100-reads-per-15-minutes window fills. There is no second
         # per-run budget: `window` is never reset inside a run, so a larger one could
-        # never fire. The 5-read margin is what absorbs the activity-list read inside a
-        # window — the day gets no such margin because it counts the list read directly
+        # never fire. The day gets no margin because it counts the list read directly
         # (#246); it used to be "respected by arithmetic", which assumed ten runs a day
         # and enforced nothing.
+        #
+        # The 5-read margin does NOT reliably absorb the list read, and an earlier version
+        # of this comment said it did. `window` only advances in the drain's Store arm —
+        # fetch_pages! never touches it, and neither do the 401/429 charges — so a first
+        # run on a 2,000-activity history issues 20 list pages plus 95 stream reads inside
+        # one window, against Strava's 100. That is C-1's shape one limit over: a counter
+        # counting a strict subset of what the limit counts. It degrades gracefully, since
+        # the 429 that follows really is a window refusal and ~15 minutes really is the
+        # remedy, so it is a follow-up rather than part of #246.
         reads_per_window: env_i64!("STRIDE_READS_PER_WINDOW", 95),
         # Strava's documented daily read cap. Overridable for the same reason the window
         # is: the e2e suite drives this arm at a limit small enough to reach in a fixture.

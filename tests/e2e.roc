@@ -880,6 +880,13 @@ run_stops! = || {
         cap_before = str_to_i64(Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='strava_reads_today'),'0');")))
         human_cap = sh!("HOME='${home}' STRIDE_API_BASE='${base}' ${envs} '${bin}' sync 2>&1")
         check!("...and a run with nothing it can do spends NOTHING finding that out", str_to_i64(Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='strava_reads_today'),'0');"))) == cap_before)?
+        # ...and that payload CONFORMS. Every other stop-reason arm validates its payload
+        # and this one did not — the one arm that added a value to a schemas/v2 enum. The
+        # closed record annotation pins the shape at compile time (ADR 0000 section 9c), so
+        # what this adds is that the `stopped` VALUE lands in the enum, which is precisely
+        # what this change touched.
+        _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' ${envs} '${bin}' sync >'${bo}' 2>/dev/null")
+        check!("...and the daily-cap payload conforms to the sync schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
         check!("...and the human line names TOMORROW", Str.contains(human_cap, "again tomorrow"))?
         # anchored on the REMEDY clause, not on "15 minutes" alone: the drain banner on
         # stderr says "Strava caps reads per 15-minute window", so the loose form passes on
@@ -1048,7 +1055,7 @@ run_stops! = || {
         } else if env_or!("E2E_EXPECT_DAILY_CAP", "") == "1" {
             # its own floor, and TIGHT: a floor below the arm's own count lets a check be
             # deleted unseen — the slack this floor's own doctrine forbids.
-            12
+            13
         } else if env_or!("E2E_EXPECT_500", "") == "1" {
             7
         } else if env_or!("E2E_EXPECT_401", "") == "1" {
