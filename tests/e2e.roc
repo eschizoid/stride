@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(738)?
+    checks_ran_exactly!(746)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2023,6 +2023,27 @@ b_seed_analyze! = |ctx| {
     # were both 27.
     code_diff = Str.trim(sh!("cat src/*.roc | tr '\\n' ' ' | grep -oE '(err_out!|emit_err!)\\( *\"[a-z_]+\"' | grep -oE '\"[a-z_]+\"' | tr -d '\"' | sort -u > /tmp/stride_src_codes.$$; jq -r '.properties.error.properties.code.enum[]' schemas/v2/envelope.json | sort > /tmp/stride_enum_codes.$$; diff /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$; rm -f /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$"))
     check!("every error code the source emits is in the contract, and vice versa", code_diff == "")?
+    # ── the two directions of the error-code declaration (#239) ─────────────────
+    # Done in jq, NOT with `comm` and process substitution. `sh!` runs under /bin/sh, which
+    # on macOS is bash 3.2 in POSIX mode, where `<(...)` is a SYNTAX ERROR — both operands
+    # come back empty and `"" == ""` passes. This file has been bitten by exactly that
+    # before; the first draft of this check was written that way.
+    decl_f = Str.trim(sh!("mktemp"))
+    _ = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' --help | jq -c '(.data.universal_error_codes // []) + [.data.commands[].error_codes[]?] | unique' > '${decl_f}'")
+    ndecl = Str.trim(sh!("jq -r 'length' '${decl_f}' 2>/dev/null"))
+    # the probe has to be able to speak: an empty declared set would make BOTH directions
+    # below trivially satisfiable in one of the two, and a jq error yields "" not 0.
+    check!("the declared error-code set is non-empty (got ${ndecl})", ndecl != "" and ndecl != "0")?
+    # DECLARED -> CONTRACT. A typo, or a code deleted from the envelope but left declared.
+    notin = Str.trim(sh!("jq -r --slurpfile d '${decl_f}' '[.. | objects | select(has(\"enum\")) | .enum[]] as $c | $d[0] | map(select(. as $x | ($c | index($x)) == null)) | join(\" \")' schemas/v2/envelope.json 2>&1"))
+    check!("every declared error code exists in the envelope contract (stray: ${notin})", notin == "")?
+    # CONTRACT -> DECLARED, which is the direction that matters. A code added to the
+    # envelope and attributed to nothing is how a hand-maintained list rots; it fails here
+    # instead of sitting undiscovered. `unknown_command` is the one exemption and it is a
+    # real one — it is what you get when there IS no form, so naming a form would be false.
+    unattr = Str.trim(sh!("jq -r --slurpfile d '${decl_f}' '[.. | objects | select(has(\"enum\")) | .enum[]] | unique | map(select(. as $x | ($d[0] | index($x)) == null)) | map(select(. != \"unknown_command\")) | join(\" \")' schemas/v2/envelope.json 2>&1"))
+    check!("every contract error code is attributed to a form or to universal (unattributed: ${unattr})", unattr == "")?
+    _ = sh!("rm -f '${decl_f}'")
     check!("...and an unknown code would be caught", Str.contains(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' activity 99999999 2>&1 | jq '.error.code = \"not_a_real_code\"' 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1"), "not in enum"))?
     check!("the envelope itself conforms", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1")) == "")?
     # the summary EMBEDDED in the plan bundle is the same shape as the standalone
@@ -3217,11 +3238,30 @@ b_agent_loop! = |ctx| {
         code = Str.trim(sh!("jq -r '.error.code // \"\"' '${out}' 2>/dev/null"))
         check!("${label}: exits non-zero with `${want}` on stdout (exit ${st}, code '${code}')", st != "0" and code == want)
     }
-    err_probe!("activity 99999999", "activity_not_found", "unknown activity")?
-    err_probe!("tte notanumber", "bad_watts", "unparseable watts")?
-    err_probe!("config get nosuchkey", "not_set", "absent config key")?
-    err_probe!("top notametric", "bad_metric", "unknown metric")?
-    err_probe!("reps notadate", "usage", "unparseable date")?
+    # OBSERVED -> DECLARED (#239). Every code a probe actually gets back must be one the
+    # command table says that form can return — universal, or declared on the form itself.
+    #
+    # This is the direction the two schema-level checks cannot reach. Those prove the
+    # declaration agrees with the envelope CONTRACT; neither can tell whether a form's own
+    # list is missing a code it really produces, because nothing in a static file knows
+    # what a command does at runtime. Wiring it to the probes means the completeness
+    # evidence grows with the suite instead of being asserted once — every error path a
+    # future test drives has to be declared or this fails.
+    #
+    # It takes the VERB, because `config get nosuchkey` is the form `config get` while
+    # `activity 99999999` is the form `activity`: the table keys on the form name, and a
+    # two-word form has to match on two words.
+    declared_probe! = |args, want, label| {
+        err_probe!(args, want, label)?
+        form = Str.trim(sh!("printf '%s' '${args}' | awk '{ if ($1 == \"config\" || $1 == \"week\") print $1\" \"$2; else print $1 }'"))
+        codes = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' --help | jq -r --arg f '${form}' '((.data.universal_error_codes // []) + ([.data.commands[] | select(.name == $f) | .error_codes // []] | flatten)) | unique | join(\" \")'"))
+        check!("...and `${want}` is declared for `${form}` (declared: ${codes})", Str.contains(" ${codes} ", " ${want} "))
+    }
+    declared_probe!("activity 99999999", "activity_not_found", "unknown activity")?
+    declared_probe!("tte notanumber", "bad_watts", "unparseable watts")?
+    declared_probe!("config get nosuchkey", "not_set", "absent config key")?
+    declared_probe!("top notametric", "bad_metric", "unknown metric")?
+    declared_probe!("reps notadate", "usage", "unparseable date")?
     err_probe!("frobnicate", "unknown_command", "unknown command")?
     # The code alone does not pin the MESSAGE, and for `reps` the value is the point:
     # the arm exists because `reps asc` once answered "no detected interval structure on
