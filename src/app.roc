@@ -74,57 +74,66 @@ help_text =
         \\"--json": stride skip 5 --json -- --json
         \\
         \\SETUP (once)
-        \\    init        create ~/.stride and migrate the SQLite db
-        \\    auth        authorize with Strava (one-time paste flow; stores creds)
-        \\    config      get/set config (hr zone bounds, timezone) — FTP is derived, not set
+        \\    init                        create ~/.stride and migrate the SQLite db
+        \\    auth                        authorize with Strava (one-time paste flow; stores creds)
+        \\    config                      get/set config (hr zone bounds, timezone)
+        \\                                — FTP is derived, never set
         \\
         \\GET DATA
-        \\    sync        pull new activities + streams (rolling 30d self-heal)
-        \\    sync --all  force a full re-list from scratch (dev escape hatch)
-        \\    import <zip|dir>  load a Strava account export — no API creds needed
-        \\    analyze     compute training metrics (TSS, zones, CTL/ATL/TSB)
+        \\    sync                        pull new activities + streams (rolling 30d self-heal)
+        \\    sync --all                  force a full re-list from scratch (dev escape hatch)
+        \\    import <zip|dir>            load a Strava account export — no API creds needed
+        \\    analyze                     compute training metrics (TSS, zones, CTL/ATL/TSB)
         \\
         \\WHERE DO I STAND?
-        \\    summary     form, 7d/28d zones + polarization, derived FTP, per-sport
-        \\    stats       career + year-to-date totals per sport
-        \\    doctor      dataset health: coverage + how each activity was scored
+        \\    summary                     form, 7d/28d zones + polarization, derived FTP, per-sport
+        \\    stats                       career + year-to-date totals per sport
+        \\    doctor                      dataset health: coverage + how each activity was scored
         \\
         \\AM I IMPROVING?
-        \\    tte <watts>        how long the CP model says you could hold a power
-        \\    reps [date]             the same workout shape across sessions, rep by rep
-        \\    progress [date] [asc|desc]
-        \\                            trend on a repeated workout, sport-aware lens
-        \\                            (power→EF, distance→speed/HR, rated→RPE); latest by default,
-        \\                            oldest-first — desc lists newest first
-        \\    compare [week|month]    this period vs the one before it (default week)
-        \\    season                  training blocks, monthly load, polarization, FTP over time
-        \\    top <metric> [n] [sport]   best sessions by hr|tss|power|intensity|distance|time|output
+        \\    tte <watts>                 how long the CP model says you could hold a power
+        \\    reps [date]                 the same workout shape across sessions, rep by rep
+        \\    progress [date] [asc|desc]  trend on a repeated workout, sport-aware lens
+        \\                                (power→EF, distance→speed/HR, rated→RPE);
+        \\                                latest by default, oldest-first — desc reverses
+        \\    compare [week|month]        this period vs the one before it (default week)
+        \\    season                      training blocks, monthly load, polarization, FTP
+        \\    top <metric> [n] [sport]    best sessions by a metric — hr, tss, power,
+        \\                                intensity, distance, time or output
         \\
         \\WHAT HAPPENED?
-        \\    activities [limit] [sport]   recent sessions with metrics (default 30)
-        \\    activity <id>                one session in depth: zones, power bests, hard min
-        \\    load [days]                  fitness/fatigue/form series (default 90)
-        \\    power-curve [days] [sport]   power-duration curve + Critical Power (alias: pc)
+        \\    activities [limit] [sport]  recent sessions with metrics (default 30)
+        \\    activity <id>               one session in depth: zones, bests, hard minutes
+        \\    load [days]                 fitness/fatigue/form series (default 90)
+        \\    power-curve [days] [sport]  power-duration curve + Critical Power (alias: pc)
         \\
         \\WHAT SHOULD I DO?
-        \\    plan                    planning bundle: summary + open sessions + last 14 days
-        \\    week                    this week's sessions (Mon-Sun, all statuses)
-        \\    week all                upcoming + this week + last week (older ones counted)
-        \\    week add <date> <type> <detail> <rationale>    add a planned session
-        \\    complete <session_id> [activity_id]            mark done (bare = rest day)
-        \\    skip <session_id> <reason> [activity_id|none]  mark skipped — optionally naming the activity done instead (`none` releases a link)
-        \\    rate <activity_id|latest> <1-10>               session-RPE — scores strength honestly
+        \\    plan                        planning bundle: summary + open sessions + 14d
+        \\    week                        this week's sessions (Mon-Sun, all statuses)
+        \\    week all                    upcoming + this week + last week
+        \\    week add <date> <type> <detail> <rationale>
+        \\                                add a planned session
+        \\    complete <session_id> [activity_id]
+        \\                                mark done (bare = rest day)
+        \\    skip <session_id> <reason> [activity_id|none]
+        \\                                mark skipped — name the activity done instead,
+        \\                                or `none` to release an existing link
+        \\    rate <activity_id|latest> <1-10>
+        \\                                session-RPE — scores strength honestly
         \\
         \\REFERENCE
-        \\    zones       power-zone watt ranges (7) from your FTP (alias: pz)
+        \\    zones                       power-zone watt ranges (7) from your FTP (alias: pz)
         \\
         \\FLAGS
-        \\    --json      machine output (beats STRIDE_FORMAT)
-        \\    --human     human tables, even for tool callers
-        \\    --help      show this help
-        \\    --version   show version
+        \\    --json                      machine output (beats STRIDE_FORMAT)
+        \\    --human                     human tables, even for tool callers
+        \\    --help, -h                  show this help
+        \\    --version                   show version
+        \\    --all                       sync only — force a full re-list
+        \\    --                          end flag parsing, so a following
+        \\                                --json is a literal value
         \\
-        \\SETUP (first time only)
+        \\STRAVA CREDENTIALS (first time only)
         \\    Create a Strava API app (strava.com/settings/api), then:
         \\    STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth
         \\    After that, creds live in the db — no env vars needed again.
