@@ -84,6 +84,7 @@ schema-check: build
     # complete, skip, config set — and deriving from it makes invoking one impossible by
     # construction. The hand-written list simply happened not to name them.
     checked=0
+    rejected=0
     forms=$(mktemp) || { echo "schema-check: mktemp failed"; exit 4; }
     trap 'rm -f "$forms"' EXIT
     STRIDE_FORMAT=json ./stride --help | jq -r '
@@ -108,6 +109,21 @@ schema-check: build
     # guard fails OPEN. Reachable if mktemp ever yields an unwritable path.
     case "$nforms" in ''|*[!0-9]*) echo "schema-check: could not count the derived forms (got '$nforms')"; exit 4 ;; esac
     case "$want" in ''|*[!0-9]*) echo "schema-check: could not read the expected form count from the table (got '$want')"; exit 4 ;; esac
+    # TWO guards, two directions, because one of them alone is blind in the other.
+    #
+    # ABSOLUTE, on the TABLE side. `nforms` and `want` come from the SAME predicate over
+    # the same table, so a predicate that collapses moves both together and the equality
+    # below reports 0 == 0 and passes — measured, exit 0, nothing validated. Replacing the
+    # literal floor with the equality alone was a regression that lost exactly the property
+    # the floor was added for. It sits on the TABLE rather than on the derivation now, so
+    # its message can name the cause, and on a quantity that only grows.
+    if [ "$want" -lt 15 ]; then
+        echo "schema-check: the command table declares only $want read-only schema-bearing forms — the selector is broken, not the table"
+        exit 4
+    fi
+    # RELATIVE, on the DERIVATION side. Catches jq truncating mid-stream, which the floor
+    # alone would shrug at: deleting `.args` from one entry gives 16 against 18, and a
+    # floor of 15 passes.
     if [ "$nforms" -ne "$want" ]; then
         echo "schema-check: derived $nforms forms but the command table declares $want — the derivation is broken, not the payloads"
         exit 4
@@ -161,10 +177,22 @@ schema-check: build
         # it, and that is the gap.
         case "$code" in
             "") ;;
-            no_activities|no_data|no_power_data|no_cp_fit|not_set|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals)
+            # `not_set` is deliberately NOT here. It cannot tell a key that is unset from a
+            # key that does not exist — app.roc emits it from NotFound and Config.roc keeps
+            # no known-key list — so allowing it to skip would recreate the hole above one
+            # code narrower: rename or retire `timezone` and `config get timezone` becomes
+            # a silent skip, with config.json never validated against real data again. The
+            # root fix is a distinct `unknown_key`, which is #254 and is a real CLI
+            # improvement independently: answering "(not set)" to a typo is a bad answer.
+            #
+            # `no_workout_on_date` IS here but is conditional: its message is
+            # argument-dependent ("no workout found on ${date}"), so it would belong in the
+            # rejected arm the day any form takes a REQUIRED date. Today both date-taking
+            # forms take it optionally, so a wrong one cannot be derived.
+            no_activities|no_data|no_power_data|no_cp_fit|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals)
                 echo "$inv: skipped ($code)"; checked=$((checked + 1)); continue ;;
             *)
-                echo "$inv: FAILED ($code) — the derived invocation was rejected, not the database"; rc=1; continue ;;
+                echo "$inv: FAILED ($code) — the derived invocation was rejected, not the database"; rc=1; rejected=$((rejected + 1)); continue ;;
         esac
         errs=$(printf '%s' "$out" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/$schema -f tools/validate.jq 2>&1 || true)
         checked=$((checked + 1))
@@ -174,8 +202,10 @@ schema-check: build
     # never counting executions is how the output can honestly say 18 while validating
     # zero, which is the shape the HIGH above produced.
     set +f
-    if [ "$checked" -ne "$nforms" ]; then
-        echo "schema-check: derived $nforms forms but reached only $checked — the loop dropped some"
+    # rejections counted separately, so this fires only on a genuine drop-out. Lumping
+    # them in made one rejected form print two lines, the second of them wrong about why.
+    if [ "$((checked + rejected))" -ne "$nforms" ]; then
+        echo "schema-check: derived $nforms forms but reached only $((checked + rejected)) — the loop dropped some"
         rc=1
     fi
     act=$(STRIDE_FORMAT=json ./stride activities 1 2>&1 | jq -r '.data[0].id // empty' 2>&1 || true)
