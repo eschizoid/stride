@@ -1854,6 +1854,26 @@ Metrics :: [].{
     # guard accepted it, in the same binary.
     is_canonical_date = |s| is_usable_date(s)
 
+    # exactly two digits, and within range. Two digits because a one-digit hour would sort
+    # WRONG against a two-digit one under byte comparison, which is the property callers
+    # are protecting when they rank timestamps as strings.
+    #
+    # Used to validate the time half of a `start_local`. The date half has its own rule
+    # (usable_date_days); this is the other half, and both are needed by anything that
+    # ranks on the whole string — a guard whose domain is narrower than its consumer's
+    # leaks through the gap, which is how "2026-08-24T37:00:00Z" once outranked a real
+    # evening session and took its rating.
+    two_digit_in : Str, I64 -> Bool
+    two_digit_in = |s, hi|
+        if Str.count_utf8_bytes(s) != 2 {
+            False
+        } else {
+            match arg_i64(s) {
+                Ok(n) => n >= 0 and n <= hi
+                Err(_) => False
+            }
+        }
+
     # epoch day number -> "Mon".."Sun". Epoch day 0 (1970-01-01) was a Thursday, so
     # (days + 3) mod 7 makes Monday = 0 (matches the Mon-aligned week convention).
     day_of_week : I64 -> Str

@@ -37,7 +37,8 @@ Plan :: [].{
                         # WRITES, and it writes into `ratings` — one of the two tables
                         # prune_deleted! refuses to touch — planned_sessions is the other,
                         # on the same grounds — because a rating "can't be re-derived", so
-                        # the row is human judgment that cannot be recovered. It also collides with the remedy the date errors print:
+                        # the row is human judgment that cannot be recovered. It also
+                        # collides with the remedy the date errors print:
                         # deleting the malformed row by id destroys the rating the athlete
                         # meant for a different session, and that session still has none.
                         #
@@ -47,20 +48,63 @@ Plan :: [].{
                         #
                         # Guard first, over every activity date, grouped by the date so the
                         # id named on a refusal is a row that actually has that date.
+                        # Grouped by the WHOLE start_local, and every component checked,
+                        # because the ranker below compares the whole string. A guard whose
+                        # domain is narrower than its consumer's leaks through the gap:
+                        # validating only substr(1,10) passed "2026-08-24T37:00:00Z" on its
+                        # date part, and `T3` beats `T1` byte-wise, so that row outranked a
+                        # real 18:00 session and took the rating. Not a hypothetical shape —
+                        # Metrics.export_date_to_iso is documented to have produced exactly
+                        # T37 from "25:00:00 PM" before its components were range-checked,
+                        # and repairing such a database is what this command is for.
+                        #
+                        # Split in SQL rather than in Roc: Str has no slicing here, and
+                        # substr keeps the guard's fields literally the same expression the
+                        # ranker's MAX sees. COALESCE on every component, because a NULL
+                        # start_local otherwise fails the DECODE with UnexpectedType(Null) —
+                        # `internal_error`, "please open an issue" — which is the shape #243
+                        # exists to remove, and which this path lost for one commit.
                         act_days = Sqlite.query_many!({
                             path: Path.utf8(path),
                             query:
-                                \\SELECT substr(start_local, 1, 10) AS d, MIN(id) AS example_id
-                                \\FROM activities GROUP BY d ORDER BY d, example_id
+                                \\SELECT COALESCE(substr(start_local, 1, 10), '') AS d,
+                                \\       COALESCE(substr(start_local, 11, 1), '') AS sep,
+                                \\       COALESCE(substr(start_local, 12, 2), '') AS hh,
+                                \\       COALESCE(substr(start_local, 15, 2), '') AS mi,
+                                \\       COALESCE(substr(start_local, 18, 2), '') AS ss,
+                                \\       COALESCE(substr(start_local, 14, 1), '') AS c1,
+                                \\       COALESCE(substr(start_local, 17, 1), '') AS c2,
+                                \\       MIN(id) AS example_id
+                                \\FROM activities GROUP BY start_local ORDER BY start_local, example_id
                             ,
                             bindings: [],
                             rows: |cols| |stmt| {
                                 d = Sqlite.str("d")(cols)(stmt)?
+                                sep = Sqlite.str("sep")(cols)(stmt)?
+                                hh = Sqlite.str("hh")(cols)(stmt)?
+                                mi = Sqlite.str("mi")(cols)(stmt)?
+                                ss = Sqlite.str("ss")(cols)(stmt)?
+                                c1 = Sqlite.str("c1")(cols)(stmt)?
+                                c2 = Sqlite.str("c2")(cols)(stmt)?
                                 example_id = Sqlite.i64("example_id")(cols)(stmt)?
-                                Ok({ d, example_id })
+                                Ok({ d, sep, hh, mi, ss, c1, c2, example_id })
                             },
                         })?
-                        _ = List.map_try(act_days, |r| Metrics.usable_date_days(r.d).map_err(|_| BadActivityDate(r.d, r.example_id)))?
+                        _ = List.map_try(
+                            act_days,
+                            |r|
+                                if Metrics.is_usable_date(r.d)
+                                    and r.sep == "T"
+                                    and r.c1 == ":"
+                                    and r.c2 == ":"
+                                    and Metrics.two_digit_in(r.hh, 23)
+                                    and Metrics.two_digit_in(r.mi, 59)
+                                    and Metrics.two_digit_in(r.ss, 59) {
+                                    Ok({})
+                                } else {
+                                    Err(BadActivityDate(r.d, r.example_id))
+                                },
+                        )?
                         # ...and only then rank, with the ORIGINAL query. It compares the
                         # whole `start_local`, which is what makes it right: two sessions on
                         # one day never tie, the later one wins outright, and MAX(id) only

@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(733)?
+    checks_ran_exactly!(736)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2561,6 +2561,27 @@ b_seed_analyze! = |ctx| {
     _ = sql!(an_db, "DELETE FROM ratings; DELETE FROM activities WHERE id IN (700,701);")
     _ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (800,'evening','Ride','Ride','${ctx.d1}T18:00:00Z',3600),(900,'morning','Ride','Ride','${ctx.d1}T08:00:00Z',3600);")
     check!("...and on a two-a-day rates the LATER session, not the higher id", Str.contains(sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' rate latest 6 2>/dev/null"), "\"rated\":800"))?
+    # ...and a malformed TIME on a valid DATE is refused, not ranked. This is the seam
+    # between the two halves of the fix: the guard read substr(1,10) while the ranker
+    # compared the whole string, so an impossible hour passed on its date part and then
+    # outranked a real session byte-wise — `T3` beats `T1`. Not a hypothetical row shape:
+    # Metrics.export_date_to_iso is documented to have produced exactly T37 from
+    # "25:00:00 PM" before its components were range-checked.
+    _ = sql!(an_db, "DELETE FROM ratings;")
+    _ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (810,'impossible hour','Ride','Ride','${ctx.d1}T37:00:00Z',3600);")
+    an_t37 = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' rate latest 6 2>/dev/null")
+    check!("an impossible HOUR on a valid date is refused, not ranked above a real session", Str.contains(an_t37, "unreadable_activity_date") and Str.contains(an_t37, "activity 810"))?
+    # ratings cleared just above, so this is "the refusal wrote nothing" rather than
+    # "the table happens to be empty" — the distinction the whole block is about.
+    check!("...and nothing was rated", Str.trim(sql!(an_db, "SELECT count(*) FROM ratings;")) == "0")?
+    _ = sql!(an_db, "DELETE FROM activities WHERE id = 810;")
+    # ...and a NULL start_local is NAMED rather than crashing the decoder. One commit of
+    # this PR dropped the COALESCE and it regressed to `internal_error` — "please open an
+    # issue" — which is the shape #243 exists to remove, on a write path.
+    _ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (820,'null date','Ride','Ride',NULL,3600);")
+    an_null = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' rate latest 6 2>/dev/null")
+    check!("a NULL start_local is named, not answered with internal_error", Str.contains(an_null, "unreadable_activity_date") and !(Str.contains(an_null, "internal_error")))?
+    _ = sql!(an_db, "DELETE FROM activities WHERE id = 820;")
     _ = sql!(an_db, "DELETE FROM ratings; DELETE FROM activities WHERE id IN (800,900);")
     # ...and the year bound is still in the shared guard. `date_str_to_days` parses the year
     # with arg_i64 and `days_to_date_str` emits it unpadded, so "999-01-01" round-trips —
