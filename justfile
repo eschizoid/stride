@@ -16,6 +16,8 @@ rate_limit_port := env("RATE_LIMIT_PORT", "8797")
 http500_port := env("HTTP500_PORT", "8795")
 # sixth instance, 429ing on the LISTING (the list-429 stop, #235)
 list429_port := env("LIST429_PORT", "8794")
+# seventh instance, serving a FULL page then 429ing page two (the partial-progress half)
+list429p_port := env("LIST429P_PORT", "8793")
 # fourth instance, 401ing forever on one id (the token-refresh retry bound, #232)
 auth401_port := env("AUTH401_PORT", "8796")
 
@@ -172,12 +174,19 @@ e2e-sync: build
     E2E_MODE=mock E2E_HTTP500=1 MOCK_PORT={{http500_port}} ./e2e &
     P5MOCK=$!
     trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK 2>/dev/null' EXIT
-    E2E_MODE=stops E2E_EXPECT_500=1 STRIDE_API_BASE=http://127.0.0.1:{{http500_port}} ./e2e
+    E2E_MODE=stops E2E_EXPECT_500=1 STRIDE_API_BASE=http://127.0.0.1:{{http500_port}} ./e2e || exit 1
+    # EVERY driver line ends `|| exit 1`. This recipe runs under `set -uo pipefail` with
+    # no `-e`, so a bare line's failure is swallowed unless it happens to be the last
+    # command — which is how appending this block silently disarmed the 5xx driver above.
+    #
     # a 429 on the LISTING, which nothing exercised before #235
     E2E_MODE=mock E2E_LIST_RATE_LIMIT=1 MOCK_PORT={{list429_port}} ./e2e &
     L429MOCK=$!
     trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK $L429MOCK 2>/dev/null' EXIT
-    E2E_MODE=stops E2E_EXPECT_LIST_429=1 STRIDE_API_BASE=http://127.0.0.1:{{list429_port}} ./e2e
+    E2E_MODE=mock E2E_LIST_RATE_LIMIT=2 MOCK_PORT={{list429p_port}} ./e2e &
+    L429P=$!
+    trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK $L429MOCK $L429P 2>/dev/null' EXIT
+    E2E_MODE=stops E2E_EXPECT_LIST_429=1 E2E_LIST_PARTIAL_BASE=http://127.0.0.1:{{list429p_port}} STRIDE_API_BASE=http://127.0.0.1:{{list429_port}} ./e2e || exit 1
 
 # build + refresh the ~/.local/bin symlink
 install: build

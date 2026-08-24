@@ -132,6 +132,27 @@ respond! = |req, _ctx| {
         # test able to tell the two apart.
         if env_or!("E2E_LIST_RATE_LIMIT", "") == "1" {
             Ok(Server.respond(Response.from_status(429).with_body(Str.to_utf8("rate limited"))))
+        } else if env_or!("E2E_LIST_RATE_LIMIT", "") == "2" {
+            # A FULL page, then a refusal. `=1` refuses page one, so nothing is ever
+            # upserted and the partial-progress half of this feature — the pages already
+            # committed being carried out and reported — has nothing to report. Review
+            # showed that made the carry mechanism unpinned: discarding the accumulator
+            # outright passed every driver, which is exactly what the code comment forbids.
+            #
+            # per_page is 100, and fetch_pages! only recurses when a page comes back FULL,
+            # so page one has to be exactly 100 rows for page two to be requested at all.
+            # `&page=1` with a boundary, NOT `page=1`. The URI is
+            # `?per_page=100&page=N`, and "per_page=100" CONTAINS the substring "page=1" —
+            # so the loose test matched every page, this arm served a full page forever,
+            # and fetch_pages! recursed until the run produced nothing at all. The
+            # pre-existing arm below has the same loose test; it is latent there only
+            # because its page returns 2 rows, which is under per_page, so the recursion
+            # stops after one page regardless.
+            if Str.contains(uri, "&page=1&") or Str.ends_with(uri, "&page=1") {
+                Ok(mock_json(mock_full_page))
+            } else {
+                Ok(Server.respond(Response.from_status(429).with_body(Str.to_utf8("rate limited"))))
+            }
         } else if Str.contains(uri, "page=1") {
             body =
                 \\[{"id":501,"name":"Mock Power Ride","sport_type":"Ride","start_date_local":"2026-07-28T10:00:00Z","moving_time":3600,"distance":30000.0,"total_elevation_gain":100.0,"average_watts":200.0,"weighted_average_watts":205.0},
@@ -709,6 +730,27 @@ run_stops! = || {
         # ...and the watermark must not move past what was never listed.
         check!("...leaving last_sync_epoch where it was", Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='last_sync_epoch'),'none');")) == before_epoch)?
         check!("...and the human screen blames the LIST too, not the drain", Str.contains(sh!("HOME='${home}' STRIDE_API_BASE='${base}' '${bin}' sync 2>&1"), "rate-limited the activity list"))?
+        # PARTIAL progress, against a second mock that serves a full page and then refuses.
+        # Everything above runs on a page-one refusal, where nothing was ever upserted — so
+        # `synced` is 0 whether the run carries its accumulator out or throws it away.
+        # Review proved that: discarding the accumulator outright passed every driver, in a
+        # PR whose own comment says "a caller that is told nothing cannot tell a
+        # rate-limited partial from a run that found nothing".
+        #
+        # per_page is 100 and fetch_pages! only recurses on a FULL page, so page one has to
+        # be exactly 100 rows for page two to be requested at all.
+        # its own mock instance, since the one this driver runs against refuses page one
+        part_base = env_or!("E2E_LIST_PARTIAL_BASE", "")
+        part_home = Str.trim(sh!("mktemp -d"))
+        _ = sh!("HOME='${part_home}' '${bin}' init >/dev/null 2>&1")
+        _ = sql!("${part_home}/.stride/db.sqlite", "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_access_token','t'),('strava_refresh_token','r'),('strava_expires_at','9999999999');")
+        _ = sh!("HOME='${part_home}' STRIDE_FORMAT=json STRIDE_API_BASE='${part_base}' '${bin}' sync >'${part_home}/out.json' 2>/dev/null")
+        pq! = |q| Str.trim(sh!("jq -r '${q}' '${part_home}/out.json' 2>/dev/null"))
+        check!("a list refused on page TWO still reports the page it kept", pq!(".data.synced") == "100")?
+        check!("...counted as new, not silently dropped", pq!(".data.new_activities") == "100")?
+        check!("...and those rows really are in the database", Str.trim(sql!("${part_home}/.stride/db.sqlite", "SELECT count(*) FROM activities;")) == "100")?
+        check!("...still reporting the list stop, and still pruning nothing", pq!(".data.stopped") == "list_rate_limited" and pq!(".data.pruned") == "0")?
+        _ = sh!("rm -rf '${part_home}'")
     } else if env_or!("E2E_EXPECT_500", "") == "1" {
         # A drain that dies with rows already committed. Salvaged from #225, minus its
         # stored-count assertion: #233 reports the queue total at the boundary, and the
@@ -836,7 +878,7 @@ run_stops! = || {
         if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
             # its own floor: this branch returns before the shared drain assertions, so the
             # 12 the default arm expects would never be reachable here
-            10
+            15
         } else if env_or!("E2E_EXPECT_500", "") == "1" {
             7
         } else if env_or!("E2E_EXPECT_401", "") == "1" {
@@ -859,6 +901,18 @@ sync_strjq! : Str, Str, Str, List(Str), Str => Str
 sync_strjq! = |bin, home, base, args, filter| {
     argstr = List.fold(args, "", |acc, a| "${acc} '${a}'")
     Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' ${argstr} | jq -r '${filter}' 2>/dev/null"))
+}
+
+# 100 activities — exactly per_page, so fetch_pages! sees a full page and asks for the
+# next one. Ids 20001+ are clear of every fixture range. Generated rather than written out
+# because the only property that matters is the COUNT.
+mock_full_page : Str
+mock_full_page = "[${bulk_rows(20001, 20100)}]"
+
+bulk_rows : I64, I64 -> Str
+bulk_rows = |i, last| {
+    row = "{\"id\":${(i).to_str()},\"name\":\"bulk ${(i).to_str()}\",\"sport_type\":\"Ride\",\"start_date_local\":\"2026-06-01T10:00:00Z\",\"moving_time\":3600,\"distance\":20000.0,\"total_elevation_gain\":0.0,\"average_heartrate\":140.0}"
+    if i >= last row else "${row},${bulk_rows(i + 1, last)}"
 }
 
 # poll the mock until it answers (pure Roc: curl via Cmd + Sleep, no shell loop)
