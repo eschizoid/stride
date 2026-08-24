@@ -51,13 +51,13 @@ jobs:
         continue-on-error: true
         with:
           version: nightly-new-compiler
-          nightly-tag: nightly-2026-08-17-b9ca140
+          nightly-tag: nightly-2026-08-23-fb208ba
       - name: Install Roc (retry — the first attempt hit a transient download failure)
         if: ${{ steps.roc.outcome == 'failure' }}
         uses: roc-lang/setup-roc@v0.3.0
         with:
           version: nightly-new-compiler
-          nightly-tag: nightly-2026-08-17-b9ca140
+          nightly-tag: nightly-2026-08-23-fb208ba
 
       # One check covers the whole codebase: `roc check` follows every import, so
       # this type-checks app.roc plus all 16 modules against basic-cli 0.22 + http.
@@ -102,13 +102,13 @@ jobs:
         continue-on-error: true
         with:
           version: nightly-new-compiler
-          nightly-tag: nightly-2026-08-17-b9ca140
+          nightly-tag: nightly-2026-08-23-fb208ba
       - name: Install Roc (retry — the first attempt hit a transient download failure)
         if: ${{ steps.roc.outcome == 'failure' }}
         uses: roc-lang/setup-roc@v0.3.0
         with:
           version: nightly-new-compiler
-          nightly-tag: nightly-2026-08-17-b9ca140
+          nightly-tag: nightly-2026-08-23-fb208ba
       # sqlite3/jq/awk/curl ship on the macOS runner; just does not
       - name: Install just
         run: brew install just
