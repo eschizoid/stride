@@ -188,11 +188,27 @@ schema-check: build
             # hole above: a check nobody trusts is as useless as one that always passes.
             # The hole needs a FUTURE rename to bite; the breakage bit immediately.
             #
-            # `no_workout_on_date` IS here but is conditional: its message is
-            # argument-dependent ("no workout found on ${date}"), so it would belong in the
-            # rejected arm the day any form takes a REQUIRED date. Today both date-taking
-            # forms take it optionally, so a wrong one cannot be derived.
-            no_activities|no_data|no_power_data|no_cp_fit|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals|not_set)
+            # `irregular_anchor` is here because it is the definition of nothing to say —
+            # its own message ends "nothing to compare it against as a repeated workout".
+            # It was in the rejected arm and that was a LIVE false red, not a latent one:
+            # ReportSessions raises it from the unguarded Ok(a) branch, so a bare `reps`
+            # hits it whenever the most recent session with work segments has blocks
+            # outside 1.6x. Review measured 372 of 389 sessions irregular on the real
+            # database — 95.6% — with only the three most recent rides uniform, which is
+            # the sole reason this recipe was green. It would have exited 1 on essentially
+            # any day between 2026-05-21 and 2026-08-16, and will again after the next
+            # unstructured ride. Intermittent is worse than constant here: a red that comes
+            # and goes teaches the reader to ignore it.
+            #
+            # THREE conditional siblings, all here and all for one reason:
+            # `no_workout_on_date`, `no_intervals_on_date` and `unscorable` have
+            # argument-dependent messages, so each would belong in the rejected arm the day
+            # any form takes a REQUIRED date. Both date-taking forms (`reps`, `progress`)
+            # take it optionally today, so no wrong date can be derived. Named together
+            # because two of them sat in the other arm by accident, and the next person to
+            # notice would have resolved the inconsistency in whichever direction they saw
+            # first.
+            no_activities|no_data|no_power_data|no_cp_fit|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals|no_intervals_on_date|unscorable|irregular_anchor|not_set)
                 echo "$inv: skipped ($code)"; checked=$((checked + 1)); continue ;;
             # DATA FAULTS — true statements about the DATABASE, not about the invocation,
             # so they must not get the rejection message below, which says the opposite and
@@ -208,8 +224,25 @@ schema-check: build
             no_database|unreadable_database|corrupt_database|database_error|unreadable_config|unreadable_activity_date|unreadable_daily_load_day)
                 echo "$inv: FAILED ($code) — the database holds a value the engine cannot read; no payload was produced"
                 rc=1; rejected=$((rejected + 1)); continue ;;
-            *)
+            # the ENGINE broke — a third thing, and neither of the two above. The recipe
+            # discards $out, so without echoing it the CLI's own "please open an issue"
+            # text never reaches the reader.
+            internal_error)
+                echo "$inv: FAILED (internal_error) — stride hit an unhandled failure; this is a bug, not the data and not the invocation"
+                printf '%s\n' "$out" | jq -r '.error.message' 2>/dev/null
+                rc=1; rejected=$((rejected + 1)); continue ;;
+            # REJECTED INVOCATIONS, enumerated. This is the recipe's own bug: it derived an
+            # argument the command would not take.
+            usage|unknown_command|bad_count|bad_metric|bad_period|bad_value|bad_watts|derived_key)
                 echo "$inv: FAILED ($code) — the derived invocation was rejected, not the database"; rc=1; rejected=$((rejected + 1)); continue ;;
+            # ...and the TRUE catch-all, which knows nothing and says so. `*)` used to do
+            # two jobs — "genuinely a rejected invocation" and "nobody has classified this
+            # code" — and only the first deserved that message. Conflating them is how
+            # `irregular_anchor` spent this PR telling users their invocation was wrong
+            # about a perfectly healthy database.
+            *)
+                echo "$inv: FAILED ($code) — schema-check has not classified this code; it does not know whether this is the data or the invocation"
+                rc=1; rejected=$((rejected + 1)); continue ;;
         esac
         errs=$(printf '%s' "$out" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/$schema -f tools/validate.jq 2>&1 || true)
         checked=$((checked + 1))
