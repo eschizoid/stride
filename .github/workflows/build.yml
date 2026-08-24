@@ -132,3 +132,9 @@ jobs:
         run: just issue-claims
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Sibling of the above, and here for the same reason: a check nobody runs is
+      # decoration. No token and no network — the oracle is the binary's own command table,
+      # which this job has already built. The recipe rebuilds via its `build` dependency so
+      # that it can never report a clean tree because ./stride was missing.
+      - name: Check the commands the docs name against the command table
+        run: ROC=roc just command-claims
