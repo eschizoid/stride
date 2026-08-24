@@ -149,6 +149,39 @@ Drain :: [].{
 
 # a 429 stops the run outright. It does NOT sleep and retry: that made a routine sync
 # block ~30 minutes in the foreground, measured, on a two-activity queue.
+# the DAILY arms, at their boundaries. Neither existed as a pure expect until review
+# pointed out that this function's own header calls the pacing decision "pure, unit-tested"
+# while the two branches this feature added were reachable only through the e2e — the
+# slowest and most environment-dependent layer, and the one where the 429 pair took three
+# attempts to get right. Boundary pairs, mirroring the window's own 2 -> Continue /
+# 3 -> WindowFull shape.
+expect match Drain.decide({ status: 429, window: 0, today: 99 }, Drain.test_lim) {
+    RateLimited => True
+    _ => False
+}
+
+expect match Drain.decide({ status: 429, window: 0, today: 100 }, Drain.test_lim) {
+    DailyCapReached => True
+    _ => False
+}
+
+expect match Drain.decide({ status: 200, window: 0, today: 98 }, Drain.test_lim) {
+    Store({ after: Continue, .. }) => True
+    _ => False
+}
+
+expect match Drain.decide({ status: 200, window: 0, today: 99 }, Drain.test_lim) {
+    Store({ after: DayFull, .. }) => True
+    _ => False
+}
+
+# ...and the DAY wins when both are full, which is the ordering the remedy depends on:
+# a run that fills both should say tomorrow, not fifteen minutes.
+expect match Drain.decide({ status: 200, window: 2, today: 99 }, Drain.test_lim) {
+    Store({ after: DayFull, .. }) => True
+    _ => False
+}
+
 expect match Drain.decide({ status: 429, window: 0, today: 0 }, Drain.test_lim) {
     RateLimited => True
     _ => False

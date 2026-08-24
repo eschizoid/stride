@@ -760,6 +760,17 @@ run_stops! = || {
         # ...and the watermark must not move past what was never listed.
         check!("...leaving last_sync_epoch where it was", Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='last_sync_epoch'),'none');")) == before_epoch)?
         check!("...and the human screen blames the LIST too, not the drain", Str.contains(sh!("HOME='${home}' STRIDE_API_BASE='${base}' '${bin}' sync 2>&1"), "rate-limited the activity list"))?
+        # ...but with the day's allowance spent it is the DAILY cap, not the window. The
+        # drain's 429 arm asks which limit refused and the list's did not, so the
+        # fifteen-minute remedy survived here — #246's defect on the other endpoint that
+        # can 429. Counter one below the cap, so the list read itself lands exactly on it,
+        # which is where a real run ends up.
+        lcap_day = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 86400) }'"))
+        _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_reads_day','${lcap_day}'),('strava_reads_today','9');")
+        lcap = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' STRIDE_READS_PER_DAY=10 '${bin}' sync 2>/dev/null")
+        check!("a 429 on the LIST reads as the daily cap once the allowance is spent", Str.contains(lcap, "daily_cap_reached"))?
+        check!("...and its human line says tomorrow rather than ~15 minutes", Str.contains(sh!("HOME='${home}' STRIDE_API_BASE='${base}' STRIDE_READS_PER_DAY=10 '${bin}' sync 2>&1"), "again tomorrow"))?
+        _ = sql!(db, "DELETE FROM config WHERE key IN ('strava_reads_day','strava_reads_today');")
         # The three sibling stop-reason arms each validate their payload and this one did
         # not, which mattered more here than anywhere else: this is the only arm in the
         # suite that ADDS a value to an enum in schemas/v2. Review deleted
@@ -1033,7 +1044,7 @@ run_stops! = || {
         if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
             # its own floor: this branch returns before the shared drain assertions, so the
             # 12 the default arm expects would never be reachable here
-            23
+            25
         } else if env_or!("E2E_EXPECT_DAILY_CAP", "") == "1" {
             # its own floor, and TIGHT: a floor below the arm's own count lets a check be
             # deleted unseen — the slack this floor's own doctrine forbids.

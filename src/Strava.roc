@@ -315,7 +315,16 @@ Strava :: [].{
                     # spots made that a coincidence rather than a fact.
                     # (Above the annotation, not between it and the body: Roc reads a
                     # separated annotation as a declaration with no value.)
-                    rl_stop = ListRateLimited
+                    # WHICH limit refused the list? The drain's 429 arm asks this and the
+                    # list's did not, so "run `stride sync` again in ~15 minutes" survived
+                    # on the other endpoint that can 429 — the same defect #246 opened on,
+                    # one endpoint over. Review measured it with the counter one below the
+                    # cap, which is exactly where a run lands after the list read.
+                    #
+                    # `FromDrain(DailyCapReached)` rather than a list-specific arm: the
+                    # remedy is what differs, and it is the same remedy. The listing being
+                    # incomplete is already carried by `resumable` and by the counts.
+                    rl_stop = if day_spent!(path)? FromDrain(DailyCapReached) else ListRateLimited
                     rl_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
                     rl_payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pending, stopped: Drain.sync_stopped_label(rl_stop), resumable: True }
                     Output.out!(rl_payload, |p| Render.sync_screen(p, rl_stop, all))
@@ -761,6 +770,10 @@ Strava :: [].{
                 resp = send_bearer!(uri, token)?
                 match Drain.decide({ status: Response.status(resp), window: st.window, today: st.today }, read_limits!({})) {
                     Refresh => {
+                        # the 401'd read is spent too, and this arm RETRIES the same id —
+                        # so the read is charged here and the retry charges its own. Two
+                        # reads at Strava, two on the counter.
+                        _ = save_reads_for_day!(path, st.day, st.today + 1)?
                         # Long runs outlive the ~6h access token; refresh and retry the same
                         # id. BOUNDED, like the 429 retry beside it: this arm recurses on the
                         # same id with the same state, so without a counter a persistently
@@ -783,7 +796,11 @@ Strava :: [].{
                             } else {
                                 bar_done!(st)
                                 Output.say!("  access token expired — refreshed, continuing...")?
-                                drain_streams!(path, fresh, ids, { ..st, refreshes: st.refreshes + 1 })
+                                # `today` advances with the charge above. Charging the row
+                                # and not the running total would leave `decide` comparing
+                                # a stale count on the retry — the disk and the loop would
+                                # disagree about how much of the day is left.
+                                drain_streams!(path, fresh, ids, { ..st, today: st.today + 1, refreshes: st.refreshes + 1 })
                             }
                         }
                     }
@@ -794,10 +811,17 @@ Strava :: [].{
                     # the daily allowance, recognised from the 429 rather than only from
                     # our own count — see Drain.decide. Same stop, different remedy.
                     DailyCapReached => {
+                        # the 429'd read is a REAL read. It never reaches the Store arm, so
+                        # without this the counter sits below the cap while Strava is
+                        # already refusing — and since #246's whole comparison is
+                        # `today >= reads_per_day`, an undercount makes it false at exactly
+                        # the moment it needs to be true.
+                        _ = save_reads_for_day!(path, st.day, st.today + 1)?
                         bar_done!(st)
                         Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: DailyCapReached })
                     }
                     RateLimited => {
+                        _ = save_reads_for_day!(path, st.day, st.today + 1)?
                         bar_done!(st)
                         Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: RateLimited })
                     }
