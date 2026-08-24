@@ -298,9 +298,15 @@ Strava :: [].{
                     # missing — pending streams, or a list that was cut short", and the
                     # schema and SKILL.md say so rather than the old equality.
                     pending = pending_streams!(path)?
+                    # BOUND once, then used twice. The payload's string and the screen's
+                    # tag must describe the same run, and writing the tag out at both
+                    # spots made that a coincidence rather than a fact.
+                    # (Above the annotation, not between it and the body: Roc reads a
+                    # separated annotation as a declaration with no value.)
+                    rl_stop = ListRateLimited
                     rl_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
-                    rl_payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pending, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }
-                    Output.out!(rl_payload, |p| Render.sync_screen(p, ListRateLimited, all))
+                    rl_payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pending, stopped: Drain.sync_stopped_label(rl_stop), resumable: True }
+                    Output.out!(rl_payload, |p| Render.sync_screen(p, rl_stop, all))
                 } else {
                 pruned = prune_deleted!(path, started, window_start)?
                 Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
@@ -322,9 +328,11 @@ Strava :: [].{
                 # OPEN record — so without this line a new payload key compiles clean and
                 # ships undeclared in schemas/v2/sync.json, which is exactly the drift
                 # `additionalKeys: false` exists to catch (ADR 0000 section 9c).
+                # BOUND once — see the note at the rate-limited payload above.
+                stop = FromDrain(pull.stopped)
                 payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
-                payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: pull.pending, stopped: Drain.sync_stopped_label(FromDrain(pull.stopped)), resumable: pull.pending > 0 }
-                Output.out!(payload, |p| Render.sync_screen(p, FromDrain(pull.stopped), all))
+                payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: pull.pending, stopped: Drain.sync_stopped_label(stop), resumable: pull.pending > 0 }
+                Output.out!(payload, |p| Render.sync_screen(p, stop, all))
                 }
             }
         }

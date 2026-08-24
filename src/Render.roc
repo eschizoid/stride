@@ -764,30 +764,43 @@ Render :: [].{
     # module where no `expect` can go, and its one e2e check then asserted two
     # unconditional literals — review deleted every NUMBER from the line and the check
     # still passed.
-    # Takes the payload AND the tag it was built from. The tag is not redundant with
-    # `p.stopped`: the payload's field is the WIRE string, which exists because sync.json
-    # is a flat enum and Output derives JSON from the record, and recovering the tag from
-    # it meant a lookup that two reviews proved a maintainer can leave stale — add a stop
-    # reason, satisfy every compile error, and the raw token still shipped to the user.
-    # Passed alongside instead, the lookup does not exist: a new reason is a
-    # non-exhaustive match here and in drain_note, and the branch you are made to write is
-    # the branch that runs.
+    # Takes the payload AND the tag it was built from. `p.stopped` is the WIRE string —
+    # it exists because sync.json is a flat enum and Output derives JSON from the record —
+    # and NOTHING in this function reads it. Recovering the tag from it was a lookup that
+    # two reviews proved a maintainer can leave stale: add a stop reason, satisfy every
+    # compile error, and the raw token still shipped to the user. Passed alongside instead,
+    # the lookup does not exist — a new reason is a non-exhaustive match here and in
+    # drain_note, and the branch you are made to write is the branch that runs.
     #
     # It does not reopen the "Render sees only the payload" rule that prune_claim below
-    # depends on. Both producer sites build `stopped:` by calling sync_stopped_label on
-    # THIS value in the same record literal, so the human line and the machine line are
-    # derived from one thing and cannot disagree about one run — which is what that rule
-    # is for.
+    # depends on. Both producer sites BIND the tag once and derive `stopped:` from that
+    # binding, so at both of them the human line and the machine line come from one value.
+    #
+    # DO NOT, not CANNOT. The signature takes the payload and the tag as two independent
+    # parameters, so a caller CAN pass a mismatched pair and nothing here stops it: review
+    # made the list site pass FromDrain(RateLimited) beside a correct `stopped:` and every
+    # offline expect stayed green — only the e2e human-screen check caught it. A third
+    # caller has to keep the same discipline. Binding once is the discipline; it is not
+    # enforcement, and an earlier version of this comment claimed it was.
     sync_screen : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }, Drain.SyncStop, Bool -> Str
     sync_screen = |p, stop, all| {
         prune_note = if p.pruned > 0 " (pruned ${U64.to_str(p.pruned)} removed on Strava)" else ""
         # Said plainly rather than folded into the pending count: unreadable is not the
-        # same as not-yet-fetched, and only the first is worth chasing. Suppressed when
-        # `stopped` is complete, because drain_note's complete arm is ONLY reachable with
-        # pending > 0 — precisely the skip case — so both clauses would state one fact
-        # twice, in two wordings, on every affected run.
+        # same as not-yet-fetched, and only the first is worth chasing. Suppressed on a
+        # complete run, because drain_note's Complete arm is ONLY reachable with pending
+        # > 0 — precisely the skip case — so both clauses would state one fact twice, in
+        # two wordings, on every affected run.
+        #
+        # Reads the TAG, not `p.stopped`. This was the last string comparison in the file,
+        # and it was pinned only by accident: while drain_note also matched these literals,
+        # renaming one broke drain_note's arms and this line came along for the ride.
+        # drain_note takes a tag now, so that coupling is gone. Review measured the gap
+        # immediately — rename `Complete => "done"` in stopped_label, update the two pins
+        # the compiler and the schema witness force, leave this line alone, and the suite
+        # is 382/382 green while every complete run with a skipped stream prints the
+        # duplicated clause these five lines exist to suppress.
         skip_note =
-            if p.streams_skipped > 0 and p.stopped != "complete" {
+            if p.streams_skipped > 0 and stop != FromDrain(Complete) {
                 " (${I64.to_str(p.streams_skipped)} had unreadable stream data)"
             } else {
                 ""
@@ -1948,9 +1961,13 @@ expect Render.drain_note(RateLimited, 40) == "Strava rate-limited this run — 4
 # these need to say — drain_note takes a StopReason, so the compiler already guarantees it
 # handles every drain reason that exists. What no type can guarantee is that
 # `stopped_label`'s spellings match schemas/v2/sync.json, because the schema is a
-# document. So these four are hand-typed on purpose, against the contract, and they are
-# the one place in this file where a hand-written list is the right answer rather than the
-# hole: they are the independent witness, not a restatement of the type.
+# document. So these four are hand-typed on purpose.
+#
+# They witness the ROC SPELLING, not the contract — and that distinction is load-bearing.
+# Review renamed the enum value in schemas/v2/sync.json ALONE: these four stayed green,
+# every offline expect stayed green, and the e2e schema-conformance check on the list-429
+# arm is what went red. So the tie has two halves — these pin tag -> literal, that pins
+# emitted literal -> schema enum — and neither alone catches a rename on the far side.
 expect Drain.stopped_label(Complete) == "complete"
 expect Drain.stopped_label(BudgetReached) == "budget_reached"
 expect Drain.stopped_label(RateLimited) == "rate_limited"
