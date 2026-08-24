@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(727)?
+    checks_ran_exactly!(730)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2487,6 +2487,11 @@ b_seed_analyze! = |ctx| {
     an_lndr = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' analyze 2>/dev/null")
     check!("a non-canonical activity date is refused by the WRITER, not laundered into a real-looking day", Str.contains(an_lndr, "unreadable_activity_date") and Str.contains(an_lndr, "activity 803"))?
     check!("...so no invented day reaches daily_load", Str.trim(sql!(an_db, "SELECT count(*) FROM daily_load WHERE day = '2026-03-05';")) == "0")?
+    # 803 goes now that it has done its job. Left in place it outlives its own check and
+    # decides, by byte order, which row the sweep below names — review measured the checks
+    # below naming 803 instead of 811 in a 2027 fixture. The block was written to be
+    # construction-safe and a leftover row put the calendar back into it.
+    _ = sql!(an_db, "DELETE FROM activity_metrics WHERE activity_id = 803; DELETE FROM activities WHERE id = 803;")
     # ...and `summary`'s hard-session statistics refuse it too — the fifth site of this
     # class and the last one in Report.roc. It read activity dates with `keep_oks`, which
     # dropped an unparseable date silently AND accepted a non-canonical one, so the fold
@@ -2532,7 +2537,22 @@ b_seed_analyze! = |ctx| {
     _ = sql!(an_db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (811,40.0,111.0,3600,1);")
     an_soft = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>/dev/null")
     check!("...and a NON-hard unreadable activity too, rather than becoming its sport's last_date", Str.contains(an_soft, "unreadable_activity_date") and Str.contains(an_soft, "activity 811"))?
+    # ...and `rate latest` resolves by PARSED day, which is the seventh site of this class
+    # and the only one that WRITES. `MAX(start_local)` is a byte comparison, so 811's
+    # malformed date outranked every real one and the rating landed on it — reported back
+    # as the id it rated, at exit 0, on a database where summary and season both refuse.
+    # Ratings are the one table prune_deleted! will not touch, because they cannot be
+    # re-derived, so this put unrecoverable human judgment on the wrong session. It also
+    # collided with the remedy: deleting 811 by id would have destroyed a rating meant for
+    # another activity, which would still have none.
+    an_rate = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' rate latest 8 2>/dev/null")
+    check!("`rate latest` refuses an unreadable date rather than rating the wrong session", Str.contains(an_rate, "unreadable_activity_date"))?
+    check!("...and writes nothing", Str.trim(sql!(an_db, "SELECT count(*) FROM ratings;")) == "0")?
     _ = sql!(an_db, "DELETE FROM activity_metrics WHERE activity_id = 811; DELETE FROM activities WHERE id = 811;")
+    # ...and with every date readable it picks the newest, not the highest-sorting string.
+    _ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (700,'older','Ride','Ride','${ctx.d1}T10:00:00Z',3600),(701,'newest','Ride','Ride','${ctx.d2}T10:00:00Z',3600);")
+    check!("...and on readable dates rates the newest activity", Str.contains(sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' rate latest 7 2>/dev/null"), "\"rated\":701"))?
+    _ = sql!(an_db, "DELETE FROM ratings; DELETE FROM activities WHERE id IN (700,701);")
     _ = sql!(an_db, "DELETE FROM activity_metrics WHERE activity_id = 804; DELETE FROM activities WHERE id = 804;")
     _ = sh!("rm -rf '${an_home}'")
     _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = 'not-a-date';")

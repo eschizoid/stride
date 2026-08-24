@@ -204,10 +204,9 @@ Report :: [].{
     # `load_series!` below deliberately does NOT go through it; `load` absorbs, which is a
     # known open defect (#249) rather than an oversight.
     #
-    # Scoped to the property rather than the count on purpose. Other implementations of this rule live in
-    # ReportSeason (two). The PREDICATE they share is factored into
-    # Metrics.usable_date_days, so what can drift is only which tag each site raises, which
-    # is the part that should differ.
+    # Scoped to the property rather than the count on purpose. The PREDICATE is factored
+    # into Metrics.usable_date_days and every site in the tree calls it, so what can differ
+    # between them is which tag each raises — which is the part that should differ.
     canonical_day : Str -> Try(I64, _)
     canonical_day = |d| (Metrics.usable_date_days(d)).map_err(|_| BadDailyLoadDay(d))
 
@@ -256,7 +255,9 @@ Report :: [].{
         # with junk HR straps; consolidated rather than grown a second definition.
         # MAX(substr(...)) is a STRING max and reached the payload with no Roc-side parse
         # at all, so a malformed start_local shipped verbatim into a field the schema calls
-        # a date — measured: last_hard_session_date: "2026-3-05T".
+        # a date — measured: last_hard_session_date: "2026-3-05T". Covered by the all-time
+        # sweep below, NOT by anything in this query: a cutoff-scoped guard cannot see a
+        # row this one can return, because this one has no cutoff.
         hard_expr = "COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) >= 300"
         last_hard = Sqlite.query!({
             path: Path.utf8(path),
@@ -394,7 +395,7 @@ Report :: [].{
             row: Sqlite.f64("b"),
         })?
 
-        sports_raw = Sqlite.query_many!({
+        sports = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT a.sport_type AS sport, COUNT(*) AS sessions, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
@@ -417,10 +418,7 @@ Report :: [].{
                 Ok({ sport, sessions, tss, moving_time, distance_m, last_date })
             },
         })?
-        # ...and refuse an unreadable one rather than publishing it. Done as a sweep over
-        # the decoded rows rather than inside the decoder, because a decoder that can raise
-        # a domain error makes every other column's failure look like the same thing.
-        sports = List.map(sports_raw, |r| { sport: r.sport, sessions: r.sessions, tss: r.tss, moving_time: r.moving_time, distance_m: r.distance_m, last_date: r.last_date })
+
 
         cutoff7 = Metrics.days_to_date_str(anchor - 6)
         zsum7 = zone_sum!(path, cutoff7)?

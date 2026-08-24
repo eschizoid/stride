@@ -1798,7 +1798,7 @@ Metrics :: [].{
     # never learns their date moved), while an unpadded 2026-8-5 sorts after every
     # 2026-1x-xx date and lands in the wrong week. The year bound holds the string at
     # ten characters, since a 3-digit year would sort after every 2xxx one.
-    # Canonical AND parseable — the one predicate every stored-date guard in the codebase
+    # Parseable AND canonical — the one predicate every stored-date guard in the codebase
     # needs, in the module where both halves already live. It exists because there were
     # five independent spellings of it (two in Report, two in ReportSeason, one in
     # Analyze), and every time this class of bug reopened it was because two sites
@@ -1817,10 +1817,15 @@ Metrics :: [].{
     # code, waiting for the predicate to be weakened.
     usable_date_days : Str -> Try(I64, _)
     usable_date_days = |s|
-        if is_canonical_date(s) {
-            date_str_to_days(s)
-        } else {
-            Err(BadDate)
+        match date_str_to_days(s) {
+            # ONE parse. The obvious spelling — `if is_canonical_date(s) date_str_to_days(s)`
+            # — parses twice, because is_canonical_date is itself implemented over
+            # date_str_to_days, and it leaves the second call's Err arm unreachable. That is
+            # the shape this function's own comment condemns, so it should not be this
+            # function's shape. Round-tripping the parsed day is what "canonical" MEANS
+            # here: only one spelling of a day survives days -> string.
+            Ok(d) => if days_to_date_str(d) == s Ok(d) else Err(BadDate)
+            Err(_) => Err(BadDate)
         }
 
     is_usable_date : Str -> Bool

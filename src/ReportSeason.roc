@@ -90,12 +90,7 @@ ReportSeason :: [].{
                 # refuses the same row loudly, and so should this. Parseable is
                 # not enough either -- date_str_to_days accepts "2026-3-05",
                 # which sorts after every 2026-1x day and yielded span_weeks -6.
-                days =
-                    if Metrics.is_canonical_date(d) {
-                        (Metrics.date_str_to_days(d)).map_err(|_| BadDailyLoadDay(d))?
-                    } else {
-                        Err(BadDailyLoadDay(d))?
-                    }
+                days = (Metrics.usable_date_days(d)).map_err(|_| BadDailyLoadDay(d))?
                 Ok({ days, tss, ctl, atl, tsb })
             },
         })?
@@ -161,12 +156,7 @@ ReportSeason :: [].{
                     # ten-character PREFIX of the column, never the column. Three separate
                     # comments here quoted the pre-substr value, and that slip is what put
                     # a string no row contains into a user-facing "delete this" message.
-                    days =
-                        if Metrics.is_canonical_date(d) {
-                            (Metrics.date_str_to_days(d)).map_err(|_| BadActivityDate(d, example_id))?
-                        } else {
-                            Err(BadActivityDate(d, example_id))?
-                        }
+                    days = (Metrics.usable_date_days(d)).map_err(|_| BadActivityDate(d, example_id))?
                     Ok({ days, fam, n, easy_s, mod_s, hard_s, ftp_lo, ftp_hi })
                 },
             })?

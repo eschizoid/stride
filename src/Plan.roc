@@ -27,16 +27,42 @@ Plan :: [].{
             Ok(rpe) => {
                 id_result =
                     if target == "latest" {
-                        match Sqlite.query!({
+                        # "latest" by PARSED day, not by string max. `MAX(start_local)` is a
+                        # byte comparison, so one malformed date outranks every real one —
+                        # '2026-3-05T' beats '2026-08-24' — and `rate latest` then attached
+                        # the rating to that row and reported it back as the id it rated, at
+                        # exit 0, on a database where `summary` and `season` both refuse.
+                        #
+                        # This is the worst instance of the class in the tree because it
+                        # WRITES, and it writes into `ratings` — the one table
+                        # prune_deleted! refuses to touch, on the grounds that a rating
+                        # "can't be re-derived", so the row is human judgment that cannot be
+                        # recovered. It also collides with the remedy the date errors print:
+                        # deleting the malformed row by id destroys the rating the athlete
+                        # meant for a different session, and that session still has none.
+                        #
+                        # Not covered by summary's sweep — `rate!` is dispatched straight
+                        # from app.roc and never reaches summary_payload!. Guarded here.
+                        rows = Sqlite.query_many!({
                             path: Path.utf8(path),
-                            query: "SELECT COALESCE(MAX(id), 0) AS id FROM activities WHERE start_local = (SELECT MAX(start_local) FROM activities)",
+                            query:
+                                \\SELECT id AS id, COALESCE(substr(start_local, 1, 10), '') AS d
+                                \\FROM activities ORDER BY id
+                            ,
                             bindings: [],
-                            row: Sqlite.i64("id"),
-                        }) {
-                            Ok(0) => Err(NoActivities)
-                            Ok(id) => Ok(id)
-                            Err(e) => Err(e)
-                        }
+                            rows: |cols| |stmt| {
+                                id = Sqlite.i64("id")(cols)(stmt)?
+                                d = Sqlite.str("d")(cols)(stmt)?
+                                Ok({ id, d })
+                            },
+                        })?
+                        # Refuse an unreadable date rather than ranking around it: ranking
+                        # around it would silently rate the wrong session, which is the bug.
+                        dated = List.map_try(rows, |r| (Metrics.usable_date_days(r.d)).map_err(|_| BadActivityDate(r.d, r.id)).map_ok(|day| { id: r.id, day }))?
+                        # newest day wins; ties broken by the higher id, which is what the
+                        # string version meant to do and did do whenever the dates parsed.
+                        best = List.fold(dated, { id: 0, day: -999999 }, |acc, r| if r.day > acc.day or (r.day == acc.day and r.id > acc.id) r else acc)
+                        if best.id == 0 Err(NoActivities) else Ok(best.id)
                     } else {
                         Metrics.arg_i64(target).map_err(|_| BadId)
                     }
