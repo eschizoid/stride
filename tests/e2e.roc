@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(690)?
+    checks_ran_exactly!(692)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2702,6 +2702,16 @@ b_agent_loop! = |ctx| {
     # non-empty; without it, `index(...) == null` would pass on an emptied list too, which
     # is the defect the bystander exists for. The two checks hold each other up.
     check!("...and the skipped session is NOT in the actionable list", pj!("[.data.open_sessions[].id] | index(${sid2})") == "null")?
+    # ...and the rows carry their own CONTENTS, not just the right ids. Membership is now
+    # bounded both ways — the list cannot be emptied and cannot gain skipped sessions —
+    # and a list with the right ids and garbage fields is still indistinguishable from a
+    # correct one. Across the whole suite `open_sessions` was only ever read as `[].id` or
+    # `| length`, and the schema pins types without patterns, so review replaced every
+    # row's target_date with '1999-01-01', session_type with 'bogus_type' and detail with
+    # 'WRONG DETAIL' and got 690 == 690, exit 0. `target_date` and `session_type` are
+    # exactly what an agent branches on to decide what to do today.
+    check!("...and the open row carries its own fields, not just its id", pj!("[.data.open_sessions[] | select(.id == ${sid_other}) | .target_date]") == "[\n  \"${d5}\"\n]")?
+    check!("...including the type and detail it was created with", pj!("[.data.open_sessions[] | select(.id == ${sid_other}) | .session_type]") == "[\n  \"endurance\"\n]" and pj!("[.data.open_sessions[] | select(.id == ${sid_other}) | .detail]") == "[\n  \"agent loop bystander\"\n]")?
     check!("...and a SUBSTITUTED activity stops counting as unplanned too", str_to_i64(pj!(".data.adherence_28d.unplanned_activities")) == sub_unplanned - 1)?
     # Named for what it asserts. It was "counted as skipped, not completed" and contains no
     # `completed` term — and review aimed four mutations at the completed half, all of
@@ -2746,6 +2756,12 @@ b_agent_loop! = |ctx| {
     # "reps" is NOT what this catches: three expects in Command.roc assert it contains
     # "not a date", and they abort `just test` before e2e runs. What this catches is a
     # message that still says "not a date" and drops the VALUE, which passes all three.
+    # ONE assertion in two halves, not a check and a spare. `usage` is a single code fed
+    # by 30 distinct Usage(...) raises in Command.roc, so `code == "usage"` alone proves
+    # only that SOME malformed invocation was refused — the arity arm answers
+    # "usage: stride reps — wrong arguments for this command", echoing nothing of what was
+    # typed. The token is the only thing separating the date arm from the other 29. Delete
+    # this and the probe above silently weakens to 1-of-30.
     check!("...and the date-refusal message names what it refused", Str.contains(stride!(ctx.bin, ctx.home, ["reps", "notadate"]), "notadate"))?
     _ = sh!("rm -f '${ctx.home}/.err-probe.out'")
 
