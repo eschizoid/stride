@@ -2473,7 +2473,8 @@ b_command_schemas! = |ctx| {
     # them, which changes this string.
     netargs = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select(.network) | \"\\(.name)[\\([.args[].name] | join(\",\"))]\"] | sort | join(\"|\")'"))
     check!("the two networked forms declare exactly what they always have (got: ${netargs})", netargs == "auth[]|sync[--all]")?
-    # ORDERING. Both probes verify the required COUNT and neither verifies its position,
+    # ORDERING: required arguments must form a PREFIX. Both probes verify the required
+    # COUNT and neither verifies its position,
     # so swapping a required and an optional argument preserves both counts and passes:
     # `top [opt(<metric>), req(<limit>), opt(<sport>)]` tells an agent the metric is
     # optional, and `stride top 10` answers bad_metric.
@@ -2484,8 +2485,19 @@ b_command_schemas! = |ctx| {
     # `select(.required)`, which silently drops any optional argument sitting between
     # required ones. Asserting it makes those three sound rather than lucky, which is the
     # same lesson as the justfile line that was safe only by being last.
-    misordered = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[].required] | index(true) != null and (index(false) != null) and (index(false) < (index(true)))) | .name] | join(\"|\")'"))
-    check!("no form declares an optional argument before a required one (bad: ${misordered})", misordered == "")?
+    #
+    # `!= (sort | reverse)` is exactly "required ones form a prefix", which is the sentence
+    # schemas/v2/commands.json states. The first version asked whether the FIRST optional
+    # precedes the FIRST required — which coincides with the invariant on every form the
+    # table has today and diverges the moment a third argument appears. It missed
+    # `[req, opt, req]`, and that shape is the only arg mutation so far whose consequence
+    # is a silent WRONG WRITE rather than an error: declaring skip as
+    # [req(<session_id>), opt(<reason>), req(<activity_id>)] tells an agent the reason is
+    # optional, and `stride skip 1 12345` then records 12345 as the REASON, exits 0, and
+    # never makes the substitute link. jq orders false < true, so this is codepoint- and
+    # locale-independent.
+    misordered = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[].required] | . != (sort | reverse)) | .name] | join(\"|\")'"))
+    check!("required arguments form a prefix — no optional one precedes a required one (bad: ${misordered})", misordered == "")?
     check!("...and there were forms with required arguments to order", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[] | select(.required)] | length > 0)] | length'")) != "0")?
     _ = sh!("rm -rf '${arity_probe}'")
     Ok({})
