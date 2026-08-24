@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(685)?
+    checks_ran_exactly!(688)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2563,6 +2563,36 @@ b_agent_loop! = |ctx| {
     # tidying rather than on anything the loop did.
     pre_unplanned = str_to_i64(Str.trim(strjq!(ctx, ["plan"], ".data.adherence_28d.unplanned_activities")))
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (9220,'agent loop ride','Ride','${ctx.d2}T07:00:00Z',3600,25000,190,190,145);")
+    # A BYSTANDER open session, created before the baselines so every delta below is
+    # unaffected by it. It exists for one assertion, after the completion: that the list
+    # still holds it.
+    #
+    # Without it the loop's own session is the ONLY open one when it completes, and the
+    # check that it disappeared is `index(sid) == null` — which is also what an EMPTY list
+    # returns. Review proved the gap rather than argued it: filtering every row out of
+    # `open_p` once a session is done left the whole suite green at 685 == 685. An agent
+    # reading `plan` would see no open sessions and conclude the week was finished.
+    #
+    # Note this failure shape is specific to negative membership. The plan_history checks
+    # compare against non-empty expected values, so an emptied history fails on its own.
+    # `index(...) == null` is the one that degenerates, and it degenerates silently.
+    # Its OWN day, five back, and that is not cosmetic. `week add` revises rather than
+    # inserts when the date already has an OPEN session — `plan_add_checked!` looks up
+    # `WHERE target_date = :date AND status = 'open'` and takes the existing id — so the
+    # bystander cannot share d1 with the session under test, and cannot share d2 either,
+    # where an earlier scenario leaves one open. Both wrong versions were written before
+    # this one: the first returned `sid_other == sid == 7`, which made "leaves the OTHER
+    # session alone" mean "leaves itself alone" — a check that passes by construction and
+    # asserts nothing. It only surfaced because `planned` then did not rise and the delta
+    # check caught it three lines on. Changing the TYPE did not help, because the lookup
+    # keys on the date alone.
+    #
+    # Computed here rather than borrowed from an earlier scenario's leftovers, for the
+    # reason the probe activity above is seeded rather than borrowed: that dependency is
+    # invisible until it breaks.
+    d5 = Str.trim(sh!("TZ=${ctx.tz} date -v-5d +%F 2>/dev/null || TZ=${ctx.tz} date -d '5 days ago' +%F"))
+    sid_other = Str.trim(strjq!(ctx, ["week", "add", "${d5}", "endurance", "agent loop bystander", "not the session under test"], ".data.id"))
+    check!("the bystander session exists, so the removal check below has something to survive it", sid_other != "" and sid_other != "null")?
     # ── leg 0: observe ──────────────────────────────────────────────────
     # Baselines read AFTER the seed, so the deltas below are the loop's own and not the
     # seed's — unplanned_activities in particular counts this new row.
@@ -2611,6 +2641,14 @@ b_agent_loop! = |ctx| {
     # payload fields is computed by a DIFFERENT query and only their agreement is the
     # contract.
     check!("completing removes the session from open_sessions", pj!("[.data.open_sessions[].id] | index(${sid})") == "null")?
+    # ...and removes ONLY it. The line above cannot tell "sid was removed" from "the list
+    # is empty" — `index()` returns null for both — and the loop's session would be the
+    # only open one without the bystander seeded above.
+    check!("...and leaves the OTHER open session alone, so an emptied list is not mistaken for a removal", pj!("[.data.open_sessions[].id] | index(${sid_other}) != null") == "true")?
+    # ...and the two really are distinct rows. Without this the check above degrades to
+    # "the session is still there" the moment anything makes `week add` return an existing
+    # id, which is exactly what it did on the first attempt.
+    check!("...which is a DIFFERENT session from the one just completed", sid_other != sid)?
     # `done`, not `completed` — the status enum is open|done|skipped. Pinned against the
     # schema's own vocabulary, which is what a coach branches on.
     check!("...but keeps it in plan_history_28d, now done", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .status]") == "[\n  \"done\"\n]")?

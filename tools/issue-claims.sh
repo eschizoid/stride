@@ -59,12 +59,21 @@ fail=0; checked=0; blocks=0; quoting=0
 EXPECTED_QUOTING=4
 
 # one line per comment block: file<TAB>startline<TAB>joined text
+#
+# GUARDED, like the markdown extractor below and for the same reason: macOS awk ABORTS
+# the rest of its argument list on a missing file rather than skipping it. Review measured
+# what that costs here — a missing file placed AFTER `src/*.roc` silently drops the block
+# count from 2085 to 1631, losing all of `tests/*.roc`, 22% of the corpus, while the script
+# still prints "none stale" and exits 0. Placed BEFORE, it happened to be caught, but only
+# because one of four quoting markers lives in src/Render.roc — an accidental tripwire,
+# not a designed one. The guard was added to the markdown block and not this one.
 awk '
   FNR==1 { if (n) { print f"\t"s"\t"t; n=0 } }
   /^[[:space:]]*#/ { if (!n) { f=FILENAME; s=FNR; t="" } n++; l=$0; sub(/^[[:space:]]*#[[:space:]]?/,"",l); t=t" "l; next }
   { if (n) { print f"\t"s"\t"t; n=0 } }
   END { if (n) print f"\t"s"\t"t }
-' src/*.roc tests/*.roc > "$BLOCKS"
+' src/*.roc tests/*.roc > "$BLOCKS" \
+  || { echo "issue-claims: Roc extraction failed — a listed file or glob is missing" >&2; exit 5; }
 
 # Markdown needs its OWN extractor: it has no comment syntax, so the `^#` rule above
 # would key on HEADINGS and slice every document into nonsense. Here a block is a
