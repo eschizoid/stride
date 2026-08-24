@@ -36,16 +36,29 @@ set -u
 # code that exits 0 under LC_ALL=C dies under en_US.UTF-8 with
 # `awk: towc: multibyte conversion failure`, exit 2, having read only part of its input. The
 # docs are full of em dashes and box-drawing, so a wrong offset finds one immediately. With
-# the advance fixed both locales yield the same 78 at exit 0.
+# the advance fixed both locales yield the same 79 at exit 0.
 #
-# NO EMISSION COUNT IS QUOTED HERE, deliberately, and that is the third revision of this
-# sentence rather than the first. The count depends entirely on how the bug is reconstructed
-# — which of the two RSTART/RLENGTH uses is clobbered, whether the dedupe is on — and three
-# people reconstructing it got three different pairs (61, 18, 180 under UTF-8), each correct
-# for its own setup and each looking like a refutation of the others. Two rounds of review
-# were spent trading those numbers. The mechanism and the exit status are the checkable
-# facts; the count is an artifact of the mutation, so it does not belong in a comment whose
-# whole value is being checkable.
+# THE RECONSTRUCTION IS PART OF THE MEASUREMENT. Three people reconstructed this bug and got
+# 61, 591 and 658, each reading like a refutation of the others, and three revisions of this
+# comment were spent on that. They are the same measurement at different settings of two
+# switches nobody had written down:
+#
+#   dedupe OFF, quoting-skip ON   ->  591 under C
+#   dedupe OFF, quoting-skip OFF  ->  658 under C     (the 67 extra are all one line:
+#                                                      the 1041-character marker line in
+#                                                      AGENTS.md, which the skip removes)
+#   dedupe ON                     ->   78/79, because the dedupe collapses the runaway
+#                                      loop back onto the right total — the very thing
+#                                      that hid this bug during development
+#
+# Clobbering the FIRST of the two RSTART/RLENGTH uses is a no-op, which is why it never
+# showed up as a variable: awk evaluates `substr(rest, RSTART + RLENGTH - 1)` before calling
+# tokens(), so "both clobbered" and "advance clobbered" are one program.
+#
+# The UTF-8 side aborts at exit 2 in every cell, and its count is NOT stable across machines
+# — 61 on one, 180 here, because "abandon the rest of the input at the first glyph a wrong
+# offset lands inside" depends on where that offset lands. The abort is the fact; the
+# truncation point is not.
 #
 # Note which direction this fails in: LOUDLY. awk exits 2, the `||` below turns that into
 # exit 5, and the truncated corpus would trip the floors anyway. It is the SILENT zero from
@@ -63,23 +76,26 @@ FILES="README.md AGENTS.md docs/*.md docs/adr/*.md .claude/skills/stride/SKILL.m
 
 # The corpus is PINNED, not merely reported, and that gap was one of this check's two blind
 # spots. The only quantitative assertion used to be "> 0", so any shrink short of total
-# silence passed under a confident summary line. Measured: converting every ``` fence in
-# README to `~~~` takes the corpus from 78 references to 59 and still exits 0. Rule B
-# contributes 19 of the 78, so a fence dialect, a parity flip, or a doc quietly leaving FILES
-# could remove a quarter of the corpus while the run read clean. That is the same
+# silence passed under a confident summary line. Rule B contributes 19 of the 79 — measured
+# by disabling it — so a fence dialect, a parity flip, or a doc quietly leaving FILES could
+# remove a quarter of the corpus while the run read clean. That is the same
 # right-looking-total-over-a-wrong-scan the emit() dedupe hid once already, relocated from
 # the loop to the corpus.
 #
 # THE FLOORS CANNOT SEE THE OTHER BLIND SPOT, and it matters that this is written down next
 # to them rather than discovered again. They measure the extractor's OUTPUT, so they detect
 # references that stop being counted and are structurally blind to references that were
-# never counted at all. Review demonstrated three mutations that hold the total at exactly
-# 78 and exit 0: a real `stride sync` added inside the quoting-marked line, and
-# `stride frobnicate` planted in a `~~~` fence or in a four-space indented block. The second
-# is the one that stings — a doc naming a command the binary does not have, in a perfectly
-# valid CommonMark fence, passing the one check whose header promises to catch it. No floor
-# value can reach that; the fix has to be in the EXTRACTOR, which is why the tilde fence is
-# now a recognised dialect below and why UNPARSED counts what neither rule could read.
+# never counted at all. Review demonstrated three mutations that held the total at exactly
+# its pinned value and exited 0: a real `stride sync` added inside the quoting-marked line,
+# and `stride frobnicate` planted in a `~~~` fence or in a four-space indented block. The
+# second is the one that stung — a doc naming a command the binary does not have, in a
+# perfectly valid CommonMark fence, passing the one check whose header promises to catch it.
+# No floor value can reach that; the fix had to be in the EXTRACTOR.
+#
+# So the tilde fence is a recognised dialect below, and UNPARSED counts what neither rule
+# could read. Both directions are now measured rather than argued: converting every ``` in
+# README to `~~~` is a NO-OP today (79 references, exit 0) where it used to take the corpus
+# to 59, and the indented block trips the pin at exit 4 naming the cause.
 #
 # FLOORS, not equalities, because the directions are not symmetric here: growth is somebody
 # writing docs and must not fail, shrink is the failure being guarded. issue-claims pins its
@@ -90,7 +106,7 @@ FILES="README.md AGENTS.md docs/*.md docs/adr/*.md .claude/skills/stride/SKILL.m
 # is computed by a shell loop that never opens a file, so it reads 18 whether awk scanned
 # eighteen documents or one; only 9 of the 18 carry a reference at all. Lower these when a
 # doc genuinely loses references, and say which in the commit message.
-MIN_REFS=78
+MIN_REFS=79
 MIN_DOCS=9
 
 # Every `command-claims: quoting` marker in the corpus, pinned so a new one is deliberate —
@@ -136,9 +152,10 @@ EXPECTED_QUOTING=1
 
 # Lines that MENTION `stride <lowercase-word>` and yielded no reference. This is the counter
 # for the direction the floors above structurally cannot see: they measure what was counted,
-# so a reference that was never counted at all leaves the total at exactly 78 and the run
-# green. Review demonstrated `stride frobnicate` passing inside a `~~~` fence and inside a
-# four-space indented block, which is the one outcome this file's header promises to prevent.
+# so a reference that was never counted at all leaves the total unchanged and the run green.
+# Review demonstrated `stride frobnicate` passing inside a `~~~` fence and inside a
+# four-space indented block, which is the one outcome the header of this file promises to
+# prevent.
 #
 # Most of this count is ordinary prose — "stride refuses", "stride already knows", "stride
 # answers the question" — and none of it is a defect. The number is not a quality signal and
@@ -151,23 +168,37 @@ EXPECTED_QUOTING=1
 # purpose. Those guard a quantity that legitimately grows; this one is a description of the
 # corpus, and both directions are worth a look — it going DOWN can mean a rule started
 # matching prose it should not.
-# 44 on this tree, and the first run of this counter was worth the whole exercise: 41 are
-# ordinary prose ("stride is", "stride refuses", "stride answers the question") and THREE sit
-# inside fences, which is where a missed claim would hide.
 #
-#   README.md:18   `── stride report (as of …)`         a banner, correctly not an invocation
-#   README.md:131  `curl -o stride https://…`           a download, correctly not an invocation
-#   README.md:171  `#   stride config set utc_offset…`  a COMMENTED-OUT invocation
+# It inherits BOTH weaknesses recorded beside EXPECTED_QUOTING, and for the same reasons.
+# It is a COUNT, not an identity: deleting one prose line while adding one unread claim
+# holds the total and passes. And it is PER LINE and binary — a line that yields any
+# reference is exempt from it entirely, so a second claim in an unread shape on the same
+# line is invisible to both mechanisms.
 #
-# The third is a real gap and it is left open deliberately. It is a genuine command reference
-# — `config set` is a real form — but rule B anchors at line start and a `#` prefix is not
-# something it can admit without also admitting `# stride refuses to guess`, which would flag
-# a verb as a command. Shell comments cannot be told from prose comments mechanically, which
-# is the same natural-language wall issue-claims hit and answered with a marker rather than a
-# parser. So it stays unextracted and stays COUNTED, which is the difference between a known
-# gap and an invisible one. A backticked reference inside the same comment IS caught, by
-# rule A, two lines further down.
-EXPECTED_UNPARSED=44
+# The `~~~` dialect added below widened the fence-parity surface: a prose line that begins
+# with `~~~` now flips polarity, and a doc explaining fence dialects is exactly the sort of
+# thing this repo writes. That risk is covered by this pin — measured, such a line takes the
+# count to 43 and exits 4 — which is the property worth having: the fix's own new hazard
+# lands on the fix's own new instrument.
+#
+# 43 on this tree, and the FIRST run of this counter was worth the whole exercise. It came
+# back 44: 41 ordinary prose lines ("stride is", "stride refuses", "stride answers the
+# question"), and three inside fences, which is where a missed claim would hide.
+#
+#   README.md:18   `── stride report (as of …)`  a banner, correctly not an invocation
+#   README.md:131  `curl -o stride https://…`    a download, correctly not an invocation
+#   README.md:171  `#   stride config set …`     a COMMENTED-OUT invocation — a real gap
+#
+# The third was a genuine command reference nothing was checking, and the fix went in the
+# DOC rather than here. Teaching rule B to accept a `#` prefix was built and measured: it
+# gains exactly one reference and costs a false accusation on
+# `# stride refuses to guess your zones`, reported as "`stride refuses to` names no command"
+# — because inside a fence an explanatory comment and a commented invocation are both `#`
+# plus text, and nothing short of parsing the fence info string separates them. So the line
+# was backticked instead, matching its own neighbour two lines below which already was.
+# Rule A picks it up with no anchor change, the count went 78 -> 79 and 44 -> 43, and a
+# bogus command planted there is now reported at exit 1 instead of living there forever.
+EXPECTED_UNPARSED=43
 
 # The trap goes up FIRST, before any of them exist. Installed after the block, a failure on
 # the second or third mktemp leaks the ones already created — `exit 6` runs with no trap
@@ -291,9 +322,13 @@ awk -v Q="$QUOTED" -v U="$UNPARSED" '
       t = tokens(substr(rest, r + l - 1))
       key = FILENAME "\t" FNR "\t" t
       # `emitted` is what the UNPARSED counter below reads to tell "this line yielded a
-      # reference" from "this line mentioned stride and yielded nothing". Incremented on the
-      # PRINT, not on the match, so a deduped repeat does not make a line look parsed twice
-      # — and a line whose only hits were duplicates still counts as parsed, which is right.
+      # reference" from "this line mentioned stride and yielded nothing". It counts PRINTS,
+      # inside the dedupe, so in principle a line whose every hit was suppressed would count
+      # as unparsed. That case cannot occur: `seen` keys on FILENAME, FNR and the token, so
+      # the first hit of any token on a line is always new and always prints. Stated as
+      # unreachable rather than as a property, because an earlier version of this comment
+      # claimed the opposite behaviour AND claimed it was right — wrong twice, in the one
+      # file whose thesis is that comments must be measurements.
       if (t != "" && !seen[key]++) { print key; emitted++ }
       rest = substr(rest, r + l)
     }
