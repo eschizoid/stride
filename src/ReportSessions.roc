@@ -35,7 +35,7 @@ ReportSessions :: [].{
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport,
+                \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, a.sport_type AS sport,
                 \\       COALESCE(a.sport_family, a.sport_type) AS family, a.name AS name,
                 \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
@@ -91,6 +91,19 @@ ReportSessions :: [].{
         match List.first(rows) {
             Err(_) => Output.err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
             Ok(a) => {
+                # REFUSES rather than rendering an empty date, because this screen COMPUTES
+                # from the date and the computation fails silently. `Report.cp_fit_as_of!`
+                # takes a 90-day window anchored here, an unreadable date makes that window
+                # empty, and the whole `vs self (90d, same family+band)` line DISAPPEARS —
+                # indistinguishable from an athlete who genuinely has no comparables. The
+                # header's blank date is at least visible; the missing line is not.
+                #
+                # The split in #249 is by what a command DOES with the date, not by which
+                # table it read: `activities` and `top` LIST or RANK and can report a row
+                # whose date is unusable, while `activity`, `reps` and `progress` compute
+                # from it and must refuse. Reporting is only defensible where the wrong
+                # value cannot become a wrong answer.
+                _ = (Metrics.usable_date_days(a.date)).map_err(|_| BadActivityDate(a.date, a.id))?
                 raw_rows = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query: "SELECT raw_json AS raw FROM streams WHERE activity_id = :id",
@@ -421,7 +434,7 @@ ReportSessions :: [].{
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport, a.name AS name,
+                \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, a.sport_type AS sport, a.name AS name,
                 \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                 \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
@@ -441,7 +454,17 @@ ReportSessions :: [].{
                 \\       COALESCE(m.load_model, '') AS load_model
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE (1=1${sf.frag})
-                \\ORDER BY a.start_local DESC, a.id DESC LIMIT ${(limit).to_str()}
+                \\-- undateable rows FIRST, and that is the whole reason `activities` is
+                \\-- allowed to report an unreadable date instead of refusing like the
+                \\-- commands that compute from one. Reporting is only honest if the row can
+                \\-- be SEEN: SQLite sorts NULL last under DESC, so the one row the listing
+                \\-- exists to expose landed at position 736 of 736 on a real database and
+                \\-- fell outside the default limit of 30 entirely. Measured — the id was
+                \\-- absent from `stride activities` and needed `activities 5000` to appear.
+                \\-- A listing whose job is to show what is stored must lead with the rows
+                \\-- that need repair; a row with no date has no place in a recency order
+                \\-- anyway, and first is the only position where no limit can hide it.
+                \\ORDER BY (CASE WHEN a.start_local IS NULL THEN 0 ELSE 1 END), a.start_local DESC, a.id DESC LIMIT ${(limit).to_str()}
             ,
             bindings: sf.binds,
             rows: |cols| |stmt| {
@@ -558,7 +581,7 @@ ReportSessions :: [].{
                 rows = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
-                        \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport, a.name AS name,
+                        \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, a.sport_type AS sport, a.name AS name,
                         \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                         \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                         \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
@@ -702,7 +725,7 @@ ReportSessions :: [].{
         anchor = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.name AS name,
+                \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, a.name AS name,
                 \\       COALESCE(a.sport_family, a.sport_type) AS fam,
                 \\       COUNT(*) AS reps, CAST(AVG(s.dur_s) AS INTEGER) AS mean_dur,
                 \\       MIN(s.dur_s) AS min_dur, MAX(s.dur_s) AS max_dur,
@@ -733,6 +756,20 @@ ReportSessions :: [].{
                 else
                     Output.err_out!("no_intervals_on_date", "no detected interval structure on ${date_arg} — the ride may have been continuous, or its streams are missing")
             Ok(a) => {
+                # REFUSES, for the reason the comparables comment below states as an
+                # invariant: the ANCHOR always keeps its row. It does not, if its date is
+                # unreadable. The comparables query filters on
+                # `a2.start_local <= self.start_local`, which is NULL — and therefore false —
+                # for every candidate including the anchor itself, so the screen answers
+                # "0 of 0 matched sessions are themselves this repeated shape" over a
+                # database that holds one. A confident zero that is really "the SQL
+                # comparison was NULL for everything" is worse than a refusal, and it breaks
+                # a property this file spends a paragraph promising.
+                #
+                # Narrow but reachable: `ORDER BY a.start_local DESC` puts NULLs last, so the
+                # unreadable row wins only when it is the sole work-segmented session — one
+                # analyzed ride on a fresh database, which is a state people are actually in.
+                _ = (Metrics.usable_date_days(a.date)).map_err(|_| BadActivityDate(a.date, a.id))?
                 # The anchor must itself BE a repeated shape before anything can
                 # share it. The old rule printed "3x11:58" over sessions whose
                 # reps ran 2187/67/250s: banding the MEAN says nothing about the
@@ -948,7 +985,7 @@ ReportSessions :: [].{
                 latest = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
-                        \\SELECT substr(a.start_local, 1, 10) AS d, a.name AS name
+                        \\SELECT COALESCE(substr(a.start_local, 1, 10), '') AS d, a.name AS name, a.id AS id
                         \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
                         \\ORDER BY a.start_local DESC, a.id DESC LIMIT 1
                     ,
@@ -956,9 +993,21 @@ ReportSessions :: [].{
                     rows: |cols| |stmt| {
                         d = Sqlite.str("d")(cols)(stmt)?
                         name = Sqlite.str("name")(cols)(stmt)?
-                        Ok({ d, name })
+                        id = Sqlite.i64("id")(cols)(stmt)?
+                        Ok({ d, name, id })
                     },
                 })?
+                # The sixth site in this file, and it was missed twice — once by the issue,
+                # which counted five, and once by me. `ORDER BY ... DESC` puts NULLs LAST, so
+                # this only surfaces when the unreadable row is the only scored activity,
+                # which is why it hides.
+                #
+                # COALESCE here is what stops the decode crashing; the guard is what stops
+                # the empty string becoming an anchor. Both are needed and they are not the
+                # same fix: `:date` bound to `''` matches no row, so `progress` would answer
+                # `no_scorable_workouts` on a database that holds scored workouts — a silent
+                # zero standing in for "the date could not be read".
+                _ = List.map_try(latest, |r| (Metrics.usable_date_days(r.d)).map_err(|_| BadActivityDate(r.d, r.id)))?
                 match List.first(latest) {
                     Ok(r) => r.d
                     Err(_) => ""
@@ -968,7 +1017,7 @@ ReportSessions :: [].{
         prows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.name AS name, substr(a.start_local, 1, 10) AS date, COALESCE(a.sport_type, '') AS sport,
+                \\SELECT a.name AS name, a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, COALESCE(a.sport_type, '') AS sport,
                 \\       CAST(COALESCE(a.distance,0) AS REAL) AS distance_m, a.moving_time AS moving_time,
                 \\       CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w, CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
                 \\       CAST(COALESCE(rt.rpe,0) AS REAL) AS rpe,
@@ -986,6 +1035,7 @@ ReportSessions :: [].{
             bindings: [{ name: ":date", value: String(date) }],
             rows: |cols| |stmt| {
                 name = Sqlite.str("name")(cols)(stmt)?
+                row_id = Sqlite.i64("id")(cols)(stmt)?
                 row_date = Sqlite.str("date")(cols)(stmt)?
                 sport = Sqlite.str("sport")(cols)(stmt)?
                 distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
@@ -998,9 +1048,25 @@ ReportSessions :: [].{
                 load_model = Sqlite.str("load_model")(cols)(stmt)?
                 dpct = Sqlite.f64("decoupling_pct")(cols)(stmt)?
                 dknown = Sqlite.i64("decoupling_known")(cols)(stmt)?
-                Ok({ name, date: row_date, sport, distance_m, moving_time, np_w, avg_hr, rpe, output_kj, tss, load_model, decoupling_pct: dpct, decoupling_known: dknown == 1 })
+                Ok({ name, date: row_date, sport, distance_m, moving_time, np_w, avg_hr, rpe, output_kj, tss, load_model, decoupling_pct: dpct, decoupling_known: dknown == 1, id: row_id })
             },
         })?
+        # REFUSES, because `progress` does not list dates — it computes a TREND across them,
+        # and an unreadable date does not go missing, it becomes a POSITION.
+        # `ORDER BY a.name, a.start_local` sorts the empty string FIRST, so the best and most
+        # recent session is relocated to be the earliest. Measured on one database, same rows,
+        # only the date NULLed: the verdict moved from "improving (28%)" to "improving (19%)"
+        # and a new line appeared reading `best: 1.49 ()`. Every number in that output is
+        # real; the conclusion is wrong; nothing marks it; exit 0. On origin/main this
+        # command answered `internal_error`, so reporting the row would have converted a loud
+        # failure into a quiet fabrication — the exact trade #249 exists to stop.
+        #
+        # `""` looked defensible while the date was a CELL. It is not, once the cell is an
+        # ordering key: a position has no empty rendering. It is also already taken —
+        # SKILL.md documents `'' = none on record` for `last_hard_session_date`, so the one
+        # documented consumer reads an empty date as "no such thing exists" and would now
+        # also have to read it as "exists, date unreadable", with nothing to separate them.
+        _ = List.map_try(prows, |r| (Metrics.usable_date_days(r.date)).map_err(|_| BadActivityDate(r.date, r.id)))?
         labeled =
             List.keep_oks(Metrics.group_progress(prows), |g| Metrics.anchor_filter(g, date))
            .map(|g| { name: Render.progress_group_label(g.name, g.kind), rows: g.rows })

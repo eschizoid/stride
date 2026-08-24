@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(752)?
+    checks_ran_exactly!(774)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2450,6 +2450,148 @@ b_seed_analyze! = |ctx| {
     # `season` refuses it through a separate `is_canonical_date` test. First draft did
     # exactly that and went red, which is the only reason the distinction is written down.
     check!("...and `compare` refuses the same anchor rather than answering with an empty month", strjq!(ctx, ["compare", "month"], ".error.code") == "unreadable_daily_load_day")?
+    # ...and `load`, which was the LAST reader of this column still absorbing (#249). It
+    # collapsed an unreadable day to epoch 0 and rendered it as a real-looking
+    # `1969-12-29` week carrying real load numbers, under a verdict line saying "form 0 —
+    # balanced", at exit 0 — on the same database where summary, compare and season all
+    # refused. A plausible wrong date is worse than a missing one: nothing about the row
+    # tells the reader not to believe it.
+    #
+    # Guarded in Report.load_series! rather than in Render — not because Render could not
+    # act (it has a third option and uses it four lines away, at the `keep_oks` that builds
+    # tsb_series) but because a pure renderer can DROP the row and cannot NAME it, and
+    # naming the row is the whole of #243. Dropping would also under-count the weekly
+    # rollup with no marker, trading a large absorption for a small one.
+    check!("...and `load` too, which invented a 1969 week rather than refusing", strjq!(ctx, ["load"], ".error.code") == "unreadable_daily_load_day")?
+    check!("...so no fabricated week reaches the human table", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["load"]), "1969")))?
+    # ...and the verdict LINE, not just the table row. `List.last(ordered)` made the
+    # fabricated day `today`, so the form reading was computed from it — a poisoned day
+    # measured `form -6 — modeled fatigue building` off a trend anchored at epoch. Fixing
+    # only the row would have left the verdict lying, which is why this is a separate
+    # assertion and not a second `contains` on the same string.
+    check!("...nor a verdict computed from the invented day", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["load"]), "form")))?
+    # `load` declares the code it can now raise. It was the only reader of daily_load that
+    # did not, and the union check elsewhere in this file could not see the gap: summary,
+    # plan and compare all declare it, so the union was satisfied by three other forms
+    # while this one was wrong — green for the wrong reason.
+    check!("...and `load` DECLARES the code it can raise", Str.contains(strjq!(ctx, ["--help"], "[.data.commands[] | select(.name == \"load\") | .error_codes[]]"), "unreadable_daily_load_day"))?
+
+    # ── #249: an unreadable date must not become a wrong ANSWER ──────────────────────
+    #
+    # #243 made the readers refuse a POISONED date. This is the other half: the sites that
+    # ABSORBED one — into an empty string, an epoch day, a fabricated trend — and answered
+    # at exit 0. Nine sites, and the rule they follow is not "guard every read". It is a
+    # SPLIT by what the command DOES with the date:
+    #
+    #   report — `activities` and `top` list or rank, so a wrong date cannot become a wrong
+    #            answer; they show the row and let the reader act on its id
+    #   refuse — `activity`, `reps`, `progress`, `week` and `analyze` compute from it (a
+    #            90-day window, a comparables filter, a trend, an ordering key, a TSS), so
+    #            a wrong date IS a wrong answer and they name the row instead
+    #
+    # The first draft of this change reported everywhere, and review measured what that
+    # cost: `progress` moved its verdict from "improving (28%)" to "improving (19%)" and
+    # printed `best: 1.49 ()`, because an empty date is not a missing cell — it is a
+    # POSITION, and `ORDER BY a.name, a.start_local` sorts it first. Every number real, the
+    # conclusion wrong, nothing marking it. On origin/main that command answered
+    # internal_error, so reporting would have traded a loud failure for a quiet fabrication.
+    #
+    # A NULL start_local is the reachable form and needs hand-written SQL, which is why it
+    # outlived #243: the column is nullable, and every `substr(start_local, 1, 10)` without
+    # a COALESCE failed the decode with UnexpectedType(Null) — `internal_error`, "please
+    # open an issue", the exact shape #243 was opened to remove.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (940,'null date','Ride','Ride',NULL,3600);")
+    check!("a NULL start_local does not answer internal_error", strjq!(ctx, ["activities"], ".error.code // \"none\"") != "internal_error")?
+    check!("...and the row is listed with an empty date rather than an invented one", Str.contains(strjq!(ctx, ["activities"], "[.data[] | select(.id == 940) | .date]"), "\"\""))?
+    # FIRST, and this is the assertion that makes "report" defensible at all. SQLite sorts
+    # NULL last under DESC, so before the ordering fix this row landed at position 736 of
+    # 736 on a real database and fell outside the default limit of 30 entirely — a listing
+    # that "shows what is stored" hiding the one row that needs repair. The check above
+    # passes either way, because it looks the row up by id rather than reading the listing
+    # the user gets; this one is what pins visibility.
+    check!("...at the TOP of the listing, where no default limit can hide it", strjq!(ctx, ["activities"], ".data[0].id") == "940")?
+    # ...and the rest of the listing keeps its contract. Ordering asserted in jq, not Roc:
+    # Str has no ordering operator here, and a check that cannot express the property it
+    # names is how "newest-first" would have gone unverified while the CASE arm reordered
+    # everything below it.
+    # `length >= 3` is the anti-vacuity half, and it is a MEASURED floor rather than a
+    # round number: this fixture's listing is four rows, three of them readable, two
+    # distinct dates. That is enough for the assertion to bite — reversing the order gives
+    # ["2026-08-21","2026-08-23","2026-08-23"], which is not its own sort|reverse — and a
+    # fixture that shrank below it would fail here rather than pass on an empty comparison.
+    # An earlier draft wrote `> 5` from habit and went red on a listing that was never that
+    # long, which is the only reason the real number is written down.
+    check!("...while the readable rows below it are still newest-first", strjq!(ctx, ["activities"], "[.data[1:][].date] | (length >= 3) and (. == (sort | reverse))") == "true")?
+    check!("...and `top` ranks on its metric, so it reports rather than refusing", strjq!(ctx, ["top", "tss"], ".error.code // \"none\"") != "unreadable_activity_date")?
+    # The refusers. Each one COMPUTES from the date, and each was measured absorbing it.
+    check!("`activity` refuses rather than dropping its comparison line", strjq!(ctx, ["activity", "940"], ".error.code") == "unreadable_activity_date")?
+    check!("...naming the ROW, because a date is not something a caller can act on", Str.contains(strjq!(ctx, ["activity", "940"], ".error.message"), "940"))?
+    # The MESSAGE distinguishes a NULL from a stored value. Quoting `('')` back reads as
+    # though the empty string is what is in the column, which sends the reader to
+    # `DELETE FROM activities WHERE start_local=''` — zero rows for a NULL, and an
+    # unreproducible bug report. Output.roc records the identical failure one value along,
+    # for 'garbage-da'.
+    check!("...and says NULL rather than quoting an empty string back", Str.contains(strjq!(ctx, ["activity", "940"], ".error.message"), "no usable start_local"))?
+    # BOTH analyze runs rewrite daily_load, so the backup goes up before the FIRST one.
+    # That ordering is not obvious and it cost a red run: the refusing run still reaches
+    # the rebuild, because #243's deliberate policy is to walk and write every day it CAN
+    # read and only then refuse. So even the refusal deletes the 'not-a-date' row the
+    # checks above and below this block depend on — and the failure lands on THEM, tens of
+    # lines away, reading as a bug in `compare`.
+    #
+    # The restore is asserted rather than assumed, and against the row COUNT taken before
+    # anything ran, the same way the `closed` probe higher in this function does it.
+    dl_249 = Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM daily_load;"))
+    _ = sql!(ctx.db, "CREATE TABLE dl_bak249 AS SELECT * FROM daily_load;")
+    check!("`analyze` refuses too — it is a WRITE, and an unplaceable row cannot be scored", strjq!(ctx, ["analyze"], ".error.code") == "unreadable_activity_date")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 940; DELETE FROM activities WHERE id = 940;")
+    check!("...and analyze recovers once the row is gone", strjq!(ctx, ["analyze"], ".data.converged") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM daily_load; INSERT INTO daily_load SELECT * FROM dl_bak249; DROP TABLE dl_bak249;")
+    check!("...with daily_load restored, so the probe leaves no state behind", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM daily_load;")) == dl_249)?
+    # `progress` groups by workout NAME, so an unreadable row only enters through a name it
+    # SHARES with the anchor date's session — which is exactly what a repeated workout is.
+    # Two rows, one dated and one not, is the smallest fixture that reaches it; a lone NULL
+    # row is invisible to this command and a check built on one would pass without ever
+    # exercising the guard.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,distance) VALUES (942,'repeat probe','Ride','Ride','${ctx.d1}T07:00:00Z',3600,20000),(943,'repeat probe','Ride','Ride',NULL,3600,20000);")
+    check!("`progress` refuses rather than sorting an empty date to the front of its trend", strjq!(ctx, ["progress", ctx.d1], ".error.code") == "unreadable_activity_date")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (942,943);")
+    # ...and the BARE form, which picks its own anchor and is a different guard on a
+    # different query. Naming a date skips that subquery entirely, so the check above cannot
+    # reach it — mutation-testing found the anchor guard SURVIVING while `progress <date>`
+    # stayed green, which is precisely the "one check, two sites" shape #243 spent its last
+    # rounds on. The anchor is `ORDER BY start_local DESC LIMIT 1` over scored activities and
+    # NULLs sort LAST there, so the unreadable row becomes the anchor only when it is the
+    # only scored one; the probe clears activity_metrics down to that and restores it.
+    _ = sql!(ctx.db, "CREATE TABLE am_bak249 AS SELECT * FROM activity_metrics;")
+    am_249 = Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM am_bak249;"))
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,distance) VALUES (946,'anchor probe','Ride','Ride',NULL,3600,20000);")
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics; INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (946,40.0,111.0,3600,1);")
+    check!("bare `progress` refuses when its own anchor is the unreadable row", strjq!(ctx, ["progress"], ".error.code") == "unreadable_activity_date")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics; INSERT INTO activity_metrics SELECT * FROM am_bak249; DROP TABLE am_bak249; DELETE FROM activities WHERE id = 946;")
+    check!("...with activity_metrics restored, so the probe leaves no state behind", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics;")) == am_249)?
+    # `reps` anchors on the most recent work-segmented session, and `ORDER BY start_local
+    # DESC` puts NULLs LAST — so the unreadable row wins only when it is the SOLE one. That
+    # is a real state (one analyzed ride on a fresh database) and it is the only way to
+    # reach this guard, so the probe clears the table and restores it.
+    _ = sql!(ctx.db, "CREATE TABLE seg_bak249 AS SELECT * FROM activity_segments; DELETE FROM activity_segments;")
+    seg_249 = Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM seg_bak249;"))
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,distance) VALUES (944,'reps probe','Ride','Ride',NULL,3600,20000);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (944,1,'work',0,720,200.0,'power'),(944,2,'work',900,720,200.0,'power'),(944,3,'work',1800,720,200.0,'power');")
+    check!("`reps` refuses rather than answering 0 of 0 over a database that holds one", strjq!(ctx, ["reps"], ".error.code") == "unreadable_activity_date")?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments; INSERT INTO activity_segments SELECT * FROM seg_bak249; DROP TABLE seg_bak249; DELETE FROM activities WHERE id = 944;")
+    check!("...with the segment table restored, so the probe leaves no state behind", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_segments;")) == seg_249)?
+    # `week` is the one site a NULL cannot reach: the window clause compares start_local
+    # against the week bounds, and NULL satisfies neither, so the row never enters the
+    # merge. It takes a POISONED date that is lexically inside the week — the last day
+    # digit corrupted, which always sorts above the Monday and below the next one — and
+    # then `day_key`'s `Err(_) => 0` used to place it at the epoch, listing it ABOVE the
+    # week it belongs to with an empty `day`.
+    wk_mon = "substr(date('${ctx.today}', '-' || ((CAST(strftime('%w','${ctx.today}') AS INTEGER) + 6) % 7) || ' days'),1,9)"
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,distance) VALUES (945,'poisoned week','Ride','Ride', ${wk_mon} || 'xT09:00:00Z', 3600, 20000);")
+    check!("`week` refuses an unplanned activity it used to sort to the epoch", strjq!(ctx, ["week"], ".error.code") == "unreadable_activity_date")?
+    check!("...naming the row rather than listing it above the week with an empty day", Str.contains(strjq!(ctx, ["week"], ".error.message"), "945"))?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 945;")
     # the error code alone is not the assertion. A confident all-zero window is the
     # failure; the code is just how it surfaces. Paired with a POSITIVE marker, because
     # `.data.current.has_data == null` is also what a renamed field, a moved payload or any

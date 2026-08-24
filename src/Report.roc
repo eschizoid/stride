@@ -290,7 +290,7 @@ Report :: [].{
         act_days = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT substr(start_local, 1, 10) AS d, MIN(id) AS example_id
+                \\SELECT COALESCE(substr(start_local, 1, 10), '') AS d, MIN(id) AS example_id
                 \\FROM activities GROUP BY d ORDER BY d, example_id
             ,
             bindings: [],
@@ -304,7 +304,7 @@ Report :: [].{
         hard_days = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT substr(a.start_local, 1, 10) AS d,
+                \\SELECT COALESCE(substr(a.start_local, 1, 10), '') AS d,
                 \\       -- carried so a refused date can name a row, as everywhere else in
                 \\       -- #243. MIN because DISTINCT on the date collapses several
                 \\       -- activities onto one day and the id has to be reproducible;
@@ -733,6 +733,37 @@ Report :: [].{
                 Ok({ day, tss, ctl, atl, tsb })
             },
         })?
+        # GUARDED here rather than in Render. Not because Render could not act — it has a
+        # third option and uses it four lines from the damage, at the `keep_oks` that builds
+        # `tsb_series` — but because a pure renderer can DROP the row and cannot NAME it, and
+        # naming the row is the whole of #243. (An earlier version of this comment claimed
+        # Render's only options were to absorb or invent. That is false, it is visible on
+        # screen next to the code, and stating it would have invited the decision to be
+        # re-litigated on a premise anyone could disprove in ten seconds.)
+        #
+        # What Render absorbed is real: `.ok_or(0)` collapsed an unreadable day to epoch 0,
+        # rendering a `1969-12-29` week row carrying real load numbers under a verdict line
+        # saying "form 0 — balanced", at exit 0. And the fabricated row was not confined to
+        # the table — `List.last(ordered)` makes it `today`, so the VERDICT was computed from
+        # it too: a poisoned day measured `form -6 — modeled fatigue building` off a trend
+        # anchored at epoch. Fixing only the table row would have left the verdict lying.
+        #
+        # Extending `keep_oks` here would have removed both without refusing anything, and it
+        # is the smaller change. It is still the wrong one: dropping the row silently
+        # under-counts the weekly rollup's sessions and load with no marker, which trades a
+        # large absorption for a small one. `daily_load` is DERIVED, so the remedy is one
+        # command and the message says it; contrast `activities`, where the row is source
+        # data and the user must delete and re-sync.
+        #
+        # Refusing the whole command costs nothing that was ever available, either: a
+        # lexically-high garbage day sorts to the top of `ORDER BY day DESC`, so it is inside
+        # every window — `load 7`, `load 14` and `load 90` all meet it.
+        #
+        # Same rule and same helper as every other daily_load.day read in this module
+        # (#243), so `load` stops being the one command that answers where the rest refuse.
+        # The asymmetry was already visible on one database: `summary` and `compare`
+        # refused while `load` printed the invented week.
+        _ = List.map_try(rows, |r| canonical_day(r.day))?
         ordered = List.fold(rows, [], |acc, x| List.concat([x], acc))
         Output.out!(ordered, Render.load_screen)
     }

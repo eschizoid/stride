@@ -284,7 +284,7 @@ Plan :: [].{
         unplanned = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS aid, substr(a.start_local,1,10) AS adate, COALESCE(a.sport_type,'') AS sport,
+                \\SELECT a.id AS aid, COALESCE(substr(a.start_local,1,10), '') AS adate, COALESCE(a.sport_type,'') AS sport,
                 \\       COALESCE(a.name,'') AS aname, COALESCE(a.moving_time,0) AS mt,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
@@ -311,6 +311,22 @@ Plan :: [].{
                 Ok({ aid, adate, sport, aname, mt, tss })
             },
         })?
+        # The absorber the issue names, and the last one still live. `day_key` below answers
+        # 0 for a date it cannot parse, and 0 is a real day number — so an unplanned activity
+        # with an unreadable date does not go missing, it sorts to the epoch and is listed
+        # FIRST, above the week it belongs to, carrying `day: ""` from `dow`. Measured:
+        # `{"activity_id":999000001,"day":"","target_date":"2026-08-2x","status":"unplanned"}`
+        # at the top of the week, exit 0.
+        #
+        # Two sites in this one file answered opposite ways: the sweep at the top of `plan`
+        # refuses an unreadable activity date, and this one absorbed it. Guarded HERE, on
+        # `unplanned`, rather than on the merged list, because this is the only place the
+        # activity id is still in hand — `unplanned_rows` has already flattened it into a
+        # display record, and a refusal that cannot name a row is what #243 was about.
+        #
+        # Planned sessions need no guard: `week add` rejects a non-canonical target_date on
+        # the write path, so only the activity-derived half can arrive unreadable.
+        _ = List.map_try(unplanned, |u| (Metrics.usable_date_days(u.adate)).map_err(|_| BadActivityDate(u.adate, u.aid)))?
         unplanned_rows = List.map(unplanned, |u| {
             # bind first, then interpolate — `${if … else ""}` splices a compile-time
             # "" into str_concat, the #32-class heap trap. Fixed upstream in roc#10595
@@ -890,7 +906,7 @@ Plan :: [].{
                 recent = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
-                        \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport, a.name AS name,
+                        \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, a.sport_type AS sport, a.name AS name,
                         \\       a.moving_time AS moving_time, CAST(COALESCE(m.tss,0) AS REAL) AS tss,
                         \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
                         \\       COALESCE(m.z1_s,0) AS z1_s, COALESCE(m.z2_s,0) AS z2_s, COALESCE(m.z3_s,0) AS z3_s,

@@ -255,7 +255,24 @@ Analyze :: [].{
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS id, a.start_local AS start, a.moving_time AS mt,
+                \\-- COALESCE and NOT a guard, which is the opposite of what this file does
+                \\-- everywhere else, so it needs its reason stated. A NULL start_local
+                \\-- crashed the decode here with UnexpectedType(Null) — `internal_error`,
+                \\-- on the command every other error message names as the remedy (#249).
+                \\--
+                \\-- The obvious fix, a date sweep refusing before any scoring, was written
+                \\-- and reverted: it refuses UPSTREAM of rebuild_daily_load!, which is where
+                \\-- the deliberate policy lives — walk and write every day that CAN be read,
+                \\-- then refuse naming the row, so a readable series is not thrown away over
+                \\-- one bad date. e2e pins both halves of that, and the sweep silently
+                \\-- turned the partial write off. A poisoned date has always flowed this way;
+                \\-- a NULL now flows the same way rather than getting its own policy.
+                \\--
+                \\-- So the row IS scored, and `start_used` records the empty string it was
+                \\-- scored from. rebuild_daily_load! then meets it through the metrics join
+                \\-- it just wrote, drops it from the walk, and refuses naming it — which is
+                \\-- also what stops an unscored NULL-dated row slipping past both guards.
+                \\SELECT a.id AS id, COALESCE(a.start_local, '') AS start, a.moving_time AS mt,
                 \\       COALESCE(a.sport_type, '') AS sport,
                 \\       CAST(a.relative_effort AS REAL) AS re, CAST(a.avg_watts AS REAL) AS aw, CAST(a.avg_hr AS REAL) AS ahr,
                 \\       CAST(a.weighted_avg_watts AS REAL) AS waw, CAST(r.rpe AS REAL) AS rpe, s.raw_json AS raw,
@@ -921,7 +938,7 @@ Analyze :: [].{
         day_rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT substr(a.start_local, 1, 10) AS day, SUM(m.tss) AS t,
+                \\SELECT COALESCE(substr(a.start_local, 1, 10), '') AS day, SUM(m.tss) AS t,
                 \\       -- carried ONLY so an unreadable day can name a row the user can
                 \\       -- act on (#243): a date is not something you can delete or re-fetch,
                 \\       -- an id is. example_id cannot tie-break here — GROUP BY day already
