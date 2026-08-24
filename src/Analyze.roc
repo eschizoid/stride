@@ -48,7 +48,7 @@ Analyze :: [].{
                 # yet), and the empty list says so without an error to translate.
                 form_rows = Sqlite.query_many!({
                     path: Path.utf8(path),
-                    query: "SELECT day AS day, CAST(tsb AS REAL) AS tsb FROM daily_load ORDER BY day DESC LIMIT 10",
+                    query: "SELECT COALESCE(day, '') AS day, CAST(tsb AS REAL) AS tsb FROM daily_load ORDER BY day DESC LIMIT 10",
                     bindings: [],
                     rows: |cols| |stmt| {
                         day = Sqlite.str("day")(cols)(stmt)?

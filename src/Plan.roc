@@ -326,7 +326,25 @@ Plan :: [].{
         #
         # Planned sessions need no guard: `week add` rejects a non-canonical target_date on
         # the write path, so only the activity-derived half can arrive unreadable.
-        _ = List.map_try(unplanned, |u| (Metrics.usable_date_days(u.adate)).map_err(|_| BadActivityDate(u.adate, u.aid)))?
+        #
+        # WHOLE TABLE, not the `unplanned` rows, and the first version got that wrong in a
+        # way worth keeping written down. Scoped to `unplanned`, the guard sits DOWNSTREAM of
+        # a window clause that compares `a.start_local` lexically against the week bounds —
+        # and both comparisons are NULL-false, so a NULL-dated activity never enters the list
+        # and the guard was provably dead for exactly the shape #249 is about. `week`'s
+        # first-ever declared error code could not be produced for half its class.
+        #
+        # The poisoned half was reachable but only on some weeks, and that is a property of
+        # the window rather than of the fixture. When Monday and Monday+7 share a nine-
+        # character prefix — 18 of the 72 Mondays from 2026-08-24, first 2026-09-21 — every
+        # 10-character string lexically inside `[mon, mon+7)` is of the form PREFIX9 + digit,
+        # which is a readable date. There is no non-canonical value to plant, so a test
+        # written against the scoped guard would have gone red on a quarter of weeks pointing
+        # at a regression that did not exist. Measured in sqlite before this was rewritten.
+        #
+        # The sweep is the same one `summary`, `season`, `plan`, `compare` and `stats` use,
+        # so `week` stops being the one command whose guard depends on the calendar.
+        _ = Report.guard_activity_dates!(path)?
         unplanned_rows = List.map(unplanned, |u| {
             # bind first, then interpolate — `${if … else ""}` splices a compile-time
             # "" into str_concat, the #32-class heap trap. Fixed upstream in roc#10595

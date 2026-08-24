@@ -464,7 +464,29 @@ ReportSessions :: [].{
                 \\-- A listing whose job is to show what is stored must lead with the rows
                 \\-- that need repair; a row with no date has no place in a recency order
                 \\-- anyway, and first is the only position where no limit can hide it.
-                \\ORDER BY (CASE WHEN a.start_local IS NULL THEN 0 ELSE 1 END), a.start_local DESC, a.id DESC LIMIT ${(limit).to_str()}
+                \\--
+                \\-- THREE SHAPES, not just NULL, and the first version of this tested
+                \\-- `IS NULL` alone. That covered exactly one of them: review measured a
+                \\-- stored empty string at position 737 of 737 and '0000-0z-01T10:00:00Z'
+                \\-- at 745 — both outside the default limit, which is verbatim the failure
+                \\-- the paragraph above claims to have fixed. The empty string is the
+                \\-- pointed one, because the error message this change also added says
+                \\-- "the column is NULL or empty", so the engine named a state and then
+                \\-- hid it from the listing it tells you to go read. 'garbage-da' escaped
+                \\-- only by luck of sorting high.
+                \\--
+                \\-- The predicate is the ROUND TRIP through SQLite's own date(), plus the
+                \\-- year bound, which between them reject every shape Metrics.usable_date_days
+                \\-- rejects except one: SQLite returns '2026-02-30' verbatim rather than
+                \\-- normalising it, so a semantically impossible day that is well FORMED
+                \\-- still sorts by value. That is acceptable here and only here — such a
+                \\-- date sorts among its real neighbours rather than at the end, so it is
+                \\-- visible, which is all this clause is for. The commands that COMPUTE
+                \\-- still refuse it, through the Roc guard that does know about February.
+                \\ORDER BY (CASE WHEN a.start_local IS NULL
+                \\               OR date(substr(a.start_local, 1, 10)) IS NOT substr(a.start_local, 1, 10)
+                \\               OR substr(a.start_local, 1, 4) < '1000'
+                \\          THEN 0 ELSE 1 END), a.start_local DESC, a.id DESC LIMIT ${(limit).to_str()}
             ,
             bindings: sf.binds,
             rows: |cols| |stmt| {

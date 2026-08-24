@@ -28,6 +28,18 @@ ReportHealth :: [].{
         path = Db.open_db!({})?
         today_days = Db.local_today_days!(path)
         year = (Metrics.civil_from_days(today_days)).y
+        # The cutoff below is the literal "0000-01-01", whose only job is to mean
+        # EVERYTHING — and `WHERE start_local >= :cutoff` is NULL-false, so an unreadable
+        # date silently removes the activity from a total printed under the heading
+        # ALL TIME. Measured: 475 sessions became 474, 11950 km became 11924, exit 0, on a
+        # command whose declared error_codes were empty.
+        #
+        # Refuses rather than reports, and that is the same call `summary` makes about the
+        # same shape one file over: a number that claims completeness and is quietly short
+        # is worse than no number. `stats` LISTS totals, which reads like the report side of
+        # #249's split, but the split is by what the date DOES — and here it decides
+        # membership in an aggregate, so a wrong date is a wrong total.
+        _ = Report.guard_activity_dates!(path)?
         all_time = stats_rows!(path, "0000-01-01")?
         ytd = stats_rows!(path, "${(year).to_str()}-01-01")?
         if Output.json_mode!({})

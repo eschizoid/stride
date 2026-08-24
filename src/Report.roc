@@ -141,7 +141,7 @@ Report :: [].{
         } else {
             days = if period == "month" 28 else 7
             label = if period == "month" "28d" else "7d"
-            match Sqlite.query!({ path: Path.utf8(path), query: "SELECT day AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sqlite.str("day") }) {
+            match Sqlite.query!({ path: Path.utf8(path), query: "SELECT COALESCE(day, '') AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sqlite.str("day") }) {
                 Err(NoRowsReturned) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
                 Err(e) => Err(e)
                 Ok(latest_day) => {
@@ -156,6 +156,23 @@ Report :: [].{
                     # run. An athlete told their fitness is holding, by a command that could
                     # not read the day it anchored on, is the worst shape this class has.
                     anchor = canonical_day(latest_day)?
+                    # AFTER the daily_load anchor, before the windows. Both halves matter.
+                    #
+                    # After, because `summary` reads its anchor first too, and putting this
+                    # sweep at the top of the command made `compare` answer
+                    # `unreadable_activity_date` on a database where `summary` answered
+                    # `unreadable_daily_load_day` — two commands disagreeing about which of
+                    # two faults they met first, over the same rows. e2e pins that agreement
+                    # and caught it.
+                    #
+                    # Before the windows, because an unreadable date does not make this
+                    # command answer wrongly about one row — it removes the row from BOTH
+                    # windows and the DELTA between them is what `compare` publishes.
+                    # Measured with one date NULLed on an otherwise unchanged database:
+                    # 331 vs 319 became 270 vs 319, and the verdict crossed a category, from
+                    # "load steady (4%)" to "load backed off (-16%)", at exit 0 with
+                    # has_data true.
+                    _ = guard_activity_dates!(path)?
                     cur_from = Metrics.days_to_date_str(anchor - (days - 1))
                     cur_to = Metrics.days_to_date_str(anchor + 1)
                     pri_from = Metrics.days_to_date_str(anchor - (2 * days - 1))
@@ -217,6 +234,46 @@ Report :: [].{
     # defect wearing a number.
     canonical_activity_day : Str, I64 -> Try(I64, _)
     canonical_activity_day = |d, id| (Metrics.usable_date_days(d)).map_err(|_| BadActivityDate(d, id))
+
+    # Every stored activity date, refused if any is unreadable, naming a row.
+    #
+    # ONE BODY, called from four commands, because it was three copies of the same query and
+    # the fourth copy is how a rule drifts. #243's last rounds were spent collapsing exactly
+    # this shape — five spellings of "canonical and parseable" that had to agree and did not.
+    #
+    # It exists as a WHOLE-TABLE sweep rather than a per-query guard because of the failure
+    # mode it covers, which is the one #249's split had no row for. `summary`, `season` and
+    # `plan` compute an ordering or an anchor, and a guard on the read is enough. `compare`
+    # and `stats` do something else with the date: they use it as a FILTER over an aggregate
+    # — `WHERE start_local >= :from AND < :to`, or `>= '0000-01-01'` meaning "everything".
+    # An unreadable date makes that comparison NULL, so the row does not produce a wrong
+    # value, it silently LEAVES THE SET, and the failure is an absence rather than a
+    # fabrication. Review measured both: `compare` moved its verdict from
+    # "load steady (4%)" to "load backed off (-16%)" with one date NULLed, and `stats`
+    # reported 474 sessions under a heading that says ALL TIME while holding 475. Exit 0,
+    # has_data true, no marker, on a screen an athlete reads for a decision.
+    #
+    # A guard on the filtering query itself could not catch that — the row is already gone
+    # by the time the rows come back, which is why it survived a review that was looking for
+    # wrong numbers rather than missing ones.
+    guard_activity_dates! : Str => Try({}, _)
+    guard_activity_dates! = |path| {
+        act_days = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT COALESCE(substr(start_local, 1, 10), '') AS d, MIN(id) AS example_id
+                \\FROM activities GROUP BY d ORDER BY d, example_id
+            ,
+            bindings: [],
+            rows: |cols| |stmt| {
+                d = Sqlite.str("d")(cols)(stmt)?
+                example_id = Sqlite.i64("example_id")(cols)(stmt)?
+                Ok({ d, example_id })
+            },
+        })?
+        _ = List.map_try(act_days, |r| canonical_activity_day(r.d, r.example_id))?
+        Ok({})
+    }
 
     pct_num : I64, I64 -> I64
     pct_num = |part, total|
@@ -287,20 +344,7 @@ Report :: [].{
         #
         # All-time, matching `season`, which already refuses any activity with an unreadable
         # date. `summary` was the surface where the same row answered at exit 0.
-        act_days = Sqlite.query_many!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT COALESCE(substr(start_local, 1, 10), '') AS d, MIN(id) AS example_id
-                \\FROM activities GROUP BY d ORDER BY d, example_id
-            ,
-            bindings: [],
-            rows: |cols| |stmt| {
-                d = Sqlite.str("d")(cols)(stmt)?
-                example_id = Sqlite.i64("example_id")(cols)(stmt)?
-                Ok({ d, example_id })
-            },
-        })?
-        _ = List.map_try(act_days, |r| canonical_activity_day(r.d, r.example_id))?
+        _ = guard_activity_dates!(path)?
         hard_days = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
@@ -352,7 +396,7 @@ Report :: [].{
         latest =
             match Sqlite.query!({
                 path: Path.utf8(path),
-                query: "SELECT day AS day, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
+                query: "SELECT COALESCE(day, '') AS day, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
                 bindings: [],
                 row: |cols| |stmt| {
                     day = Sqlite.str("day")(cols)(stmt)?
@@ -546,7 +590,7 @@ Report :: [].{
         # window moves the truncation point, it does not remove it.
         ramp_rows = Sqlite.query_many!({
             path: Path.utf8(path),
-            query: "SELECT day AS day, CAST(ctl AS REAL) AS ctl, CAST(tsb AS REAL) AS tsb FROM daily_load WHERE day >= :cutoff ORDER BY day DESC",
+            query: "SELECT COALESCE(day, '') AS day, CAST(ctl AS REAL) AS ctl, CAST(tsb AS REAL) AS tsb FROM daily_load WHERE day >= :cutoff ORDER BY day DESC",
             bindings: [{ name: ":cutoff", value: String(Metrics.days_to_date_str(anchor - 30)) }],
             rows: |cols| |stmt| {
                 d = Sqlite.str("day")(cols)(stmt)?
@@ -722,7 +766,7 @@ Report :: [].{
         path = Db.open_db!({})?
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
-            query: "SELECT day AS day, tss AS tss, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT ${(days).to_str()}",
+            query: "SELECT COALESCE(day, '') AS day, tss AS tss, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT ${(days).to_str()}",
             bindings: [],
             rows: |cols| |stmt| {
                 day = Sqlite.str("day")(cols)(stmt)?

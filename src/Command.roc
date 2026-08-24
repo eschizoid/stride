@@ -325,11 +325,14 @@ Command := [
 		errs(writes("config set", [req("<key>"), req("<value>")], "config.json"), ["bad_value", "derived_key"]),
 		errs(reads("summary", [], "summary.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
 		errs(reads("plan", [], "plan.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
-		reads("stats", [], "stats.json"),
+		## `stats` had no declared codes: its totals are a pure listing, until #249 found
+		## that `WHERE start_local >= :cutoff` is NULL-false, so an unreadable date leaves
+		## an ALL TIME total silently short. It refuses now.
+		errs(reads("stats", [], "stats.json"), ["unreadable_activity_date"]),
 		reads("doctor", [], "doctor.json"),
 		errs(reads("zones", [], "zones.json"), ["no_power_data"]),
 		errs(reads("pz", [], "zones.json"), ["no_power_data"]),
-		errs(reads("compare", [opt("<week|month>")], "compare.json"), ["bad_period", "no_data", "unreadable_daily_load_day"]),
+		errs(reads("compare", [opt("<week|month>")], "compare.json"), ["bad_period", "no_data", "unreadable_activity_date", "unreadable_daily_load_day"]),
 		errs(reads("activities", [opt("<limit>"), opt("<sport>")], "activities.json"), ["bad_count"]),
 		## `unreadable_activity_date` on the three forms #249 made REFUSE rather than report
 		## an empty date. The split is by what the form does with the date: `activities` and
