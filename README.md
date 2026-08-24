@@ -192,9 +192,8 @@ pacing itself well inside Strava's rate limits: it drains up to 95 reads against
 100-per-15-minute window, then STOPS rather than sleeping, says so, and sets `resumable`.
 Run it again in about fifteen minutes and it continues. Strava's daily cap is 1000, so
 roughly ten runs a day is the ceiling and a multi-thousand-activity history converges over
-a few days of that — hands-off, and never holding your terminal. After that the same command is a two-second incremental. There
-is no separate backfill command to know about; `stride sync --all` exists only to force a
-full re-list from scratch.
+a few days of that — hands-off, and never holding your terminal. After that the same command is a two-second incremental. `stride sync --all`
+exists only to force a full re-list from scratch.
 
 After `auth`, credentials live in the db — no env vars ever again. Day-to-day:
 

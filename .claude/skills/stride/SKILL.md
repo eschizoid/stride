@@ -14,8 +14,8 @@ Never do training math yourself: read stride's numbers, add judgment.
 
 1. `stride sync --json` — the ONE command that pulls data from Strava (#232). It re-lists a
    rolling 30-day window so recent edits self-heal, then drains every activity still
-   missing streams, paced against Strava's limits. There is no `backfill` command any
-   more; a first run on a fresh install is the whole history pull.
+   missing streams, paced against Strava's limits. A first run on a fresh install is the
+   whole history pull.
    It ends in the usual envelope (`schemas/v2/sync.json`) with progress on stderr.
    Read `resumable` to decide whether to run it again — usually `pending_streams > 0`, but also true when the LISTING was cut short and the queue is empty — and
    `stopped` for why it ended (`complete` / `budget_reached` / `rate_limited` / `list_rate_limited`, the last being a 429 on the ACTIVITY LIST rather than a stream, which leaves the listing incomplete and prunes nothing — all
