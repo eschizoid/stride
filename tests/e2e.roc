@@ -2034,6 +2034,18 @@ b_seed_analyze! = |ctx| {
     # the probe has to be able to speak: an empty declared set would make BOTH directions
     # below trivially satisfiable in one of the two, and a jq error yields "" not 0.
     check!("the declared error-code set is non-empty (got ${ndecl})", ndecl != "" and ndecl != "0")?
+    # The selector is PINNED to the error-code enum's path rather than sweeping every
+    # enum in the file. Enums are the house style here — 11 of 26 schemas in schemas/v2
+    # carry at least one, activity.json carries three — and envelope.json is a likely home
+    # for a second: the natural next step from this PR is a retriability or severity field
+    # on the error object, whose members would then be folded into the "contract" set and
+    # demanded as error-code attributions.
+    #
+    # A pinned path is only safe because of the guard immediately below. Pinned and
+    # unguarded, a restructure that moved the enum would silently empty the contract set
+    # and make contract->declared vacuous — the exact hazard the guard closes. The two
+    # belong together; either alone is worse than the generic selector.
+    #
     # ...and the CONTRACT set too, symmetrically. Without this the contract->declared
     # direction passes vacuously if envelope.json's `enum` key is ever renamed: the
     # selector yields [], and [] mapped and joined is "", which is the pass condition.
@@ -2041,16 +2053,16 @@ b_seed_analyze! = |ctx| {
     # loudly in that same scenario — and the commit message ranked that sibling as the
     # lesser of the two, so anyone trimming the "redundant" direction would have turned the
     # load-bearing one into "" == "".
-    ncontract = Str.trim(sh!("jq -r '[.. | objects | select(has(\"enum\")) | .enum[]] | length' schemas/v2/envelope.json 2>/dev/null"))
+    ncontract = Str.trim(sh!("jq -r '.properties.error.properties.code.enum | length' schemas/v2/envelope.json 2>/dev/null"))
     check!("the contract error-code set is non-empty (got ${ncontract})", ncontract != "" and ncontract != "0")?
     # DECLARED -> CONTRACT. A typo, or a code deleted from the envelope but left declared.
-    notin = Str.trim(sh!("jq -r --slurpfile d '${decl_f}' '[.. | objects | select(has(\"enum\")) | .enum[]] as $c | $d[0] | map(select(. as $x | ($c | index($x)) == null)) | join(\" \")' schemas/v2/envelope.json 2>&1"))
+    notin = Str.trim(sh!("jq -r --slurpfile d '${decl_f}' '.properties.error.properties.code.enum as $c | $d[0] | map(select(. as $x | ($c | index($x)) == null)) | join(\" \")' schemas/v2/envelope.json 2>&1"))
     check!("every declared error code exists in the envelope contract (stray: ${notin})", notin == "")?
     # CONTRACT -> DECLARED, which is the direction that matters. A code added to the
     # envelope and attributed to nothing is how a hand-maintained list rots; it fails here
     # instead of sitting undiscovered. `unknown_command` is the one exemption and it is a
     # real one — it is what you get when there IS no form, so naming a form would be false.
-    unattr = Str.trim(sh!("jq -r --slurpfile d '${decl_f}' '[.. | objects | select(has(\"enum\")) | .enum[]] | unique | map(select(. as $x | ($d[0] | index($x)) == null)) | map(select(. != \"unknown_command\")) | join(\" \")' schemas/v2/envelope.json 2>&1"))
+    unattr = Str.trim(sh!("jq -r --slurpfile d '${decl_f}' '.properties.error.properties.code.enum | unique | map(select(. as $x | ($d[0] | index($x)) == null)) | map(select(. != \"unknown_command\")) | join(\" \")' schemas/v2/envelope.json 2>&1"))
     check!("every contract error code is attributed to a form or to universal (unattributed: ${unattr})", unattr == "")?
     _ = sh!("rm -f '${decl_f}'")
     check!("...and an unknown code would be caught", Str.contains(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' activity 99999999 2>&1 | jq '.error.code = \"not_a_real_code\"' 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1"), "not in enum"))?
