@@ -70,7 +70,8 @@ Drain :: [].{
 
     Action : [
         Refresh, # 401: refresh the access token, retry the same id (bounded by the caller)
-        RateLimited, # 429: stop and report; the caller does not sleep or retry
+        RateLimited, # 429 with allowance left: stop and report; the caller does not sleep
+        DailyCapReached, # 429 with the day spent: the same stop, a different remedy
         Store({ window : I64, today : I64, after : PostStore }), # success: store, then advance
     ]
 
@@ -80,7 +81,20 @@ Drain :: [].{
     decide : { status : U16, window : I64, today : I64 }, Limits -> Action
     decide = |s, lim|
         if s.status == 429 {
-            RateLimited
+            # WHICH limit did we hit? A 429 with the day's allowance already spent is the
+            # daily cap, and saying "try again in ~15 minutes" there is the instruction
+            # that cannot succeed — the whole of #246, printed in the exact state #246
+            # exists to describe.
+            #
+            # This arm is not a nicety, it is what makes the feature reachable at all.
+            # stride's count can only ever be at or below Strava's, so Strava refuses
+            # first: without this branch the 429 stops the drain before the Store arm ever
+            # tests the day, and DailyCapReached is unreachable from the correct path.
+            if s.today >= lim.reads_per_day {
+                DailyCapReached
+            } else {
+                RateLimited
+            }
         } else if s.status == 401 {
             Refresh
         } else {

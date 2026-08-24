@@ -92,11 +92,11 @@ just install   # build + symlink to ~/.local/bin/stride
 - `tests/e2e.roc` is ONE binary in FIVE roles, picked by `E2E_MODE`: the offline suite
   (default, no mode set), a mock Strava server (`mock`), and three drivers that run
   against it — `sync` (real sync + token refresh), `skips` (the undecodable-body skip
-  path), and `stops` (the `budget_reached` / `rate_limited` outcomes). `just e2e-sync`
+  path), and `stops` (the `budget_reached` / `rate_limited` / `daily_cap_reached` / `list_rate_limited` outcomes). `just e2e-sync`
   starts four mock instances on four ports (`mock_port`, `bad_stream_port`, `auth401_port`,
   `rate_limit_port`) and runs all three drivers; the mock's behaviour is varied by
   `E2E_BAD_STREAM` / `E2E_RATE_LIMIT` / `E2E_STREAM_401`. `STRIDE_API_BASE` points stride at the mock, and
-  `STRIDE_READS_PER_WINDOW` shrinks the rate-limit pacing so a terminal arm that would
+  `STRIDE_READS_PER_WINDOW / STRIDE_READS_PER_DAY` shrinks the rate-limit pacing so a terminal arm that would
   otherwise cost a full 95-read window is reachable in milliseconds. Same species of seam as
   `STRIDE_API_BASE`; humans never set any of them. They can only LOWER a limit — an
   override able to RAISE one would let a typo or a copied command line hammer Strava and
