@@ -30,10 +30,16 @@
 set -u
 # Byte-wise, so substr() offsets are byte offsets. The extractor below walks a line by
 # re-slicing it, and a slice that lands mid-character makes macOS awk FATAL with
-# "towc: multibyte conversion failure" and ABANDON the rest of its input — measured at 61
-# references instead of 78, exit 2, while the advance bug noted beside emit() was still
-# producing arbitrary offsets. With the advance fixed both locales now yield the same 78
-# and exit 0; this keeps that from resting on the offsets happening to stay on ASCII.
+# "towc: multibyte conversion failure" and ABANDON the rest of its input. Reintroducing the
+# advance bug noted beside emit() and running both ways: LC_ALL=C gives 79 emissions at
+# exit 0, en_US.UTF-8 dies on the first multibyte glyph it lands inside for 18 at exit 2.
+# The docs are full of em dashes and box-drawing, so a wrong offset finds one immediately.
+#
+# Note which direction this fails in: LOUDLY. awk exits 2, the `||` below turns that into
+# exit 5, and the truncated corpus would trip the floors anyway. It is the SILENT zero from
+# the regex-literal bug that needed guarding, not this. With the advance fixed both locales
+# yield the same 78 at exit 0, so LC_ALL=C is defence in depth — it keeps that agreement
+# from resting on every offset happening to land on ASCII.
 LC_ALL=C
 export LC_ALL
 
@@ -44,10 +50,65 @@ STRIDE="${STRIDE:-./stride}"
 # per-file guard by name instead of silently contributing nothing.
 FILES="README.md AGENTS.md docs/*.md docs/adr/*.md .claude/skills/stride/SKILL.md"
 
+# The corpus is PINNED, not merely reported, and that gap was this check's real blind spot.
+# The only quantitative assertion used to be "> 0", so any shrink short of total silence
+# passed under a confident summary line. Measured: converting README's ``` fences to `~~~`,
+# a fully valid CommonMark fence this extractor does not recognise, takes the corpus from 78
+# references to 73 and still exits 0. Rule B contributes 19 of the 78, so a fence dialect, a
+# fence-parity flip, or a doc quietly leaving FILES can remove a quarter of the corpus while
+# the run reads clean. That is the same right-looking-total-over-a-wrong-scan the emit()
+# dedupe hid once already, relocated from the loop to the corpus.
+#
+# FLOORS, not equalities, because the directions are not symmetric here: growth is somebody
+# writing docs and must not fail, shrink is the failure being guarded. issue-claims pins its
+# marker count EXACTLY, for the opposite reason — a suppression is deliberate in both
+# directions, so both directions should be loud.
+#
+# MIN_DOCS counts the docs that CONTRIBUTED a reference, not the docs stat'd. `nfiles` below
+# is computed by a shell loop that never opens a file, so it reads 18 whether awk scanned
+# eighteen documents or one; only 9 of the 18 carry a reference at all. Lower these when a
+# doc genuinely loses references, and say which in the commit message.
+MIN_REFS=78
+MIN_DOCS=9
+
+# Every `command-claims: quoting` marker in the corpus, pinned so a new one is deliberate —
+# the same mechanism and the same pin as issue-claims, for the same reason.
+#
+# A doc that says a command does NOT exist otherwise fails here on a TRUE sentence. That is
+# not hypothetical: this check was born from a README line naming `stride backfill`, and
+# src/Command.roc still carries the retired-command arm that makes `backfill` worth
+# explaining. Planted against the real table, all three of these go red —
+# "there is no `stride backfill` command", "the old `stride migrate` was removed in 0.4",
+# "an error looks like `stride frobnicate`: unknown command" — and the only way out without
+# a marker is to strip the backticks, degrading the doc to satisfy the linter.
+#
+# LINE-scoped, unlike issue-claims' block scope, because a reference is a line-level fact
+# here while an issue-state claim spans a paragraph. In prose written one-paragraph-per-line
+# the marker rides at the end of the sentence inside an HTML comment, which renders as
+# nothing.
+#
+# Counts LINES, where issue-claims counts OCCURRENCES, and the divergence is deliberate. Its
+# unit is a paragraph, so a second token pasted into an already-marked block is invisible to
+# block-counting; here the unit IS the line, so "how many lines are exempt" is exactly what
+# the pin should hold. A line carrying the token twice — the AGENTS.md line does, once in
+# backticked prose naming the marker and once as the marker — exempts one line either way.
+#
+# AGENTS.md carries the one exempted line, and it deliberately also names a fake command
+# (`stride backfill`), so documenting the escape hatch is what exercises it: this is not a
+# pin of zero guarding a mechanism nobody runs. Verified by deleting the `next` from the awk
+# rule below, which reports `AGENTS.md:331 stride backfill` and exits 1.
+EXPECTED_QUOTING=1
+
+# The trap goes up FIRST, before any of them exist. Installed after the block, a failure on
+# the second or third mktemp leaks the ones already created — `exit 6` runs with no trap
+# armed. `rm -f ""` is a silent no-op (exit 0), so the unset placeholders cost nothing.
+NAMED=; REAL=; HELP=; ARGS=; QUOTED=
+trap 'rm -f "$NAMED" "$REAL" "$HELP" "$ARGS" "$QUOTED"' EXIT
 NAMED=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
 REAL=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
 HELP=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
-trap 'rm -f "$NAMED" "$REAL" "$HELP"' EXIT
+ARGS=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
+QUOTED=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
 
 command -v jq >/dev/null 2>&1 || { echo "command-claims: jq not found — the table cannot be read, refusing to pass" >&2; exit 6; }
 [ -x "$STRIDE" ] || { echo "command-claims: $STRIDE is not an executable — run \`just build\` first (the recipe depends on it); refusing to report a clean tree because the oracle was missing" >&2; exit 6; }
@@ -62,6 +123,20 @@ command -v jq >/dev/null 2>&1 || { echo "command-claims: jq not found — the ta
   || { echo "command-claims: \`$STRIDE --json --help\` failed — cannot read the command table" >&2; exit 3; }
 jq -r '.data.commands[].name' < "$HELP" > "$REAL" \
   || { echo "command-claims: the help payload has no .data.commands[].name — the TABLE is broken, not the docs" >&2; exit 3; }
+
+# The SECOND half of the oracle, and the reason `stride week frobnicate` is refutable at all.
+# Longest-prefix resolution alone makes any bogus token after a real command invisible: it
+# resolves at `week`, the leftover is discarded, and the reference passes — in the exact
+# direction this tool exists for. The table already carries what distinguishes them. `week`
+# declares the literal lowercase arg `all`, `top` declares `<hr|tss|…>`, and `analyze`
+# declares nothing at all, so `week all` is VERIFIABLE, `top hr` is a placeholder value, and
+# `analyze frobnicate` is REFUTABLE. Flags (`--all`) never reach here — tokens() captures
+# `[a-z]`, so a leading `-` is not a token.
+#
+# One line per command, name<TAB>arg names joined by spaces, and pinned to REAL's line count
+# below so the two halves cannot silently disagree about which commands exist.
+jq -r '.data.commands[] | .name + "\t" + ([.args[]?.name] | join(" "))' < "$HELP" > "$ARGS" \
+  || { echo "command-claims: the help payload has no .data.commands[].args — the TABLE is broken, not the docs" >&2; exit 3; }
 
 # --------------------------------------------------------------- the corpus: the docs
 #
@@ -107,11 +182,18 @@ done
 #
 # The two patterns are STRINGS, not `/…/` literals, and that is not a style choice. A regex
 # literal passed as a function argument is not a regex in awk — it evaluates to `$0 ~ /…/`,
-# so `pat` arrives as 0 or 1, `match()` is handed a one-character pattern, and the scan loop
-# below stops advancing. It hung on the first file, with no output and no error. The
-# `RLENGTH < 1` bail covers the general form of that: a zero-width match would leave `rest`
-# unchanged forever.
-awk '
+# so `pat` arrives as 0 or 1 and `match()` is handed the one-character pattern `0`.
+# Measured: `awk 'BEGIN { pat = /`stride +[a-z]/; print pat }'` prints 0, and match() against
+# it hits the first literal zero in the line.
+#
+# The failure that leaves is a SILENT ZERO, which is why the `nrefs`/floor guards below are
+# the ones that catch it. Reintroducing only the literal into the current loop yields 0
+# emissions, exit 0, instantly, over all 18 files — no output and no error, but also no hang.
+# (It did hang while the advance below was also broken; both at once, a scan that never
+# progresses. Only the combination hangs, and the comment used to attribute that to the
+# literal alone.) The `RLENGTH < 1` bail covers the general form: a zero-width match would
+# leave `rest` unchanged forever.
+awk -v Q="$QUOTED" '
   function tokens(s) {
     if (match(s, /^[a-z][a-z-]*( [a-z][a-z-]*)?/)) return substr(s, RSTART, RLENGTH)
     return ""
@@ -123,12 +205,13 @@ awk '
   # perfectly: the corpus count came out right while the loop was wrong.
   #
   # Dedupe is HERE, on the whole (file, line, command) triple, and not a `sort -u` after the
-  # fact. A fenced line can satisfy both rules and would otherwise be reported twice — as it
-  # was, when the mutation test planted `stride frobnicate` in ADR 0007. Sorting to dedupe
-  # also reorders the report lexically, which puts :10 above :7; emitting in file order and
-  # deduping in place keeps the report in reading order. Deduping on a KEY (`sort -u -k1,2`)
-  # is the wrong fix twice over: it would collapse the three distinct commands chained on
-  # README.md:201 into one.
+  # fact. Two shapes collide: a fenced line can satisfy both rules, and one line can name the
+  # same command twice. Measured on this tree with the dedupe disabled, it is the second —
+  # 79 raw emissions against 78, the single suppression being SKILL.md:183, which backticks
+  # `stride analyze` twice in one sentence. Sorting to dedupe also reorders the report
+  # lexically, which puts :10 above :7; emitting in file order and deduping in place keeps
+  # the report in reading order. Deduping on a KEY (`sort -u -k1,2`) is the wrong fix twice
+  # over: it would collapse the three distinct commands chained on README.md:201 into one.
   function emit(line, pat,   rest, t, r, l, key) {
     rest = line
     while (match(rest, pat)) {
@@ -142,11 +225,17 @@ awk '
   }
   FNR==1 { fence = 0 }
   /^[[:space:]]*```/ { fence = 1 - fence; next }
+  # The opt-out, counted in the SAME pass that applies it so the pin and the skip cannot
+  # disagree about how many lines were exempted. Deliberately before the extraction rules
+  # and after the fence toggle: a marked line must still move fence state, or opting one
+  # line out would invert polarity for the rest of the file.
+  index($0, "command-claims: quoting") { quoting++; next }
   {
     emit($0, "`(\\./)?stride +[a-z]")
     if (fence && match($0, /^[[:space:]]*(\$[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(\.\/)?stride[[:space:]]+[a-z]/))
       emit($0, "(\\./)?stride +[a-z]")
   }
+  END { print (quoting + 0) > Q }
 ' $FILES > "$NAMED" \
   || { echo "command-claims: doc extraction failed — a listed file or glob is missing" >&2; exit 5; }
 
@@ -174,6 +263,37 @@ if [ "$nreal" -eq 0 ]; then
   exit 3
 fi
 
+# ndocs is the docs that CONTRIBUTED, counted from what awk emitted. nfiles above is counted
+# by a shell loop that never opened a file, so it says 18 whether the scan read eighteen
+# documents or one. Only this number falls to zero when awk aborts mid-list.
+ndocs=$(cut -f1 "$NAMED" | sort -u | wc -l | tr -d ' ')
+nquot=$(cat "$QUOTED" 2>/dev/null | tr -d ' ')
+case "$ndocs" in ''|*[!0-9]*) echo "command-claims: could not count the contributing docs (got '$ndocs')" >&2; exit 2 ;; esac
+case "$nquot" in ''|*[!0-9]*) echo "command-claims: the extractor did not report a quoting-marker count (got '$nquot') — it did not reach END, so the scan is truncated" >&2; exit 2 ;; esac
+
+if [ "$nrefs" -lt "$MIN_REFS" ]; then
+  echo "command-claims: $nrefs command references, floor is $MIN_REFS — the corpus SHRANK; a doc left FILES, a fence dialect changed, or the extractor stopped seeing a shape. Confirm the loss is deliberate and lower MIN_REFS." >&2
+  exit 2
+fi
+if [ "$ndocs" -lt "$MIN_DOCS" ]; then
+  echo "command-claims: references came from $ndocs docs, floor is $MIN_DOCS — the scan is reading fewer documents than it did; awk may have aborted mid-list. Confirm and lower MIN_DOCS." >&2
+  exit 2
+fi
+if [ "$nquot" != "$EXPECTED_QUOTING" ]; then
+  echo "command-claims: $nquot quoting markers, expected $EXPECTED_QUOTING — an opt-out was added or removed; confirm it is deliberate and update EXPECTED_QUOTING" >&2
+  exit 4
+fi
+
+# The two halves of the oracle must describe the same command set. Nothing downstream can
+# tell "this command declares no args" from "this command is missing from ARGS", and those
+# have opposite meanings: the first REFUTES a trailing token, the second would refute every
+# one of them. A jq shape change that empties one half and not the other lands here.
+nargs=$(wc -l < "$ARGS" | tr -d ' ')
+if [ "$nargs" != "$nreal" ]; then
+  echo "command-claims: the table yielded $nreal names but $nargs arg rows — the two halves of the oracle disagree; refusing to judge trailing tokens against a partial table" >&2
+  exit 3
+fi
+
 # The two-token ceiling in the extractor is pinned to the table rather than believed. A
 # three-word form (`config get set`, say) would otherwise be captured as its two-word
 # prefix, and since that prefix would itself resolve, the reference would pass unchecked.
@@ -190,12 +310,20 @@ fi
 # ----------------------------------------------------------------------- the comparison
 #
 # LONGEST PREFIX against the table's OWN names, which is why nothing here knows that
-# `config` and `week` are the two-word verbs. `week all` resolves at `week`, because `week`
-# is a command and `all` is its literal argument; `config set hr_z1_max` resolves at
+# `config` and `week` are the two-word verbs. `config set hr_z1_max` resolves at
 # `config set`; `config frobnicate` resolves at NEITHER — `config` alone is not a command —
 # and is reported, which is right. The loop peels one trailing token at a time rather than
 # testing two known shapes, so it needs no change if the table ever grows a wider form
 # (the ceiling above is what makes sure the extractor is widened to feed it).
+#
+# THEN the peeled token is judged, and skipping that step is what made the peel a hole. A
+# bare longest-prefix pass resolves `week frobnicate` at `week`, discards the leftover and
+# calls the reference clean — a doc naming a command the binary does not have, passing the
+# one check that exists to catch exactly that. The table settles it: `week` declares the
+# literal `all`, `top` declares `<hr|tss|…>`, and `analyze` declares nothing, so `week all`
+# is verifiable, `top hr` is a placeholder value, and `analyze frobnicate` and
+# `week frobnicate` are refutable. A command declaring ANY placeholder accepts any trailing
+# token, because a placeholder's whole point is that its values are not enumerable here.
 fail=0
 while IFS="$(printf '\t')" read -r file line cand; do
   p="$cand"
@@ -206,10 +334,22 @@ while IFS="$(printf '\t')" read -r file line cand; do
       *)     p="" ;;
     esac
   done
-  [ -n "$p" ] && continue
-  echo "UNKNOWN  $file:$line  \`stride $cand\` names no command the binary has"
+  if [ -z "$p" ]; then
+    echo "UNKNOWN  $file:$line  \`stride $cand\` names no command the binary has"
+    fail=1
+    continue
+  fi
+  [ "$p" = "$cand" ] && continue
+  x="${cand#"$p" }"
+  spec=$(awk -F"$(printf '\t')" -v n="$p" '$1 == n { print $2; exit }' "$ARGS")
+  case "$spec" in *"<"*) continue ;; esac
+  case " $spec " in *" $x "*) continue ;; esac
+  echo "UNKNOWN  $file:$line  \`stride $cand\` — \`$p\` is a command, but it takes no \`$x\`"
   fail=1
 done < "$NAMED"
 
-[ "$fail" = "0" ] && echo "command-claims: $nrefs command references across $nfiles docs, resolved against $nreal commands in the table — all name real commands"
+# "$ndocs of $nfiles" rather than "$nfiles docs": the second number is what the shell stat'd
+# and the first is what actually yielded a reference, and reporting only the larger one
+# implies a coverage the run never measured. Half the corpus names no command at all.
+[ "$fail" = "0" ] && echo "command-claims: $nrefs command references across $ndocs of $nfiles docs, resolved against $nreal commands in the table — all name real commands"
 exit $fail

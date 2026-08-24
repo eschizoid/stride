@@ -328,6 +328,7 @@ tests on linux/macOS/Windows, then build + e2e on macOS), `release-please.yml`
 - **Normal git history — no more squash/force-push on `main`.** Commit normally, push
   fast-forward. (We used to amend one commit and force-push; that era is over. The one
   exception was a single force-push to fix the transition commit's message.)
+- **`just command-claims` holds the docs to the command table.** Every `stride <cmd>` a doc NAMES is a claim that the binary HAS it, and until #252 nothing checked it; the oracle is `stride --json --help`, the same machine-readable table `just schema-check` uses. One direction only — a doc naming a command that does not exist fails, a command no doc mentions is a coverage question and is deliberately not checked. Occasionally a doc must name a command the binary lacks, because saying so is the point: a sentence explaining that `stride backfill` was retired is TRUE, and stripping its backticks to satisfy the linter would degrade the doc to serve the tool. Such a line opts out with the literal marker `command-claims: quoting`, which rides in an HTML comment and renders as nothing. The count is pinned in the script, so adding one is deliberate — and this very line carries the repo's only marker, so the opt-out is exercised by being documented rather than sitting untested behind a pin of zero. <!-- command-claims: quoting -->
 
 ## Releases (release-please)
 
