@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(736)?
+    checks_ran_exactly!(738)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2571,6 +2571,23 @@ b_seed_analyze! = |ctx| {
     _ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (810,'impossible hour','Ride','Ride','${ctx.d1}T37:00:00Z',3600);")
     an_t37 = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' rate latest 6 2>/dev/null")
     check!("an impossible HOUR on a valid date is refused, not ranked above a real session", Str.contains(an_t37, "unreadable_activity_date") and Str.contains(an_t37, "activity 810"))?
+    # ...and the message names the half that FAILED. It used to hand back the date — a
+    # perfectly readable '2026-08-24' — for a row whose fault is the hour, which is the
+    # round-1 defect ("quotes a value the column does not hold") wearing new clothes:
+    # quoting the half that is correct.
+    check!("...naming the TIME, not the date half that is perfectly readable", Str.contains(an_t37, "T37:00:00") and !(Str.contains(an_t37, "('${ctx.d1}')")))?
+    _ = sql!(an_db, "DELETE FROM activities WHERE id = 810;")
+    # ...and the ranker compares exactly the slice the guard validates. Anything past
+    # position 19 is unvalidated, so ranking on the whole string let a lowercase 'z' in
+    # position 20 outrank an uppercase 'Z' on an identical timestamp — bounded (it cannot
+    # misorder rows that differ) but it silently overrode the documented tie-break, which
+    # says MAX(id) decides identical stamps. Ranking on substr(1,19) makes the two domains
+    # the same expression rather than two lists that have to agree, which is the invariant
+    # this branch re-derived four times and came up short on every time.
+    _ = sql!(an_db, "DELETE FROM ratings;")
+    _ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (830,'lower z','Ride','Ride','${ctx.d1}T18:00:00z',3600),(930,'upper Z','Ride','Ride','${ctx.d1}T18:00:00Z',3600);")
+    check!("a byte past position 19 cannot override the tie-break", Str.contains(sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' rate latest 5 2>/dev/null"), "\"rated\":930"))?
+    _ = sql!(an_db, "DELETE FROM ratings; DELETE FROM activities WHERE id IN (830,930);")
     # ratings cleared just above, so this is "the refusal wrote nothing" rather than
     # "the table happens to be empty" — the distinction the whole block is about.
     check!("...and nothing was rated", Str.trim(sql!(an_db, "SELECT count(*) FROM ratings;")) == "0")?
@@ -2613,7 +2630,7 @@ b_seed_analyze! = |ctx| {
     # characters; it said "has start_local 'garbage-da'" and sent the user to a DELETE
     # matching zero rows. The daily_load arm quotes its column whole and has always been
     # asserted; this one was not, which is how the sentence stayed false.
-    check!("...quoting the ten characters it actually read", Str.contains(strjq!(ctx, ["season"], ".error.message"), "beginning 'garbage-da'"))?
+    check!("...quoting the ten characters it actually read", Str.contains(strjq!(ctx, ["season"], ".error.message"), "start_local ('garbage-da')"))?
     # and the remedy leads with the one that always works. `sync --all` silently no-ops on
     # an imported row (synced_at NULL, so the upsert never sees it and prune exempts it),
     # so it is stated as conditional and second.

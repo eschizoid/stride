@@ -198,8 +198,9 @@ Output :: [].{
     # which is the wrong instruction for both: nothing here is unanticipated — the code
     # constructs BadActivityDate and BadDailyLoadDay on purpose, at a date it deliberately
     # refuses to guess at. It just never reached the boundary as itself (#243).
-    # "BEGINS", not "is". `raw` is `substr(a.start_local, 1, 10)` — the day the engine
-    # reads, not the column. Saying "has start_local 'garbage-da'" sent the user to
+    # PARENTHESISED, not "is" and not "beginning". `raw` is the COMPONENT that failed —
+    # the ten-character day for a date fault, the time slice for a time fault — never the
+    # whole column and not always its start. Saying "has start_local 'garbage-da'" sent the user to
     # `DELETE FROM activities WHERE start_local='garbage-da'`, which matches zero rows,
     # and made every bug report quoting it unreproducible. Measured against this PR's own
     # fixtures: '2026-3-01T06:00:00Z' printed as '2026-3-01T'. Carrying the whole column
@@ -217,7 +218,7 @@ Output :: [].{
     # and the sync one is stated as conditional.
     unreadable_activity_date_msg : Str, I64 -> Str
     unreadable_activity_date_msg = |raw, id|
-        "activity ${(id).to_str()} has an unreadable start_local beginning '${raw}' — delete that row by id and re-sync, or run `stride sync --all` if Strava still lists the activity"
+        "activity ${(id).to_str()} has an unreadable start_local ('${raw}') — delete that row by id and re-sync, or run `stride sync --all` if Strava still lists the activity"
 
     unreadable_activity_date! : Str, I64 => Try({}, _)
     unreadable_activity_date! = |raw, id| {
