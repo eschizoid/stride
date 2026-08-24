@@ -155,12 +155,11 @@ schema-check: build
         done
         if [ -n "$skipform" ]; then echo "$c: FAILED ($skipform)"; rc=1; continue; fi
         out=$(STRIDE_FORMAT=json ./stride $inv </dev/null 2>&1 || true)
-        # a command that legitimately has nothing to say (fresh install, no
-        # activities) returns an error ENVELOPE; that is the database being
-        # empty, not the contract being violated, so skip rather than accuse
-        # a BROKEN install is not "legitimately nothing to say" — no_database
-        # and friends must fail the check rather than read as a skip (#183 gave
-        # them envelopes, which is exactly what made them skippable)
+        # THREE outcomes, not two. A command that legitimately has nothing to say (fresh
+        # install, no activities) returns an error ENVELOPE and is skipped. A BROKEN
+        # install is not "legitimately nothing to say" — no_database and friends must fail
+        # (#183 gave them envelopes, which is exactly what made them skippable). And a
+        # rejected INVOCATION is this recipe's own bug, which is the third arm.
         code=$(printf '%s' "$out" | jq -r '.error.code // empty' 2>/dev/null)
 
         # ALLOWLIST, not denylist. The old hand-written list's arguments were literals a
@@ -177,20 +176,38 @@ schema-check: build
         # it, and that is the gap.
         case "$code" in
             "") ;;
-            # `not_set` is deliberately NOT here. It cannot tell a key that is unset from a
-            # key that does not exist — app.roc emits it from NotFound and Config.roc keeps
-            # no known-key list — so allowing it to skip would recreate the hole above one
-            # code narrower: rename or retire `timezone` and `config get timezone` becomes
-            # a silent skip, with config.json never validated against real data again. The
-            # root fix is a distinct `unknown_key`, which is #254 and is a real CLI
-            # improvement independently: answering "(not set)" to a typo is a bad answer.
+            # `not_set` is here UNDER PROTEST, and #254 owns removing it. It cannot tell a
+            # key that is unset from one that does not exist — app.roc emits it from
+            # NotFound and Config.roc keeps no known-key list — so while it is allowlisted,
+            # renaming or retiring `timezone` makes this one form skip silently.
+            #
+            # It stays because taking it out is worse TODAY. `stride init` writes zero
+            # config rows, so on a fresh install every key answers `not_set` and removing
+            # this entry turns `just schema-check` red on a correct, uncorrupted new
+            # database. A checker that cries wolf on a clean install is the mirror of the
+            # hole above: a check nobody trusts is as useless as one that always passes.
+            # The hole needs a FUTURE rename to bite; the breakage bit immediately.
             #
             # `no_workout_on_date` IS here but is conditional: its message is
             # argument-dependent ("no workout found on ${date}"), so it would belong in the
             # rejected arm the day any form takes a REQUIRED date. Today both date-taking
             # forms take it optionally, so a wrong one cannot be derived.
-            no_activities|no_data|no_power_data|no_cp_fit|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals)
+            no_activities|no_data|no_power_data|no_cp_fit|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals|not_set)
                 echo "$inv: skipped ($code)"; checked=$((checked + 1)); continue ;;
+            # DATA FAULTS — true statements about the DATABASE, not about the invocation,
+            # so they must not get the rejection message below, which says the opposite and
+            # would send the reader hunting for a bug in this recipe while their database is
+            # corrupt. #183's arm plus the unreadable_* family (#206, #247).
+            #
+            # Not skipped, for a reason worth stating: `season`, `summary`, `plan` and
+            # `compare` can ALL raise the #247 date codes, so allowing them to skip would
+            # silently drop four of eighteen forms — 22% of coverage — on exactly the
+            # databases where payload validation matters most. They are also
+            # argument-independent, so failing on them can never be a false accusation
+            # caused by this recipe's own derived filler.
+            no_database|unreadable_database|corrupt_database|database_error|unreadable_config|unreadable_activity_date|unreadable_daily_load_day)
+                echo "$inv: FAILED ($code) — the database holds a value the engine cannot read; no payload was produced"
+                rc=1; rejected=$((rejected + 1)); continue ;;
             *)
                 echo "$inv: FAILED ($code) — the derived invocation was rejected, not the database"; rc=1; rejected=$((rejected + 1)); continue ;;
         esac
