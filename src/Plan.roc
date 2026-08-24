@@ -27,9 +27,109 @@ Plan :: [].{
             Ok(rpe) => {
                 id_result =
                     if target == "latest" {
+                        # "latest" by PARSED day, not by string max. `MAX(start_local)` is a
+                        # byte comparison, so one malformed date outranks every real one —
+                        # '2026-3-05T' beats '2026-08-24' — and `rate latest` then attached
+                        # the rating to that row and reported it back as the id it rated, at
+                        # exit 0, on a database where `summary` and `season` both refuse.
+                        #
+                        # This is the worst instance of the class in the tree because it
+                        # WRITES, and it writes into `ratings` — one of the two tables
+                        # prune_deleted! refuses to touch — planned_sessions is the other,
+                        # on the same grounds — because a rating "can't be re-derived", so
+                        # the row is human judgment that cannot be recovered. It also
+                        # collides with the remedy the date errors print:
+                        # deleting the malformed row by id destroys the rating the athlete
+                        # meant for a different session, and that session still has none.
+                        #
+                        # Not covered by summary's sweep — `rate!` is dispatched straight
+                        # from app.roc and never reaches summary_payload!. Guarded here.
+                        # TWO steps, and the split is the point: Roc GUARDS, SQL RANKS.
+                        #
+                        # Guard first, over every activity date, grouped by the date so the
+                        # id named on a refusal is a row that actually has that date.
+                        # THE INVARIANT, made structural instead of remembered: the guard
+                        # validates substr(start_local, 1, 19) and the ranker compares
+                        # substr(start_local, 1, 19). Not two lists that have to agree —
+                        # the same slice. This branch re-derived "the guard's domain must
+                        # equal its consumer's" four times (day vs day, day vs timestamp,
+                        # ten chars vs whole string, nineteen vs whole string) and came up
+                        # short every time, most recently letting a lowercase 'z' in
+                        # position 20 outrank an uppercase 'Z' on an identical timestamp.
+                        # Positions 1..19 are the whole date and time; anything past them
+                        # cannot reorder rows that differ, and now cannot reorder rows that
+                        # do not either.
+                        #
+                        # TWO halves, split by what each language does cheaply. The date
+                        # half needs Roc — the round-trip and the year bound are not
+                        # expressible in SQL — so it groups by DAY and hands back one row
+                        # per distinct day. The time half is pure comparison, so it stays in
+                        # SQL as a single offending-row query and costs nothing per row.
+                        # Grouping by the whole timestamp instead made this scale with
+                        # ACTIVITIES rather than DAYS: review measured ~870ms at 50k
+                        # against ~86ms for the day grouping.
+                        act_days = Sqlite.query_many!({
+                            path: Path.utf8(path),
+                            query:
+                                \\SELECT COALESCE(substr(start_local, 1, 10), '') AS d, MIN(id) AS example_id
+                                \\FROM activities GROUP BY d ORDER BY d, example_id
+                            ,
+                            bindings: [],
+                            rows: |cols| |stmt| {
+                                d = Sqlite.str("d")(cols)(stmt)?
+                                example_id = Sqlite.i64("example_id")(cols)(stmt)?
+                                Ok({ d, example_id })
+                            },
+                        })?
+                        _ = List.map_try(act_days, |r| Metrics.usable_date_days(r.d).map_err(|_| BadActivityDate(r.d, r.example_id)))?
+                        # ...and the TIME half. No NULL arm here, deliberately: a NULL
+                        # start_local is already refused by the date sweep above, where the
+                        # COALESCE turns it into "" and usable_date_days rejects that. I
+                        # wrote `start_local IS NULL OR NOT(...)` first and mutation-tested
+                        # it — removing the NULL arm changed nothing, because the date half
+                        # gets there first. A guard that cannot fail is what this branch has
+                        # spent nine rounds deleting, so it is gone, and the `a NULL
+                        # start_local is named` check is what holds the property.
+                        #
+                        # The ORDERING is therefore load-bearing: the date sweep must run
+                        # before this, or a NULL reaches the decoder as UnexpectedType(Null)
+                        # — `internal_error` on a write path, which regressed once already.
+                        bad_time = Sqlite.query_many!({
+                            path: Path.utf8(path),
+                            query:
+                                \\SELECT id AS id, COALESCE(substr(start_local, 11, 9), '') AS t
+                                \\FROM activities
+                                \\WHERE NOT (
+                                \\      length(start_local) >= 19
+                                \\  AND substr(start_local, 11, 1) = 'T'
+                                \\  AND substr(start_local, 14, 1) = ':'
+                                \\  AND substr(start_local, 17, 1) = ':'
+                                \\  AND substr(start_local, 12, 2) GLOB '[0-9][0-9]'
+                                \\  AND substr(start_local, 15, 2) GLOB '[0-9][0-9]'
+                                \\  AND substr(start_local, 18, 2) GLOB '[0-9][0-9]'
+                                \\  AND CAST(substr(start_local, 12, 2) AS INTEGER) <= 23
+                                \\  AND CAST(substr(start_local, 15, 2) AS INTEGER) <= 59
+                                \\  AND CAST(substr(start_local, 18, 2) AS INTEGER) <= 59
+                                \\)
+                                \\ORDER BY id LIMIT 1
+                            ,
+                            bindings: [],
+                            rows: |cols| |stmt| {
+                                id = Sqlite.i64("id")(cols)(stmt)?
+                                t = Sqlite.str("t")(cols)(stmt)?
+                                Ok({ id, t })
+                            },
+                        })?
+                        # names the component that FAILED, not the one that is fine. The
+                        # message used to hand back the date half — "beginning '2026-08-24'"
+                        # for a row whose date is perfectly readable and whose time is T37.
+                        _ = match List.first(bad_time) {
+                            Ok(r) => Err(BadActivityDate(if Str.is_empty(r.t) "(no time)" else r.t, r.id))
+                            Err(_) => Ok({})
+                        }?
                         match Sqlite.query!({
                             path: Path.utf8(path),
-                            query: "SELECT COALESCE(MAX(id), 0) AS id FROM activities WHERE start_local = (SELECT MAX(start_local) FROM activities)",
+                            query: "SELECT COALESCE(MAX(id), 0) AS id FROM activities WHERE substr(start_local, 1, 19) = (SELECT MAX(substr(start_local, 1, 19)) FROM activities)",
                             bindings: [],
                             row: Sqlite.i64("id"),
                         }) {

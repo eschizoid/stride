@@ -297,6 +297,20 @@ run_command! = |cmd|
         # each call site: several commands load config, and the remedy is identical for
         # all of them -- name the key, echo the stored text (#206).
         Err(UnreadableConfig(key, raw)) => Output.unreadable_config!(key, raw)
+        # A stored date the engine refuses to guess at. Same reasoning as the config arm
+        # above -- converted HERE, at the one boundary, because four commands can RAISE
+        # these tags (`season` both, `summary` and `plan` through the ramp anchor,
+        # `compare` through its own), and the remedy depends on the TABLE rather than on
+        # which command met the row. "Can raise the tag" is the property this arm depends
+        # on and the one worth checking. One other command reads daily_load and still
+        # absorbs: `load` collapses an unreadable day to epoch 0, which surfaces as a
+        # fabricated 1969 week row in the rollup view (>14 days; the daily view prints the
+        # day verbatim). `stats` and `doctor` do NOT read daily_load and never parse a
+        # date -- they compare `activities.start_local` as bytes in SQL, so an unreadable
+        # value joins or leaves a window by string order. Different failure, named
+        # separately rather than folded in here.
+        Err(BadActivityDate(raw, id)) => Output.unreadable_activity_date!(raw, id)
+        Err(BadDailyLoadDay(raw)) => Output.unreadable_daily_load_day!(raw)
         Err(SqliteErr(NotADatabase, _)) =>
             Output.err_out!("corrupt_database", "~/.stride/db.sqlite is not a readable SQLite database — restore a backup or re-run `stride init` against a fresh path")
         Err(SqliteErr(code, msg)) =>

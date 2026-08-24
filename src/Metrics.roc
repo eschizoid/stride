@@ -1798,15 +1798,80 @@ Metrics :: [].{
     # never learns their date moved), while an unpadded 2026-8-5 sorts after every
     # 2026-1x-xx date and lands in the wrong week. The year bound holds the string at
     # ten characters, since a 3-digit year would sort after every 2xxx one.
-    is_canonical_date : Str -> Bool
-    is_canonical_date = |s|
+    # Parseable AND canonical — the one predicate every stored-date guard in the codebase
+    # needs, in the module where both halves already live. It exists because there were
+    # five independent spellings of it (two in Report, two in ReportSeason, one in
+    # Analyze), and every time this class of bug reopened it was because two sites
+    # implemented one rule and only one got updated. What legitimately VARIES between the
+    # sites is the error TAG — an activity date is repaired by deleting or re-fetching a
+    # row, a daily_load day by rebuilding the table — so the rule is factored here and the
+    # tag stays a local decision at each call site.
+    #
+    # Both halves matter, and the parse alone is the weaker one: `date_str_to_days`
+    # accepts "2026-3-05", and the non-canonical day is the DANGEROUS case rather than the
+    # harmless one, because date columns are compared and sorted as strings in SQL.
+    # Returns the DAY, not a Bool, so a caller never parses twice. The Bool form below is
+    # defined in terms of it for the two sites that genuinely only need a predicate; every
+    # site that goes on to use the value takes this one, and none of them ends up with a
+    # second parse whose failure arm is unreachable — which is a silent-drop arm sitting in
+    # code, waiting for the predicate to be weakened.
+    usable_date_days : Str -> Try(I64, _)
+    usable_date_days = |s|
         match date_str_to_days(s) {
+            # ONE parse. The obvious spelling — `if is_canonical_date(s) date_str_to_days(s)`
+            # — parses twice, because is_canonical_date is itself implemented over
+            # date_str_to_days, and it leaves the second call's Err arm unreachable.
+            #
+            # The round trip is what "canonical" MEANS here: only one spelling of a day
+            # survives days -> string. The YEAR BOUND is the other half and it is not
+            # optional — `date_str_to_days` parses the year with arg_i64, which accepts any
+            # integer, and `days_to_date_str` emits it unpadded, so "999-01-01" round-trips
+            # cleanly. It also sorts ABOVE every real date under `ORDER BY day DESC`
+            # ('9' > '2'), which is the precise hazard every caller of this function exists
+            # to prevent. Dropping it here — which an earlier version of this rewrite did,
+            # while its commit message claimed five spellings had become one — let `summary`
+            # anchor on year 999 and report it as `as_of` at exit 0, and left two live
+            # definitions of "canonical" in this module answering differently on the same
+            # string.
             Ok(d) => {
                 c = civil_from_days(d)
-                days_to_date_str(d) == s and c.y >= 1000 and c.y <= 9999
+                if days_to_date_str(d) == s and c.y >= 1000 and c.y <= 9999 Ok(d) else Err(BadDate)
             }
+            Err(_) => Err(BadDate)
+        }
 
+    is_usable_date : Str -> Bool
+    is_usable_date = |s|
+        match usable_date_days(s) {
+            Ok(_) => True
             Err(_) => False
+        }
+
+    is_canonical_date : Str -> Bool
+    # DEFINED OVER usable_date_days, not beside it. These were two independent bodies of
+    # the same rule, which is how one of them lost the year bound without the other
+    # noticing — and `week add 999-01-01` kept answering `bad_date` while every stored-date
+    # guard accepted it, in the same binary.
+    is_canonical_date = |s| is_usable_date(s)
+
+    # exactly two digits, and within range. Two digits because a one-digit hour would sort
+    # WRONG against a two-digit one under byte comparison, which is the property callers
+    # are protecting when they rank timestamps as strings.
+    #
+    # Used to validate the time half of a `start_local`. The date half has its own rule
+    # (usable_date_days); this is the other half, and both are needed by anything that
+    # ranks on the whole string — a guard whose domain is narrower than its consumer's
+    # leaks through the gap, which is how "2026-08-24T37:00:00Z" once outranked a real
+    # evening session and took its rating.
+    two_digit_in : Str, I64 -> Bool
+    two_digit_in = |s, hi|
+        if Str.count_utf8_bytes(s) != 2 {
+            False
+        } else {
+            match arg_i64(s) {
+                Ok(n) => n >= 0 and n <= hi
+                Err(_) => False
+            }
         }
 
     # epoch day number -> "Mon".."Sun". Epoch day 0 (1970-01-01) was a Thursday, so
