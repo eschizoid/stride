@@ -83,7 +83,9 @@ schema-check: build
     # schema-bearing commands that write — init, sync, analyze, import, rate, week add,
     # complete, skip, config set — and deriving from it makes invoking one impossible by
     # construction. The hand-written list simply happened not to name them.
-    forms=$(mktemp)
+    checked=0
+    forms=$(mktemp) || { echo "schema-check: mktemp failed"; exit 4; }
+    trap 'rm -f "$forms"' EXIT
     STRIDE_FORMAT=json ./stride --help | jq -r '
         .data.commands[]
         | select(.mutates == false and .network == false and .interactive == false and .schema != "")
@@ -94,15 +96,34 @@ schema-check: build
     # the count is asserted rather than assumed. The floor is the size of the list this
     # replaced; it is a floor and not an equality because the table is expected to grow.
     nforms=$(wc -l < "$forms" | tr -d ' ')
-    if [ "$nforms" -lt 15 ]; then
-        echo "schema-check: derived only $nforms forms from the command table (expected >= 15) — the derivation is broken, not the payloads"
+    # DERIVED expectation, not a literal. A hardcoded floor has slack — 18 forms against a
+    # floor of 15 lets three vanish — and it is bump-bait besides: when it trips it cannot
+    # say which side moved. Asking the table twice and comparing makes the failure name the
+    # direction. It also catches jq truncating mid-stream, which is a live route: a command
+    # entry missing `args` makes jq emit the earlier records and exit 5, and `> "$forms"`
+    # discards that status under a recipe with no `set -e`.
+    want=$(STRIDE_FORMAT=json ./stride --help | jq -r '[.data.commands[] | select(.mutates == false and .network == false and .interactive == false and .schema != "" and .name != "activity")] | length')
+    # NUMERIC check first, and `-lt` is why: on this /bin/sh an empty `nforms` makes
+    # `[ "" -lt 15 ]` print "integer expression expected" and take the ELSE branch — the
+    # guard fails OPEN. Reachable if mktemp ever yields an unwritable path.
+    case "$nforms" in ''|*[!0-9]*) echo "schema-check: could not count the derived forms (got '$nforms')"; exit 4 ;; esac
+    case "$want" in ''|*[!0-9]*) echo "schema-check: could not read the expected form count from the table (got '$want')"; exit 4 ;; esac
+    if [ "$nforms" -ne "$want" ]; then
+        echo "schema-check: derived $nforms forms but the command table declares $want — the derivation is broken, not the payloads"
         exit 4
     fi
     echo "schema-check: $nforms forms derived from the command table"
+    # Globbing OFF for the loop only: `$req` and `$inv` are unquoted on purpose (a form
+    # name like `config get` has to split into two argv entries), so a future `<file*>`
+    # placeholder would expand against the repo root. Restored after the loop, because the
+    # schema-lint sweep below needs `schemas/v2/*.json` to glob — turning it off globally
+    # broke that, which is how this comment came to exist.
+    set -f
     while IFS="$(printf '\t')" read -r c schema req; do
         inv="$c"
         skipform=""
         for a in $req; do
+            v=""
             case "$a" in
                 # an alternation names its own valid values; take the first. This is why
                 # `top` needs no entry below — the table already says what it accepts.
@@ -117,7 +138,7 @@ schema-check: build
             inv="$inv $v"
         done
         if [ -n "$skipform" ]; then echo "$c: FAILED ($skipform)"; rc=1; continue; fi
-        out=$(STRIDE_FORMAT=json ./stride $inv 2>&1 || true)
+        out=$(STRIDE_FORMAT=json ./stride $inv </dev/null 2>&1 || true)
         # a command that legitimately has nothing to say (fresh install, no
         # activities) returns an error ENVELOPE; that is the database being
         # empty, not the contract being violated, so skip rather than accuse
@@ -125,18 +146,38 @@ schema-check: build
         # and friends must fail the check rather than read as a skip (#183 gave
         # them envelopes, which is exactly what made them skippable)
         code=$(printf '%s' "$out" | jq -r '.error.code // empty' 2>/dev/null)
+
+        # ALLOWLIST, not denylist. The old hand-written list's arguments were literals a
+        # human had checked; this PR derives them from placeholder TEXT, which
+        # Command.roc's own comment names as the one field the table does not enforce. So
+        # a wrong derived argument is now possible, and under a denylist it came back as
+        # `top metric: skipped (bad_metric)` — indistinguishable from a thin database, with
+        # the recipe exiting 0 having validated nothing. Review reproduced exactly that.
+        #
+        # `usage`, `bad_*` and `unknown_command` mean the INVOCATION was rejected, which is
+        # this recipe's own bug, not a fact about the data. Only the codes that genuinely
+        # mean "nothing to say on this database" skip. The e2e mutation sweep learned the
+        # same lesson and grew a `stalled` check for `usage`; this recipe did not inherit
+        # it, and that is the gap.
         case "$code" in
-            no_database|unreadable_database|corrupt_database|database_error)
-                echo "$inv: FAILED ($code)"; rc=1; continue ;;
+            "") ;;
+            no_activities|no_data|no_power_data|no_cp_fit|not_set|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals)
+                echo "$inv: skipped ($code)"; checked=$((checked + 1)); continue ;;
+            *)
+                echo "$inv: FAILED ($code) — the derived invocation was rejected, not the database"; rc=1; continue ;;
         esac
-        if printf '%s' "$out" | jq -e 'has("error")' >/dev/null 2>&1; then
-            echo "$inv: skipped ($(printf '%s' "$out" | jq -r '.error.code'))"
-            continue
-        fi
         errs=$(printf '%s' "$out" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/$schema -f tools/validate.jq 2>&1 || true)
+        checked=$((checked + 1))
         if [ -n "$errs" ]; then echo "$inv:"; echo "$errs"; rc=1; else echo "$inv: conforms"; fi
     done < "$forms"
-    rm -f "$forms"
+    # ...and reconcile the two counts. Announcing "18 forms derived" before the loop and
+    # never counting executions is how the output can honestly say 18 while validating
+    # zero, which is the shape the HIGH above produced.
+    set +f
+    if [ "$checked" -ne "$nforms" ]; then
+        echo "schema-check: derived $nforms forms but reached only $checked — the loop dropped some"
+        rc=1
+    fi
     act=$(STRIDE_FORMAT=json ./stride activities 1 2>&1 | jq -r '.data[0].id // empty' 2>&1 || true)
     if [ -n "$act" ]; then
         errs=$(STRIDE_FORMAT=json ./stride activity "$act" 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/activity.json -f tools/validate.jq 2>&1 || true)
