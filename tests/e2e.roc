@@ -704,7 +704,19 @@ run_stops! = || {
     #   budget: one read per run, so the second queued id is never requested.
     #   rate:   the real window, so the drain DOES reach 501 and meets its 429.
     #           Nothing sleeps any more, so this costs milliseconds.
-    envs = if rate_limited "" else "STRIDE_READS_PER_WINDOW=1"
+    daily_cap = env_or!("E2E_EXPECT_DAILY_CAP", "") == "1"
+    # THREE seams now, mutually exclusive on purpose. The daily one needs the WINDOW left
+    # at its default: set both to 1 and the window fires first, the run reports
+    # budget_reached, and this arm tests the stop it is not about — which is exactly the
+    # trap the budget/rate pair above already documents for itself.
+    envs =
+        if daily_cap {
+            "STRIDE_READS_PER_DAY=1"
+        } else if rate_limited {
+            ""
+        } else {
+            "STRIDE_READS_PER_WINDOW=1"
+        }
     run_sync_bf! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' ${envs} '${bin}' sync >'${bo}' 2>/dev/null")
     bf_start = str_to_i64(Str.trim(sh!("date +%s")))
     _ = run_sync_bf!("json")
@@ -825,6 +837,48 @@ run_stops! = || {
         # DIFFERENT call, so matching the label alone passes with the per-id frame deleted.
         # That frame is the only carrier of "how far did it get" on the error path.
         check!("...and the progress frame recorded the id it retired", Str.contains(err500, "1/2"))?
+    } else if daily_cap {
+        # #246. Every stop used to advise "~15 minutes", including the one where the answer
+        # is tomorrow: the daily cap was "respected by arithmetic" — ~95 reads a window x
+        # ~10 windows a day under Strava's 1000 — and there are 96 windows in a day, not
+        # 10. Follow the advice and you do four runs an hour, cross 1000 in about two and a
+        # half hours, and then every read is refused while stride keeps saying fifteen
+        # minutes.
+        check!("a run that spends the daily allowance says so", bfq!(".data.stopped") == "daily_cap_reached")?
+        check!("...and is resumable, because the work is not finished", bfq!(".data.resumable") == "true")?
+        check!("...at exit 0 with no error field, like every other stop reason", bfq!(".error") == "null")?
+        # THE point of the issue, and not `contains "tomorrow"` alone: the failure mode was
+        # two stops sharing one remedy, so the assertion has to be that this one does NOT
+        # carry the other's wording.
+        # queue refilled first. The json run above spent the one allowed read on the last
+        # queued id, so without this the human run finds pending_streams == 0, sync_screen
+        # never consults drain_note, and the assertion below tests an empty tail rather
+        # than the sentence. Written without it and it failed exactly that way.
+        _ = sql!(db, "DELETE FROM streams;")
+        human_cap = sh!("HOME='${home}' STRIDE_API_BASE='${base}' ${envs} '${bin}' sync 2>&1")
+        check!("...and the human line names TOMORROW", Str.contains(human_cap, "again tomorrow"))?
+        check!("...and does NOT say ~15 minutes, the instruction that cannot succeed", !(Str.contains(human_cap, "15 minutes")))?
+        # the counter is PERSISTED, which is what makes the cap mean anything across runs.
+        # Both rows: a count without its day would never reset, and a day without a count
+        # would pace from zero forever.
+        cap_day = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 86400) }'"))
+        check!("...and the read count is stored against today's UTC day", Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='strava_reads_day'),'none');")) == cap_day)?
+        check!("...with a non-zero count", str_to_i64(Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='strava_reads_today'),'0');"))) > 0)?
+        # ...and a STALE day resets it. That is the reset mechanism in full — there is no
+        # scheduled job, the stamp not being today IS the reset — so it is asserted rather
+        # than described. Backdated by one day, then a run must start from zero, which it
+        # can only show by draining again rather than refusing on yesterday's total.
+        # Driven at a cap of TWO, not one, and that is the whole discriminating power of
+        # this check. At a cap of one, a reset count and a stale count behave identically —
+        # both stop after a single read — so the assertion passes either way. Written that
+        # way first and mutation-proved: making reads_today! ignore the day stamp entirely
+        # left the suite green. At two, a reset count spends two reads and a stale count
+        # (already at one) spends one, so the fetched count separates them.
+        _ = sql!(db, "UPDATE config SET value = '${I64.to_str(str_to_i64(cap_day) - 1)}' WHERE key = 'strava_reads_day';")
+        _ = sql!(db, "DELETE FROM streams;")
+        _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' STRIDE_READS_PER_DAY=2 '${bin}' sync >'${bo}' 2>/dev/null")
+        check!("a stale day stamp resets the count rather than needing a scheduled job", Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='strava_reads_day'),'none');")) == cap_day)?
+        check!("...and the run spent a FULL fresh allowance, not yesterday's remainder", bfq!(".data.streams_fetched") == "2")?
     } else if env_or!("E2E_EXPECT_401", "") == "1" {
         # The refresh arm recurses on the SAME id. Seed a token the mock will not hand
         # back, so get_valid_token! genuinely rotates once and the arm is entered rather
@@ -930,6 +984,10 @@ run_stops! = || {
             # its own floor: this branch returns before the shared drain assertions, so the
             # 12 the default arm expects would never be reachable here
             23
+        } else if env_or!("E2E_EXPECT_DAILY_CAP", "") == "1" {
+            # its own floor: this branch asserts the persisted counter and its reset as
+            # well as the envelope, so the default arm's number would not reach it
+            10
         } else if env_or!("E2E_EXPECT_500", "") == "1" {
             7
         } else if env_or!("E2E_EXPECT_401", "") == "1" {

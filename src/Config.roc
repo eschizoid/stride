@@ -38,7 +38,7 @@ Config :: [].{
 	# and keeps the read sites honest.
 	numeric_key : Str -> [Int, Decimal, Free]
 	numeric_key = |k|
-		if k == "utc_offset_minutes" or k == "last_sync_epoch" or Str.ends_with(k, "_expires_at")
+		if k == "utc_offset_minutes" or k == "last_sync_epoch" or k == "strava_reads_today" or k == "strava_reads_day" or Str.ends_with(k, "_expires_at")
 			Int
 		else if Str.starts_with(k, "hr_z")
 			Decimal

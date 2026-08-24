@@ -12,27 +12,41 @@ Drain :: [].{
     # control-flow action. (Counting our own reads by choice, so pacing does not depend
     # on any endpoint sending rate-limit headers.)
 
-    # ONE limit: the collapse in #232 left a single stop mechanism. A run drains until
-    # Strava's 15-minute read window is full, then stops and asks to be re-run. It does
-    # NOT sleep to the next window — that made a routine sync block ~30 minutes in the
-    # foreground — and it does not carry a separate per-run budget either: `window` is
-    # never reset within a run, so a per-run cap of 940 against a window of 95 could
-    # never fire. Review proved both arms dead by evaluating `decide` at production
-    # limits. The DAILY cap is respected by arithmetic rather than by a counter: ~95
-    # reads per window × ~10 windows a day sits just under Strava's 1000.
-    Limits : { reads_per_window : I64 }
+    # TWO limits, and they stop the run for different lengths of time. A run drains until
+    # Strava's 15-minute read window is full, then stops and asks to be re-run — it does
+    # NOT sleep to the next window, because that made a routine sync block ~30 minutes in
+    # the foreground. It carries no separate per-RUN budget: `window` is never reset
+    # inside a run, so a per-run cap of 940 against a window of 95 could never fire, and
+    # review proved both arms dead by evaluating `decide` at production limits.
+    #
+    # The DAILY cap used to be "respected by arithmetic": ~95 reads per window × ~10
+    # windows a day sits just under Strava's 1000. There are 96 fifteen-minute windows in
+    # a day, not 10 — that sentence assumed the athlete runs sync about ten times, and
+    # nothing enforced it. Least of all stride's own output, which after every stop said
+    # "run `stride sync` again in ~15 minutes". Follow that and you do four runs an hour
+    # at ~95 reads: 1000 is crossed in about two and a half hours, and every read for the
+    # rest of the day is refused while stride keeps advising fifteen minutes. The one
+    # case where the answer is TOMORROW was the one case it could not say.
+    #
+    # So it is counted now, against a persisted per-UTC-day total. Counting our own reads
+    # rather than reading rate-limit headers is the same choice `decide` already makes for
+    # the window, for the same reason: pacing does not depend on any endpoint sending
+    # them. It is an approximation — anything else using the same token is invisible to
+    # us — but it is the approximation stride was already making, with the count kept
+    # instead of thrown away.
+    Limits : { reads_per_window : I64, reads_per_day : I64 }
 
     # what to do after a successful fetch has been stored. WindowFull, not SleepWindow —
     # nothing sleeps, and a tag named for behaviour the code does not have is how the
     # next reader gets it wrong.
-    PostStore : [Continue, WindowFull]
+    PostStore : [Continue, WindowFull, DayFull]
 
     # Why a DRAIN run ended. A TAG, not a Str, so the COMPILER enforces the set at the
     # producer: drain_streams! cannot invent a fourth reason or typo an existing one.
     # This shape was chosen after the Str version shipped pinned by nothing: Render's
     # expects hand-type their own literals, so they check Render against itself, and
     # renaming a literal in the producer left every test green.
-    StopReason : [Complete, BudgetReached, RateLimited]
+    StopReason : [Complete, BudgetReached, RateLimited, DailyCapReached]
 
     # Why a SYNC run ended — the value behind the payload's `stopped` field, which itself
     # carries the Str this maps to; the tag never crosses that boundary. Wider than
@@ -57,13 +71,13 @@ Drain :: [].{
     Action : [
         Refresh, # 401: refresh the access token, retry the same id (bounded by the caller)
         RateLimited, # 429: stop and report; the caller does not sleep or retry
-        Store({ window : I64, after : PostStore }), # success: store, then advance
+        Store({ window : I64, today : I64, after : PostStore }), # success: store, then advance
     ]
 
     # Counting our own reads BY CHOICE, so pacing never depends on an endpoint sending
     # rate-limit headers. A 429 is a backstop for when our count and Strava's disagree,
     # not the mechanism.
-    decide : { status : U16, window : I64 }, Limits -> Action
+    decide : { status : U16, window : I64, today : I64 }, Limits -> Action
     decide = |s, lim|
         if s.status == 429 {
             RateLimited
@@ -73,8 +87,20 @@ Drain :: [].{
             # any other status is handled by the store step (404 → empty marker,
             # 2xx → body, other → error propagated there); here we just advance counters
             window2 = s.window + 1
-            after = if window2 >= lim.reads_per_window WindowFull else Continue
-            Store({ window: window2, after })
+            today2 = s.today + 1
+            # DAY before WINDOW, because they mean different things to the user and the
+            # longer one wins. A run that fills both should say "tomorrow", not "fifteen
+            # minutes" — waiting fifteen minutes when the daily cap is spent is an
+            # instruction that cannot succeed, which is the whole of #246.
+            after =
+                if today2 >= lim.reads_per_day {
+                    DayFull
+                } else if window2 >= lim.reads_per_window {
+                    WindowFull
+                } else {
+                    Continue
+                }
+            Store({ window: window2, today: today2, after })
         }
 
     # The tag <-> wire-string vocabulary, in one place. `sync_stopped_label` is the only
@@ -91,6 +117,7 @@ Drain :: [].{
             Complete => "complete"
             BudgetReached => "budget_reached"
             RateLimited => "rate_limited"
+            DailyCapReached => "daily_cap_reached"
         }
 
     sync_stopped_label : SyncStop -> Str
@@ -101,51 +128,51 @@ Drain :: [].{
         }
 
     test_lim : Limits
-    test_lim = { reads_per_window: 3 }
+    test_lim = { reads_per_window: 3, reads_per_day: 100 }
 }
 
 # ── tests ───────────────────────────────────────────────────────────
 
 # a 429 stops the run outright. It does NOT sleep and retry: that made a routine sync
 # block ~30 minutes in the foreground, measured, on a two-activity queue.
-expect match Drain.decide({ status: 429, window: 0 }, Drain.test_lim) {
+expect match Drain.decide({ status: 429, window: 0, today: 0 }, Drain.test_lim) {
     RateLimited => True
     _ => False
 }
-expect match Drain.decide({ status: 429, window: 2 }, Drain.test_lim) {
+expect match Drain.decide({ status: 429, window: 2, today: 2 }, Drain.test_lim) {
     RateLimited => True
     _ => False
 }
 
 # 401 asks for a token refresh; the CALLER bounds how many it will spend
-expect match Drain.decide({ status: 401, window: 0 }, Drain.test_lim) {
+expect match Drain.decide({ status: 401, window: 0, today: 0 }, Drain.test_lim) {
     Refresh => True
     _ => False
 }
 
 # a normal fetch stores and continues, advancing both counters
-expect match Drain.decide({ status: 200, window: 0 }, Drain.test_lim) {
-    Store({ window: 1, after: Continue }) => True
+expect match Drain.decide({ status: 200, window: 0, today: 0 }, Drain.test_lim) {
+    Store({ window: 1, today: 1, after: Continue }) => True
     _ => False
 }
 
 # 404 takes the same store path (the marker write happens in the drain)
-expect match Drain.decide({ status: 404, window: 0 }, Drain.test_lim) {
-    Store({ window: 1, after: Continue }) => True
+expect match Drain.decide({ status: 404, window: 0, today: 0 }, Drain.test_lim) {
+    Store({ window: 1, today: 1, after: Continue }) => True
     _ => False
 }
 
 # filling the window stores, then ends the run. This is the arm production actually
 # takes — `window` is never reset inside a run, so it is the only way a drain stops
 # short, and the previous model's per-run cap could never fire ahead of it.
-expect match Drain.decide({ status: 200, window: 2 }, Drain.test_lim) {
-    Store({ window: 3, after: WindowFull }) => True
+expect match Drain.decide({ status: 200, window: 2, today: 2 }, Drain.test_lim) {
+    Store({ window: 3, today: 3, after: WindowFull }) => True
     _ => False
 }
 
 # and it stays WindowFull past the boundary rather than wrapping back to Continue
-expect match Drain.decide({ status: 200, window: 9 }, Drain.test_lim) {
-    Store({ window: 10, after: WindowFull }) => True
+expect match Drain.decide({ status: 200, window: 9, today: 9 }, Drain.test_lim) {
+    Store({ window: 10, today: 10, after: WindowFull }) => True
     _ => False
 }
 

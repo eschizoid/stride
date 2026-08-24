@@ -711,6 +711,11 @@ Render :: [].{
                 Complete => "${I64.to_str(pending)} had unreadable stream data — they retry next sync"
                 BudgetReached => "filled Strava's 15-minute read window — ${I64.to_str(pending)} to go, run `stride sync` again in ~15 minutes"
                 RateLimited => "Strava rate-limited this run — ${I64.to_str(pending)} to go, try again in ~15 minutes"
+                # the ONE stop whose remedy is not fifteen minutes. Strava's daily read
+                # cap resets at UTC midnight, so re-running sooner spends nothing and
+                # gets nothing — and every other arm here says "~15 minutes", which is
+                # what made this the case stride could not express (#246).
+                DailyCapReached => "used up today's Strava read allowance — ${I64.to_str(pending)} to go, run `stride sync` again tomorrow"
             }
         }
 
@@ -1951,6 +1956,11 @@ expect Render.drain_note(RateLimited, 0) == "all streams present"
 expect Render.drain_note(Complete, 5) == "5 had unreadable stream data — they retry next sync"
 expect Render.drain_note(BudgetReached, 40) == "filled Strava's 15-minute read window — 40 to go, run `stride sync` again in ~15 minutes"
 expect Render.drain_note(RateLimited, 40) == "Strava rate-limited this run — 40 to go, try again in ~15 minutes"
+# the ONE arm whose remedy is not fifteen minutes. Full-string, and separately asserted
+# NOT to carry the other arms' wording, because the whole of #246 is that these two stops
+# were indistinguishable to a reader.
+expect Render.drain_note(DailyCapReached, 40) == "used up today's Strava read allowance — 40 to go, run `stride sync` again tomorrow"
+expect !(Str.contains(Render.drain_note(DailyCapReached, 40), "15 minutes"))
 
 # No catch-all expect any more, and that is the point: drain_note takes a StopReason, so
 # "an outcome that did not come through stopped_label" is not a value that exists. The
@@ -1971,6 +1981,7 @@ expect Render.drain_note(RateLimited, 40) == "Strava rate-limited this run — 4
 expect Drain.stopped_label(Complete) == "complete"
 expect Drain.stopped_label(BudgetReached) == "budget_reached"
 expect Drain.stopped_label(RateLimited) == "rate_limited"
+expect Drain.stopped_label(DailyCapReached) == "daily_cap_reached"
 expect Drain.sync_stopped_label(ListRateLimited) == "list_rate_limited"
 
 # No label may appear RAW in the human line — the failure this whole thread of work is
@@ -1983,7 +1994,7 @@ expect Drain.sync_stopped_label(ListRateLimited) == "list_rate_limited"
 #
 # Both `pending` shapes, because the tail dispatches on pending_streams too.
 expect {
-    stops = [FromDrain(Complete), FromDrain(BudgetReached), FromDrain(RateLimited), ListRateLimited]
+    stops = [FromDrain(Complete), FromDrain(BudgetReached), FromDrain(RateLimited), FromDrain(DailyCapReached), ListRateLimited]
     List.all(
         stops,
         |t| {

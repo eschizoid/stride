@@ -161,6 +161,14 @@ Db :: [].{
         pad = |n| if n < 10 "0${(n).to_str()}" else (n).to_str()
         "${if m < 0 "-" else "+"}${pad(a // 60)}:${pad(a % 60)}"
     }
+    # UTC day number, for the one thing that is anchored to UTC rather than to the
+    # athlete's calendar: Strava's daily read cap. Everything else in stride uses
+    # local_today_days! below, because a training day is a local-calendar fact — but the
+    # cap resets at UTC midnight regardless of where you live, so counting reads against
+    # a local day would reset the counter at the wrong moment by exactly the UTC offset.
+    utc_today_days! : {} => I64
+    utc_today_days! = |{}| now_secs!({}) // 86400
+
     local_today_days! : Str => I64
     local_today_days! = |path| {
         mode = resolve_time_mode!(path)

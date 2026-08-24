@@ -1,6 +1,6 @@
 {
   "title": "sync",
-  "description": "One sync run: what it re-listed, what it stored, and why it stopped. Since #232 this is the only command that pulls data from Strava \u2014 it drains missing streams paced against Strava's limits and stops on the per-run read budget, so a first run on a fresh install may need repeating. Read `resumable` to decide.",
+  "description": "One sync run: what it re-listed, what it stored, and why it stopped. Since #232 this is the only command that pulls data from Strava — it drains missing streams paced against Strava's limits and stops on the per-run read budget, so a first run on a fresh install may need repeating. Read `resumable` to decide.",
   "type": "object",
   "additionalKeys": false,
   "required": [
@@ -42,16 +42,17 @@
     "stopped": {
       "type": "string",
       "enum": [
-        "complete",
         "budget_reached",
-        "rate_limited",
-        "list_rate_limited"
+        "complete",
+        "daily_cap_reached",
+        "list_rate_limited",
+        "rate_limited"
       ],
-      "description": "Why the run ended. `complete` = the stream queue emptied; `budget_reached` = the run filled Strava's 15-minute read window; `rate_limited` = Strava returned 429 on a STREAM read; `list_rate_limited` = Strava returned 429 on the ACTIVITY LIST, so the listing is incomplete and nothing was pruned (#235). The last two are the same upstream condition and have the same remedy \u2014 run again in ~15 minutes \u2014 but they are distinct values because they describe different incomplete states, and a drain that 429s on its first id is otherwise indistinguishable from a list that 429s on page one. All four arrive in a SUCCESS envelope at exit 0. Do not discriminate on this token against the `rate_limited` ERROR code, which is a different thing in a different envelope shape \u2014 discriminate on the envelope."
+      "description": "Why the run ended. `complete` = the stream queue emptied; `budget_reached` = the run filled Strava's 15-minute read window; `rate_limited` = Strava returned 429 on a STREAM read; `daily_cap_reached` = stride's own count of today's reads reached Strava's daily allowance; `list_rate_limited` = Strava returned 429 on the ACTIVITY LIST, so the listing is incomplete and nothing was pruned (#235). The REMEDIES differ and that is the point of the distinction: `budget_reached`, `rate_limited` and `list_rate_limited` all clear when the 15-minute window rolls over, while `daily_cap_reached` clears at UTC midnight — advising ~15 minutes there is an instruction that cannot succeed (#246). All five arrive in a SUCCESS envelope at exit 0. Do not discriminate on this token against the `rate_limited` ERROR code, which is a different thing in a different envelope shape — discriminate on the envelope."
     },
     "resumable": {
       "type": "boolean",
-      "description": "Whether anything is still missing, so the run should be repeated. Usually `pending_streams > 0`, re-measured from the database in every arm. It is also true when `stopped` is `list_rate_limited` even with an empty queue, because what was left undone there is the LISTING, not the stream backlog \u2014 a run refused on page one has nothing pending and absolutely must be repeated."
+      "description": "Whether anything is still missing, so the run should be repeated. Usually `pending_streams > 0`, re-measured from the database in every arm. It is also true when `stopped` is `list_rate_limited` even with an empty queue, because what was left undone there is the LISTING, not the stream backlog — a run refused on page one has nothing pending and absolutely must be repeated."
     }
   }
 }
