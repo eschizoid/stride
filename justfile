@@ -68,32 +68,196 @@ schema-check: build
     # never be skipped — a real contract test even on a fresh install
     errs=$(STRIDE_FORMAT=json ./stride --help 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/commands.json -f tools/validate.jq 2>&1 || true)
     if [ -n "$errs" ]; then echo "commands:"; echo "$errs"; rc=1; else echo "commands: conforms"; fi
-    # schema name : invocation — they differ where a command needs an argument
-    # (top) or where the file name cannot carry a dash (power_curve)
-    for pair in summary:summary plan:plan activities:activities top:"top tss" load:load \
-                stats:stats doctor:doctor zones:zones compare:compare progress:progress \
-                week:week power_curve:power-curve tte:"tte 300" reps:reps season:season; do
-        c="${pair%%:*}"
-        inv=$(printf '%s' "${pair#*:}" | tr -d '"')
-        out=$(STRIDE_FORMAT=json ./stride $inv 2>&1 || true)
-        # a command that legitimately has nothing to say (fresh install, no
-        # activities) returns an error ENVELOPE; that is the database being
-        # empty, not the contract being violated, so skip rather than accuse
-        # a BROKEN install is not "legitimately nothing to say" — no_database
-        # and friends must fail the check rather than read as a skip (#183 gave
-        # them envelopes, which is exactly what made them skippable)
+    # DERIVED from the command table, not written out. #219 made that table the
+    # authority — every form declares the schemas/v2 file its payload validates against —
+    # and the hand-written list this replaces had already drifted away from it: it named
+    # 15 forms where the table declares 19 read-only ones, silently never checking `pz`,
+    # `pc` or `config get` against a real database. A second copy of a mapping does not
+    # stay wrong in an interesting way; it just stops covering things.
+    #
+    # `activity` is excluded and handled separately below, because its argument is an id
+    # that has to come from the data rather than from the table.
+    #
+    # The `mutates == false` filter is a SAFETY property, not a tidiness one, and it is
+    # the reason this recipe is allowed near a real database: the table declares nine
+    # schema-bearing commands that write — init, sync, analyze, import, rate, week add,
+    # complete, skip, config set — and deriving from it makes invoking one impossible by
+    # construction. The hand-written list simply happened not to name them.
+    checked=0
+    rejected=0
+    forms=$(mktemp) || { echo "schema-check: mktemp failed"; exit 4; }
+    trap 'rm -f "$forms"' EXIT
+    STRIDE_FORMAT=json ./stride --help | jq -r '
+        .data.commands[]
+        | select(.mutates == false and .network == false and .interactive == false and .schema != "")
+        | select(.name != "activity")
+        | [.name, .schema, ([.args[] | select(.required) | .name] | join(" "))]
+        | @tsv' > "$forms"
+    # A derivation that yields nothing looks exactly like a suite with nothing to say, so
+    # the count is asserted rather than assumed. The floor is the size of the list this
+    # replaced; it is a floor and not an equality because the table is expected to grow.
+    nforms=$(wc -l < "$forms" | tr -d ' ')
+    # DERIVED expectation, not a literal. A hardcoded floor has slack — 18 forms against a
+    # floor of 15 lets three vanish — and it is bump-bait besides: when it trips it cannot
+    # say which side moved. Asking the table twice and comparing makes the failure name the
+    # direction. It also catches jq truncating mid-stream, which is a live route: a command
+    # entry missing `args` makes jq emit the earlier records and exit 5, and `> "$forms"`
+    # discards that status under a recipe with no `set -e`.
+    want=$(STRIDE_FORMAT=json ./stride --help | jq -r '[.data.commands[] | select(.mutates == false and .network == false and .interactive == false and .schema != "" and .name != "activity")] | length')
+    # NUMERIC check first, and `-lt` is why: on this /bin/sh an empty `nforms` makes
+    # `[ "" -lt 15 ]` print "integer expression expected" and take the ELSE branch — the
+    # guard fails OPEN. Reachable if mktemp ever yields an unwritable path.
+    case "$nforms" in ''|*[!0-9]*) echo "schema-check: could not count the derived forms (got '$nforms')"; exit 4 ;; esac
+    case "$want" in ''|*[!0-9]*) echo "schema-check: could not read the expected form count from the table (got '$want')"; exit 4 ;; esac
+    # TWO guards, two directions, because one of them alone is blind in the other.
+    #
+    # ABSOLUTE, on the TABLE side. `nforms` and `want` come from the SAME predicate over
+    # the same table, so a predicate that collapses moves both together and the equality
+    # below reports 0 == 0 and passes — measured, exit 0, nothing validated. Replacing the
+    # literal floor with the equality alone was a regression that lost exactly the property
+    # the floor was added for. It sits on the TABLE rather than on the derivation now, so
+    # its message can name the cause, and on a quantity that only grows.
+    if [ "$want" -lt 15 ]; then
+        echo "schema-check: the command table declares only $want read-only schema-bearing forms — the selector is broken, not the table"
+        exit 4
+    fi
+    # RELATIVE, on the DERIVATION side. Catches jq truncating mid-stream, which the floor
+    # alone would shrug at: deleting `.args` from one entry gives 16 against 18, and a
+    # floor of 15 passes.
+    if [ "$nforms" -ne "$want" ]; then
+        echo "schema-check: derived $nforms forms but the command table declares $want — the derivation is broken, not the payloads"
+        exit 4
+    fi
+    echo "schema-check: $nforms forms derived from the command table"
+    # Globbing OFF for the loop only: `$req` and `$inv` are unquoted on purpose (a form
+    # name like `config get` has to split into two argv entries), so a future `<file*>`
+    # placeholder would expand against the repo root. Restored after the loop, because the
+    # schema-lint sweep below needs `schemas/v2/*.json` to glob — turning it off globally
+    # broke that, which is how this comment came to exist.
+    set -f
+    while IFS="$(printf '\t')" read -r c schema req; do
+        inv="$c"
+        skipform=""
+        for a in $req; do
+            v=""
+            case "$a" in
+                # an alternation names its own valid values; take the first. This is why
+                # `top` needs no entry below — the table already says what it accepts.
+                *"|"*) v=$(printf '%s' "$a" | tr -d '<>' | cut -d'|' -f1) ;;
+                # everything else needs a value nothing in the table supplies. FAIL rather
+                # than skip on an unknown one: a new required argument must break this
+                # loudly, not quietly drop its form from the check.
+                "<watts>") v=300 ;;
+                "<key>") v=timezone ;;
+                *) skipform="no value known for required argument $a" ;;
+            esac
+            inv="$inv $v"
+        done
+        if [ -n "$skipform" ]; then echo "$c: FAILED ($skipform)"; rc=1; continue; fi
+        out=$(STRIDE_FORMAT=json ./stride $inv </dev/null 2>&1 || true)
+        # THREE outcomes, not two. A command that legitimately has nothing to say (fresh
+        # install, no activities) returns an error ENVELOPE and is skipped. A BROKEN
+        # install is not "legitimately nothing to say" — no_database and friends must fail
+        # (#183 gave them envelopes, which is exactly what made them skippable). And a
+        # rejected INVOCATION is this recipe's own bug, which is the third arm.
         code=$(printf '%s' "$out" | jq -r '.error.code // empty' 2>/dev/null)
+
+        # ALLOWLIST, not denylist. The old hand-written list's arguments were literals a
+        # human had checked; this PR derives them from placeholder TEXT, which
+        # Command.roc's own comment names as the one field the table does not enforce. So
+        # a wrong derived argument is now possible, and under a denylist it came back as
+        # `top metric: skipped (bad_metric)` — indistinguishable from a thin database, with
+        # the recipe exiting 0 having validated nothing. Review reproduced exactly that.
+        #
+        # `usage`, `bad_*` and `unknown_command` mean the INVOCATION was rejected, which is
+        # this recipe's own bug, not a fact about the data. Only the codes that genuinely
+        # mean "nothing to say on this database" skip. The e2e mutation sweep learned the
+        # same lesson and grew a `stalled` check for `usage`; this recipe did not inherit
+        # it, and that is the gap.
         case "$code" in
-            no_database|unreadable_database|corrupt_database|database_error)
-                echo "$inv: FAILED ($code)"; rc=1; continue ;;
+            "") ;;
+            # `not_set` is here UNDER PROTEST, and #254 owns removing it. It cannot tell a
+            # key that is unset from one that does not exist — app.roc emits it from
+            # NotFound and Config.roc keeps no known-key list — so while it is allowlisted,
+            # renaming or retiring `timezone` makes this one form skip silently.
+            #
+            # It stays because taking it out is worse TODAY. `stride init` writes zero
+            # config rows, so on a fresh install every key answers `not_set` and removing
+            # this entry turns `just schema-check` red on a correct, uncorrupted new
+            # database. A checker that cries wolf on a clean install is the mirror of the
+            # hole above: a check nobody trusts is as useless as one that always passes.
+            # The hole needs a FUTURE rename to bite; the breakage bit immediately.
+            #
+            # `irregular_anchor` is here because it is the definition of nothing to say —
+            # its own message ends "nothing to compare it against as a repeated workout".
+            # It was in the rejected arm and that was a LIVE false red, not a latent one:
+            # ReportSessions raises it from the unguarded Ok(a) branch, so a bare `reps`
+            # hits it whenever the most recent session with work segments has blocks
+            # outside 1.6x. Review measured 372 of 389 sessions irregular on the real
+            # database — 95.6% — with only the three most recent rides uniform, which is
+            # the sole reason this recipe was green. It would have exited 1 on essentially
+            # any day between 2026-05-21 and 2026-08-16, and will again after the next
+            # unstructured ride. Intermittent is worse than constant here: a red that comes
+            # and goes teaches the reader to ignore it.
+            #
+            # THREE conditional siblings, all here and all for one reason:
+            # `no_workout_on_date`, `no_intervals_on_date` and `unscorable` have
+            # argument-dependent messages, so each would belong in the rejected arm the day
+            # any form takes a REQUIRED date. Both date-taking forms (`reps`, `progress`)
+            # take it optionally today, so no wrong date can be derived. Named together
+            # because two of them sat in the other arm by accident, and the next person to
+            # notice would have resolved the inconsistency in whichever direction they saw
+            # first.
+            no_activities|no_data|no_power_data|no_cp_fit|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals|no_intervals_on_date|unscorable|irregular_anchor|not_set)
+                echo "$inv: skipped ($code)"; checked=$((checked + 1)); continue ;;
+            # DATA FAULTS — true statements about the DATABASE, not about the invocation,
+            # so they must not get the rejection message below, which says the opposite and
+            # would send the reader hunting for a bug in this recipe while their database is
+            # corrupt. #183's arm plus the unreadable_* family (#206, #247).
+            #
+            # Not skipped, for a reason worth stating: `season`, `summary`, `plan` and
+            # `compare` can ALL raise the #247 date codes, so allowing them to skip would
+            # silently drop four of eighteen forms — 22% of coverage — on exactly the
+            # databases where payload validation matters most. They are also
+            # argument-independent, so failing on them can never be a false accusation
+            # caused by this recipe's own derived filler.
+            no_database|unreadable_database|corrupt_database|database_error|unreadable_config|unreadable_activity_date|unreadable_daily_load_day)
+                echo "$inv: FAILED ($code) — the database holds a value the engine cannot read; no payload was produced"
+                rc=1; rejected=$((rejected + 1)); continue ;;
+            # the ENGINE broke — a third thing, and neither of the two above. The recipe
+            # discards $out, so without echoing it the CLI's own "please open an issue"
+            # text never reaches the reader.
+            internal_error)
+                echo "$inv: FAILED (internal_error) — stride hit an unhandled failure; this is a bug, not the data and not the invocation"
+                printf '%s\n' "$out" | jq -r '.error.message' 2>/dev/null
+                rc=1; rejected=$((rejected + 1)); continue ;;
+            # REJECTED INVOCATIONS, enumerated. This is the recipe's own bug: it derived an
+            # argument the command would not take.
+            usage|unknown_command|bad_count|bad_metric|bad_period|bad_value|bad_watts|derived_key)
+                echo "$inv: FAILED ($code) — the derived invocation was rejected, not the database"; rc=1; rejected=$((rejected + 1)); continue ;;
+            # ...and the TRUE catch-all, which knows nothing and says so. `*)` used to do
+            # two jobs — "genuinely a rejected invocation" and "nobody has classified this
+            # code" — and only the first deserved that message. Conflating them is how
+            # `irregular_anchor` spent this PR telling users their invocation was wrong
+            # about a perfectly healthy database.
+            *)
+                echo "$inv: FAILED ($code) — schema-check has not classified this code; it does not know whether this is the data or the invocation"
+                rc=1; rejected=$((rejected + 1)); continue ;;
         esac
-        if printf '%s' "$out" | jq -e 'has("error")' >/dev/null 2>&1; then
-            echo "$inv: skipped ($(printf '%s' "$out" | jq -r '.error.code'))"
-            continue
-        fi
-        errs=$(printf '%s' "$out" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/$c.json -f tools/validate.jq 2>&1 || true)
+        errs=$(printf '%s' "$out" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/$schema -f tools/validate.jq 2>&1 || true)
+        checked=$((checked + 1))
         if [ -n "$errs" ]; then echo "$inv:"; echo "$errs"; rc=1; else echo "$inv: conforms"; fi
-    done
+    done < "$forms"
+    # ...and reconcile the two counts. Announcing "18 forms derived" before the loop and
+    # never counting executions is how the output can honestly say 18 while validating
+    # zero, which is the shape the HIGH above produced.
+    set +f
+    # rejections counted separately, so this fires only on a genuine drop-out. Lumping
+    # them in made one rejected form print two lines, the second of them wrong about why.
+    if [ "$((checked + rejected))" -ne "$nforms" ]; then
+        echo "schema-check: derived $nforms forms but reached only $((checked + rejected)) — the loop dropped some"
+        rc=1
+    fi
     act=$(STRIDE_FORMAT=json ./stride activities 1 2>&1 | jq -r '.data[0].id // empty' 2>&1 || true)
     if [ -n "$act" ]; then
         errs=$(STRIDE_FORMAT=json ./stride activity "$act" 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/activity.json -f tools/validate.jq 2>&1 || true)
