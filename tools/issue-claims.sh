@@ -42,15 +42,38 @@ REPO="${GH_REPO:-eschizoid/stride}"
 CACHE=$(mktemp); BLOCKS=$(mktemp); trap 'rm -f "$CACHE" "$BLOCKS"' EXIT
 fail=0; checked=0; blocks=0; quoting=0
 # every `issue-claims: quoting` marker in the repo, pinned so a new one is deliberate
+# PLAN.md is listed through `ls` so its ABSENCE is not an error while its PRESENCE is
+# still scanned. AGENTS.md and ADR 0000 both permit a root PLAN.md only on the condition
+# that this tool reads it — that scan is the load-bearing half of the permission, and the
+# self-deletion trigger only ever worked because of it. A literal entry would fail whenever
+# no sequence is in flight; naming nothing at all would leave the permission standing with
+# its enforcement quietly gone.
+#
+# The `||` matters more than it looks. macOS awk ABORTS the rest of its argument list on a
+# missing file rather than skipping it, and this invocation's exit status was discarded, so
+# one absent entry silently truncated the scan — losing every file listed after it. That is
+# how deleting PLAN.md reported "1 quoting markers" instead of 4 and nearly had the expected
+# count "corrected" to a number a broken run produced. It only surfaced at all because the
+# marker-bearing files happened to sit downstream; remove one from the end and the
+# truncation is invisible.
 EXPECTED_QUOTING=4
 
 # one line per comment block: file<TAB>startline<TAB>joined text
+#
+# GUARDED, like the markdown extractor below and for the same reason: macOS awk ABORTS
+# the rest of its argument list on a missing file rather than skipping it. Review measured
+# what that costs here — a missing file placed AFTER `src/*.roc` silently drops the block
+# count from 2085 to 1631, losing all of `tests/*.roc`, 22% of the corpus, while the script
+# still prints "none stale" and exits 0. Placed BEFORE, it happened to be caught, but only
+# because one of four quoting markers lives in src/Render.roc — an accidental tripwire,
+# not a designed one. The guard was added to the markdown block and not this one.
 awk '
   FNR==1 { if (n) { print f"\t"s"\t"t; n=0 } }
   /^[[:space:]]*#/ { if (!n) { f=FILENAME; s=FNR; t="" } n++; l=$0; sub(/^[[:space:]]*#[[:space:]]?/,"",l); t=t" "l; next }
   { if (n) { print f"\t"s"\t"t; n=0 } }
   END { if (n) print f"\t"s"\t"t }
-' src/*.roc tests/*.roc > "$BLOCKS"
+' src/*.roc tests/*.roc > "$BLOCKS" \
+  || { echo "issue-claims: Roc extraction failed — a listed file or glob is missing" >&2; exit 5; }
 
 # Markdown needs its OWN extractor: it has no comment syntax, so the `^#` rule above
 # would key on HEADINGS and slice every document into nonsense. Here a block is a
@@ -84,7 +107,8 @@ awk '
   /^[[:space:]]*$/ { if (n) { print f"\t"s"\t"t; n=0 } next }
   { if (!n) { f=FILENAME; s=FNR; t="" } n++; t=t" "$0 }
   END { if (n) print f"\t"s"\t"t }
-' README.md AGENTS.md PLAN.md docs/*.md docs/adr/*.md .claude/skills/stride/SKILL.md >> "$BLOCKS"
+' README.md AGENTS.md $(ls PLAN.md 2>/dev/null) docs/*.md docs/adr/*.md .claude/skills/stride/SKILL.md >> "$BLOCKS" \
+  || { echo "issue-claims: markdown extraction failed — a listed file is missing" >&2; exit 5; }
 
 while IFS=$'\t' read -r f s txt; do
   blocks=$((blocks + 1))
