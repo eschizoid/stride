@@ -297,6 +297,12 @@ run_command! = |cmd|
         # each call site: several commands load config, and the remedy is identical for
         # all of them -- name the key, echo the stored text (#206).
         Err(UnreadableConfig(key, raw)) => Output.unreadable_config!(key, raw)
+        # A stored date the engine refuses to guess at. Same reasoning as the config arm
+        # above -- converted HERE because three commands walk these two tables (`season`
+        # reaches both, `summary` and `plan` reach daily_load through the ramp anchor),
+        # and the remedy depends on the TABLE rather than on which command met the row.
+        Err(BadActivityDate(raw, id)) => Output.unreadable_activity_date!(raw, id)
+        Err(BadDailyLoadDay(raw)) => Output.unreadable_daily_load_day!(raw)
         Err(SqliteErr(NotADatabase, _)) =>
             Output.err_out!("corrupt_database", "~/.stride/db.sqlite is not a readable SQLite database — restore a backup or re-run `stride init` against a fresh path")
         Err(SqliteErr(code, msg)) =>

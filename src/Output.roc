@@ -180,6 +180,52 @@ Output :: [].{
     unreadable_config_msg = |key, raw|
         "${key} is set to '${raw}', which is not a number — fix it with `stride config set ${key} <value>`"
 
+    # A stored DATE the engine cannot read, from one of the two tables that hold dates:
+    # `activities.start_local`, which stride mirrors from Strava, and `daily_load.day`,
+    # which stride derives itself. Separate codes rather than one, because the remedies
+    # are genuinely different and the boundary's own 401 arm records what flattening two
+    # remedies into one message costs: the mirror row is repaired by re-fetching it, and
+    # the derived row by rebuilding the table. A caller told only "a date is bad" cannot
+    # pick between them.
+    #
+    # These are NOT internal_error. That arm's message asks the user to open an issue,
+    # which is the wrong instruction for both: nothing here is unanticipated — the code
+    # constructs BadActivityDate and BadDailyLoadDay on purpose, at a date it deliberately
+    # refuses to guess at. It just never reached the boundary as itself (#243).
+    unreadable_activity_date_msg : Str, I64 -> Str
+    unreadable_activity_date_msg = |raw, id|
+        "activity ${(id).to_str()} has start_local '${raw}', which is not a readable date — re-fetch it with `stride sync --all`, or delete the row and re-sync"
+
+    unreadable_activity_date! : Str, I64 => Try({}, _)
+    unreadable_activity_date! = |raw, id| {
+        msg = unreadable_activity_date_msg(raw, id)
+        (if json_mode!({})
+            emit_err!("unreadable_activity_date", msg)
+        else
+            Stdout.line!(msg))?
+        Err(Exit(error_status))
+    }
+
+    # `stride analyze`, NOT `stride analyze --all` — that form does not exist and exits
+    # with `usage`, which is the same defect this whole change is about: an error whose
+    # remedy does not work. Measured: plain `analyze` calls rebuild_daily_load!, which
+    # DELETEs the table and rewrites it, so the unreadable day is gone afterwards and
+    # `season` succeeds. Verified end to end against a poisoned snapshot, not read off
+    # the code.
+    unreadable_daily_load_day_msg : Str -> Str
+    unreadable_daily_load_day_msg = |raw|
+        "daily_load holds the day '${raw}', which is not a readable date — rebuild the table with `stride analyze`"
+
+    unreadable_daily_load_day! : Str => Try({}, _)
+    unreadable_daily_load_day! = |raw| {
+        msg = unreadable_daily_load_day_msg(raw)
+        (if json_mode!({})
+            emit_err!("unreadable_daily_load_day", msg)
+        else
+            Stdout.line!(msg))?
+        Err(Exit(error_status))
+    }
+
     unreadable_config! : Str, Str => Try({}, _)
     unreadable_config! = |key, raw| {
         msg = unreadable_config_msg(key, raw)

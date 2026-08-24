@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(692)?
+    checks_ran_exactly!(702)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2380,7 +2380,16 @@ b_seed_analyze! = |ctx| {
     # exit 0; it must refuse loudly, the way summary already does
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES ('not-a-date', 30.0, 5.0, 5.0, 0.0);")
     bad_day = stride!(ctx.bin, ctx.home, ["season"])
+    # `contains "error"` was the whole assertion here, and internal_error satisfies it —
+    # so this check passed for two releases while `season` was answering "unhandled
+    # failure: BadDailyLoadDay(...) — please open an issue" (#243). Asserting the CODE is
+    # the difference between "it refused" and "it refused for the reason it names", and
+    # this is the second time in this file a `contains` accepted the failure it was
+    # written to catch.
     check!("a malformed daily_load day is refused, not absorbed", !(Str.contains(bad_day, "span_weeks")) and Str.contains(bad_day, "error"))?
+    check!("...naming the code, not internal_error", strjq!(ctx, ["season"], ".error.code") == "unreadable_daily_load_day")?
+    check!("...and quoting the unreadable day back", Str.contains(strjq!(ctx, ["season"], ".error.message"), "'not-a-date'"))?
+    check!("...with a remedy that is a real command form", Str.contains(strjq!(ctx, ["season"], ".error.message"), "`stride analyze`"))?
     _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = 'not-a-date';")
     # ...and the SAME rule on the other date-parsing site. Absorbing this one
     # dropped the activity from sessions, polarization AND the threshold range
@@ -2389,6 +2398,9 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (933,40.0,300.0,3600,1);")
     bad_act = stride!(ctx.bin, ctx.home, ["season"])
     check!("a malformed activity date is refused, not absorbed", Str.contains(bad_act, "error") and !(Str.contains(bad_act, "blocks")))?
+    check!("...naming the code, not internal_error", strjq!(ctx, ["season"], ".error.code") == "unreadable_activity_date")?
+    # THE point of the issue: a date is not something a caller can act on. The id is.
+    check!("...and naming the ROW, so a caller can repair or delete it", Str.contains(strjq!(ctx, ["season"], ".error.message"), "activity 933"))?
     # ...and PARSEABLE is not enough. "2026-3-01" parses fine and sorts after
     # every 2026-1x date, so it became ftp_end for its month AND its block and
     # published the threshold running backwards -- at exit 0, which is the
@@ -2397,10 +2409,28 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (934,40.0,111.0,3600,1);")
     unpadded = stride!(ctx.bin, ctx.home, ["season"])
     check!("a non-canonical activity date is refused too", Str.contains(unpadded, "error") and !(Str.contains(unpadded, "blocks")))?
+    check!("...with the same code as the unparseable one", strjq!(ctx, ["season"], ".error.code") == "unreadable_activity_date")?
+    # 934, not 933, and that is the assertion: both bad rows are in the table here, and
+    # "2026-3-01" sorts before "garbage-da", so the row named must be the one the walk
+    # actually met first. Naming a row that is merely bad, rather than the one that
+    # stopped the run, sends the user to repair the wrong activity.
+    check!("...naming the row the walk met FIRST, not merely a bad one", Str.contains(strjq!(ctx, ["season"], ".error.message"), "activity 934"))?
+    # ...and when the refused date is shared, the LOWEST id. The query groups by (date,
+    # family), so one bad date can hold several rows and `example_id` has to choose. MIN
+    # rather than any is what makes the answer reproducible — a bug report that quotes a
+    # different id on every run is not a bug report. Nothing pinned this until now: with
+    # one row per group MIN, MAX and "whichever" are the same value, so the choice was
+    # asserted only by the comment claiming it.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (932,'same bad day','Ride','Ride','2026-3-01T06:00:00Z',3600);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (932,40.0,111.0,3600,1);")
+    check!("...and the LOWEST id when one bad date groups several rows", Str.contains(strjq!(ctx, ["season"], ".error.message"), "activity 932"))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 932; DELETE FROM activities WHERE id = 932;")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 934; DELETE FROM activities WHERE id = 934;")
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day,tss,ctl,atl,tsb) VALUES ('2026-3-05', 30.0, 5.0, 5.0, 0.0);")
     unpadded_day = stride!(ctx.bin, ctx.home, ["season"])
     check!("a non-canonical daily_load day is refused too", Str.contains(unpadded_day, "error") and !(Str.contains(unpadded_day, "span_weeks")))?
+    check!("...with the daily_load code, not the activity one", strjq!(ctx, ["season"], ".error.code") == "unreadable_daily_load_day")?
+    check!("...quoting the day it refused", Str.contains(strjq!(ctx, ["season"], ".error.message"), "'2026-3-05'"))?
     _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = '2026-3-05';")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 933; DELETE FROM activities WHERE id = 933;")
     # A CONTROLLED block, because the fixture's own data does not discriminate:

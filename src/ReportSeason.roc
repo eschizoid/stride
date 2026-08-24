@@ -120,7 +120,14 @@ ReportSeason :: [].{
                     \\       CAST(COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_moderate_s ELSE m.z3_s END), 0) AS REAL) AS mod_s,
                     \\       CAST(COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END), 0) AS REAL) AS hard_s,
                     \\       CAST(COALESCE(MIN(NULLIF(m.ftp_used, 0)), 0) AS REAL) AS ftp_lo,
-                    \\       CAST(COALESCE(MAX(m.ftp_used), 0) AS REAL) AS ftp_hi
+                    \\       CAST(COALESCE(MAX(m.ftp_used), 0) AS REAL) AS ftp_hi,
+                    \\       -- an id from the group, carried ONLY so a refused date can name a row
+                    \\       -- the user can act on. The envelope used to carry the date alone, and a
+                    \\       -- date is not something you can delete or re-fetch (#243). MIN rather
+                    \\       -- than any: an unreadable date groups every row that shares it, so the
+                    \\       -- group can hold more than one — naming the lowest id is deterministic,
+                    \\       -- which a test can pin and a bug report can quote.
+                    \\       MIN(a.id) AS example_id
                     \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                     \\GROUP BY date, fam ORDER BY date
                 ,
@@ -134,6 +141,7 @@ ReportSeason :: [].{
                     hard_s = Sqlite.f64("hard_s")(cols)(stmt)?
                     ftp_lo = Sqlite.f64("ftp_lo")(cols)(stmt)?
                     ftp_hi = Sqlite.f64("ftp_hi")(cols)(stmt)?
+                    example_id = Sqlite.i64("example_id")(cols)(stmt)?
                     # Same rule as daily_load.day: absorbing this silently drops
                     # the activity from sessions, polarization AND the threshold
                     # range with no trace at exit 0. And a merely-PARSEABLE date
@@ -142,9 +150,9 @@ ReportSeason :: [].{
                     # threshold running backwards.
                     days =
                         if Metrics.is_canonical_date(d) {
-                            (Metrics.date_str_to_days(d)).map_err(|_| BadActivityDate(d))?
+                            (Metrics.date_str_to_days(d)).map_err(|_| BadActivityDate(d, example_id))?
                         } else {
-                            Err(BadActivityDate(d))?
+                            Err(BadActivityDate(d, example_id))?
                         }
                     Ok({ days, fam, n, easy_s, mod_s, hard_s, ftp_lo, ftp_hi })
                 },
