@@ -260,7 +260,34 @@ Command := [
 		## the file under schemas/v2 its success payload validates against, "" when the
 		## command has no machine payload of its own.
 		schema : Str,
+		## error codes THIS FORM can return, on top of `universal_error_codes` below.
+		## The pair matters: an agent deciding whether a failure is worth retrying needs
+		## to tell "this database is unreadable" (universal, retrying will not help) from
+		## "no power data in the window" (specific to this form and this data).
+		##
+		## Two tiers rather than one list per form because most of the codes raised in
+		## app.roc are boundary codes that ANY form can hit — nineteen copies of
+		## `no_database` would be a drift surface with no information in it, which is the
+		## trap #219 named when it left this bullet undone.
+		##
+		## NOT claimed to be exhaustive, and the schema says so in those words. What IS
+		## mechanically true is stated by the two checks in the e2e suite: every code
+		## declared here exists in the envelope contract, and every code in the envelope
+		## contract is declared by some form or listed as unattributable. The second is the
+		## one that matters — it makes adding a code without attributing it fail, which is
+		## the direction a hand-maintained list normally rots in.
+		error_codes : List(Str),
 	}
+
+	## Codes any form can return, so no form declares them. The database ones are raised
+	## at app.roc's boundary and reachable from every command that opens the db; `usage` is
+	## reachable from every form, including argument-less ones, by passing an extra word.
+	##
+	## `unknown_command` is deliberately NOT here and NOT on any form: it is what you get
+	## when there is no form, so attributing it to one would be false. It is listed as
+	## unattributable in the e2e completeness check, with that reason.
+	universal_error_codes : List(Str)
+	universal_error_codes = ["corrupt_database", "database_error", "internal_error", "no_database", "unreadable_database", "usage"]
 
 	verb_of : Str -> Str
 	verb_of = |name| (List.first(Str.split_on(name, " "))).ok_or(name)
@@ -274,54 +301,59 @@ Command := [
 	## read-only, offline, non-interactive — the shape most commands have, so the table
 	## below states only the exceptions and each exception is visible at a glance.
 	reads : Str, List(Arg), Str -> Spec
-	reads = |name, args, schema| { name, args, mutates: False, network: False, interactive: False, schema }
+	reads = |name, args, schema| { name, args, mutates: False, network: False, interactive: False, schema, error_codes: [] }
 
 	writes : Str, List(Arg), Str -> Spec
 	writes = |name, args, schema| { ..reads(name, args, schema), mutates: True }
 
+	## reads/writes with form-specific error codes. A separate constructor rather than a
+	## sixth positional argument, so the forms that have none stay one line.
+	errs : Spec, List(Str) -> Spec
+	errs = |spec, codes| { ..spec, error_codes: codes }
+
 	specs : List(Spec)
 	specs = [
 		writes("init", [], "init.json"),
-		{ ..writes("auth", [], ""), network: True, interactive: True },
-		{ ..writes("sync", [opt("--all")], "sync.json"), network: True },
-		writes("analyze", [], "analyze.json"),
-		writes("import", [req("<export.zip|dir>")], "import.json"),
-		writes("rate", [req("<activity_id|latest>"), req("<1-10>")], "rate.json"),
-		writes("week add", [req("<YYYY-MM-DD>"), req("<type>"), req("<detail>"), req("<rationale>")], "week_add.json"),
-		writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"),
-		writes("skip", [req("<session_id>"), req("<reason>"), opt("<activity_id|none>")], "skip.json"),
-		writes("config set", [req("<key>"), req("<value>")], "config.json"),
-		reads("summary", [], "summary.json"),
-		reads("plan", [], "plan.json"),
+		errs({ ..writes("auth", [], ""), network: True, interactive: True }, ["missing_client_creds", "network_unreachable", "not_authenticated", "rate_limited", "stdin_closed", "strava_error"]),
+		errs({ ..writes("sync", [opt("--all")], "sync.json"), network: True }, ["network_unreachable", "not_authenticated", "rate_limited", "strava_error", "unreadable_config"]),
+		errs(writes("analyze", [], "analyze.json"), ["missing_config", "unreadable_activity_date", "unreadable_config"]),
+		errs(writes("import", [req("<export.zip|dir>")], "import.json"), ["empty_csv", "no_activities_csv", "unzip_failed"]),
+		errs(writes("rate", [req("<activity_id|latest>"), req("<1-10>")], "rate.json"), ["activity_not_found", "bad_id", "bad_rpe", "no_activities", "unreadable_activity_date"]),
+		errs(writes("week add", [req("<YYYY-MM-DD>"), req("<type>"), req("<detail>"), req("<rationale>")], "week_add.json"), ["bad_date"]),
+		errs(writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"), ["activity_already_linked", "activity_not_found", "activity_required", "bad_id", "session_not_found"]),
+		errs(writes("skip", [req("<session_id>"), req("<reason>"), opt("<activity_id|none>")], "skip.json"), ["activity_already_linked", "activity_not_found", "bad_id", "session_done", "session_not_found"]),
+		errs(writes("config set", [req("<key>"), req("<value>")], "config.json"), ["bad_value", "derived_key"]),
+		errs(reads("summary", [], "summary.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
+		errs(reads("plan", [], "plan.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
 		reads("stats", [], "stats.json"),
 		reads("doctor", [], "doctor.json"),
-		reads("zones", [], "zones.json"),
-		reads("pz", [], "zones.json"),
-		reads("compare", [opt("<week|month>")], "compare.json"),
-		reads("activities", [opt("<limit>"), opt("<sport>")], "activities.json"),
-		reads("activity", [req("<activity_id>")], "activity.json"),
+		errs(reads("zones", [], "zones.json"), ["no_power_data"]),
+		errs(reads("pz", [], "zones.json"), ["no_power_data"]),
+		errs(reads("compare", [opt("<week|month>")], "compare.json"), ["bad_period", "no_data", "unreadable_daily_load_day"]),
+		errs(reads("activities", [opt("<limit>"), opt("<sport>")], "activities.json"), ["bad_count"]),
+		errs(reads("activity", [req("<activity_id>")], "activity.json"), ["activity_not_found"]),
 		## the metric set is CLOSED, so it is spelled out. A caller reading only this
 		## payload cannot guess it, and it is the one required argument here whose
 		## wrong value costs a round trip (`bad_metric`).
-		reads("top", [req("<hr|tss|power|intensity|distance|time|output>"), opt("<limit>"), opt("<sport>")], "top.json"),
+		errs(reads("top", [req("<hr|tss|power|intensity|distance|time|output>"), opt("<limit>"), opt("<sport>")], "top.json"), ["bad_count", "bad_metric"]),
 		## DAYS of lookback, not a row count — `power-curve` returns a fixed set of
 		## points regardless, so `<n>` beside `activities`' `<n>` left two identical
 		## shapes meaning different things.
-		reads("load", [opt("<days>")], "load.json"),
-		reads("power-curve", [opt("<days>"), opt("<sport>")], "power_curve.json"),
-		reads("pc", [opt("<days>"), opt("<sport>")], "power_curve.json"),
+		errs(reads("load", [opt("<days>")], "load.json"), ["bad_count"]),
+		errs(reads("power-curve", [opt("<days>"), opt("<sport>")], "power_curve.json"), ["bad_count"]),
+		errs(reads("pc", [opt("<days>"), opt("<sport>")], "power_curve.json"), ["bad_count"]),
 		## A DATE, not a workout name. The parse arm BOUND this to a variable called
 		## `name` until this commit renamed it, and that binder is where an earlier draft
 		## of this table got `<name>` from — the
 		## handler queries `substr(a.start_local,1,10) = :date` and answers
 		## `no_workout_on_date`. Every other document in the repo says `[date]`; only
 		## this table said otherwise, and this table is the one an agent reads.
-		reads("progress", [opt("<YYYY-MM-DD>"), opt("<asc|desc>")], "progress.json"),
-		reads("tte", [req("<watts>")], "tte.json"),
-		reads("reps", [opt("<YYYY-MM-DD>")], "reps.json"),
-		reads("season", [], "season.json"),
+		errs(reads("progress", [opt("<YYYY-MM-DD>"), opt("<asc|desc>")], "progress.json"), ["no_scorable_workouts", "no_workout_on_date", "unscorable"]),
+		errs(reads("tte", [req("<watts>")], "tte.json"), ["bad_watts", "no_cp_fit"]),
+		errs(reads("reps", [opt("<YYYY-MM-DD>")], "reps.json"), ["irregular_anchor", "no_detected_intervals", "no_intervals_on_date"]),
+		errs(reads("season", [], "season.json"), ["no_activities", "unreadable_activity_date", "unreadable_daily_load_day"]),
 		reads("week", [opt("all")], "week.json"),
-		reads("config get", [req("<key>")], "config.json"),
+		errs(reads("config get", [req("<key>")], "config.json"), ["derived_key", "not_set"]),
 		reads("--version", [], "version.json"),
 		reads("--help", [], "commands.json"),
 		reads("-h", [], "commands.json"),

@@ -212,6 +212,12 @@ main! = |raw_args| {
                         Output.emit_ok!({
                             commands: List.keep_if(Command.specs, |s| !(Str.starts_with(s.name, "-")) and s.name != "help"),
                             flags: ["--json", "--human", "--help", "-h", "--version", "--all", "--"],
+                            # once, not on all nineteen forms. A caller's effective set for
+                            # a form is this list PLUS that form's `error_codes` — the split
+                            # is the information: a database that will not open is not worth
+                            # retrying, and `no_power_data` on `tte` says something about the
+                            # data rather than the machine.
+                            universal_error_codes: Command.universal_error_codes,
                         })
                     } else {
                         Stdout.line!(help_text)
