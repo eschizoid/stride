@@ -176,16 +176,7 @@ Analyze :: [].{
         }
     # canonical AND parseable. Both halves, for the reason spelled out at the fold above:
     # the parse alone accepts "2026-3-05T", and this module WRITES the result.
-    usable_day : Str -> Bool
-    usable_day = |d|
-        if Metrics.is_canonical_date(d) {
-            match Metrics.date_str_to_days(d) {
-                Ok(_) => True
-                Err(_) => False
-            }
-        } else {
-            False
-        }
+
 
     ActivityRow : {
         id : I64,
@@ -975,13 +966,9 @@ Analyze :: [].{
             # makes the run refuse over data it did use. They agreed only because both were
             # typed correctly, and nothing held them together.
             |dict, r|
-                if usable_day(r.day) {
-                    match Metrics.date_str_to_days(r.day) {
-                        Ok(d) => Dict.insert(dict, d, r.t)
-                        Err(_) => dict,
-                    }
-                } else {
-                    dict
+                match Metrics.usable_date_days(r.day) {
+                    Ok(d) => Dict.insert(dict, d, r.t)
+                    Err(_) => dict,
                 }
         )
         # Every row this fold could NOT use, kept rather than discarded. Dropping one
@@ -992,7 +979,7 @@ Analyze :: [].{
         # The walk still runs and still writes what it could read, because a correct
         # partial series beats no series; then the run refuses, naming the row, so the
         # incompleteness is stated rather than left for `season` to discover.
-        unusable = List.keep_if(day_rows, |r| !(usable_day(r.day)))
+        unusable = List.keep_if(day_rows, |r| !(Metrics.is_usable_date(r.day)))
         valid_days = Dict.keys(by_day)
         walked = match List.first(valid_days) {
             # Nothing to walk. TWO different facts arrive here and they need different

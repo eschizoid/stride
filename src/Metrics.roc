@@ -1798,6 +1798,38 @@ Metrics :: [].{
     # never learns their date moved), while an unpadded 2026-8-5 sorts after every
     # 2026-1x-xx date and lands in the wrong week. The year bound holds the string at
     # ten characters, since a 3-digit year would sort after every 2xxx one.
+    # Canonical AND parseable — the one predicate every stored-date guard in the codebase
+    # needs, in the module where both halves already live. It exists because there were
+    # five independent spellings of it (two in Report, two in ReportSeason, one in
+    # Analyze), and every time this class of bug reopened it was because two sites
+    # implemented one rule and only one got updated. What legitimately VARIES between the
+    # sites is the error TAG — an activity date is repaired by deleting or re-fetching a
+    # row, a daily_load day by rebuilding the table — so the rule is factored here and the
+    # tag stays a local decision at each call site.
+    #
+    # Both halves matter, and the parse alone is the weaker one: `date_str_to_days`
+    # accepts "2026-3-05", and the non-canonical day is the DANGEROUS case rather than the
+    # harmless one, because date columns are compared and sorted as strings in SQL.
+    # Returns the DAY, not a Bool, so a caller never parses twice. The Bool form below is
+    # defined in terms of it for the two sites that genuinely only need a predicate; every
+    # site that goes on to use the value takes this one, and none of them ends up with a
+    # second parse whose failure arm is unreachable — which is a silent-drop arm sitting in
+    # code, waiting for the predicate to be weakened.
+    usable_date_days : Str -> Try(I64, _)
+    usable_date_days = |s|
+        if is_canonical_date(s) {
+            date_str_to_days(s)
+        } else {
+            Err(BadDate)
+        }
+
+    is_usable_date : Str -> Bool
+    is_usable_date = |s|
+        match usable_date_days(s) {
+            Ok(_) => True
+            Err(_) => False
+        }
+
     is_canonical_date : Str -> Bool
     is_canonical_date = |s|
         match date_str_to_days(s) {

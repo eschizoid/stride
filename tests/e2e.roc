@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(725)?
+    checks_ran_exactly!(727)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2491,7 +2491,7 @@ b_seed_analyze! = |ctx| {
     # class and the last one in Report.roc. It read activity dates with `keep_oks`, which
     # dropped an unparseable date silently AND accepted a non-canonical one, so the fold
     # both under-counted and mis-dated. Review measured one poisoned hard session:
-    # hard_sessions.d14 fell 1 -> 0 and days_since_last rose 3 -> 172 with
+    # hard_days.d14 fell 1 -> 0 and days_since_last rose 3 -> 172 with
     # days_since_known still TRUE — a fabricated number carrying a flag that certifies it,
     # and 172 days versus 3 is "badly overdue for intensity" versus "recovering".
     # pi_hard_s, not pi_easy_s: the row has to qualify as HARD or the fold never sees it.
@@ -2516,6 +2516,23 @@ b_seed_analyze! = |ctx| {
     an_hard = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>/dev/null")
     check!("a non-canonical date on a HARD session refuses in summary rather than skewing its stats", Str.contains(an_hard, "unreadable_activity_date"))?
     check!("...naming that row, not just the date", Str.contains(an_hard, "activity 804"))?
+    # ...and the two string MAXes that have no parse to guard. Both publish into fields the
+    # schema calls dates and both were measured shipping malformed values at exit 0.
+    # `last_hard_session_date` is ALL-TIME, so the 28-day fold above cannot see the row:
+    # one malformed hard session older than the window, with none inside it, is an athlete
+    # on a rest block. `sports_28d.last_date` needs no hard_expr at all, so any poisoned
+    # activity sorting above the cutoff becomes its sport's "last seen".
+    _ = sql!(an_db, "DELETE FROM activity_metrics WHERE activity_id = 804; DELETE FROM activities WHERE id = 804;")
+    _ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (810,'old hard','Ride','Ride','0000-0z-02T10:00:00Z',3600);")
+    _ = sql!(an_db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_hard_s,metrics_rev) VALUES (810,40.0,111.0,3600,1);")
+    an_old = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>/dev/null")
+    check!("an unreadable hard session OUTSIDE the 28-day window is refused too, not published as last_hard_session_date", Str.contains(an_old, "unreadable_activity_date") and Str.contains(an_old, "activity 810"))?
+    _ = sql!(an_db, "DELETE FROM activity_metrics WHERE activity_id = 810; DELETE FROM activities WHERE id = 810;")
+    _ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (811,'easy run','Run','Run','${hard_bad}T10:00:00Z',3600);")
+    _ = sql!(an_db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (811,40.0,111.0,3600,1);")
+    an_soft = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>/dev/null")
+    check!("...and a NON-hard unreadable activity too, rather than becoming its sport's last_date", Str.contains(an_soft, "unreadable_activity_date") and Str.contains(an_soft, "activity 811"))?
+    _ = sql!(an_db, "DELETE FROM activity_metrics WHERE activity_id = 811; DELETE FROM activities WHERE id = 811;")
     _ = sql!(an_db, "DELETE FROM activity_metrics WHERE activity_id = 804; DELETE FROM activities WHERE id = 804;")
     _ = sh!("rm -rf '${an_home}'")
     _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = 'not-a-date';")

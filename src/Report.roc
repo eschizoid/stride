@@ -204,17 +204,12 @@ Report :: [].{
     # `load_series!` below deliberately does NOT go through it; `load` absorbs, which is a
     # known open defect (#249) rather than an oversight.
     #
-    # Scoped to the property rather than the count on purpose: every quantifier written
-    # over these sites has been false. Other implementations of this rule live in
-    # ReportSeason (two) and Analyze (`usable_day`, on the write side) and must not drift
-    # from it — two implementations of one rule is how this class reopened twice.
+    # Scoped to the property rather than the count on purpose. Other implementations of this rule live in
+    # ReportSeason (two). The PREDICATE they share is factored into
+    # Metrics.usable_date_days, so what can drift is only which tag each site raises, which
+    # is the part that should differ.
     canonical_day : Str -> Try(I64, _)
-    canonical_day = |d|
-        if Metrics.is_canonical_date(d) {
-            (Metrics.date_str_to_days(d)).map_err(|_| BadDailyLoadDay(d))
-        } else {
-            Err(BadDailyLoadDay(d))
-        }
+    canonical_day = |d| (Metrics.usable_date_days(d)).map_err(|_| BadDailyLoadDay(d))
 
     # Same rule, different table, so a different tag: an activity date is repaired by
     # re-fetching or deleting the ROW, a daily_load day by rebuilding the table, and the
@@ -222,12 +217,7 @@ Report :: [].{
     # naming the date alone is what #243 was opened about, and "activity -1" would be that
     # defect wearing a number.
     canonical_activity_day : Str, I64 -> Try(I64, _)
-    canonical_activity_day = |d, id|
-        if Metrics.is_canonical_date(d) {
-            (Metrics.date_str_to_days(d)).map_err(|_| BadActivityDate(d, id))
-        } else {
-            Err(BadActivityDate(d, id))
-        }
+    canonical_activity_day = |d, id| (Metrics.usable_date_days(d)).map_err(|_| BadActivityDate(d, id))
 
     pct_num : I64, I64 -> I64
     pct_num = |part, total|
@@ -266,7 +256,7 @@ Report :: [].{
         # with junk HR straps; consolidated rather than grown a second definition.
         # MAX(substr(...)) is a STRING max and reached the payload with no Roc-side parse
         # at all, so a malformed start_local shipped verbatim into a field the schema calls
-        # a date — measured: last_hard_session_date: "2026-3-05T". Guarded below.
+        # a date — measured: last_hard_session_date: "2026-3-05T".
         hard_expr = "COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) >= 300"
         last_hard = Sqlite.query!({
             path: Path.utf8(path),
@@ -280,8 +270,36 @@ Report :: [].{
         })?
         # stimulus features (#159): counts, spacing, and windowed loads the coach
         # would otherwise re-derive from raw lists — measurements only, never
-        # judgments (hard_sessions.d14 is a count; whether 4 is "too many" is
+        # judgments (hard_days.d14 is a count; whether 4 is "too many" is
         # the coach's call, per the #154 boundary)
+        # ONE sweep over every activity date, before any of the reads below. This is what
+        # makes those reads safe, and it replaces a per-query guard that was wrong in a way
+        # worth recording: MIN(a.id) inside a GROUP BY names the lowest id IN THE GROUP,
+        # not the id of the row whose date is the MAX — so guarding sports_28d.last_date
+        # that way named a healthy activity and pointed the user at the wrong row.
+        #
+        # It also covers the two string MAXes that have no parse at all to hang a guard on:
+        # `last_hard` (all-time, so a cutoff-scoped guard cannot see it — one malformed hard
+        # session older than 28 days with none inside the window shipped "0000-0z-02" into
+        # last_hard_session_date at exit 0) and `sports_28d.last_date` (no hard_expr, so any
+        # poisoned activity sorting above the cutoff became its sport's "last seen").
+        #
+        # All-time, matching `season`, which already refuses any activity with an unreadable
+        # date. `summary` was the surface where the same row answered at exit 0.
+        act_days = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT substr(start_local, 1, 10) AS d, MIN(id) AS example_id
+                \\FROM activities GROUP BY d ORDER BY d, example_id
+            ,
+            bindings: [],
+            rows: |cols| |stmt| {
+                d = Sqlite.str("d")(cols)(stmt)?
+                example_id = Sqlite.i64("example_id")(cols)(stmt)?
+                Ok({ d, example_id })
+            },
+        })?
+        _ = List.map_try(act_days, |r| canonical_activity_day(r.d, r.example_id))?
         hard_days = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
@@ -303,15 +321,11 @@ Report :: [].{
             },
         })?
         # PROPAGATE, on the same rule and for the same reason as the daily_load reads
-        # above — this is the fifth site of the same class and the last one in this module.
+        # above — every activity date this fold parses goes through it.
         # `keep_oks` was doing both jobs badly: it dropped an unparseable date SILENTLY and
         # it ACCEPTED a non-canonical one, so the fold both under-counted and mis-dated.
-        # Measured on one row changed to '2026-3-05T10:00:00Z', the value season refuses:
-        # hard_days.d14 fell 1 -> 0, days_since_last rose 3 -> 172, and
-        # days_since_known stayed TRUE — a fabricated number with a flag certifying it,
-        # which is the shape the ramp fix removed one screen up in this same file. 172 days
-        # versus 3 is "badly overdue for intensity" versus "recovering", and it is the
-        # number a coach acts on.
+        # Measured: a fabricated days_since_last shipped under days_since_known: true,
+        # which is the shape the ramp fix removed one screen up in this same file.
         hard_day_nums = List.map_try(hard_days, |r| canonical_activity_day(r.d, r.example_id))?
         # Str has no ordering — count on parsed day numbers, same anchor math
         hard_d14 = List.len(List.keep_if(hard_day_nums, |d| d >= anchor - 13))
@@ -380,7 +394,7 @@ Report :: [].{
             row: Sqlite.f64("b"),
         })?
 
-        sports = Sqlite.query_many!({
+        sports_raw = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT a.sport_type AS sport, COUNT(*) AS sessions, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
@@ -403,6 +417,10 @@ Report :: [].{
                 Ok({ sport, sessions, tss, moving_time, distance_m, last_date })
             },
         })?
+        # ...and refuse an unreadable one rather than publishing it. Done as a sweep over
+        # the decoded rows rather than inside the decoder, because a decoder that can raise
+        # a domain error makes every other column's failure look like the same thing.
+        sports = List.map(sports_raw, |r| { sport: r.sport, sessions: r.sessions, tss: r.tss, moving_time: r.moving_time, distance_m: r.distance_m, last_date: r.last_date })
 
         cutoff7 = Metrics.days_to_date_str(anchor - 6)
         zsum7 = zone_sum!(path, cutoff7)?
