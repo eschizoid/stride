@@ -182,10 +182,16 @@ Output :: [].{
 
     # A stored DATE the engine cannot read, from the two tables these two errors are
     # raised for: `activities.start_local`, which stride mirrors from Strava, and
-    # `daily_load.day`, which stride derives itself. NOT the only date columns in the
-    # schema — `planned_sessions.target_date` is a third, and the one a user can poison
-    # without touching SQLite, since `week add` stores whatever string it is handed. It
-    # has no code here because nothing raises a tag for it yet; see Plan.roc's own note.
+    # `daily_load.day`, which stride derives itself. There is a third date column,
+    # `planned_sessions.target_date`, and it needs no code here for a good reason rather
+    # than an accident: `plan_add!` rejects a non-canonical date with `bad_date` before
+    # the database is opened, and it is the only writer of that column. It is the
+    # best-guarded date in the schema.
+    #
+    # An earlier version of this comment said the opposite — that `week add` "stores
+    # whatever string it is handed" — and cited Plan.roc's own note as evidence. That note
+    # has been false since the day the guard landed beside it, and citing it is prose
+    # sourced from prose, which is the mechanism #243 came from in the first place.
     #
     # Separate codes rather than one, because the remedies are genuinely different: the
     # mirror row is repaired by re-fetching it, the derived row by rebuilding the table.
@@ -204,14 +210,19 @@ Output :: [].{
     # fixtures: '2026-3-01T06:00:00Z' printed as '2026-3-01T'. Carrying the whole column
     # out of the query was the other option and it is not available — SQLite's bare-column
     # rule only pins a value to the min/max row when there is ONE min/max aggregate, and
-    # this query has three.
+    # this query has three. Not available FROM THIS QUERY, to be exact — a second read by
+    # `example_id` would return the true column. That is a round trip and a second failure
+    # mode for a string the user does not need: the id is the handle they act on.
     #
     # The ID is therefore the only handle that works, so the remedy leads with it. The
     # order of the two remedies is not cosmetic either: `sync --all` was measured to
     # SILENTLY no-op on a row Strava does not list — an imported one, where `synced_at` is
-    # NULL — returning `updated_activities: 0` at exit 0 and leaving the same error. An
-    # error whose first suggestion reports success while changing nothing is the defect
-    # this whole change exists to remove.
+    # NULL — returning `updated_activities: 0` at exit 0 and leaving the same error. The
+    # cause is that Strava's listing does not contain the id, and the upsert is keyed on
+    # ids from the response; `synced_at` is why PRUNE exempts the row, which is a separate
+    # mechanism. Stamping imports would therefore change nothing. An error whose first
+    # suggestion reports success while changing nothing is the defect this whole change
+    # exists to remove.
     unreadable_activity_date_msg : Str, I64 -> Str
     unreadable_activity_date_msg = |raw, id|
         "activity ${(id).to_str()} has an unreadable start_local beginning '${raw}' — delete that row by id and re-sync, or run `stride sync --all` if Strava still lists the activity"

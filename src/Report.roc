@@ -145,15 +145,17 @@ Report :: [].{
                 Err(NoRowsReturned) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
                 Err(e) => Err(e)
                 Ok(latest_day) => {
-                    # PROPAGATE, exactly as summary_payload! does 140 lines below with the
-                    # identical read. Collapsing to epoch day 0 here does not fail loudly —
-                    # it answers. Measured on one poisoned row: a real 28-day block (138
+                    # PROPAGATE, through the same helper summary_payload! uses on the same
+                    # anchor 130 lines below. (Same anchor semantics, NOT the same
+                    # statement — that one selects day, ctl, atl and tsb.) Collapsing to
+                    # epoch day 0 here does not fail loudly — it answers. Measured on one
+                    # poisoned row: a real 28-day block (138
                     # TSS, 2 sessions, 58% easy) came back as `has_data: false`, every
                     # figure 0, exit 0, and the human line said "no load recorded either 28d
                     # · fitness holding". `summary` refused on the same database in the same
                     # run. An athlete told their fitness is holding, by a command that could
                     # not read the day it anchored on, is the worst shape this class has.
-                    anchor = (Metrics.date_str_to_days(latest_day)).map_err(|_| BadDailyLoadDay(latest_day))?
+                    anchor = canonical_day(latest_day)?
                     cur_from = Metrics.days_to_date_str(anchor - (days - 1))
                     cur_to = Metrics.days_to_date_str(anchor + 1)
                     pri_from = Metrics.days_to_date_str(anchor - (2 * days - 1))
@@ -190,6 +192,25 @@ Report :: [].{
         })?
         Ok(n > 0)
     }
+    # The anchor guard, in ONE place because three commands share one hazard and two of
+    # them had only half of it. `date_str_to_days` alone accepts "2026-3-05" — and a
+    # non-canonical day is the DANGEROUS one, not the harmless one: `ORDER BY day DESC` is
+    # a string sort, so "2026-3-05" beats every "2026-08-xx" and becomes `latest`. Measured
+    # on a two-row table before this: `summary` reported as_of 2026-3-05, `compare`
+    # published an all-zero 28-day window at exit 0, and only `season` refused — because
+    # season was the one site testing is_canonical_date as well.
+    #
+    # A previous commit here fixed the `compare` half with the parse check alone and the
+    # comment on it said "every command that anchors on that day refuses it". It did not.
+    # Half the class stayed open, in the sentence that declared it closed.
+    canonical_day : Str -> Try(I64, _)
+    canonical_day = |d|
+        if Metrics.is_canonical_date(d) {
+            (Metrics.date_str_to_days(d)).map_err(|_| BadDailyLoadDay(d))
+        } else {
+            Err(BadDailyLoadDay(d))
+        }
+
     pct_num : I64, I64 -> I64
     pct_num = |part, total|
         if total == 0
@@ -297,7 +318,7 @@ Report :: [].{
         # cutoffs in the far future (every window returns nothing, and summary prints a
         # confident all-zero report) or in 1969 (every "last 28 days" window silently
         # becomes all-time). Both exit 0 with nothing flagged.
-        anchor = (Metrics.date_str_to_days(latest.day)).map_err(|_| BadDailyLoadDay(latest.day))?
+        anchor = canonical_day(latest.day)?
         # Inclusive >= cutoffs: today plus 27/59 prior days are true 28/60-day windows.
         cutoff28 = Metrics.days_to_date_str(anchor - 27)
         cutoff60 = Metrics.days_to_date_str(anchor - 59)

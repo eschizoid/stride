@@ -917,16 +917,22 @@ Analyze :: [].{
         day_rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT substr(a.start_local, 1, 10) AS day, SUM(m.tss) AS t
+                \\SELECT substr(a.start_local, 1, 10) AS day, SUM(m.tss) AS t,
+                \\       -- carried ONLY so an unreadable day can name a row the user can
+                \\       -- act on, on the branch below where no day parses at all. Same
+                \\       -- reasoning as ReportSeason's example_id (#243): a date is not
+                \\       -- something you can delete or re-fetch, an id is.
+                \\       MIN(m.activity_id) AS example_id
                 \\FROM activity_metrics m
                 \\JOIN activities a ON a.id = m.activity_id
-                \\GROUP BY day ORDER BY day
+                \\GROUP BY day ORDER BY day, example_id
             ,
             bindings: [],
             rows: |cols| |stmt| {
                 day = Sqlite.str("day")(cols)(stmt)?
                 t = Sqlite.f64("t")(cols)(stmt)?
-                Ok({ day, t })
+                example_id = Sqlite.i64("example_id")(cols)(stmt)?
+                Ok({ day, t, example_id })
             },
         })?
         # keep only rows whose date parses. Deriving the walk bounds from these VALID
@@ -943,16 +949,31 @@ Analyze :: [].{
         )
         valid_days = Dict.keys(by_day)
         match List.first(valid_days) {
-            # No parseable day means the derived table should be EMPTY, not left as it was.
-            # Returning Ok({}) here without clearing made `stride analyze` a no-op that
-            # reports `converged: true` at exit 0 while an unreadable row survives in
-            # daily_load — and that row is what `summary`, `season`, `plan` and `compare`
-            # refuse on, each naming `stride analyze` as the remedy. Review measured the
-            # loop: analyze, exit 0, converged; season, same error, verbatim; forever.
-            # The other branch DELETEs unconditionally, so this is the same rule applied
-            # to the case where the walk has nothing to write, not a new behaviour.
-            # (Fresh database: the DELETE hits an empty table and costs nothing.)
-            Err(_) => Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM daily_load", bindings: [] })
+            # Nothing to walk. TWO different facts arrive here and they need different
+            # answers, which is what the single `Ok({})` that used to sit here got wrong.
+            #
+            # `day_rows` EMPTY means there is nothing scored yet — a fresh database, or one
+            # whose metrics have not been computed. Clear and succeed: daily_load is a pure
+            # function of what was scored, and leaving a stale series behind is what let a
+            # poisoned row survive `analyze` while every reader refused on it, each naming
+            # `stride analyze` as the remedy. That was a loop at exit 0, reporting
+            # `converged: true` forever.
+            #
+            # `day_rows` NON-EMPTY with no parseable day is a different fact: rows exist and
+            # not one of their dates could be read. Clearing there is still correct for the
+            # table, but answering `converged: true` is not — the engine holds activities,
+            # has scored them, and would then tell the athlete "no scored training days
+            # yet ... run `stride sync` then `stride analyze`" while `stats` reports their
+            # sessions and kilometres in the same breath. Review measured exactly that, and
+            # it is the same defect one layer down: a remedy that cannot work. So it names
+            # the row instead, through the error this PR added for it.
+            Err(_) => {
+                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM daily_load", bindings: [] })?
+                match List.first(day_rows) {
+                    Ok(r) => Err(BadActivityDate(r.day, r.example_id))
+                    Err(_) => Ok({})
+                }
+            }
             Ok(seed) => {
                 bounds = List.fold(valid_days, { lo: seed, hi: seed }, |b, d| { lo: (b.lo).min(d), hi: (b.hi).max(d) })
                 # extend through today so rest days decay ATL/CTL and TSB is true as-of-now

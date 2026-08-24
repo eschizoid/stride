@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(712)?
+    checks_ran_exactly!(717)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2409,8 +2409,12 @@ b_seed_analyze! = |ctx| {
     # exactly that and went red, which is the only reason the distinction is written down.
     check!("...and `compare` refuses the same anchor rather than answering with an empty month", strjq!(ctx, ["compare", "month"], ".error.code") == "unreadable_daily_load_day")?
     # the error code alone is not the assertion. A confident all-zero window is the
-    # failure; the code is just how it surfaces.
+    # failure; the code is just how it surfaces. Paired with a POSITIVE marker, because
+    # `.data.current.has_data == null` is also what a renamed field, a moved payload or any
+    # other failure of `compare` returns — an absence on its own cannot tell those apart
+    # from the thing it is here to catch. The pair does: the message must quote the day.
     check!("...publishing no all-zero window as if it had been measured", strjq!(ctx, ["compare", "month"], ".data.current.has_data") == "null")?
+    check!("...and saying which day it choked on, so the absence above is not the whole claim", Str.contains(strjq!(ctx, ["compare", "month"], ".error.message"), "'not-a-date'"))?
     check!("...while `summary` refuses it too, which is where this guard already was", strjq!(ctx, ["summary"], ".error.code") == "unreadable_daily_load_day")?
     # ...and the remedy the message names actually clears it. rebuild_daily_load! only
     # reached its DELETE when at least one activity date parsed; with none it returned
@@ -2449,6 +2453,18 @@ b_seed_analyze! = |ctx| {
     # nothing changed. All four zone keys are needed to get here; seeding three left
     # `analyze` answering missing_config and the clear never ran.
     check!("...having actually run, not errored out before touching the table", Str.contains(an_out, "\"converged\":true"))?
+    # ...and the OTHER shape of "nothing to walk" is not the same fact and must not get the
+    # same answer. Rows exist and not one date parses: clearing the table is still right,
+    # but reporting converged: true is not — the engine holds scored activities and would
+    # then tell the athlete "no scored training days yet, run `stride sync` then `stride
+    # analyze`" while `stats` reports their sessions in the same breath. Review measured
+    # that loop after the fix above closed the first one; it is the same defect one layer
+    # down, so `analyze` names the row.
+    _ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (801,'unreadable','Ride','Ride','0000-0z-01T10:00:00Z',3600);")
+    _ = sql!(an_db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (801,40.0,111.0,3600,1);")
+    an_bad = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' analyze 2>/dev/null")
+    check!("scored rows with no readable date make `analyze` refuse, not report converged", Str.contains(an_bad, "unreadable_activity_date"))?
+    check!("...naming the row, and NOT claiming convergence over data it dropped", Str.contains(an_bad, "activity 801") and !(Str.contains(an_bad, "\"converged\":true")))?
     _ = sh!("rm -rf '${an_home}'")
     _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = 'not-a-date';")
     # ...and the SAME rule on the other date-parsing site. Absorbing this one
@@ -2519,6 +2535,16 @@ b_seed_analyze! = |ctx| {
     check!("a non-canonical daily_load day is refused too", Str.contains(unpadded_day, "error") and !(Str.contains(unpadded_day, "span_weeks")))?
     check!("...with the daily_load code, not the activity one", strjq!(ctx, ["season"], ".error.code") == "unreadable_daily_load_day")?
     check!("...quoting the day it refused", Str.contains(strjq!(ctx, ["season"], ".error.message"), "'2026-3-05'"))?
+    # ...and so do the other two, which is what "close the class" has to mean. Both guarded
+    # with `date_str_to_days` alone, and that ACCEPTS "2026-3-05" — while a non-canonical
+    # day is the dangerous one, not the harmless one: `ORDER BY day DESC` is a string sort,
+    # so "2026-3-05" beats every "2026-08-xx" and becomes the anchor. Measured before the
+    # fix, on this exact value: `summary` reported as_of 2026-3-05 and `compare` published
+    # an all-zero 28-day window, both at exit 0, while season refused. The previous commit
+    # fixed compare's parse check and its comment claimed every command now refused. Half
+    # the class was still open, inside the sentence declaring it closed.
+    check!("...and so does `summary`, on the non-canonical day and not just the unparseable one", strjq!(ctx, ["summary"], ".error.code") == "unreadable_daily_load_day")?
+    check!("...and `compare` too, rather than anchoring on a day that sorts last", strjq!(ctx, ["compare", "month"], ".error.code") == "unreadable_daily_load_day")?
     _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = '2026-3-05';")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 933; DELETE FROM activities WHERE id = 933;")
     # A CONTROLLED block, because the fixture's own data does not discriminate:
