@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.8.0](https://github.com/eschizoid/stride/compare/v0.7.0...v0.8.0) (2026-08-24)
+
+
+### Features
+
+* backfill answers --json with an envelope instead of prose ([#223](https://github.com/eschizoid/stride/issues/223)) ([8a526a3](https://github.com/eschizoid/stride/commit/8a526a35f7d8c8dfc1cc83cdf1d937769ac2ad57))
+* command discovery declares which error codes a form can return ([#256](https://github.com/eschizoid/stride/issues/256)) ([1d9e790](https://github.com/eschizoid/stride/commit/1d9e7901a97bf64c79aa015ec9869ef17c2c7a0e))
+* doctor reports what analyze would recompute, and why it cannot ([#241](https://github.com/eschizoid/stride/issues/241)) ([b65312a](https://github.com/eschizoid/stride/commit/b65312a202ddea02cacf1903ecb6c02c8dba6832))
+* plan reports data freshness so a coach need not call doctor ([#237](https://github.com/eschizoid/stride/issues/237)) ([f9767f5](https://github.com/eschizoid/stride/commit/f9767f5e73b815b860c059a321d855a3d2332661))
+* stride sync is the only command that talks to Strava ([#233](https://github.com/eschizoid/stride/issues/233)) ([d3f0215](https://github.com/eschizoid/stride/commit/d3f0215e1e0cfd6569bc923f8882969f20c6917c))
+* sync reports undecodable stream bodies instead of dropping them silently ([#229](https://github.com/eschizoid/stride/issues/229)) ([2a7f1c2](https://github.com/eschizoid/stride/commit/2a7f1c29538b9f708cf08ed369c84a3b6c6fdceb))
+* the command table describes commands, it does not merely name them ([#240](https://github.com/eschizoid/stride/issues/240)) ([32cb222](https://github.com/eschizoid/stride/commit/32cb222ade8885b6303c33382c4367c3105650c2))
+
+
+### Bug Fixes
+
+* a 429 on the activity list stops the run instead of aborting it ([#245](https://github.com/eschizoid/stride/issues/245)) ([23f841d](https://github.com/eschizoid/stride/commit/23f841dfb79647124f74bbef5c77984a1ce16292))
+* align the help text, and stop it disagreeing with the machine payload ([e041b8b](https://github.com/eschizoid/stride/commit/e041b8b1f35e79b19909286207b3fac29508f852))
+* derive schema-check's forms from the command table ([#253](https://github.com/eschizoid/stride/issues/253)) ([ec6c733](https://github.com/eschizoid/stride/commit/ec6c733302542d3241867d77d1932294e71cb572))
+* enforce the table budget on cells with no break opportunity ([#213](https://github.com/eschizoid/stride/issues/213)) ([3ef5f55](https://github.com/eschizoid/stride/commit/3ef5f555a4f9ad98cf47cae4e9e478a5ef1b64c2))
+* keep the claims gate green after [#232](https://github.com/eschizoid/stride/issues/232) closed ([551fabd](https://github.com/eschizoid/stride/commit/551fabd8a314ac913f5d6cf6fb9d4374e81f1894))
+* name the row behind an unreadable date instead of internal_error ([#247](https://github.com/eschizoid/stride/issues/247)) ([e064b90](https://github.com/eschizoid/stride/commit/e064b90ea662aaa35eefc6098824b5709a801dd7))
+* report a config value the engine cannot read, instead of guessing ([#207](https://github.com/eschizoid/stride/issues/207)) ([2237024](https://github.com/eschizoid/stride/commit/2237024e5ec63f2e3889a262708bfd190646d582))
+* report the two sync-path config reads that swallowed a bad value ([#211](https://github.com/eschizoid/stride/issues/211)) ([0e21f80](https://github.com/eschizoid/stride/commit/0e21f807bb85f5ef09790e1f30bad0c71b153086))
+* scan docs for stale issue-state claims, and close two pattern gaps ([#214](https://github.com/eschizoid/stride/issues/214)) ([019c9e9](https://github.com/eschizoid/stride/commit/019c9e95aa7ad476857d5b21fcef88c9f34f8a31))
+
 ## [0.7.0](https://github.com/eschizoid/stride/compare/v0.6.0...v0.7.0) (2026-08-18)
 
 
