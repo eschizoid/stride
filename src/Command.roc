@@ -315,23 +315,23 @@ Command := [
 	specs = [
 		writes("init", [], "init.json"),
 		errs({ ..writes("auth", [], ""), network: True, interactive: True }, ["missing_client_creds", "network_unreachable", "not_authenticated", "rate_limited", "stdin_closed", "strava_error"]),
-		errs({ ..writes("sync", [opt("--all")], "sync.json"), network: True }, ["missing_client_creds", "network_unreachable", "not_authenticated", "rate_limited", "strava_error"]),
+		errs({ ..writes("sync", [opt("--all")], "sync.json"), network: True }, ["network_unreachable", "not_authenticated", "rate_limited", "strava_error", "unreadable_config"]),
 		errs(writes("analyze", [], "analyze.json"), ["missing_config", "unreadable_activity_date", "unreadable_config"]),
 		errs(writes("import", [req("<export.zip|dir>")], "import.json"), ["empty_csv", "no_activities_csv", "unzip_failed"]),
 		errs(writes("rate", [req("<activity_id|latest>"), req("<1-10>")], "rate.json"), ["activity_not_found", "bad_id", "bad_rpe", "no_activities", "unreadable_activity_date"]),
 		errs(writes("week add", [req("<YYYY-MM-DD>"), req("<type>"), req("<detail>"), req("<rationale>")], "week_add.json"), ["bad_date"]),
-		errs(writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"), ["activity_already_linked", "activity_not_found", "activity_required", "bad_id", "session_done", "session_not_found"]),
+		errs(writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"), ["activity_already_linked", "activity_not_found", "activity_required", "bad_id", "session_not_found"]),
 		errs(writes("skip", [req("<session_id>"), req("<reason>"), opt("<activity_id|none>")], "skip.json"), ["activity_already_linked", "activity_not_found", "bad_id", "session_done", "session_not_found"]),
 		errs(writes("config set", [req("<key>"), req("<value>")], "config.json"), ["bad_value", "derived_key"]),
 		errs(reads("summary", [], "summary.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
-		errs(reads("plan", [], "plan.json"), ["missing_config", "no_activities", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
+		errs(reads("plan", [], "plan.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
 		reads("stats", [], "stats.json"),
 		reads("doctor", [], "doctor.json"),
-		errs(reads("zones", [], "zones.json"), ["missing_config", "unreadable_config"]),
-		errs(reads("pz", [], "zones.json"), ["missing_config", "unreadable_config"]),
+		errs(reads("zones", [], "zones.json"), ["no_power_data"]),
+		errs(reads("pz", [], "zones.json"), ["no_power_data"]),
 		errs(reads("compare", [opt("<week|month>")], "compare.json"), ["bad_period", "no_data", "unreadable_daily_load_day"]),
 		errs(reads("activities", [opt("<limit>"), opt("<sport>")], "activities.json"), ["bad_count"]),
-		errs(reads("activity", [req("<activity_id>")], "activity.json"), ["activity_not_found", "bad_id"]),
+		errs(reads("activity", [req("<activity_id>")], "activity.json"), ["activity_not_found"]),
 		## the metric set is CLOSED, so it is spelled out. A caller reading only this
 		## payload cannot guess it, and it is the one required argument here whose
 		## wrong value costs a round trip (`bad_metric`).
@@ -339,18 +339,18 @@ Command := [
 		## DAYS of lookback, not a row count — `power-curve` returns a fixed set of
 		## points regardless, so `<n>` beside `activities`' `<n>` left two identical
 		## shapes meaning different things.
-		errs(reads("load", [opt("<days>")], "load.json"), ["bad_count", "no_data"]),
-		errs(reads("power-curve", [opt("<days>"), opt("<sport>")], "power_curve.json"), ["bad_count", "no_power_data"]),
-		errs(reads("pc", [opt("<days>"), opt("<sport>")], "power_curve.json"), ["bad_count", "no_power_data"]),
+		errs(reads("load", [opt("<days>")], "load.json"), ["bad_count"]),
+		errs(reads("power-curve", [opt("<days>"), opt("<sport>")], "power_curve.json"), ["bad_count"]),
+		errs(reads("pc", [opt("<days>"), opt("<sport>")], "power_curve.json"), ["bad_count"]),
 		## A DATE, not a workout name. The parse arm BOUND this to a variable called
 		## `name` until this commit renamed it, and that binder is where an earlier draft
 		## of this table got `<name>` from — the
 		## handler queries `substr(a.start_local,1,10) = :date` and answers
 		## `no_workout_on_date`. Every other document in the repo says `[date]`; only
 		## this table said otherwise, and this table is the one an agent reads.
-		errs(reads("progress", [opt("<YYYY-MM-DD>"), opt("<asc|desc>")], "progress.json"), ["bad_date", "no_scorable_workouts", "no_workout_on_date", "unscorable"]),
-		errs(reads("tte", [req("<watts>")], "tte.json"), ["bad_watts", "no_cp_fit", "no_power_data"]),
-		errs(reads("reps", [opt("<YYYY-MM-DD>")], "reps.json"), ["bad_date", "irregular_anchor", "no_detected_intervals", "no_intervals_on_date", "no_workout_on_date"]),
+		errs(reads("progress", [opt("<YYYY-MM-DD>"), opt("<asc|desc>")], "progress.json"), ["no_scorable_workouts", "no_workout_on_date", "unscorable"]),
+		errs(reads("tte", [req("<watts>")], "tte.json"), ["bad_watts", "no_cp_fit"]),
+		errs(reads("reps", [opt("<YYYY-MM-DD>")], "reps.json"), ["irregular_anchor", "no_detected_intervals", "no_intervals_on_date"]),
 		errs(reads("season", [], "season.json"), ["no_activities", "unreadable_activity_date", "unreadable_daily_load_day"]),
 		reads("week", [opt("all")], "week.json"),
 		errs(reads("config get", [req("<key>")], "config.json"), ["derived_key", "not_set"]),

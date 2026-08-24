@@ -71,7 +71,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Error codes this FORM can return, on top of the top-level `universal_error_codes`. The effective set for a form is the union of the two. NOT claimed to be exhaustive: what is mechanically guaranteed is that every code named here exists in schemas/v2/envelope.json's enum, and that every code in that enum is named by some form or recorded as unattributable — so a new code cannot be added without being attributed, which is the direction such a list normally rots in. Reachability is proven per code by the e2e suite for the codes it can drive."
+            "description": "Error codes this FORM can return, on top of the top-level `universal_error_codes`. The effective set for a form is the union of the two. NOT claimed to be exhaustive. What is mechanically guaranteed: every code named here exists in schemas/v2/envelope.json's enum, and every code in that enum is named by some form or recorded as unattributable — so a new code cannot be added without being attributed, which is the direction such a list normally rots in. Attribution is by RAISE SITE, traced from each err_out! call through the commands that reach it; review found 15 of 82 entries wrong when they were first assigned by plausibility instead — a code that is the right one for a neighbouring form passes the attributed-somewhere check while being false here."
           }
         }
       }
@@ -88,7 +88,7 @@
       "items": {
         "type": "string"
       },
-      "description": "Error codes ANY form can return, so no form repeats them. The database codes are raised at the process boundary and reachable from every command that opens the database; `usage` is reachable from every form, including argument-less ones, by passing an extra word. `unknown_command` is deliberately absent from this and from every form: it is what you get when there is no form."
+      "description": "Error codes reachable from essentially any form, so no form repeats them. The database codes are raised at the process boundary and reachable from every command that OPENS the database — `init` is the documented exception for `no_database`, since it creates the database and so can never report its absence (it can still return `corrupt_database`). `usage` was driven against all 29 forms, including argument-less ones, by passing an extra word. `unknown_command` is deliberately absent from this and from every form: it is what you get when there is no form."
     }
   }
 }

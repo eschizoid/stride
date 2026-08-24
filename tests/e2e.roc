@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(746)?
+    checks_ran_exactly!(752)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2034,6 +2034,15 @@ b_seed_analyze! = |ctx| {
     # the probe has to be able to speak: an empty declared set would make BOTH directions
     # below trivially satisfiable in one of the two, and a jq error yields "" not 0.
     check!("the declared error-code set is non-empty (got ${ndecl})", ndecl != "" and ndecl != "0")?
+    # ...and the CONTRACT set too, symmetrically. Without this the contract->declared
+    # direction passes vacuously if envelope.json's `enum` key is ever renamed: the
+    # selector yields [], and [] mapped and joined is "", which is the pass condition.
+    # It held only through an undocumented coupling — the declared->contract sibling fails
+    # loudly in that same scenario — and the commit message ranked that sibling as the
+    # lesser of the two, so anyone trimming the "redundant" direction would have turned the
+    # load-bearing one into "" == "".
+    ncontract = Str.trim(sh!("jq -r '[.. | objects | select(has(\"enum\")) | .enum[]] | length' schemas/v2/envelope.json 2>/dev/null"))
+    check!("the contract error-code set is non-empty (got ${ncontract})", ncontract != "" and ncontract != "0")?
     # DECLARED -> CONTRACT. A typo, or a code deleted from the envelope but left declared.
     notin = Str.trim(sh!("jq -r --slurpfile d '${decl_f}' '[.. | objects | select(has(\"enum\")) | .enum[]] as $c | $d[0] | map(select(. as $x | ($c | index($x)) == null)) | join(\" \")' schemas/v2/envelope.json 2>&1"))
     check!("every declared error code exists in the envelope contract (stray: ${notin})", notin == "")?
@@ -3253,7 +3262,19 @@ b_agent_loop! = |ctx| {
     # two-word form has to match on two words.
     declared_probe! = |args, want, label| {
         err_probe!(args, want, label)?
-        form = Str.trim(sh!("printf '%s' '${args}' | awk '{ if ($1 == \"config\" || $1 == \"week\") print $1\" \"$2; else print $1 }'"))
+        # The form is resolved AGAINST THE TABLE, by longest matching prefix of its own
+        # names — not by an awk that hardcodes which verbs are two words.
+        #
+        # The awk version degraded silently, which is the defect this check exists to
+        # catch. When the extracted name matched nothing, the jq below yielded [] and
+        # `codes` fell back to the six universal codes, so the check became "is `want`
+        # universal?" and passed. `week` made that live rather than hypothetical: it is a
+        # ONE-word form that appears in the two-word list because `week add` exists, so
+        # every `week` probe that is not literally `week add ...` resolved to nothing. And
+        # the one probe in this set whose `want` is universal — `reps notadate` -> `usage`
+        # — would have passed either way, so it proved nothing about attribution at all.
+        form = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' --help | jq -r --arg a '${args}' '[.data.commands[].name | . as $n | select(($a + \" \") | startswith($n + \" \"))] | (sort_by(length) | last) // \"\"'"))
+        check!("...the probed form `${form}` is one the command table declares", form != "")?
         codes = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' --help | jq -r --arg f '${form}' '((.data.universal_error_codes // []) + ([.data.commands[] | select(.name == $f) | .error_codes // []] | flatten)) | unique | join(\" \")'"))
         check!("...and `${want}` is declared for `${form}` (declared: ${codes})", Str.contains(" ${codes} ", " ${want} "))
     }
