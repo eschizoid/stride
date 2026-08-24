@@ -789,7 +789,13 @@ Render :: [].{
         # shape the e2e happened to construct.
         tail =
             if p.stopped == "list_rate_limited" {
-                " — Strava rate-limited the activity list, so it is incomplete; nothing was pruned. Run `stride sync` again in ~15 minutes"
+                # read from `pruned`, not from `stopped`. Prune is unreachable on this
+                # path today — sync! returns before it — but that is a fact about
+                # Strava.sync!, and this function can only see the payload. Asserting it
+                # from here would be Render vouching for a caller it never observes, and
+                # the sentence would go quietly false the day the early return moves.
+                prune_claim = if p.pruned == 0 "; nothing was pruned" else ""
+                " — Strava rate-limited the activity list, so it is incomplete${prune_claim}. Run `stride sync` again in ~15 minutes"
             } else if p.pending_streams > 0 {
                 " — ${drain_note(p.stopped, p.pending_streams)}"
             } else {
@@ -1912,10 +1918,33 @@ expect Render.drain_note(Drain.stopped_label(Complete), 0) == "all streams prese
 expect Str.starts_with(Render.drain_note(Drain.stopped_label(BudgetReached), 40), "filled Strava's 15-minute read window")
 expect Str.starts_with(Render.drain_note(Drain.stopped_label(RateLimited), 40), "Strava rate-limited this run")
 
-# no label the producer can emit may fall through to the catch-all
+# no drain label may fall through drain_note to the catch-all. Three, not four: the
+# fourth label never reaches this function — sync_screen's tail claims it first — so
+# asserting it here would assert nothing about the path it actually takes. The guard
+# below covers all four at the surface where they are all in fact rendered.
 expect {
     produced = [Drain.stopped_label(Complete), Drain.stopped_label(BudgetReached), Drain.stopped_label(RateLimited)]
     List.all(produced, |s| Render.drain_note(s, 9) != "${s} — 9 to go")
+}
+
+# EVERY label the producer can emit, checked where the user reads it: none of them may
+# appear raw in the human line. Enumerated over SyncStop rather than StopReason, which
+# is the whole reason the wider type exists — a sweep keyed on the drain's three arms
+# cannot see the fourth, and the fourth is the one whose handling is a single `==` in
+# sync_screen's tail. Delete that branch and "list_rate_limited" falls through to
+# drain_note's catch-all and ships to the user verbatim; this fails when it does.
+# Both `pending` shapes, because the tail dispatches on pending_streams too.
+expect {
+    labels = [FromDrain(Complete), FromDrain(BudgetReached), FromDrain(RateLimited), ListRateLimited]
+    List.all(
+        labels,
+        |t| {
+            lbl = Drain.sync_stopped_label(t)
+            row = |pending| { synced: 3, new_activities: 1, updated_activities: 0, pruned: 0, streams_fetched: 2, streams_skipped: 0, pending_streams: pending, stopped: lbl, resumable: pending > 0 }
+            !(Str.contains(Render.sync_screen(row(9), False), lbl))
+            and !(Str.contains(Render.sync_screen(row(0), False), lbl))
+        },
+    )
 }
 
 # ADR 0012's boundary rule: a new prose surface joins the denylist sweep. These are
@@ -1928,6 +1957,10 @@ expect {
         Render.drain_note("complete", 5),
         Render.drain_note("budget_reached", 40),
         Render.drain_note("rate_limited", 40),
+        # the list-refusal sentence is a prose surface of its own — it does not come
+        # through drain_note, so a sweep over drain_note's arms alone would miss it.
+        Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, False),
+        Render.sync_screen({ synced: 100, new_activities: 100, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 100, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, False),
         # freshness_note is a prose surface too, and ADR 0012's own consequences say the
         # sweep is where a new one joins. Every arm, including the empty one: an arm that
         # is only exercised on a broken config is exactly the one nobody would think to
@@ -1991,17 +2024,28 @@ expect
 
 # A refused LIST says so, and says it about the LIST. Full-string, because a `contains`
 # on "rate" passes on drain_note's wording too — which is exactly how the first version of
-# this arm looked correct while never running.
+# this arm looked correct while never running. `stopped` is built by the PRODUCER rather
+# than hand-typed: these are the only expects covering the new arm, so typing the literal
+# here would have checked Render against itself and passed straight through a rename.
 expect
-    Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, stopped: "list_rate_limited", resumable: True }, False)
+    Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, False)
     == "synced 0 new, 0 updated (0 re-checked in the 30-day window), fetched streams for 0 — Strava rate-limited the activity list, so it is incomplete; nothing was pruned. Run `stride sync` again in ~15 minutes"
 
 # ...and it still says it with a FULL queue, which is the first-run shape the earlier
 # version got wrong: pending at its maximum, drain_note winning, and the sentence blaming
 # the drain for a list refusal.
 expect
-    Render.sync_screen({ synced: 100, new_activities: 100, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 100, stopped: "list_rate_limited", resumable: True }, False)
+    Render.sync_screen({ synced: 100, new_activities: 100, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 100, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, False)
     == "synced 100 new, 0 updated (100 re-checked in the 30-day window), fetched streams for 0 — Strava rate-limited the activity list, so it is incomplete; nothing was pruned. Run `stride sync` again in ~15 minutes"
+
+# the prune claim comes from `pruned`, not from `stopped`. Strava.sync! returns before
+# prune on this path, so production never builds this payload — which is precisely why
+# the claim must be derived rather than asserted: Render cannot see that early return,
+# and the sentence would go silently false the day it moves. Hardcoding "nothing was
+# pruned" fails here; reading the field passes on both shapes.
+expect
+    Render.sync_screen({ synced: 4, new_activities: 0, updated_activities: 0, pruned: 2, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, False)
+    == "synced 0 new, 0 updated (4 re-checked in the 30-day window) (pruned 2 removed on Strava), fetched streams for 0 — Strava rate-limited the activity list, so it is incomplete. Run `stride sync` again in ~15 minutes"
 
 # ...while a DRAIN rate limit still gets drain_note's wording, so the new arm did not
 # swallow the case it sits in front of.

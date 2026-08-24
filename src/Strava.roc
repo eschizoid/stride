@@ -299,7 +299,7 @@ Strava :: [].{
                     # schema and SKILL.md say so rather than the old equality.
                     pending = pending_streams!(path)?
                     rl_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
-                    rl_payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pending, stopped: Drain.stopped_label(ListRateLimited), resumable: True }
+                    rl_payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pending, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }
                     Output.out!(rl_payload, |p| Render.sync_screen(p, all))
                 } else {
                 pruned = prune_deleted!(path, started, window_start)?
@@ -323,7 +323,7 @@ Strava :: [].{
                 # ships undeclared in schemas/v2/sync.json, which is exactly the drift
                 # `additionalKeys: false` exists to catch (ADR 0000 section 9c).
                 payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
-                payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: pull.pending, stopped: Drain.stopped_label(pull.stopped), resumable: pull.pending > 0 }
+                payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: pull.pending, stopped: Drain.sync_stopped_label(FromDrain(pull.stopped)), resumable: pull.pending > 0 }
                 Output.out!(payload, |p| Render.sync_screen(p, all))
                 }
             }
@@ -586,8 +586,11 @@ Strava :: [].{
     # which is a failure, not a stopping reason.) Both non-complete reasons stop on the
     # 15-MINUTE window, so both mean ~15 minutes, not tomorrow.
     #
-    # `stopped` is a Drain.StopReason tag, so the compiler enforces the set here;
-    # Drain.stopped_label is the one place it becomes the string that ships.
+    # `stopped` is a Drain.StopReason tag with exactly three arms, so the compiler
+    # enforces the set here: a drain CANNOT report the list refusal that also ships in
+    # the payload's `stopped` field, because that arm lives on Drain.SyncStop and sync!
+    # wraps this outcome in FromDrain on the way out. Drain.sync_stopped_label is the
+    # one place either becomes the string that ships.
     DrainOutcome : { stored : I64, skipped : I64, pending : I64, stopped : Drain.StopReason }
 
     drain_streams! : Str, Str, List(I64), DrainState => Try(DrainOutcome, _)

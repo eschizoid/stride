@@ -140,20 +140,34 @@ respond! = |req, _ctx| {
             # outright passed every driver, which is exactly what the code comment forbids.
             #
             # per_page is 100, and fetch_pages! only recurses when a page comes back FULL,
-            # so page one has to be exactly 100 rows for page two to be requested at all.
-            # `&page=1` with a boundary, NOT `page=1`. The URI is
-            # `?per_page=100&page=N`, and "per_page=100" CONTAINS the substring "page=1" —
-            # so the loose test matched every page, this arm served a full page forever,
-            # and fetch_pages! recursed until the run produced nothing at all. The
-            # pre-existing arm below has the same loose test; it is latent there only
-            # because its page returns 2 rows, which is under per_page, so the recursion
-            # stops after one page regardless.
-            if Str.contains(uri, "&page=1&") or Str.ends_with(uri, "&page=1") {
-                Ok(mock_json(mock_full_page))
+            # so every page before the refusal has to be exactly 100 rows.
+            #
+            # TWO full pages, not one, and that is the whole point of the fixture. With a
+            # single page, `synced`, `new_activities`, `pending_streams`, the row count and
+            # per_page are ALL 100 — and page one must equal per_page for the recursion to
+            # happen at all, so no single-page fixture can separate them. Review proved the
+            # cost: replacing the running total `acc.relisted + got` with just `got` — which
+            # ships the LAST page's count instead of the sum — survived this driver and every
+            # other one, because every other fixture is single-page too. On a real three-page
+            # account that reports `synced: 100` for 250 activities. Two pages makes the
+            # answer 200, which is neither per_page nor any one page's count, so only a
+            # running total produces it.
+            #
+            # `&page=1` with a boundary, NOT `page=1`. The URI is `?per_page=100&page=N`,
+            # and "per_page=100" CONTAINS the substring "page=1" — so the loose test matched
+            # every page, this arm served a full page forever, and fetch_pages! recursed
+            # until the run produced nothing at all. "page=10" and "page=100" are the other
+            # side of the same trap, and the arm below had the identical bug until this
+            # commit: latent there only because its page returns 2 rows, under per_page, so
+            # the recursion stopped after one page whatever the test said.
+            if page_is(uri, 1) {
+                Ok(mock_json(mock_page_one))
+            } else if page_is(uri, 2) {
+                Ok(mock_json(mock_page_two))
             } else {
                 Ok(Server.respond(Response.from_status(429).with_body(Str.to_utf8("rate limited"))))
             }
-        } else if Str.contains(uri, "page=1") {
+        } else if page_is(uri, 1) {
             body =
                 \\[{"id":501,"name":"Mock Power Ride","sport_type":"Ride","start_date_local":"2026-07-28T10:00:00Z","moving_time":3600,"distance":30000.0,"total_elevation_gain":100.0,"average_watts":200.0,"weighted_average_watts":205.0},
                 \\ {"id":502,"name":"Mock HR Row","sport_type":"Rowing","start_date_local":"2026-07-29T10:00:00Z","moving_time":1800,"distance":5000.0,"total_elevation_gain":0.0,"average_heartrate":150.0}]
@@ -737,19 +751,35 @@ run_stops! = || {
         # PR whose own comment says "a caller that is told nothing cannot tell a
         # rate-limited partial from a run that found nothing".
         #
-        # per_page is 100 and fetch_pages! only recurses on a FULL page, so page one has to
-        # be exactly 100 rows for page two to be requested at all.
+        # per_page is 100 and fetch_pages! only recurses on a FULL page, so every page
+        # before the refusal has to be exactly 100 rows. TWO of them, refused on the third:
+        # 200 is neither per_page nor any single page's count, so `synced == 200` can only
+        # come from a running total. With one page every quantity in this payload collapsed
+        # onto 100 and `total = got` — shipping the last page instead of the sum — passed
+        # the whole suite.
         # its own mock instance, since the one this driver runs against refuses page one
         part_base = env_or!("E2E_LIST_PARTIAL_BASE", "")
         part_home = Str.trim(sh!("mktemp -d"))
+        part_db = "${part_home}/.stride/db.sqlite"
         _ = sh!("HOME='${part_home}' '${bin}' init >/dev/null 2>&1")
-        _ = sql!("${part_home}/.stride/db.sqlite", "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_access_token','t'),('strava_refresh_token','r'),('strava_expires_at','9999999999');")
-        _ = sh!("HOME='${part_home}' STRIDE_FORMAT=json STRIDE_API_BASE='${part_base}' '${bin}' sync >'${part_home}/out.json' 2>/dev/null")
+        _ = sql!(part_db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_access_token','t'),('strava_refresh_token','r'),('strava_expires_at','9999999999');")
+        part_sync! = |_| sh!("HOME='${part_home}' STRIDE_FORMAT=json STRIDE_API_BASE='${part_base}' '${bin}' sync >'${part_home}/out.json' 2>/dev/null")
+        _ = part_sync!({})
         pq! = |q| Str.trim(sh!("jq -r '${q}' '${part_home}/out.json' 2>/dev/null"))
-        check!("a list refused on page TWO still reports the page it kept", pq!(".data.synced") == "100")?
-        check!("...counted as new, not silently dropped", pq!(".data.new_activities") == "100")?
-        check!("...and those rows really are in the database", Str.trim(sql!("${part_home}/.stride/db.sqlite", "SELECT count(*) FROM activities;")) == "100")?
+        check!("a list refused on page THREE still reports both pages it kept", pq!(".data.synced") == "200")?
+        check!("...counted as new, not silently dropped", pq!(".data.new_activities") == "200")?
+        check!("...and those rows really are in the database", Str.trim(sql!(part_db, "SELECT count(*) FROM activities;")) == "200")?
+        check!("...spanning BOTH pages, so the second one was stored and not just counted", Str.trim(sql!(part_db, "SELECT count(*) FROM activities WHERE id BETWEEN 20101 AND 20200;")) == "100")?
         check!("...still reporting the list stop, and still pruning nothing", pq!(".data.stopped") == "list_rate_limited" and pq!(".data.pruned") == "0")?
+        # Run it AGAIN against the same mock. `synced` is what was re-listed and
+        # `new_activities` is what was inserted, and on the first run both are 200 — so
+        # either one hardcoded to the other passes. The second run separates them: the same
+        # 200 rows come back, none of them new. (The watermark never advanced, asserted
+        # above, so the request is identical.)
+        _ = part_sync!({})
+        check!("re-listing the same refused pages re-counts them", pq!(".data.synced") == "200")?
+        check!("...while reporting none of them as new, which is what splits synced from new", pq!(".data.new_activities") == "0")?
+        check!("...and stores no duplicates", Str.trim(sql!(part_db, "SELECT count(*) FROM activities;")) == "200")?
         _ = sh!("rm -rf '${part_home}'")
     } else if env_or!("E2E_EXPECT_500", "") == "1" {
         # A drain that dies with rows already committed. Salvaged from #225, minus its
@@ -878,7 +908,7 @@ run_stops! = || {
         if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
             # its own floor: this branch returns before the shared drain assertions, so the
             # 12 the default arm expects would never be reachable here
-            15
+            19
         } else if env_or!("E2E_EXPECT_500", "") == "1" {
             7
         } else if env_or!("E2E_EXPECT_401", "") == "1" {
@@ -903,11 +933,26 @@ sync_strjq! = |bin, home, base, args, filter| {
     Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' ${argstr} | jq -r '${filter}' 2>/dev/null"))
 }
 
-# 100 activities — exactly per_page, so fetch_pages! sees a full page and asks for the
-# next one. Ids 20001+ are clear of every fixture range. Generated rather than written out
-# because the only property that matters is the COUNT.
-mock_full_page : Str
-mock_full_page = "[${bulk_rows(20001, 20100)}]"
+# Which page a listing URI asks for. A BOUNDARY test, because the query string is
+# `?per_page=100&page=N`: "per_page=100" contains "page=1", and "page=10"/"page=100"
+# contain "page=1" as well, so `Str.contains(uri, "page=1")` is true for every page any
+# caller will ever request. One function so the two arms above cannot drift, and so the
+# next arm added gets the boundary for free instead of re-deriving it.
+page_is : Str, I64 -> Bool
+page_is = |uri, n| {
+    tok = "&page=${n.to_str()}"
+    Str.contains(uri, "${tok}&") or Str.ends_with(uri, tok)
+}
+
+# Two pages of 100 — each exactly per_page, so fetch_pages! sees a full page and asks for
+# the next one, and the sum (200) is a number no single page and no constant can produce.
+# Ids 20001+ are clear of every fixture range. Generated rather than written out because
+# the only property that matters is the COUNT.
+mock_page_one : Str
+mock_page_one = "[${bulk_rows(20001, 20100)}]"
+
+mock_page_two : Str
+mock_page_two = "[${bulk_rows(20101, 20200)}]"
 
 bulk_rows : I64, I64 -> Str
 bulk_rows = |i, last| {
