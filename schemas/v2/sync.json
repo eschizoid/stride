@@ -1,6 +1,6 @@
 {
   "title": "sync",
-  "description": "One sync run: what it re-listed, what it stored, and why it stopped. Since #232 this is the only command that pulls data from Strava — it drains missing streams paced against Strava's limits and stops on the per-run read budget, so a first run on a fresh install may need repeating. Read `resumable` to decide.",
+  "description": "One sync run: what it re-listed, what it stored, and why it stopped. Since #232 this is the only command that pulls data from Strava \u2014 it drains missing streams paced against Strava's limits and stops on the per-run read budget, so a first run on a fresh install may need repeating. Read `resumable` to decide.",
   "type": "object",
   "additionalKeys": false,
   "required": [
@@ -41,16 +41,17 @@
     },
     "stopped": {
       "type": "string",
-      "description": "why the stream drain ended. complete = the queue emptied; budget_reached = Strava's 15-minute read window filled, so run again in ~15 minutes; rate_limited = Strava returned 429, same remedy. Neither non-complete reason means waiting until tomorrow: a run drains at most one window's worth of reads and stops rather than sleeping, so repeated runs across the day are how a large history converges. NOTE rate_limited here is a partial success in a SUCCESS envelope at exit 0 — the run did real work before stopping — whereas the identically-named error code means the command made no progress and exits 1 (#227)",
       "enum": [
         "complete",
         "budget_reached",
-        "rate_limited"
-      ]
+        "rate_limited",
+        "list_rate_limited"
+      ],
+      "description": "Why the run ended. `complete` = the stream queue emptied; `budget_reached` = the run filled Strava's 15-minute read window; `rate_limited` = Strava returned 429 on a STREAM read; `list_rate_limited` = Strava returned 429 on the ACTIVITY LIST, so the listing is incomplete and nothing was pruned (#235). The last two are the same upstream condition and have the same remedy \u2014 run again in ~15 minutes \u2014 but they are distinct values because they describe different incomplete states, and a drain that 429s on its first id is otherwise indistinguishable from a list that 429s on page one. All four arrive in a SUCCESS envelope at exit 0. Do not discriminate on this token against the `rate_limited` ERROR code, which is a different thing in a different envelope shape \u2014 discriminate on the envelope."
     },
     "resumable": {
       "type": "boolean",
-      "description": "whether anything is still missing — exactly pending_streams > 0. True after a complete run when a body would not decode; false after a budget stop that happened to empty the queue"
+      "description": "Whether anything is still missing, so the run should be repeated. Usually `pending_streams > 0`, re-measured from the database in every arm. It is also true when `stopped` is `list_rate_limited` even with an empty queue, because what was left undone there is the LISTING, not the stream backlog \u2014 a run refused on page one has nothing pending and absolutely must be repeated."
     }
   }
 }

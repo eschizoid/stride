@@ -126,7 +126,48 @@ respond! = |req, _ctx| {
             Ok(mock_json(body))
         }
     } else if Str.contains(uri, "/api/v3/athlete/activities") {
-        if Str.contains(uri, "page=1") {
+        # 429 on the LISTING (#235). Nothing exercised this before — the rate-limit arm
+        # below refuses a STREAM read only, which is how the list path could abort the run
+        # at exit 1 while a 429 twenty lines later stopped gracefully at exit 0, with no
+        # test able to tell the two apart.
+        if env_or!("E2E_LIST_RATE_LIMIT", "") == "1" {
+            Ok(Server.respond(Response.from_status(429).with_body(Str.to_utf8("rate limited"))))
+        } else if env_or!("E2E_LIST_RATE_LIMIT", "") == "2" {
+            # A FULL page, then a refusal. `=1` refuses page one, so nothing is ever
+            # upserted and the partial-progress half of this feature — the pages already
+            # committed being carried out and reported — has nothing to report. Review
+            # showed that made the carry mechanism unpinned: discarding the accumulator
+            # outright passed every driver, which is exactly what the code comment forbids.
+            #
+            # per_page is 100, and fetch_pages! only recurses when a page comes back FULL,
+            # so every page before the refusal has to be exactly 100 rows.
+            #
+            # TWO full pages, not one, and that is the whole point of the fixture. With a
+            # single page, `synced`, `new_activities`, `pending_streams`, the row count and
+            # per_page are ALL 100 — and page one must equal per_page for the recursion to
+            # happen at all, so no single-page fixture can separate them. Review proved the
+            # cost: replacing the running total `acc.relisted + got` with just `got` — which
+            # ships the LAST page's count instead of the sum — survived this driver and every
+            # other one, because every other fixture is single-page too. On a real three-page
+            # account that reports `synced: 100` for 250 activities. Two pages makes the
+            # answer 200, which is neither per_page nor any one page's count, so only a
+            # running total produces it.
+            #
+            # `&page=1` with a boundary, NOT `page=1`. The URI is `?per_page=100&page=N`,
+            # and "per_page=100" CONTAINS the substring "page=1" — so the loose test matched
+            # every page, this arm served a full page forever, and fetch_pages! recursed
+            # until the run produced nothing at all. "page=10" and "page=100" are the other
+            # side of the same trap, and the arm below had the identical bug until this
+            # commit: latent there only because its page returns 2 rows, under per_page, so
+            # the recursion stopped after one page whatever the test said.
+            if page_is(uri, 1) {
+                Ok(mock_json(mock_page_one))
+            } else if page_is(uri, 2) {
+                Ok(mock_json(mock_page_two))
+            } else {
+                Ok(Server.respond(Response.from_status(429).with_body(Str.to_utf8("rate limited"))))
+            }
+        } else if page_is(uri, 1) {
             body =
                 \\[{"id":501,"name":"Mock Power Ride","sport_type":"Ride","start_date_local":"2026-07-28T10:00:00Z","moving_time":3600,"distance":30000.0,"total_elevation_gain":100.0,"average_watts":200.0,"weighted_average_watts":205.0},
                 \\ {"id":502,"name":"Mock HR Row","sport_type":"Rowing","start_date_local":"2026-07-29T10:00:00Z","moving_time":1800,"distance":5000.0,"total_elevation_gain":0.0,"average_heartrate":150.0}]
@@ -665,7 +706,99 @@ run_stops! = || {
     _ = run_sync_bf!("json")
     bf_elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - bf_start
 
-    if env_or!("E2E_EXPECT_500", "") == "1" {
+    if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
+        # A 429 on the LISTING (#235). Before this, the same upstream condition behaved two
+        # ways inside one invocation: a hard exit 1 if it landed on the list, a success
+        # envelope with `stopped: "rate_limited"` and exit 0 if it landed on a stream. The
+        # first breaks every cron and shell wrapper for a run that did its job up to the cap.
+        #
+        # The envelope assertions are the contract. The two after them are the ones that
+        # matter most, because they are about damage rather than reporting: `prune_deleted!`
+        # removes what the listing did NOT re-list, so running it against a partial list
+        # would delete activities that exist and were simply never reached — and the
+        # watermark must not advance past activities the run never saw.
+        # SEEDED first, and this is the whole point. The mock 429s EVERY list request,
+        # including the driver's own setup sync, so this branch ran against an empty
+        # database — `pruned == 0` and `activities unchanged` were comparing 0 to 0 and
+        # were structurally incapable of failing. The destructive property this branch
+        # exists to protect was the one thing it did not test.
+        #
+        # `synced_at` is set to a DIFFERENT value from any run stamp, and `start_local` is
+        # inside the 30-day window, which is exactly what makes a row a prune victim: the
+        # predicate is `synced_at <> :stamp AND start_local >= :window_start`. If the early
+        # return were removed, these rows would be deleted.
+        bait_day = Str.trim(sh!("date +%F"))
+        _ = sql!(db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,synced_at) VALUES (7001,'prune bait a','Ride','${bait_day}T10:00:00Z',3600,20000,1),(7002,'prune bait b','Ride','${bait_day}T11:00:00Z',3600,20000,1);")
+        _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('last_sync_epoch','1700000000');")
+        before_epoch = Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='last_sync_epoch'),'none');"))
+        before_acts = Str.trim(sql!(db, "SELECT count(*) FROM activities;"))
+        check!("the prune-bait rows are really there, so the next checks are not 0 == 0", before_acts != "0" and before_epoch != "none")?
+        st429 = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null; echo $?"))
+        check!("a 429 on the activity list exits 0, like a 429 on a stream", st429 == "0")?
+        check!("...reporting list_rate_limited, naming the LIST rather than the drain", bfq!(".data.stopped") == "list_rate_limited")?
+        check!("...and resumable, so a caller knows to run it again", bfq!(".data.resumable") == "true")?
+        check!("...with no error field at all", bfq!(".error") == "null")?
+        # THE destructive one: a partial list must not drive a prune.
+        check!("...pruning nothing, because a partial list is not evidence of deletion", bfq!(".data.pruned") == "0")?
+        check!("...and deleting no activities", Str.trim(sql!(db, "SELECT count(*) FROM activities;")) == before_acts)?
+        # ...and the watermark must not move past what was never listed.
+        check!("...leaving last_sync_epoch where it was", Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='last_sync_epoch'),'none');")) == before_epoch)?
+        check!("...and the human screen blames the LIST too, not the drain", Str.contains(sh!("HOME='${home}' STRIDE_API_BASE='${base}' '${bin}' sync 2>&1"), "rate-limited the activity list"))?
+        # The three sibling stop-reason arms each validate their payload and this one did
+        # not, which mattered more here than anywhere else: this is the only arm in the
+        # suite that ADDS a value to an enum in schemas/v2. Review deleted
+        # "list_rate_limited" from sync.json's `stopped` enum and all 19 checks stayed
+        # green — a contract break shipping under a green suite, and no other driver could
+        # have caught it, because emitting the value at all needs a list-429 mock and only
+        # these two halves have one.
+        check!("the list-refused payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
+        # PARTIAL progress, against a second mock that serves a full page and then refuses.
+        # Everything above runs on a page-one refusal, where nothing was ever upserted — so
+        # `synced` is 0 whether the run carries its accumulator out or throws it away.
+        # Review proved that: discarding the accumulator outright passed every driver, in a
+        # PR whose own comment says "a caller that is told nothing cannot tell a
+        # rate-limited partial from a run that found nothing".
+        #
+        # per_page is 100 and fetch_pages! only recurses on a FULL page, so every page
+        # before the refusal has to be exactly 100 rows. TWO of them, refused on the third:
+        # 200 is neither per_page nor any single page's count, so `synced == 200` can only
+        # come from a running total. With one page every quantity in this payload collapsed
+        # onto 100 and `total = got` — shipping the last page instead of the sum — passed
+        # the whole suite.
+        # its own mock instance, since the one this driver runs against refuses page one
+        part_base = env_or!("E2E_LIST_PARTIAL_BASE", "")
+        part_home = Str.trim(sh!("mktemp -d"))
+        part_db = "${part_home}/.stride/db.sqlite"
+        _ = sh!("HOME='${part_home}' '${bin}' init >/dev/null 2>&1")
+        _ = sql!(part_db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_access_token','t'),('strava_refresh_token','r'),('strava_expires_at','9999999999');")
+        part_sync! = |_| sh!("HOME='${part_home}' STRIDE_FORMAT=json STRIDE_API_BASE='${part_base}' '${bin}' sync >'${part_home}/out.json' 2>/dev/null")
+        _ = part_sync!({})
+        pq! = |q| Str.trim(sh!("jq -r '${q}' '${part_home}/out.json' 2>/dev/null"))
+        check!("a list refused on page THREE still reports both pages it kept", pq!(".data.synced") == "200")?
+        check!("...counted as new, not silently dropped", pq!(".data.new_activities") == "200")?
+        check!("...and those rows really are in the database", Str.trim(sql!(part_db, "SELECT count(*) FROM activities;")) == "200")?
+        check!("...spanning BOTH pages, so the second one was stored and not just counted", Str.trim(sql!(part_db, "SELECT count(*) FROM activities WHERE id BETWEEN 20101 AND 20200;")) == "100")?
+        check!("...still reporting the list stop, and still pruning nothing", pq!(".data.stopped") == "list_rate_limited" and pq!(".data.pruned") == "0")?
+        # The queue at its MAXIMUM, which is the shape Render's tail comment is written
+        # about and the reason the list arm is tested before pending_streams. The consumer
+        # side pins it (Render's sync_screen expect carries pending_streams: 100); the
+        # PRODUCER was unpinned, and zeroing this field passed all 19 checks.
+        check!("...reporting the whole listed backlog as pending, not zero", pq!(".data.pending_streams") == "200")?
+        # nothing was updated on a first run, and `updated_activities` survived being
+        # replaced by `synced` because no check read it
+        check!("...and nothing updated, because every row was new", pq!(".data.updated_activities") == "0")?
+        check!("the partial-list payload conforms to the schema too", Str.trim(sh!("jq '.data' '${part_home}/out.json' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
+        # Run it AGAIN against the same mock. `synced` is what was re-listed and
+        # `new_activities` is what was inserted, and on the first run both are 200 — so
+        # either one hardcoded to the other passes. The second run separates them: the same
+        # 200 rows come back, none of them new. (The watermark never advanced, asserted
+        # above, so the request is identical.)
+        _ = part_sync!({})
+        check!("re-listing the same refused pages re-counts them", pq!(".data.synced") == "200")?
+        check!("...while reporting none of them as new, which is what splits synced from new", pq!(".data.new_activities") == "0")?
+        check!("...and stores no duplicates", Str.trim(sql!(part_db, "SELECT count(*) FROM activities;")) == "200")?
+        _ = sh!("rm -rf '${part_home}'")
+    } else if env_or!("E2E_EXPECT_500", "") == "1" {
         # A drain that dies with rows already committed. Salvaged from #225, minus its
         # stored-count assertion: #233 reports the queue total at the boundary, and the
         # per-id progress frame above it carries "how far did it get" at finer resolution.
@@ -789,7 +922,11 @@ run_stops! = || {
     # has to be the smallest of them — which makes it loosest where the branch is biggest.
     # At a shared floor of 8 the budget branch could lose a third of its checks unseen.
     checks_ran_at_least!(
-        if env_or!("E2E_EXPECT_500", "") == "1" {
+        if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
+            # its own floor: this branch returns before the shared drain assertions, so the
+            # 12 the default arm expects would never be reachable here
+            23
+        } else if env_or!("E2E_EXPECT_500", "") == "1" {
             7
         } else if env_or!("E2E_EXPECT_401", "") == "1" {
             8
@@ -811,6 +948,33 @@ sync_strjq! : Str, Str, Str, List(Str), Str => Str
 sync_strjq! = |bin, home, base, args, filter| {
     argstr = List.fold(args, "", |acc, a| "${acc} '${a}'")
     Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' ${argstr} | jq -r '${filter}' 2>/dev/null"))
+}
+
+# Which page a listing URI asks for. A BOUNDARY test, because the query string is
+# `?per_page=100&page=N`: "per_page=100" contains "page=1", and "page=10"/"page=100"
+# contain "page=1" as well, so `Str.contains(uri, "page=1")` is true for every page any
+# caller will ever request. One function so the two arms above cannot drift, and so the
+# next arm added gets the boundary for free instead of re-deriving it.
+page_is : Str, I64 -> Bool
+page_is = |uri, n| {
+    tok = "&page=${n.to_str()}"
+    Str.contains(uri, "${tok}&") or Str.ends_with(uri, tok)
+}
+
+# Two pages of 100 — each exactly per_page, so fetch_pages! sees a full page and asks for
+# the next one, and the sum (200) is a number no single page and no constant can produce.
+# Ids 20001+ are clear of every fixture range. Generated rather than written out because
+# the only property that matters is the COUNT.
+mock_page_one : Str
+mock_page_one = "[${bulk_rows(20001, 20100)}]"
+
+mock_page_two : Str
+mock_page_two = "[${bulk_rows(20101, 20200)}]"
+
+bulk_rows : I64, I64 -> Str
+bulk_rows = |i, last| {
+    row = "{\"id\":${(i).to_str()},\"name\":\"bulk ${(i).to_str()}\",\"sport_type\":\"Ride\",\"start_date_local\":\"2026-06-01T10:00:00Z\",\"moving_time\":3600,\"distance\":20000.0,\"total_elevation_gain\":0.0,\"average_heartrate\":140.0}"
+    if i >= last row else "${row},${bulk_rows(i + 1, last)}"
 }
 
 # poll the mock until it answers (pure Roc: curl via Cmd + Sleep, no shell loop)

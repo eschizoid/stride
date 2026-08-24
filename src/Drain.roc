@@ -1,9 +1,12 @@
 Drain :: [].{
     # ── the stream drain's pure half ────────────────────────────────────
-    # Two things, both pure and both belonging to the drain loop in Strava.drain_streams!:
+    # Three things, all pure. Two belong to the drain loop in Strava.drain_streams!:
     # the rate-pacing DECISION (`decide`), and the vocabulary its outcome ships in
-    # (`StopReason` + `stopped_label`). The loop is a thin effectful skin dispatching on
-    # both, so every branch is unit-testable here.
+    # (`StopReason` + `stopped_label`). The third, `SyncStop`, does NOT belong to the
+    # drain — it belongs to `sync!`, which is the whole point of it being a separate
+    # type, and it lives here so the one wire vocabulary stays in one file. The loop is
+    # a thin effectful skin dispatching on the first two, so every branch is
+    # unit-testable here.
     #
     # `decide` takes a response status and the per-run counters and returns the next
     # control-flow action. (Counting our own reads by choice, so pacing does not depend
@@ -24,14 +27,32 @@ Drain :: [].{
     # next reader gets it wrong.
     PostStore : [Continue, WindowFull]
 
-    # Why a drain run ended — the value that ships as the payload's `stopped`.
-    # A TAG, not a Str, so the COMPILER enforces the set at the producer: drain_streams!
-    # cannot invent a fourth reason or typo an existing one. `stopped_label` below is the
-    # single place it becomes a string, and its three arms are pinned by equality expects.
+    # Why a DRAIN run ended. A TAG, not a Str, so the COMPILER enforces the set at the
+    # producer: drain_streams! cannot invent a fourth reason or typo an existing one.
     # This shape was chosen after the Str version shipped pinned by nothing: Render's
     # expects hand-type their own literals, so they check Render against itself, and
     # renaming a literal in the producer left every test green.
     StopReason : [Complete, BudgetReached, RateLimited]
+
+    # Why a SYNC run ended — the value behind the payload's `stopped` field, which itself
+    # carries the Str this maps to; the tag never crosses that boundary. Wider than
+    # StopReason by one inhabitant, because one thing stops a sync without being a drain
+    # reason: the activity LIST was refused, which happens before the drain runs at all.
+    #
+    # WRAPPING rather than adding a fourth arm to StopReason is the whole point. A fourth
+    # arm would also be in scope at the three sites where drain_streams! constructs a
+    # `stopped` value, so the compiler would accept a drain claiming a list refusal —
+    # losing the exact guarantee the tag was introduced for. Here drain_streams! still
+    # returns a StopReason and cannot name ListRateLimited at all; only sync!, which
+    # issues both requests, does.
+    #
+    # The alternative to a distinct arm was reusing RateLimited for both. That left the
+    # payload unable to say WHICH request was refused, and Render physically unable to
+    # write the right sentence, because the only distinction available to it was
+    # `pending_streams > 0` — which is true on precisely the first-run sync this case
+    # exists for. A drain that 429s on its first id and a list that 429s on page one are
+    # otherwise identical in the envelope.
+    SyncStop : [FromDrain(StopReason), ListRateLimited]
 
     Action : [
         Refresh, # 401: refresh the access token, retry the same id (bounded by the caller)
@@ -56,14 +77,27 @@ Drain :: [].{
             Store({ window: window2, after })
         }
 
-    # the ONE tag -> wire-string conversion. These three strings are also the enum in
-    # schemas/v2/sync.json; changing one without the other is a contract break.
+    # The tag <-> wire-string vocabulary, in one place. `sync_stopped_label` is the only
+    # PRODUCTION entry point — both payload sites in Strava.sync! go through it, and it
+    # delegates the three drain reasons to `stopped_label` rather than restating them, so
+    # a rename cannot land on one spelling only. `stopped_label` exists for the narrower
+    # domain: Render.drain_note handles drain reasons and nothing else, and its expects
+    # say so by composing against this rather than against the wider function.
+    # These four strings are also the enum in schemas/v2/sync.json; changing one without
+    # the other is a contract break.
     stopped_label : StopReason -> Str
     stopped_label = |r|
         match r {
             Complete => "complete"
             BudgetReached => "budget_reached"
             RateLimited => "rate_limited"
+        }
+
+    sync_stopped_label : SyncStop -> Str
+    sync_stopped_label = |s|
+        match s {
+            FromDrain(r) => stopped_label(r)
+            ListRateLimited => "list_rate_limited"
         }
 
     test_lim : Limits
@@ -121,3 +155,13 @@ expect match Drain.decide({ status: 200, window: 9 }, Drain.test_lim) {
 expect Drain.stopped_label(Complete) == "complete"
 expect Drain.stopped_label(BudgetReached) == "budget_reached"
 expect Drain.stopped_label(RateLimited) == "rate_limited"
+
+# the fourth string has no StopReason to come from — it is reachable only through
+# SyncStop, which is the type-level statement that a drain cannot produce it.
+expect Drain.sync_stopped_label(ListRateLimited) == "list_rate_limited"
+
+# and the wrapper DELEGATES rather than restating: these fail if sync_stopped_label
+# ever grows its own copy of the three drain strings and the two spellings drift.
+expect Drain.sync_stopped_label(FromDrain(Complete)) == Drain.stopped_label(Complete)
+expect Drain.sync_stopped_label(FromDrain(BudgetReached)) == Drain.stopped_label(BudgetReached)
+expect Drain.sync_stopped_label(FromDrain(RateLimited)) == Drain.stopped_label(RateLimited)
