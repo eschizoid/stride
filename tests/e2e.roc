@@ -264,7 +264,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(688)?
+    checks_ran_exactly!(690)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2562,6 +2562,11 @@ b_agent_loop! = |ctx| {
     # deltas are measured against. Getting that wrong is a check that fails on its own
     # tidying rather than on anything the loop did.
     pre_unplanned = str_to_i64(Str.trim(strjq!(ctx, ["plan"], ".data.adherence_28d.unplanned_activities")))
+    # ...and the same for planned, read before the BYSTANDER below exists. `base_planned`
+    # is read after it, so it cannot answer "did this scenario put the plan back": the
+    # bystander is a row this scenario created and must therefore remove. The end-state
+    # check compares against this.
+    pre_planned = str_to_i64(Str.trim(strjq!(ctx, ["plan"], ".data.adherence_28d.planned")))
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (9220,'agent loop ride','Ride','${ctx.d2}T07:00:00Z',3600,25000,190,190,145);")
     # A BYSTANDER open session, created before the baselines so every delta below is
     # unaffected by it. It exists for one assertion, after the completion: that the list
@@ -2619,16 +2624,20 @@ b_agent_loop! = |ctx| {
     check!("...and still_open by exactly one", str_to_i64(pj!(".data.adherence_28d.still_open")) == base_open + 1)?
     check!("...while completed did not move — planning is not completing", str_to_i64(pj!(".data.adherence_28d.completed")) == base_completed)?
     check!("...and both lists grew by one", str_to_i64(pj!(".data.open_sessions | length")) == base_open_len + 1 and str_to_i64(pj!(".data.plan_history_28d | length")) == base_hist_len + 1)?
-    # The identity asserted HERE, the only moment `still_open` is non-zero — measured at
-    # planned=3, completed=0, skipped=2, still_open=1. Not all four terms: `completed` is
+    # The identity asserted here, where `still_open` is at its highest — measured at
+    # planned=4, completed=0, skipped=2, still_open=2. Not all four terms: `completed` is
     # necessarily 0 in leg 1, and there is no point in this scenario where all four are
     # non-zero at once. This assertion is correct and cheap; it is NOT load-bearing —
     # review could construct no mutation for which it is the unique catcher, because every
-    # delta check fires first. Review proved the other two assertions of it
-    # measure nothing: at the baseline and at the end still_open is 0, so both reduce to
-    # `planned == skipped`, and a payload hardwiring still_open to 0 passed the whole suite
-    # with only the two delta checks removed. Those deltas carry all of the still_open
-    # signal; the identity only earns its place at this point.
+    # delta check fires first.
+    #
+    # This comment used to say "the ONLY moment still_open is non-zero", and that the two
+    # sibling assertions of the identity reduced to `planned == skipped` because still_open
+    # was 0 at both. The bystander session added above made all three false in one stroke —
+    # still_open is now 1 / 2 / 1 at baseline, here, and at the end — and it took review
+    # measuring the three points to notice, because every check stayed green. A comment
+    # describing which assertions are weak is only worth having if it is re-derived when
+    # the fixture moves underneath it.
     check!("...and the adherence identity holds with still_open actually non-zero", str_to_i64(pj!(".data.adherence_28d.still_open")) > 0 and str_to_i64(pj!(".data.adherence_28d.planned")) == str_to_i64(pj!(".data.adherence_28d.completed")) + str_to_i64(pj!(".data.adherence_28d.skipped")) + str_to_i64(pj!(".data.adherence_28d.still_open")))?
 
     # ── leg 2: reconcile against real training ──────────────────────────
@@ -2680,6 +2689,19 @@ b_agent_loop! = |ctx| {
     # block that sets the stricter standard should not be the one breaking it.
     sub_out = stride!(ctx.bin, ctx.home, ["skip", sid2, "did something else instead", "9221"])
     check!("...the substitution is accepted, not refused (got ${Str.trim(sub_out)})", Str.contains(sub_out, "\"substitute_activity\":9221") and Str.contains(sub_out, "\"skipped_session\":${sid2}"))?
+    # ...and a SKIPPED session is not in the actionable list either. The removal check
+    # above bounds `open_sessions` from BELOW — it cannot be emptied — and this bounds it
+    # from above. Review found the gap between them: changing open_p's predicate from
+    # `= 'open'` to `<> 'done'` is a one-token slip that puts every skipped session back
+    # into the list an agent branches on. `base_open_len` is measured with the slip already
+    # active so it absorbs the phantom rows, leg 1's +1 still holds, and `still_open` comes
+    # from a different query — so nothing in this scenario noticed. The agent re-plans
+    # against sessions it already skipped.
+    #
+    # Negative membership is safe here only because the bystander guarantees the list is
+    # non-empty; without it, `index(...) == null` would pass on an emptied list too, which
+    # is the defect the bystander exists for. The two checks hold each other up.
+    check!("...and the skipped session is NOT in the actionable list", pj!("[.data.open_sessions[].id] | index(${sid2})") == "null")?
     check!("...and a SUBSTITUTED activity stops counting as unplanned too", str_to_i64(pj!(".data.adherence_28d.unplanned_activities")) == sub_unplanned - 1)?
     # Named for what it asserts. It was "counted as skipped, not completed" and contains no
     # `completed` term — and review aimed four mutations at the completed half, all of
@@ -2730,8 +2752,15 @@ b_agent_loop! = |ctx| {
     # ── cleanup: the loop leaves no trace ───────────────────────────────
     # Deleted by id, and the deletion asserted — every counter this scenario moved has to
     # come back, or a later scenario inherits a session it never created.
-    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${sid}; DELETE FROM activity_metrics WHERE activity_id = 9220; DELETE FROM activities WHERE id = 9220;")
-    check!("the loop left the plan exactly as it found it", str_to_i64(pj!(".data.adherence_28d.planned")) == base_planned and str_to_i64(pj!(".data.adherence_28d.completed")) == base_completed and str_to_i64(pj!(".data.adherence_28d.unplanned_activities")) == pre_unplanned)?
+    # The BYSTANDER goes too, and it is compared against `pre_planned` rather than
+    # `base_planned` for the same reason `pre_unplanned` exists: the state to return to is
+    # the one from before this scenario built anything, not the baseline the deltas are
+    # measured against. `base_planned` is read AFTER the bystander, so comparing against it
+    # let the bystander leak while the check reported the plan restored — measured, one row
+    # and one open session inherited by every scenario after this one.
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${sid}; DELETE FROM planned_sessions WHERE id = ${sid_other}; DELETE FROM activity_metrics WHERE activity_id = 9220; DELETE FROM activities WHERE id = 9220;")
+    check!("the loop left the plan exactly as it found it", str_to_i64(pj!(".data.adherence_28d.planned")) == pre_planned and str_to_i64(pj!(".data.adherence_28d.completed")) == base_completed and str_to_i64(pj!(".data.adherence_28d.unplanned_activities")) == pre_unplanned)?
+    check!("...leaving no open session behind either, bystander included", str_to_i64(pj!(".data.open_sessions | length")) == base_open_len - 1)?
     Ok({})
 }
 
