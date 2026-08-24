@@ -68,13 +68,55 @@ schema-check: build
     # never be skipped — a real contract test even on a fresh install
     errs=$(STRIDE_FORMAT=json ./stride --help 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/commands.json -f tools/validate.jq 2>&1 || true)
     if [ -n "$errs" ]; then echo "commands:"; echo "$errs"; rc=1; else echo "commands: conforms"; fi
-    # schema name : invocation — they differ where a command needs an argument
-    # (top) or where the file name cannot carry a dash (power_curve)
-    for pair in summary:summary plan:plan activities:activities top:"top tss" load:load \
-                stats:stats doctor:doctor zones:zones compare:compare progress:progress \
-                week:week power_curve:power-curve tte:"tte 300" reps:reps season:season; do
-        c="${pair%%:*}"
-        inv=$(printf '%s' "${pair#*:}" | tr -d '"')
+    # DERIVED from the command table, not written out. #219 made that table the
+    # authority — every form declares the schemas/v2 file its payload validates against —
+    # and the hand-written list this replaces had already drifted away from it: it named
+    # 15 forms where the table declares 19 read-only ones, silently never checking `pz`,
+    # `pc` or `config get` against a real database. A second copy of a mapping does not
+    # stay wrong in an interesting way; it just stops covering things.
+    #
+    # `activity` is excluded and handled separately below, because its argument is an id
+    # that has to come from the data rather than from the table.
+    #
+    # The `mutates == false` filter is a SAFETY property, not a tidiness one, and it is
+    # the reason this recipe is allowed near a real database: the table declares nine
+    # schema-bearing commands that write — init, sync, analyze, import, rate, week add,
+    # complete, skip, config set — and deriving from it makes invoking one impossible by
+    # construction. The hand-written list simply happened not to name them.
+    forms=$(mktemp)
+    STRIDE_FORMAT=json ./stride --help | jq -r '
+        .data.commands[]
+        | select(.mutates == false and .network == false and .interactive == false and .schema != "")
+        | select(.name != "activity")
+        | [.name, .schema, ([.args[] | select(.required) | .name] | join(" "))]
+        | @tsv' > "$forms"
+    # A derivation that yields nothing looks exactly like a suite with nothing to say, so
+    # the count is asserted rather than assumed. The floor is the size of the list this
+    # replaced; it is a floor and not an equality because the table is expected to grow.
+    nforms=$(wc -l < "$forms" | tr -d ' ')
+    if [ "$nforms" -lt 15 ]; then
+        echo "schema-check: derived only $nforms forms from the command table (expected >= 15) — the derivation is broken, not the payloads"
+        exit 4
+    fi
+    echo "schema-check: $nforms forms derived from the command table"
+    while IFS="$(printf '\t')" read -r c schema req; do
+        inv="$c"
+        skipform=""
+        for a in $req; do
+            case "$a" in
+                # an alternation names its own valid values; take the first. This is why
+                # `top` needs no entry below — the table already says what it accepts.
+                *"|"*) v=$(printf '%s' "$a" | tr -d '<>' | cut -d'|' -f1) ;;
+                # everything else needs a value nothing in the table supplies. FAIL rather
+                # than skip on an unknown one: a new required argument must break this
+                # loudly, not quietly drop its form from the check.
+                "<watts>") v=300 ;;
+                "<key>") v=timezone ;;
+                *) skipform="no value known for required argument $a" ;;
+            esac
+            inv="$inv $v"
+        done
+        if [ -n "$skipform" ]; then echo "$c: FAILED ($skipform)"; rc=1; continue; fi
         out=$(STRIDE_FORMAT=json ./stride $inv 2>&1 || true)
         # a command that legitimately has nothing to say (fresh install, no
         # activities) returns an error ENVELOPE; that is the database being
@@ -91,9 +133,10 @@ schema-check: build
             echo "$inv: skipped ($(printf '%s' "$out" | jq -r '.error.code'))"
             continue
         fi
-        errs=$(printf '%s' "$out" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/$c.json -f tools/validate.jq 2>&1 || true)
+        errs=$(printf '%s' "$out" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/$schema -f tools/validate.jq 2>&1 || true)
         if [ -n "$errs" ]; then echo "$inv:"; echo "$errs"; rc=1; else echo "$inv: conforms"; fi
-    done
+    done < "$forms"
+    rm -f "$forms"
     act=$(STRIDE_FORMAT=json ./stride activities 1 2>&1 | jq -r '.data[0].id // empty' 2>&1 || true)
     if [ -n "$act" ]; then
         errs=$(STRIDE_FORMAT=json ./stride activity "$act" 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/activity.json -f tools/validate.jq 2>&1 || true)
