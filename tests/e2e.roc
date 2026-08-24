@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(730)?
+    checks_ran_exactly!(733)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2552,6 +2552,27 @@ b_seed_analyze! = |ctx| {
     # ...and with every date readable it picks the newest, not the highest-sorting string.
     _ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (700,'older','Ride','Ride','${ctx.d1}T10:00:00Z',3600),(701,'newest','Ride','Ride','${ctx.d2}T10:00:00Z',3600);")
     check!("...and on readable dates rates the newest activity", Str.contains(sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' rate latest 7 2>/dev/null"), "\"rated\":701"))?
+    # ...and on a TWO-A-DAY it rates the later session, not the higher id. Ranking on the
+    # parsed day instead of the full timestamp manufactures a tie that the old string max
+    # never had, and then breaks it by id — which has no relationship to time of day. The
+    # evening ride here deliberately carries the LOWER id, because ids track upload order
+    # and a backfill, a manual entry or an import all break that correlation. Review
+    # measured the morning session being rated; this is the check that would have caught it.
+    _ = sql!(an_db, "DELETE FROM ratings; DELETE FROM activities WHERE id IN (700,701);")
+    _ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (800,'evening','Ride','Ride','${ctx.d1}T18:00:00Z',3600),(900,'morning','Ride','Ride','${ctx.d1}T08:00:00Z',3600);")
+    check!("...and on a two-a-day rates the LATER session, not the higher id", Str.contains(sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' rate latest 6 2>/dev/null"), "\"rated\":800"))?
+    _ = sql!(an_db, "DELETE FROM ratings; DELETE FROM activities WHERE id IN (800,900);")
+    # ...and the year bound is still in the shared guard. `date_str_to_days` parses the year
+    # with arg_i64 and `days_to_date_str` emits it unpadded, so "999-01-01" round-trips —
+    # and sorts ABOVE every real date under ORDER BY day DESC, which is the exact hazard
+    # every caller of that guard exists to prevent. A rewrite that kept the round trip and
+    # dropped the bound let `summary` anchor on year 999 and report it as as_of at exit 0.
+    _ = sql!(an_db, "INSERT OR REPLACE INTO daily_load (day,tss,ctl,atl,tsb) VALUES ('999-01-01', 30.0, 5.0, 5.0, 0.0);")
+    check!("a year-999 day is refused, not accepted as canonical because it round-trips", Str.contains(sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>/dev/null"), "unreadable_daily_load_day"))?
+    # ...and the OTHER definition of the rule agrees, which is the thing that went wrong:
+    # `week add` kept the bound while every stored-date guard lost it, in one binary.
+    check!("...and `week add` refuses the same year, so one rule means one answer", Str.contains(sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' week add 999-01-01 endurance x y 2>/dev/null"), "bad_date"))?
+    _ = sql!(an_db, "DELETE FROM daily_load WHERE day = '999-01-01';")
     _ = sql!(an_db, "DELETE FROM ratings; DELETE FROM activities WHERE id IN (700,701);")
     _ = sql!(an_db, "DELETE FROM activity_metrics WHERE activity_id = 804; DELETE FROM activities WHERE id = 804;")
     _ = sh!("rm -rf '${an_home}'")

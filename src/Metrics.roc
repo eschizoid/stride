@@ -1820,11 +1820,23 @@ Metrics :: [].{
         match date_str_to_days(s) {
             # ONE parse. The obvious spelling — `if is_canonical_date(s) date_str_to_days(s)`
             # — parses twice, because is_canonical_date is itself implemented over
-            # date_str_to_days, and it leaves the second call's Err arm unreachable. That is
-            # the shape this function's own comment condemns, so it should not be this
-            # function's shape. Round-tripping the parsed day is what "canonical" MEANS
-            # here: only one spelling of a day survives days -> string.
-            Ok(d) => if days_to_date_str(d) == s Ok(d) else Err(BadDate)
+            # date_str_to_days, and it leaves the second call's Err arm unreachable.
+            #
+            # The round trip is what "canonical" MEANS here: only one spelling of a day
+            # survives days -> string. The YEAR BOUND is the other half and it is not
+            # optional — `date_str_to_days` parses the year with arg_i64, which accepts any
+            # integer, and `days_to_date_str` emits it unpadded, so "999-01-01" round-trips
+            # cleanly. It also sorts ABOVE every real date under `ORDER BY day DESC`
+            # ('9' > '2'), which is the precise hazard every caller of this function exists
+            # to prevent. Dropping it here — which an earlier version of this rewrite did,
+            # while its commit message claimed five spellings had become one — let `summary`
+            # anchor on year 999 and report it as `as_of` at exit 0, and left two live
+            # definitions of "canonical" in this module answering differently on the same
+            # string.
+            Ok(d) => {
+                c = civil_from_days(d)
+                if days_to_date_str(d) == s and c.y >= 1000 and c.y <= 9999 Ok(d) else Err(BadDate)
+            }
             Err(_) => Err(BadDate)
         }
 
@@ -1836,15 +1848,11 @@ Metrics :: [].{
         }
 
     is_canonical_date : Str -> Bool
-    is_canonical_date = |s|
-        match date_str_to_days(s) {
-            Ok(d) => {
-                c = civil_from_days(d)
-                days_to_date_str(d) == s and c.y >= 1000 and c.y <= 9999
-            }
-
-            Err(_) => False
-        }
+    # DEFINED OVER usable_date_days, not beside it. These were two independent bodies of
+    # the same rule, which is how one of them lost the year bound without the other
+    # noticing — and `week add 999-01-01` kept answering `bad_date` while every stored-date
+    # guard accepted it, in the same binary.
+    is_canonical_date = |s| is_usable_date(s)
 
     # epoch day number -> "Mon".."Sun". Epoch day 0 (1970-01-01) was a Thursday, so
     # (days + 3) mod 7 makes Monday = 0 (matches the Mon-aligned week convention).

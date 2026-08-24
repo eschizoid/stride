@@ -34,35 +34,60 @@ Plan :: [].{
                         # exit 0, on a database where `summary` and `season` both refuse.
                         #
                         # This is the worst instance of the class in the tree because it
-                        # WRITES, and it writes into `ratings` — the one table
-                        # prune_deleted! refuses to touch, on the grounds that a rating
-                        # "can't be re-derived", so the row is human judgment that cannot be
-                        # recovered. It also collides with the remedy the date errors print:
+                        # WRITES, and it writes into `ratings` — one of the two tables
+                        # prune_deleted! refuses to touch — planned_sessions is the other,
+                        # on the same grounds — because a rating "can't be re-derived", so
+                        # the row is human judgment that cannot be recovered. It also collides with the remedy the date errors print:
                         # deleting the malformed row by id destroys the rating the athlete
                         # meant for a different session, and that session still has none.
                         #
                         # Not covered by summary's sweep — `rate!` is dispatched straight
                         # from app.roc and never reaches summary_payload!. Guarded here.
-                        rows = Sqlite.query_many!({
+                        # TWO steps, and the split is the point: Roc GUARDS, SQL RANKS.
+                        #
+                        # Guard first, over every activity date, grouped by the date so the
+                        # id named on a refusal is a row that actually has that date.
+                        act_days = Sqlite.query_many!({
                             path: Path.utf8(path),
                             query:
-                                \\SELECT id AS id, COALESCE(substr(start_local, 1, 10), '') AS d
-                                \\FROM activities ORDER BY id
+                                \\SELECT substr(start_local, 1, 10) AS d, MIN(id) AS example_id
+                                \\FROM activities GROUP BY d ORDER BY d, example_id
                             ,
                             bindings: [],
                             rows: |cols| |stmt| {
-                                id = Sqlite.i64("id")(cols)(stmt)?
                                 d = Sqlite.str("d")(cols)(stmt)?
-                                Ok({ id, d })
+                                example_id = Sqlite.i64("example_id")(cols)(stmt)?
+                                Ok({ d, example_id })
                             },
                         })?
-                        # Refuse an unreadable date rather than ranking around it: ranking
-                        # around it would silently rate the wrong session, which is the bug.
-                        dated = List.map_try(rows, |r| (Metrics.usable_date_days(r.d)).map_err(|_| BadActivityDate(r.d, r.id)).map_ok(|day| { id: r.id, day }))?
-                        # newest day wins; ties broken by the higher id, which is what the
-                        # string version meant to do and did do whenever the dates parsed.
-                        best = List.fold(dated, { id: 0, day: -999999 }, |acc, r| if r.day > acc.day or (r.day == acc.day and r.id > acc.id) r else acc)
-                        if best.id == 0 Err(NoActivities) else Ok(best.id)
+                        _ = List.map_try(act_days, |r| Metrics.usable_date_days(r.d).map_err(|_| BadActivityDate(r.d, r.example_id)))?
+                        # ...and only then rank, with the ORIGINAL query. It compares the
+                        # whole `start_local`, which is what makes it right: two sessions on
+                        # one day never tie, the later one wins outright, and MAX(id) only
+                        # separates identical timestamps.
+                        #
+                        # An earlier version of this fix ranked on the parsed DAY and I
+                        # claimed that was what the string version did. It was not. The day
+                        # discards the time, MANUFACTURES a tie that did not exist, and then
+                        # resolves it by id — which has no relationship to time of day.
+                        # Review measured an 18:00 session with id 800 losing to an 08:00
+                        # one with id 900, so `rate latest` rated the MORNING ride after a
+                        # two-a-day. Ids track upload order, which usually tracks time and
+                        # does not have to.
+                        #
+                        # So the string max is kept, and the guard above is what makes it
+                        # trustworthy: it was only ever wrong because an unreadable date
+                        # could outrank a real one, and now none can reach it.
+                        match Sqlite.query!({
+                            path: Path.utf8(path),
+                            query: "SELECT COALESCE(MAX(id), 0) AS id FROM activities WHERE start_local = (SELECT MAX(start_local) FROM activities)",
+                            bindings: [],
+                            row: Sqlite.i64("id"),
+                        }) {
+                            Ok(0) => Err(NoActivities)
+                            Ok(id) => Ok(id)
+                            Err(e) => Err(e)
+                        }
                     } else {
                         Metrics.arg_i64(target).map_err(|_| BadId)
                     }
