@@ -174,6 +174,19 @@ Analyze :: [].{
 
                 }
         }
+    # canonical AND parseable. Both halves, for the reason spelled out at the fold above:
+    # the parse alone accepts "2026-3-05T", and this module WRITES the result.
+    usable_day : Str -> Bool
+    usable_day = |d|
+        if Metrics.is_canonical_date(d) {
+            match Metrics.date_str_to_days(d) {
+                Ok(_) => True
+                Err(_) => False
+            }
+        } else {
+            False
+        }
+
     ActivityRow : {
         id : I64,
         start : Str,
@@ -920,8 +933,14 @@ Analyze :: [].{
                 \\SELECT substr(a.start_local, 1, 10) AS day, SUM(m.tss) AS t,
                 \\       -- carried ONLY so an unreadable day can name a row the user can
                 \\       -- act on, on the branch below where no day parses at all. Same
-                \\       -- reasoning as ReportSeason's example_id (#243): a date is not
-                \\       -- something you can delete or re-fetch, an id is.
+                \\       -- reasoning as ReportSeason's example_id (#243) for MIN: a date is
+                \\       -- not something you can delete or re-fetch, an id is. NOT the same
+                \\       -- reasoning for the secondary sort key — there the group is
+                \\       -- (date, fam) and `fam` decides which group is met first, whereas
+                \\       -- here the group is `day` alone, so it is already unique per output
+                \\       -- row and example_id can never tie-break. Belt-and-braces; removing
+                \\       -- it is safe, and a reader coming from that block would otherwise
+                \\       -- assume it is load-bearing.
                 \\       MIN(m.activity_id) AS example_id
                 \\FROM activity_metrics m
                 \\JOIN activities a ON a.id = m.activity_id
@@ -935,20 +954,46 @@ Analyze :: [].{
                 Ok({ day, t, example_id })
             },
         })?
-        # keep only rows whose date parses. Deriving the walk bounds from these VALID
-        # days (not blindly from the first/last row) avoids the trap where a single
-        # malformed start_local defaulted to epoch-day 0 and walked from 1970.
+        # keep only rows whose date is CANONICAL and parses. Deriving the walk bounds from
+        # these VALID days (not blindly from the first/last row) avoids the trap where a
+        # single malformed start_local defaulted to epoch-day 0 and walked from 1970.
+        #
+        # is_canonical_date as well as the parse, and this is the site where that matters
+        # most in the whole tree, because this one WRITES. `date_str_to_days` alone accepts
+        # "2026-3-05T", "2026-08-9T" and "2026-8-05T" — and the day this fold produces is
+        # then written back through days_to_date_str, so it lands in daily_load looking
+        # perfectly canonical. Review measured it: analyze reported converged: true, wrote
+        # 2026-03-05 from '2026-3-05T10:00:00Z', and summary and compare then reported over
+        # it at exit 0 while season refused the same activity. In one case the walk also ran
+        # from March, producing 173 rows off one malformed date.
+        #
+        # No downstream guard can catch that. Report.canonical_day checks daily_load.day,
+        # and by the time the value reaches daily_load it has already been laundered into a
+        # real-looking date. The guard has to be here, upstream of the write.
         by_day = List.fold(
             day_rows,
             Dict.empty(),
             |dict, r|
-                match Metrics.date_str_to_days(r.day) {
-                    Ok(d) => Dict.insert(dict, d, r.t)
-                    Err(_) => dict,
+                if Metrics.is_canonical_date(r.day) {
+                    match Metrics.date_str_to_days(r.day) {
+                        Ok(d) => Dict.insert(dict, d, r.t)
+                        Err(_) => dict,
+                    }
+                } else {
+                    dict
                 }
         )
+        # Every row this fold could NOT use, kept rather than discarded. Dropping one
+        # silently is the same defect as everything else in #243, and it is the LIKELY
+        # shape: one bad date among many, not all of them. Review measured it — ten good
+        # activities plus one unreadable gave `converged: true` and `computed: 11` beside
+        # ten days of load, two numbers in one payload disagreeing with nothing to say so.
+        # The walk still runs and still writes what it could read, because a correct
+        # partial series beats no series; then the run refuses, naming the row, so the
+        # incompleteness is stated rather than left for `season` to discover.
+        unusable = List.keep_if(day_rows, |r| !(usable_day(r.day)))
         valid_days = Dict.keys(by_day)
-        match List.first(valid_days) {
+        walked = match List.first(valid_days) {
             # Nothing to walk. TWO different facts arrive here and they need different
             # answers, which is what the single `Ok({})` that used to sit here got wrong.
             #
@@ -967,13 +1012,7 @@ Analyze :: [].{
             # sessions and kilometres in the same breath. Review measured exactly that, and
             # it is the same defect one layer down: a remedy that cannot work. So it names
             # the row instead, through the error this PR added for it.
-            Err(_) => {
-                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM daily_load", bindings: [] })?
-                match List.first(day_rows) {
-                    Ok(r) => Err(BadActivityDate(r.day, r.example_id))
-                    Err(_) => Ok({})
-                }
-            }
+            Err(_) => Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM daily_load", bindings: [] })
             Ok(seed) => {
                 bounds = List.fold(valid_days, { lo: seed, hi: seed }, |b, d| { lo: (b.lo).min(d), hi: (b.hi).max(d) })
                 # extend through today so rest days decay ATL/CTL and TSB is true as-of-now
@@ -996,6 +1035,15 @@ Analyze :: [].{
                         }
                 }
             }
+        }
+        walked?
+        # ...and only now, after the table holds everything that WAS readable, refuse if
+        # anything was not. Order matters: refusing first would leave daily_load stale, and
+        # every reader would keep answering confidently from a series whose inputs the
+        # engine cannot read — the silent wrong answer this whole change removes.
+        match List.first(unusable) {
+            Ok(r) => Err(BadActivityDate(r.day, r.example_id))
+            Err(_) => Ok({})
         }
     }
     rebuild_txn! : Str, Dict(I64, F64), I64, I64 => Try({}, _)

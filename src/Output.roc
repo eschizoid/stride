@@ -185,8 +185,7 @@ Output :: [].{
     # `daily_load.day`, which stride derives itself. There is a third date column,
     # `planned_sessions.target_date`, and it needs no code here for a good reason rather
     # than an accident: `plan_add!` rejects a non-canonical date with `bad_date` before
-    # the database is opened, and it is the only writer of that column. It is the
-    # best-guarded date in the schema.
+    # the database is opened, and it is the only writer of that column.
     #
     # An earlier version of this comment said the opposite — that `week add` "stores
     # whatever string it is handed" — and cited Plan.roc's own note as evidence. That note
@@ -217,12 +216,13 @@ Output :: [].{
     # The ID is therefore the only handle that works, so the remedy leads with it. The
     # order of the two remedies is not cosmetic either: `sync --all` was measured to
     # SILENTLY no-op on a row Strava does not list — an imported one, where `synced_at` is
-    # NULL — returning `updated_activities: 0` at exit 0 and leaving the same error. The
-    # cause is that Strava's listing does not contain the id, and the upsert is keyed on
-    # ids from the response; `synced_at` is why PRUNE exempts the row, which is a separate
-    # mechanism. Stamping imports would therefore change nothing. An error whose first
-    # suggestion reports success while changing nothing is the defect this whole change
-    # exists to remove.
+    # NULL — returning `updated_activities: 0` at exit 0 and leaving the same error. So
+    # `sync --all` will not repair an imported row, and the id-based remedy leads.
+    # (Two earlier versions of this paragraph explained the mechanism and got it wrong
+    # both times, the second in the dangerous direction — it said stamping imports "would
+    # change nothing", when Strava.prune_deleted! exempts exactly the NULL rows and
+    # stamping them would move them INTO the victim set. The mechanism is documented where
+    # it lives; this comment only needs the consequence.)
     unreadable_activity_date_msg : Str, I64 -> Str
     unreadable_activity_date_msg = |raw, id|
         "activity ${(id).to_str()} has an unreadable start_local beginning '${raw}' — delete that row by id and re-sync, or run `stride sync --all` if Strava still lists the activity"

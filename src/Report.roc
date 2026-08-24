@@ -192,17 +192,26 @@ Report :: [].{
         })?
         Ok(n > 0)
     }
-    # The anchor guard, in ONE place because three commands share one hazard and two of
-    # them had only half of it. `date_str_to_days` alone accepts "2026-3-05" — and a
+    # The daily_load.day guard, used by every read of that column in this module — the two
+    # anchors AND the ramp series. NOT the only copy in the tree: ReportSeason has its own
+    # inline equivalent for daily_load.day and a second for activity dates, and those two
+    # must not drift from this one. Two implementations of one rule is how this class
+    # reopened twice already.
+    #
+    # The ramp series matters separately from the anchors, and the anchor guard does not
+    # cover it: a non-canonical day only has to BE the anchor when it sorts highest. Give
+    # the table a canonical day that sorts above it and the poisoned row slips into the
+    # 30-day window untested — '2026-3-05' >= '2026-12-06' is true under byte order, and
+    # so is '2026-3-05' < '2027-01-05'. Review measured what that published: a ramp_7d of
+    # -49 and a form_delta of -79 against an honest 0, with form_delta_known: true
+    # certifying it, at exit 0. That is the fabricated ramp the fold's own comment warns
+    # about, arriving through the guard that had just been upgraded to catch it. `date_str_to_days` alone accepts "2026-3-05" — and a
     # non-canonical day is the DANGEROUS one, not the harmless one: `ORDER BY day DESC` is
     # a string sort, so "2026-3-05" beats every "2026-08-xx" and becomes `latest`. Measured
     # on a two-row table before this: `summary` reported as_of 2026-3-05, `compare`
     # published an all-zero 28-day window at exit 0, and only `season` refused — because
     # season was the one site testing is_canonical_date as well.
     #
-    # A previous commit here fixed the `compare` half with the parse check alone and the
-    # comment on it said "every command that anchors on that day refuses it". It did not.
-    # Half the class stayed open, in the sentence that declared it closed.
     canonical_day : Str -> Try(I64, _)
     canonical_day = |d|
         if Metrics.is_canonical_date(d) {
@@ -515,9 +524,9 @@ Report :: [].{
             match acc {
                 Err(e) => Err(e)
                 Ok(xs) =>
-                    match Metrics.date_str_to_days(r.d) {
+                    match canonical_day(r.d) {
                         Ok(day) => Ok(List.prepend(xs, { day, ctl: r.ctl, tsb: r.tsb }))
-                        Err(_) => Err(BadDailyLoadDay(r.d))
+                        Err(e) => Err(e)
                     }
             })?
         # one validated series, two views — each helper takes a closed record, so the

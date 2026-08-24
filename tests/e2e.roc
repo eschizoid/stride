@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(717)?
+    checks_ran_exactly!(721)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2465,6 +2465,28 @@ b_seed_analyze! = |ctx| {
     an_bad = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' analyze 2>/dev/null")
     check!("scored rows with no readable date make `analyze` refuse, not report converged", Str.contains(an_bad, "unreadable_activity_date"))?
     check!("...naming the row, and NOT claiming convergence over data it dropped", Str.contains(an_bad, "activity 801") and !(Str.contains(an_bad, "\"converged\":true")))?
+    # ...and the PARTIAL case, which is the likely one: some dates read, one does not.
+    # It refuses too — but only after writing what it could read, so a readable series is
+    # not thrown away over one bad row. Both halves asserted, because either alone is
+    # satisfiable the wrong way: refusing while wiping the table, or keeping the table and
+    # saying nothing.
+    _ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (802,'readable','Ride','Ride','${ctx.d1}T07:00:00Z',3600);")
+    _ = sql!(an_db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (802,40.0,111.0,3600,1);")
+    an_part = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' analyze 2>/dev/null")
+    check!("one unreadable date among readable ones still refuses, naming it", Str.contains(an_part, "unreadable_activity_date") and Str.contains(an_part, "activity 801"))?
+    check!("...while keeping the series it COULD read, rather than discarding it all", str_to_i64(Str.trim(sql!(an_db, "SELECT count(*) FROM daily_load;"))) > 0)?
+    # ...and a NON-CANONICAL date counts as unreadable here, which is the one that matters
+    # most in this file because this is the writer. `date_str_to_days` alone accepts
+    # "2026-3-05T" and the fold would then write 2026-03-05 back through days_to_date_str
+    # — a perfectly canonical row invented from a malformed one, which every downstream
+    # guard then trusts. Report.canonical_day cannot catch it: by the time the value
+    # reaches daily_load it has already been laundered.
+    _ = sql!(an_db, "DELETE FROM activity_metrics WHERE activity_id = 801; DELETE FROM activities WHERE id = 801;")
+    _ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (803,'non-canonical','Ride','Ride','2026-3-05T10:00:00Z',3600);")
+    _ = sql!(an_db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (803,40.0,111.0,3600,1);")
+    an_lndr = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' analyze 2>/dev/null")
+    check!("a non-canonical activity date is refused by the WRITER, not laundered into a real-looking day", Str.contains(an_lndr, "unreadable_activity_date") and Str.contains(an_lndr, "activity 803"))?
+    check!("...so no invented day reaches daily_load", Str.trim(sql!(an_db, "SELECT count(*) FROM daily_load WHERE day = '2026-03-05';")) == "0")?
     _ = sh!("rm -rf '${an_home}'")
     _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = 'not-a-date';")
     # ...and the SAME rule on the other date-parsing site. Absorbing this one
