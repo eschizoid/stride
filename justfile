@@ -258,10 +258,36 @@ schema-check: build
         echo "schema-check: derived $nforms forms but reached only $((checked + rejected)) — the loop dropped some"
         rc=1
     fi
+    # The FIRST row is deliberately the worst one. #249 hoists undateable activities to the
+    # top of `activities` so a listing cannot hide the row that needs repair — and `activity
+    # <id>` REFUSES on exactly that row, because the screen computes a 90-day window from
+    # the date. So on any database with one bad date, `.data[0].id` names a row whose detail
+    # view is an error envelope, `jq '.data'` is null, and this printed
+    # "activity N: expected object, got null" — a schema violation reported against a
+    # database whose only problem is one unreadable date, with the message pointing at the
+    # wrong thing. That is the wrong-cause diagnosis #249 exists to remove, one level up in
+    # the tooling, and the two halves of that PR caused it between them.
+    #
+    # A DECLARED refusal is a pass here. schema-check's question is "does the payload match
+    # its schema", and a form that correctly refuses has no payload to match — the envelope
+    # check below covers the error shape, and the e2e command-schema loop covers which codes
+    # a form may raise. Only an UNDECLARED code is a finding, which is why the code is
+    # compared against the table rather than merely being non-empty.
     act=$(STRIDE_FORMAT=json ./stride activities 1 2>&1 | jq -r '.data[0].id // empty' 2>&1 || true)
     if [ -n "$act" ]; then
-        errs=$(STRIDE_FORMAT=json ./stride activity "$act" 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/activity.json -f tools/validate.jq 2>&1 || true)
-        if [ -n "$errs" ]; then echo "activity $act:"; echo "$errs"; rc=1; else echo "activity $act: conforms"; fi
+        raw=$(STRIDE_FORMAT=json ./stride activity "$act" 2>&1 || true)
+        code=$(printf '%s' "$raw" | jq -r '.error.code // empty' 2>/dev/null || true)
+        if [ -n "$code" ]; then
+            declared=$(STRIDE_FORMAT=json ./stride --json --help | jq -r --arg c "$code" '((.data.universal_error_codes // []) + ([.data.commands[] | select(.name == "activity") | .error_codes // []] | flatten)) | index($c) // empty' 2>/dev/null || true)
+            if [ -n "$declared" ]; then
+                echo "activity $act: refused with declared code $code (no payload to validate)"
+            else
+                echo "activity $act: refused with UNDECLARED code $code"; rc=1
+            fi
+        else
+            errs=$(printf '%s' "$raw" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/activity.json -f tools/validate.jq 2>&1 || true)
+            if [ -n "$errs" ]; then echo "activity $act:"; echo "$errs"; rc=1; else echo "activity $act: conforms"; fi
+        fi
     else
         echo "activity: skipped (no activities yet)"
     fi

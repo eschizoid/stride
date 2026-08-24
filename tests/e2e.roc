@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(784)?
+    checks_ran_exactly!(785)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2543,9 +2543,20 @@ b_seed_analyze! = |ctx| {
     # failure the paragraph above claims to have fixed. 'garbage-da' escaped only by sorting
     # high. Asserted as a SET so the four cannot be checked one at a time and pass by luck of
     # which one leads.
-    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (941,'poisoned low','Ride','Ride','0000-0z-01T10:00:00Z',3600),(942,'stored empty','Ride','Ride','',3600);")
-    check!("...and an empty string and a lexically-low poisoned date surface too, not just NULL", strjq!(ctx, ["activities"], "[.data[0:3][].id] | sort | join(\",\")") == "940,941,942")?
-    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (941,942);")
+    #
+    # '1000-02-30' is the fourth shape and it is here for a platform reason, not a date one:
+    # it is IMPOSSIBLE but well FORMED, so the only thing that rejects it is the bundled
+    # SQLite's date(), and the version bundled differs from the one on this machine's PATH
+    # (3.49.1 vs 3.43.2 — the older returns it verbatim). The refusal rule is Roc and
+    # version-independent; this visibility rule is not. This row is what holds them together
+    # across a platform upgrade.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (941,'poisoned low','Ride','Ride','0000-0z-01T10:00:00Z',3600),(942,'stored empty','Ride','Ride','',3600),(947,'impossible low','Ride','Ride','1000-02-30T10:00:00Z',3600);")
+    check!("...and an empty string, a lexically-low poisoned date and an impossible day surface too", strjq!(ctx, ["activities"], "[.data[0:4][].id] | sort | join(\",\")") == "940,941,942,947")?
+    # ...and a READABLE lexically-low date is NOT hoisted, which is the other half of the
+    # predicate. Without this the clause could hoist everything and still pass above.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (948,'readable low','Ride','Ride','1000-01-01T10:00:00Z',3600);")
+    check!("...while a readable early date stays in date order, so the hoist is not hoisting everything", strjq!(ctx, ["activities"], "[.data[0:5][].id] | map(select(. == 948)) | length") == "0")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (941,942,947,948);")
     # `top time`, NOT `top tss`, and the difference is the whole check. `top tss` filters on
     # `m.tss > 0` and row 940 has no activity_metrics row at this point in the fixture — the
     # analyze probe that would score it runs later — so 940 is absent from the result set

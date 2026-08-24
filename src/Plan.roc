@@ -68,20 +68,13 @@ Plan :: [].{
                         # Grouping by the whole timestamp instead made this scale with
                         # ACTIVITIES rather than DAYS: review measured ~870ms at 50k
                         # against ~86ms for the day grouping.
-                        act_days = Sqlite.query_many!({
-                            path: Path.utf8(path),
-                            query:
-                                \\SELECT COALESCE(substr(start_local, 1, 10), '') AS d, MIN(id) AS example_id
-                                \\FROM activities GROUP BY d ORDER BY d, example_id
-                            ,
-                            bindings: [],
-                            rows: |cols| |stmt| {
-                                d = Sqlite.str("d")(cols)(stmt)?
-                                example_id = Sqlite.i64("example_id")(cols)(stmt)?
-                                Ok({ d, example_id })
-                            },
-                        })?
-                        _ = List.map_try(act_days, |r| Metrics.usable_date_days(r.d).map_err(|_| BadActivityDate(r.d, r.example_id)))?
+                        # The shared sweep, not a copy of it. This was a byte-identical
+                        # spelling of Report.guard_activity_dates! — same query, same guard —
+                        # sitting ~270 lines above a call to that very helper in this same
+                        # file, while the helper's own comment claimed to be the one body.
+                        # A comment asserting the property the extraction was performed to
+                        # create, in a file holding the counterexample.
+                        _ = Report.guard_activity_dates!(path)?
                         # ...and the TIME half. No NULL arm here, deliberately: a NULL
                         # start_local is already refused by the date sweep above, where the
                         # COALESCE turns it into "" and usable_date_days rejects that. I
@@ -342,8 +335,11 @@ Plan :: [].{
         # written against the scoped guard would have gone red on a quarter of weeks pointing
         # at a regression that did not exist. Measured in sqlite before this was rewritten.
         #
-        # The sweep is the same one `summary`, `season`, `plan`, `compare` and `stats` use,
-        # so `week` stops being the one command whose guard depends on the calendar.
+        # The sweep is the same one `rate`, `compare`, `summary`, `plan` and `stats` use, so
+        # `week` stops being the one command whose guard depends on the calendar. NOT
+        # `season`, which guards inline over a differently-grouped query for the reason its
+        # own comment gives — an earlier version of this line listed it and contradicted
+        # Report.roc two files away.
         _ = Report.guard_activity_dates!(path)?
         unplanned_rows = List.map(unplanned, |u| {
             # bind first, then interpolate — `${if … else ""}` splices a compile-time

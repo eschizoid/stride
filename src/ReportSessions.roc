@@ -476,13 +476,27 @@ ReportSessions :: [].{
                 \\-- only by luck of sorting high.
                 \\--
                 \\-- The predicate is the ROUND TRIP through SQLite's own date(), plus the
-                \\-- year bound, which between them reject every shape Metrics.usable_date_days
-                \\-- rejects except one: SQLite returns '2026-02-30' verbatim rather than
-                \\-- normalising it, so a semantically impossible day that is well FORMED
-                \\-- still sorts by value. That is acceptable here and only here — such a
-                \\-- date sorts among its real neighbours rather than at the end, so it is
-                \\-- visible, which is all this clause is for. The commands that COMPUTE
-                \\-- still refuse it, through the Roc guard that does know about February.
+                \\-- year bound. Measured against the SHIPPED binary, it hoists every shape
+                \\-- Metrics.usable_date_days rejects, impossible-but-well-formed days
+                \\-- included: '2026-02-30', '2026-04-31' and '1000-02-30' all land in the
+                \\-- first three rows, while a readable '1000-01-01' correctly stays at 740.
+                \\--
+                \\-- WHICH SQLite matters, and an earlier version of this comment was
+                \\-- measured against the wrong one. The system CLI here is 3.43.2 and
+                \\-- returns '2026-02-30' verbatim; the binary links 3.49.1 through
+                \\-- basic-cli and does not. So the comment documented a residual the
+                \\-- product does not have, and justified it with reasoning that was wrong
+                \\-- anyway — such a row ranks 91 of 738 without the hoist, which is
+                \\-- "among its neighbours" and still outside the default limit of 30.
+                \\--
+                \\-- The real property is a split: the REFUSAL rule lives in Roc and is
+                \\-- version-independent, while this VISIBILITY rule delegates part of
+                \\-- itself to the bundled SQLite. Two definitions of "readable date" in one
+                \\-- feature is the drift shape Metrics.usable_date_days exists to prevent.
+                \\-- The platform is hash-pinned, so it cannot move silently — but it does
+                \\-- move on upgrades, and the e2e hoist fixtures are what hold the two
+                \\-- together across one. '1000-02-30' is in that set for exactly this
+                \\-- reason: it is the shape only the newer date() catches.
                 \\ORDER BY (CASE WHEN a.start_local IS NULL
                 \\               OR date(substr(a.start_local, 1, 10)) IS NOT substr(a.start_local, 1, 10)
                 \\               OR substr(a.start_local, 1, 4) < '1000'
@@ -523,7 +537,18 @@ ReportSessions :: [].{
             Stdout.line!(Render.render_table(
                 ["date", "sport", "name", "time", "load", "intensity (if)", "hard"],
                 List.map(rows, |a| [
-                    a.date,
+                    # `-` for an unreadable date, which is this table's own house rule for
+                    # every other column — the legend below teaches it for `load` and
+                    # `intensity`, and README states it as "a session with no usable data
+                    # shows `-`, not an invented number". The date column was the one place
+                    # with genuinely no usable data and the only one not using it.
+                    #
+                    # A blank cell here is not merely unhelpful, it is AMBIGUOUS: a long
+                    # activity name wraps onto a continuation row whose date cell is also
+                    # blank, so the row this listing was hoisted to the top to expose
+                    # renders identically to a line-wrap artifact. Review measured the two
+                    # side by side in the same four-row table.
+                    (if Str.is_empty(a.date) "-" else a.date),
                     a.sport,
                     a.name,
                     Render.mins(a.moving_time),
@@ -652,7 +677,11 @@ ReportSessions :: [].{
                         }
                     Stdout.line!(Render.render_table(
                         ["date", "sport", header, "name"],
-                        List.map(rows, |r| [r.date, r.sport, val(r), r.name]),
+                        # `-` for an unreadable date, same house rule as `activities` above:
+                        # `top` is the other REPORT command, so it shows the row rather than
+                        # refusing, and a blank cell is indistinguishable from a wrapped-name
+                        # continuation row.
+                        List.map(rows, |r| [(if Str.is_empty(r.date) "-" else r.date), r.sport, val(r), r.name]),
                     ))
                 }
             }

@@ -218,8 +218,10 @@ Report :: [].{
     # the anchor when it sorts highest — put a canonical day above it and the poisoned row
     # slips into the 30-day window with the anchor guard none the wiser, publishing a
     # ramp_7d of -49 and a form_delta of -79 under `form_delta_known: true`, at exit 0.
-    # `load_series!` below deliberately does NOT go through it; `load` absorbs, which is a
-    # known open defect (#249) rather than an oversight.
+    # `load_series!` below now goes through it too, which closes the last reader of this
+    # column that absorbed. This sentence used to say the opposite and call it a known open
+    # defect — a claim about tracker state, asserted in the branch that closes it, so
+    # `tools/issue-claims.sh` would have gone red the moment #249 did.
     #
     # Scoped to the property rather than the count on purpose. The PREDICATE is factored
     # into Metrics.usable_date_days and every site in the tree calls it, so what can differ
@@ -237,9 +239,19 @@ Report :: [].{
 
     # Every stored activity date, refused if any is unreadable, naming a row.
     #
-    # ONE BODY, called from four commands, because it was three copies of the same query and
-    # the fourth copy is how a rule drifts. #243's last rounds were spent collapsing exactly
-    # this shape — five spellings of "canonical and parseable" that had to agree and did not.
+    # ONE BODY, because it was copies of the same query and the next copy is how a rule
+    # drifts. #243's last rounds were spent collapsing exactly this shape — five spellings of
+    # "canonical and parseable" that had to agree and did not.
+    #
+    # FIVE call sites, reaching `rate`, `week`, `compare`, `summary`, `plan` and `stats`.
+    # `season` is NOT one of them and that is deliberate, not an omission: it guards inline
+    # over its own query, which groups by (date, family) rather than by date, so the id it
+    # names is the lowest within the group the walk reaches first. Sharing this body there
+    # would name a different row than its own comment promises.
+    #
+    # The count is written down because it was wrong three ways at once — "four commands"
+    # here, "six" in the commit message, and a list naming `season` two files over. A number
+    # in a comment is a claim like any other.
     #
     # It exists as a WHOLE-TABLE sweep rather than a per-query guard because of the failure
     # mode it covers, which is the one #249's split had no row for. `summary`, `season` and
