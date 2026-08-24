@@ -802,12 +802,33 @@ Render :: [].{
                     prune_claim = if p.pruned == 0 "; nothing was pruned" else ""
                     " — Strava rate-limited the activity list, so it is incomplete${prune_claim}. Run `stride sync` again in ~15 minutes"
                 }
-                # A MATCH, not an `==` chain, and that is the enforcement: add a fifth arm
-                # to Drain.SyncStop and this stops compiling. The `==` this replaced was
-                # the single line standing between a new stop reason and the user seeing
-                # its raw wire token, and the test that claimed to guard it enumerated the
-                # labels by hand — so it kept passing while the type grew past it.
-                Known(FromDrain(_)) | Unknown(_) =>
+                # A MATCH, not an `==` chain, and that is the enforcement: add an arm to
+                # Drain.SyncStop or Drain.StopReason and this stops compiling. The `==`
+                # this replaced was the single line standing between a new stop reason and
+                # the user seeing its raw wire token, and the test that claimed to guard it
+                # enumerated the labels by hand — so it kept passing while the type grew
+                # past it.
+                #
+                # The three drain reasons are spelled OUT rather than matched as
+                # `FromDrain(_)`. Review added a fourth StopReason, took the one compile
+                # error the wildcard version demanded, and still shipped `— token_dead —
+                # 9 to go` to the user: the wildcard swallowed the new reason and
+                # drain_note's catch-all printed it raw. A wildcard here re-opens exactly
+                # the hole the match was introduced to close, one type down.
+                Known(FromDrain(Complete)) | Known(FromDrain(BudgetReached)) | Known(FromDrain(RateLimited)) =>
+                    if p.pending_streams > 0 {
+                        " — ${drain_note(p.stopped, p.pending_streams)}"
+                    } else {
+                        ""
+                    }
+
+                # A label this build does not know. Kept SEPARATE from the drain arm even
+                # though the rendering is identical, because sharing the branch is how a
+                # new reason reached the user twice: once through StopReason's wildcard
+                # and once through here. Split, the expects below can pin what this does,
+                # and `Unknown(_) => ""` — which passed the whole suite when review tried
+                # it — now fails.
+                Unknown(_) =>
                     if p.pending_streams > 0 {
                         " — ${drain_note(p.stopped, p.pending_streams)}"
                     } else {
@@ -1949,9 +1970,8 @@ expect {
 # round-trip expect below pins the parser to the producer. Both `pending` shapes, because
 # the tail dispatches on pending_streams too.
 expect {
-    labels = [FromDrain(Complete), FromDrain(BudgetReached), FromDrain(RateLimited), ListRateLimited]
     List.all(
-        labels,
+        Drain.all_stops,
         |t| {
             lbl = Drain.sync_stopped_label(t)
             row = |pending| { synced: 3, new_activities: 1, updated_activities: 0, pruned: 0, streams_fetched: 2, streams_skipped: 0, pending_streams: pending, stopped: lbl, resumable: pending > 0 }
@@ -1966,13 +1986,39 @@ expect {
 # comparisons silently sends that reason down the FromDrain branch, where a list refusal
 # would be described as a drain stop.
 expect {
-    all = [FromDrain(Complete), FromDrain(BudgetReached), FromDrain(RateLimited), ListRateLimited]
-    List.all(all, |t| Drain.stop_of_label(Drain.sync_stopped_label(t)) == Known(t))
+    List.all(Drain.all_stops, |t| Drain.stop_of_label(Drain.sync_stopped_label(t)) == Known(t))
 }
 
 # ...and a label from some other build is carried through rather than guessed into one of
 # the four. This is the arm that keeps the tail's `Unknown` branch honest.
 expect Drain.stop_of_label("throttled_by_proxy") == Unknown("throttled_by_proxy")
+
+# ...and what sync_screen DOES with it, which the line above does not reach. Review split
+# the tail's `Unknown` branch off and returned "" from it: the parser expect above stayed
+# green, and an unknown reason vanished from the line entirely instead of rendering
+# verbatim — while the comment claimed it rendered verbatim. Pinning the parser is not
+# pinning the rendering.
+expect
+    Render.sync_screen({ synced: 3, new_activities: 1, updated_activities: 0, pruned: 0, streams_fetched: 2, streams_skipped: 0, pending_streams: 9, stopped: "throttled_by_proxy", resumable: True }, False)
+    == "synced 1 new, 0 updated (3 re-checked in the 30-day window), fetched streams for 2 — throttled_by_proxy — 9 to go"
+
+# `all_stops` IS the hand-written list — Roc cannot enumerate a tag union, so one copy is
+# irreducible. Every other guard folds over it, which means a MISSING entry makes them all
+# quietly smaller rather than red: drop ListRateLimited and the round-trip expect above
+# checks three labels and passes, and the raw-token sweep checks three and passes.
+#
+# So this is the independent witness, and it is hand-typed on purpose. These four strings
+# are the enum in schemas/v2/sync.json — the contract, which is the one place the set is
+# stated without reference to the type. Anything the wire says exists must parse to a
+# Known here, and the count pins that nothing was dropped while the strings were edited.
+expect List.len(Drain.all_stops) == 4
+expect List.all(
+    ["complete", "budget_reached", "rate_limited", "list_rate_limited"],
+    |wire| match Drain.stop_of_label(wire) {
+        Known(t) => Drain.sync_stopped_label(t) == wire
+        Unknown(_) => False
+    },
+)
 
 # ADR 0012's boundary rule: a new prose surface joins the denylist sweep. These are
 # tool instructions ("run `stride sync` again tomorrow"), not training advice, but

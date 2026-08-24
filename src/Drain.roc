@@ -119,17 +119,29 @@ Drain :: [].{
     # into one of the four.
     stop_of_label : Str -> [Known(SyncStop), Unknown(Str)]
     stop_of_label = |s|
-        if s == stopped_label(Complete) {
-            Known(FromDrain(Complete))
-        } else if s == stopped_label(BudgetReached) {
-            Known(FromDrain(BudgetReached))
-        } else if s == stopped_label(RateLimited) {
-            Known(FromDrain(RateLimited))
-        } else if s == sync_stopped_label(ListRateLimited) {
-            Known(ListRateLimited)
-        } else {
-            Unknown(s)
+        match List.find_first(all_stops, |t| sync_stopped_label(t) == s) {
+            Ok(t) => Known(t)
+            Err(_) => Unknown(s)
         }
+
+    # THE list. Roc cannot enumerate a tag union, so exactly one hand-written copy of the
+    # four inhabitants is unavoidable — this is it, and it sits directly under SyncStop so
+    # the thing that changes and the list that must change with it are one line apart.
+    #
+    # There were three copies before, in two files: this parser's if-chain, and both of
+    # Render's sweeps. Two independent reviews found the same failure from opposite ends —
+    # adding a fifth arm gave the compile error the design promised, and a maintainer who
+    # fixed exactly what the compiler named still shipped the raw wire token to the user,
+    # because nothing made them extend the parser. That is the hand-written-list criticism
+    # this design was built to answer, relocated rather than removed. Folding the parser
+    # over `all_stops` makes it agree with the producer by construction; the Render sweeps
+    # now consume this too, so a fifth arm has one place to be added and every guard that
+    # depends on the set grows with it.
+    #
+    # The `expect` below is what makes this list honest — it is the one thing here that a
+    # missing entry breaks.
+    all_stops : List(SyncStop)
+    all_stops = [FromDrain(Complete), FromDrain(BudgetReached), FromDrain(RateLimited), ListRateLimited]
 
     test_lim : Limits
     test_lim = { reads_per_window: 3 }
