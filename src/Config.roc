@@ -64,6 +64,17 @@ Config :: [].{
 		)
 		or is_zone_key(k)
 
+	# Of the keys the engine reads, the ones a PERSON sets. The rest — `last_sync_epoch`,
+	# the `strava_*` family — are stride's own bookkeeping, writable so a broken one can be
+	# repaired but not things anyone configures.
+	#
+	# The line already existed in `known_key_summary`'s two groups; this makes it a value
+	# the listing can show. Without it, `stride config` marked all twelve `read`, so a user
+	# scanning it could not tell which four were theirs — the `unknown_key` refusal drew the
+	# distinction and the listing beside it did not.
+	user_settable : Str -> Bool
+	user_settable = |k| k == "timezone" or k == "utc_offset_minutes" or is_zone_key(k)
+
 	# What the `unknown_key` refusal tells the reader, in one place beside the predicate it
 	# describes. The first cut named four keys while `config set` accepted twelve — the
 	# same "advice pointing where the answer is not" the message was written to replace,

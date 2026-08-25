@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(833)?
+    checks_ran_exactly!(846)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1733,21 +1733,67 @@ b_config_ftp! = |ctx| {
     # the rows most likely to be on a real database, and `config get` has a better answer
     # for them than "unrecognised" — this is the listing agreeing with that answer.
     check!("...and a derived key is marked derived, not unrecognised", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"ftp_ride\") | .status] | join(\",\")") == "derived")?
-    check!("...while a key the engine consults is marked read", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"timezone\") | .status] | join(\",\")") == "read")?
-    # ...and the human line carries the marker too, so the terminal reader sees it
-    check!("...and the human listing shows the marker", Str.contains(stride_human!(ctx.bin, ctx.home, ["config"]), "timezon  (unrecognised)"))?
-    # ...and a marked-unrecognised row can be CLEARED, which is what makes marking honest.
-    # Refusing every write to an unknown key left the leftover permanently unreachable; an
-    # empty value takes the row OUT of the state #254 is about, so it is not the trap.
-    check!("...and clearing it is allowed, which refusing every write would have prevented", !(Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", ""]), "unknown_key")))?
-    check!("...after which it is gone from the listing", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"timezon\")] | length") == "0")?
-    check!("...while a NON-empty write to it is still refused", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", "again"]), "unknown_key"))?
+    check!("...while a key the user sets is marked settable", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"timezone\") | .status] | join(\",\")") == "settable")?
+    # ...and stride's OWN bookkeeping is a fourth state, not lumped in with the user's.
+    # The listing marked all twelve read keys the same, so a reader could not tell which
+    # four were theirs — while the `unknown_key` refusal beside it drew exactly that line.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('last_sync_epoch', '1700000000');")
+    check!("...and stride's own bookkeeping is marked managed, not settable", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"last_sync_epoch\") | .status] | join(\",\")") == "managed")?
+    # ...and the human line carries the marker too, so the terminal reader sees it. THREE
+    # arms, because one was not enough: swapping the un-marked branch from `settable` to
+    # `derived` left the suite green while the derived rows lost their marker entirely and
+    # every settable key gained a noise suffix — exactly the confusion marking prevents.
+    conf_human = stride_human!(ctx.bin, ctx.home, ["config"])
+    check!("...and the human listing marks an unrecognised row", Str.contains(conf_human, "timezon  (unrecognised)"))?
+    check!("...and a derived one", Str.contains(conf_human, "ftp_ride  (derived)"))?
+    check!("...and leaves a settable key unmarked, which is what makes a marker mean anything", Str.contains(conf_human, "\ntimezone\n") or Str.starts_with(conf_human, "timezone\n"))?
+    # ...and a marked row can be REMOVED, which is what makes marking honest. Refusing every
+    # write left a leftover permanently unreachable — unreadable, unwritable, and before
+    # marking, unlistable, with sqlite3 the only way out.
+    #
+    # It DELETES rather than storing "". The empty write was worse than nothing for the
+    # family that most needed it: `numeric_key` calls anything `hr_z*` Decimal, so an empty
+    # value was refused with `bad_value` — and the misspelled zone keys are the population
+    # #254's own tightening created. Worse, `Analyze.load_config!` requires every `hr_z*`
+    # key to parse as F64, so an empty row does not sit inert, it kills `analyze` outright.
+    check!("...and clearing an unrecognised row is allowed", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", ""]), "\"removed\":true"))?
+    check!("...which DELETES it rather than emptying it, so nothing can choke on the row", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'timezon';")) == "0")?
+    check!("...and it reaches the zone misspellings, which an empty write could not", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_maxx", ""]), "\"removed\""))?
+    # ...and the DERIVED family, which `is_derived` refused before this arm ran. Those are
+    # the rows the schema itself calls most likely to be on a real database.
+    check!("...and a derived row, which derived_key refused before it", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", ""]), "\"removed\":true"))?
+    check!("...leaving it gone rather than emptied", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'ftp_ride';")) == "0")?
+    # ...while it is not an ENTRANCE. An empty write was `INSERT OR REPLACE`, so
+    # `config set qwertyuiop ""` CREATED a row for a key that never existed — invisible in
+    # the listing, unreadable by `config get`. The CLI could manufacture exactly the class
+    # of row the marking exists to expose.
+    check!("...and removing a key that was never there creates nothing", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "qwertyuiop", ""]), "\"removed\":false"))?
+    check!("...and really creates nothing", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'qwertyuiop';")) == "0")?
+    check!("...while a NON-empty write to an unrecognised key is still refused", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", "again"]), "unknown_key"))?
+    # ...and clearing a key the engine DOES read is not this path: it stores an empty value
+    # and the normal guards apply, so removal can never silently wipe live config.
+    check!("...and an empty write to a key stride reads is not a removal", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", ""]), "bad_value"))?
+    # ── the two cell shapes `Sqlite.str` cannot decode, both reachable because `value` is
+    # declared TEXT with no NOT NULL and TEXT affinity converts INTEGER and REAL but not
+    # blobs. Each answered `internal_error` — "this is a bug, not the data and not the
+    # invocation" — about a fault that is entirely the data, and each made `config get`
+    # disagree with the listing, which asks SQL.
+    #
+    # NULL is the half the first CAST missed: `CAST(NULL AS TEXT)` is still NULL, so only
+    # the COALESCE closes it, and dropping that from `Db.config_get!` left the suite green.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('utc_offset_minutes', NULL);")
+    check!("a NULL config cell reads as not_set, not as an engine bug", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "utc_offset_minutes"]), "not_set"))?
+    check!("...and the listing agrees it is not set", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"utc_offset_minutes\")] | length") == "0")?
+    _ = sql!(ctx.db, "UPDATE config SET value = X'00FF' WHERE key = 'utc_offset_minutes';")
+    check!("...and a BLOB cell reports as data rather than an unhandled failure", !(Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "utc_offset_minutes"]), "internal_error")))?
+    check!("...which the listing also shows, so the two cannot disagree", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"utc_offset_minutes\")] | length") == "1")?
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key = 'utc_offset_minutes';")
     # SORTED, which the schema states in prose and nothing validated. schema-check takes
-    # the first `read` entry as its filler, so an unsorted listing makes that filler depend
+    # the first settable-or-managed entry as its filler, so an unsorted listing makes that filler depend
     # on SQLite's rowid order — the same staleness the filler change was meant to remove,
     # one layer down. Dropping `ORDER BY key` left the whole suite green.
     check!("...and the listing is sorted, which schema-check's filler choice depends on", strjq!(ctx, ["config"], "[.data.keys[].key] == ([.data.keys[].key] | sort)") == "true")?
-    _ = sql!(ctx.db, "DELETE FROM config WHERE key IN ('hr_z2_max_ride', 'strava_access_token', 'timezon', 'ftp_ride');")
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key IN ('hr_z2_max_ride', 'strava_access_token', 'timezon', 'ftp_ride', 'last_sync_epoch', 'hr_z1_maxx');")
     # delete the row rather than storing "" — not because they differ (Db.roc collapses
     # both to NoTz, and doctor reports the same UTC fallback for each; that equivalence
     # is pinned in b_doctor!) but because an absent row is the state a fresh install is

@@ -526,7 +526,7 @@ config_list! = |{}| {
         rows,
         |k| {
             key: k,
-            status: if Config.is_derived(k) "derived" else if Config.known_key(k) "read" else "unrecognised",
+            status: if Config.is_derived(k) "derived" else if Config.user_settable(k) "settable" else if Config.known_key(k) "managed" else "unrecognised",
             redacted: Config.is_secret(k),
         },
     )
@@ -541,7 +541,7 @@ config_list! = |{}| {
                         p.keys,
                         |e| {
                             shown = if e.redacted "${e.key} = <redacted>" else e.key
-                            if e.status == "read" shown else "${shown}  (${e.status})"
+                            if e.status == "settable" shown else "${shown}  (${e.status})"
                         },
                     ),
                     "\n",
@@ -557,6 +557,25 @@ config_list! = |{}| {
 # set" — counts, not names — so a reader who mistyped `hr_z2_max_rid` and followed the
 # advice would learn how many zone keys exist and not one of their names. Advice that
 # sends the reader somewhere the answer is not is worse than no advice.
+# `config set <key> ""` on a key the engine does not read: delete the row and say what
+# happened. Reports whether there was anything there, because "removed" and "there was
+# nothing to remove" are different facts and a caller clearing a leftover wants to know
+# which one it got — the same absence taxonomy the rest of the CLI keeps.
+removal! : Str => Try({}, _)
+removal! = |key| {
+    path = Db.open_db!({})?
+    existed =
+        match Db.config_opt!(path, key)? {
+            Found(_) => 1 == 1
+            NotFound => 1 == 2
+        }
+    Db.config_delete!(path, key)?
+    Output.out!(
+        { key, removed: existed },
+        |p| if p.removed "${p.key} removed — stride does not read it" else "${p.key} was not stored; stride does not read it either",
+    )
+}
+
 unknown_key_message : Str -> Str
 unknown_key_message = |key|
     "${key} is not a key stride reads. ${Config.known_key_summary} `stride config` lists what this database has set."
@@ -580,9 +599,32 @@ numeric_refusal = |key, val|
 
 config_store! : Str, Str => Try({}, _)
 config_store! = |key, val|
+    # FIRST, and before every other guard including `is_derived`: an EMPTY value on a key
+    # the engine does not read is a REMOVAL, and it deletes the row (#254).
+    #
+    # First, because two guards below reject it otherwise and between them they covered
+    # most of the population this needs to serve. `numeric_key` classifies anything
+    # starting `hr_z` as Decimal, so `config set hr_z1_maxx ""` answered `bad_value` — and
+    # the misspelled zone keys are precisely the rows #254's tightened `zone_shape`
+    # orphaned. `is_derived` rejected `ftp_ride`, which the listing's own schema calls the
+    # rows most likely to be on a real database. Removing an ignored row is the opposite
+    # of "confirming a change that never happens", so `derived_key` has nothing to say here.
+    #
+    # DELETE, not `value = ''`, which was the first cut and was worse than nothing for the
+    # zone family: `Analyze.load_config!` requires every `hr_z*` key to parse as F64, so one
+    # empty row kills `analyze` outright, and the error it prints names `config set` as the
+    # remedy — the one command that could no longer fix it. An empty write was also an
+    # ENTRANCE: `INSERT OR REPLACE` meant `config set qwertyuiop ""` created a row for a key
+    # that never existed, invisible in the listing and unreadable by `config get`. The CLI
+    # could manufacture exactly the class of row the marking exists to expose.
+    #
+    # The row must already be absent-or-junk for this to fire, so it cannot clear a key the
+    # engine reads: those take the normal path and `numeric_refusal` still guards them.
+    if val == "" and !(Config.known_key(key))
+        removal!(key)
     # refuse the keys the engine derives — storing one would confirm a change that never
     # happens, since sport_ftp! reads power history and not config (ADR 0005)
-    if Config.is_derived(key)
+    else if Config.is_derived(key)
         Output.err_out!(
             "derived_key",
             "${key} is derived from your power history, not configured — stride uses the sport family's best 20-min power x 0.95 over the 60 days up to each activity. Nothing to set; `stride summary` shows the current value.",
@@ -596,14 +638,10 @@ config_store! = |key, val|
     #
     # Internal writers (`Strava.roc`'s token and read-cap bookkeeping) call `Db.config_set!`
     # directly and never pass through here, so this constrains the human/agent surface only.
-    # ...unless the value is EMPTY, which is the way out for a row that is already there.
-    # #254 closed `config set timezon x`, and closing it without this made a pre-#254
-    # leftover unreachable from the CLI entirely: unreadable (`unknown_key`), unwritable
-    # (`unknown_key`), and — before the listing started marking them — unlistable. The only
-    # remaining tool was sqlite3. Clearing is not the trap the guard exists to prevent: an
-    # empty value reads as `not_set` everywhere and the listing stops showing it, so this
-    # takes the row OUT of the state the issue is about rather than into it.
-    else if !(Config.known_key(key)) and val != ""
+    # ...and a NON-empty write to a key the engine does not read is the trap itself. The
+    # empty case is handled at the top, so this arm is exactly "you are storing a value
+    # nothing will ever consult".
+    else if !(Config.known_key(key))
         Output.err_out!("unknown_key", unknown_key_message(key))
     else if numeric_refusal(key, val) != ""
         # a stored value that parses nowhere is the same trap as one that is read

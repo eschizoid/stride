@@ -195,7 +195,7 @@ schema-check: build
                     else
                         # `status == "read"` — the listing marks rather than filters, and only
                         # the read rows have a payload for `config get` to return.
-                        v=$(printf '%s' "$keyout" | jq -r '[.data.keys[] | select(.status == "read")][0].key // empty')
+                        v=$(printf '%s' "$keyout" | jq -r '[.data.keys[] | select(.status == "settable" or .status == "managed")][0].key // empty')
                         [ -z "$v" ] && nodata="no config key this database has set is one config get returns a payload for"
                     fi ;;
                 *) skipform="no value known for required argument $a" ;;
