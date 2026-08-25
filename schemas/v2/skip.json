@@ -14,7 +14,7 @@
     "reason": {
       "type": "string"
     },
-    "substitute_activity_id": {
+    "substitute_activity": {
       "type": "integer"
     },
     "released_substitute": {

@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(873)?
+    checks_ran_exactly!(887)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2477,6 +2477,25 @@ b_seed_analyze! = |ctx| {
     act_sess = Str.trim(strjq!(ctx, ["week", "add", "2099-11-11", "endurance", "schema action probe", "r"], ".data.id"))
     check!("week add conforms", validate!("week add 2099-11-12 endurance d r", "week_add") == "")?
     check!("skip conforms", validate!("skip ${act_sess} \"probe reason\"", "skip") == "")?
+    # `complete` — BOTH forms, and this is the oracle ADR 0000 §9c says does not exist.
+    # `just schema-check` and the conformance loop below both select `mutates == false`,
+    # so `complete`, `import`, `init` and `rate` are validated by neither pass. #258 found
+    # out the expensive way: `replaced_activity` was added to the two-argument form and
+    # made REQUIRED, and the rest form — same command, same schema — silently stopped
+    # conforming to its own contract, with nothing anywhere to say so.
+    #
+    # `skip` was wrong in the same undetected way and is fixed in the same commit: it
+    # emits `substitute_activity` while skip.json declared `substitute_activity_id`. The
+    # `skip conforms` line above only ever exercised the bare arm, so the substitute arms
+    # went unvalidated too — hence the substitute form below as well.
+    rest_sess = Str.trim(strjq!(ctx, ["week", "add", "2099-11-13", "rest", "schema rest probe", "r"], ".data.id"))
+    check!("complete (rest form) conforms", validate!("complete ${rest_sess}", "complete") == "")?
+    done_sess = Str.trim(strjq!(ctx, ["week", "add", "2099-11-14", "endurance", "schema complete probe", "r"], ".data.id"))
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9240,'schema complete probe','Ride','2099-11-14T09:00:00Z',3600,21000),(9241,'schema substitute probe','Ride','2099-11-15T09:00:00Z',3600,21000);")
+    check!("complete (activity form) conforms", validate!("complete ${done_sess} 9240", "complete") == "")?
+    sub_sess = Str.trim(strjq!(ctx, ["week", "add", "2099-11-15", "endurance", "schema substitute probe", "r"], ".data.id"))
+    check!("skip (substitute form) conforms", validate!("skip ${sub_sess} \"did something else\" 9241", "skip") == "")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (9240, 9241);")
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date LIKE '2099-11-%';")
     # ...and an empty capture must FAIL rather than read as conformance, which
     # is what it did before (a crashed binary validated clean)
@@ -4001,6 +4020,14 @@ b_agent_loop! = |ctx| {
     # the clause, re-running the same command reports the activity as having replaced
     # ITSELF, which reads as history lost when nothing changed.
     check!("...while re-completing with the SAME activity replaces nothing", strjq!(ctx, ["complete", "${sid}", "9222"], ".data.replaced_activity") == "0")?
+    # ...on the HUMAN line as well, which the JSON assertion above does not reach. Review
+    # proved the gap: changing the note's guard from `replaced != 0` to `prior != 0` while
+    # leaving the VALUE as `replaced` left the payload correct and made the sentence read
+    # "(replacing activity 0, whose completion of this session is now gone)" — and the
+    # whole suite stayed green, because the only human assertion here fires on the
+    # different-activity case. Same class as the `doctor` blank lines: one surface, one
+    # check, and the check aimed at the other branch.
+    check!("...and the human line stays silent about it too", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["complete", "${sid}", "9222"]), "replacing activity")))?
     check!("...while the human line says so too, not just the payload", Str.contains(stride_human!(ctx.bin, ctx.home, ["complete", "${sid}", "9220"]), "replacing activity 9222"))?
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 9222; DELETE FROM activities WHERE id = 9222;")
     check!("...linked to the activity it was completed against", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .completed_activity_id]") == "[\n  9220\n]")?
@@ -4503,7 +4530,29 @@ b_plan! = |ctx| {
     check!("superseded substitute resurfaces as unplanned", strjq!(ctx, ["week"], "[.data[] | select(.status == \"unplanned\" and .activity_id == 300)] | length") == "1")?
     # ...and acting on the advertised-free activity SUCCEEDS: the claim steals the
     # display-dead tombstone link instead of refusing what week just offered
-    check!("claiming a tombstone-held activity steals the link", Str.contains(stride!(ctx.bin, ctx.home, ["complete", replan, "300"]), "\"completed_session\""))?
+    # ...and complete it ONCE first, with a different activity, so the steal below lands on
+    # an already-done session. That makes this the only payload in the suite carrying a
+    # non-zero `replaced_activity` and a `released_substitute_of` together — which is the
+    # `ReleasedFrom` arm of #258's fix, and review proved nothing reached it: mutating that
+    # arm alone back to `replaced_activity: 0` (and dropping its note) left the suite fully
+    # green while restoring the exact silent overwrite #258 closes.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (302,'first claim','Ride','${ctx.today}T05:00:00Z',1800,9000);")
+    _ = stride!(ctx.bin, ctx.home, ["complete", replan, "302"])
+    steal_json = stride!(ctx.bin, ctx.home, ["complete", replan, "300"])
+    check!("claiming a tombstone-held activity steals the link", Str.contains(steal_json, "\"completed_session\""))?
+    check!("...and the SAME payload names the completion it erased", Str.contains(steal_json, "\"replaced_activity\":302"))?
+    check!("...alongside the session it stole the link from", Str.contains(steal_json, "\"released_substitute_of\""))?
+    # ...and the human sentence carries BOTH clauses. The arm builds one string from two
+    # independent notes, so a clause dropped there is invisible to any JSON assertion.
+    # ...re-staged rather than re-read, because the steal CONSUMED the tombstone link: a
+    # second `complete replan 300` takes the NothingReleased arm and would assert the
+    # two-clause sentence against a one-clause one. Put 300 back on the tombstone and hand
+    # `replan` back to 302, so the human run sees the same state the JSON run did.
+    _ = stride!(ctx.bin, ctx.home, ["complete", replan, "302"])
+    _ = sql!(ctx.db, "UPDATE planned_sessions SET substitute_activity_id = 300 WHERE id = ${today_sess};")
+    steal_human = stride_human!(ctx.bin, ctx.home, ["complete", replan, "300"])
+    check!("...and the human line carries both clauses at once", Str.contains(steal_human, "replacing activity 302") and Str.contains(steal_human, "released its old substitute link on session #${today_sess}"))?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 302;")
     check!("the tombstone link was released", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE substitute_activity_id = 300;")) == "0")?
     # a bare re-skip PRESERVES a substitute link (judgment-tier survives wording fixes)
     resess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "reskip probe", "r"], ".data.id"))
@@ -4514,8 +4563,34 @@ b_plan! = |ctx| {
     check!("...and says so in the output", Str.contains(reskip_out, "kept_substitute"))?
     # completing a substituted session clears the arrow — the completion IS the story
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (304,'real evidence','Ride','${ctx.d1}T18:00:00Z',1800,9000);")
-    _ = stride!(ctx.bin, ctx.home, ["complete", resess, "304"])
+    comp_sub = stride!(ctx.bin, ctx.home, ["complete", resess, "304"])
     check!("completion clears the substitute link", Str.trim(sql!(ctx.db, "SELECT COALESCE(substitute_activity_id,0) FROM planned_sessions WHERE id = ${resess};")) == "0")?
+    # ...and SAYS which link it destroyed. This clearing was pinned green while nothing
+    # reported it, and #258's first cut made that worse rather than better: it read only
+    # `completed_activity_id`, so this call — which erases the only record that the athlete
+    # did 303 in place of this session — answered `replaced_activity: 0`, an affirmative
+    # "nothing was replaced". `skip` treats the same column as worth reporting in both
+    # directions (`kept_substitute`, `released_substitute`) and calls it judgment-tier data
+    # that is never silently destroyed by a wording fix; `complete` destroys it outright.
+    check!("...and names the substitute it destroyed doing so", Str.contains(comp_sub, "\"released_substitute\":303"))?
+    # re-staged for the same reason as the steal above: the completion CONSUMED the link,
+    # so a bare re-run would assert the sentence against a state that has nothing to drop
+    _ = sql!(ctx.db, "UPDATE planned_sessions SET substitute_activity_id = 303 WHERE id = ${resess};")
+    check!("...in the human line too", Str.contains(stride_human!(ctx.bin, ctx.home, ["complete", resess, "304"]), "dropping substitute activity 303"))?
+    # ...while a completion that destroyed no substitute says 0 rather than going silent —
+    # the always-present half, without which a constant-303 field would pass the check above
+    check!("...while a completion with no substitute to drop reports 0", Str.contains(stride!(ctx.bin, ctx.home, ["complete", resess, "304"]), "\"released_substitute\":0"))?
+    # ...and completing WITH the substitute is a promotion, not a loss: the caller still
+    # holds the link, so naming it as released would report a destruction that did not
+    # happen. This is the whole content of the `prior.s != activity_id` clause and the only
+    # input that separates it from a bare `prior.s`. Mutation found the gap exactly as it
+    # did for `replaced` — `released = prior.s` survived both other checks, because the two
+    # agree everywhere except here.
+    _ = sql!(ctx.db, "UPDATE planned_sessions SET substitute_activity_id = 303 WHERE id = ${resess};")
+    promo = stride!(ctx.bin, ctx.home, ["complete", resess, "303"])
+    check!("...and promoting the substitute to the completion releases nothing", Str.contains(promo, "\"released_substitute\":0"))?
+    check!("...nor says so in the human line", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["complete", resess, "303"]), "dropping substitute")))?
+    _ = stride!(ctx.bin, ctx.home, ["complete", resess, "304"])
     # the COMPLETION arm of the claim guard: an activity that already completed a
     # session refuses a second claim, naming the session and the permanence
     dc2sess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d2}", "endurance", "completion claim probe", "r"], ".data.id"))
@@ -4549,8 +4624,14 @@ b_plan! = |ctx| {
     # a rest day completed bare clears any lingering substitute the same way
     restsess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "rest", "rest probe", "r"], ".data.id"))
     _ = sql!(ctx.db, "UPDATE planned_sessions SET substitute_activity_id = 303 WHERE id = ${restsess};")
-    _ = stride!(ctx.bin, ctx.home, ["complete", restsess])
+    rest_out = stride!(ctx.bin, ctx.home, ["complete", restsess])
     check!("bare rest completion clears the substitute link", Str.trim(sql!(ctx.db, "SELECT COALESCE(substitute_activity_id,0) FROM planned_sessions WHERE id = ${restsess};")) == "0")?
+    # ...and reports the same two fields as the activity form, because it is the SAME
+    # command under the same schema. `replaced_activity` is honestly 0 here — a bare rest
+    # completion links no activity — but `released_substitute` is not: this arm runs the
+    # identical `substitute_activity_id = NULL`, so it destroys the link the same way.
+    check!("...and reports the substitute it dropped", Str.contains(rest_out, "\"released_substitute\":303"))?
+    check!("...with replaced_activity honestly 0, a rest completion linking nothing", Str.contains(rest_out, "\"replaced_activity\":0"))?
     # the NULL-link arm: a completed rest day refuses skip with its own wording —
     # this also pins the COALESCE that keeps a NULL from hard-failing the decoder
     check!("a completed rest day refuses skip in the NULL-link wording", Str.contains(stride!(ctx.bin, ctx.home, ["skip", restsess, "x"]), "completed rest day"))?
