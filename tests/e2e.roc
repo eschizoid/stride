@@ -656,7 +656,7 @@ run_sync! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_at_least!(50)?
+    checks_ran_at_least!(52)?
     Stdout.line!("SYNC E2E CHECKS PASS")
 }
 
@@ -741,7 +741,7 @@ run_skips! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_at_least!(16)?
+    checks_ran_at_least!(20)?
     Stdout.line!("SKIPS E2E CHECKS PASS")
 }
 
@@ -1169,21 +1169,21 @@ run_stops! = || {
         if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
             # its own floor: this branch returns before the shared drain assertions, so the
             # 12 the default arm expects would never be reachable here
-            26
+            28
         } else if env_or!("E2E_EXPECT_DAILY_CAP", "") == "1" {
             # its own floor, and TIGHT: a floor below the arm's own count lets a check be
             # deleted unseen — the slack this floor's own doctrine forbids.
-            14
+            16
         } else if env_or!("E2E_EXPECT_500", "") == "1" {
-            7
+            9
         } else if env_or!("E2E_EXPECT_401", "") == "1" {
-            8
+            10
         } else if rate_limited {
             # 12 since this arm gained the daily-cap-via-429 pair — the path the daily
             # arm's own driver structurally cannot reach.
-            12
+            14
         } else {
-            12
+            14
         },
     )?
     Stdout.line!("STOP-REASON E2E CHECKS PASS")
@@ -6249,7 +6249,7 @@ tally_is_scoped! = |{}| {
     mypid = Str.trim(sh!("echo $PPID"))
     mode = env_or!("E2E_MODE", "e2e")
     check!("this driver's appends landed in a tally named for its own process", mypid != "" and Str.trim(sh!("[ -s '.e2e-checks.${mode}.${mypid}' ] && echo yes || echo no")) == "yes")?
-    check!("...and nothing in this run wrote the shared name two runs would collide on", Str.trim(sh!("[ -e '.e2e-checks.${mode}' ] && echo shared || echo scoped")) == "scoped")
+    check!("...and the shared name two runs would collide on is unused in this directory", Str.trim(sh!("[ -e '.e2e-checks.${mode}' ] && echo shared || echo scoped")) == "scoped")
 }
 
 # Fails LOUDLY. sh! swallows exit codes, and a reset that silently does not happen leaves
@@ -6268,7 +6268,27 @@ reset_checks! = |{}| {
     #
     # Removing it HERE and asserting its absence at the END is what makes the assertion mean
     # "this run did not write it" rather than "this directory happens to be clean".
-    _ = sh!("rm -f .e2e-checks.${env_or!("E2E_MODE", "e2e")}")
+    # QUOTED, unlike `checks_log!`'s sites, which cannot be — they carry a `$PPID` that has
+    # to expand. This one has nothing to expand, so quoting is free, and unquoted it was a
+    # live instance of the race this PR closes: `E2E_MODE='*'` makes it `rm -f
+    # .e2e-checks.*`, which deletes every concurrent run's tally. Measured — a normal run
+    # beside it lost 61 lines and died `787 == 848`. Not reachable from the justfile, but
+    # "not reachable today" is the argument this file exists to distrust.
+    _ = sh!("rm -f '.e2e-checks.${env_or!("E2E_MODE", "e2e")}'")
+    # ...and sweep tallies whose OWNER IS GONE. A run that fails or is interrupted before
+    # its guard leaks its pid-named file, pids never repeat, and nothing else collects them.
+    # A blanket `rm -f .e2e-checks.*` would delete a concurrent run's live tally, which is
+    # the bug this PR closes — so the sweep asks whether each owner is still alive.
+    #
+    # `kill -0` errs in the safe direction: it reports success for a pid owned by another
+    # user (EPERM), so an unfamiliar process is treated as ALIVE and its file left alone.
+    # And it is the only form that reaches the interrupt path — Ctrl-C during a 50-second
+    # suite is the ordinary case, and no in-process cleanup can ever run there.
+    #
+    # Pid reuse is why this is a tidy-up rather than a correctness measure: the scoped
+    # `rm -f` above already removes THIS pid's file on entry, so a recycled pid cannot
+    # inherit a stale tally even if the sweep never ran.
+    _ = sh!("for f in .e2e-checks.*.*; do [ -e \"$f\" ] || continue; p=$(printf %s \"$f\" | sed 's/.*\\.//'); case \"$p\" in ''|*[!0-9]*) continue ;; esac; kill -0 \"$p\" 2>/dev/null || rm -f \"$f\"; done")
     left = Str.trim(sh!("wc -l 2>/dev/null < ${checks_log!({})} || echo 0"))
     if left == "0" {
         Ok({})
