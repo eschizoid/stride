@@ -148,6 +148,13 @@ schema-check: build
     while IFS="$(printf '\t')" read -r c schema req; do
         inv="$c"
         skipform=""
+        # TWO reasons a form can produce no argument, and they are opposite verdicts.
+        # `skipform` is "this recipe does not know what to pass" — its own bug, so it FAILS.
+        # `nodata` is "the database has nothing for this argument to name" — a true fact
+        # about the data, so it skips, in the same class as `no_activities`. Separated
+        # because folding the second into the first turns a correct fresh install red, and
+        # folding the first into the second is how a form silently stops being checked.
+        nodata=""
         for a in $req; do
             v=""
             case "$a" in
@@ -158,12 +165,27 @@ schema-check: build
                 # than skip on an unknown one: a new required argument must break this
                 # loudly, not quietly drop its form from the check.
                 "<watts>") v=300 ;;
-                "<key>") v=timezone ;;
+                # ASKED FOR, not hardcoded (#254). This was the literal `timezone`, and the
+                # skip on `not_set` below covered for it: on any database where that one key
+                # happened to be unset — a real state, measured on a copy of the live db with
+                # 736 activities and twelve other config rows — `config get` dropped out and
+                # the recipe still exited 0, having never validated config.json against real
+                # data. That is the silent-under-check this whole arm exists to prevent, and
+                # `unknown_key` does not reach it: the filler was a REAL key, just an empty one.
+                #
+                # Taking the first key the binary says holds a value makes the filler
+                # unfalsifiable-by-staleness — retire `timezone` and this picks something else
+                # rather than skipping — and turns the empty case into a fact the recipe
+                # CHECKED (no config rows at all) rather than an error code that meant two
+                # things. `not_set` is out of the allowlist entirely as a result.
+                "<key>") v=$(STRIDE_FORMAT=json ./stride config 2>/dev/null | jq -r '.data.keys[0].key // empty')
+                       [ -z "$v" ] && nodata="this database has no config set, so there is no payload to validate" ;;
                 *) skipform="no value known for required argument $a" ;;
             esac
             inv="$inv $v"
         done
         if [ -n "$skipform" ]; then echo "$c: FAILED ($skipform)"; rc=1; continue; fi
+        if [ -n "$nodata" ]; then echo "$c: skipped ($nodata)"; checked=$((checked + 1)); continue; fi
         out=$(STRIDE_FORMAT=json ./stride $inv </dev/null 2>&1 || true)
         # THREE outcomes, not two. A command that legitimately has nothing to say (fresh
         # install, no activities) returns an error ENVELOPE and is skipped. A BROKEN
@@ -186,23 +208,20 @@ schema-check: build
         # it, and that is the gap.
         case "$code" in
             "") ;;
-            # `not_set` was here UNDER PROTEST until #254. The protest was that it could
-            # not tell a key that is unset from one that does not exist, so renaming or
-            # retiring `timezone` — the literal this loop fills `<key>` with, forty lines
-            # up — would make this one form skip silently and stop validating config.json
-            # against real data, with the allowlist entry as its cover.
+            # `not_set` WAS here, under protest, and #254 removed it — the acceptance
+            # criterion the issue named, not a follow-up. It is in the REJECTED arm below
+            # now, because after #254 there is only one way for this recipe to see it: it
+            # asked for a key the binary said holds a value and got nothing back, which is
+            # a contradiction inside one run, not a fact about the data.
             #
-            # #254 split the two: an unrecognised key now answers `unknown_key`, which is
-            # in the REJECTED arm below with the rest of "the recipe derived an argument
-            # the command would not take". So the rename this comment was afraid of is now
-            # a red with a message naming the filler, and `not_set` is left meaning one
-            # thing only — a key stride does read, holding no value.
-            #
-            # In that single meaning it is an ordinary member of this arm, on the same
-            # footing as `no_activities`: `stride init` writes zero config rows, so on a
-            # fresh install every key is genuinely unset and there is no payload to
-            # validate. What makes that a legitimate skip rather than a hole is not this
-            # entry, it is `unknown_key` standing behind it.
+            # The protest was that `not_set` could not tell a wrong filler from a genuinely
+            # unset key. Two changes retire it. `unknown_key` splits off the unrecognised
+            # case, so retiring `timezone` is a red naming the filler rather than a silent
+            # skip. And the filler is no longer the literal `timezone` at all — it comes
+            # from `stride config`, so the "genuinely unset" case cannot arise for a key
+            # this loop chose. The empty-database case that kept the entry alive is now
+            # `nodata` above: a state the recipe CHECKED, reported in its own words, rather
+            # than an error code standing in for two different situations.
             #
             # `irregular_anchor` is here because it is the definition of nothing to say —
             # its own message ends "nothing to compare it against as a repeated workout".
@@ -224,7 +243,7 @@ schema-check: build
             # because two of them sat in the other arm by accident, and the next person to
             # notice would have resolved the inconsistency in whichever direction they saw
             # first.
-            no_activities|no_data|no_power_data|no_cp_fit|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals|no_intervals_on_date|unscorable|irregular_anchor|not_set)
+            no_activities|no_data|no_power_data|no_cp_fit|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals|no_intervals_on_date|unscorable|irregular_anchor)
                 echo "$inv: skipped ($code)"; checked=$((checked + 1)); continue ;;
             # DATA FAULTS — true statements about the DATABASE, not about the invocation,
             # so they must not get the rejection message below, which says the opposite and
@@ -249,7 +268,7 @@ schema-check: build
                 rc=1; rejected=$((rejected + 1)); continue ;;
             # REJECTED INVOCATIONS, enumerated. This is the recipe's own bug: it derived an
             # argument the command would not take.
-            usage|unknown_command|bad_count|bad_metric|bad_period|bad_value|bad_watts|derived_key|unknown_key)
+            usage|unknown_command|bad_count|bad_metric|bad_period|bad_value|bad_watts|derived_key|unknown_key|not_set)
                 echo "$inv: FAILED ($code) — the derived invocation was rejected, not the database"; rc=1; rejected=$((rejected + 1)); continue ;;
             # ...and the TRUE catch-all, which knows nothing and says so. `*)` used to do
             # two jobs — "genuinely a rejected invocation" and "nobody has classified this

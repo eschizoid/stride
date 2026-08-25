@@ -17,41 +17,44 @@ Config :: [].{
 		or Str.ends_with(k, "_token")
 		or Str.ends_with(k, "_secret")
 
-	# Keys the engine RECOGNISES. Absent from this and `config get` answers `unknown_key`
-	# rather than `not_set` (#254).
+	# Keys the engine LOOKS UP A VALUE FOR. Absent from this and `config get` / `config set`
+	# answer `unknown_key` rather than `not_set` / plain success (#254).
 	#
-	# The two were indistinguishable, and the harm is not the typo — it is what the typo
-	# invites. `config get timezon` answered "(not set)", which says the key is fine and
-	# merely empty, so the natural next step is `config set timezon <value>`, which SUCCEEDS
-	# and writes a row the engine will never read. That is the same trap `is_derived` exists
-	# to prevent from the other direction, described in its own comment as a `config set`
-	# that "looks like it worked".
+	# `not_set` and "no such key" were indistinguishable, and the harm is not the typo — it
+	# is what the typo invites. `config get timezon` answered "(not set)", which says the key
+	# is fine and merely empty, so the natural next step is `config set timezon <value>`.
+	# That succeeded, so both halves of the round trip agreed the key was real while nothing
+	# ever read it. Same trap `is_derived` prevents from the other direction, described in
+	# its own comment as a `config set` that "looks like it worked".
 	#
-	# A PREDICATE over patterns, not a flat list, because two families are open-ended:
-	# per-sport zone overrides (`hr_z1_max_ride`, matched by ReportHealth's
-	# `key GLOB 'hr_z[1-4]_max_?*'`) and the derived FTP keys, which take any `ftp_<sport>`.
+	# The DERIVED family is deliberately NOT here. `config get` and `config set` both test
+	# `is_derived` first and refuse by name, so this predicate never sees `ftp_ride` — a
+	# clause for it would be unreachable from every caller, and this file's `numeric_key`
+	# comment already settled what to do with an unreachable clause: delete it, because a
+	# rule no test can falsify is not a guard. `known_key("ftp_ride") == False` is therefore
+	# correct and load-bearing rather than an oversight.
 	#
-	# Derived keys are recognised in order to be REFUSED: `config get` tests this predicate
-	# FIRST, so a derived key must pass here to reach `is_derived` and get the better
-	# message. That ordering is deliberate — with `is_derived` tested first this clause was
-	# unreachable from the only caller and deleting it left the suite green. Secrets are
-	# recognised for a similar reason: the read path redacts them, and it can only redact a
-	# key it admits exists.
+	# `secret_keys` directly, NOT `is_secret`. `is_secret`'s suffix rule is deliberately
+	# fail-OPEN so an unlisted future secret is still redacted; reusing it here inverts that
+	# into fail-open recognition, which is the opposite of what this predicate wants. It let
+	# `config get strava_acess_token` — a typo of a real key, and issue #254's own scenario —
+	# answer "(not set)" again. Only the three real secrets need to be admitted, and that is
+	# all the redaction path requires.
 	#
-	# Fails CLOSED in the useful direction. A new key the engine starts reading and nobody
-	# adds here answers `unknown_key` on a key that works — annoying and visible. The
-	# reverse, a key listed here that nothing reads, is the silent trap, which is why this
-	# is derived from what the code actually touches rather than from what the docs mention.
+	# Fails CLOSED in the useful direction. A new key the engine starts reading that nobody
+	# adds here answers `unknown_key` on a key that works: annoying and visible. The reverse,
+	# a key listed here that nothing reads, is the silent trap — which is why this is derived
+	# from the read sites and not from the docs. `metrics_rev` sat here for exactly one
+	# revision on the strength of an AGENTS.md sentence; it is a Roc constant and an
+	# `activity_metrics` column, and has never been read from `config`.
 	known_key : Str -> Bool
 	known_key = |k|
-		is_secret(k)
-		or is_derived(k)
+		List.contains(secret_keys, k)
 		or List.contains(
 			[
 				"timezone",
 				"utc_offset_minutes",
 				"last_sync_epoch",
-				"metrics_rev",
 				"strava_client_id",
 				"strava_expires_at",
 				"strava_reads_today",
@@ -59,9 +62,40 @@ Config :: [].{
 			],
 			k,
 		)
-		# per-sport HR zone overrides: `hr_z1_max` through `hr_z4_max`, optionally suffixed
-		# with a sport family. Same shape ReportHealth counts with `hr_z[1-4]_max_?*`.
-		or (Str.starts_with(k, "hr_z") and Str.contains(k, "_max"))
+		or is_zone_key(k)
+
+	# `hr_z1_max` .. `hr_z4_max`, optionally suffixed with a sport family
+	# (`hr_z2_max_ride`) — exactly what `Metrics.hr_zone_key_global` and
+	# `Metrics.hr_zone_key` build, and exactly what `ReportHealth` counts with
+	# `key GLOB 'hr_z[1-4]_max_?*'`.
+	#
+	# Written out rather than `starts_with("hr_z") and contains("_max")`, which was the
+	# first cut and claimed in its own comment to be the same shape as that GLOB. It was
+	# not: it admitted `hr_z9_max`, `hr_zz_max`, `hr_z1_maximum` and `hr_z1_maxx`, none of
+	# which any read site can produce, so four ways of mistyping a zone key kept answering
+	# "(not set)" — the defect this predicate exists to remove.
+	is_zone_key : Str -> Bool
+	is_zone_key = |k| zone_shape(Str.to_utf8(k))
+
+	# bytes: h r _ z <digit> _ m a x, then either end-of-key or `_` and a non-empty suffix
+	zone_shape : List(U8) -> Bool
+	zone_shape = |b|
+		match b {
+			[104, 114, 95, 122, d, 95, 109, 97, 120, .. as rest] =>
+				d >= 49 and d <= 52 and zone_suffix(rest)
+
+			_ => False
+		}
+
+	# the GLOB's `_?*`: an underscore followed by at least one byte. A bare trailing `_`
+	# (`hr_z1_max_`) is not a sport and no builder emits it.
+	zone_suffix : List(U8) -> Bool
+	zone_suffix = |b|
+		match b {
+			[] => True
+			[95, _, ..] => True
+			_ => False
+		}
 
 	# Keys the engine DERIVES and never reads from config. Accepting one would be worse
 	# than refusing it: `config set ftp_ride 250` used to succeed, print a confirmation,
@@ -177,53 +211,68 @@ expect Config.numeric_key("timezone") == Free
 expect Config.numeric_key("strava_access_token") == Free
 expect Config.numeric_key("strava_client_id") == Free
 
-# known_key: the keys the engine actually reads. Every clause below was mutation-checked
-# ALONE — the union of three predicates makes it very easy to write an expect that some
-# OTHER clause satisfies, and then deleting the clause under test leaves the suite green.
+# known_key: the keys the engine looks up a value for. Every clause was mutation-checked
+# ALONE — a union of predicates makes it very easy to write an expect that some OTHER
+# clause satisfies, so deleting the clause under test leaves the suite green.
 expect Config.known_key("timezone") == True
 expect Config.known_key("utc_offset_minutes") == True
 expect Config.known_key("last_sync_epoch") == True
-expect Config.known_key("metrics_rev") == True
 expect Config.known_key("strava_client_id") == True
 expect Config.known_key("strava_expires_at") == True
 expect Config.known_key("strava_reads_today") == True
 expect Config.known_key("strava_reads_day") == True
 
-# ...via is_secret, which known_key must defer to rather than list: the read path REDACTS
-# these, and it can only redact a key it admits exists. Deleting the `is_secret(k)` clause
-# leaves every literal above still True, so this is the only line that kills it.
+# the three real secrets, via `secret_keys` — the read path redacts them and can only
+# redact a key it admits exists. Deleting that clause leaves every literal above still
+# True, so these are the only lines that kill it.
 expect Config.known_key("strava_access_token") == True
 expect Config.known_key("strava_refresh_token") == True
+expect Config.known_key("strava_client_secret") == True
 
-# ...and via is_derived, which exists to be REFUSED with a better message. Answering
-# unknown_key first would swallow it, so recognising them is what keeps derived_key
-# reachable. Same reasoning: nothing else here starts `ftp`.
-expect Config.known_key("ftp") == True
-expect Config.known_key("ftp_ride") == True
-# a sport the engine has never seen, because is_derived takes any ftp_<sport>
-expect Config.known_key("ftp_kitesurfing") == True
+# ...but NOT through `is_secret`'s fail-open suffix rule, which is the mutant that shipped
+# in the first cut. `is_secret` returns True for anything ending `_token` / `_secret` on
+# purpose, so a future secret is redacted even if unlisted; borrowing it here turned that
+# into fail-open RECOGNITION and let typos of the credential keys keep answering
+# "(not set)" — issue #254's own scenario, in the family where it matters most.
+expect Config.is_secret("strava_acess_token") == True
+expect Config.known_key("strava_acess_token") == False
+expect Config.known_key("stava_access_token") == False
+expect Config.known_key("some_api_token") == False
+expect Config.known_key("random_secret") == False
 
-# the zone family. `hr_z1_max` would also pass through numeric_key's `hr_z` clause, but
-# known_key does not consult numeric_key -- Free is a legitimate classification, so a
-# `numeric_key(k) != Free` test would reject `timezone`. The per-sport suffix is the case
-# a literal list cannot cover: `hr_z2_max_ride` appears nowhere in the source.
+# the DERIVED family is deliberately absent: `config get`/`config set` refuse it by name
+# before this predicate runs, so a clause here would be unreachable from every caller.
+expect Config.known_key("ftp") == False
+expect Config.known_key("ftp_ride") == False
+
+# the zone family, exactly as `Metrics.hr_zone_key_global` and `hr_zone_key` build it. The
+# per-sport suffix is the case a literal list cannot cover: `hr_z2_max_ride` appears
+# nowhere in the source.
 expect Config.known_key("hr_z1_max") == True
 expect Config.known_key("hr_z4_max") == True
 expect Config.known_key("hr_z2_max_ride") == True
 expect Config.known_key("hr_z3_max_soccer") == True
+expect Config.known_key("hr_z1_max_standuppaddling") == True
 
-# ...and the point of the whole thing: a typo of a real key is NOT recognised. Each of
+# ...and everything the loose first cut (`starts_with("hr_z") and contains("_max")`) let
+# through while claiming to be the same shape as ReportHealth's `hr_z[1-4]_max_?*`. Each
+# of these answered "(not set)" on a shipped binary; none is producible by any read site.
+expect Config.known_key("hr_z9_max") == False
+expect Config.known_key("hr_z0_max") == False
+expect Config.known_key("hr_zz_max") == False
+expect Config.known_key("hr_z1_maximum") == False
+expect Config.known_key("hr_z1_maxx") == False
+expect Config.known_key("hr_z1_max_") == False
+expect Config.known_key("xhr_z1_max") == False
+expect Config.known_key("hr_z") == False
+expect Config.known_key("hr_z1") == False
+expect Config.known_key("power_max") == False
+
+# ...and the point of the whole thing: a typo of a real key is not recognised. Each of
 # these is one edit away from a key that is.
 expect Config.known_key("timezon") == False
 expect Config.known_key("time_zone") == False
 expect Config.known_key("utc_offset") == False
-expect Config.known_key("hr_zone1") == False
-# `hr_z` alone is not a zone key -- the clause needs BOTH halves, and dropping the
-# `_max` half is otherwise invisible
-expect Config.known_key("hr_z") == False
-expect Config.known_key("hr_z1") == False
-# ...and dropping the `hr_z` half is what this one kills: `_max` on its own
-expect Config.known_key("power_max") == False
 expect Config.known_key("") == False
 expect Config.known_key("nope") == False
 # not a prefix match: a real key with anything appended is a different key

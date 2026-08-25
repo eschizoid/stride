@@ -76,7 +76,8 @@ help_text =
         \\SETUP (once)
         \\    init                        create ~/.stride and migrate the SQLite db
         \\    auth                        authorize with Strava (one-time paste flow; stores creds)
-        \\    config                      get/set config (hr zone bounds, timezone)
+        \\    config                      list the config that is set (secrets redacted)
+        \\    config get|set <key> [value]   read or write one key (hr zone bounds, timezone)
         \\                                — FTP is derived, never set
         \\
         \\GET DATA
@@ -411,6 +412,7 @@ dispatch! = |cmd|
         Command.CompleteRest(session_id) => Plan.complete_rest!(session_id)
         Command.Skip(session_id, reason) => Plan.skip!(session_id, reason, NoSub)
         Command.SkipWith(session_id, reason, activity_id) => Plan.skip!(session_id, reason, Sub(activity_id))
+        Command.ConfigList => config_list!({})
         Command.ConfigGet(key) => config_show!(key)
         Command.ConfigSet(key, val) => config_store!(key, val)
 
@@ -423,33 +425,25 @@ config_show! = |key|
     # the "looks like it worked" trap alive for exactly the people who fell into it — they
     # would see a number the engine never consults. Refusing to set it while still printing
     # it is half a fix.
-    # FIRST, and before the db is opened (#254). Whether the binary recognises a key is a
-    # fact about the BINARY — it needs no database, so a typo gets the same answer on a
-    # fresh install as on a populated one.
     #
-    # This existed as `not_set`, which reads as "the key is fine, it is just empty" — so
-    # the natural next step after `config get timezon` is `config set timezon <value>`,
-    # which succeeds and writes a row nothing reads. Same trap `derived_key` below exists
-    # to prevent from the other direction.
-    #
-    # Ordering it FIRST is what makes `known_key`'s `is_derived` clause load-bearing rather
-    # than decoration. With `is_derived` tested first, that clause was unreachable from the
-    # only caller — deleting it left the whole suite green, which is the shape this file's
-    # `numeric_key` comment calls a rule no test can falsify. Now a derived key must pass
-    # `known_key` to REACH `derived_key`, so dropping the clause turns `config get ftp_ride`
-    # into `unknown_key` and the e2e check for the better message goes red.
-    if !(Config.known_key(key))
-        Output.err_out!("unknown_key", "${key} is not a key stride reads — check the spelling; `stride doctor` lists the config it uses")
-    # A derived key must not be READ back either. Databases created before FTP became
-    # derived still hold ftp_ride / ftp_rowing rows, so echoing the stored value would keep
-    # the "looks like it worked" trap alive for exactly the people who fell into it — they
-    # would see a number the engine never consults. Refusing to set it while still printing
-    # it is half a fix.
-    else if Config.is_derived(key)
+    # This stays FIRST, and `known_key` deliberately excludes the derived family so the two
+    # cannot both claim a key. An earlier revision reordered these and argued the order was
+    # load-bearing; review reverted the reorder with nothing else changed and the whole
+    # suite stayed green, which made the claim decoration by this file's own standard.
+    if Config.is_derived(key)
         Output.err_out!(
             "derived_key",
             "${key} is derived from your power history, not configured. Any value stored under this key is ignored (older databases may still hold one). `stride summary` shows the value actually in use.",
         )
+    # ...and a key the engine looks up NOTHING for is its own answer (#254). This was
+    # `not_set`, which reads as "the key is fine, it is just empty" — so the next step after
+    # `config get timezon` is `config set timezon <value>`, and that succeeded too, so both
+    # halves of the round trip agreed the key was real while nothing ever read it.
+    #
+    # Before the db is opened, because whether the binary recognises a key is a fact about
+    # the BINARY: a typo gets the same answer on a fresh install as on a populated one.
+    else if !(Config.known_key(key))
+        Output.err_out!("unknown_key", unknown_key_message(key))
     else {
         # only the paths that actually read a value open the db
         path = Db.open_db!({})?
@@ -459,15 +453,83 @@ config_show! = |key|
                 # redacted must be Bool-TYPED, not a bare `True` tag: the new builtin JSON
                 # serializes a bare tag as the string "True". Config.is_secret(key) is Bool
                 # and is True here (we're inside the is_secret branch).
-                Found(_) => Output.out!({ key, value: "<redacted>", redacted: Config.is_secret(key) }, |_| "${key} = <redacted> (secret — stored in the db, not shown)")
+                # An EMPTY value is `not_set`, not a set-but-blank secret. Same rule as the
+                # non-secret arm below, and for the same reason.
+                Found(v) =>
+                    if v == ""
+                        Output.err_out!("not_set", "(not set)")
+                    else
+                        Output.out!({ key, value: "<redacted>", redacted: Config.is_secret(key) }, |_| "${key} = <redacted> (secret — stored in the db, not shown)")
+
                 NotFound => Output.err_out!("not_set", "(not set)")
             }
         else
             match Db.config_opt!(path, key)? {
-                Found(v) => Output.out!({ key, value: v }, |p| p.value)
+                # An empty ROW is not a set key. Every read path in the engine already says
+                # so — `Db.roc` collapses `''` and absent to the same `NoTz`, and `doctor`
+                # reports the identical UTC fallback for each — so `config get` answering
+                # success with `value: ""` was the outlier, and it made this command
+                # disagree with bare `config`, which lists only keys holding a value.
+                # A key that reads as configured while nothing consults it is the shape of
+                # #254 itself, one layer in.
+                Found(v) =>
+                    if v == ""
+                        Output.err_out!("not_set", "(not set)")
+                    else
+                        Output.out!({ key, value: v }, |p| p.value)
+
                 NotFound => Output.err_out!("not_set", "(not set)")
             }
     }
+# Bare `config`: the keys that actually hold a value, in the order they read best. Answers
+# "which config do I have set?", which nothing did — `doctor` reports counts ("hr zones
+# set, 0 per-sport zone key(s) set"), and a count is not a name.
+#
+# Values are NOT returned. A listing is a different question from a lookup, and returning
+# values here would make one command that dumps every secret in the database, defeating
+# `config get`'s redaction by going around it. `redacted` marks which entries `config get`
+# would refuse to show, so a caller can tell "set, and I may read it" from "set, and I may
+# not" without a second call per key.
+#
+# Rows are filtered through `known_key` for the same reason `config get` refuses one: a
+# database may hold rows from a retired key or from a `config set` typo made before #254
+# closed that door, and listing those would advertise them as configuration that works.
+config_list! : {} => Try({}, _)
+config_list! = |{}| {
+    path = Db.open_db!({})?
+    rows = Sqlite.query_many!({
+        path: Path.utf8(path),
+        query: "SELECT key AS k FROM config WHERE COALESCE(value, '') <> '' ORDER BY key",
+        bindings: [],
+        rows: Sqlite.str("k"),
+    })?
+    known = List.keep_if(rows, |k| Config.known_key(k))
+    entries = List.map(known, |k| { key: k, redacted: Config.is_secret(k) })
+    Output.out!(
+        { keys: entries },
+        |p|
+            if List.is_empty(p.keys)
+                "no config set — `stride config set <key> <value>`"
+            else
+                Str.join_with(
+                    List.map(p.keys, |e| if e.redacted "${e.key} = <redacted>" else e.key),
+                    "\n",
+                ),
+    )
+}
+
+# One message for both verbs, so `config set timezon x` and `config get timezon` cannot
+# drift into disagreeing about whether the key exists.
+#
+# It NAMES the keys rather than pointing at `stride doctor`, which the first cut did and
+# which does not have the answer: doctor reports "hr zones set, 0 per-sport zone key(s)
+# set" — counts, not names — so a reader who mistyped `hr_z2_max_rid` and followed the
+# advice would learn how many zone keys exist and not one of their names. Advice that
+# sends the reader somewhere the answer is not is worse than no advice.
+unknown_key_message : Str -> Str
+unknown_key_message = |key|
+    "${key} is not a key stride reads. Settable keys: timezone, utc_offset_minutes, hr_z1_max..hr_z4_max (optionally per sport, e.g. hr_z2_max_ride). FTP is derived, never set."
+
 numeric_refusal : Str, Str -> Str
 # arg_i64/arg_f64, NOT is_plain_int/is_plain_decimal. The predicates check SYNTAX; the
 # readers use arg_*, which is the predicate PLUS from_str -- and from_str also rejects
@@ -494,6 +556,17 @@ config_store! = |key, val|
             "derived_key",
             "${key} is derived from your power history, not configured — stride uses the sport family's best 20-min power x 0.95 over the 60 days up to each activity. Nothing to set; `stride summary` shows the current value.",
         )
+    # ...and the WRITE half of #254, which the first cut left out and thereby made worse.
+    # Guarding only `config get` produced a CLI that confirmed a write and then denied the
+    # key existed: `config set timezon x` printed `timezon = x`, `config get timezon` then
+    # answered `unknown_key`. Before that it was at least a self-consistent trap. The trap
+    # is the point of the issue, so this is the half that actually closes it — the same
+    # reasoning `is_derived` above applies to its own family, which guards both verbs.
+    #
+    # Internal writers (`Strava.roc`'s token and read-cap bookkeeping) call `Db.config_set!`
+    # directly and never pass through here, so this constrains the human/agent surface only.
+    else if !(Config.known_key(key))
+        Output.err_out!("unknown_key", unknown_key_message(key))
     else if numeric_refusal(key, val) != ""
         # a stored value that parses nowhere is the same trap as one that is read
         # nowhere (Config.is_derived's comment) -- refuse it here rather than let
