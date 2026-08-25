@@ -181,7 +181,20 @@ Drain :: [].{
     # already owing them and would overshoot its cap by that many.
     #
     # Pure, and here rather than inline in the drain loop, so both directions are pinned by
-    # expects instead of by a fixture that would need a fake clock to build.
+    # expects instead of by a fixture that would need a fake clock to build. Note what that
+    # does and does not cover: the RULE is pinned, the CALL is not — deleting the call site
+    # in Strava.drain_streams! leaves every driver green, because reaching the reset arm
+    # needs a clock that moves mid-drain and the repo has no seam for one.
+    #
+    # BACKWARDS is treated the same as forwards, and that is a default rather than a
+    # decision. Forwards the allowance genuinely reset, so zeroing is free. Backwards it did
+    # not: stride hands out a fresh allowance while Strava still counts the old one, and the
+    # 429s that follow are then read as a WINDOW refusal — "~15 minutes", the wrong remedy,
+    # which is #246. It needs a clock to move back a whole day (a wrong RTC at boot that
+    # then NTP-syncs is the realistic shape), and the conservative alternative is one token:
+    # take the new day, keep the count. Left permissive because the reset path is the one
+    # that matters and a stale stamp already resets on any mismatch — but the expect below
+    # pins the permissive answer, so it should read as chosen rather than as settled.
     roll_day : { day : I64, today : I64 }, I64 -> { day : I64, today : I64 }
     roll_day = |st, now_day| if now_day == st.day st else { day: now_day, today: 0 }
 

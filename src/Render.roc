@@ -720,9 +720,9 @@ Render :: [].{
             # run. A 404 is NOT this case — it stores a `{}` marker and leaves the
             # pending set at once, which is why "Strava has no streams for these" is
             # the wrong sentence here however plausible it sounds.
-            Complete => if pending == 0 "all streams present" else "${I64.to_str(pending)} had unreadable stream data — they retry next sync"
-            BudgetReached => if pending == 0 "all streams present" else "filled Strava's 15-minute read window — ${I64.to_str(pending)} to go, run `stride sync` again in ~15 minutes"
-            RateLimited => if pending == 0 "all streams present" else "Strava rate-limited this run — ${I64.to_str(pending)} to go, try again in ~15 minutes"
+            Complete => if pending == 0 "" else "${I64.to_str(pending)} had unreadable stream data — they retry next sync"
+            BudgetReached => if pending == 0 "" else "filled Strava's 15-minute read window — ${I64.to_str(pending)} to go, run `stride sync` again in ~15 minutes"
+            RateLimited => if pending == 0 "" else "Strava rate-limited this run — ${I64.to_str(pending)} to go, try again in ~15 minutes"
             # the ONE stop whose remedy is not fifteen minutes. Strava's daily read
             # cap resets at UTC midnight, so re-running sooner spends nothing and
             # gets nothing — and every other arm here says "~15 minutes", which is
@@ -856,10 +856,18 @@ Render :: [].{
                     prune_claim = if p.pruned == 0 "; nothing was pruned" else ""
                     " — Strava rate-limited the activity list, so it is incomplete${prune_claim}. Run `stride sync` again in ~15 minutes"
                 }
-                # A MATCH on the TAG, and no catch-all in either direction — that is the
-                # enforcement. Add an arm to SyncStop and this stops compiling; add one to
-                # StopReason and drain_note stops compiling. What matters is that the
-                # branch the compiler makes you write is the branch that RUNS.
+                # A MATCH on the TAG, no catch-all — that is the enforcement. Add an arm to
+                # SyncStop and this stops compiling; add one to StopReason and drain_note
+                # stops compiling. What matters is that the branch the compiler makes you
+                # write is the branch that RUNS.
+                #
+                # "In either direction" used to be part of that sentence and was briefly
+                # false: a `match r { DailyCapReached => … _ => … }` was added below to carve
+                # the daily cap out of the pending guard, and review measured that a fifth
+                # StopReason then produced exactly two errors, neither of them here — so a
+                # new reason printed no remedy at all under a green suite. The `_` is gone
+                # and the sentence is true again, but it is worth knowing it was a claim
+                # before it was a property.
                 #
                 # Two earlier shapes failed that test and both looked enforced. `==`
                 # against a literal was one line between a new reason and the user seeing
@@ -872,30 +880,48 @@ Render :: [].{
                     # UNCONDITIONAL, like its sibling above and for the same reason, plus
                     # one more: this stop is reachable with an empty queue by construction —
                     # a capped day is exactly the day nothing is left to drain.
-                    " — Strava rate-limited the activity list, so it is incomplete; and today's read allowance is used up. Run `stride sync` again tomorrow"
+                    # `prune_claim` READ, not assumed, on the same reasoning its sibling
+                    # above gives: prune is unreachable on this path today because sync!
+                    # returns before it, but that is a fact about Strava.sync! and this
+                    # function can only see what it is handed. The first version of this arm
+                    # hardcoded the sentence without it — harmless, since `pruned` is 0 on
+                    # both paths, but it dropped a fact one of two sibling paths still
+                    # states, which is how they drift. Computed here rather than hoisted,
+                    # because the two arms are the only users and hoisting it would put a
+                    # binding in scope for the FromDrain arm that must never read it.
+                    {
+                        cap_prune_claim = if p.pruned == 0 "; nothing was pruned" else ""
+                        " — Strava rate-limited the activity list, so it is incomplete${cap_prune_claim}; and today's read allowance is used up. Run `stride sync` again tomorrow"
+                    }
                 FromDrain(r) =>
-                    # `pending_streams > 0` is NOT the test for every reason, and treating
-                    # it as one is what made the daily cap silent. For Complete,
-                    # BudgetReached and RateLimited an empty queue really does mean nothing
-                    # is left to say — the work is done, or it resumes in fifteen minutes
-                    # without the athlete doing anything. DailyCapReached is different:
-                    # nothing will happen for the rest of the UTC day, and the pre-flight
-                    # refusal reaches here having made NO request at all, so the counts
-                    # above are a description of a run that never ran.
+                    # UNCONDITIONAL. This function does not decide whether a reason has
+                    # anything to say on an empty queue — `drain_note` answers that per arm,
+                    # exhaustively, and answering it in two places is what went wrong twice.
                     #
-                    # Measured before this carve-out: `stride sync` on a spent day printed
-                    # "synced 0 new, 0 updated (0 re-checked in the 30-day window), fetched
-                    # streams for 0" and exited 0. No request was made and none would be.
-                    # That is #246's own defect in a purer form — not the wrong remedy, but
-                    # a sentence that positively implies a successful quiet sync.
-                    match r {
-                        DailyCapReached => " — ${drain_note(r, p.pending_streams)}"
-                        _ =>
-                            if p.pending_streams > 0 {
-                                " — ${drain_note(r, p.pending_streams)}"
-                            } else {
-                                ""
-                            }
+                    # First `pending_streams > 0` guarded the whole tail, so DailyCapReached
+                    # printed nothing at all: `stride sync` on a spent day said "synced 0
+                    # new, 0 updated (0 re-checked in the 30-day window), fetched streams for
+                    # 0" and exited 0, having made no request and with none possible. Then
+                    # the fix carved DailyCapReached out with a `match` that needed a `_`,
+                    # and review measured what that cost: adding a fifth StopReason produced
+                    # exactly two non-exhaustive errors (`stopped_label`, `drain_note`) and
+                    # NOT this site, so a new reason whose remedy is not "wait fifteen
+                    # minutes" printed no remedy at all, compiler silent, suite green. The
+                    # same defect, one reason over, reintroduced by its own fix.
+                    #
+                    # The question this site was asking — "does an empty queue mean there is
+                    # nothing to say?" — is a property of the REASON, so it belongs where
+                    # the reasons are enumerated. Asking it here meant asking it without the
+                    # compiler watching.
+                    #
+                    # So drain_note answers it by returning EMPTY, and this site only
+                    # formats. It used to return "all streams present" for the quiet
+                    # reasons, which never shipped — the old guard suppressed the whole tail
+                    # before it could — and e2e asserts that string never appears in human
+                    # output. Dead text standing in for a decision made elsewhere.
+                    {
+                        note = drain_note(r, p.pending_streams)
+                        if Str.is_empty(note) "" else " — ${note}"
                     }
             }
         # `--all` re-listed the ENTIRE account, so naming the rolling window there would
@@ -1991,15 +2017,15 @@ expect !(Metrics.has_coaching_language(Render.warming_up_note(True, 12))) and !(
 # present" left all of them green, so a rate-limited run would have told a human
 # every stream was present. Each expect below fails on at least one mutation that
 # the previous set accepted.
-expect Render.drain_note(Complete, 0) == "all streams present"
+expect Render.drain_note(Complete, 0) == ""
 
 # `pending` outranks the reason. A budget stop that happened to empty the queue is
 # done — the window fills on the read just stored, without inspecting the rest of the
 # list, so this is reachable — and keying the note on `stopped` printed "0 to go, run
 # `stride sync` again tomorrow" next to a payload saying resumable: false. The
 # human and machine surfaces must not contradict each other about the same run.
-expect Render.drain_note(BudgetReached, 0) == "all streams present"
-expect Render.drain_note(RateLimited, 0) == "all streams present"
+expect Render.drain_note(BudgetReached, 0) == ""
+expect Render.drain_note(RateLimited, 0) == ""
 expect Render.drain_note(Complete, 5) == "5 had unreadable stream data — they retry next sync"
 expect Render.drain_note(BudgetReached, 40) == "filled Strava's 15-minute read window — 40 to go, run `stride sync` again in ~15 minutes"
 expect Render.drain_note(RateLimited, 40) == "Strava rate-limited this run — 40 to go, try again in ~15 minutes"

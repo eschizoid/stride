@@ -274,9 +274,15 @@ Strava :: [].{
                         Some(a) => Metrics.epoch_to_iso(a + 86400)
                         None => ""
                     }
-                # BEFORE the first request. A run with the day's allowance already spent
-                # has nothing it can do and should cost nothing to find out — it reports
-                # the same stop and the same remedy as one that spends its last read.
+                # BEFORE the first request. A run that STARTS with the day's allowance spent
+                # has nothing it can do and costs nothing to find out — it reports the same
+                # stop and the same remedy as one that spends its last read.
+                #
+                # "A run", unqualified, was too strong and review caught it: the LIST can
+                # push the counter past the cap mid-run (up to one read per page beyond it),
+                # and the drain then spends exactly one wasted stream read before `decide`
+                # stops it. One read is not worth a branch, but the sentence claimed a
+                # property of every run and only has it for runs that start spent.
                 #
                 # That last clause was measured FALSE and is only true again because of the
                 # Render fix that followed. This arm reaches Render with an empty queue by
@@ -601,10 +607,19 @@ Strava :: [].{
     # Charged BEFORE the request, not after, and the two counters therefore disagree about
     # what a read is: the drain charges from a response it holds, this charges from an
     # intent. A transport failure or a timeout counts a read Strava never saw. That is the
-    # deliberate direction — a cap is a ceiling, so over-counting spends a little of the
-    # athlete's allowance and under-counting overshoots it and gets every subsequent read
-    # refused. It does mean Drain's "stride's count can only ever be at or below Strava's"
-    # is a statement about the drain, not about this function.
+    # deliberate direction — a cap is a ceiling, so under-counting overshoots it and gets
+    # every subsequent read refused by Strava, which is the failure #246 exists to prevent.
+    #
+    # The cost of over-counting is not "a little of the allowance", and that wording was too
+    # soft for a branch this one keeps being bitten on: the pre-flight refuses on
+    # `today >= reads_per_day`, so a sufficiently over-counted day refuses EVERY run until
+    # UTC midnight. It needs on the order of a thousand transport failures in a day to get
+    # there, so it is not a practical concern — but it is a different KIND of cost than the
+    # sentence implied.
+    #
+    # It also means the drain's "stride's count can drift under Strava's" is a statement
+    # about the drain, which charges from a response it holds, and not about this function,
+    # which charges from an intent.
     charge_read! : Str => Try({}, _)
     charge_read! = |path| {
         day = Db.utc_today_days!({})
@@ -650,6 +665,17 @@ Strava :: [].{
                 Known(n) => Ok(n)
                 Corrupt(v) => {
                     _ = Output.say!("cannot read the day stamp on Strava's read counter ('${v}') — treating it as today so the count still applies; `stride config set strava_reads_today 0` clears both")
+                    # ...and REPAIR it, which is what makes the conservative reading
+                    # affordable. `config_reads!`'s argument for guessing the cap is that it
+                    # "costs one day, self-heals at UTC midnight" — true of a corrupt COUNT,
+                    # whose stamp goes stale on its own, and false of a corrupt STAMP, which
+                    # is read as today FOREVER. Measured: three consecutive runs all refused,
+                    # all writing nothing, a fixed point with narration as the only exit.
+                    #
+                    # Writing a real day keeps this run refused — the count still applies —
+                    # and makes the stamp genuinely stale tomorrow, so the midnight
+                    # self-heal the sibling comment promises is true for both rows.
+                    _ = Db.config_set!(path, "strava_reads_day", I64.to_str(day_now))?
                     Ok(day_now)
                 }
             }?
@@ -730,9 +756,13 @@ Strava :: [].{
     # of tomorrow's 1000 and is told to come back tomorrow all day on a day they spent
     # almost nothing.
     #
-    # Worse, it was the only reachable trigger. Because the count is at or below Strava's,
-    # the correct path can hardly overshoot the cap — so before this, essentially the only
-    # way to see `daily_cap_reached` was this bug.
+    # Worse, it was the only reachable trigger AT THE TIME. That was true while stride
+    # counted stream reads only: the count sat below Strava's, Strava refused first, and the
+    # 429 arm stopped the drain before the Store arm could test the day. Once `charge_read!`
+    # began counting the LIST read, `DayFull` became reachable on the correct path with no
+    # 429 anywhere — it is the arm the e2e mutation kill fires on. The same premise was
+    # corrected in Drain.decide's comment and this copy of it was missed, which is the third
+    # time a sentence on this branch has outlived the change that falsified it.
     #
     # The caller passes the day it is CURRENTLY on, re-read each iteration rather than
     # captured once, and that changed after review. Captured once, a crossing stamped every

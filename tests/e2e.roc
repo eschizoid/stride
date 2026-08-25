@@ -767,9 +767,33 @@ run_stops! = || {
         # which is where a real run ends up.
         lcap_day = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 86400) }'"))
         _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_reads_day','${lcap_day}'),('strava_reads_today','9');")
-        lcap = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' STRIDE_READS_PER_DAY=10 '${bin}' sync 2>/dev/null")
-        check!("a 429 on the LIST reads as the daily cap once the allowance is spent", Str.contains(lcap, "daily_cap_reached"))?
-        check!("...and its human line says tomorrow rather than ~15 minutes", Str.contains(sh!("HOME='${home}' STRIDE_API_BASE='${base}' STRIDE_READS_PER_DAY=10 '${bin}' sync 2>&1"), "again tomorrow"))?
+        # Written to `$bo` rather than only captured, because the schema check below reads
+        # that file — without this it validated the PREVIOUS run's payload and the new enum
+        # value was emitted and never checked. Review proved it: deleting
+        # "list_daily_cap_reached" from sync.json left every driver green, which is the
+        # identical gap the paragraph below records for "list_rate_limited", reproduced by
+        # the commit that added the second value.
+        _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' STRIDE_READS_PER_DAY=10 '${bin}' sync >'${bo}' 2>/dev/null")
+        lcap = Str.trim(sh!("jq -r '.data.stopped' '${bo}' 2>&1"))
+        # EXACT, not `contains`. "list_daily_cap_reached" CONTAINS "daily_cap_reached", so a
+        # substring test passes for the folded token and the separate one alike — and this
+        # check is named for telling them apart. Review reverted the whole list change back
+        # to `FromDrain(DailyCapReached)` and every driver stayed green through this line.
+        check!("a 429 on the LIST reads as the LIST daily cap once the allowance is spent", lcap == "list_daily_cap_reached")?
+        # RE-SEEDED before the human run, and finding that out was worth the round. The run
+        # above charges its list read, so the counter goes 9 -> 10 and the NEXT invocation is
+        # refused by the pre-flight before it ever reaches the list. The human check below
+        # therefore used to assert "again tomorrow" against the PRE-FLIGHT arm while being
+        # named for the list one — passing, on the wrong code path, for the whole life of
+        # this check. It only surfaced because the incomplete-listing assertion added beside
+        # it went red, and that sentence the pre-flight cannot produce.
+        _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_reads_day','${lcap_day}'),('strava_reads_today','9');")
+        lcap_human = sh!("HOME='${home}' STRIDE_API_BASE='${base}' STRIDE_READS_PER_DAY=10 '${bin}' sync 2>&1")
+        # BOTH facts on one screen, asserted separately, because either alone is satisfied
+        # by a version that dropped the other: the fold kept "tomorrow" and lost the
+        # listing, and #235's original kept the listing and said "~15 minutes".
+        check!("...and its human line says tomorrow rather than ~15 minutes", Str.contains(lcap_human, "again tomorrow"))?
+        check!("...while still saying the listing is incomplete, the fact the fold lost", Str.contains(lcap_human, "the activity list, so it is incomplete"))?
         _ = sql!(db, "DELETE FROM config WHERE key IN ('strava_reads_day','strava_reads_today');")
         # The three sibling stop-reason arms each validate their payload and this one did
         # not, which mattered more here than anywhere else: this is the only arm in the
@@ -1064,7 +1088,7 @@ run_stops! = || {
         if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
             # its own floor: this branch returns before the shared drain assertions, so the
             # 12 the default arm expects would never be reachable here
-            25
+            26
         } else if env_or!("E2E_EXPECT_DAILY_CAP", "") == "1" {
             # its own floor, and TIGHT: a floor below the arm's own count lets a check be
             # deleted unseen — the slack this floor's own doctrine forbids.
