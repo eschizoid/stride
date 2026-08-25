@@ -68,20 +68,13 @@ Plan :: [].{
                         # Grouping by the whole timestamp instead made this scale with
                         # ACTIVITIES rather than DAYS: review measured ~870ms at 50k
                         # against ~86ms for the day grouping.
-                        act_days = Sqlite.query_many!({
-                            path: Path.utf8(path),
-                            query:
-                                \\SELECT COALESCE(substr(start_local, 1, 10), '') AS d, MIN(id) AS example_id
-                                \\FROM activities GROUP BY d ORDER BY d, example_id
-                            ,
-                            bindings: [],
-                            rows: |cols| |stmt| {
-                                d = Sqlite.str("d")(cols)(stmt)?
-                                example_id = Sqlite.i64("example_id")(cols)(stmt)?
-                                Ok({ d, example_id })
-                            },
-                        })?
-                        _ = List.map_try(act_days, |r| Metrics.usable_date_days(r.d).map_err(|_| BadActivityDate(r.d, r.example_id)))?
+                        # The shared sweep, not a copy of it. This was a byte-identical
+                        # spelling of Report.guard_activity_dates! — same query, same guard —
+                        # sitting ~270 lines above a call to that very helper in this same
+                        # file, while the helper's own comment claimed to be the one body.
+                        # A comment asserting the property the extraction was performed to
+                        # create, in a file holding the counterexample.
+                        _ = Report.guard_activity_dates!(path)?
                         # ...and the TIME half. No NULL arm here, deliberately: a NULL
                         # start_local is already refused by the date sweep above, where the
                         # COALESCE turns it into "" and usable_date_days rejects that. I
@@ -123,8 +116,15 @@ Plan :: [].{
                         # names the component that FAILED, not the one that is fine. The
                         # message used to hand back the date half — "beginning '2026-08-24'"
                         # for a row whose date is perfectly readable and whose time is T37.
+                        # BadActivityTime, not BadActivityDate. Same error code, different
+                        # message: `r.t` is the time COMPONENT, and the date message frames
+                        # its argument as the stored value inside a reproduction handle. So
+                        # this raised `('T37:00:00')` and `('(no time)')` — two strings that
+                        # are not in the column, matching zero rows for anyone who pastes
+                        # them into a WHERE clause. The empty case is now worded rather than
+                        # given a fake literal.
                         _ = match List.first(bad_time) {
-                            Ok(r) => Err(BadActivityDate(if Str.is_empty(r.t) "(no time)" else r.t, r.id))
+                            Ok(r) => Err(BadActivityTime(r.t, r.id))
                             Err(_) => Ok({})
                         }?
                         match Sqlite.query!({
@@ -284,7 +284,7 @@ Plan :: [].{
         unplanned = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS aid, substr(a.start_local,1,10) AS adate, COALESCE(a.sport_type,'') AS sport,
+                \\SELECT a.id AS aid, COALESCE(substr(a.start_local,1,10), '') AS adate, COALESCE(a.sport_type,'') AS sport,
                 \\       COALESCE(a.name,'') AS aname, COALESCE(a.moving_time,0) AS mt,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
@@ -311,6 +311,43 @@ Plan :: [].{
                 Ok({ aid, adate, sport, aname, mt, tss })
             },
         })?
+        # The absorber the issue names, and the last one still live. `day_key` below answers
+        # 0 for a date it cannot parse, and 0 is a real day number — so an unplanned activity
+        # with an unreadable date does not go missing, it sorts to the epoch and is listed
+        # FIRST, above the week it belongs to, carrying `day: ""` from `dow`. Measured:
+        # `{"activity_id":999000001,"day":"","target_date":"2026-08-2x","status":"unplanned"}`
+        # at the top of the week, exit 0.
+        #
+        # Two sites in this one file answered opposite ways: the sweep at the top of `plan`
+        # refuses an unreadable activity date, and this one absorbed it. Guarded HERE, on
+        # `unplanned`, rather than on the merged list, because this is the only place the
+        # activity id is still in hand — `unplanned_rows` has already flattened it into a
+        # display record, and a refusal that cannot name a row is what #243 was about.
+        #
+        # Planned sessions need no guard: `week add` rejects a non-canonical target_date on
+        # the write path, so only the activity-derived half can arrive unreadable.
+        #
+        # WHOLE TABLE, not the `unplanned` rows, and the first version got that wrong in a
+        # way worth keeping written down. Scoped to `unplanned`, the guard sits DOWNSTREAM of
+        # a window clause that compares `a.start_local` lexically against the week bounds —
+        # and both comparisons are NULL-false, so a NULL-dated activity never enters the list
+        # and the guard was provably dead for exactly the shape #249 is about. `week`'s
+        # first-ever declared error code could not be produced for half its class.
+        #
+        # The poisoned half was reachable but only on some weeks, and that is a property of
+        # the window rather than of the fixture. When Monday and Monday+7 share a nine-
+        # character prefix — 18 of the 72 Mondays from 2026-08-24, first 2026-09-21 — every
+        # 10-character string lexically inside `[mon, mon+7)` is of the form PREFIX9 + digit,
+        # which is a readable date. There is no non-canonical value to plant, so a test
+        # written against the scoped guard would have gone red on a quarter of weeks pointing
+        # at a regression that did not exist. Measured in sqlite before this was rewritten.
+        #
+        # The sweep is the same one `rate`, `compare`, `summary`, `plan` and `stats` use, so
+        # `week` stops being the one command whose guard depends on the calendar. NOT
+        # `season`, which guards inline over a differently-grouped query for the reason its
+        # own comment gives — an earlier version of this line listed it and contradicted
+        # Report.roc two files away.
+        _ = Report.guard_activity_dates!(path)?
         unplanned_rows = List.map(unplanned, |u| {
             # bind first, then interpolate — `${if … else ""}` splices a compile-time
             # "" into str_concat, the #32-class heap trap. Fixed upstream in roc#10595
@@ -890,7 +927,7 @@ Plan :: [].{
                 recent = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
-                        \\SELECT a.id AS id, substr(a.start_local, 1, 10) AS date, a.sport_type AS sport, a.name AS name,
+                        \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, a.sport_type AS sport, a.name AS name,
                         \\       a.moving_time AS moving_time, CAST(COALESCE(m.tss,0) AS REAL) AS tss,
                         \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
                         \\       COALESCE(m.z1_s,0) AS z1_s, COALESCE(m.z2_s,0) AS z2_s, COALESCE(m.z3_s,0) AS z3_s,

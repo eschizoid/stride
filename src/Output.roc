@@ -216,9 +216,59 @@ Output :: [].{
     # NULL — returning `updated_activities: 0` at exit 0 and leaving the same error. So
     # `sync --all` will not repair an imported row, which is why the id-based remedy leads
     # and the sync one is stated as conditional.
+    # EMPTY `raw` gets its own wording, because the parenthetical is the reproduction handle
+    # and quoting `('')` makes it a false one. Every reader in #249 reaches this through
+    # `COALESCE(substr(start_local, 1, 10), '')`, so a NULL column and a stored empty string
+    # arrive identically — and "has an unreadable start_local ('')" reads as though the empty
+    # string is what is stored, sending the user to
+    # `DELETE FROM activities WHERE start_local=''`, which matches zero rows for a NULL. That
+    # is the same defect this comment's own paragraph above records for 'garbage-da', one
+    # value further along.
+    #
+    # It says NULL-or-empty rather than picking one, and that is deliberate rather than lazy:
+    # the COALESCE has already collapsed the two by the time anything gets here, and the
+    # distinction is not actionable — both repair the same way, by id. Carrying
+    # `start_local IS NULL` as its own column through nine call sites would buy a word the
+    # user cannot act on differently.
     unreadable_activity_date_msg : Str, I64 -> Str
-    unreadable_activity_date_msg = |raw, id|
-        "activity ${(id).to_str()} has an unreadable start_local ('${raw}') — delete that row by id and re-sync, or run `stride sync --all` if Strava still lists the activity"
+    unreadable_activity_date_msg = |raw, id| {
+        what =
+            if Str.is_empty(raw) {
+                "no usable start_local (the column is NULL or empty)"
+            } else {
+                "an unreadable start_local ('${raw}')"
+            }
+        "activity ${(id).to_str()} has ${what} — delete that row by id and re-sync, or run `stride sync --all` if Strava still lists the activity"
+    }
+
+    # The TIME half of the same column, and it needs its own wording for the reason the
+    # paragraph above gives about `('')`. `raw` here is the nine characters after the date —
+    # a COMPONENT, never the stored value — so quoting it the way the date message does puts
+    # a string in the reproduction handle that `WHERE start_local='T37:00:00'` matches zero
+    # rows of. Same defect, third instance: 'garbage-da' first, `('')` second, this third.
+    #
+    # So the component is named OUTSIDE the handle. The id stays where it was, leading the
+    # remedy, because it is the only thing here anyone can act on.
+    unreadable_activity_time_msg : Str, I64 -> Str
+    unreadable_activity_time_msg = |raw, id| {
+        what =
+            if Str.is_empty(raw) {
+                "no time after its date"
+            } else {
+                "an unreadable time after its date — the time component reads '${raw}'"
+            }
+        "activity ${(id).to_str()} has ${what} — delete that row by id and re-sync, or run `stride sync --all` if Strava still lists the activity"
+    }
+
+    unreadable_activity_time! : Str, I64 => Try({}, _)
+    unreadable_activity_time! = |raw, id| {
+        msg = unreadable_activity_time_msg(raw, id)
+        (if json_mode!({})
+            emit_err!("unreadable_activity_date", msg)
+        else
+            Stdout.line!(msg))?
+        Err(Exit(error_status))
+    }
 
     unreadable_activity_date! : Str, I64 => Try({}, _)
     unreadable_activity_date! = |raw, id| {

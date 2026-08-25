@@ -1,12 +1,13 @@
 {
   "title": "activities",
-  "description": "Payload of `stride activities` \u2014 a list.",
+  "description": "Payload of `stride activities` — a list.",
   "type": "array",
   "items": {
     "type": "object",
     "required": [
       "avg_hr",
       "date",
+      "date_known",
       "distance_m",
       "hard_s",
       "hr_known",
@@ -107,6 +108,10 @@
       },
       "zones_known": {
         "type": "boolean"
+      },
+      "date_known": {
+        "type": "boolean",
+        "description": "Whether `date` could be read. False means the row's stored `start_local` is NULL, empty, malformed, or dated before year 1000 — `date` is then an empty string, which is a HOLE and not a value. Needed because an empty date string already means something else in this contract: SKILL.md documents `last_hard_session_date` as `'' = none on record`, so without this flag a consumer cannot tell 'no such thing exists' from 'it exists and its date is unreadable'. #249 chose to REPORT these rows rather than refuse, because a listing cannot turn a wrong date into a wrong answer, and hoists them to the top so no limit hides them; this is the field that says which ones they are."
       }
     }
   }

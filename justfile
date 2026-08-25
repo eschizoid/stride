@@ -268,12 +268,126 @@ schema-check: build
         echo "schema-check: derived $nforms forms but reached only $((checked + rejected)) — the loop dropped some"
         rc=1
     fi
-    act=$(STRIDE_FORMAT=json ./stride activities 1 2>&1 | jq -r '.data[0].id // empty' 2>&1 || true)
-    if [ -n "$act" ]; then
-        errs=$(STRIDE_FORMAT=json ./stride activity "$act" 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/activity.json -f tools/validate.jq 2>&1 || true)
-        if [ -n "$errs" ]; then echo "activity $act:"; echo "$errs"; rc=1; else echo "activity $act: conforms"; fi
-    else
+    # The FIRST row is deliberately the worst one. #249 hoists undateable activities to the
+    # top of `activities` so a listing cannot hide the row that needs repair — and `activity
+    # <id>` REFUSES on exactly that row, because the screen computes a 90-day window from
+    # the date. So on any database with one bad date, `.data[0].id` names a row whose detail
+    # view is an error envelope, `jq '.data'` is null, and this printed
+    # "activity N: expected object, got null" — a schema violation reported against a
+    # database whose only problem is one unreadable date, with the message pointing at the
+    # wrong thing. That is the wrong-cause diagnosis #249 exists to remove, one level up in
+    # the tooling, and the two halves of that PR caused it between them.
+    #
+    # A DECLARED refusal is a pass here. schema-check's question is "does the payload match
+    # its schema", and a form that correctly refuses has no payload to match — the envelope
+    # check below covers the error shape, and the e2e command-schema loop covers which codes
+    # a form may raise. Only an UNDECLARED code is a finding, which is why the code is
+    # compared against the table rather than merely being non-empty.
+    # PER-COMMAND codes only, never the universal set, and that distinction is the whole
+    # correctness of this block. `universal_error_codes` contains `internal_error` — it is
+    # declared universally precisely BECAUSE it is the catch-all, meaning "can occur
+    # anywhere", not "is a correct answer here". Testing membership against the union made
+    # this print "refused with declared code internal_error" and exit 0 on a database where
+    # `stride activity <id>` answered "unhandled failure: UnexpectedType(Null) — please open
+    # an issue". Before that change the same state was rc=1. A contract checker reporting
+    # green on the exact failure shape #243 and #249 exist to eliminate, in the branch that
+    # closes them. Every other universal member is the same class: something went wrong
+    # OUTSIDE the form's own logic. The per-command list is the one that means "this form may
+    # legitimately answer this instead of a payload".
+    #
+    # WALKS the first rows rather than taking only the first, because #249 hoists undateable
+    # activities to the top of `activities`. Taking `.data[0]` alone means that on precisely
+    # the databases where you most want to know `activity.json` still conforms, the only path
+    # ever exercised is the refusal one. Walking keeps both properties without re-implementing
+    # the date rule in a third language, which is the trap `guard_activity_dates!` exists to
+    # avoid.
+    acts=$(STRIDE_FORMAT=json ./stride activities 20 2>&1 || true)
+    acode=$(printf '%s' "$acts" | jq -r '.error.code // empty' 2>/dev/null || true)
+    ids=$(printf '%s' "$acts" | jq -r '.data[]?.id // empty' 2>/dev/null || true)
+    # PARSEABILITY first, and it is a third branch rather than part of either. Both
+    # derivations above read the same string through jq with errors suppressed, so
+    # unparseable output leaves BOTH empty — `acode` empty skips the envelope branch, and
+    # `-z "$ids"` then reports "skipped (no activities yet)" at rc=0 about a database holding
+    # 736 activities. That is the same false statement fixed one commit ago, reached through
+    # a different door: the envelope branch catches a WELL-FORMED error and nothing caught
+    # malformed output. `// empty` cannot tell "jq parsed it and found no rows" from "jq
+    # could not parse it".
+    #
+    # Narrow but live. The recipe sets STRIDE_FORMAT=json itself, so it needs the JSON path
+    # to break for THIS command — a format regression scoped to `activities`, or `activities`
+    # gaining narration, since `2>&1` merges stderr into the parse and `analyze` already
+    # writes there. And it is the checker going quiet about a regression in the exact thing
+    # it checks: a JSON-mode break is a contract break, and the contract checker would have
+    # said "skipped" and exited 0. The `commands:` check above catches a GLOBAL JSON
+    # regression; one scoped to a single command slips past it.
+    if ! printf '%s' "$acts" | jq -e . >/dev/null 2>&1; then
+        echo "activity: cannot sample — \`activities\` did not return JSON"; rc=1
+    elif [ -n "$acode" ]; then
+        # NOT "skipped (no activities yet)". `// empty` cannot tell "no rows" from "the
+        # listing returned an envelope", and the old branch said the database was empty
+        # while it held 737 activities — a diagnostic making a false statement, which is the
+        # defect one level up that the rest of this block was fixed for.
+        echo "activity: cannot sample — \`activities\` itself refused with $acode"; rc=1
+    elif [ -z "$ids" ]; then
+        # THIS BRANCH CAN FAIL OPEN, and what stops it is somewhere else in this recipe.
+        # `-z "$ids"` cannot distinguish "no rows" from "rows that parsed but carried no
+        # usable id" — measured on a real row with its id nulled, deleted, or made a string,
+        # all of which land here at rc=0. Every one of those shapes VIOLATES
+        # activities.json, and `activities` is one of the derived forms, so the loop above
+        # validates it in the same run and the recipe is red anyway. The block's fail-open is
+        # never the sole outcome.
+        #
+        # Which makes the redundancy load-bearing and worth naming: `activity` is excluded
+        # from the derived list by an explicit `select(.name != "activity")`, and that line is
+        # exactly where the next person needing an exclusion will look. If `activities` ever
+        # joins it, this becomes a genuine silent pass and nothing will say so.
+        #
+        # Not made fatal on `activity_not_found` for an id `activities` just returned, though
+        # the two commands disagreeing could not be legitimate: a row deleted by a concurrent
+        # sync between the two calls is an unlikely but real race, and trading a hypothetical
+        # bug-detection for a real flake is the wrong direction for a local tool.
         echo "activity: skipped (no activities yet)"
+    else
+        decl=$(STRIDE_FORMAT=json ./stride --json --help | jq -r '[.data.commands[] | select(.name == "activity") | .error_codes // []] | flatten | join(" ")' 2>/dev/null || true)
+        # The universal set, read so it can be REFUSED rather than trusted. Excluding it is
+        # currently a property of the TABLE — the block is safe only because no form declares
+        # a universal code in its own error_codes, which is true today and enforced nowhere.
+        # The day someone adds `internal_error` to a form's list, plausibly to make some
+        # other check go green, this silently returns to passing on it, and the comment
+        # explaining why that must never happen is three files from the change that does it.
+        # Held here instead, where it is stated.
+        uni=$(STRIDE_FORMAT=json ./stride --json --help | jq -r '(.data.universal_error_codes // []) | join(" ")' 2>/dev/null || true)
+        validated=0
+        lastcode=""
+        for id in $ids; do
+            raw=$(STRIDE_FORMAT=json ./stride activity "$id" 2>&1 || true)
+            code=$(printf '%s' "$raw" | jq -r '.error.code // empty' 2>/dev/null || true)
+            if [ -z "$code" ]; then
+                # ONE payload, by design rather than by accident. The walk stops at the first
+                # row that yields one, so structural variation — a row with no streams, no
+                # segments, no metrics against one with all three — is never sampled. That
+                # was equally true before the walk existed; widening it means deciding what
+                # "enough shapes" is, which is its own conversation.
+                errs=$(printf '%s' "$raw" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/activity.json -f tools/validate.jq 2>&1 || true)
+                if [ -n "$errs" ]; then echo "activity $id:"; echo "$errs"; rc=1; else echo "activity $id: conforms"; fi
+                validated=1; break
+            fi
+            lastcode="$code"
+            case " $uni " in
+                *" $code "*) echo "activity $id: refused with UNIVERSAL code $code, which is never a correct answer for a form"; rc=1; validated=1; break ;;
+            esac
+            case " $decl " in
+                *" $code "*) echo "activity $id: refused with declared code $code — sampling the next row" ;;
+                *) echo "activity $id: refused with UNDECLARED code $code"; rc=1; validated=1; break ;;
+            esac
+        done
+        if [ "$validated" = "0" ]; then
+            # rc=1, and provably not a false red: every form that sweeps activity dates has
+            # already FAILED in the forms loop above by the time this state is reachable, so
+            # this line can only ever agree with a red the recipe already is. Names the last
+            # code so the reader does not have to re-derive why.
+            echo "activity: every sampled row refused (last: $lastcode), so activity.json was never validated against a payload"; rc=1
+        fi
     fi
     # the envelope schema covers BOTH arms, so this one is never skipped
     errs=$(STRIDE_FORMAT=json ./stride summary 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1 || true)

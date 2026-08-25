@@ -72,7 +72,7 @@ ReportSeason :: [].{
         day_rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT day AS day, CAST(COALESCE(tss, 0) AS REAL) AS tss,
+                \\SELECT COALESCE(day, '') AS day, CAST(COALESCE(tss, 0) AS REAL) AS tss,
                 \\       CAST(COALESCE(ctl, 0) AS REAL) AS ctl,
                 \\       CAST(COALESCE(atl, 0) AS REAL) AS atl,
                 \\       CAST(COALESCE(tsb, 0) AS REAL) AS tsb
@@ -102,7 +102,7 @@ ReportSeason :: [].{
             pol_rows = Sqlite.query_many!({
                 path: Path.utf8(path),
                 query:
-                    \\SELECT substr(a.start_local, 1, 10) AS date,
+                    \\SELECT COALESCE(substr(a.start_local, 1, 10), '') AS date,
                     \\       COALESCE(a.sport_family, a.sport_type) AS fam,
                     \\       COUNT(*) AS n,
                     \\       -- the house fallback (see zone_sum!): the pi_* split when the activity

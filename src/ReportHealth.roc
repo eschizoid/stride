@@ -28,6 +28,18 @@ ReportHealth :: [].{
         path = Db.open_db!({})?
         today_days = Db.local_today_days!(path)
         year = (Metrics.civil_from_days(today_days)).y
+        # The cutoff below is the literal "0000-01-01", whose only job is to mean
+        # EVERYTHING — and `WHERE start_local >= :cutoff` is NULL-false, so an unreadable
+        # date silently removes the activity from a total printed under the heading
+        # ALL TIME. Measured: 475 sessions became 474, 11950 km became 11924, exit 0, on a
+        # command whose declared error_codes were empty.
+        #
+        # Refuses rather than reports, and that is the same call `summary` makes about the
+        # same shape one file over: a number that claims completeness and is quietly short
+        # is worse than no number. `stats` LISTS totals, which reads like the report side of
+        # #249's split, but the split is by what the date DOES — and here it decides
+        # membership in an aggregate, so a wrong date is a wrong total.
+        _ = Report.guard_activity_dates!(path)?
         all_time = stats_rows!(path, "0000-01-01")?
         ytd = stats_rows!(path, "${(year).to_str()}-01-01")?
         if Output.json_mode!({})
@@ -83,7 +95,19 @@ ReportHealth :: [].{
                 \\       COALESCE(SUM(CASE WHEN COALESCE(a.avg_watts, a.weighted_avg_watts, 0) > 0 THEN 1 ELSE 0 END), 0) AS with_power,
                 \\       COALESCE(SUM(CASE WHEN s.activity_id IS NOT NULL AND s.raw_json <> '{}' THEN 1 ELSE 0 END), 0) AS with_streams,
                 \\       COALESCE(SUM(CASE WHEN m.activity_id IS NULL THEN 1 ELSE 0 END), 0) AS unanalyzed,
-                \\       COALESCE(SUM(CASE WHEN COALESCE(m.tss, 0) = 0 AND m.activity_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS zero_load
+                \\       COALESCE(SUM(CASE WHEN COALESCE(m.tss, 0) = 0 AND m.activity_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS zero_load,
+                \\       -- rows whose start_local cannot be read (#265). doctor is the
+                \\       -- command a stuck user reaches for, and it reported a clean engine
+                \\       -- on databases where analyze, summary, season, plan, stats and week
+                \\       -- all refused — every one of those messages naming a remedy the
+                \\       -- user has to apply BY ID, which doctor had and did not say.
+                \\       --
+                \\       -- Same predicate as the ORDER BY hoist in ReportSessions, and it has
+                \\       -- to be: this counts what those commands refuse over. It is a COUNT
+                \\       -- and not a verdict — ADR 0012 puts "is this a problem?" on the
+                \\       -- coach's side — and `stride activities` now leads with these rows,
+                \\       -- so the pointer to the ids is a command rather than a list here.
+                \\       COALESCE(SUM(1 - ${Report.date_known_sql}), 0) AS undateable
                 \\FROM activities a
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
@@ -96,7 +120,8 @@ ReportHealth :: [].{
                 with_streams = Sqlite.i64("with_streams")(cols)(stmt)?
                 unanalyzed = Sqlite.i64("unanalyzed")(cols)(stmt)?
                 zero_load = Sqlite.i64("zero_load")(cols)(stmt)?
-                Ok({ total, with_hr, with_power, with_streams, unanalyzed, zero_load })
+                undateable = Sqlite.i64("undateable")(cols)(stmt)?
+                Ok({ total, with_hr, with_power, with_streams, unanalyzed, zero_load, undateable })
             },
         })?
         models = Sqlite.query_many!({
@@ -294,6 +319,7 @@ ReportHealth :: [].{
             with_streams: cov.with_streams,
             unanalyzed: cov.unanalyzed,
             zero_load: cov.zero_load,
+            undateable_activities: cov.undateable,
             rated: rated_total,
             strength_unrated: strength_unrated.to_i64_wrap(),
             scored_by: models,
@@ -349,6 +375,22 @@ ReportHealth :: [].{
                     ["", "  → ${(p.strength_unrated).to_str()} strength-class sessions have no rating — `stride rate <id> <1-10>` scores them honestly"]
                 else
                     []
+            # A LIST that is empty or one element, exactly like `hint` above, rather than a
+            # string that is empty or a sentence. The conditional undateable line disappears
+            # when it has nothing to say, and `""` keeps meaning what it means everywhere
+            # else in this screen: a deliberate section spacer.
+            #
+            # The first version returned `else ""` and filtered the whole joined list for
+            # empties — which removed all SIX spacers, five here and one in `hint`, turning
+            # the screen into an undifferentiated wall and detaching the footer arrow. The
+            # two e2e checks that read this screen are `Str.contains` on single lines, so
+            # 785 checks stayed green through a regression that changed every section
+            # boundary on it.
+            undateable =
+                if p.undateable_activities > 0
+                    ["  activities with an unreadable date: ${(p.undateable_activities).to_str()} — `stride activities` lists them first; delete each by id and re-sync"]
+                else
+                    []
             Str.join_with(
                 List.join([
                     [
@@ -388,6 +430,16 @@ ReportHealth :: [].{
                             "  would be recomputed by analyze: unknown — ${p.config_error}"
                         },
                         "  streams still pending: ${(p.pending_streams).to_str()} — run `stride sync` to keep draining them",
+                    ],
+                    # ONLY when there are any (#265). Every other line here reports a number
+                    # that is meaningful at zero — "0 not yet analyzed" is a clean bill —
+                    # but this one is a fault count, and printing "0 undateable" on every
+                    # healthy run trains the eye to skip the row on the day it is not zero.
+                    # That is the same argument `plan`'s freshness note makes for staying
+                    # silent. Names the command rather than the ids, because `activities`
+                    # now leads with these rows.
+                    undateable,
+                    [
                         "  config: hr zones ${if p.zones_set "set" else "incomplete"}, ${(p.sport_zone_overrides).to_str()} per-sport zone key(s) set · ${(p.ftp_derived_sports).to_str()} sport(s) have a derived FTP (FTP is never configured — see summary)",
                         "  time: ${p.time}",
                     ],

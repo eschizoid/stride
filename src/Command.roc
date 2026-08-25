@@ -325,13 +325,21 @@ Command := [
 		errs(writes("config set", [req("<key>"), req("<value>")], "config.json"), ["bad_value", "derived_key"]),
 		errs(reads("summary", [], "summary.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
 		errs(reads("plan", [], "plan.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
-		reads("stats", [], "stats.json"),
+		## `stats` had no declared codes: its totals are a pure listing, until #249 found
+		## that `WHERE start_local >= :cutoff` is NULL-false, so an unreadable date leaves
+		## an ALL TIME total silently short. It refuses now.
+		errs(reads("stats", [], "stats.json"), ["unreadable_activity_date"]),
 		reads("doctor", [], "doctor.json"),
 		errs(reads("zones", [], "zones.json"), ["no_power_data"]),
 		errs(reads("pz", [], "zones.json"), ["no_power_data"]),
-		errs(reads("compare", [opt("<week|month>")], "compare.json"), ["bad_period", "no_data", "unreadable_daily_load_day"]),
+		errs(reads("compare", [opt("<week|month>")], "compare.json"), ["bad_period", "no_data", "unreadable_activity_date", "unreadable_daily_load_day"]),
 		errs(reads("activities", [opt("<limit>"), opt("<sport>")], "activities.json"), ["bad_count"]),
-		errs(reads("activity", [req("<activity_id>")], "activity.json"), ["activity_not_found"]),
+		## `unreadable_activity_date` on the three forms #249 made REFUSE rather than report
+		## an empty date. The split is by what the form does with the date: `activities` and
+		## `top` list or rank and still report the row, so they gain no code; `activity`,
+		## `reps` and `progress` compute from it — a 90-day window, a comparables filter, a
+		## trend — and now name the row instead of answering over a value they invented.
+		errs(reads("activity", [req("<activity_id>")], "activity.json"), ["activity_not_found", "unreadable_activity_date"]),
 		## the metric set is CLOSED, so it is spelled out. A caller reading only this
 		## payload cannot guess it, and it is the one required argument here whose
 		## wrong value costs a round trip (`bad_metric`).
@@ -339,7 +347,12 @@ Command := [
 		## DAYS of lookback, not a row count — `power-curve` returns a fixed set of
 		## points regardless, so `<n>` beside `activities`' `<n>` left two identical
 		## shapes meaning different things.
-		errs(reads("load", [opt("<days>")], "load.json"), ["bad_count"]),
+		## `unreadable_daily_load_day` because #249 made `load` refuse a day it used to
+		## render as a 1969 week. It was the ONLY reader of that table not declaring the
+		## code, and nothing caught the gap: the e2e union check at tests/e2e.roc passes
+		## because summary, plan and compare declare it, so the union was satisfied by
+		## three other forms while this one was wrong — a check green for the wrong reason.
+		errs(reads("load", [opt("<days>")], "load.json"), ["bad_count", "unreadable_daily_load_day"]),
 		errs(reads("power-curve", [opt("<days>"), opt("<sport>")], "power_curve.json"), ["bad_count"]),
 		errs(reads("pc", [opt("<days>"), opt("<sport>")], "power_curve.json"), ["bad_count"]),
 		## A DATE, not a workout name. The parse arm BOUND this to a variable called
@@ -348,11 +361,13 @@ Command := [
 		## handler queries `substr(a.start_local,1,10) = :date` and answers
 		## `no_workout_on_date`. Every other document in the repo says `[date]`; only
 		## this table said otherwise, and this table is the one an agent reads.
-		errs(reads("progress", [opt("<YYYY-MM-DD>"), opt("<asc|desc>")], "progress.json"), ["no_scorable_workouts", "no_workout_on_date", "unscorable"]),
+		errs(reads("progress", [opt("<YYYY-MM-DD>"), opt("<asc|desc>")], "progress.json"), ["no_scorable_workouts", "no_workout_on_date", "unreadable_activity_date", "unscorable"]),
 		errs(reads("tte", [req("<watts>")], "tte.json"), ["bad_watts", "no_cp_fit"]),
-		errs(reads("reps", [opt("<YYYY-MM-DD>")], "reps.json"), ["irregular_anchor", "no_detected_intervals", "no_intervals_on_date"]),
+		errs(reads("reps", [opt("<YYYY-MM-DD>")], "reps.json"), ["irregular_anchor", "no_detected_intervals", "no_intervals_on_date", "unreadable_activity_date"]),
 		errs(reads("season", [], "season.json"), ["no_activities", "unreadable_activity_date", "unreadable_daily_load_day"]),
-		reads("week", [opt("all")], "week.json"),
+		## `week` had NO declared codes at all, and now has one: #249 made it refuse an
+		## unplanned activity whose date it used to sort to the epoch and list first.
+		errs(reads("week", [opt("all")], "week.json"), ["unreadable_activity_date"]),
 		errs(reads("config get", [req("<key>")], "config.json"), ["derived_key", "not_set"]),
 		reads("--version", [], "version.json"),
 		reads("--help", [], "commands.json"),

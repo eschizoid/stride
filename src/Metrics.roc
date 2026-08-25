@@ -940,7 +940,12 @@ Metrics :: [].{
         }
 
     # ── repeated-workout progress (the `progress` command's business rules) ─
-    ProgressRow : { name : Str, date : Str, sport : Str, distance_m : F64, moving_time : I64, np_w : F64, avg_hr : F64, rpe : F64, output_kj : F64, tss : F64, load_model : Str, decoupling_pct : F64, decoupling_known : Bool }
+    # `id` is carried for ONE reason: so `progress` can name the row when it refuses an
+    # unreadable date (#249). Nothing here scores or groups on it. It lives on the row rather
+    # than in a second guard query over the same WHERE clause because two expressions that
+    # must select the same rows are exactly the seam #243 spent its last three rounds
+    # closing — the guard's domain has to BE the consumer's domain, not merely match it.
+    ProgressRow : { name : Str, date : Str, sport : Str, distance_m : F64, moving_time : I64, np_w : F64, avg_hr : F64, rpe : F64, output_kj : F64, tss : F64, load_model : Str, decoupling_pct : F64, decoupling_known : Bool, id : I64 }
 
     # split rows (already sorted by name) into per-workout runs
     group_progress : List(ProgressRow) -> List({ name : Str, rows : List(ProgressRow) })
@@ -2459,7 +2464,7 @@ Metrics :: [].{
 
 # lens selection: power ride -> Ef, run with pace+HR -> SpeedHr, rated strength -> Rpe
 expect {
-    row = |sport, np, dist, mt, rpe| { name: "X", date: "2025-01-01", sport, distance_m: dist, moving_time: mt, np_w: np, avg_hr: 150.0, rpe, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False }
+    row = |sport, np, dist, mt, rpe| { name: "X", date: "2025-01-01", sport, distance_m: dist, moving_time: mt, np_w: np, avg_hr: 150.0, rpe, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     Metrics.progress_lens([row("Ride", 200.0, 0.0, 3600, 0.0)]) == Ef
     and Metrics.progress_lens([row("Run", 0.0, 10000.0, 3000, 0.0)]) == SpeedHr
     and Metrics.progress_lens([row("WeightTraining", 0.0, 0.0, 2700, 7.0)]) == Rpe
@@ -2471,7 +2476,7 @@ expect {
 # the same column, and trending it against NP invents an improvement. Same watts, same HR:
 # provenance alone decides.
 expect {
-    row = |lm| { name: "X", date: "2025-01-01", sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: 200.0, avg_hr: 150.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: lm, decoupling_pct: 0.0, decoupling_known: False }
+    row = |lm| { name: "X", date: "2025-01-01", sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: 200.0, avg_hr: 150.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: lm, decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     Metrics.lens_score(Ef, row("power_stream")).is_ok()
     and Metrics.lens_score(Ef, row("avg_watts")).is_err()
     and Metrics.lens_score(Ef, row("weighted_watts")).is_ok()
@@ -2620,7 +2625,7 @@ expect {
 
 # EF = NP/HR; RPE is lower-is-better
 expect {
-    r = { name: "X", date: "d", sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: 300.0, avg_hr: 150.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False }
+    r = { name: "X", date: "d", sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: 300.0, avg_hr: 150.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     (Metrics.lens_score(Ef, r).ok_or(0.0) - 2.0).abs() < 0.001 and Metrics.lens_higher_better(Ef) and !(Metrics.lens_higher_better(Rpe))
 }
 
@@ -3088,7 +3093,7 @@ expect Metrics.is_auto_name("Morning Ride") and Metrics.is_auto_name("Lunch Grav
 
 # group_progress: adjacent same-name rows fold into one group per workout
 expect {
-    pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False }
+    pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     gs = Metrics.group_progress([pr("A", "2025-01-01", 0.0), pr("A", "2025-02-01", 0.0), pr("B", "2025-03-01", 0.0)])
     List.len(gs) == 2 and List.first(gs).map_ok(|g| List.len(g.rows) == 2).ok_or(False)
 }
@@ -3096,7 +3101,7 @@ expect {
 # anchor_filter: exact names pass through; auto-names gate to ±10% of anchor distance;
 # distance-less auto-name anchors show alone; off-date anchors drop the group
 expect {
-    pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False }
+    pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     exact = Metrics.anchor_filter({ name: "Class X", rows: [pr("Class X", "2025-01-01", 0.0)] }, "2025-01-01")
     gated = Metrics.anchor_filter({ name: "Morning Ride", rows: [pr("Morning Ride", "2025-01-01", 20000.0), pr("Morning Ride", "2025-02-01", 21000.0), pr("Morning Ride", "2025-03-01", 40000.0)] }, "2025-01-01")
     lone = Metrics.anchor_filter({ name: "Morning Ride", rows: [pr("Morning Ride", "2025-01-01", 0.0), pr("Morning Ride", "2025-02-01", 21000.0)] }, "2025-01-01")
