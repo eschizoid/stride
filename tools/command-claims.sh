@@ -208,8 +208,9 @@ EXPECTED_UNPARSED=45
 # renamed-`top` table it exited 3 at the old anchor, both before the self-test ran — so a
 # simultaneously broken rule went unreported in exactly the runs most likely to have
 # broken it. Nothing below can hide it now.
+#
 # The rule itself, as a function, so the self-test below judges the SAME code the comparison
-# rather than a second copy of it. Returns 0 to accept the trailing token, 1 to refute.
+# loop runs rather than a second copy of it. Returns 0 to accept the trailing token, 1 to refute.
 #   $1 the trailing token, $2 the command's declared arg spec (space-joined, in order)
 judge_trailing() {
   _tok="$1"
@@ -312,14 +313,16 @@ fi
 # The trap goes up FIRST, before any of them exist. Installed after the block, a failure on
 # the second or third mktemp leaks the ones already created — `exit 6` runs with no trap
 # armed. `rm -f ""` is a silent no-op (exit 0), so the unset placeholders cost nothing.
-NAMED=; REAL=; HELP=; ARGS=; QUOTED=; UNPARSED=
-trap 'rm -f "$NAMED" "$REAL" "$HELP" "$ARGS" "$QUOTED" "$UNPARSED"' EXIT
+NAMED=; REAL=; HELP=; ARGS=; QUOTED=; UNPARSED=; SIGA=; SIGB=
+trap 'rm -f "$NAMED" "$REAL" "$HELP" "$ARGS" "$QUOTED" "$UNPARSED" "$SIGA" "$SIGB"' EXIT
 NAMED=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
 REAL=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
 HELP=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
 ARGS=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
 QUOTED=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
 UNPARSED=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
+SIGA=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
+SIGB=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
 
 command -v jq >/dev/null 2>&1 || { echo "command-claims: jq not found — the table cannot be read, refusing to pass" >&2; exit 6; }
 [ -x "$STRIDE" ] || { echo "command-claims: $STRIDE is not an executable — run \`just build\` first (the recipe depends on it); refusing to report a clean tree because the oracle was missing" >&2; exit 6; }
@@ -346,8 +349,8 @@ jq -r '.data.commands[].name' < "$HELP" > "$REAL" \
 #
 # One line per command, name<TAB>arg names joined by spaces, and pinned to REAL's line count
 # below so the two halves cannot silently disagree about which commands exist.
-# `required` is carried through, marked with a leading `!`, because the judgement below
-# cannot be sound without it: a trailing token may legally fill position 2 when position 1
+# `required` is carried through, marked with a leading `!`, because `judge_trailing` (above,
+# at the top of the file) cannot be sound without it: a trailing token may legally fill position 2 when position 1
 # is OPTIONAL, and `week`'s only declared arg (`all`) is exactly that. Dropping the flag —
 # which this line did — made the rule refuse `stride week ride` on a table declaring
 # `week [all] [<sport>]`, a legal invocation. The payload has carried `required` since
@@ -584,24 +587,53 @@ nargs=$(wc -l < "$ARGS" | tr -d ' ')
 # required literal blocking a placeholder behind it, has zero instances in the table and
 # zero corpus coverage, and lives only in the self-test. The day someone adds such a
 # command is the day these rows move and the rule starts doing real work.
-EXPECTED_REQUIRED_SIG='activity=1 complete=1 config get=1 config set=1,2 import=1 rate=1,2 skip=1,2 top=1 tte=1 week add=1,2,3,4'
-# awk on the TAB, not `tr`: the ARGS rows are `name<TAB>arg arg ...` and a command name may
-# itself contain a space (`week add`, `config set`), so splitting on spaces alone both glues
-# the first arg to the name and mis-numbers every position after it.
-reqsig=$(awk -F'\t' '{ n = split($2, a, " "); s = ""; for (i = 1; i <= n; i++) if (substr(a[i], 1, 1) == "!") s = (s == "" ? i : s "," i); if (s != "") printf "%s=%s\n", $1, s }' "$ARGS" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
-# The empty case gets its own branch. A payload declaring no arguments at all yields an
-# empty signature, and neither half of the general message is true of it — nothing was
-# dropped from `required`, the whole `.args` side of the oracle is gone. `nargs != nreal`
-# cannot see it either, since all the rows still exist.
-if [ -z "$reqsig" ]; then
+EXPECTED_REQUIRED_SIG='activity=1|complete=1|config get=1|config set=1,2|import=1|rate=1,2|skip=1,2|top=1|tte=1|week add=1,2,3,4'
+# `|`-joined, not space-joined: a command NAME may contain a space (`config get`), so a
+# space-joined signature cannot be split back into its entries — which is what the diff
+# below needs in order to name the rows that moved.
+reqsig=$(awk -F'\t' '{ n = split($2, a, " "); s = ""; for (i = 1; i <= n; i++) if (substr(a[i], 1, 1) == "!") s = (s == "" ? i : s "," i); if (s != "") printf "%s=%s\n", $1, s }' "$ARGS" | LC_ALL=C sort | tr '\n' '|' | sed 's/|$//')
+# Two different emptinesses, and the general message is false of both. An empty SIGNATURE
+# means "no REQUIRED args", which is the likelier drift; an empty ARG COUNT means the
+# `.args` half of the oracle is gone entirely. `nargs != nreal` sees neither, because all
+# the rows still exist either way. Gate on the token count first so each gets its own
+# sentence — review reproduced the misdiagnosis by declaring every arg optional, on a table
+# where `top` plainly still declared three.
+nargtok=$(awk -F'\t' '{ n = split($2, a, " "); for (i = 1; i <= n; i++) if (a[i] != "") c++ } END { print c + 0 }' "$ARGS")
+case "$nargtok" in ''|*[!0-9]*) echo "command-claims: could not count the table's declared arguments (got '$nargtok')" >&2; exit 3 ;; esac
+if [ "$nargtok" -eq 0 ]; then
   echo "command-claims: the derived table declares no arguments at all — the \`.args\` half of the oracle is empty, so the trailing-token rule has nothing to walk" >&2
+  exit 3
+fi
+if [ -z "$reqsig" ]; then
+  echo "command-claims: the derived table declares $nargtok arguments but marks none of them required — the walk then never stops, and every trailing token is accepted. Either the extraction dropped \`required\`, or the table genuinely made everything optional." >&2
   exit 3
 fi
 if [ "$reqsig" != "$EXPECTED_REQUIRED_SIG" ]; then
   echo "command-claims: required-arg signature changed." >&2
-  echo "  expected: $EXPECTED_REQUIRED_SIG" >&2
-  echo "  derived:  $reqsig" >&2
-  echo "command-claims: either the extraction dropped/forged \`required\` or reordered the args (the trailing-token rule silently over-accepts without the markers, and walks the wrong way without the order), or an argument genuinely changed between required and optional. Confirm which against the diff above, then update EXPECTED_REQUIRED_SIG." >&2
+  printf '%s\n' "$EXPECTED_REQUIRED_SIG" | tr '|' '\n' | LC_ALL=C sort > "$SIGA"
+  printf '%s\n' "$reqsig" | tr '|' '\n' | LC_ALL=C sort > "$SIGB"
+  comm -23 "$SIGA" "$SIGB" | sed 's/^/  only in expected:  /' >&2
+  comm -13 "$SIGA" "$SIGB" | sed 's/^/  only in derived:   /' >&2
+  echo "command-claims: either the extraction dropped/forged \`required\` or reordered the args (the trailing-token rule silently over-accepts without the markers, and walks the wrong way without the order), or an argument genuinely changed between required and optional. Confirm each row above, then update EXPECTED_REQUIRED_SIG." >&2
+  exit 3
+fi
+# ...and the PLACEHOLDER/LITERAL split survived, which the signature cannot see. It encodes
+# requiredness and POSITION; `judge_trailing` branches FIRST on whether an arg NAME is a
+# placeholder, and nothing pinned names. Two measured one-line survivors in the extraction,
+# both leaving the signature byte-identical and all three gates green: mapping every arg to
+# `<x>` makes the rule accept everything reachable, so `stride week frobnicate` — the exact
+# bug this file exists to catch — passes while `analyze frobnicate` still refutes and the
+# run looks healthy; stripping the angle brackets makes every arg a literal, so legal
+# references like `stride top hr` and `stride compare month` are falsely accused.
+#
+# A COUNT here, deliberately, unlike the signature above: shape belongs in the pin, arg NAME
+# TEXT does not. Folding `<`-ness per position would be stronger and would also trip on
+# renaming `<limit>` to `<count>`, which should stay free. 31 of 33; the two mutants give 33
+# and 0.
+EXPECTED_PLACEHOLDERS=31
+nplace=$(awk -F'\t' '{ n = split($2, a, " "); for (i = 1; i <= n; i++) { t = a[i]; sub(/^!/, "", t); if (t ~ /^</) c++ } } END { print c + 0 }' "$ARGS")
+if [ "$nplace" != "$EXPECTED_PLACEHOLDERS" ]; then
+  echo "command-claims: $nplace placeholder args in the derived table, expected $EXPECTED_PLACEHOLDERS — the extraction is mangling arg names, which flips the rule's first branch: all-placeholder accepts every trailing token, all-literal refuses every legal one. Confirm against \`stride --json --help\` before updating EXPECTED_PLACEHOLDERS." >&2
   exit 3
 fi
 
@@ -638,8 +670,16 @@ fi
 # one check that exists to catch exactly that. The table settles it: `week` declares the
 # literal `all`, `top` declares `<hr|tss|…>`, and `analyze` declares nothing, so `week all`
 # is verifiable, `top hr` is a placeholder value, and `analyze frobnicate` and
-# `week frobnicate` are refutable. A command declaring ANY placeholder accepts any trailing
-# token, because a placeholder's whole point is that its values are not enumerable here.
+# `week frobnicate` are refutable.
+#
+# The judgement itself is `judge_trailing`, at the top of this file. Do not restate its rule
+# here. The sentence that used to sit on this line — "a command declaring ANY placeholder
+# accepts any trailing token" — was true on main and became false with this file's first
+# commit, which replaced the list-wide test with a positional walk that stops at the first
+# REQUIRED argument. It survived four review rounds, and hoisting the rule 400 lines up is
+# what made it dangerous rather than merely stale: nothing adjacent contradicts it any more,
+# so a reader of this section gets superseded semantics stated as current, in the file whose
+# whole thesis is that comments are measurements.
 
 fail=0
 while IFS="$(printf '\t')" read -r file line cand; do
