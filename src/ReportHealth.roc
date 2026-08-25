@@ -95,7 +95,22 @@ ReportHealth :: [].{
                 \\       COALESCE(SUM(CASE WHEN COALESCE(a.avg_watts, a.weighted_avg_watts, 0) > 0 THEN 1 ELSE 0 END), 0) AS with_power,
                 \\       COALESCE(SUM(CASE WHEN s.activity_id IS NOT NULL AND s.raw_json <> '{}' THEN 1 ELSE 0 END), 0) AS with_streams,
                 \\       COALESCE(SUM(CASE WHEN m.activity_id IS NULL THEN 1 ELSE 0 END), 0) AS unanalyzed,
-                \\       COALESCE(SUM(CASE WHEN COALESCE(m.tss, 0) = 0 AND m.activity_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS zero_load
+                \\       COALESCE(SUM(CASE WHEN COALESCE(m.tss, 0) = 0 AND m.activity_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS zero_load,
+                \\       -- rows whose start_local cannot be read (#265). doctor is the
+                \\       -- command a stuck user reaches for, and it reported a clean engine
+                \\       -- on databases where analyze, summary, season, plan, stats and week
+                \\       -- all refused — every one of those messages naming a remedy the
+                \\       -- user has to apply BY ID, which doctor had and did not say.
+                \\       --
+                \\       -- Same predicate as the ORDER BY hoist in ReportSessions, and it has
+                \\       -- to be: this counts what those commands refuse over. It is a COUNT
+                \\       -- and not a verdict — ADR 0012 puts "is this a problem?" on the
+                \\       -- coach's side — and `stride activities` now leads with these rows,
+                \\       -- so the pointer to the ids is a command rather than a list here.
+                \\       COALESCE(SUM(CASE WHEN a.start_local IS NULL
+                \\                           OR date(substr(a.start_local, 1, 10)) IS NOT substr(a.start_local, 1, 10)
+                \\                           OR substr(a.start_local, 1, 4) < '1000'
+                \\                         THEN 1 ELSE 0 END), 0) AS undateable
                 \\FROM activities a
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
@@ -108,7 +123,8 @@ ReportHealth :: [].{
                 with_streams = Sqlite.i64("with_streams")(cols)(stmt)?
                 unanalyzed = Sqlite.i64("unanalyzed")(cols)(stmt)?
                 zero_load = Sqlite.i64("zero_load")(cols)(stmt)?
-                Ok({ total, with_hr, with_power, with_streams, unanalyzed, zero_load })
+                undateable = Sqlite.i64("undateable")(cols)(stmt)?
+                Ok({ total, with_hr, with_power, with_streams, unanalyzed, zero_load, undateable })
             },
         })?
         models = Sqlite.query_many!({
@@ -306,6 +322,7 @@ ReportHealth :: [].{
             with_streams: cov.with_streams,
             unanalyzed: cov.unanalyzed,
             zero_load: cov.zero_load,
+            undateable_activities: cov.undateable,
             rated: rated_total,
             strength_unrated: strength_unrated.to_i64_wrap(),
             scored_by: models,
@@ -361,8 +378,13 @@ ReportHealth :: [].{
                     ["", "  → ${(p.strength_unrated).to_str()} strength-class sessions have no rating — `stride rate <id> <1-10>` scores them honestly"]
                 else
                     []
+            # EMPTIES DROPPED, so a line that has nothing to say costs no blank row. The
+            # undateable-activities line below is conditional — it is a fault count, and a
+            # "0 undateable" printed on every healthy run trains the eye to skip the row on
+            # the day it is not zero — and `else ""` in a joined list otherwise renders as
+            # an empty line rather than as nothing.
             Str.join_with(
-                List.join([
+                List.keep_if(List.join([
                     [
                         "",
                         "── stride doctor ─────────────────────────────",
@@ -400,11 +422,26 @@ ReportHealth :: [].{
                             "  would be recomputed by analyze: unknown — ${p.config_error}"
                         },
                         "  streams still pending: ${(p.pending_streams).to_str()} — run `stride sync` to keep draining them",
+                        # ONLY when there are any (#265). Every other line here reports a
+                        # number that is meaningful at zero — "0 not yet analyzed" is a
+                        # clean bill — but this one is a fault count, and printing "0
+                        # undateable" on every healthy run trains the eye to skip the row
+                        # on the day it is not zero. That is the same argument `plan`'s
+                        # freshness note makes for staying silent, and the same one this
+                        # file's own junk-filter line lost by always printing.
+                        #
+                        # Names the command rather than the ids: `activities` now leads
+                        # with these rows, so one pointer beats an unbounded list here.
+                        if p.undateable_activities > 0 {
+                            "  activities with an unreadable date: ${(p.undateable_activities).to_str()} — `stride activities` lists them first; delete each by id and re-sync"
+                        } else {
+                            ""
+                        },
                         "  config: hr zones ${if p.zones_set "set" else "incomplete"}, ${(p.sport_zone_overrides).to_str()} per-sport zone key(s) set · ${(p.ftp_derived_sports).to_str()} sport(s) have a derived FTP (FTP is never configured — see summary)",
                         "  time: ${p.time}",
                     ],
                     hint,
-                ]),
+                ]), |line| !(Str.is_empty(line))),
                 "\n",
             )
         })

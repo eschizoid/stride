@@ -434,7 +434,7 @@ ReportSessions :: [].{
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, a.sport_type AS sport, a.name AS name,
+                \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, CASE WHEN a.start_local IS NULL OR date(substr(a.start_local, 1, 10)) IS NOT substr(a.start_local, 1, 10) OR substr(a.start_local, 1, 4) < '1000' THEN 0 ELSE 1 END AS date_known, a.sport_type AS sport, a.name AS name,
                 \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                 \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
@@ -506,6 +506,7 @@ ReportSessions :: [].{
             rows: |cols| |stmt| {
                 id = Sqlite.i64("id")(cols)(stmt)?
                 date = Sqlite.str("date")(cols)(stmt)?
+                date_known = Sqlite.i64("date_known")(cols)(stmt)?
                 sport = Sqlite.str("sport")(cols)(stmt)?
                 name = Sqlite.str("name")(cols)(stmt)?
                 moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
@@ -526,7 +527,7 @@ ReportSessions :: [].{
                 hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
                 zones_known = Sqlite.i64("zones_known")(cols)(stmt)?
                 load_model = Sqlite.str("load_model")(cols)(stmt)?
-                Ok({ id, date, sport, name, moving_time, distance_m, tss, load_model, np_w, power_known: power_known != 0, intensity, intensity_known: intensity_known != 0, z1_s, z2_s, z3_s, z4_s, z5_s, zones_known: zones_known != 0, hard_s, relative_effort, avg_hr, hr_known: hr_known != 0 })
+                Ok({ id, date, date_known: date_known != 0, sport, name, moving_time, distance_m, tss, load_model, np_w, power_known: power_known != 0, intensity, intensity_known: intensity_known != 0, z1_s, z2_s, z3_s, z4_s, z5_s, zones_known: zones_known != 0, hard_s, relative_effort, avg_hr, hr_known: hr_known != 0 })
             },
         })?
         if Output.json_mode!({})
@@ -628,7 +629,7 @@ ReportSessions :: [].{
                 rows = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
-                        \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, a.sport_type AS sport, a.name AS name,
+                        \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, CASE WHEN a.start_local IS NULL OR date(substr(a.start_local, 1, 10)) IS NOT substr(a.start_local, 1, 10) OR substr(a.start_local, 1, 4) < '1000' THEN 0 ELSE 1 END AS date_known, a.sport_type AS sport, a.name AS name,
                         \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                         \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                         \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
@@ -645,6 +646,7 @@ ReportSessions :: [].{
                     rows: |cols| |stmt| {
                         id = Sqlite.i64("id")(cols)(stmt)?
                         date = Sqlite.str("date")(cols)(stmt)?
+                        date_known = Sqlite.i64("date_known")(cols)(stmt)?
                         sport = Sqlite.str("sport")(cols)(stmt)?
                         name = Sqlite.str("name")(cols)(stmt)?
                         moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
@@ -657,7 +659,7 @@ ReportSessions :: [].{
                         power_known = Sqlite.i64("power_known")(cols)(stmt)?
                         intensity_known = Sqlite.i64("intensity_known")(cols)(stmt)?
                         hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
-                        Ok({ id, date, sport, name, moving_time, distance_m, tss, np_w, power_known: power_known != 0, intensity, intensity_known: intensity_known != 0, avg_hr, hr_known: hr_known != 0, output_kj })
+                        Ok({ id, date, date_known: date_known != 0, sport, name, moving_time, distance_m, tss, np_w, power_known: power_known != 0, intensity, intensity_known: intensity_known != 0, avg_hr, hr_known: hr_known != 0, output_kj })
                     },
                 })?
                 if Output.json_mode!({})
@@ -848,7 +850,7 @@ ReportSessions :: [].{
                 sessions = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
-                        \\SELECT a2.id AS id, substr(a2.start_local, 1, 10) AS date, a2.name AS name,
+                        \\SELECT a2.id AS id, COALESCE(substr(a2.start_local, 1, 10), '') AS date, a2.name AS name,
                         \\       COUNT(*) AS reps,
                         \\       CAST(AVG(s.avg_signal) AS REAL) AS mean_w,
                         \\       CAST(AVG(s.dur_s) AS INTEGER) AS mean_dur,
@@ -961,8 +963,23 @@ ReportSessions :: [].{
                 })
                 # selection ranked by uniformity, DISPLAY by date — the coach
                 # reads a trend down the page, not a ranking
-                # Str has no ordering in this Roc — sort on parsed day numbers
-                keyed = List.map(sessions, |sn| { d: (Metrics.date_str_to_days(sn.date)).ok_or(0), sn })
+                # Str has no ordering in this Roc — sort on parsed day numbers.
+                #
+                # GUARDED, and the guard produces the key rather than sitting beside it
+                # (#270). This was `.ok_or(0)`, which collapses an unreadable comparable to
+                # the epoch and heads the by-date table with it — so `reps` refused an
+                # unreadable ANCHOR date and absorbed an unreadable COMPARABLE one, in the
+                # same screen, after a change whose whole subject is that distinction. The
+                # WHERE clause excludes NULLs by accident (`a2.start_local <= self.start_local`
+                # is NULL-false) but not a poisoned date that sorts at or below the anchor.
+                #
+                # One expression, so the guard's domain IS the sort key's domain. Two
+                # expressions that must agree about which dates are usable is the seam #243
+                # spent its last three rounds closing.
+                keyed = List.map_try(sessions, |sn|
+                    (Metrics.usable_date_days(sn.date))
+                        .map_err(|_| BadActivityDate(sn.date, sn.id))
+                        .map_ok(|d| { d, sn }))?
                 by_date = List.map(List.sort_with(keyed, |x, y| if x.d > y.d LT else if x.d < y.d GT else EQ), |k| k.sn)
                 built = List.map_try!(by_date, |sn| {
                     rs = rows_for!(sn.id)?
