@@ -428,20 +428,33 @@ fi
 # have opposite meanings: the first REFUTES a trailing token, the second would refute every
 # one of them. A jq shape change that empties one half and not the other lands here.
 nargs=$(wc -l < "$ARGS" | tr -d ' ')
-# ...and the REQUIRED MARKER survived the extraction. `judge_trailing`'s self-test uses
-# hand-written specs, so it cannot see the jq above stop emitting `!` — and without the
-# marker the walk finds no required arg, never stops, and accepts far more than it should.
-# Measured: dropping `(if .required then "!" else "" end)` was green in the self-test AND on
-# the corpus, because exactly one of the 80 references reaches the rule at all.
+# ...and the REQUIRED MARKERS survived the extraction, COUNTED rather than sampled at one
+# position of one row. `judge_trailing`'s self-test uses hand-written specs, so it cannot
+# see the jq above stop emitting `!` — and the walk without markers never stops and
+# over-accepts, which restores the false accusation this change exists to remove.
 #
-# Pinned on `top`, whose first arg is `required: true` and has been since #219. A command
-# with a required first arg is what the marker is FOR; if none exists, the table changed in
-# a way this rule needs to know about.
-topspec=$(awk -F"$(printf '\t')" '$1 == "top" { print $2; exit }' "$ARGS")
-case "$topspec" in
-  "!"*) ;;
-  *) echo "command-claims: \`top\` declares a required first argument, but its ARGS row is [$topspec] with no \`!\` marker — the extraction dropped \`required\`, and the trailing-token rule silently over-accepts without it" >&2; exit 3 ;;
-esac
+# A count, because that is the convention this file already uses (EXPECTED_QUOTING,
+# EXPECTED_UNPARSED, nargs vs nreal) and because a one-position anchor was blind to two
+# measured extraction mutants that both left `top`'s row starting with `!`: marking EVERY
+# arg required (33 markers), and marking only the first arg of each command (10). Both ran
+# green under the anchor; both die here. It also catches a required-to-optional flip
+# anywhere in the table, which the walk's verdicts genuinely turn on and nothing else sees.
+#
+# Worth knowing when this needs bumping: NO command today declares a literal at position 1
+# followed by anything at all — `sync` (`--all`) and `week` (`all`) are the only commands
+# with a literal arg and each declares exactly one. So the walk's distinctive behaviour, a
+# required literal blocking a placeholder behind it, has zero instances in the table and
+# zero corpus coverage, and lives only in the self-test. The day someone adds such a
+# command is the day this number moves and the rule starts doing real work.
+EXPECTED_REQUIRED=16
+# tab AND space: the ARGS rows are `name<TAB>arg arg ...`, so splitting on spaces alone
+# leaves the first arg glued to the command name and its marker invisible — measured, that
+# undercounted 16 as 6.
+nreq=$(tr " \t" "\n\n" < "$ARGS" | grep -c "^!" || true)
+if [ "$nreq" != "$EXPECTED_REQUIRED" ]; then
+  echo "command-claims: $nreq required-arg markers in the derived table, expected $EXPECTED_REQUIRED — either the extraction dropped/forged \`required\` (the trailing-token rule silently over-accepts without it) or an argument changed between required and optional. Confirm which and update EXPECTED_REQUIRED." >&2
+  exit 3
+fi
 
 if [ "$nargs" != "$nreal" ]; then
   echo "command-claims: the table yielded $nreal names but $nargs arg rows — the two halves of the oracle disagree; refusing to judge trailing tokens against a partial table" >&2
@@ -483,17 +496,33 @@ fi
 #   $1 the trailing token, $2 the command's declared arg spec (space-joined, in order)
 judge_trailing() {
   _tok="$1"
+  _verdict=1
+  # `set -f` because `for _a in $2` is an unquoted expansion, which does word splitting AND
+  # PATHNAME EXPANSION. The spec is data, not a glob. Measured: case 9's `[<n>]` is a valid
+  # bracket pattern over `{<, n, >}`, so an untracked file named `n` in the repo root made
+  # the verdict `refute` and turned the whole run red — at exit 7, blaming the rule — while
+  # files named `n` and `<` made it accept for the wrong reason. The verdict was a function
+  # of working-directory contents in both directions. Today's table is glob-clean (no `*`,
+  # `?` or `[` in any declared arg name) so only the self-test was exposed, but a false red
+  # with a false diagnosis on the one guard whose job is to say the rule is broken is worse
+  # than the hole it was covering. Same class of hidden input as the locale the header
+  # spends a page eliminating.
+  #
+  # The verdict moves to a variable because an early `return` would leave `-f` set for the
+  # rest of the run, and `FILES` at the top of this file depends on globbing.
+  set -f
   for _a in $2; do
     case "$_a" in "!"*) _req=1; _a="${_a#!}" ;; *) _req=0 ;; esac
     # a placeholder in a position the token can reach accepts it — its values are not
     # enumerable from the table, which is the one thing the old rule had right
-    case "$_a" in *"<"*) return 0 ;; esac
-    [ "$_a" = "$_tok" ] && return 0
+    case "$_a" in *"<"*) _verdict=0; break ;; esac
+    [ "$_a" = "$_tok" ] && { _verdict=0; break; }
     # ...and a REQUIRED arg the token did not match is where the walk stops: nothing after
     # it is reachable, because reaching it would mean skipping something mandatory.
-    [ "$_req" = "1" ] && return 1
+    [ "$_req" = "1" ] && { _verdict=1; break; }
   done
-  return 1
+  set +f
+  return "$_verdict"
 }
 
 # ...and PROVE it can refute, before trusting it on the real corpus. Every other guard in
