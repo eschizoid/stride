@@ -286,15 +286,19 @@ closed-world validator for third parties.** `additionalKeys: false` exists so th
 payload which GREW without a schema update is caught rather than shipped. In CI that
 enforcement is `just e2e`, which runs `tools/validate.jq` against seeded fixtures;
 `just schema-check` runs the same validator against your own database and is the
-"does MY data conform" pass, local and not part of CI. Coverage is not total, and it now has three tiers rather than two. Four
-payloads (`complete`, `import`, `init`, `rate`) are validated by neither pass, so
-a key added to THOSE is currently caught by nothing. What those four share is not that they
-mutate — `analyze`, `config set`, `week add` and `skip` all mutate and are all validated —
-but that `just schema-check` DERIVES its form list from the command table filtered on
-`mutates == false and network == false and interactive == false`, so any command outside
-that filter gets no automatic coverage and has to be given an explicit `e2e` arm BY HAND.
-Six of the ten schema-bearing mutating commands have one; those four do not. #259 gave
-`auth` a payload and an `e2e-sync` arm in the same commit for that reason. That arm
+"does MY data conform" pass, local and not part of CI. Coverage is not total, and it now has three tiers rather than two. THREE
+payloads (`complete`, `init`, `rate`) are validated by neither pass, so
+a key added to THOSE is currently caught by nothing. This sentence said FOUR and named
+`import` among them until #259 re-derived it; `import` has had an arm at
+`tests/e2e.roc`'s import scenario for some time, and the stale number survived because it
+was read rather than counted. What the remaining three share is not that they
+mutate — `analyze`, `config set`, `week add`, `skip` and `import` all mutate and are all
+validated — but that `just schema-check` DERIVES its form list from the command table
+filtered on `mutates == false and network == false and interactive == false`, so any
+command outside that filter gets no automatic coverage and has to be given an explicit
+`e2e` arm BY HAND. Seven of the ten schema-bearing mutating commands have one; those three
+do not. #259 gave `auth` a payload and an `e2e-sync` arm in the same commit for that
+reason. That arm
 validates auth's payload against its schema and asserts the tokens it reports storing are
 in the database, which is narrower than `sync`'s coverage in the same recipe: `sync`'s
 payload is validated in eight places across four drivers, and — see the next paragraph —

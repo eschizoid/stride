@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(854)?
+    checks_ran_exactly!(857)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -418,6 +418,12 @@ run_sync! = || {
     check!("...and the tokens it says it stored are actually in the db", Str.trim(sql!(adb, "SELECT value FROM config WHERE key='strava_access_token';")) == "mock-access")?
     check!("...both of them, since a dead refresh token bricks the next sync", Str.trim(sql!(adb, "SELECT value FROM config WHERE key='strava_refresh_token';")) == "mock-refresh")?
     check!("...and the expiry it REPORTED is the one it persisted", Str.trim(sql!(adb, "SELECT value FROM config WHERE key='strava_expires_at';")) == "9999999999")?
+    # ...and the CLIENT CREDS, written by the two lines immediately after save_tokens!.
+    # Deleting those left all three checks above green, and the failure is delayed, which
+    # is worse: sync works that afternoon on the still-fresh access token, and the next
+    # morning the refresh path raises MissingEnv and the user is told to open an issue.
+    check!("...and the client creds beside them, whose loss surfaces a day later as a bug report", Str.trim(sql!(adb, "SELECT value FROM config WHERE key='strava_client_id';")) == "e2e-id")?
+    check!("...both, since either one missing breaks the refresh", Str.trim(sql!(adb, "SELECT value FROM config WHERE key='strava_client_secret';")) == "e2e-secret")?
     # ...and the form the bug report actually names. Every check above uses
     # STRIDE_FORMAT=json, which never reaches `--json`'s re-exec in app.roc — a different
     # mechanism that has to preserve stdin (the paste), stdout (the envelope) and the exit
@@ -640,7 +646,7 @@ run_sync! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_at_least!(48)?
+    checks_ran_at_least!(50)?
     Stdout.line!("SYNC E2E CHECKS PASS")
 }
 
@@ -1607,7 +1613,14 @@ b_auth! = |ctx| {
     # stdout ALONE, deliberately: `sh!` merges the streams elsewhere in this file, which
     # would hide the whole defect, since the bytes were always present — just on the wrong
     # channel and the wrong line. 2>/dev/null is what makes this check able to fail.
-    creds = "env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret HOME='${ctx.home}'"
+    # STRIDE_API_BASE on a loopback port NOTHING listens on. Every invocation below hits EOF
+    # at the paste prompt and returns before `post_form!`, so the base is never dialled — it
+    # reaches only `open_browser!`, whose loopback gate is the point. Without it these seven
+    # invocations each opened a real strava.com tab: the gate landed in the same commit as
+    # a claim that `just test` no longer does that, and `just test` still did, because the
+    # only arm that set a base was in `run_sync!`, which `just test` never runs. One
+    # unasserted source change, one measured-false sentence in a commit message.
+    creds = "env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret STRIDE_API_BASE=http://127.0.0.1:1 HOME='${ctx.home}'"
     auth_stdout = Str.trim(sh!("${creds} STRIDE_FORMAT=json '${ctx.bin}' auth < /dev/null 2>/dev/null"))
     check!("auth --json puts nothing but the envelope on stdout", Str.starts_with(auth_stdout, "{") and Str.ends_with(auth_stdout, "}"))?
     # ...and it is ONE line, which `starts_with {` alone does not establish: the prompt was
@@ -1642,6 +1655,31 @@ b_auth! = |ctx| {
     # when someone edits the screen, which is exactly when a look is wanted.
     check!("...as separate lines, not one welded string, and not one line more", Str.trim(sh!("${creds} STRIDE_FORMAT=human '${ctx.bin}' auth < /dev/null 2>/dev/null | wc -l | tr -d ' '")) == "8")?
     check!("...with the authorize URL alone on its own line, since it is the manual fallback", Str.trim(sh!("${creds} STRIDE_FORMAT=human '${ctx.bin}' auth < /dev/null 2>/dev/null | grep -c '^   https://www.strava.com/oauth/authorize' | tr -d ' '")) == "1")?
+    # ...and the instruction numbered 1 comes first. The exact line count pins welding and
+    # splitting and says nothing about ORDER: swapping the two numbered blocks keeps it at
+    # 8, keeps the URL alone on its line, keeps every `contains` true — and puts "Click
+    # Authorize in the browser tab that just opened (URL below if it didn't)" BELOW the URL
+    # it points at.
+    check!("...and the steps are in order, which a line count cannot see", Str.starts_with(Str.trim(sh!("${creds} STRIDE_FORMAT=human '${ctx.bin}' auth < /dev/null 2>/dev/null | head -1")), "1) "))?
+    # ── the browser gate itself, in BOTH directions (#259). It shipped unasserted, and both
+    # things that happens went on to happen: the commit claimed `just test` no longer opens
+    # seven strava.com tabs while it still did, and inverting the condition — no browser for
+    # a real user, one per test — was fully green.
+    #
+    # A stub `open` on PATH in a throwaway dir, touching a marker. `open` is what
+    # `open_browser!` tries first and it succeeds, so `xdg-open` is never reached.
+    stub = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+    _ = sh!("printf '#!/bin/sh\\ntouch \"${stub}/opened\"\\n' > '${stub}/open'; chmod +x '${stub}/open'")
+    # Each probe reports the marker AND a word proving the binary actually ran, because
+    # "no browser opened" is also what a command that never started looks like. The first
+    # cut single-quoted `PATH="${stub}:$PATH"`, so sh took `$PATH` literally, `env` was not
+    # on the path, the invocation failed — and the loopback probe passed anyway, on exactly
+    # that vacuity. The real-base probe failing is the only reason it was noticed.
+    check!("a loopback token endpoint opens no browser — nothing on this machine is authorizing", Str.trim(sh!("rm -f '${stub}/opened'; PATH=\"${stub}:$PATH\" ${creds} '${ctx.bin}' auth < /dev/null 2>&1 | grep -qi 'stdin closed' && { [ -e '${stub}/opened' ] && echo opened || echo quiet; } || echo 'auth did not run'")) == "quiet")?
+    # ...and the half that matters more, because the inversion passed everything else: a
+    # REAL base must still open one. Without this, "never open a browser" is green.
+    check!("...while a real base still does, which is the whole flow", Str.trim(sh!("rm -f '${stub}/opened'; PATH=\"${stub}:$PATH\" env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret HOME='${ctx.home}' '${ctx.bin}' auth < /dev/null 2>&1 | grep -qi 'stdin closed' && { [ -e '${stub}/opened' ] && echo opened || echo quiet; } || echo 'auth did not run'")) == "opened")?
+    _ = sh!("rm -rf '${stub}'")
     Ok({})
 }
 

@@ -41,12 +41,24 @@ Strava :: [].{
     # exec!) so a failing launcher can't spew stderr into the auth instructions or
     # hand the inherited TTY to a console browser on headless boxes.
     # ...and NOT when the token endpoint is a loopback mock. `STRIDE_API_BASE` is the e2e
-    # seam and humans never set it, so a loopback base means a test — while the authorize
-    # URL stays real always, which is what made `just test` open seven strava.com tabs on a
-    # dev machine and `just e2e-sync` an eighth. Silent in CI, where `open`/`xdg-open` do
-    # not exist and both arms take their Err path, so nothing noticed for as long as it has
-    # been true. Gated on the SAME allow-list `api_base!` uses, so a base stride would not
-    # talk to cannot suppress the browser either.
+    # seam, so a loopback base means a test — while the authorize URL stays real always,
+    # which is what made `just test` open seven strava.com tabs on a dev machine and
+    # `just e2e-sync` an eighth. Silent in CI, where `open`/`xdg-open` do not exist and both
+    # arms take their Err path, so nothing noticed for as long as it has been true.
+    #
+    # This is a PREFIX test, not `Config.api_base_allowed`, and the difference matters. That
+    # predicate is structural precisely to reject the prefix trap its own comment names —
+    # `http://localhost:8799@attacker.tld` starts with `http://localhost:` and resolves to
+    # attacker.tld. This is safe only because it reads `api_base!({})`, which has ALREADY
+    # applied the allow-list and returned real Strava for anything it rejects. So the
+    # obligation on the next reader: do NOT hoist these two calls into a direct
+    # `Env.var_str!` as a tidy-up, because that is exactly what makes the bypass live.
+    #
+    # It can also suppress the browser for someone who is not testing: a human pointing the
+    # TOKEN endpoint at a loopback proxy still needs a real browser to obtain the code. The
+    # cost is bounded — the URL is still printed, and the docs call that the manual fallback
+    # — but it degrades from "tab plus URL" to "URL", which is a real if small behaviour
+    # change keyed off a variable that nominally means something else.
     open_browser! : Str => {}
     open_browser! = |url|
         if Str.starts_with(api_base!({}), "http://127.0.0.1") or Str.starts_with(api_base!({}), "http://localhost") {
