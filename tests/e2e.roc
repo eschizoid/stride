@@ -4772,6 +4772,12 @@ b_plan! = |ctx| {
     # pairs=0. So stage one substitute-holding row reachably (`week add` + `skip`, no hand
     # edit) and assert all three numbers: rows of BOTH kinds present, none paired.
     #
+    # The two presences are not equally robust, and it matters which is which. `sub > 0` is
+    # STAGED, so it can only go red if the staging breaks — which is its job, and which it
+    # did on the first attempt. `comp > 0` is INHERITED from rows three unrelated scenarios
+    # left behind, so a future cleanup upstream drops it to 0. The day that happens the fix
+    # is to stage a completed row too, not to weaken the check.
+    #
     # Activity 303 and not 306: the B-scenario deletes 306-309 at its own cleanup, and a
     # skip naming a deleted activity answers `activity_not_found` and links nothing — which
     # is exactly how the first version of this staging left `sub=0` while looking staged.
