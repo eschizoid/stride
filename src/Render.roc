@@ -840,6 +840,7 @@ Render :: [].{
         # does not apply to a tag union here) and no bare `1 == 1` (which warns on an
         # untyped literal). One exhaustive shape, and a new reason must answer.
         skip_clause = " (${I64.to_str(p.streams_skipped)} had unreadable stream data)"
+        skip_for_reason : Drain.StopReason -> Str
         skip_for_reason = |r|
             match r {
                 # Complete's own note names the skipped count, so repeating it here is the

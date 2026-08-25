@@ -664,7 +664,7 @@ run_skips! = || {
     # emit cannot fail for any input. What it actually cares about is that a run which
     # skipped unreadable streams does not also claim the queue is drained, so it says that
     # against the number instead of against a dead literal.
-    check!("...nor that everything is present", Str.contains(human, "to go") or Str.contains(human, "retry next sync"))?
+    check!("...and told they retry next sync", Str.contains(human, "retry next sync"))?
 
     _ = sh!("rm -rf '${home}'")
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
