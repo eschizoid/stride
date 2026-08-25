@@ -280,13 +280,18 @@ run_all! = || {
     # is about. The sweep is a tidy-up by its own comment; the probe was promoting it to a
     # gate on everything.
     #
-    # This asserts the DEGRADATION instead: with `ps`, the dead owner's file is collected;
-    # without it, nothing is. Both are the correct outcome for their world, and the guard
-    # becomes detectable on the ps-less one — remove it there and the blanket sweep deletes
-    # the LIVE sentinel, failing check 1. On a normal PATH the guard stays undetectable,
-    # which is inherent: a suite that has `ps` cannot observe what happens without it, the
-    # same shape as the EPERM gap recorded beside `sweep_litter!`.
-    ps_ok = Str.trim(sh!("command -v ps >/dev/null 2>&1 && echo yes || echo no")) == "yes"
+    # This asserts the DEGRADATION instead: where `ps -p` works, the dead owner's file is
+    # collected; where it does not, nothing is. Both are the correct outcome for their
+    # world, and the guard becomes detectable on the degraded one — remove it there and the
+    # blanket sweep deletes the LIVE sentinel, failing check 1. Where `ps -p` works the
+    # guard stays undetectable, which is inherent: a suite with a working `ps` cannot
+    # observe what happens without one, the same shape as the EPERM gap recorded beside
+    # `sweep_litter!`. Note the corollary — on a degraded platform, unwiring the sweep and
+    # bailing out of it produce the same program, so unwiring is undetectable there too.
+    # That is not a hole: detection lapses exactly where the thing detected stops existing.
+    #
+    # `ps_usable!` and not a second `command -v ps` here: one definition, two call sites.
+    ps_ok = ps_usable!({})
     check!("...collects one whose owner is gone, or with no `ps` collects nothing at all", Str.trim(sh!("[ -e '.e2e-checks.${probe_mode}.999999' ] && echo kept || echo swept")) == (if ps_ok "swept" else "kept"))?
     # ...and leaves a suffix that is not a pid alone. That is the shape a quoting regression
     # produces — a literal `.e2e-checks.<mode>.$PPID` — and collecting it would hide exactly
@@ -6306,10 +6311,35 @@ tally_is_scoped! = |{}| {
 # candidate; the `[ -e ]` guard absorbs a non-matching glob; the numeric `case` skips a
 # suffix that is not a pid, which is what keeps a literal `.$PPID` file (the shape a
 # quoting regression produces) from being collected as though its owner had died.
+# The condition the sweep runs under, as ONE definition with two call sites: the sweep
+# itself and the probe in `run_all!` that asserts which way it degraded. Those two had the
+# condition spelled out separately and agreed only by being character-identical — the first
+# edit to either would have left the probe asserting the wrong world. Same lesson as this
+# file's round-1 defect, one level up: one definition, two call sites.
+#
+# `ps -p $$` and NOT `command -v ps`. Busybox HAS `ps`, so `command -v` finds it and the
+# guard never fires — and busybox `ps` rejects `-p`, so the sweep's `ps -p` fails for every
+# pid and it deletes every tally including a live owner's. That is the blanket behaviour
+# this change removed, back on exactly the platform the guard was added to protect.
+# Measured with a stub on PATH: `command -v ps` passes, the driver fails
+# `...owner is still running`, and the live sentinel is gone. `$$` is the probing shell, so
+# it is guaranteed alive, and the probe covers `ps` ABSENT and `ps` WITHOUT `-p` alike.
+#
+# NOT covered: a `ps` that accepts `-p`, ignores it, and exits 0 for anything. Detecting
+# that needs a pid guaranteed dead, and 999999 is not reliably above `pid_max` on Linux.
+# Busybox's actual behaviour on an unknown option is to print usage and exit non-zero,
+# which is the covered case, so the uncovered one is the pathological variant.
+ps_usable! : {} => Bool
+ps_usable! = |{}| Str.trim(sh!("ps -p $$ >/dev/null 2>&1 && echo yes || echo no")) == "yes"
+
 sweep_litter! : {} => {}
 sweep_litter! = |{}| {
-    _ = sh!("command -v ps >/dev/null 2>&1 || exit 0; for f in .e2e-checks.*.*; do [ -e \"$f\" ] || continue; p=$(printf %s \"$f\" | sed 's/.*\\.//'); case \"$p\" in ''|*[!0-9]*) continue ;; esac; ps -p \"$p\" >/dev/null 2>&1 || rm -f \"$f\"; done")
-    {}
+    if ps_usable!({}) {
+        _ = sh!("for f in .e2e-checks.*.*; do [ -e \"$f\" ] || continue; p=$(printf %s \"$f\" | sed 's/.*\\.//'); case \"$p\" in ''|*[!0-9]*) continue ;; esac; ps -p \"$p\" >/dev/null 2>&1 || rm -f \"$f\"; done")
+        {}
+    } else {
+        {}
+    }
 }
 
 reset_checks! : {} => Try({}, _)
