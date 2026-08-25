@@ -313,8 +313,28 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
+    # ── the litter sweep's own safety property, which nothing asserted (#266). Replacing
+    # the whole pid-liveness loop with the obvious `rm -f .e2e-checks.*` simplification was
+    # green in both suites — and then, under two concurrent runs, produced `804 == 848`:
+    # #266 verbatim, the under-count direction, one run's live tally deleted by the other's
+    # reset. Three rounds of this review found the same shape three times, a plausible edit
+    # reverting a safety property with both suites green; this is the last of them.
+    #
+    # It probes `sweep_litter!` itself, not a copy of its shell, for the reason that
+    # function's own comment gives. `sweepprobe` collides with neither `.e2e-checks.<mode>`
+    # nor this run's own tally, so `tally_is_scoped!` and the guard below are untouched.
+    mypid = Str.trim(sh!("echo $PPID"))
+    _ = sh!("touch '.e2e-checks.sweepprobe.${mypid}' '.e2e-checks.sweepprobe.999999' '.e2e-checks.sweepprobe.notapid'")
+    sweep_litter!({})
+    check!("the litter sweep keeps a tally whose owner is still running", Str.trim(sh!("[ -e '.e2e-checks.sweepprobe.${mypid}' ] && echo kept || echo swept")) == "kept")?
+    check!("...collects one whose owner is gone", Str.trim(sh!("[ -e '.e2e-checks.sweepprobe.999999' ] && echo kept || echo swept")) == "swept")?
+    # ...and leaves a suffix that is not a pid alone. That is the shape a quoting regression
+    # produces — a literal `.e2e-checks.<mode>.$PPID` — and collecting it would hide exactly
+    # the defect `tally_is_scoped!` exists to catch.
+    check!("...and skips a suffix that is not a pid at all", Str.trim(sh!("[ -e '.e2e-checks.sweepprobe.notapid' ] && echo kept || echo swept")) == "kept")?
+    _ = sh!("rm -f '.e2e-checks.sweepprobe.'*")
     tally_is_scoped!({})?
-    checks_ran_exactly!(912)?
+    checks_ran_exactly!(915)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6255,6 +6275,21 @@ tally_is_scoped! = |{}| {
 # Fails LOUDLY. sh! swallows exit codes, and a reset that silently does not happen leaves
 # a stale tally that makes the floor pass for a driver that ran nothing — the guard
 # failing in the one direction it exists to prevent. So verify the file is gone.
+# The litter collector, as its own function so the probe in `run_all!` exercises the SHIPPED
+# code rather than a copy of it. A copy is how this file's round-1 defect happened: two
+# checks that re-derived the tally path instead of observing the file, and therefore agreed
+# with themselves while the real path was wrong.
+#
+# `.e2e-checks.*.*` needs TWO dots, so the legacy `.e2e-checks.<mode>` name is never a
+# candidate; the `[ -e ]` guard absorbs a non-matching glob; the numeric `case` skips a
+# suffix that is not a pid, which is what keeps a literal `.$PPID` file (the shape a
+# quoting regression produces) from being collected as though its owner had died.
+sweep_litter! : {} => {}
+sweep_litter! = |{}| {
+    _ = sh!("for f in .e2e-checks.*.*; do [ -e \"$f\" ] || continue; p=$(printf %s \"$f\" | sed 's/.*\\.//'); case \"$p\" in ''|*[!0-9]*) continue ;; esac; ps -p \"$p\" >/dev/null 2>&1 || rm -f \"$f\"; done")
+    {}
+}
+
 reset_checks! : {} => Try({}, _)
 reset_checks! = |{}| {
     _ = sh!("rm -f ${checks_log!({})}")
@@ -6280,15 +6315,33 @@ reset_checks! = |{}| {
     # A blanket `rm -f .e2e-checks.*` would delete a concurrent run's live tally, which is
     # the bug this PR closes — so the sweep asks whether each owner is still alive.
     #
-    # `kill -0` errs in the safe direction: it reports success for a pid owned by another
-    # user (EPERM), so an unfamiliar process is treated as ALIVE and its file left alone.
-    # And it is the only form that reaches the interrupt path — Ctrl-C during a 50-second
+    # ...and sweep tallies whose OWNER IS GONE. A run that fails or is interrupted before
+    # its guard leaks its pid-named file, pids never repeat, and nothing else collects them.
+    # A blanket `rm -f .e2e-checks.*` would delete a concurrent run's live tally, which is
+    # the bug this PR closes — so the sweep asks whether each owner is still alive.
+    #
+    # `ps -p`, NOT `kill -0`, and the comment here said the opposite for one commit. The
+    # claim was that `kill -0` errs safe because it reports success for another user's pid
+    # (EPERM), leaving an unfamiliar process alone. It does not: on this platform `kill -0`
+    # exits 1 for EPERM, indistinguishable from ESRCH — POSIX says the utility fails when
+    # the signal could not be SENT, not when the process is absent. Measured, as an
+    # ordinary user against pid 1, which is alive and root-owned:
+    #
+    #     kill -0 1  -> 1        ps -p 1  -> 0
+    #     kill -0 X  -> 1        ps -p X  -> 1     (X dead)
+    #
+    # So the sweep treated "alive but not mine" as dead and deleted the file. Narrow blast
+    # radius — it needs another user's concurrent run in a shared checkout — but the
+    # comment asserted a verified safety property that measurement contradicts, in the PR
+    # about exactly that. `ps -p` has the semantics the paragraph claimed all along.
+    #
+    # It is also the only form that reaches the interrupt path: Ctrl-C during a 50-second
     # suite is the ordinary case, and no in-process cleanup can ever run there.
     #
     # Pid reuse is why this is a tidy-up rather than a correctness measure: the scoped
     # `rm -f` above already removes THIS pid's file on entry, so a recycled pid cannot
     # inherit a stale tally even if the sweep never ran.
-    _ = sh!("for f in .e2e-checks.*.*; do [ -e \"$f\" ] || continue; p=$(printf %s \"$f\" | sed 's/.*\\.//'); case \"$p\" in ''|*[!0-9]*) continue ;; esac; kill -0 \"$p\" 2>/dev/null || rm -f \"$f\"; done")
+    sweep_litter!({})
     left = Str.trim(sh!("wc -l 2>/dev/null < ${checks_log!({})} || echo 0"))
     if left == "0" {
         Ok({})
