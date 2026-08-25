@@ -319,6 +319,23 @@ schema-check: build
         # defect one level up that the rest of this block was fixed for.
         echo "activity: cannot sample — \`activities\` itself refused with $acode"; rc=1
     elif [ -z "$ids" ]; then
+        # THIS BRANCH CAN FAIL OPEN, and what stops it is somewhere else in this recipe.
+        # `-z "$ids"` cannot distinguish "no rows" from "rows that parsed but carried no
+        # usable id" — measured on a real row with its id nulled, deleted, or made a string,
+        # all of which land here at rc=0. Every one of those shapes VIOLATES
+        # activities.json, and `activities` is one of the derived forms, so the loop above
+        # validates it in the same run and the recipe is red anyway. The block's fail-open is
+        # never the sole outcome.
+        #
+        # Which makes the redundancy load-bearing and worth naming: `activity` is excluded
+        # from the derived list by an explicit `select(.name != "activity")`, and that line is
+        # exactly where the next person needing an exclusion will look. If `activities` ever
+        # joins it, this becomes a genuine silent pass and nothing will say so.
+        #
+        # Not made fatal on `activity_not_found` for an id `activities` just returned, though
+        # the two commands disagreeing could not be legitimate: a row deleted by a concurrent
+        # sync between the two calls is an unlikely but real race, and trading a hypothetical
+        # bug-detection for a real flake is the wrong direction for a local tool.
         echo "activity: skipped (no activities yet)"
     else
         decl=$(STRIDE_FORMAT=json ./stride --json --help | jq -r '[.data.commands[] | select(.name == "activity") | .error_codes // []] | flatten | join(" ")' 2>/dev/null || true)
