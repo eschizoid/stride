@@ -250,8 +250,63 @@ shutdown! = |_reason, _ctx| Ok({})
 
 run_all! : () => Try({}, _)
 run_all! = || {
+    # ── the litter sweep's safety property, probed through the SHIPPED CALL PATH (#266).
+    # Sentinels are planted BEFORE `reset_checks!` and read after it, so what is under test
+    # is "reset_checks! collects litter", not "sweep_litter! would if called". An earlier
+    # cut called `sweep_litter!` directly and passed while the call site was deleted:
+    # collection silently off in the three mock-backed drivers, both suites green. That is
+    # the same ladder this review has climbed twice already — round 1 asserted a
+    # re-derivation instead of the shipped file, this asserts the shipped function instead
+    # of the shipped call site.
+    #
+    # Replacing the pid-liveness loop with a blanket `rm -f .e2e-checks.*` was also green in
+    # both suites, and then produced `804 == 848` under two concurrent runs: #266 verbatim.
+    #
+    # `${mode}-sweepprobe` rather than a bare `sweepprobe`, which was NOT collision-free:
+    # `sweepprobe` is a valid `E2E_MODE`, so `E2E_MODE=sweepprobe` made the run's own tally
+    # the same file the probe deletes. It failed loudly rather than passing wrongly, but
+    # "cannot collide" was not what the code guaranteed. Suffixing the mode can never equal
+    # `.e2e-checks.<mode>.<pid>` for any mode, and still carries the two dots the sweep's
+    # glob requires.
+    probe_mypid = Str.trim(sh!("echo $PPID"))
+    probe_mode = "${env_or!("E2E_MODE", "e2e")}-sweepprobe"
+    _ = sh!("touch '.e2e-checks.${probe_mode}.${probe_mypid}' '.e2e-checks.${probe_mode}.999999' '.e2e-checks.${probe_mode}.notapid'")
     reset_checks!({})?
+    check!("the litter sweep keeps a tally whose owner is still running", Str.trim(sh!("[ -e '.e2e-checks.${probe_mode}.${probe_mypid}' ] && echo kept || echo swept")) == "kept")?
+    # ...CONDITIONALLY, because asserting collection unconditionally cancels the `ps` guard
+    # on the one platform that guard exists for. Measured on a PATH with no `ps`: the suite
+    # died here, at check 2 of 851, before a single assertion about stride ran — under a
+    # message about litter collection, which is the attribution complaint this whole change
+    # is about. The sweep is a tidy-up by its own comment; the probe was promoting it to a
+    # gate on everything.
+    #
+    # This asserts the DEGRADATION instead: where `ps -p` works, the dead owner's file is
+    # collected; where it does not, nothing is. Both are the correct outcome for their
+    # world, and the guard becomes detectable on the degraded one — remove it there and the
+    # blanket sweep deletes the LIVE sentinel, failing check 1. Where `ps -p` works the
+    # guard stays undetectable, which is inherent: a suite with a working `ps` cannot
+    # observe what happens without one, the same shape as the EPERM gap recorded inside
+    # `reset_checks!`. Note the corollary — on a degraded platform, unwiring the sweep and
+    # bailing out of it produce the same program, so unwiring is undetectable there too.
+    # That is not a hole: detection lapses exactly where the thing detected stops existing.
+    #
+    # `ps_usable!` and not a second copy of its probe here: one definition, two call sites.
+    ps_ok = ps_usable!({})
+    check!("...collects one whose owner is gone, or with no `ps` collects nothing at all", Str.trim(sh!("[ -e '.e2e-checks.${probe_mode}.999999' ] && echo kept || echo swept")) == (if ps_ok "swept" else "kept"))?
+    # ...and leaves a suffix that is not a pid alone. That is the shape a quoting regression
+    # produces — a literal `.e2e-checks.<mode>.$PPID` — and collecting it would hide exactly
+    # the defect `tally_is_scoped!` exists to catch.
+    check!("...and skips a suffix that is not a pid at all", Str.trim(sh!("[ -e '.e2e-checks.${probe_mode}.notapid' ] && echo kept || echo swept")) == "kept")?
+    _ = sh!("rm -f '.e2e-checks.${probe_mode}.'*")
     reset_sqlite_errors!({})
+    # ── #266: the tally the guard at the end of this driver counts must belong to THIS
+    # process. Asserted here rather than trusted, because the property was documented for
+    # months while the code did not have it — `checks_log!`'s comment described `$PPID`
+    # from the day it was written beside a path keyed on `E2E_MODE`.
+    #
+    # Two halves, and both are needed. The positive one alone passes if the path gains a
+    # pid AND keeps the shared name; the negative one alone passes on any machine where
+    # no run has ever created the shared file, which on a fresh checkout is every machine.
     bin = env_or!("STRIDE_BIN", "./stride")
     home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
     # Anchor the harness to the SAME clock the binary will use. These used to be
@@ -305,7 +360,8 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(910)?
+    tally_is_scoped!({})?
+    checks_ran_exactly!(915)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -646,7 +702,8 @@ run_sync! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_at_least!(50)?
+    tally_is_scoped!({})?
+    checks_ran_at_least!(52)?
     Stdout.line!("SYNC E2E CHECKS PASS")
 }
 
@@ -730,7 +787,8 @@ run_skips! = || {
     _ = sh!("rm -rf '${home}'")
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     reset_sqlite_errors!({})
-    checks_ran_at_least!(16)?
+    tally_is_scoped!({})?
+    checks_ran_at_least!(20)?
     Stdout.line!("SKIPS E2E CHECKS PASS")
 }
 
@@ -1153,25 +1211,26 @@ run_stops! = || {
     # Per MODE. run_stops! has three branches of very different size, and a single floor
     # has to be the smallest of them — which makes it loosest where the branch is biggest.
     # At a shared floor of 8 the budget branch could lose a third of its checks unseen.
+    tally_is_scoped!({})?
     checks_ran_at_least!(
         if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
             # its own floor: this branch returns before the shared drain assertions, so the
             # 12 the default arm expects would never be reachable here
-            26
+            28
         } else if env_or!("E2E_EXPECT_DAILY_CAP", "") == "1" {
             # its own floor, and TIGHT: a floor below the arm's own count lets a check be
             # deleted unseen — the slack this floor's own doctrine forbids.
-            14
+            16
         } else if env_or!("E2E_EXPECT_500", "") == "1" {
-            7
+            9
         } else if env_or!("E2E_EXPECT_401", "") == "1" {
-            8
+            10
         } else if rate_limited {
             # 12 since this arm gained the daily-cap-via-429 pair — the path the daily
             # arm's own driver structurally cannot reach.
-            12
+            14
         } else {
-            12
+            14
         },
     )?
     Stdout.line!("STOP-REASON E2E CHECKS PASS")
@@ -6185,22 +6244,216 @@ is_nonempty = |s| !(Str.is_empty(Str.trim(s))) and Str.trim(s) != "null"
 # the only thing that catches it IN THIS SHAPE. `if/else if` on a Bool gets no redundancy
 # analysis from the compiler; the same dispatch written as a `match` on a tag would have
 # been a build-failing warning. Worth restructuring if this file grows another scenario.
-# PER PROCESS, not a fixed path. `sh` is a child of this binary, so $PPID inside the
-# script is this driver's own pid — each e2e invocation gets its own tally with no env
-# plumbing. A shared path was worse than no guard: two drivers in one checkout inflate
-# each other's counts, so a driver whose branch had gone dead PASSED its floor; and a
-# second driver's reset wipes the first's tally mid-run, producing a false red that looks
-# exactly like a real regression. Review reproduced both with nothing artificial, and the
-# false-red construction explains failures previously blamed on port collisions.
+# PER PROCESS, not a fixed path (#266). `sh` is a child of this binary, so `$PPID` inside
+# the script is this driver's own pid — each e2e invocation gets its own tally with no env
+# plumbing, and two runs in one checkout cannot touch each other's.
+#
+# This paragraph described `$PPID` from the day it was written while the code beside it
+# keyed on `E2E_MODE`, so the property it promised was never true. What E2E_MODE actually
+# discriminates is ROLE, and roles repeat: `E2E_MODE=stops` runs six times in one
+# `just e2e`. Sequentially that is fine, because each run resets first — but it means the
+# name was never a per-run identity, and concurrency is where that shows.
+#
+# A shared path is worse than no guard, in both directions. Two drivers appending to one
+# file inflate each other's counts, so a driver whose branch had gone dead passes its
+# floor. And a second driver's reset wipes the first's tally mid-run, producing a red that
+# names the guard rather than the collision — `498 == 774` with all 774 checks printing
+# `ok`, which is indistinguishable from the silent-removal regression the guard exists to
+# catch. Two reviewers hit it independently on #249 and one wrote it up as a product
+# defect before the cause was found.
+#
+# `$PPID` and not `mktemp`: the path has to be recomputed identically by `check!`,
+# `reset_checks!` and `checks_ran_exactly!` without threading state through every scenario
+# function, and the pid is the one identity all three can derive for free. The MODE stays
+# in the name ahead of it so a leftover file still says which driver produced it.
 checks_log! : {} => Str
-checks_log! = |{}| ".e2e-checks.${env_or!("E2E_MODE", "e2e")}"
+checks_log! = |{}| ".e2e-checks.${env_or!("E2E_MODE", "e2e")}.$PPID"
+
+# Asserts on the FILE, not on the string `checks_log!` returns, and that distinction is the
+# whole value of this function. A first cut resolved the path through a separate `sh -c` and
+# compared it to `$PPID` read back the same way — so it never observed the file the appends
+# land in. Review then made the natural "harden the shell" edit, single-quoting the path at
+# the four sites that touch it, which stops `$PPID` expanding: every run appended to a file
+# literally named `.e2e-checks.e2e.$PPID`, two concurrent runs corrupted each other exactly
+# as #266 describes (`1629 == 848` and `22 == 848`), and BOTH new checks printed `ok`.
+#
+# So this looks for the file whose name carries this process's pid, and requires it to be
+# non-empty — which only the real append path can make true. It runs at the END of a driver,
+# after hundreds of appends, for the same reason: at the start `reset_checks!` has just
+# deleted it, so any statement about it is true under every implementation.
+#
+# The absence half is about the PRE-#266 shared name. `reset_checks!` removes it on entry
+# (see the note in `reset_checks!`), so finding it here means something in THIS run wrote
+# it.
+#
+# Called by every driver, not just `run_all!`. The other three guard with
+# `checks_ran_at_least!`, where collision-induced over-counting passes by construction — so
+# they are the ones that structurally cannot notice a shared tally, and leaving them out put
+# the assertion only where a collision was already detectable. Measured: scoping the path
+# per-process for the default mode alone and leaving sync/skips/stops on the fixed name was
+# green in both suites.
+tally_is_scoped! : {} => Try({}, _)
+tally_is_scoped! = |{}| {
+    mypid = Str.trim(sh!("echo $PPID"))
+    mode = env_or!("E2E_MODE", "e2e")
+    check!("this driver's appends landed in a tally named for its own process", mypid != "" and Str.trim(sh!("[ -s '.e2e-checks.${mode}.${mypid}' ] && echo yes || echo no")) == "yes")?
+    check!("...and the shared name two runs would collide on is unused in this directory", Str.trim(sh!("[ -e '.e2e-checks.${mode}' ] && echo shared || echo scoped")) == "scoped")
+}
 
 # Fails LOUDLY. sh! swallows exit codes, and a reset that silently does not happen leaves
 # a stale tally that makes the floor pass for a driver that ran nothing — the guard
 # failing in the one direction it exists to prevent. So verify the file is gone.
+# The litter collector, as its own function so the probe in `run_all!` exercises the SHIPPED
+# code rather than a copy of it. A copy is how this file's round-1 defect happened: two
+# checks that re-derived the tally path instead of observing the file, and therefore agreed
+# with themselves while the real path was wrong.
+#
+# `.e2e-checks.*.*` needs TWO dots, so the legacy `.e2e-checks.<mode>` name is never a
+# candidate; the `[ -e ]` guard absorbs a non-matching glob; the numeric `case` skips a
+# suffix that is not a pid, which is what keeps a literal `.$PPID` file (the shape a
+# quoting regression produces) from being collected as though its owner had died.
+# The condition the sweep runs under, as ONE definition with two call sites: the sweep
+# itself and the probe in `run_all!` that asserts which way it degraded. Those two had the
+# condition spelled out separately and agreed only by being character-identical — the first
+# edit to either would have left the probe asserting the wrong world. Same lesson as this
+# file's round-1 defect, one level up: one definition, two call sites.
+#
+# Probe the CAPABILITY THE SWEEP NEEDS, not the binary's existence. `command -v ps` tested
+# EXISTENCE, and a `ps` that exists but rejects `-p` passes it — then the sweep's `ps -p`
+# fails for every pid and it deletes every tally including a live owner's, which is the
+# blanket behaviour this change removed, restored on exactly the platform the guard was
+# added to protect. Measured with a stub on PATH: `command -v ps` passes, the driver fails
+# `...owner is still running`, and the live sentinel is gone.
+#
+# `$$` is the probing shell, guaranteed alive because it is the process asking. Measured
+# through the shipped binary against four `ps` variants, each stub sanity-checked before its
+# row was read: real `ps` → collects the dead owner; rejects `-p` → bails; accepts `-p` and
+# ignores it → reddens at check 2; uid-restricted `/proc` → never bails, which is the
+# another-user gap recorded further down this comment.
+#
+# `$$` and NOT `$PPID`. Review recommended `$PPID` on the theory that the sweep asks about
+# OTHER processes while `$$` only proves self-visibility, then retracted it after building a
+# faithful stub: real `hidepid=1`/`hidepid=2` discriminates on UID, and a shell this driver
+# spawns inherits the driver's uid — `/bin/sh` here is not setuid, and exec otherwise
+# preserves credentials — so both forms succeed and the two are byte-identical on every
+# shape either of us could tie to a REAL MECHANISM. Scoped deliberately: a setuid shell is
+# the one thing that would separate them, which is checkable with `ls -l /bin/sh` rather
+# than assumed. `sudo` does not, since it sets the uid for the whole tree before the driver
+# starts, and neither does a runner dropping privileges before the job.
+#
+# The retraction is recorded because the retraction is the reusable part. The stub that
+# produced the wrong recommendation modelled "visible iff you are my direct caller"; the
+# mechanism it stood for keys on "is it my uid". Nobody checked the stub against the
+# mechanism before drawing a table from it. That stub still separates the two forms and no
+# known `ps` implements it — without this note the next reader rebuilds it and re-makes the
+# same change.
+#
+# `$$` also needs one assumption fewer — POSIX sets `PPID` at shell init and does not update
+# it on reparenting, so `ps -p $PPID` would name a stale pid if the parent exited in
+# between. That cannot happen here (the driver is blocked waiting on this shell), but it is
+# an argument `$$` does not have to make.
+#
+# NOT covered, and NOT fixable from here: a tally owned by ANOTHER USER's live run. Under
+# uid-restricted `/proc` that process is invisible, `ps -p` fails, and the sweep judges it
+# dead and deletes it. Measured by planting `.e2e-checks.e2e.1` — pid 1, alive, root-owned —
+# and running the driver: DELETED, suite green at 851. Control, the same plant under the
+# real `ps`: KEPT, dead one collected. So the deletion is the visibility restriction and not
+# the plant. This is the same hole recorded inside `reset_checks!` as the EPERM gap, reached
+# through visibility rather than permission; the property is that another user's LIVE
+# process can be indistinguishable from a dead one, which is worth stating as the property
+# rather than as whichever mechanism reaches it, since the mechanism has now changed twice
+# underneath it.
+#
+# Also NOT covered: a `ps` that accepts `-p`, ignores it, and exits 0 for anything.
+# Tolerable because it fails LOUDLY — measured, it reddens the suite at check 2 and destroys
+# nothing. A guard exists for the SILENT case. Covering it would need a pid guaranteed dead,
+# and 999999 is not reliably above `pid_max` on Linux.
+ps_usable! : {} => Bool
+ps_usable! = |{}| Str.trim(sh!("ps -p $$ >/dev/null 2>&1 && echo yes || echo no")) == "yes"
+
+sweep_litter! : {} => {}
+sweep_litter! = |{}| {
+    if ps_usable!({}) {
+        _ = sh!("for f in .e2e-checks.*.*; do [ -e \"$f\" ] || continue; p=$(printf %s \"$f\" | sed 's/.*\\.//'); case \"$p\" in ''|*[!0-9]*) continue ;; esac; ps -p \"$p\" >/dev/null 2>&1 || rm -f \"$f\"; done")
+        {}
+    } else {
+        {}
+    }
+}
+
 reset_checks! : {} => Try({}, _)
 reset_checks! = |{}| {
     _ = sh!("rm -f ${checks_log!({})}")
+    # ...and the PRE-#266 name, once, on entry. Every checkout that ever ran the old code
+    # holds a stale `.e2e-checks.<mode>` — the old design left it behind deliberately, and
+    # `.gitignore` said so — so the end-of-driver assertion that nothing wrote that name
+    # would fire on the first run after upgrading, in a worktree where nothing did. That is
+    # a red naming the guard rather than the cause, which is the exact failure this whole
+    # change exists to remove, reintroduced by the guard added to remove it. Measured: 18 of
+    # 19 sibling worktrees on this machine held one.
+    #
+    # Removing it HERE and asserting its absence at the END is what makes the assertion mean
+    # "this run did not write it" rather than "this directory happens to be clean".
+    # QUOTED, unlike `checks_log!`'s sites, which cannot be — they carry a `$PPID` that has
+    # to expand. This one has nothing to expand, so quoting is free, and unquoted it was a
+    # live instance of the race this PR closes: `E2E_MODE='*'` makes it `rm -f
+    # .e2e-checks.*`, which deletes every concurrent run's tally. Measured — a normal run
+    # beside it lost 61 lines and died `787 == 848`. Not reachable from the justfile, but
+    # "not reachable today" is the argument this file exists to distrust.
+    _ = sh!("rm -f '.e2e-checks.${env_or!("E2E_MODE", "e2e")}'")
+    # ...and sweep tallies whose OWNER IS GONE. A run that fails or is interrupted before
+    # its guard leaks its pid-named file, pids never repeat, and nothing else collects them.
+    # A blanket `rm -f .e2e-checks.*` would delete a concurrent run's live tally, which is
+    # the bug this PR closes — so the sweep asks whether each owner is still alive.
+    #
+    # `ps -p`, NOT `kill -0`, and the comment here said the opposite for one commit. The
+    # claim was that `kill -0` errs safe because it reports success for another user's pid
+    # (EPERM), leaving an unfamiliar process alone. It does not: on this platform `kill -0`
+    # exits 1 for EPERM, indistinguishable from ESRCH — POSIX says the utility fails when
+    # the signal could not be SENT, not when the process is absent. Measured, as an
+    # ordinary user against pid 1, which is alive and root-owned:
+    #
+    #     kill -0 1  -> 1        ps -p 1  -> 0
+    #     kill -0 X  -> 1        ps -p X  -> 1     (X dead)
+    #
+    # So the sweep treated "alive but not mine" as dead and deleted the file. Narrow blast
+    # radius — it needs another user's concurrent run in a shared checkout — but the
+    # comment asserted a verified safety property that measurement contradicts, in the PR
+    # about exactly that. On a default `/proc`, `ps -p` has the semantics the paragraph
+    # claimed all along — but not on a restricted one; see the another-user gap recorded
+    # beside `ps_usable!`, where a live process of another user is invisible and its tally
+    # is collected.
+    #
+    # GUARDED on `ps -p` WORKING, via `ps_usable!`. Without a guard the fallback is not "the
+    # sweep stops working" but the blanket `rm` this PR removed: unguarded, a non-zero
+    # `ps -p` fires the LOOP's own `|| rm -f "$f"`, so every tally goes — live ones included
+    # — with the sweep still exiting 0. `ps_usable!`'s `||` does the OPPOSITE on the same
+    # status: it bails. Two operators, opposite effects, so read each one's site.
+    #
+    # Stated as an EXIT-STATUS PARTITION deliberately, because that needs no claim about
+    # what any `ps` implementation does: `ps -p $$` either exits 0 or it does not. Every
+    # non-zero exit from the GUARD bails — missing (127, a shell property rather than this
+    # binary's), rejecting the flag, or visibility-restricted. The only case that proceeds
+    # is exit 0, and the uncovered case is then the one remaining cell — a `ps` that exits 0
+    # without honouring `-p` — rather than a separate assertion about a platform.
+    #
+    # Measured, on a PATH holding sh/sed/printf/rm but no ps: guarded, a live owner AND a
+    # dead owner are both KEPT; with ps present, live kept and dead collected. So it
+    # degrades to leak, never to destroy.
+    #
+    # The guard tests the CAPABILITY, not the binary's existence. An earlier version tested
+    # `command -v ps` and justified itself by `command` being a POSIX built-in — true, and
+    # beside the point, because a `ps` that exists and rejects `-p` passes that test and then
+    # destroys everything. This paragraph said so for two commits after the code stopped
+    # doing it.
+    #
+    # The sweep is also the only form that reaches the interrupt path: Ctrl-C during a 50-second
+    # suite is the ordinary case, and no in-process cleanup can ever run there.
+    #
+    # Pid reuse is why this is a tidy-up rather than a correctness measure: the scoped
+    # `rm -f` above already removes THIS pid's file on entry, so a recycled pid cannot
+    # inherit a stale tally even if the sweep never ran.
+    sweep_litter!({})
     left = Str.trim(sh!("wc -l 2>/dev/null < ${checks_log!({})} || echo 0"))
     if left == "0" {
         Ok({})
@@ -6234,7 +6487,9 @@ reset_checks! = |{}| {
 checks_ran_at_least! : I64 => Try({}, _)
 checks_ran_at_least! = |floor| {
     ran = str_to_i64(Str.trim(sh!("wc -l 2>/dev/null < ${checks_log!({})} || echo 0")))
-    check!("this driver ran its checks (${I64.to_str(ran)} >= ${I64.to_str(floor)})", ran >= floor)
+    res = check!("this driver ran its checks (${I64.to_str(ran)} >= ${I64.to_str(floor)})", ran >= floor)
+    _ = sh!("rm -f ${checks_log!({})}")
+    res
 }
 
 # The EXACT variant, for a driver whose count is meant to be pinned rather than floored.
@@ -6252,10 +6507,18 @@ checks_ran_at_least! = |floor| {
 # number in every one of its six commits and no review round ever checked it against the
 # checks actually added. Relying on someone reading the diff was the weaker argument, and
 # the evidence against it is this file's own history.
+# ...and both variants REMOVE the tally when they are done with it. Per-process paths mean
+# one file per invocation rather than one per role, and `just e2e` starts fifteen of them
+# with pids that never repeat, so without this the checkout accumulates a file per driver
+# per run forever. Deleted AFTER the guard's own `check!`, which appends a line of its own —
+# deleting before it would leave a one-line file behind instead of none. The result is
+# bound and returned rather than `?`-chained, so a failing guard still cleans up.
 checks_ran_exactly! : I64 => Try({}, _)
 checks_ran_exactly! = |expected| {
     ran = str_to_i64(Str.trim(sh!("wc -l 2>/dev/null < ${checks_log!({})} || echo 0")))
-    check!("this driver ran exactly its checks (${I64.to_str(ran)} == ${I64.to_str(expected)})", ran == expected)
+    res = check!("this driver ran exactly its checks (${I64.to_str(ran)} == ${I64.to_str(expected)})", ran == expected)
+    _ = sh!("rm -f ${checks_log!({})}")
+    res
 }
 
 check! : Str, Bool => Try({}, _)
