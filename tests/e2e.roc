@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(807)?
+    checks_ran_exactly!(846)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1245,8 +1245,10 @@ b_init_config! = |ctx| {
     # These were the last two paths that handed a tool caller bare prose: a
     # usage error printed `usage: stride ...` as text, and a bare invocation
     # printed the whole human help screen.
-    check!("a usage error is an envelope for machines", Str.contains(stride!(ctx.bin, ctx.home, ["config"]), "\"code\":\"usage\""))?
-    check!("...and stays a plain line for humans", Str.contains(stride_human!(ctx.bin, ctx.home, ["config"]), "usage: stride config") and !(Str.contains(stride_human!(ctx.bin, ctx.home, ["config"]), "schema_version")))?
+    # `config get` with no key, not bare `config`, which became the listing in #254. The
+    # form still has to exist for this to test anything, so both halves moved together.
+    check!("a usage error is an envelope for machines", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get"]), "\"code\":\"usage\""))?
+    check!("...and stays a plain line for humans", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "get"]), "usage: stride config") and !(Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "get"]), "schema_version")))?
     # asking what stride can do is a QUESTION, not a failure: same exit 0 in
     # both modes, answered as data for machines and as the help screen for
     # humans — and `--help` is the same request, so it gets the same answer
@@ -1664,7 +1666,134 @@ b_config_ftp! = |ctx| {
     check!("...and the requested format still wins", Str.contains(term_out, "schema_version"))?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${term_sess};")
     check!("config get json value", strjq!(ctx, ["config", "get", "timezone"], ".data.value") == ctx.tz)?
-    check!("config get not_set error", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "nope"]), "not_set"))?
+    # #254: `nope` is not a key stride reads, and that is a different fact from "this key
+    # is empty". Both used to answer `not_set`, which reads as "the key is fine, just
+    # empty" and sends the reader to `config set nope <value>` — a write nothing ever
+    # reads back. The pair below is what separates them, and BOTH halves are load-bearing:
+    # the `unknown_key` check alone passes if `known_key` returns False for everything,
+    # and the `not_set` check alone passes if it returns True for everything.
+    check!("config get unknown_key error on a key stride does not read", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "nope"]), "unknown_key"))?
+    # ...and a key it DOES read, spelled right, is not swept in with it. `strava_reads_day`
+    # is recognised and unwritten on this fixture, so this is the recognised-but-unset half
+    # with no setup of its own.
+    check!("...while a recognised key with no value is still not_set", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "strava_reads_day"]), "not_set"))?
+    # the per-sport zone family is a PATTERN, not a listed name — `hr_z2_max_ride` is never
+    # written anywhere in the source, so a known-key set built by grepping for literals
+    # would reject it and break a form the engine actually supports (ReportHealth counts
+    # these with `key GLOB 'hr_z[1-4]_max_?*'`).
+    check!("...and a per-sport zone override is recognised, not unknown", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "hr_z2_max_ride"]), "not_set"))?
+    # a secret has to be recognised too: the read path REDACTS it, and it can only redact a
+    # key it admits exists. Answering unknown_key here would leak that judgement instead.
+    check!("...and a secret is recognised (redaction needs the key to exist)", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "strava_access_token"]), "not_set"))?
+    # ...but a TYPO of one is not, which is where the first cut failed. `known_key` borrowed
+    # `is_secret`, whose `_token`/`_secret` suffix rule is deliberately fail-OPEN so an
+    # unlisted future secret is still redacted — so every misspelling of a credential key
+    # kept answering "(not set)", the exact scenario #254 is about, in the family where
+    # following that advice means pasting a real secret under a key nothing reads.
+    check!("...while a TYPO of a secret is not recognised", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "strava_acess_token"]), "unknown_key"))?
+    # ...and the same for the zone family, whose first-cut pattern was `starts_with("hr_z")
+    # and contains("_max")` while its comment claimed to mirror `hr_z[1-4]_max_?*`
+    check!("...and a mistyped zone key is not recognised either", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "hr_z1_maxx"]), "unknown_key") and Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "hr_z9_max"]), "unknown_key"))?
+    # ── the WRITE half. Guarding only `config get` was worse than guarding neither: the
+    # CLI confirmed a write and then denied the key existed. Both verbs, one predicate.
+    check!("config set refuses an unknown key rather than storing it", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", "America/Chicago"]), "unknown_key"))?
+    check!("...and stores nothing, so get and set cannot disagree", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'timezon';")) == "0")?
+    check!("...while a real key still writes", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max_ride", "155"]), "hr_z2_max_ride"))?
+    # ── bare `config` lists what is set. Its first job is answering "which config do I
+    # have?", which nothing did; its second is being the source `just schema-check` fills
+    # `config get <key>` from, so that recipe can no longer skip on a stale literal.
+    conf_list = strjq!(ctx, ["config"], "[.data.keys[].key] | join(\",\")")
+    check!("bare config lists the key just written", Str.contains(conf_list, "hr_z2_max_ride"))?
+    check!("...and the timezone the harness set", Str.contains(conf_list, "timezone"))?
+    # a listing that returns every key regardless of value would pass the two checks above
+    check!("...but not a key with no row", !(Str.contains(conf_list, "last_sync_epoch")))?
+    # ...and not a key whose ROW EXISTS but is empty, which is a different filter and was
+    # covered by nothing: dropping `WHERE COALESCE(value,'') <> ''` left the suite green,
+    # because every other key here is either present-with-a-value or absent entirely. An
+    # empty row is exactly what `config get` calls `not_set`, so listing it would make the
+    # two commands contradict each other — the contradiction this whole issue is about.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('utc_offset_minutes', '');")
+    check!("...nor a key whose row exists but holds no value", !(Str.contains(strjq!(ctx, ["config"], "[.data.keys[].key] | join(\",\")"), "utc_offset_minutes")))?
+    check!("...which is the same key config get calls not_set, so the two agree", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "utc_offset_minutes"]), "not_set"))?
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key = 'utc_offset_minutes';")
+    # VALUES are never in the listing — a listing that carried them would be one command
+    # dumping every secret, going around the redaction `config get` enforces per key
+    conf_raw = stride!(ctx.bin, ctx.home, ["config"])
+    check!("...and no values, so it cannot become a credential dump", !(Str.contains(conf_raw, "America/")))?
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('strava_access_token', 'sekrit-e2e');")
+    conf_sec = stride!(ctx.bin, ctx.home, ["config"])
+    check!("...naming a set secret without printing it", Str.contains(conf_sec, "strava_access_token") and Str.contains(conf_sec, "\"redacted\":true") and !(Str.contains(conf_sec, "sekrit-e2e")))?
+    # ── rows the binary does not read are MARKED, not hidden. A first cut filtered them,
+    # which made a pre-#254 leftover (`config set timezon x` used to succeed) unreadable,
+    # unwritable AND unlistable — visible only to sqlite3. For an issue about a row nothing
+    # reads, turning a visible dead row into an invisible one is the wrong direction.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('timezon', 'left over from before #254'), ('ftp_ride', '243');")
+    check!("...while a row for a key stride does not read is SHOWN, marked unrecognised", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"timezon\") | .status] | join(\",\")") == "unrecognised")?
+    # ...and the derived family gets its own marker rather than being lumped in. These are
+    # the rows most likely to be on a real database, and `config get` has a better answer
+    # for them than "unrecognised" — this is the listing agreeing with that answer.
+    check!("...and a derived key is marked derived, not unrecognised", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"ftp_ride\") | .status] | join(\",\")") == "derived")?
+    check!("...while a key the user sets is marked settable", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"timezone\") | .status] | join(\",\")") == "settable")?
+    # ...and stride's OWN bookkeeping is a fourth state, not lumped in with the user's.
+    # The listing marked all twelve read keys the same, so a reader could not tell which
+    # four were theirs — while the `unknown_key` refusal beside it drew exactly that line.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('last_sync_epoch', '1700000000');")
+    check!("...and stride's own bookkeeping is marked managed, not settable", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"last_sync_epoch\") | .status] | join(\",\")") == "managed")?
+    # ...and the human line carries the marker too, so the terminal reader sees it. THREE
+    # arms, because one was not enough: swapping the un-marked branch from `settable` to
+    # `derived` left the suite green while the derived rows lost their marker entirely and
+    # every settable key gained a noise suffix — exactly the confusion marking prevents.
+    conf_human = stride_human!(ctx.bin, ctx.home, ["config"])
+    check!("...and the human listing marks an unrecognised row", Str.contains(conf_human, "timezon  (unrecognised)"))?
+    check!("...and a derived one", Str.contains(conf_human, "ftp_ride  (derived)"))?
+    check!("...and leaves a settable key unmarked, which is what makes a marker mean anything", Str.contains(conf_human, "\ntimezone\n") or Str.starts_with(conf_human, "timezone\n"))?
+    # ...and a marked row can be REMOVED, which is what makes marking honest. Refusing every
+    # write left a leftover permanently unreachable — unreadable, unwritable, and before
+    # marking, unlistable, with sqlite3 the only way out.
+    #
+    # It DELETES rather than storing "". The empty write was worse than nothing for the
+    # family that most needed it: `numeric_key` calls anything `hr_z*` Decimal, so an empty
+    # value was refused with `bad_value` — and the misspelled zone keys are the population
+    # #254's own tightening created. Worse, `Analyze.load_config!` requires every `hr_z*`
+    # key to parse as F64, so an empty row does not sit inert, it kills `analyze` outright.
+    check!("...and clearing an unrecognised row is allowed", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", ""]), "\"removed\":true"))?
+    check!("...which DELETES it rather than emptying it, so nothing can choke on the row", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'timezon';")) == "0")?
+    check!("...and it reaches the zone misspellings, which an empty write could not", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_maxx", ""]), "\"removed\""))?
+    # ...and the DERIVED family, which `is_derived` refused before this arm ran. Those are
+    # the rows the schema itself calls most likely to be on a real database.
+    check!("...and a derived row, which derived_key refused before it", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", ""]), "\"removed\":true"))?
+    check!("...leaving it gone rather than emptied", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'ftp_ride';")) == "0")?
+    # ...while it is not an ENTRANCE. An empty write was `INSERT OR REPLACE`, so
+    # `config set qwertyuiop ""` CREATED a row for a key that never existed — invisible in
+    # the listing, unreadable by `config get`. The CLI could manufacture exactly the class
+    # of row the marking exists to expose.
+    check!("...and removing a key that was never there creates nothing", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "qwertyuiop", ""]), "\"removed\":false"))?
+    check!("...and really creates nothing", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'qwertyuiop';")) == "0")?
+    check!("...while a NON-empty write to an unrecognised key is still refused", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", "again"]), "unknown_key"))?
+    # ...and clearing a key the engine DOES read is not this path: it stores an empty value
+    # and the normal guards apply, so removal can never silently wipe live config.
+    check!("...and an empty write to a key stride reads is not a removal", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", ""]), "bad_value"))?
+    # ── the two cell shapes `Sqlite.str` cannot decode, both reachable because `value` is
+    # declared TEXT with no NOT NULL and TEXT affinity converts INTEGER and REAL but not
+    # blobs. Each answered `internal_error` — "this is a bug, not the data and not the
+    # invocation" — about a fault that is entirely the data, and each made `config get`
+    # disagree with the listing, which asks SQL.
+    #
+    # NULL is the half the first CAST missed: `CAST(NULL AS TEXT)` is still NULL, so only
+    # the COALESCE closes it, and dropping that from `Db.config_get!` left the suite green.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('utc_offset_minutes', NULL);")
+    check!("a NULL config cell reads as not_set, not as an engine bug", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "utc_offset_minutes"]), "not_set"))?
+    check!("...and the listing agrees it is not set", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"utc_offset_minutes\")] | length") == "0")?
+    _ = sql!(ctx.db, "UPDATE config SET value = X'00FF' WHERE key = 'utc_offset_minutes';")
+    check!("...and a BLOB cell reports as data rather than an unhandled failure", !(Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "utc_offset_minutes"]), "internal_error")))?
+    check!("...which the listing also shows, so the two cannot disagree", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"utc_offset_minutes\")] | length") == "1")?
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key = 'utc_offset_minutes';")
+    # SORTED, which the schema states in prose and nothing validated. schema-check takes
+    # the first settable-or-managed entry as its filler, so an unsorted listing makes that filler depend
+    # on SQLite's rowid order — the same staleness the filler change was meant to remove,
+    # one layer down. Dropping `ORDER BY key` left the whole suite green.
+    check!("...and the listing is sorted, which schema-check's filler choice depends on", strjq!(ctx, ["config"], "[.data.keys[].key] == ([.data.keys[].key] | sort)") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key IN ('hr_z2_max_ride', 'strava_access_token', 'timezon', 'ftp_ride', 'last_sync_epoch', 'hr_z1_maxx');")
     # delete the row rather than storing "" — not because they differ (Db.roc collapses
     # both to NoTz, and doctor reports the same UTC fallback for each; that equivalence
     # is pinned in b_doctor!) but because an absent row is the state a fresh install is
@@ -3757,7 +3886,11 @@ b_agent_loop! = |ctx| {
     }
     declared_probe!("activity 99999999", "activity_not_found", "unknown activity")?
     declared_probe!("tte notanumber", "bad_watts", "unparseable watts")?
-    declared_probe!("config get nosuchkey", "not_set", "absent config key")?
+    declared_probe!("config get nosuchkey", "unknown_key", "unrecognised config key")?
+    # both codes `config get` can reach on an absent value, because they are now different
+    # facts and the table has to attribute each. `strava_reads_day` is recognised and
+    # unwritten on this fixture; `nosuchkey` is neither.
+    declared_probe!("config get strava_reads_day", "not_set", "recognised but unset config key")?
     declared_probe!("top notametric", "bad_metric", "unknown metric")?
     declared_probe!("reps notadate", "usage", "unparseable date")?
     err_probe!("frobnicate", "unknown_command", "unknown command")?

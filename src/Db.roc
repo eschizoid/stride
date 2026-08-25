@@ -43,7 +43,16 @@ Db :: [].{
     config_get! = |path, key|
         Sqlite.query!({
             path: Path.utf8(path),
-            query: "SELECT value FROM config WHERE key = :key",
+            # CAST(... AS TEXT), and the reason is a real divergence rather than defensive
+            # habit. `value` is declared TEXT, and TEXT affinity converts INTEGER and REAL
+            # but NOT blobs — so a blob written by a hand-edit or a partial corruption
+            # survives in the column, and a bare `Sqlite.str` decode then answers
+            # `UnexpectedType(Bytes)`, which `config get` reports as `internal_error`:
+            # "this is a bug, not the data and not the invocation", about a fault that is
+            # entirely the data. It also made this path disagree with bare `config`, which
+            # asks SQL whether a row holds a value and would list a key `config get` then
+            # refused. One rule, decided in one place.
+            query: "SELECT COALESCE(CAST(value AS TEXT), '') AS value FROM config WHERE key = :key",
             bindings: [{ name: ":key", value: String(key) }],
             row: Sqlite.str("value"),
         })
@@ -59,6 +68,27 @@ Db :: [].{
             Err(other) => Err(other)
 
         }
+    # Remove a config row outright. Used by `config set <unrecognised> ""` (#254), which is
+    # the way out for a row the engine no longer reads.
+    #
+    # DELETE and not `value = ''`, which was the first cut and is worse than doing nothing
+    # for the family it most needed to serve. `Analyze.load_config!` requires every key
+    # starting `hr_z` to parse as F64, so one empty zone row kills `analyze` outright — and
+    # the misspelled zone keys are exactly the population #254's tightened `zone_shape`
+    # created. The write also could not reach them: `numeric_key` classifies `hr_z*` as
+    # Decimal, so the empty value was refused with `bad_value` before it got there.
+    #
+    # It is also the argument this repo already made once, in the e2e comment beside the
+    # timezone fixture: delete the row rather than storing '', "because an absent row is
+    # the state a fresh install is actually in".
+    config_delete! : Str, Str => Try({}, _)
+    config_delete! = |path, key|
+        Sqlite.execute!({
+            path: Path.utf8(path),
+            query: "DELETE FROM config WHERE key = :key",
+            bindings: [{ name: ":key", value: String(key) }],
+        })
+
     config_set! : Str, Str, Str => Try({}, _)
     config_set! = |path, key, value|
         Sqlite.execute!({

@@ -44,6 +44,7 @@ Command := [
 	SkipWith(Str, Str, Str),
 	ConfigGet(Str),
 	ConfigSet(Str, Str),
+	ConfigList,
 ].{
 
 	## Why parsing failed, mapped by the caller to output:
@@ -157,6 +158,15 @@ Command := [
 			[_, "skip", session_id, reason, activity_id] => Ok(SkipWith(session_id, reason, activity_id))
 			[_, "skip", session_id, reason] => Ok(Skip(session_id, reason))
 			[_, "config", "get", key] => Ok(ConfigGet(key))
+			# bare `config` LISTS the keys that hold a value (secrets redacted). It was a
+			# Usage error, which made "which config do I actually have set?" a question the
+			# CLI could not answer — `doctor` reports counts, not names. #254 needs it for a
+			# second reason: `just schema-check` filled `config get <key>` with a hardcoded
+			# `timezone` and skipped on `not_set`, so on any database where that one key was
+			# unset the form dropped out silently at exit 0. The filler comes from here now,
+			# so it cannot be stale, and the skip is decided by an EMPTY LIST — a fact the
+			# recipe checks — instead of by an error code that could mean two things.
+			[_, "config"] => Ok(ConfigList)
 			[_, "config", "set", key, val] => Ok(ConfigSet(key, val))
 			[_, "--version"] => Ok(Version)
 			[_, "week", ..] => Err(Usage("week add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `week` for this week's sessions, `week all` for the whole log"))
@@ -322,7 +332,7 @@ Command := [
 		errs(writes("week add", [req("<YYYY-MM-DD>"), req("<type>"), req("<detail>"), req("<rationale>")], "week_add.json"), ["bad_date"]),
 		errs(writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"), ["activity_already_linked", "activity_not_found", "activity_required", "bad_id", "session_not_found"]),
 		errs(writes("skip", [req("<session_id>"), req("<reason>"), opt("<activity_id|none>")], "skip.json"), ["activity_already_linked", "activity_not_found", "bad_id", "session_done", "session_not_found"]),
-		errs(writes("config set", [req("<key>"), req("<value>")], "config.json"), ["bad_value", "derived_key"]),
+		errs(writes("config set", [req("<key>"), req("<value>")], "config.json"), ["bad_value", "derived_key", "unknown_key"]),
 		errs(reads("summary", [], "summary.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
 		errs(reads("plan", [], "plan.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
 		## `stats` had no declared codes: its totals are a pure listing, until #249 found
@@ -368,7 +378,8 @@ Command := [
 		## `week` had NO declared codes at all, and now has one: #249 made it refuse an
 		## unplanned activity whose date it used to sort to the epoch and list first.
 		errs(reads("week", [opt("all")], "week.json"), ["unreadable_activity_date"]),
-		errs(reads("config get", [req("<key>")], "config.json"), ["derived_key", "not_set"]),
+		reads("config", [], "config_list.json"),
+		errs(reads("config get", [req("<key>")], "config.json"), ["derived_key", "not_set", "unknown_key"]),
 		reads("--version", [], "version.json"),
 		reads("--help", [], "commands.json"),
 		reads("-h", [], "commands.json"),
@@ -618,8 +629,22 @@ expect
 		Ok(Plan) => True
 		_ => False
 	}
+# bare `config` LISTS what is set — it was a Usage error until #254, on the same reasoning
+# as bare `plan` and bare `week` above: the shortest spelling of a command should answer
+# the question the reader has, not scold them for not asking it precisely enough.
 expect
 	match Command.parse(["stride", "config"]) {
+		Ok(ConfigList) => True
+		_ => False
+	}
+# ...while a WRONG config form is still a Usage error, so the arm above did not eat them
+expect
+	match Command.parse(["stride", "config", "get"]) {
+		Err(Usage("config get <key>  |  config set <key> <value>")) => True
+		_ => False
+	}
+expect
+	match Command.parse(["stride", "config", "set", "timezone"]) {
 		Err(Usage("config get <key>  |  config set <key> <value>")) => True
 		_ => False
 	}

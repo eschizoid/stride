@@ -59,6 +59,7 @@
             "stdin_closed",
             "strava_error",
             "unknown_command",
+            "unknown_key",
             "unreadable_activity_date",
             "unreadable_config",
             "unreadable_daily_load_day",

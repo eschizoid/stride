@@ -17,6 +17,120 @@ Config :: [].{
 		or Str.ends_with(k, "_token")
 		or Str.ends_with(k, "_secret")
 
+	# Keys the engine LOOKS UP A VALUE FOR. Absent from this and `config get` / `config set`
+	# answer `unknown_key` rather than `not_set` / plain success (#254).
+	#
+	# `not_set` and "no such key" were indistinguishable, and the harm is not the typo — it
+	# is what the typo invites. `config get timezon` answered "(not set)", which says the key
+	# is fine and merely empty, so the natural next step is `config set timezon <value>`.
+	# That succeeded, so both halves of the round trip agreed the key was real while nothing
+	# ever read it. Same trap `is_derived` prevents from the other direction, described in
+	# its own comment as a `config set` that "looks like it worked".
+	#
+	# The DERIVED family is deliberately NOT here. `config get` and `config set` both test
+	# `is_derived` first and refuse by name, so this predicate never sees `ftp_ride` — a
+	# clause for it would be unreachable from every caller, and this file's `numeric_key`
+	# comment already settled what to do with an unreachable clause: delete it, because a
+	# rule no test can falsify is not a guard. `known_key("ftp_ride") == False` is therefore
+	# correct and load-bearing rather than an oversight.
+	#
+	# `secret_keys` directly, NOT `is_secret`. `is_secret`'s suffix rule is deliberately
+	# fail-OPEN so an unlisted future secret is still redacted; reusing it here inverts that
+	# into fail-open recognition, which is the opposite of what this predicate wants. It let
+	# `config get strava_acess_token` — a typo of a real key, and issue #254's own scenario —
+	# answer "(not set)" again. Only the three real secrets need to be admitted, and that is
+	# all the redaction path requires.
+	#
+	# Fails CLOSED in the useful direction, but the cost of being WRONG here went up when
+	# `config set <key> ""` became a DELETE. A key the engine reads that is missing from
+	# this predicate used to answer `unknown_key` — annoying and visible. It is now
+	# removable, and reported as `removed: true` with "stride does not read it", which
+	# would be a false statement about a key it does read. Silent and destructive, not
+	# annoying and visible.
+	#
+	# Nothing is in that state today (every read site is covered, checked at the boundary),
+	# but two documented keys are waiting to enter it: `Metrics.threshold_pace_key` and
+	# `Metrics.model_key` describe `threshold_pace_<sport>` and `model_<sport>` as config
+	# keys for slices not yet wired up. Whoever wires one up MUST add it here in the same
+	# commit, or `config set threshold_pace_run ""` silently deletes live config.
+	#
+	# The reverse — a key listed here that nothing reads — is the older trap, which is why
+	# this is derived from the read sites and not from the docs. `metrics_rev` sat here for
+	# exactly one revision on the strength of an AGENTS.md sentence; it is a Roc constant
+	# and an `activity_metrics` column, and has never been read from `config`.
+	known_key : Str -> Bool
+	known_key = |k|
+		List.contains(secret_keys, k)
+		or List.contains(
+			[
+				"timezone",
+				"utc_offset_minutes",
+				"last_sync_epoch",
+				"strava_client_id",
+				"strava_expires_at",
+				"strava_reads_today",
+				"strava_reads_day",
+			],
+			k,
+		)
+		or is_zone_key(k)
+
+	# Of the keys the engine reads, the ones a PERSON sets. The rest — `last_sync_epoch`,
+	# the `strava_*` family — are stride's own bookkeeping, writable so a broken one can be
+	# repaired but not things anyone configures.
+	#
+	# The line already existed in `known_key_summary`'s two groups; this makes it a value
+	# the listing can show. Without it, `stride config` marked all twelve `read`, so a user
+	# scanning it could not tell which four were theirs — the `unknown_key` refusal drew the
+	# distinction and the listing beside it did not.
+	user_settable : Str -> Bool
+	user_settable = |k| k == "timezone" or k == "utc_offset_minutes" or is_zone_key(k)
+
+	# What the `unknown_key` refusal tells the reader, in one place beside the predicate it
+	# describes. The first cut named four keys while `config set` accepted twelve — the
+	# same "advice pointing where the answer is not" the message was written to replace,
+	# and it contradicted the listing, which shows `last_sync_epoch` and the `strava_*` keys
+	# as set config. Two groups, because the distinction is real: the first are yours, the
+	# second are stride's bookkeeping and are writable only so a broken one can be repaired.
+	#
+	# Pinned against `known_key` below: every literal that predicate accepts has an expect
+	# asserting it appears here, so the two cannot drift.
+	known_key_summary : Str
+	known_key_summary = "Settable: timezone, utc_offset_minutes, hr_z1_max..hr_z4_max (optionally per sport, e.g. hr_z2_max_ride). Written by stride and rarely set by hand: last_sync_epoch, strava_client_id, strava_expires_at, strava_reads_today, strava_reads_day, strava_access_token, strava_refresh_token, strava_client_secret. FTP is derived, never set."
+
+	# `hr_z1_max` .. `hr_z4_max`, optionally suffixed with a sport family
+	# (`hr_z2_max_ride`) — exactly what `Metrics.hr_zone_key_global` and
+	# `Metrics.hr_zone_key` build, and exactly what `ReportHealth` counts with
+	# `key GLOB 'hr_z[1-4]_max_?*'`.
+	#
+	# Written out rather than `starts_with("hr_z") and contains("_max")`, which was the
+	# first cut and claimed in its own comment to be the same shape as that GLOB. It was
+	# not: it admitted `hr_z9_max`, `hr_zz_max`, `hr_z1_maximum` and `hr_z1_maxx`, none of
+	# which any read site can produce, so four ways of mistyping a zone key kept answering
+	# "(not set)" — the defect this predicate exists to remove.
+	is_zone_key : Str -> Bool
+	is_zone_key = |k| zone_shape(Str.to_utf8(k))
+
+	# bytes: h r _ z <digit> _ m a x, then either end-of-key or `_` and a non-empty suffix
+	zone_shape : List(U8) -> Bool
+	zone_shape = |b|
+		match b {
+			[104, 114, 95, 122, d, 95, 109, 97, 120, .. as rest] =>
+				d >= 49 and d <= 52 and zone_suffix(rest)
+
+			_ => False
+		}
+
+	# the GLOB's `_?*`: an underscore followed by at least one byte. A bare trailing `_`
+	# (`hr_z1_max_`) is not a sport and no builder emits it.
+	zone_suffix : List(U8) -> Bool
+	zone_suffix = |b|
+		match b {
+			[] => True
+			[95, _, ..] => True
+			_ => False
+		}
+
 	# Keys the engine DERIVES and never reads from config. Accepting one would be worse
 	# than refusing it: `config set ftp_ride 250` used to succeed, print a confirmation,
 	# and change nothing, because Db.sport_ftp! computes FTP from the athlete's own power
@@ -130,6 +244,126 @@ expect Config.numeric_key("hr_z4_max_ride") == Decimal
 expect Config.numeric_key("timezone") == Free
 expect Config.numeric_key("strava_access_token") == Free
 expect Config.numeric_key("strava_client_id") == Free
+
+# known_key: the keys the engine looks up a value for. Every clause was mutation-checked
+# ALONE — a union of predicates makes it very easy to write an expect that some OTHER
+# clause satisfies, so deleting the clause under test leaves the suite green.
+expect Config.known_key("timezone") == True
+expect Config.known_key("utc_offset_minutes") == True
+expect Config.known_key("last_sync_epoch") == True
+expect Config.known_key("strava_client_id") == True
+expect Config.known_key("strava_expires_at") == True
+expect Config.known_key("strava_reads_today") == True
+expect Config.known_key("strava_reads_day") == True
+
+# the three real secrets, via `secret_keys` — the read path redacts them and can only
+# redact a key it admits exists. Deleting that clause leaves every literal above still
+# True, so these are the only lines that kill it.
+expect Config.known_key("strava_access_token") == True
+expect Config.known_key("strava_refresh_token") == True
+expect Config.known_key("strava_client_secret") == True
+
+# ...but NOT through `is_secret`'s fail-open suffix rule, which is the mutant that shipped
+# in the first cut. `is_secret` returns True for anything ending `_token` / `_secret` on
+# purpose, so a future secret is redacted even if unlisted; borrowing it here turned that
+# into fail-open RECOGNITION and let typos of the credential keys keep answering
+# "(not set)" — issue #254's own scenario, in the family where it matters most.
+expect Config.is_secret("strava_acess_token") == True
+expect Config.known_key("strava_acess_token") == False
+expect Config.known_key("stava_access_token") == False
+expect Config.known_key("some_api_token") == False
+expect Config.known_key("random_secret") == False
+
+# the DERIVED family is deliberately absent: `config get`/`config set` refuse it by name
+# before this predicate runs, so a clause here would be unreachable from every caller.
+expect Config.known_key("ftp") == False
+expect Config.known_key("ftp_ride") == False
+
+# the zone family, exactly as `Metrics.hr_zone_key_global` and `hr_zone_key` build it. The
+# per-sport suffix is the case a literal list cannot cover: `hr_z2_max_ride` appears
+# nowhere in the source.
+expect Config.known_key("hr_z1_max") == True
+expect Config.known_key("hr_z4_max") == True
+expect Config.known_key("hr_z2_max_ride") == True
+expect Config.known_key("hr_z3_max_soccer") == True
+expect Config.known_key("hr_z1_max_standuppaddling") == True
+
+# EVERY digit outside 1..4, not just the two that bracket the range. `hr_z9_max` and
+# `hr_z0_max` alone left 5–8 unpinned, and review proved that mattered: widening the bound
+# by ONE (`d <= 52` -> `d <= 53`) made `config set hr_z5_max 200` succeed and write a row
+# nothing reads — #254's defect, reintroduced, suite green. `hr_z5_max` is also the likeliest
+# wrong edit rather than a contrived one: README calls z5 "everything above hr_z4_max", so a
+# maintainer could reasonably think it belongs in the pattern. It does not; `hr_zone_key` is
+# called only with 1..4, and the globals are four literals.
+# user_settable: the split that makes the listing able to say which rows are YOURS. Every
+# clause pinned, because it shipped with none — and the mutant that dropped the zone clause
+# marked `hr_z1_max`..`hr_z4_max` "managed", i.e. "stride's own bookkeeping, not something
+# anyone configures", about the four lines README tells a new user to type. Suite green.
+# The two e2e checks pin one literal each (`timezone`, `last_sync_epoch`), so they cover
+# one of the three clauses and not the one covering the largest family.
+expect Config.user_settable("timezone") == True
+expect Config.user_settable("utc_offset_minutes") == True
+expect Config.user_settable("hr_z1_max") == True
+expect Config.user_settable("hr_z4_max") == True
+expect Config.user_settable("hr_z2_max_ride") == True
+# ...and stride's own bookkeeping is NOT yours, which is the whole point of the split
+expect Config.user_settable("last_sync_epoch") == False
+expect Config.user_settable("strava_access_token") == False
+expect Config.user_settable("strava_client_id") == False
+expect Config.user_settable("strava_reads_day") == False
+# ...nor is a derived key, nor a typo — both have their own status
+expect Config.user_settable("ftp_ride") == False
+expect Config.user_settable("timezon") == False
+expect Config.user_settable("hr_z5_max") == False
+expect Config.user_settable("") == False
+
+expect Config.known_key("hr_z5_max") == False
+expect Config.known_key("hr_z6_max") == False
+expect Config.known_key("hr_z7_max") == False
+expect Config.known_key("hr_z8_max") == False
+expect Config.known_key("hr_z5_max_ride") == False
+
+# the refusal message and the predicate cannot drift: every literal `known_key` accepts is
+# named in the summary the message prints. Without this the two are two lists, and the
+# first cut proved what that costs — a message naming four keys for a predicate accepting
+# twelve, contradicting the listing shipped beside it.
+expect Str.contains(Config.known_key_summary, "timezone")
+expect Str.contains(Config.known_key_summary, "utc_offset_minutes")
+expect Str.contains(Config.known_key_summary, "last_sync_epoch")
+expect Str.contains(Config.known_key_summary, "strava_client_id")
+expect Str.contains(Config.known_key_summary, "strava_expires_at")
+expect Str.contains(Config.known_key_summary, "strava_reads_today")
+expect Str.contains(Config.known_key_summary, "strava_reads_day")
+expect Str.contains(Config.known_key_summary, "strava_access_token")
+expect Str.contains(Config.known_key_summary, "strava_refresh_token")
+expect Str.contains(Config.known_key_summary, "strava_client_secret")
+expect Str.contains(Config.known_key_summary, "hr_z1_max")
+expect Str.contains(Config.known_key_summary, "hr_z4_max")
+expect Str.contains(Config.known_key_summary, "hr_z2_max_ride")
+
+# ...and everything the loose first cut (`starts_with("hr_z") and contains("_max")`) let
+# through while claiming to be the same shape as ReportHealth's `hr_z[1-4]_max_?*`. Each
+# of these answered "(not set)" on a shipped binary; none is producible by any read site.
+expect Config.known_key("hr_z9_max") == False
+expect Config.known_key("hr_z0_max") == False
+expect Config.known_key("hr_zz_max") == False
+expect Config.known_key("hr_z1_maximum") == False
+expect Config.known_key("hr_z1_maxx") == False
+expect Config.known_key("hr_z1_max_") == False
+expect Config.known_key("xhr_z1_max") == False
+expect Config.known_key("hr_z") == False
+expect Config.known_key("hr_z1") == False
+expect Config.known_key("power_max") == False
+
+# ...and the point of the whole thing: a typo of a real key is not recognised. Each of
+# these is one edit away from a key that is.
+expect Config.known_key("timezon") == False
+expect Config.known_key("time_zone") == False
+expect Config.known_key("utc_offset") == False
+expect Config.known_key("") == False
+expect Config.known_key("nope") == False
+# not a prefix match: a real key with anything appended is a different key
+expect Config.known_key("timezone_x") == False
 
 expect Config.is_secret("strava_access_token") == True
 expect Config.is_secret("strava_refresh_token") == True

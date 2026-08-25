@@ -1,0 +1,28 @@
+{
+  "title": "config_list",
+  "description": "Result of bare `stride config` — every config key that holds a value, sorted by key, each MARKED rather than filtered. Names only, never values: a listing is a different question from a lookup, and returning values would be one command that dumps every secret, going around `config get`'s per-key redaction. `redacted: true` marks the entries `config get` will refuse to show, so a caller can tell 'set, and I may read it' from 'set, and I may not' without a call per key. Keys are NOT filtered out, because hiding a row the engine ignores makes it undiscoverable while leaving it in the database — see `status`.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "keys"
+  ],
+  "properties": {
+    "keys": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": ["key", "status", "redacted"],
+        "properties": {
+          "key": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["settable", "managed", "derived", "unrecognised"],
+            "description": "`settable` — yours: `timezone`, `utc_offset_minutes`, the HR zone bounds. `managed` — stride's own bookkeeping (`last_sync_epoch`, the `strava_*` family), writable so a broken one can be repaired but not something anyone configures; the two are separated because a listing that called all of them one thing left a reader unable to see which were theirs. `derived` — stored and ignored: the `ftp*` family, computed from power history (ADR 0005), which `config get` answers `derived_key` for; these are the rows most likely to be present on a real database, since it predates the derivation. `unrecognised` — a retired name, a row written by a `config set` typo before #254 refused them, or a key for a slice that is documented but not yet wired up (`threshold_pace_<sport>`, `model_<sport>`). `settable` and `managed` are the statuses for which `config get` returns a payload, which is what `just schema-check` selects on. Note `settable` and `managed` are facts about the BINARY except for the per-sport zone overrides, where whether the engine consults `hr_z2_max_<sport>` also depends on whether that sport is present in this database."
+          },
+          "redacted": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}
