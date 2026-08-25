@@ -457,6 +457,42 @@ fi
 # is verifiable, `top hr` is a placeholder value, and `analyze frobnicate` and
 # `week frobnicate` are refutable. A command declaring ANY placeholder accepts any trailing
 # token, because a placeholder's whole point is that its values are not enumerable here.
+# The rule itself, as a function, so the self-test below judges the SAME code the loop runs
+# rather than a second copy of it. Returns 0 to accept the trailing token, 1 to refute.
+#   $1 the trailing token, $2 the command's declared arg spec (space-joined, in order)
+judge_trailing() {
+  _first="${2%% *}"
+  case "$_first" in *"<"*) return 0 ;; esac
+  [ "$_first" = "$1" ] && return 0
+  return 1
+}
+
+# ...and PROVE it can refute, before trusting it on the real corpus. Every other guard in
+# this file asserts that its INPUTS are non-empty; none asserted that the judgement works,
+# and a rule that accepts everything looks exactly like a corpus with nothing wrong in it.
+# That is not hypothetical here: the rule this replaces accepted any trailing token for 17
+# of 30 commands, and the case it was built for was one table change from reverting.
+#
+# The third case is that revert, pinned: `week` declaring `all` and then a placeholder must
+# still refute `frobnicate`, which is what positional buys and what list-wide lost.
+selftest_fail=0
+sf() {  # description, token, spec, expected verdict (accept|refute)
+  if judge_trailing "$2" "$3"; then _got=accept; else _got=refute; fi
+  [ "$_got" = "$4" ] || { echo "command-claims: SELF-TEST FAILED — $1: judged '$2' against [$3] as $_got, expected $4" >&2; selftest_fail=1; }
+}
+sf "a literal arg refutes anything else"          frobnicate "all"                       refute
+sf "a literal arg accepts itself"                 all        "all"                       accept
+sf "a literal FIRST still refutes, however many placeholders follow" \
+                                                  frobnicate "all <n>"                   refute
+sf "a placeholder in position 1 accepts anything" frobnicate "<metric> <limit>"          accept
+sf "no declared args refutes anything"            frobnicate ""                          refute
+sf "a flag is a literal like any other"           --all      "--all"                     accept
+sf "...and refutes a non-flag"                    frobnicate "--all"                     refute
+if [ "$selftest_fail" != "0" ]; then
+  echo "command-claims: the trailing-token rule does not judge as declared — refusing to run it against the docs" >&2
+  exit 3
+fi
+
 fail=0
 while IFS="$(printf '\t')" read -r file line cand; do
   p="$cand"
@@ -475,8 +511,28 @@ while IFS="$(printf '\t')" read -r file line cand; do
   [ "$p" = "$cand" ] && continue
   x="${cand#"$p" }"
   spec=$(awk -F"$(printf '\t')" -v n="$p" '$1 == n { print $2; exit }' "$ARGS")
-  case "$spec" in *"<"*) continue ;; esac
-  case " $spec " in *" $x "*) continue ;; esac
+  # POSITIONAL, not list-wide (#269). `$x` is always the FIRST argument — `$cand` is at
+  # most two tokens by the ceiling asserted above, and a two-token `$p` with a two-token
+  # `$cand` exits at the equality test before here — so the only arg it can be is the one
+  # the table declares in position 1.
+  #
+  # The old rule asked whether the command declared a placeholder ANYWHERE and accepted any
+  # trailing token if so. That is right about placeholders and wrong about position: it
+  # judged only the 12 of 29 commands that declare no placeholder at all, and the other 17
+  # accepted anything. Worse, it was one table change from reverting the case it was built
+  # for — measured, adding a single `<n>` to `week`'s args made `stride week frobnicate`
+  # pass again, and nothing would have noticed.
+  #
+  # Positionally, `week` declares `all` at position 1, so `week frobnicate` stays refutable
+  # however many placeholders are appended after it. A placeholder IN position 1 still
+  # accepts anything, which is correct rather than a concession — that position genuinely
+  # takes a value the table cannot enumerate.
+  #
+  # An empty `$spec` means the command declares no arguments, so any trailing token is
+  # refutable — the same meaning it had before, reached without a special case. The
+  # ARGS-vs-REAL row-count guard above is what makes an empty spec trustworthy: it separates
+  # "declares nothing" from "missing from the table", which mean opposite things here.
+  judge_trailing "$x" "$spec" && continue
   echo "UNKNOWN  $file:$line  \`stride $cand\` — \`$p\` is a command, but it takes no \`$x\`"
   fail=1
 done < "$NAMED"
