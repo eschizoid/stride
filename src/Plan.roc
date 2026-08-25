@@ -116,8 +116,15 @@ Plan :: [].{
                         # names the component that FAILED, not the one that is fine. The
                         # message used to hand back the date half — "beginning '2026-08-24'"
                         # for a row whose date is perfectly readable and whose time is T37.
+                        # BadActivityTime, not BadActivityDate. Same error code, different
+                        # message: `r.t` is the time COMPONENT, and the date message frames
+                        # its argument as the stored value inside a reproduction handle. So
+                        # this raised `('T37:00:00')` and `('(no time)')` — two strings that
+                        # are not in the column, matching zero rows for anyone who pastes
+                        # them into a WHERE clause. The empty case is now worded rather than
+                        # given a fake literal.
                         _ = match List.first(bad_time) {
-                            Ok(r) => Err(BadActivityDate(if Str.is_empty(r.t) "(no time)" else r.t, r.id))
+                            Ok(r) => Err(BadActivityTime(r.t, r.id))
                             Err(_) => Ok({})
                         }?
                         match Sqlite.query!({

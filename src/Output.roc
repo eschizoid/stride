@@ -241,6 +241,35 @@ Output :: [].{
         "activity ${(id).to_str()} has ${what} — delete that row by id and re-sync, or run `stride sync --all` if Strava still lists the activity"
     }
 
+    # The TIME half of the same column, and it needs its own wording for the reason the
+    # paragraph above gives about `('')`. `raw` here is the nine characters after the date —
+    # a COMPONENT, never the stored value — so quoting it the way the date message does puts
+    # a string in the reproduction handle that `WHERE start_local='T37:00:00'` matches zero
+    # rows of. Same defect, third instance: 'garbage-da' first, `('')` second, this third.
+    #
+    # So the component is named OUTSIDE the handle. The id stays where it was, leading the
+    # remedy, because it is the only thing here anyone can act on.
+    unreadable_activity_time_msg : Str, I64 -> Str
+    unreadable_activity_time_msg = |raw, id| {
+        what =
+            if Str.is_empty(raw) {
+                "no time after its date"
+            } else {
+                "an unreadable time after its date — the time component reads '${raw}'"
+            }
+        "activity ${(id).to_str()} has ${what} — delete that row by id and re-sync, or run `stride sync --all` if Strava still lists the activity"
+    }
+
+    unreadable_activity_time! : Str, I64 => Try({}, _)
+    unreadable_activity_time! = |raw, id| {
+        msg = unreadable_activity_time_msg(raw, id)
+        (if json_mode!({})
+            emit_err!("unreadable_activity_date", msg)
+        else
+            Stdout.line!(msg))?
+        Err(Exit(error_status))
+    }
+
     unreadable_activity_date! : Str, I64 => Try({}, _)
     unreadable_activity_date! = |raw, id| {
         msg = unreadable_activity_date_msg(raw, id)

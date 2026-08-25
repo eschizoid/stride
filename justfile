@@ -273,23 +273,54 @@ schema-check: build
     # check below covers the error shape, and the e2e command-schema loop covers which codes
     # a form may raise. Only an UNDECLARED code is a finding, which is why the code is
     # compared against the table rather than merely being non-empty.
-    act=$(STRIDE_FORMAT=json ./stride activities 1 2>&1 | jq -r '.data[0].id // empty' 2>&1 || true)
-    if [ -n "$act" ]; then
-        raw=$(STRIDE_FORMAT=json ./stride activity "$act" 2>&1 || true)
-        code=$(printf '%s' "$raw" | jq -r '.error.code // empty' 2>/dev/null || true)
-        if [ -n "$code" ]; then
-            declared=$(STRIDE_FORMAT=json ./stride --json --help | jq -r --arg c "$code" '((.data.universal_error_codes // []) + ([.data.commands[] | select(.name == "activity") | .error_codes // []] | flatten)) | index($c) // empty' 2>/dev/null || true)
-            if [ -n "$declared" ]; then
-                echo "activity $act: refused with declared code $code (no payload to validate)"
-            else
-                echo "activity $act: refused with UNDECLARED code $code"; rc=1
-            fi
-        else
-            errs=$(printf '%s' "$raw" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/activity.json -f tools/validate.jq 2>&1 || true)
-            if [ -n "$errs" ]; then echo "activity $act:"; echo "$errs"; rc=1; else echo "activity $act: conforms"; fi
-        fi
-    else
+    # PER-COMMAND codes only, never the universal set, and that distinction is the whole
+    # correctness of this block. `universal_error_codes` contains `internal_error` — it is
+    # declared universally precisely BECAUSE it is the catch-all, meaning "can occur
+    # anywhere", not "is a correct answer here". Testing membership against the union made
+    # this print "refused with declared code internal_error" and exit 0 on a database where
+    # `stride activity <id>` answered "unhandled failure: UnexpectedType(Null) — please open
+    # an issue". Before that change the same state was rc=1. A contract checker reporting
+    # green on the exact failure shape #243 and #249 exist to eliminate, in the branch that
+    # closes them. Every other universal member is the same class: something went wrong
+    # OUTSIDE the form's own logic. The per-command list is the one that means "this form may
+    # legitimately answer this instead of a payload".
+    #
+    # WALKS the first rows rather than taking only the first, because #249 hoists undateable
+    # activities to the top of `activities`. Taking `.data[0]` alone means that on precisely
+    # the databases where you most want to know `activity.json` still conforms, the only path
+    # ever exercised is the refusal one. Walking keeps both properties without re-implementing
+    # the date rule in a third language, which is the trap `guard_activity_dates!` exists to
+    # avoid.
+    acts=$(STRIDE_FORMAT=json ./stride activities 20 2>&1 || true)
+    acode=$(printf '%s' "$acts" | jq -r '.error.code // empty' 2>/dev/null || true)
+    ids=$(printf '%s' "$acts" | jq -r '.data[]?.id // empty' 2>/dev/null || true)
+    if [ -n "$acode" ]; then
+        # NOT "skipped (no activities yet)". `// empty` cannot tell "no rows" from "the
+        # listing returned an envelope", and the old branch said the database was empty
+        # while it held 737 activities — a diagnostic making a false statement, which is the
+        # defect one level up that the rest of this block was fixed for.
+        echo "activity: cannot sample — \`activities\` itself refused with $acode"; rc=1
+    elif [ -z "$ids" ]; then
         echo "activity: skipped (no activities yet)"
+    else
+        decl=$(STRIDE_FORMAT=json ./stride --json --help | jq -r '[.data.commands[] | select(.name == "activity") | .error_codes // []] | flatten | join(" ")' 2>/dev/null || true)
+        validated=0
+        for id in $ids; do
+            raw=$(STRIDE_FORMAT=json ./stride activity "$id" 2>&1 || true)
+            code=$(printf '%s' "$raw" | jq -r '.error.code // empty' 2>/dev/null || true)
+            if [ -z "$code" ]; then
+                errs=$(printf '%s' "$raw" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/activity.json -f tools/validate.jq 2>&1 || true)
+                if [ -n "$errs" ]; then echo "activity $id:"; echo "$errs"; rc=1; else echo "activity $id: conforms"; fi
+                validated=1; break
+            fi
+            case " $decl " in
+                *" $code "*) echo "activity $id: refused with declared code $code — sampling the next row" ;;
+                *) echo "activity $id: refused with UNDECLARED code $code"; rc=1; validated=1; break ;;
+            esac
+        done
+        if [ "$validated" = "0" ]; then
+            echo "activity: every sampled row refused, so activity.json was never validated against a payload"; rc=1
+        fi
     fi
     # the envelope schema covers BOTH arms, so this one is never skipped
     errs=$(STRIDE_FORMAT=json ./stride summary 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1 || true)

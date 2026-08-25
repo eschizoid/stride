@@ -253,6 +253,24 @@ Report :: [].{
     # here, "six" in the commit message, and a list naming `season` two files over. A number
     # in a comment is a claim like any other.
     #
+    # CONTRACT FOR CALLERS: a command that reads `daily_load` must guard THAT column before
+    # calling this. The reason is the user's path, not consistency for its own sake. With
+    # both faults present, `analyze` — the daily_load remedy — clears the poisoned day AND
+    # surfaces the activity fault in the same run, exiting non-zero: one user action between
+    # the two messages. Measured. Reverse the order and it costs strictly more — the user
+    # deletes the activity row, re-syncs, runs `compare`, and meets a second failure nobody
+    # warned them about, which `analyze` would have told them for free.
+    #
+    # `stats` and `week` name the activity row first, and that is not an inconsistency to
+    # tidy away: they never read `daily_load`, so it is the only fault they can see. Every
+    # message is true and the terminal state is reached from either entry point.
+    #
+    # The fragile holder is `summary`, not `compare`. `compare` holds the order locally and
+    # visibly — anchor at :158, sweep at :175. `summary` holds it ACROSS TWO FUNCTIONS: the
+    # daily_load guard, and this sweep inside `hard_day_block!`, which runs later. Nothing
+    # but call order and one e2e check holds that, so it is the site that breaks first if
+    # either function is reorganised.
+    #
     # It exists as a WHOLE-TABLE sweep rather than a per-query guard because of the failure
     # mode it covers, which is the one #249's split had no row for. `summary`, `season` and
     # `plan` compute an ordering or an anchor, and a guard on the read is enough. `compare`

@@ -316,6 +316,12 @@ run_command! = |cmd|
         # value joins or leaves a window by string order. Different failure, named
         # separately rather than folded in here.
         Err(BadActivityDate(raw, id)) => Output.unreadable_activity_date!(raw, id)
+        # Same CODE, different wording. The time half's `raw` is a COMPONENT of start_local,
+        # never the column, so rendering it through the date message put a string that is not
+        # stored inside a parenthetical Output.roc documents as the reproduction handle —
+        # `DELETE FROM activities WHERE start_local='T37:00:00'` matches zero rows, which is
+        # the third instance of that exact defect in this file's history.
+        Err(BadActivityTime(raw, id)) => Output.unreadable_activity_time!(raw, id)
         Err(BadDailyLoadDay(raw)) => Output.unreadable_daily_load_day!(raw)
         Err(SqliteErr(NotADatabase, _)) =>
             Output.err_out!("corrupt_database", "~/.stride/db.sqlite is not a readable SQLite database — restore a backup or re-run `stride init` against a fresh path")
