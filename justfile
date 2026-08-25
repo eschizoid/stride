@@ -186,17 +186,23 @@ schema-check: build
         # it, and that is the gap.
         case "$code" in
             "") ;;
-            # `not_set` is here UNDER PROTEST, and #254 owns removing it. It cannot tell a
-            # key that is unset from one that does not exist — app.roc emits it from
-            # NotFound and Config.roc keeps no known-key list — so while it is allowlisted,
-            # renaming or retiring `timezone` makes this one form skip silently.
+            # `not_set` was here UNDER PROTEST until #254. The protest was that it could
+            # not tell a key that is unset from one that does not exist, so renaming or
+            # retiring `timezone` — the literal this loop fills `<key>` with, forty lines
+            # up — would make this one form skip silently and stop validating config.json
+            # against real data, with the allowlist entry as its cover.
             #
-            # It stays because taking it out is worse TODAY. `stride init` writes zero
-            # config rows, so on a fresh install every key answers `not_set` and removing
-            # this entry turns `just schema-check` red on a correct, uncorrupted new
-            # database. A checker that cries wolf on a clean install is the mirror of the
-            # hole above: a check nobody trusts is as useless as one that always passes.
-            # The hole needs a FUTURE rename to bite; the breakage bit immediately.
+            # #254 split the two: an unrecognised key now answers `unknown_key`, which is
+            # in the REJECTED arm below with the rest of "the recipe derived an argument
+            # the command would not take". So the rename this comment was afraid of is now
+            # a red with a message naming the filler, and `not_set` is left meaning one
+            # thing only — a key stride does read, holding no value.
+            #
+            # In that single meaning it is an ordinary member of this arm, on the same
+            # footing as `no_activities`: `stride init` writes zero config rows, so on a
+            # fresh install every key is genuinely unset and there is no payload to
+            # validate. What makes that a legitimate skip rather than a hole is not this
+            # entry, it is `unknown_key` standing behind it.
             #
             # `irregular_anchor` is here because it is the definition of nothing to say —
             # its own message ends "nothing to compare it against as a repeated workout".
@@ -243,7 +249,7 @@ schema-check: build
                 rc=1; rejected=$((rejected + 1)); continue ;;
             # REJECTED INVOCATIONS, enumerated. This is the recipe's own bug: it derived an
             # argument the command would not take.
-            usage|unknown_command|bad_count|bad_metric|bad_period|bad_value|bad_watts|derived_key)
+            usage|unknown_command|bad_count|bad_metric|bad_period|bad_value|bad_watts|derived_key|unknown_key)
                 echo "$inv: FAILED ($code) — the derived invocation was rejected, not the database"; rc=1; rejected=$((rejected + 1)); continue ;;
             # ...and the TRUE catch-all, which knows nothing and says so. `*)` used to do
             # two jobs — "genuinely a rejected invocation" and "nobody has classified this

@@ -423,7 +423,29 @@ config_show! = |key|
     # the "looks like it worked" trap alive for exactly the people who fell into it — they
     # would see a number the engine never consults. Refusing to set it while still printing
     # it is half a fix.
-    if Config.is_derived(key)
+    # FIRST, and before the db is opened (#254). Whether the binary recognises a key is a
+    # fact about the BINARY — it needs no database, so a typo gets the same answer on a
+    # fresh install as on a populated one.
+    #
+    # This existed as `not_set`, which reads as "the key is fine, it is just empty" — so
+    # the natural next step after `config get timezon` is `config set timezon <value>`,
+    # which succeeds and writes a row nothing reads. Same trap `derived_key` below exists
+    # to prevent from the other direction.
+    #
+    # Ordering it FIRST is what makes `known_key`'s `is_derived` clause load-bearing rather
+    # than decoration. With `is_derived` tested first, that clause was unreachable from the
+    # only caller — deleting it left the whole suite green, which is the shape this file's
+    # `numeric_key` comment calls a rule no test can falsify. Now a derived key must pass
+    # `known_key` to REACH `derived_key`, so dropping the clause turns `config get ftp_ride`
+    # into `unknown_key` and the e2e check for the better message goes red.
+    if !(Config.known_key(key))
+        Output.err_out!("unknown_key", "${key} is not a key stride reads — check the spelling; `stride doctor` lists the config it uses")
+    # A derived key must not be READ back either. Databases created before FTP became
+    # derived still hold ftp_ride / ftp_rowing rows, so echoing the stored value would keep
+    # the "looks like it worked" trap alive for exactly the people who fell into it — they
+    # would see a number the engine never consults. Refusing to set it while still printing
+    # it is half a fix.
+    else if Config.is_derived(key)
         Output.err_out!(
             "derived_key",
             "${key} is derived from your power history, not configured. Any value stored under this key is ignored (older databases may still hold one). `stride summary` shows the value actually in use.",

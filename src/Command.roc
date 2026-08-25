@@ -368,7 +368,7 @@ Command := [
 		## `week` had NO declared codes at all, and now has one: #249 made it refuse an
 		## unplanned activity whose date it used to sort to the epoch and list first.
 		errs(reads("week", [opt("all")], "week.json"), ["unreadable_activity_date"]),
-		errs(reads("config get", [req("<key>")], "config.json"), ["derived_key", "not_set"]),
+		errs(reads("config get", [req("<key>")], "config.json"), ["derived_key", "not_set", "unknown_key"]),
 		reads("--version", [], "version.json"),
 		reads("--help", [], "commands.json"),
 		reads("-h", [], "commands.json"),

@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(807)?
+    checks_ran_exactly!(814)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1664,7 +1664,28 @@ b_config_ftp! = |ctx| {
     check!("...and the requested format still wins", Str.contains(term_out, "schema_version"))?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${term_sess};")
     check!("config get json value", strjq!(ctx, ["config", "get", "timezone"], ".data.value") == ctx.tz)?
-    check!("config get not_set error", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "nope"]), "not_set"))?
+    # #254: `nope` is not a key stride reads, and that is a different fact from "this key
+    # is empty". Both used to answer `not_set`, which reads as "the key is fine, just
+    # empty" and sends the reader to `config set nope <value>` — a write nothing ever
+    # reads back. The pair below is what separates them, and BOTH halves are load-bearing:
+    # the `unknown_key` check alone passes if `known_key` returns False for everything,
+    # and the `not_set` check alone passes if it returns True for everything.
+    check!("config get unknown_key error on a key stride does not read", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "nope"]), "unknown_key"))?
+    # ...and a key it DOES read, spelled right, is not swept in with it. `strava_reads_day`
+    # is recognised and unwritten on this fixture, so this is the recognised-but-unset half
+    # with no setup of its own.
+    check!("...while a recognised key with no value is still not_set", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "strava_reads_day"]), "not_set"))?
+    # the per-sport zone family is a PATTERN, not a listed name — `hr_z2_max_ride` is never
+    # written anywhere in the source, so a known-key set built by grepping for literals
+    # would reject it and break a form the engine actually supports (ReportHealth counts
+    # these with `key GLOB 'hr_z[1-4]_max_?*'`).
+    check!("...and a per-sport zone override is recognised, not unknown", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "hr_z2_max_ride"]), "not_set"))?
+    # a secret has to be recognised too: the read path REDACTS it, and it can only redact a
+    # key it admits exists. Answering unknown_key here would leak that judgement instead.
+    check!("...and a secret is recognised (redaction needs the key to exist)", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "strava_access_token"]), "not_set"))?
+    # ...as does a derived key, whose own refusal is the better message and must not be
+    # swallowed by the unknown_key check that now runs beside it.
+    check!("...and a derived key still says derived_key, not unknown_key", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "ftp_ride"]), "derived_key"))?
     # delete the row rather than storing "" — not because they differ (Db.roc collapses
     # both to NoTz, and doctor reports the same UTC fallback for each; that equivalence
     # is pinned in b_doctor!) but because an absent row is the state a fresh install is
@@ -3757,7 +3778,11 @@ b_agent_loop! = |ctx| {
     }
     declared_probe!("activity 99999999", "activity_not_found", "unknown activity")?
     declared_probe!("tte notanumber", "bad_watts", "unparseable watts")?
-    declared_probe!("config get nosuchkey", "not_set", "absent config key")?
+    declared_probe!("config get nosuchkey", "unknown_key", "unrecognised config key")?
+    # both codes `config get` can reach on an absent value, because they are now different
+    # facts and the table has to attribute each. `strava_reads_day` is recognised and
+    # unwritten on this fixture; `nosuchkey` is neither.
+    declared_probe!("config get strava_reads_day", "not_set", "recognised but unset config key")?
     declared_probe!("top notametric", "bad_metric", "unknown metric")?
     declared_probe!("reps notadate", "usage", "unparseable date")?
     err_probe!("frobnicate", "unknown_command", "unknown command")?
