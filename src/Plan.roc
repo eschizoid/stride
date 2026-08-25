@@ -701,7 +701,23 @@ Plan :: [].{
                             # record needs a `superseded_activity_id` column and a
                             # migration; that is a follow-up, and this is not a substitute
                             # for it.
-                            replaced_note = if replaced != 0 " (replacing activity ${I64.to_str(replaced)}, whose completion of this session is now gone — `stride complete ${I64.to_str(session_id)} ${I64.to_str(replaced)}` puts it back)" else ""
+                            #
+                            # The remedy is EXACTLY invertible on this row, and the reason is
+                            # worth writing down because nothing else records it:
+                            # `replaced_activity` and `dropped_substitute` are mutually
+                            # exclusive in every state the CLI can produce. Every write that
+                            # sets `completed_activity_id` NULLs `substitute_activity_id` in
+                            # the same statement, and the only write that SETS
+                            # `substitute_activity_id` — `skip`'s Sub arm — refuses a `done`
+                            # row. So a row being repaired here cannot also hold a substitute,
+                            # and there is nothing else on it left un-restored. (A test that
+                            # wants both non-zero is probing a hand-edited database.)
+                            #
+                            # "this session's completion", not "it": on the ReleasedFrom arm
+                            # the same call also clears a substitute link on a DIFFERENT
+                            # session, and re-running the remedy does not bring that back.
+                            # The bare pronoun sat one clause away from that sentence.
+                            replaced_note = if replaced != 0 " (replacing activity ${I64.to_str(replaced)}, whose completion of this session is now gone — `stride complete ${I64.to_str(session_id)} ${I64.to_str(replaced)}` puts this session's completion back)" else ""
                             released_note = if released != 0 " (dropping substitute activity ${I64.to_str(released)}, which no longer stands in for this session)" else ""
                             match steal_dead_links!(path, activity_id, session_id)? {
                                 ReleasedFrom(holder) =>

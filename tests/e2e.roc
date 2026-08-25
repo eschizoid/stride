@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(891)?
+    checks_ran_exactly!(901)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2507,6 +2507,17 @@ b_seed_analyze! = |ctx| {
     # ...and an empty capture must FAIL rather than read as conformance, which
     # is what it did before (a crashed binary validated clean)
     check!("an empty payload is not conformance", Str.contains(Str.trim(sh!("out=$(false 2>/dev/null); if [ -z \"$out\" ]; then echo 'no output from `x` — nothing was validated'; fi")), "nothing was validated"))?
+    # ...and neither is a TOOL that cannot see the difference. Several checks distinguish an
+    # integer 0 from a float 0.0 with `jq -r '… | tojson'`, because that is how a wrongly
+    # typed zero shipped: `Str.contains(out, "\"k\":0")` accepts `0.0` by prefix, and
+    # validate.jq's integer test is `floor($v) == $v`, which accepts it too.
+    #
+    # `tojson` only discriminates on jq >= 1.7. jq 1.6 renders every number through a double
+    # and prints `0` for both, so on an older runner those gates go silently blind on the
+    # exact defect they were written for. CI pins no jq version and `ubuntu-latest` floats,
+    # so the assumption is asserted here rather than trusted — the same bargain
+    # `schema-check`'s "a checker that always succeeds is decoration" comment makes.
+    check!("jq can tell an integer 0 from a float 0.0, which several checks below assume", Str.trim(sh!("echo '{\"a\":0.0}' | jq -r '.a | tojson'")) == "0.0")?
     # the error arm of the envelope, with its code vocabulary enumerated: an
     # error code that is not in the schema fails here, which is the same drift
     # bargain additionalKeys makes for payload keys
@@ -4543,25 +4554,33 @@ b_plan! = |ctx| {
     # `ReleasedFrom` arm of #258's fix, and review proved nothing reached it: mutating that
     # arm alone back to `replaced_activity: 0` (and dropping its note) left the suite fully
     # green while restoring the exact silent overwrite #258 closes.
-    # ...and `replan` carries a substitute of its OWN, so the one payload below reports all
-    # three destructions at once. Review proved the third was reached by nothing: mutating
-    # `dropped_substitute` to 0 on this arm alone left the suite green at 825, while the
-    # call still NULLed a real substitute link — the same silent destruction one field over.
-    # `replan` being merely already-done is not enough; its `substitute_activity_id` has to
-    # be non-zero too, which is why 301 exists.
-    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (301,'replan substitute','Ride','${ctx.today}T04:00:00Z',1800,9000),(302,'first claim','Ride','${ctx.today}T05:00:00Z',1800,9000);")
+    # TWO scenarios, not one fused one, because the fused one is UNREACHABLE. A first cut
+    # gave `replan` a substitute by raw SQL so a single payload could carry all three
+    # destructions — and review proved that state is impossible through the CLI: every
+    # write that sets `completed_activity_id` NULLs `substitute_activity_id` in the same
+    # statement, and the only write that SETS `substitute_activity_id` (`skip`'s Sub arm)
+    # refuses a `done` row. So `replaced_activity` and `dropped_substitute` are mutually
+    # exclusive, and a check needing both is probing a hand-edited database.
+    #
+    # Worse than useless: the `ReleasedFrom` arm's `dropped_substitute` was then exercised
+    # ONLY against that impossible input, so a mutant reporting it "only when replaced != 0"
+    # — correct on the fixture, dead in every reachable state — was fully green while
+    # destroying real links. The two arms below are each reachable with ordinary commands.
+    #
+    # Scenario A: an already-DONE victim, claimed by a tombstone-held activity.
+    # Reports `replaced_activity` + `released_substitute_of`.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (302,'first claim','Ride','${ctx.today}T05:00:00Z',1800,9000);")
     _ = stride!(ctx.bin, ctx.home, ["complete", replan, "302"])
-    _ = sql!(ctx.db, "UPDATE planned_sessions SET substitute_activity_id = 301 WHERE id = ${replan};")
     steal_json = stride!(ctx.bin, ctx.home, ["complete", replan, "300"])
     check!("claiming a tombstone-held activity steals the link", Str.contains(steal_json, "\"completed_session\""))?
     check!("...and the SAME payload names the completion it erased", Str.contains(steal_json, "\"replaced_activity\":302"))?
-    check!("...and the substitute link it dropped on this session", Str.contains(steal_json, "\"dropped_substitute\":301"))?
     check!("...alongside the session it stole the link from", Str.contains(steal_json, "\"released_substitute_of\""))?
-    # ...and this payload — three destructions in one — is the one the schema has to admit.
-    # The four conformance lines added in the action block all land on non-steal arms, so
-    # `released_substitute_of` stayed unpinned: deleting it from complete.json left the
-    # suite green while a real steal payload violated it.
-    check!("...and the three-destruction payload conforms to complete.json", Str.trim(sh!("printf '%s' '${steal_json}' | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/complete.json -f tools/validate.jq 2>&1")) == "")?
+    check!("...while dropping no substitute, which that row cannot hold", Str.trim(sh!("printf '%s' '${steal_json}' | jq -r '.data.dropped_substitute | tojson'")) == "0")?
+    # ...and a steal payload is the one the schema has to admit. The four conformance lines
+    # in the action block all land on non-steal arms, so `released_substitute_of` stayed
+    # unpinned: deleting it from complete.json left the suite green while a real steal
+    # payload violated it.
+    check!("...and a steal payload conforms to complete.json", Str.trim(sh!("printf '%s' '${steal_json}' | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/complete.json -f tools/validate.jq 2>&1")) == "")?
     # ...and the human sentence carries BOTH clauses. The arm builds one string from two
     # independent notes, so a clause dropped there is invisible to any JSON assertion.
     # ...re-staged rather than re-read, because the steal CONSUMED the tombstone link: a
@@ -4572,8 +4591,57 @@ b_plan! = |ctx| {
     _ = sql!(ctx.db, "UPDATE planned_sessions SET substitute_activity_id = 300 WHERE id = ${today_sess};")
     steal_human = stride_human!(ctx.bin, ctx.home, ["complete", replan, "300"])
     check!("...and the human line carries both clauses at once", Str.contains(steal_human, "replacing activity 302") and Str.contains(steal_human, "released its old substitute link on session #${today_sess}"))?
-    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (301, 302);")
+    # ...and the REMEDY the note prints is asserted by RUNNING it, not by matching its text.
+    # Swapping the two ids in that sentence — `stride complete <activity> <session>` — was
+    # fully green and printed confidently wrong advice that answers `session_not_found`.
+    # Running it is the stronger claim anyway: the overwrite is exactly invertible on this
+    # row, because a row holding a completion cannot also hold a substitute (the
+    # mutual-exclusivity note above), so nothing else on it is left un-restored.
+    check!("...and the remedy it prints names the right two ids in the right order", Str.contains(steal_human, "`stride complete ${replan} 302` puts this session's completion back"))?
+    _ = stride!(ctx.bin, ctx.home, ["complete", replan, "302"])
+    check!("...and running it verbatim restores the completion it named", Str.trim(sql!(ctx.db, "SELECT COALESCE(completed_activity_id,0) FROM planned_sessions WHERE id = ${replan};")) == "302")?
+    _ = stride!(ctx.bin, ctx.home, ["complete", replan, "300"])
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 302;")
     check!("the tombstone link was released", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE substitute_activity_id = 300;")) == "0")?
+    # ── Scenario B: a victim SKIPPED WITH A SUBSTITUTE, claimed by a tombstone-held
+    # activity. Reports `dropped_substitute` + `released_substitute_of`, and it is the arm
+    # nothing reached: a mutant reporting `dropped_substitute` only when `replaced != 0`
+    # was fully green, because the only test touching this arm used a hand-edited row that
+    # had both. Built with ordinary commands end to end — no raw SQL — precisely because
+    # the point is that a user gets here in four steps.
+    # TWO trios, not one re-staged one. The steal consumes both links, and the victim ends
+    # `done`, so `skip` refuses to put the substitute back — there is no CLI way to re-stage
+    # this state, and reaching for raw SQL is exactly what produced the impossible fixture
+    # above. A second trio costs four commands and stays honest about reachability.
+    #
+    # The victim and the holder must be on DIFFERENT dates: `week add` on a date that
+    # already has a session supersedes it, which is how the holder's tombstone is made, and
+    # doing it on the victim's date would supersede the victim instead.
+    bstage! = |vday, hday, sub_act, claim_act| {
+        vic = Str.trim(strjq!(ctx, ["week", "add", vday, "endurance", "B victim", "r"], ".data.id"))
+        hold = Str.trim(strjq!(ctx, ["week", "add", hday, "endurance", "B holder", "r"], ".data.id"))
+        _ = stride!(ctx.bin, ctx.home, ["skip", vic, "did ${sub_act} instead", sub_act])
+        _ = stride!(ctx.bin, ctx.home, ["skip", hold, "did ${claim_act} instead", claim_act])
+        # ...and supersede the holder, so the claimant's link is display-dead and stealable
+        sup = Str.trim(strjq!(ctx, ["week", "add", hday, "endurance", "B supersedes holder", "r"], ".data.id"))
+        Ok({ vic, hold, sup })
+    }
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (306,'B victim substitute','Ride','2099-10-01T07:00:00Z',1800,9000),(307,'B claimant','Ride','2099-10-02T08:00:00Z',1800,9000),(308,'B2 victim substitute','Ride','2099-10-03T07:00:00Z',1800,9000),(309,'B2 claimant','Ride','2099-10-04T08:00:00Z',1800,9000);")
+    b1 = bstage!("2099-10-01", "2099-10-02", "306", "307")?
+    b_json = stride!(ctx.bin, ctx.home, ["complete", b1.vic, "307"])
+    check!("a claim on a substituted session names the substitute it destroyed", Str.contains(b_json, "\"dropped_substitute\":306"))?
+    check!("...alongside the session it stole the claimant's link from", Str.contains(b_json, "\"released_substitute_of\":${b1.hold}"))?
+    # ...and `replaced_activity` is 0 here, which is not a weaker assertion but the one that
+    # proves the two fields are independent: a `dropped_substitute` wired to fire only when
+    # `replaced_activity` does would report 0 on this payload, and that mutant was green.
+    check!("...while replacing no completion, because a skipped row holds none", Str.trim(sh!("printf '%s' '${b_json}' | jq -r '.data.replaced_activity | tojson'")) == "0")?
+    check!("...and the substitute link really is gone from the row", Str.trim(sql!(ctx.db, "SELECT COALESCE(substitute_activity_id,0) FROM planned_sessions WHERE id = ${b1.vic};")) == "0")?
+    check!("...and this payload conforms too", Str.trim(sh!("printf '%s' '${b_json}' | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/complete.json -f tools/validate.jq 2>&1")) == "")?
+    b2 = bstage!("2099-10-03", "2099-10-04", "308", "309")?
+    b_human = stride_human!(ctx.bin, ctx.home, ["complete", b2.vic, "309"])
+    check!("...and the human line names both, on a fresh instance of the same state", Str.contains(b_human, "dropping substitute activity 308") and Str.contains(b_human, "released its old substitute link on session #${b2.hold}"))?
+    check!("...without claiming a completion was replaced", !(Str.contains(b_human, "replacing activity")))?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date LIKE '2099-10-%'; DELETE FROM activities WHERE id IN (306, 307, 308, 309);")
     # a bare re-skip PRESERVES a substitute link (judgment-tier survives wording fixes)
     resess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "reskip probe", "r"], ".data.id"))
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (303,'probe spin','Ride','${ctx.d1}T09:00:00Z',1800,9000);")
@@ -4620,8 +4688,8 @@ b_plan! = |ctx| {
     # did for `replaced` — `released = prior.s` survived both other checks, because the two
     # agree everywhere except here.
     _ = sql!(ctx.db, "UPDATE planned_sessions SET substitute_activity_id = 303 WHERE id = ${resess};")
-    promo = stride!(ctx.bin, ctx.home, ["complete", resess, "303"])
-    check!("...and promoting the substitute to the completion drops nothing", Str.contains(promo, "\"dropped_substitute\":0,") or Str.contains(promo, "\"dropped_substitute\":0}"))?
+    _promo = stride!(ctx.bin, ctx.home, ["complete", resess, "303"])
+    check!("...and promoting the substitute to the completion drops nothing", strjq!(ctx, ["complete", resess, "303"], ".data.dropped_substitute | tojson") == "0")?
     # ...and the HUMAN line, which needs its own re-stage for the reason above: without it
     # the substitute is already NULL and this assertion is true under any implementation.
     # Review proved that: guarding the note on `prior.s != 0` while valuing it on `released`
