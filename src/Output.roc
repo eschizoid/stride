@@ -156,6 +156,30 @@ Output :: [].{
     say! : Str => Try({}, _)
     say! = |msg| Stderr.line!(msg)
 
+    # ── prose only a HUMAN can act on (#259) ─────────────────────────────
+    #
+    # `auth`'s paste-the-code instructions, and nothing else so far. Unlike `say!` these
+    # are the command's PRIMARY output in human mode, so they belong on stdout there —
+    # and unlike a table they are not the machine answer, so in JSON mode they must not.
+    #
+    # They were unconditional `Stdout.line!`/`Stdout.write!`, which put prose on the
+    # envelope's channel. The prompt made it visible rather than merely untidy: written
+    # without a trailing newline, it left the envelope on the SAME LINE —
+    # `code: {"error":{"code":"stdin_closed",...}}` — so `stride auth --json | tail -1 |
+    # jq` was a parse error. `stdin_closed` exists to tell an unattended caller there was
+    # no terminal to paste into, which is exactly the caller that parses rather than reads.
+    #
+    # Stderr rather than suppressed: a human running `stride auth --json` still deserves
+    # to see what to do, and stderr carries no contract, so nothing on stdout moves.
+    human_line! : Str => Try({}, _)
+    human_line! = |msg| if json_mode!({}) Stderr.line!(msg) else Stdout.line!(msg)
+
+    # ...and the no-newline form, for a prompt the answer is typed after. In JSON mode it
+    # goes to stderr as a full LINE: the reason to omit the newline is that a human types
+    # on the same row, and there is nobody typing on stderr.
+    human_write! : Str => Try({}, _)
+    human_write! = |msg| if json_mode!({}) Stderr.line!(msg) else Stdout.write!(msg)
+
     # a known, user-fixable error: machine-readable JSON for tool callers, a plain
     # line for humans, and exit 1 either way (#163) — the payload carries the
     # failure, the status carries the fact that there WAS one.

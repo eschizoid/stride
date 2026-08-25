@@ -40,8 +40,30 @@ Strava :: [].{
     # failure — the URL is always printed as the manual fallback. exec_output! (not
     # exec!) so a failing launcher can't spew stderr into the auth instructions or
     # hand the inherited TTY to a console browser on headless boxes.
+    # ...and NOT when the token endpoint is a loopback mock. `STRIDE_API_BASE` is the e2e
+    # seam, so a loopback base means a test — while the authorize URL stays real always,
+    # which is what made `just test` open seven strava.com tabs on a dev machine and
+    # `just e2e-sync` an eighth. Silent in CI, where `open`/`xdg-open` do not exist and both
+    # arms take their Err path, so nothing noticed for as long as it has been true.
+    #
+    # This is a PREFIX test, not `Config.api_base_allowed`, and the difference matters. That
+    # predicate is structural precisely to reject the prefix trap its own comment names —
+    # `http://localhost:8799@attacker.tld` starts with `http://localhost:` and resolves to
+    # attacker.tld. This is safe only because it reads `api_base!({})`, which has ALREADY
+    # applied the allow-list and returned real Strava for anything it rejects. So the
+    # obligation on the next reader: do NOT hoist these two calls into a direct
+    # `Env.var_str!` as a tidy-up, because that is exactly what makes the bypass live.
+    #
+    # It can also suppress the browser for someone who is not testing: a human pointing the
+    # TOKEN endpoint at a loopback proxy still needs a real browser to obtain the code. The
+    # cost is bounded — the URL is still printed, and the docs call that the manual fallback
+    # — but it degrades from "tab plus URL" to "URL", which is a real if small behaviour
+    # change keyed off a variable that nominally means something else.
     open_browser! : Str => {}
     open_browser! = |url|
+        if Str.starts_with(api_base!({}), "http://127.0.0.1") or Str.starts_with(api_base!({}), "http://localhost") {
+            {}
+        } else
         match Cmd.new(OsStr.from_str("open")).arg(OsStr.from_str(url)).exec_output!() {
             Ok(_) => {}
             Err(_) =>
@@ -90,15 +112,18 @@ Strava :: [].{
     auth_flow! : Str, Str, Str => Try({}, _)
     auth_flow! = |path, client_id, client_secret| {
         url = "https://www.strava.com/oauth/authorize?client_id=${client_id}&response_type=code&redirect_uri=http://localhost&approval_prompt=auto&scope=read,activity:read_all"
-        Stdout.line!("1) Click Authorize in the browser tab that just opened (URL below if it didn't):")?
-        Stdout.line!("")?
-        Stdout.line!("   ${url}")?
-        Stdout.line!("")?
+        # Output.human_line!, not Stdout.line! — stdout carries the envelope in JSON mode
+        # and this prose is not it (#259). The prompt below is the one that made it more
+        # than untidy: no trailing newline meant the envelope landed on the same line.
+        Output.human_line!("1) Click Authorize in the browser tab that just opened (URL below if it didn't):")?
+        Output.human_line!("")?
+        Output.human_line!("   ${url}")?
+        Output.human_line!("")?
         open_browser!(url)
-        Stdout.line!("2) You'll land on a localhost page that fails to load — that's expected.")?
-        Stdout.line!("   Copy the code=XXXX value from the address bar and paste it here.")?
-        Stdout.line!("")?
-        Stdout.write!("code: ")?
+        Output.human_line!("2) You'll land on a localhost page that fails to load — that's expected.")?
+        Output.human_line!("   Copy the code=XXXX value from the address bar and paste it here.")?
+        Output.human_line!("")?
+        Output.human_write!("code: ")?
         code_raw = Stdin.line!()?
         code = Str.trim(code_raw)
         form = "client_id=${client_id}&client_secret=${client_secret}&code=${code}&grant_type=authorization_code"
@@ -108,7 +133,19 @@ Strava :: [].{
         # persist client creds so sync never needs env vars again
         Db.config_set!(path, "strava_client_id", client_id)?
         Db.config_set!(path, "strava_client_secret", client_secret)?
-        Stdout.line!("authorized — tokens stored. Run `stride sync` to pull your activities.")
+        # ...and the SUCCESS line was the same defect as the prompt, one path over: bare
+        # prose on stdout in JSON mode, so a caller that survived the prompt collision
+        # still got something `jq` cannot read. `init` had exactly this and was fixed to
+        # `Output.out!` on the grounds that "EVERY machine response is a versioned
+        # envelope" is only true if the setup steps honor it too; auth is the other setup
+        # step, and the command table publishing six machine-readable error codes for it
+        # is a promise that its stdout is parseable.
+        #
+        # `expires_at` rather than a bare success flag: it is the one fact a caller can act
+        # on (when to expect the refresh), it is already in hand, and a payload whose only
+        # field restates the exit code carries nothing. Tokens themselves never appear —
+        # the same rule `config get` enforces, for the same reason.
+        Output.out!({ authorized: 1 == 1, expires_at: tokens.expires_at }, |_| "authorized — tokens stored. Run `stride sync` to pull your activities.")
     }
     decode_tokens : List(U8) -> Try(TokenResp, _)
     decode_tokens = |body| {

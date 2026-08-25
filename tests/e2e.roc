@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(846)?
+    checks_ran_exactly!(859)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -377,6 +377,61 @@ run_sync! = || {
     _ = sync_stride!(bin, home, base, ["config", "set", "hr_z2_max", "153"])
     _ = sync_stride!(bin, home, base, ["config", "set", "hr_z3_max", "168"])
     _ = sync_stride!(bin, home, base, ["config", "set", "hr_z4_max", "183"])
+
+    # ── auth, end to end against the mock (#259). The ONE payload path no other pass
+    # reaches: `just schema-check` selects `mutates == false and network == false and
+    # interactive == false`, and the command table sets all three the other way for `auth`,
+    # so this payload is validated by neither pass — the set ADR 0000 §9c enumerates.
+    #
+    # Without this arm the success envelope is pinned by nothing. Measured on the first
+    # cut: `Output.out!({ authorized: 1 == 2, expires_at: 0 }, ...)` — a successful auth
+    # reporting `authorized: false` — passed `just build`, `just e2e` and `just schema-check`
+    # at exit 0, and schema-check never printed the word "auth".
+    #
+    # It runs HERE rather than in `b_auth!` because it needs the mock's /oauth/token
+    # endpoint, which only this driver has. `b_auth!` keeps the refusal paths, which need
+    # no network.
+    ahome = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+    _ = sync_stride!(bin, ahome, base, ["init"])
+    auth_ok = Str.trim(sh!("echo fakecode | env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret HOME='${ahome}' STRIDE_API_BASE='${base}' STRIDE_FORMAT=json '${bin}' auth 2>/dev/null"))
+    check!("auth's success payload conforms to its schema", Str.trim(sh!("printf '%s' '${auth_ok}' | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/auth.json -f tools/validate.jq 2>&1")) == "")?
+    check!("...reporting the authorization it actually performed", Str.trim(sh!("printf '%s' '${auth_ok}' | jq -r '.data.authorized'")) == "true")?
+    # `tojson`, NOT `== "9999999999"`: the validator's integer test is `floor($v) == $v`,
+    # which `9999999999.0` passes, and a `"expires_at":9` substring passes too. The record
+    # literal carries no annotation and its render closure is `|_|`, so nothing in the
+    # source pins the type — the only thing making this an integer is `TokenResp.expires_at`
+    # two hops away in `decode_tokens`. The mock's value is deliberately not 0 or 1.
+    check!("...with an expiry the validator itself cannot type-check", Str.trim(sh!("printf '%s' '${auth_ok}' | jq -r '.data.expires_at | tojson'")) == "9999999999")?
+    # ...and the EFFECT, not just the envelope. `authorized: true` is a claim about database
+    # state and nothing read the database: deleting `save_tokens!` left all four original
+    # checks green while `auth` reported success, printed "tokens stored", stored nothing,
+    # and the next `sync` answered not_authenticated.
+    #
+    # These replace a `!contains(out, "mock-access")` check that was an absence assertion
+    # three ways over. It passed on an error envelope, on an empty string and on a crash;
+    # it was redundant, because `additionalKeys: false` already rejects a token key; and it
+    # was fixture-coupled — renaming the mock's token made it permanently green while a
+    # payload that leaked one still passed it. The pair below asserts the tokens ARE in the
+    # db and the schema keeps them OUT of the payload, so the fixture literals are
+    # load-bearing in the direction that can fail.
+    adb = "${ahome}/.stride/db.sqlite"
+    check!("...and the tokens it says it stored are actually in the db", Str.trim(sql!(adb, "SELECT value FROM config WHERE key='strava_access_token';")) == "mock-access")?
+    check!("...both of them, since a dead refresh token bricks the next sync", Str.trim(sql!(adb, "SELECT value FROM config WHERE key='strava_refresh_token';")) == "mock-refresh")?
+    check!("...and the expiry it REPORTED is the one it persisted", Str.trim(sql!(adb, "SELECT value FROM config WHERE key='strava_expires_at';")) == "9999999999")?
+    # ...and the CLIENT CREDS, written by the two lines immediately after save_tokens!.
+    # Deleting those left all three checks above green, and the failure is delayed, which
+    # is worse: sync works that afternoon on the still-fresh access token, and the next
+    # morning the refresh path raises MissingEnv and the user is told to open an issue.
+    check!("...and the client creds beside them, whose loss surfaces a day later as a bug report", Str.trim(sql!(adb, "SELECT value FROM config WHERE key='strava_client_id';")) == "e2e-id")?
+    check!("...both, since either one missing breaks the refresh", Str.trim(sql!(adb, "SELECT value FROM config WHERE key='strava_client_secret';")) == "e2e-secret")?
+    # ...and the form the bug report actually names. Every check above uses
+    # STRIDE_FORMAT=json, which never reaches `--json`'s re-exec in app.roc — a different
+    # mechanism that has to preserve stdin (the paste), stdout (the envelope) and the exit
+    # code. A regression there breaks `stride auth --json | tail -1 | jq` verbatim while
+    # this driver reports its exact count.
+    auth_flag = Str.trim(sh!("echo fakecode | env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret HOME='${ahome}' STRIDE_API_BASE='${base}' '${bin}' auth --json 2>/dev/null | tail -1 | jq -r '.data.authorized'"))
+    check!("...and --json, the flag the bug report names, survives its re-exec with stdin", auth_flag == "true")?
+    _ = sh!("rm -rf '${ahome}'")
 
     _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','stale-access'),('strava_refresh_token','stale-refresh'),('strava_expires_at','1');")
 
@@ -591,7 +646,7 @@ run_sync! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_at_least!(41)?
+    checks_ran_at_least!(50)?
     Stdout.line!("SYNC E2E CHECKS PASS")
 }
 
@@ -1550,6 +1605,98 @@ b_auth! = |ctx| {
     # mirror the bash: unset any real creds (env -u) and feed EOF on stdin
     out = sh!("env -u STRAVA_CLIENT_ID -u STRAVA_CLIENT_SECRET HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' auth < /dev/null")
     check!("credless auth gives setup guidance", Str.contains(out, "missing_client_creds"))?
+    # ── #259: with creds present, auth reaches the paste prompt and then hits EOF. That
+    # is `stdin_closed`, the code whose whole purpose is telling an unattended caller
+    # there was no terminal — so it is the code most likely to be PARSED rather than read,
+    # and it was the one the prompt collided with.
+    #
+    # stdout ALONE, deliberately: `sh!` merges the streams elsewhere in this file, which
+    # would hide the whole defect, since the bytes were always present — just on the wrong
+    # channel and the wrong line. 2>/dev/null is what makes this check able to fail.
+    # STRIDE_API_BASE on a loopback port NOTHING listens on. Every invocation below hits EOF
+    # at the paste prompt and returns before `post_form!`, so the base is never dialled — it
+    # reaches only `open_browser!`, whose loopback gate is the point. Without it these seven
+    # invocations each opened a real strava.com tab: the gate landed in the same commit as
+    # a claim that `just test` no longer does that, and `just test` still did, because the
+    # only arm that set a base was in `run_sync!`, which `just test` never runs. One
+    # unasserted source change, one measured-false sentence in a commit message.
+    creds = "env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret STRIDE_API_BASE=http://127.0.0.1:1 HOME='${ctx.home}'"
+    auth_stdout = Str.trim(sh!("${creds} STRIDE_FORMAT=json '${ctx.bin}' auth < /dev/null 2>/dev/null"))
+    check!("auth --json puts nothing but the envelope on stdout", Str.starts_with(auth_stdout, "{") and Str.ends_with(auth_stdout, "}"))?
+    # ...and it is ONE line, which `starts_with {` alone does not establish: the prompt was
+    # written without a newline, so the envelope shared its row and the whole thing still
+    # ended in `}`. This is the assertion the bug report's `| tail -1 | jq` stands for.
+    check!("...on one line, so `tail -1 | jq` parses it", Str.trim(sh!("${creds} STRIDE_FORMAT=json '${ctx.bin}' auth < /dev/null 2>/dev/null | wc -l | tr -d ' '")) == "1")?
+    check!("...carrying the code that says why", Str.contains(auth_stdout, "stdin_closed"))?
+    check!("...and it survives jq, which is the whole point", Str.trim(sh!("${creds} STRIDE_FORMAT=json '${ctx.bin}' auth < /dev/null 2>/dev/null | tail -1 | jq -r '.error.code' 2>&1")) == "stdin_closed")?
+    # the prose is not DELETED, only moved — a human running --json still needs to know
+    # what to paste. Asserting its presence on stderr is what separates "moved" from
+    # "suppressed", and a fix that just dropped the lines would pass every check above.
+    auth_stderr = sh!("${creds} STRIDE_FORMAT=json '${ctx.bin}' auth < /dev/null 2>&1 1>/dev/null")
+    check!("...while the paste instructions moved to stderr rather than vanishing", Str.contains(auth_stderr, "Copy the code=XXXX value") and Str.contains(auth_stderr, "code:"))?
+    # HUMAN mode is unchanged: the instructions are this command's primary output there,
+    # so they stay on stdout. Without this, "move the prose to stderr" unconditionally
+    # would pass everything above and leave `stride auth` printing nothing to a human.
+    auth_human = sh!("${creds} STRIDE_FORMAT=human '${ctx.bin}' auth < /dev/null 2>/dev/null")
+    check!("...and human mode still prints the instructions on stdout", Str.contains(auth_human, "Copy the code=XXXX value"))?
+    # ...as LINES, which `Str.contains` cannot see. Swapping human mode's `Stdout.line!`
+    # for `Stdout.write!` left the suite green while welding the whole screen into one
+    # string — the authorize URL fused to the `2)` that follows it, so the manual fallback
+    # the flow depends on is not even selectable as a URL. Presence on a channel and
+    # legibility are different properties, and only the first was asserted.
+    #
+    # EXACT, not a floor. `>= 6` against an actual 8 left two mutants alive in the slack:
+    # welding only the second instruction block gives 7, and turning `human_write!`'s
+    # human branch into `Stdout.line!` — which deletes the entire reason that helper exists
+    # separately, since the prompt then stops sitting on the row the user types on — gives
+    # 9. Both passed a floor of 6, one of them under a check named "not one welded string".
+    # The objection to exact counts elsewhere in this file is that they cost a bump per
+    # added check; this is a fixed block of prose, not a growing tally, so it changes only
+    # when someone edits the screen, which is exactly when a look is wanted.
+    check!("...as separate lines, not one welded string, and not one line more", Str.trim(sh!("${creds} STRIDE_FORMAT=human '${ctx.bin}' auth < /dev/null 2>/dev/null | wc -l | tr -d ' '")) == "8")?
+    check!("...with the authorize URL alone on its own line, since it is the manual fallback", Str.trim(sh!("${creds} STRIDE_FORMAT=human '${ctx.bin}' auth < /dev/null 2>/dev/null | grep -c '^   https://www.strava.com/oauth/authorize' | tr -d ' '")) == "1")?
+    # ...and the instruction numbered 1 comes first. The exact line count pins welding and
+    # splitting and says nothing about ORDER: swapping the two numbered blocks keeps it at
+    # 8, keeps the URL alone on its line, keeps every `contains` true — and puts "Click
+    # Authorize in the browser tab that just opened (URL below if it didn't)" BELOW the URL
+    # it points at.
+    check!("...and the steps are in order, which a line count cannot see", Str.starts_with(Str.trim(sh!("${creds} STRIDE_FORMAT=human '${ctx.bin}' auth < /dev/null 2>/dev/null | head -1")), "1) "))?
+    # ── the browser gate itself, in BOTH directions (#259). It shipped unasserted, and both
+    # things that happens went on to happen: the commit claimed `just test` no longer opens
+    # seven strava.com tabs while it still did, and inverting the condition — no browser for
+    # a real user, one per test — was fully green.
+    #
+    # A stub `open` on PATH in a throwaway dir, touching a marker. `open` is what
+    # `open_browser!` tries first and it succeeds, so `xdg-open` is never reached.
+    stub = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+    _ = sh!("printf '#!/bin/sh\\ntouch \"${stub}/opened\"\\n' > '${stub}/open'; chmod +x '${stub}/open'")
+    # Each probe reports the marker AND a word proving the binary actually ran, because
+    # "no browser opened" is also what a command that never started looks like. The first
+    # cut single-quoted `PATH="${stub}:$PATH"`, so sh took `$PATH` literally, `env` was not
+    # on the path, the invocation failed — and the loopback probe passed anyway, on exactly
+    # that vacuity. The real-base probe failing is the only reason it was noticed.
+    check!("a loopback token endpoint opens no browser — nothing on this machine is authorizing", Str.trim(sh!("rm -f '${stub}/opened'; PATH=\"${stub}:$PATH\" ${creds} '${ctx.bin}' auth < /dev/null 2>&1 | grep -qi 'stdin closed' && { [ -e '${stub}/opened' ] && echo opened || echo quiet; } || echo 'auth did not run'")) == "quiet")?
+    # ...and `localhost`, the OTHER spelling the gate accepts and the suite never uses.
+    # Every base string in this repo is `127.0.0.1` — seven mock instances in the justfile
+    # and the one above — so deleting the `localhost` disjunct was fully green while a
+    # contributor pointing a mock at `localhost:8799`, a spelling `api_base_allowed`
+    # explicitly permits, got a browser tab per run.
+    check!("...and the localhost spelling of loopback too, which no fixture otherwise uses", Str.trim(sh!("rm -f '${stub}/opened'; PATH=\"${stub}:$PATH\" env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret STRIDE_API_BASE=http://localhost:1 HOME='${ctx.home}' '${ctx.bin}' auth < /dev/null 2>&1 | grep -qi 'stdin closed' && { [ -e '${stub}/opened' ] && echo opened || echo quiet; } || echo 'auth did not run'")) == "quiet")?
+    # ...and the half that matters more, because the inversion passed everything else: a
+    # REAL base must still open one. Without this, "never open a browser" is green.
+    check!("...while a real base still does, which is the whole flow", Str.trim(sh!("rm -f '${stub}/opened'; PATH=\"${stub}:$PATH\" env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret HOME='${ctx.home}' '${ctx.bin}' auth < /dev/null 2>&1 | grep -qi 'stdin closed' && { [ -e '${stub}/opened' ] && echo opened || echo quiet; } || echo 'auth did not run'")) == "opened")?
+    # ...and the xdg-open FALLBACK, which this PR made unreachable everywhere. Before the
+    # loopback base landed in `creds`, the seven b_auth! invocations set none, so on Linux
+    # CI `open` was absent and this arm executed seven times a run — executed, never
+    # asserted. Now the gate returns early for all seven and probe 2 supplies a working
+    # `open`, so nothing reaches it on any platform: a downgrade from weak coverage to
+    # none, on the arm carrying the documented hang hazard.
+    #
+    # A stub `open` that EXITS 1 drives it, with no PATH surgery beyond what is already
+    # here — `open_browser!` tries `open` first and falls through on Err.
+    _ = sh!("printf '#!/bin/sh\\nexit 1\\n' > '${stub}/open'; printf '#!/bin/sh\\ntouch \"${stub}/xdg\"\\n' > '${stub}/xdg-open'; chmod +x '${stub}/open' '${stub}/xdg-open'")
+    check!("...and a failing `open` falls through to xdg-open, the arm nothing else reaches", Str.trim(sh!("rm -f '${stub}/xdg'; PATH=\"${stub}:$PATH\" env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret HOME='${ctx.home}' '${ctx.bin}' auth < /dev/null 2>&1 | grep -qi 'stdin closed' && { sleep 1; [ -e '${stub}/xdg' ] && echo fellthrough || echo quiet; } || echo 'auth did not run'")) == "fellthrough")?
+    _ = sh!("rm -rf '${stub}'")
     Ok({})
 }
 
