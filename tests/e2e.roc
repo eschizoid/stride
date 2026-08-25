@@ -4763,11 +4763,31 @@ b_plan! = |ctx| {
     # `Plan.roc` states that a row cannot hold both a completion and a substitute, and
     # #258's remedy is only exactly invertible because of it — "nothing else on that row
     # left un-restored" is that sentence. It was written from reading two code paths; this
-    # is the fixture, which has just driven skip, complete, rest-complete, release, steal
-    # and promotion across many rows, agreeing. It is deliberately over the WHOLE table and
-    # not a window, so a row any earlier block left in the impossible state is caught here
-    # rather than by whoever relies on the invariant next.
-    check!("no row holds both a completion and a substitute, which the remedy depends on", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE COALESCE(completed_activity_id,0) <> 0 AND COALESCE(substitute_activity_id,0) <> 0;")) == "0")?
+    # is the fixture agreeing.
+    #
+    # The pairing count ALONE is not a measurement. Every scenario above clears the
+    # substitute link as it goes, so by the time control reaches here the table holds rows
+    # with completions and NO row with a live substitute — and "none paired" over an empty
+    # half is true of any implementation. Review measured that directly: comp=3, sub=0,
+    # pairs=0. So stage one substitute-holding row reachably (`week add` + `skip`, no hand
+    # edit) and assert all three numbers: rows of BOTH kinds present, none paired.
+    #
+    # Activity 303 and not 306: the B-scenario deletes 306-309 at its own cleanup, and a
+    # skip naming a deleted activity answers `activity_not_found` and links nothing — which
+    # is exactly how the first version of this staging left `sub=0` while looking staged.
+    # 300/303/304 survive until the cleanup two lines below.
+    #
+    # Deliberately over the WHOLE table and not a window — but "any earlier block" is the
+    # honest scope, and `b_plan!` is block 9 of 27: `b_agent_loop!`, where #258's payload
+    # assertions live, runs 13 blocks later and is invisible to this check. A later fixture
+    # that legitimately hand-edits a paired row (probing corrupt-db handling, say) would
+    # trip this from another block; the failure would name the plan scenario, which is the
+    # cheap direction to be wrong in.
+    inv_sub = Str.trim(strjq!(ctx, ["week", "add", "2099-10-09", "endurance", "invariant substitute holder", "r"], ".data.id"))
+    _ = stride!(ctx.bin, ctx.home, ["skip", inv_sub, "did 303 instead", "303"])
+    inv_counts = Str.trim(sql!(ctx.db, "SELECT 'comp=' || SUM(c) || ' sub=' || SUM(s) || ' pairs=' || SUM(c*s) FROM (SELECT (COALESCE(completed_activity_id,0) <> 0) AS c, (COALESCE(substitute_activity_id,0) <> 0) AS s FROM planned_sessions);"))
+    check!("no row holds both a completion and a substitute, over rows of both kinds (${inv_counts})", !(Str.contains(inv_counts, "comp=0 ")) and !(Str.contains(inv_counts, "sub=0 ")) and Str.ends_with(inv_counts, "pairs=0"))?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${inv_sub};")
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${today_sess}, ${extra_sess}, ${replan}, ${resess}, ${restsess}); DELETE FROM activities WHERE id IN (300, 303, 304);")
 
     # ── plan history + adherence (#158): planned-vs-actual from ONE call.
