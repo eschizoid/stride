@@ -155,6 +155,7 @@ schema-check: build
         # because folding the second into the first turns a correct fresh install red, and
         # folding the first into the second is how a form silently stops being checked.
         nodata=""
+        keyfault=""
         for a in $req; do
             v=""
             case "$a" in
@@ -178,13 +179,33 @@ schema-check: build
                 # rather than skipping — and turns the empty case into a fact the recipe
                 # CHECKED (no config rows at all) rather than an error code that meant two
                 # things. `not_set` is out of the allowlist entirely as a result.
-                "<key>") v=$(STRIDE_FORMAT=json ./stride config 2>/dev/null | jq -r '.data.keys[0].key // empty')
-                       [ -z "$v" ] && nodata="this database has no config set, so there is no payload to validate" ;;
+                # CAPTURE ONCE, then classify — do not pipe an error envelope into `// empty`.
+                # A first cut did, and `2>/dev/null` plus `// empty` collapsed FOUR different
+                # situations into one empty string: no rows, rows that are all `derived` or
+                # `unrecognised`, no database, and a corrupt one. The last two then routed
+                # around the DATA FAULTS arm below — the arm that exists to say "the database
+                # holds a value the engine cannot read" — and got reported as "this database
+                # has no config set", which is a statement, and false.
+                "<key>")
+                    keyout=$(STRIDE_FORMAT=json ./stride config 2>&1)
+                    keyerr=$(printf '%s' "$keyout" | jq -r '.error.code // empty' 2>/dev/null)
+                    if [ -n "$keyerr" ]; then
+                        keyfault="$keyerr"
+                        v=""
+                    else
+                        # `status == "read"` — the listing marks rather than filters, and only
+                        # the read rows have a payload for `config get` to return.
+                        v=$(printf '%s' "$keyout" | jq -r '[.data.keys[] | select(.status == "read")][0].key // empty')
+                        [ -z "$v" ] && nodata="no config key this database has set is one config get returns a payload for"
+                    fi ;;
                 *) skipform="no value known for required argument $a" ;;
             esac
             inv="$inv $v"
         done
         if [ -n "$skipform" ]; then echo "$c: FAILED ($skipform)"; rc=1; continue; fi
+        # a fault reading the LISTING is a fault, not an absence — same wording the data-fault
+        # arm below uses, so the two cannot be told apart by the reader either
+        if [ -n "$keyfault" ]; then echo "$c: FAILED ($keyfault) — the database holds a value the engine cannot read; no payload was produced"; rc=1; rejected=$((rejected + 1)); continue; fi
         if [ -n "$nodata" ]; then echo "$c: skipped ($nodata)"; checked=$((checked + 1)); continue; fi
         out=$(STRIDE_FORMAT=json ./stride $inv </dev/null 2>&1 || true)
         # THREE outcomes, not two. A command that legitimately has nothing to say (fresh

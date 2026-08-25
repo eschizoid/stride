@@ -1,6 +1,6 @@
 {
   "title": "config_list",
-  "description": "Result of bare `stride config` — the config keys that hold a value, sorted. Names only, never values: a listing is a different question from a lookup, and returning values here would be one command that dumps every secret, going around `config get`'s redaction. `redacted: true` marks the entries `config get` will refuse to show, so a caller can tell 'set, and I may read it' from 'set, and I may not' without a call per key. Keys the binary does not read (retired names, rows written by a `config set` typo made before #254 closed that door) are filtered out rather than advertised as working configuration.",
+  "description": "Result of bare `stride config` — every config key that holds a value, sorted by key, each MARKED rather than filtered. Names only, never values: a listing is a different question from a lookup, and returning values would be one command that dumps every secret, going around `config get`'s per-key redaction. `redacted: true` marks the entries `config get` will refuse to show, so a caller can tell 'set, and I may read it' from 'set, and I may not' without a call per key. Keys are NOT filtered out, because hiding a row the engine ignores makes it undiscoverable while leaving it in the database — see `status`.",
   "type": "object",
   "additionalKeys": false,
   "required": [
@@ -12,9 +12,14 @@
       "items": {
         "type": "object",
         "additionalKeys": false,
-        "required": ["key", "redacted"],
+        "required": ["key", "status", "redacted"],
         "properties": {
           "key": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["read", "derived", "unrecognised"],
+            "description": "`read` — the engine consults this key. `derived` — stored and ignored: the `ftp*` family, computed from power history (ADR 0005), which `config get` answers `derived_key` for; these are the rows most likely to be present on a real database, since it predates the derivation. `unrecognised` — a retired name, or a row written by a `config set` typo before #254 refused them. Only `read` keys have a payload `config get` will return, which is what `just schema-check` selects on."
+          },
           "redacted": { "type": "boolean" }
         }
       }

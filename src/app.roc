@@ -491,20 +491,45 @@ config_show! = |key|
 # would refuse to show, so a caller can tell "set, and I may read it" from "set, and I may
 # not" without a second call per key.
 #
-# Rows are filtered through `known_key` for the same reason `config get` refuses one: a
-# database may hold rows from a retired key or from a `config set` typo made before #254
-# closed that door, and listing those would advertise them as configuration that works.
+# Every row that holds a value, MARKED, not filtered. A first cut dropped the rows the
+# engine does not read, and that was the wrong filter twice over. It made the command
+# unable to answer the question it exists for — the help says "list the config that is
+# set", and it answered "list the config that is set AND that I would read", which differ
+# on any database old enough to still hold `ftp_ride` rows. And it turned a visible dead
+# row into an invisible one: after #254 closed `config set timezon x`, a leftover from
+# before could no longer be read, written, or listed, so the only way to find it was
+# sqlite3. For an issue whose subject is "a row nothing reads", hiding those is backwards.
+#
+# `status` instead: `read` (the engine consults it), `derived` (stored, ignored — what
+# `config get` answers `derived_key` for), `unrecognised` (a retired name or a pre-#254
+# typo). That also decouples `just schema-check`, which fills `config get <key>` from this
+# listing: it selects `status == "read"` rather than trusting an upstream filter.
+#
+# Values are NOT returned. A listing is a different question from a lookup, and returning
+# them would make one command that dumps every secret, defeating `config get`'s redaction
+# by going around it. `redacted` marks which entries `config get` will refuse to show, so
+# a caller can tell "set, and I may read it" from "set, and I may not" without a call per
+# key.
+#
+# The emptiness test is the SAME rule `config get` uses, decided in SQL once — see the
+# CAST note in Db.config_get!, which is what stopped the two disagreeing on a blob.
 config_list! : {} => Try({}, _)
 config_list! = |{}| {
     path = Db.open_db!({})?
     rows = Sqlite.query_many!({
         path: Path.utf8(path),
-        query: "SELECT key AS k FROM config WHERE COALESCE(value, '') <> '' ORDER BY key",
+        query: "SELECT key AS k FROM config WHERE COALESCE(CAST(value AS TEXT), '') <> '' ORDER BY key",
         bindings: [],
         rows: Sqlite.str("k"),
     })?
-    known = List.keep_if(rows, |k| Config.known_key(k))
-    entries = List.map(known, |k| { key: k, redacted: Config.is_secret(k) })
+    entries = List.map(
+        rows,
+        |k| {
+            key: k,
+            status: if Config.is_derived(k) "derived" else if Config.known_key(k) "read" else "unrecognised",
+            redacted: Config.is_secret(k),
+        },
+    )
     Output.out!(
         { keys: entries },
         |p|
@@ -512,7 +537,13 @@ config_list! = |{}| {
                 "no config set — `stride config set <key> <value>`"
             else
                 Str.join_with(
-                    List.map(p.keys, |e| if e.redacted "${e.key} = <redacted>" else e.key),
+                    List.map(
+                        p.keys,
+                        |e| {
+                            shown = if e.redacted "${e.key} = <redacted>" else e.key
+                            if e.status == "read" shown else "${shown}  (${e.status})"
+                        },
+                    ),
                     "\n",
                 ),
     )
@@ -528,7 +559,7 @@ config_list! = |{}| {
 # sends the reader somewhere the answer is not is worse than no advice.
 unknown_key_message : Str -> Str
 unknown_key_message = |key|
-    "${key} is not a key stride reads. Settable keys: timezone, utc_offset_minutes, hr_z1_max..hr_z4_max (optionally per sport, e.g. hr_z2_max_ride). FTP is derived, never set."
+    "${key} is not a key stride reads. ${Config.known_key_summary} `stride config` lists what this database has set."
 
 numeric_refusal : Str, Str -> Str
 # arg_i64/arg_f64, NOT is_plain_int/is_plain_decimal. The predicates check SYNTAX; the
@@ -565,7 +596,14 @@ config_store! = |key, val|
     #
     # Internal writers (`Strava.roc`'s token and read-cap bookkeeping) call `Db.config_set!`
     # directly and never pass through here, so this constrains the human/agent surface only.
-    else if !(Config.known_key(key))
+    # ...unless the value is EMPTY, which is the way out for a row that is already there.
+    # #254 closed `config set timezon x`, and closing it without this made a pre-#254
+    # leftover unreachable from the CLI entirely: unreadable (`unknown_key`), unwritable
+    # (`unknown_key`), and — before the listing started marking them — unlistable. The only
+    # remaining tool was sqlite3. Clearing is not the trap the guard exists to prevent: an
+    # empty value reads as `not_set` everywhere and the listing stops showing it, so this
+    # takes the row OUT of the state the issue is about rather than into it.
+    else if !(Config.known_key(key)) and val != ""
         Output.err_out!("unknown_key", unknown_key_message(key))
     else if numeric_refusal(key, val) != ""
         # a stored value that parses nowhere is the same trap as one that is read

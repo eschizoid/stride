@@ -43,7 +43,16 @@ Db :: [].{
     config_get! = |path, key|
         Sqlite.query!({
             path: Path.utf8(path),
-            query: "SELECT value FROM config WHERE key = :key",
+            # CAST(... AS TEXT), and the reason is a real divergence rather than defensive
+            # habit. `value` is declared TEXT, and TEXT affinity converts INTEGER and REAL
+            # but NOT blobs — so a blob written by a hand-edit or a partial corruption
+            # survives in the column, and a bare `Sqlite.str` decode then answers
+            # `UnexpectedType(Bytes)`, which `config get` reports as `internal_error`:
+            # "this is a bug, not the data and not the invocation", about a fault that is
+            # entirely the data. It also made this path disagree with bare `config`, which
+            # asks SQL whether a row holds a value and would list a key `config get` then
+            # refused. One rule, decided in one place.
+            query: "SELECT CAST(value AS TEXT) AS value FROM config WHERE key = :key",
             bindings: [{ name: ":key", value: String(key) }],
             row: Sqlite.str("value"),
         })

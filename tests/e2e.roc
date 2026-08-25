@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(826)?
+    checks_ran_exactly!(833)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1723,11 +1723,31 @@ b_config_ftp! = |ctx| {
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('strava_access_token', 'sekrit-e2e');")
     conf_sec = stride!(ctx.bin, ctx.home, ["config"])
     check!("...naming a set secret without printing it", Str.contains(conf_sec, "strava_access_token") and Str.contains(conf_sec, "\"redacted\":true") and !(Str.contains(conf_sec, "sekrit-e2e")))?
-    # rows the binary does not read are filtered rather than advertised as working config.
-    # A pre-#254 database can hold them: `config set timezon x` used to succeed.
-    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('timezon', 'left over from before #254');")
-    check!("...and hides a row for a key stride does not read", !(Str.contains(strjq!(ctx, ["config"], "[.data.keys[].key] | join(\",\")"), "timezon,")))?
-    _ = sql!(ctx.db, "DELETE FROM config WHERE key IN ('hr_z2_max_ride', 'strava_access_token', 'timezon');")
+    # ── rows the binary does not read are MARKED, not hidden. A first cut filtered them,
+    # which made a pre-#254 leftover (`config set timezon x` used to succeed) unreadable,
+    # unwritable AND unlistable — visible only to sqlite3. For an issue about a row nothing
+    # reads, turning a visible dead row into an invisible one is the wrong direction.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('timezon', 'left over from before #254'), ('ftp_ride', '243');")
+    check!("...while a row for a key stride does not read is SHOWN, marked unrecognised", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"timezon\") | .status] | join(\",\")") == "unrecognised")?
+    # ...and the derived family gets its own marker rather than being lumped in. These are
+    # the rows most likely to be on a real database, and `config get` has a better answer
+    # for them than "unrecognised" — this is the listing agreeing with that answer.
+    check!("...and a derived key is marked derived, not unrecognised", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"ftp_ride\") | .status] | join(\",\")") == "derived")?
+    check!("...while a key the engine consults is marked read", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"timezone\") | .status] | join(\",\")") == "read")?
+    # ...and the human line carries the marker too, so the terminal reader sees it
+    check!("...and the human listing shows the marker", Str.contains(stride_human!(ctx.bin, ctx.home, ["config"]), "timezon  (unrecognised)"))?
+    # ...and a marked-unrecognised row can be CLEARED, which is what makes marking honest.
+    # Refusing every write to an unknown key left the leftover permanently unreachable; an
+    # empty value takes the row OUT of the state #254 is about, so it is not the trap.
+    check!("...and clearing it is allowed, which refusing every write would have prevented", !(Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", ""]), "unknown_key")))?
+    check!("...after which it is gone from the listing", strjq!(ctx, ["config"], "[.data.keys[] | select(.key == \"timezon\")] | length") == "0")?
+    check!("...while a NON-empty write to it is still refused", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", "again"]), "unknown_key"))?
+    # SORTED, which the schema states in prose and nothing validated. schema-check takes
+    # the first `read` entry as its filler, so an unsorted listing makes that filler depend
+    # on SQLite's rowid order — the same staleness the filler change was meant to remove,
+    # one layer down. Dropping `ORDER BY key` left the whole suite green.
+    check!("...and the listing is sorted, which schema-check's filler choice depends on", strjq!(ctx, ["config"], "[.data.keys[].key] == ([.data.keys[].key] | sort)") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key IN ('hr_z2_max_ride', 'strava_access_token', 'timezon', 'ftp_ride');")
     # delete the row rather than storing "" — not because they differ (Db.roc collapses
     # both to NoTz, and doctor reports the same UTC fallback for each; that equivalence
     # is pinned in b_doctor!) but because an absent row is the state a fresh install is

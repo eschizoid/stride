@@ -64,6 +64,18 @@ Config :: [].{
 		)
 		or is_zone_key(k)
 
+	# What the `unknown_key` refusal tells the reader, in one place beside the predicate it
+	# describes. The first cut named four keys while `config set` accepted twelve — the
+	# same "advice pointing where the answer is not" the message was written to replace,
+	# and it contradicted the listing, which shows `last_sync_epoch` and the `strava_*` keys
+	# as set config. Two groups, because the distinction is real: the first are yours, the
+	# second are stride's bookkeeping and are writable only so a broken one can be repaired.
+	#
+	# Pinned against `known_key` below: every literal that predicate accepts has an expect
+	# asserting it appears here, so the two cannot drift.
+	known_key_summary : Str
+	known_key_summary = "Settable: timezone, utc_offset_minutes, hr_z1_max..hr_z4_max (optionally per sport, e.g. hr_z2_max_ride). Written by stride and rarely set by hand: last_sync_epoch, strava_client_id, strava_expires_at, strava_reads_today, strava_reads_day, strava_access_token, strava_refresh_token, strava_client_secret. FTP is derived, never set."
+
 	# `hr_z1_max` .. `hr_z4_max`, optionally suffixed with a sport family
 	# (`hr_z2_max_ride`) — exactly what `Metrics.hr_zone_key_global` and
 	# `Metrics.hr_zone_key` build, and exactly what `ReportHealth` counts with
@@ -253,6 +265,37 @@ expect Config.known_key("hr_z4_max") == True
 expect Config.known_key("hr_z2_max_ride") == True
 expect Config.known_key("hr_z3_max_soccer") == True
 expect Config.known_key("hr_z1_max_standuppaddling") == True
+
+# EVERY digit outside 1..4, not just the two that bracket the range. `hr_z9_max` and
+# `hr_z0_max` alone left 5–8 unpinned, and review proved that mattered: widening the bound
+# by ONE (`d <= 52` -> `d <= 53`) made `config set hr_z5_max 200` succeed and write a row
+# nothing reads — #254's defect, reintroduced, suite green. `hr_z5_max` is also the likeliest
+# wrong edit rather than a contrived one: README calls z5 "everything above hr_z4_max", so a
+# maintainer could reasonably think it belongs in the pattern. It does not; `hr_zone_key` is
+# called only with 1..4, and the globals are four literals.
+expect Config.known_key("hr_z5_max") == False
+expect Config.known_key("hr_z6_max") == False
+expect Config.known_key("hr_z7_max") == False
+expect Config.known_key("hr_z8_max") == False
+expect Config.known_key("hr_z5_max_ride") == False
+
+# the refusal message and the predicate cannot drift: every literal `known_key` accepts is
+# named in the summary the message prints. Without this the two are two lists, and the
+# first cut proved what that costs — a message naming four keys for a predicate accepting
+# twelve, contradicting the listing shipped beside it.
+expect Str.contains(Config.known_key_summary, "timezone")
+expect Str.contains(Config.known_key_summary, "utc_offset_minutes")
+expect Str.contains(Config.known_key_summary, "last_sync_epoch")
+expect Str.contains(Config.known_key_summary, "strava_client_id")
+expect Str.contains(Config.known_key_summary, "strava_expires_at")
+expect Str.contains(Config.known_key_summary, "strava_reads_today")
+expect Str.contains(Config.known_key_summary, "strava_reads_day")
+expect Str.contains(Config.known_key_summary, "strava_access_token")
+expect Str.contains(Config.known_key_summary, "strava_refresh_token")
+expect Str.contains(Config.known_key_summary, "strava_client_secret")
+expect Str.contains(Config.known_key_summary, "hr_z1_max")
+expect Str.contains(Config.known_key_summary, "hr_z4_max")
+expect Str.contains(Config.known_key_summary, "hr_z2_max_ride")
 
 # ...and everything the loose first cut (`starts_with("hr_z") and contains("_max")`) let
 # through while claiming to be the same shape as ReportHealth's `hr_z[1-4]_max_?*`. Each
