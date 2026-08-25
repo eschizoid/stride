@@ -3658,14 +3658,23 @@ b_agent_loop! = |ctx| {
     # without inheriting a second query's date bounds.
     open_ids = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' plan 2>/dev/null | jq -r '[.data.open_sessions[].id] | join(\",\")'"))
     check!("nothing `open_sessions` offers is anything but open in planned_sessions", open_ids != "" and Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE id IN (${open_ids}) AND COALESCE(status,'open') <> 'open';")) == "0")?
-    # The guard is on the comparison DOMAIN, not on the arrays. Asserting both lists
-    # non-empty was entailed by checks that already ran above — `sid_other` is in
-    # `open_sessions`, `sid` is a done row in history — so it could not fail where it
-    # stands. What the check can actually fire on is an in-window row a mutant PROMOTES, so
-    # what has to exist is an overlap and a shut row for a phantom to occupy. Today those
-    # are b_plan!'s two tombstones on ctx.today, which this scenario neither creates nor
-    # names; if they move out of the window the documented mutation survives silently.
-    check!("...over lists that overlap, with a shut row a phantom could occupy", str_to_i64(pj!("[.data.open_sessions[].id] as $o | [.data.plan_history_28d[].id] | map(select(. as $x | $o | index($x))) | length")) > 0 and str_to_i64(pj!("[.data.plan_history_28d[] | select(.status == \"skipped\")] | length")) > 0)?
+    # The guard measures the population the CHECK depends on, which is the table — and the
+    # previous version measured `plan_history_28d`, left over from when the check read it
+    # too. Those can no longer agree: history is windowed on both sides and the table is
+    # not. Review proved the mismatch with a matched pair. Re-date b_plan!'s tombstones out
+    # of the 28-day window and the check is undamaged while the guard fails, crying "no shut
+    # row a phantom could occupy" over a table holding seven of them; apply the same drift
+    # WITH the documented phantom and the check still goes red, because it sees all four
+    # promoted rows through the table regardless of date. A false alarm in the first case
+    # and an actively misleading one in the second.
+    #
+    # The overlap conjunct went with it. After the cleanup `open_sessions` is empty, so
+    # `open_ids != ""` inside the check already goes red — it guarded nothing the check does
+    # not guard itself.
+    #
+    # What genuinely disarms this check is a table with nothing to promote, and that is what
+    # is asserted. Measured: 7 non-open rows at this point.
+    check!("...over a non-empty offer, against a table holding non-open rows to promote", open_ids != "" and str_to_i64(Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE COALESCE(status,'open') <> 'open';"))) > 0)?
 
     # ── cleanup: the loop leaves no trace ───────────────────────────────
     # Deleted by id, and the deletion asserted — every counter this scenario moved has to
