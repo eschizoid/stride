@@ -693,30 +693,54 @@ Render :: [].{
     # forced to write is the branch that runs.
     drain_note : Drain.StopReason, I64 -> Str
     drain_note = |stopped, pending|
-        # `pending` is tested FIRST, before the reason. Nothing is left to do regardless
-        # of why the run ended, and a budget stop that happened to empty the queue is
-        # reachable (the window fills on the read just stored, without inspecting the rest
-        # of the list). Keying this on `stopped` instead printed "0 to go, run `stride
-        # sync` again tomorrow" beside a payload saying resumable: false — the human
-        # and machine surfaces contradicting each other about the same run.
-        if pending == 0 {
-            "all streams present"
-        } else {
-            match stopped {
-                # The ONLY way to drain the queue and still be pending: a stream body
-                # that would not decode is skipped WITHOUT storing, so it retries next
-                # run. A 404 is NOT this case — it stores a `{}` marker and leaves the
-                # pending set at once, which is why "Strava has no streams for these" is
-                # the wrong sentence here however plausible it sounds.
-                Complete => "${I64.to_str(pending)} had unreadable stream data — they retry next sync"
-                BudgetReached => "filled Strava's 15-minute read window — ${I64.to_str(pending)} to go, run `stride sync` again in ~15 minutes"
-                RateLimited => "Strava rate-limited this run — ${I64.to_str(pending)} to go, try again in ~15 minutes"
-                # the ONE stop whose remedy is not fifteen minutes. Strava's daily read
-                # cap resets at UTC midnight, so re-running sooner spends nothing and
-                # gets nothing — and every other arm here says "~15 minutes", which is
-                # what made this the case stride could not express (#246).
-                DailyCapReached => "used up today's Strava read allowance — ${I64.to_str(pending)} to go, run `stride sync` again tomorrow"
-            }
+        # `pending` is tested first for MOST reasons, and the exception is the point.
+        #
+        # For Complete, BudgetReached and RateLimited an empty queue means nothing is left
+        # to do regardless of why the run ended, and a budget stop that happened to empty
+        # the queue is reachable (the window fills on the read just stored, without
+        # inspecting the rest of the list). Keying those on `stopped` instead printed "0 to
+        # go, run `stride sync` again tomorrow" beside a payload saying resumable: false —
+        # the human and machine surfaces contradicting each other about the same run.
+        #
+        # DailyCapReached is NOT one of those. "Nothing is left to do" is false for it in
+        # both directions: the pre-flight refusal arrives here having made no request, so
+        # the queue being empty says nothing about whether work remains; and "all streams
+        # present" would be a positive claim about state the run never looked at. The
+        # sentence that used to sit above this one — "nothing is left to do regardless of
+        # why the run ended" — was true when it was written and stopped being true when
+        # this reason was added.
+        # Each arm states its OWN empty-queue behaviour rather than sharing one test above
+        # the match. The shared test read better and was wrong for one of four reasons, and
+        # a `_` catch-all to carve that one out would have given back exactly the
+        # exhaustiveness this whole type exists to buy — a new StopReason has to stop
+        # compiling HERE, in the branch that runs.
+        match stopped {
+            # The ONLY way to drain the queue and still be pending: a stream body
+            # that would not decode is skipped WITHOUT storing, so it retries next
+            # run. A 404 is NOT this case — it stores a `{}` marker and leaves the
+            # pending set at once, which is why "Strava has no streams for these" is
+            # the wrong sentence here however plausible it sounds.
+            Complete => if pending == 0 "all streams present" else "${I64.to_str(pending)} had unreadable stream data — they retry next sync"
+            BudgetReached => if pending == 0 "all streams present" else "filled Strava's 15-minute read window — ${I64.to_str(pending)} to go, run `stride sync` again in ~15 minutes"
+            RateLimited => if pending == 0 "all streams present" else "Strava rate-limited this run — ${I64.to_str(pending)} to go, try again in ~15 minutes"
+            # the ONE stop whose remedy is not fifteen minutes. Strava's daily read
+            # cap resets at UTC midnight, so re-running sooner spends nothing and
+            # gets nothing — and every other arm here says "~15 minutes", which is
+            # what made this the case stride could not express (#246).
+            #
+            # And the ONE stop that says something on an EMPTY queue. "all streams present"
+            # is a positive claim about state the run never looked at — the pre-flight
+            # refusal arrives here having made no request at all — and staying silent let
+            # `stride sync` print "synced 0 new, 0 updated, fetched streams for 0" and exit
+            # 0 on a day where nothing more would happen. Measured, and it is #246's own
+            # defect in a purer form: not the wrong remedy, but a sentence implying a
+            # successful quiet sync.
+            DailyCapReached =>
+                if pending == 0 {
+                    "used up today's Strava read allowance — nothing was fetched, and nothing will be until it resets; run `stride sync` again tomorrow"
+                } else {
+                    "used up today's Strava read allowance — ${I64.to_str(pending)} to go, run `stride sync` again tomorrow"
+                }
         }
 
     # `plan`'s data-freshness line (#221). "" when there is nothing to say, on the same
@@ -844,11 +868,34 @@ Render :: [].{
                 # compiler named, and still got `— auth_expired — 9 to go`, because the
                 # lookup table it never mentioned had no entry for the new tag. Deleting
                 # the lookup is what closes it.
+                ListDailyCapReached =>
+                    # UNCONDITIONAL, like its sibling above and for the same reason, plus
+                    # one more: this stop is reachable with an empty queue by construction —
+                    # a capped day is exactly the day nothing is left to drain.
+                    " — Strava rate-limited the activity list, so it is incomplete; and today's read allowance is used up. Run `stride sync` again tomorrow"
                 FromDrain(r) =>
-                    if p.pending_streams > 0 {
-                        " — ${drain_note(r, p.pending_streams)}"
-                    } else {
-                        ""
+                    # `pending_streams > 0` is NOT the test for every reason, and treating
+                    # it as one is what made the daily cap silent. For Complete,
+                    # BudgetReached and RateLimited an empty queue really does mean nothing
+                    # is left to say — the work is done, or it resumes in fifteen minutes
+                    # without the athlete doing anything. DailyCapReached is different:
+                    # nothing will happen for the rest of the UTC day, and the pre-flight
+                    # refusal reaches here having made NO request at all, so the counts
+                    # above are a description of a run that never ran.
+                    #
+                    # Measured before this carve-out: `stride sync` on a spent day printed
+                    # "synced 0 new, 0 updated (0 re-checked in the 30-day window), fetched
+                    # streams for 0" and exited 0. No request was made and none would be.
+                    # That is #246's own defect in a purer form — not the wrong remedy, but
+                    # a sentence that positively implies a successful quiet sync.
+                    match r {
+                        DailyCapReached => " — ${drain_note(r, p.pending_streams)}"
+                        _ =>
+                            if p.pending_streams > 0 {
+                                " — ${drain_note(r, p.pending_streams)}"
+                            } else {
+                                ""
+                            }
                     }
             }
         # `--all` re-listed the ENTIRE account, so naming the rolling window there would

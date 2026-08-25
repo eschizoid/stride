@@ -926,6 +926,19 @@ run_stops! = || {
         # this arm already fixed.
         check!("a stale day stamp resets the count rather than needing a scheduled job", str_to_i64(Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='strava_reads_today'),'0');"))) == 3)?
         check!("...and the run spent a FULL fresh allowance, not yesterday's remainder", bfq!(".data.streams_fetched") == "2")?
+        # ...and it stopped on the DAY, which is the arm nothing else in this driver
+        # reaches. Every other daily-cap assertion here exercises the PRE-FLIGHT refusal:
+        # once `charge_read!` began counting the list read, the seeding sync leaves the
+        # counter at 3 and the capped runs are refused before the first request. So
+        # `DayFull` — the arm that fires on the correct path, with no 429, on the run that
+        # actually exhausts the allowance, and the arm review round 1 said was unreachable —
+        # was pinned by nothing. Measured: changing it to report `BudgetReached` left all
+        # 818 checks green.
+        check!("...and stopped on the DAILY cap, the one arm no 429 produces", bfq!(".data.stopped") == "daily_cap_reached")?
+        # The count assertion two lines up has the shape its own comment warns about, one
+        # field over: a run that IGNORED the stamp also ends at the cap, because it stops
+        # when it gets there. `streams_fetched == 2` is what discriminates, and this pins
+        # the reason it stopped. Three assertions, three different failure modes.
     } else if env_or!("E2E_EXPECT_401", "") == "1" {
         # The refresh arm recurses on the SAME id. Seed a token the mock will not hand
         # back, so get_valid_token! genuinely rotates once and the arm is entered rather
@@ -1055,7 +1068,7 @@ run_stops! = || {
         } else if env_or!("E2E_EXPECT_DAILY_CAP", "") == "1" {
             # its own floor, and TIGHT: a floor below the arm's own count lets a check be
             # deleted unseen — the slack this floor's own doctrine forbids.
-            13
+            14
         } else if env_or!("E2E_EXPECT_500", "") == "1" {
             7
         } else if env_or!("E2E_EXPECT_401", "") == "1" {

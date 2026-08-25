@@ -66,7 +66,21 @@ Drain :: [].{
     # `pending_streams > 0` — which is true on precisely the first-run sync this case
     # exists for. A drain that 429s on its first id and a list that 429s on page one are
     # otherwise identical in the envelope.
-    SyncStop : [FromDrain(StopReason), ListRateLimited]
+    # ListDailyCapReached is the LIST refused with the day already spent, and it exists
+    # because folding it into FromDrain(DailyCapReached) cost the one fact this arm carries.
+    # An earlier version did exactly that and argued the cost was acceptable. It is not:
+    # `FromDrain(_)` renders only when `pending_streams > 0`, so on the empty queue — which
+    # is the steady state, and the state a capped day reaches — the human line went EMPTY.
+    # Measured: the same fixture, same 429ing list, only the counter differing, printed the
+    # full "the list is incomplete, run again in ~15 minutes" sentence at 0 reads and
+    # nothing at all at 9. That is a strict regression of #235 caused by #246, and it is the
+    # second time this exact position has been wrong — the comment on sync_screen's tail
+    # already records the first.
+    #
+    # Two facts, so two of them have to survive: the listing is incomplete (#235) and the
+    # remedy is tomorrow rather than fifteen minutes (#246). One tag cannot carry both
+    # unless Render is allowed to guess, and the whole point of this type is that it is not.
+    SyncStop : [FromDrain(StopReason), ListRateLimited, ListDailyCapReached]
 
     Action : [
         Refresh, # 401: refresh the access token, retry the same id (bounded by the caller)
@@ -86,10 +100,18 @@ Drain :: [].{
             # that cannot succeed — the whole of #246, printed in the exact state #246
             # exists to describe.
             #
-            # This arm is not a nicety, it is what makes the feature reachable at all.
-            # stride's count can only ever be at or below Strava's, so Strava refuses
-            # first: without this branch the 429 stops the drain before the Store arm ever
-            # tests the day, and DailyCapReached is unreachable from the correct path.
+            # This arm is a BACKSTOP, not the mechanism, and this comment used to claim the
+            # opposite — "what makes the feature reachable at all", on the reasoning that
+            # stride's count is always at or below Strava's so Strava refuses first. That
+            # was true while only stream reads were counted. Once `charge_read!` began
+            # counting the LIST read too, the Store arm's DayFull branch reaches the cap on
+            # the correct path, with no 429 at all, which is the path the feature is for.
+            # The sentence survived the change that falsified it by one commit.
+            #
+            # It still earns its place: stride's count can drift under Strava's — anything
+            # else using the same token is invisible here — and when it does, this is what
+            # tells the 429 apart from a window refusal so the remedy is tomorrow rather
+            # than fifteen minutes.
             if s.today >= lim.reads_per_day {
                 DailyCapReached
             } else {
@@ -139,7 +161,29 @@ Drain :: [].{
         match s {
             FromDrain(r) => stopped_label(r)
             ListRateLimited => "list_rate_limited"
+            # Its OWN token, not `daily_cap_reached`. A consumer reading the payload has to
+            # be able to tell "the listing is incomplete AND the day is spent" from "the
+            # drain stopped on the day", because the first means rows are missing and the
+            # second does not. That is the same reason `list_rate_limited` is not
+            # `rate_limited`.
+            ListDailyCapReached => "list_daily_cap_reached"
         }
+
+    # A drain can outlive UTC midnight, and when it does the allowance REALLY HAS reset —
+    # so the honest model is to notice, not to carry the old day to the end of the run.
+    #
+    # Captured-once was the first version and it was wrong in both directions at once.
+    # Start at 23:58 with 990 of 1000 spent, cross midnight at read 5, hit the cap at read
+    # 10: the athlete is told "run `stride sync` again tomorrow" at 00:01, sixty seconds
+    # after the allowance reset, and the next run works immediately. That is #246's own
+    # defect — advice that cannot succeed — reintroduced by #246's own fix. And the ten
+    # reads spent after midnight were stamped to the day before, so the new day began
+    # already owing them and would overshoot its cap by that many.
+    #
+    # Pure, and here rather than inline in the drain loop, so both directions are pinned by
+    # expects instead of by a fixture that would need a fake clock to build.
+    roll_day : { day : I64, today : I64 }, I64 -> { day : I64, today : I64 }
+    roll_day = |st, now_day| if now_day == st.day st else { day: now_day, today: 0 }
 
     test_lim : Limits
     test_lim = { reads_per_window: 3, reads_per_day: 100 }
@@ -239,3 +283,17 @@ expect Drain.sync_stopped_label(ListRateLimited) == "list_rate_limited"
 expect Drain.sync_stopped_label(FromDrain(Complete)) == Drain.stopped_label(Complete)
 expect Drain.sync_stopped_label(FromDrain(BudgetReached)) == Drain.stopped_label(BudgetReached)
 expect Drain.sync_stopped_label(FromDrain(RateLimited)) == Drain.stopped_label(RateLimited)
+
+# ...and the fifth, for the same reason one layer along: only sync! can name a LIST refusal
+# that also spent the day, so this string cannot come from a drain either.
+expect Drain.sync_stopped_label(ListDailyCapReached) == "list_daily_cap_reached"
+
+# the midnight roll, both directions. The reset one is the arm that matters — a drain in
+# flight when the allowance resets must notice, or it advises "come back tomorrow" on a day
+# that has already started and stamps the new day with reads it did not spend.
+expect Drain.roll_day({ day: 20690, today: 995 }, 20690) == { day: 20690, today: 995 }
+expect Drain.roll_day({ day: 20690, today: 995 }, 20691) == { day: 20691, today: 0 }
+# ...and it never runs BACKWARDS into a count. A clock that jumps back a day resets too:
+# the count belongs to the day it is stamped with, and a stamp that disagrees is not a
+# count this run may spend against.
+expect Drain.roll_day({ day: 20691, today: 995 }, 20690) == { day: 20690, today: 0 }

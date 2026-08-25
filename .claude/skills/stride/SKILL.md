@@ -17,12 +17,12 @@ Never do training math yourself: read stride's numbers, add judgment.
    missing streams, paced against Strava's limits. A first run on a fresh install is the
    whole history pull.
    It ends in the usual envelope (`schemas/v2/sync.json`) with progress on stderr.
-   Read `resumable` to decide whether to run it again — usually `pending_streams > 0`, but also true when the LISTING was cut short and the queue is empty — and
-   `stopped` for why it ended (`complete` / `budget_reached` / `rate_limited` / `daily_cap_reached` / `list_rate_limited`, the last being a 429 on the ACTIVITY LIST rather than a stream, which leaves the listing incomplete and prunes nothing).
+   Read `resumable` to decide whether to run it again — usually `pending_streams > 0`, but also true when the LISTING was cut short and the queue is empty, and when the run was refused BEFORE its first request because the day was already spent — and
+   `stopped` for why it ended (`complete` / `budget_reached` / `rate_limited` / `daily_cap_reached` / `list_rate_limited` / `list_daily_cap_reached`). The two `list_*` tokens are a 429 on the ACTIVITY LIST rather than a stream, which leaves the listing INCOMPLETE and prunes nothing — rows are missing, so `synced` and `pruned` describe a partial run. `list_daily_cap_reached` is that refusal on a day whose allowance is already gone: both facts at once.
    THE REMEDY DIFFERS and that is the point of the distinction: `budget_reached`,
    `rate_limited` and `list_rate_limited` all clear when Strava's 15-minute window rolls
    over, so tell the athlete about fifteen minutes. `daily_cap_reached` clears at UTC
-   MIDNIGHT — tell them tomorrow. Advising fifteen minutes there is an instruction that
+   MIDNIGHT, and so does `list_daily_cap_reached` — tell them tomorrow. Advising fifteen minutes there is an instruction that
    cannot succeed, and this file used to say exactly that ("all non-complete reasons stop
    on the 15-MINUTE window ... NOT tomorrow") for every stop including that one.
    A first sync on a large history takes one run per 15-minute window, bounded by
