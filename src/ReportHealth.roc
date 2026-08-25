@@ -210,7 +210,7 @@ ReportHealth :: [].{
             query:
                 \\SELECT COALESCE(sport_type, '') AS sport,
                 \\       CASE WHEN COALESCE(avg_hr, 0) > 0 THEN 1 ELSE 0 END AS has_hr
-                \\FROM activities ORDER BY start_local DESC, id DESC LIMIT 200
+                \\FROM activities ORDER BY ${Metrics.rank_ts_sql("start_local", Desc)}, id DESC LIMIT 200
             ,
             bindings: [],
             rows: |cols| |stmt| {

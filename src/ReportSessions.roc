@@ -497,7 +497,7 @@ ReportSessions :: [].{
                 \\-- move on upgrades, and the e2e hoist fixtures are what hold the two
                 \\-- together across one. '1000-02-30' is in that set for exactly this
                 \\-- reason: it is the shape only the newer date() catches.
-                \\ORDER BY ${Report.date_known_sql}, a.start_local DESC, a.id DESC LIMIT ${(limit).to_str()}
+                \\ORDER BY ${Metrics.hoist_unrankable_sql("a.start_local")}, a.id DESC LIMIT ${(limit).to_str()}
             ,
             bindings: sf.binds,
             rows: |cols| |stmt| {
@@ -783,7 +783,7 @@ ReportSessions :: [].{
                 \\FROM activity_segments s JOIN activities a ON a.id = s.activity_id
                 \\WHERE s.kind = 'work' AND (:d = '' OR substr(a.start_local, 1, 10) = :d)
                 \\GROUP BY s.activity_id
-                \\ORDER BY a.start_local DESC, a.id DESC LIMIT 1
+                \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC LIMIT 1
             ,
             bindings: [{ name: ":d", value: String(date_arg) }],
             rows: |cols| |stmt| {
@@ -816,8 +816,10 @@ ReportSessions :: [].{
                 # comparison was NULL for everything" is worse than a refusal, and it breaks
                 # a property this file spends a paragraph promising.
                 #
-                # Narrow but reachable: `ORDER BY a.start_local DESC` puts NULLs last, so the
-                # unreadable row wins only when it is the sole work-segmented session — one
+                # Narrow but reachable, and NARROWER since #255: the ordering is now an
+                # explicit rankability flag rather than NULL semantics, so it also covers
+                # non-NULL unreadable rows the old clause let win. The unreadable row
+                # therefore wins only when it is the sole work-segmented session — one
                 # analyzed ride on a fresh database, which is a state people are actually in.
                 _ = (Metrics.usable_date_days(a.date)).map_err(|_| BadActivityDate(a.date, a.id))?
                 # The anchor must itself BE a repeated shape before anything can
@@ -1052,7 +1054,7 @@ ReportSessions :: [].{
                     query:
                         \\SELECT COALESCE(substr(a.start_local, 1, 10), '') AS d, a.name AS name, a.id AS id
                         \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
-                        \\ORDER BY a.start_local DESC, a.id DESC LIMIT 1
+                        \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC LIMIT 1
                     ,
                     bindings: [],
                     rows: |cols| |stmt| {

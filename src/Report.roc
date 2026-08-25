@@ -40,7 +40,10 @@ Report :: [].{
     # does not. `date_known` is a PUBLISHED boolean SKILL.md tells the coach to trust, so the
     # e2e fixture for '1000-02-30' — the one shape only the newer date() rejects — is what
     # holds SQL to the Roc rule across a platform upgrade.
-    date_known_sql = "(CASE WHEN a.start_local IS NULL OR date(substr(a.start_local, 1, 10)) IS NOT substr(a.start_local, 1, 10) OR substr(a.start_local, 1, 4) < '1000' THEN 0 ELSE 1 END)"
+    # The SQL twin of Metrics.usable_date_days lives THERE now, beside the Roc rule it has
+    # to agree with — `Analyze` and `Strava` also rank on this column and cannot import
+    # Report, which imports them. This stays as the name four sites already use.
+    date_known_sql = Metrics.date_known_sql_for("a.start_local")
     medium_models_sql = "'hr_zones','hr_avg','session_rpe'"
     low_models_sql = "'relative_effort'"
 

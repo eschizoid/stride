@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(859)?
+    checks_ran_exactly!(869)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2319,6 +2319,21 @@ b_seed_analyze! = |ctx| {
     # is the comparability rule made visible; a session whose rep COUNT or
     # rep-duration BAND differs must not appear beside it.
     check!("reps anchors on the interval ride", strjq!(ctx, ["reps"], ".data.anchor_activity_id") == "103")?
+    # ...and an unrankable timestamp cannot steal that anchor (#255). This is the site where
+    # an impossible TIME is invisible to every existing guard: `Report.guard_activity_dates!`
+    # and the inline `usable_date_days` check both inspect `substr(start_local, 1, 10)`
+    # only, so a valid date with a `T37:00:00` sails through the refusals and simply wins
+    # the `ORDER BY … LIMIT 1`. A wrong anchor silently reframes every comparison the
+    # command makes.
+    #
+    # Seven of the eight sites this change touched had no behavioural check at all —
+    # reverting them to their `origin/main` ORDER BY left the suite green at 862. This is
+    # one of them, chosen because its consequence is a wrong answer rather than a wrong
+    # order.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (7710,'impossible-time interval','Ride',(SELECT substr(start_local,1,10) FROM activities WHERE id=103) || 'T37:00:00Z',3600,20000);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) SELECT 7710, ordinal, kind, start_s, dur_s, avg_signal, signal FROM activity_segments WHERE activity_id = 103;")
+    check!("...and an unrankable timestamp cannot steal the reps anchor", strjq!(ctx, ["reps"], ".data.anchor_activity_id") == "103")?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 7710; DELETE FROM activities WHERE id = 7710;")
     check!("reps states the shape it compared on", strjq!(ctx, ["reps"], ".data.shape | (.rep_count > 0) and (.band_hi_s > .band_lo_s)") == "true")?
     check!("every session shares the anchor's rep count", strjq!(ctx, ["reps"], "[.data.sessions[].rep_count] | unique | length == 1") == "true")?
     check!("...and every rep duration sits inside the stated band", strjq!(ctx, ["reps"], ".data as $d | [$d.sessions[].mean_dur_s | (. >= $d.shape.band_lo_s and . < $d.shape.band_hi_s)] | all") == "true")?
@@ -3027,6 +3042,57 @@ b_seed_analyze! = |ctx| {
     # predicate. Without this the clause could hoist everything and still pass above.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (948,'readable low','Ride','Ride','1000-01-01T10:00:00Z',3600);")
     check!("...while a readable early date stays in date order, so the hoist is not hoisting everything", strjq!(ctx, ["activities"], "[.data[0:5][].id] | map(select(. == 948)) | length") == "0")?
+    # ...and the SECONDARY key, which the hoist does not cover (#255). `date_known` sorts
+    # undateable rows to the top, and among everything below it the tie-break was the raw
+    # column — so a valid date with an impossible TIME still outranked every real row on
+    # its own day, and nothing marked it: `date_known` is 1 for that row, so `doctor`'s
+    # undateable count does not see it either. The hoist answers the date dimension; this
+    # is the time dimension of the same defect, wearing the same intent.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (949,'impossible time','Ride','Ride',(SELECT substr(start_local,1,10) FROM activities WHERE id=101) || 'T37:00:00Z',3600);")
+    # `activities 3`, not the default 30. With a ten-row fixture there is no limit for a
+    # sunk row to fall below, so this assertion could not show what its name claims — and
+    # the limit interaction is exactly where the round-2 regression lived, untested
+    # anywhere else in the suite. Three rows makes absence real.
+    check!("...and an impossible TIME is HOISTED into view, not sunk below a small limit", strjq!(ctx, ["activities", "3"], "[.data[] | select(.id == 949)] | length") == "1")?
+    # ...which is the property, not "it does not outrank". An earlier cut of this fix sank
+    # the row instead: on a 737-row database it went to position 737, outside the default
+    # limit of 30, uncounted by `doctor`, and still published as `date_known: true` — three
+    # ways invisible, and measurably worse than doing nothing for a listing whose job is
+    # surfacing what needs repair. Ranking wants such a row LAST; this listing wants it
+    # FIRST, and #249 already answered which one `activities` is.
+    # `index(...) != null` FIRST, because jq returns null for an absent row and
+    # `str_to_i64("null")` is 0 — the BEST position. A row that vanished from the listing
+    # entirely scored as hoisted and both of these reported success, blind to precisely
+    # the sunk-below-the-limit failure they exist to catch. Latent only because this
+    # fixture is smaller than the default limit, which nothing asserts.
+    check!("...ahead of every readable row, which is what the hoist is for", strjq!(ctx, ["activities"], "[.data[].id] | (index(949) != null) and (index(949) < index(101))") == "true")?
+    # ...and one whose bad time sorts LOW, which is the half a `T37` fixture cannot see.
+    # `T37:00:00` sorts HIGH as a string, so under the defect it lands first among the
+    # readable rows ANYWAY — present, and ahead of 101 — and both assertions above pass on
+    # the code they were written to reject. `T00:99:00` is the other shape `rankable_sql`'s
+    # comment names, and it sorts BELOW every real row, so only a real hoist lifts it.
+    #
+    # The rule, stated for both directions because the first draft of it was backwards and
+    # would have made two CORRECT fixtures here vacuous: PLANT A VALUE THAT SORTS INTO THE
+    # POSITION THE DEFECT WOULD WRONGLY GIVE IT. A SINK site (an unrankable row must not
+    # win) needs a HIGH-sorting value — a low one never outranks anything, so nothing is
+    # observed. A HOIST site (a broken row must not hide) needs a LOW one — a high one lands
+    # near the top under the defect anyway and both orderings agree. The shortlist and
+    # streak fixtures are sink sites and correctly plant `T37`; this is a hoist site and
+    # needs `T00:99`.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (951,'impossible minute','Ride','Ride',(SELECT substr(start_local,1,10) FROM activities WHERE id=101) || 'T00:99:00Z',3600);")
+    check!("...including one whose bad time sorts LOW, where only a real hoist lifts it", strjq!(ctx, ["activities"], "[.data[].id] | (index(951) != null) and (index(951) < index(101))") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 951;")
+    # ...and a well-formed year below 1000 is undateable too. This holds the SQL year bound
+    # to the Roc one, and NOTHING held it: deleting ` OR substr(col,1,4) < '1000'` passed the
+    # whole suite, because every sub-1000 fixture here is MALFORMED and so is caught by the
+    # round-trip half instead. This file already records that exact accident happening once —
+    # the two bodies of the rule drifted and one lost the year bound, so `week add 999-01-01`
+    # answered `bad_date` while every stored-date guard accepted it, in one binary.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (950,'readable pre-1000','Ride','Ride','0999-06-15T10:00:00Z',3600);")
+    check!("...and a well-formed year below 1000 is undateable, holding the SQL year bound to the Roc one", strjq!(ctx, ["activities"], "[.data[] | select(.id == 950) | .date_known] | join(\",\")") == "false")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 950;")
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 949;")
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (941,942,947,948);")
     # `top time`, NOT `top tss`, and the difference is the whole check. `top tss` filters on
     # `m.tss > 0` and row 940 has no activity_metrics row at this point in the fixture — the
@@ -4508,6 +4574,44 @@ b_plan! = |ctx| {
     near_refusal = stride!(ctx.bin, ctx.home, ["complete", near_id])
     check!("a refusal lists the activity ids actually near that date", Str.contains(near_refusal, "Activities near that date"))?
     check!("...naming the real activity, not a placeholder", Str.contains(near_refusal, "101"))?
+    # ...and an UNRANKABLE timestamp cannot be candidate #1 (#255). This list is the write
+    # path's shortlist — the caller picks from it and the pick becomes
+    # `completed_activity_id` — and it ranked on the whole column, so a valid date with an
+    # impossible time sorted above every real row. `T37:00:00` is the shape
+    # `export_date_to_iso` is documented to have produced from `"25:00:00 PM"`.
+    #
+    # Measured, same fixture, ordering reverted: the impossible row is offered FIRST, ahead
+    # of a real activity on the same day. The rule that fixes it is #247's — the guard's
+    # domain must equal its consumer's — so the ranker orders on the same expression the
+    # rankability test validates, and unrankable rows sort last rather than being excluded:
+    # a row that needs repair must stay visible.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (7701,'impossible time','Ride','${near_date}T37:00:00Z',3600,20000);")
+    # Which id appears FIRST in the hint, read through the shell — the file has no
+    # string-index helper and adding one for a single comparison is more surface than the
+    # assertion is worth.
+    first_cand = Str.trim(sh!("HOME='${ctx.home}' '${ctx.bin}' complete ${near_id} 2>&1 | grep -oE '^  (101|7701)  ' | head -1 | tr -d ' '"))
+    check!("...ranking a real timestamp above an unrankable one", first_cand == "101")?
+    check!("...while still LISTING the unrankable row, which needs repair rather than hiding", Str.contains(stride!(ctx.bin, ctx.home, ["complete", near_id]), "7701"))?
+    # ...and a bad DATE with a fine time, which is the other half of the rule. The time half
+    # cannot subsume it: `datetime('2026-02-30T09:00:00')` is non-NULL on BOTH sqlite
+    # versions in play — 3.43.2 returns it verbatim, 3.49.1 normalises it to `2026-03-02` —
+    # so the row is rankable either way and only the round-trip date test catches it.
+    #
+    # ITS OWN SESSION, on a month boundary, because the first cut of this check was INERT.
+    # `candidate_activities!` filters `start_local >= date(target,'-1 day') AND < +2 day`
+    # BEFORE it orders, so a `1000-02-30` row planted against a 2026 session is discarded
+    # lexically and the assertion could only ever see the real activity — green on exactly
+    # the failure it was written to catch, under a comment claiming it had been measured.
+    # A 2026-02-28 target gives the window ['2026-02-27','2026-03-02'), which an impossible
+    # 2026-02-30 lands inside.
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 7701;")
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (7702,'impossible date','Ride','2026-02-30T09:00:00Z',3600,20000),(7703,'real feb ride','Ride','2026-02-28T09:00:00Z',3600,20000);")
+    _ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('2026-02-28T00:00:00Z','2026-02-28','endurance','feb boundary probe','r','open');")
+    feb_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
+    check!("...and BOTH candidates reach the ranker, so the next check is not vacuous", Str.contains(stride!(ctx.bin, ctx.home, ["complete", feb_id]), "7702") and Str.contains(stride!(ctx.bin, ctx.home, ["complete", feb_id]), "7703"))?
+    check!("...with an unreadable DATE losing to a real one, not only an unreadable time", Str.trim(sh!("HOME='${ctx.home}' '${ctx.bin}' complete ${feb_id} 2>&1 | grep -oE '^  (7702|7703)  ' | head -1 | tr -d ' '")) == "7703")?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${feb_id};")
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (7702, 7703);")
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${near_id};")
     check!("rest bare complete", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "3"]), "\"rest\":true"))?
     check!("rest is done in db", Str.trim(sql!(ctx.db, "SELECT status FROM planned_sessions WHERE id=3;")) == "done")?
@@ -5080,6 +5184,21 @@ b_doctor! = |ctx| {
     # ...and a strapped ride on top resets it to 0
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9404,'strapped ride','Ride','2099-03-04T10:00:00Z',3600,30000,0,140);")
     check!("a strapped ride resets the streak", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "0")?
+    # ...and an UNRANKABLE timestamp cannot head that walk (#255). This is the site where a
+    # wrong order is a wrong ANSWER rather than a wrong listing: the streak is a
+    # leading-prefix fold over `ORDER BY … LIMIT 200`, so the published number is a function
+    # of the order, not of the set. A strapless row with an impossible time dated on the
+    # newest day sorts to the head on the raw column and reopens a streak that a real
+    # strapped ride had just closed.
+    #
+    # Chosen because it is the last of the eight sites whose consequence is an answer. Of
+    # the five now unchecked, three have no observable consequence at all — Plan.roc:301's
+    # SQL order is discarded by `List.sort_with`, Analyze.roc:288 only affects batch
+    # composition and `converge_metrics!` runs to a fixed point, and the `progress` anchor's
+    # consumer reads `substr(start_local, 1, 10)` where a bad time cannot cross a day.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation) SELECT 9405,'strapless impossible time','Ride', substr(start_local,1,10) || 'T37:00:00Z',3600,20000,100 FROM activities WHERE id = 9404;")
+    check!("...and an unrankable timestamp cannot head the streak walk and reopen it", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "0")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 9405;")
     # device_watts = 0 is Strava flagging ESTIMATED watts; dated today so it lands in 30d
     est_before = sfloat(strjq!(ctx, ["doctor"], ".data.estimated_power_count_30d"))
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_watts,device_watts) VALUES (9405,'estimated watts','Ride','${ctx.today}T09:00:00Z',3600,30000,0,180,0);")
