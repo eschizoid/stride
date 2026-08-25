@@ -290,7 +290,7 @@ run_all! = || {
     # bailing out of it produce the same program, so unwiring is undetectable there too.
     # That is not a hole: detection lapses exactly where the thing detected stops existing.
     #
-    # `ps_usable!` and not a second `command -v ps` here: one definition, two call sites.
+    # `ps_usable!` and not a second copy of its probe here: one definition, two call sites.
     ps_ok = ps_usable!({})
     check!("...collects one whose owner is gone, or with no `ps` collects nothing at all", Str.trim(sh!("[ -e '.e2e-checks.${probe_mode}.999999' ] && echo kept || echo swept")) == (if ps_ok "swept" else "kept"))?
     # ...and leaves a suffix that is not a pid alone. That is the shape a quoting regression
@@ -6331,23 +6331,36 @@ tally_is_scoped! = |{}| {
 #
 # `$$` and NOT `$PPID`. Review recommended `$PPID` on the theory that the sweep asks about
 # OTHER processes while `$$` only proves self-visibility, then retracted it after building a
-# faithful stub: real `hidepid=1`/`hidepid=2` discriminates on UID, and a shell and its
-# parent always share one, so both forms succeed and the two are byte-identical on every
-# shape either of us could construct. `$$` also needs one assumption fewer — POSIX sets
-# `PPID` at shell init and does not update it on reparenting, so `ps -p $PPID` would name a
-# stale pid if the parent exited in between. That cannot happen here (the driver is blocked
-# waiting on this shell), but it is an argument `$$` does not have to make.
+# faithful stub: real `hidepid=1`/`hidepid=2` discriminates on UID, and a shell this driver
+# spawns inherits the driver's uid — `/bin/sh` here is not setuid, and exec otherwise
+# preserves credentials — so both forms succeed and the two are byte-identical on every
+# shape either of us could tie to a REAL MECHANISM. Scoped deliberately: a setuid shell is
+# the one thing that would separate them, which is checkable with `ls -l /bin/sh` rather
+# than assumed. `sudo` does not, since it sets the uid for the whole tree before the driver
+# starts, and neither does a runner dropping privileges before the job.
+#
+# The retraction is recorded because the retraction is the reusable part. The stub that
+# produced the wrong recommendation modelled "visible iff you are my direct caller"; the
+# mechanism it stood for keys on "is it my uid". Nobody checked the stub against the
+# mechanism before drawing a table from it. That stub still separates the two forms and no
+# known `ps` implements it — without this note the next reader rebuilds it and re-makes the
+# same change.
+#
+# `$$` also needs one assumption fewer — POSIX sets `PPID` at shell init and does not update
+# it on reparenting, so `ps -p $PPID` would name a stale pid if the parent exited in
+# between. That cannot happen here (the driver is blocked waiting on this shell), but it is
+# an argument `$$` does not have to make.
 #
 # NOT covered, and NOT fixable from here: a tally owned by ANOTHER USER's live run. Under
 # uid-restricted `/proc` that process is invisible, `ps -p` fails, and the sweep judges it
 # dead and deletes it. Measured by planting `.e2e-checks.e2e.1` — pid 1, alive, root-owned —
 # and running the driver: DELETED, suite green at 851. Control, the same plant under the
-# real `ps`: KEPT. So the deletion is the visibility restriction and not the plant. This is
-# the same hole
-# recorded beside `sweep_litter!` as the EPERM gap, reached through visibility rather than
-# permission; the property is that another user's LIVE process can be indistinguishable from
-# a dead one, which is worth stating as the property rather than as whichever mechanism
-# reaches it, since the mechanism has now changed twice underneath it.
+# real `ps`: KEPT, dead one collected. So the deletion is the visibility restriction and not
+# the plant. This is the same hole recorded inside `reset_checks!` as the EPERM gap, reached
+# through visibility rather than permission; the property is that another user's LIVE
+# process can be indistinguishable from a dead one, which is worth stating as the property
+# rather than as whichever mechanism reaches it, since the mechanism has now changed twice
+# underneath it.
 #
 # Also NOT covered: a `ps` that accepts `-p`, ignores it, and exits 0 for anything.
 # Tolerable because it fails LOUDLY — measured, it reddens the suite at check 2 and destroys
@@ -6406,15 +6419,19 @@ reset_checks! = |{}| {
     # comment asserted a verified safety property that measurement contradicts, in the PR
     # about exactly that. `ps -p` has the semantics the paragraph claimed all along.
     #
-    # GUARDED on `ps` existing, because without that the fallback is not "the sweep stops
-    # working" but the blanket `rm` this PR removed: `ps -p` exits 127 when the binary is
-    # missing, `||` fires, and every tally goes — live ones included — with the sweep still
-    # exiting 0. Measured, on a PATH holding sh/sed/printf/rm but no ps: guarded, a live
-    # owner AND a dead owner are both KEPT; with ps present, live kept and dead collected.
-    # So it degrades to leak, never to destroy. `command` is a POSIX built-in, so the guard
-    # cannot itself be the missing thing. The case that motivates it is a minimal image
-    # (busybox `ps` may not support `-p`) rather than the runners in use — and the guard
-    # makes that question moot rather than needing an answer.
+    # GUARDED on `ps -p` WORKING, via `ps_usable!`. Without a guard the fallback is not "the
+    # sweep stops working" but the blanket `rm` this PR removed: `ps -p` exits 127 when the
+    # binary is missing and non-zero when it rejects `-p`, `||` fires either way, and every
+    # tally goes — live ones included — with the sweep still exiting 0. Measured, on a PATH
+    # holding sh/sed/printf/rm but no ps: guarded, a live owner AND a dead owner are both
+    # KEPT; with ps present, live kept and dead collected. So it degrades to leak, never to
+    # destroy.
+    #
+    # The guard tests the CAPABILITY, not the binary's existence. An earlier version tested
+    # `command -v ps` and justified itself by `command` being a POSIX built-in — true, and
+    # beside the point, because a `ps` that exists and rejects `-p` passes that test and then
+    # destroys everything. This paragraph said so for two commits after the code stopped
+    # doing it.
     #
     # It is also the only form that reaches the interrupt path: Ctrl-C during a 50-second
     # suite is the ordinary case, and no in-process cleanup can ever run there.
