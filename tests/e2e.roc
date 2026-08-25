@@ -252,6 +252,26 @@ run_all! : () => Try({}, _)
 run_all! = || {
     reset_checks!({})?
     reset_sqlite_errors!({})
+    # ── #266: the tally the guard at the end of this driver counts must belong to THIS
+    # process. Asserted here rather than trusted, because the property was documented for
+    # months while the code did not have it — `checks_log!`'s comment described `$PPID`
+    # from the day it was written beside a path keyed on `E2E_MODE`.
+    #
+    # Two halves, and both are needed. The positive one alone passes if the path gains a
+    # pid AND keeps the shared name; the negative one alone passes on any machine where
+    # no run has ever created the shared file, which on a fresh checkout is every machine.
+    # RESOLVE the path and compare it against this process's pid. An earlier cut asserted
+    # file existence instead — "the shared name is not in use" and "the scoped file exists"
+    # — and BOTH survived reverting the path to the shared name, because `reset_checks!`
+    # deletes whatever `checks_log!` names immediately before, so "that file does not exist
+    # yet" is true under every implementation, and "that file exists now" is true as soon
+    # as any check has appended to it, whatever it is called. Two assertions about the same
+    # file, neither able to tell which file it was.
+    #
+    # `sh -c` is a child of this binary, so `$PPID` inside it is this driver's pid — the
+    # same expansion `checks_log!` relies on, read back independently here.
+    mypid = Str.trim(sh!("echo $PPID"))
+    check!("the tally path carries this process's pid, so two runs cannot share it", mypid != "" and Str.ends_with(Str.trim(sh!("echo \"${checks_log!({})}\"")), ".${mypid}"))?
     bin = env_or!("STRIDE_BIN", "./stride")
     home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
     # Anchor the harness to the SAME clock the binary will use. These used to be
@@ -305,7 +325,13 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(910)?
+    # ...and nothing wrote to the shared name along the way. AT THE END, deliberately: a
+    # driver's very first check runs just after `reset_checks!` has deleted that file, so
+    # asserting its absence there is true under every implementation — measured, it
+    # survived reverting the whole fix. By here, hundreds of appends have happened, so a
+    # `check!` that also wrote to the shared path would have created it.
+    check!("nothing wrote to the shared tally name two concurrent runs would collide on", Str.trim(sh!("[ -e '.e2e-checks.${env_or!("E2E_MODE", "e2e")}' ] && echo shared || echo scoped")) == "scoped")?
+    checks_ran_exactly!(912)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6185,15 +6211,30 @@ is_nonempty = |s| !(Str.is_empty(Str.trim(s))) and Str.trim(s) != "null"
 # the only thing that catches it IN THIS SHAPE. `if/else if` on a Bool gets no redundancy
 # analysis from the compiler; the same dispatch written as a `match` on a tag would have
 # been a build-failing warning. Worth restructuring if this file grows another scenario.
-# PER PROCESS, not a fixed path. `sh` is a child of this binary, so $PPID inside the
-# script is this driver's own pid — each e2e invocation gets its own tally with no env
-# plumbing. A shared path was worse than no guard: two drivers in one checkout inflate
-# each other's counts, so a driver whose branch had gone dead PASSED its floor; and a
-# second driver's reset wipes the first's tally mid-run, producing a false red that looks
-# exactly like a real regression. Review reproduced both with nothing artificial, and the
-# false-red construction explains failures previously blamed on port collisions.
+# PER PROCESS, not a fixed path (#266). `sh` is a child of this binary, so `$PPID` inside
+# the script is this driver's own pid — each e2e invocation gets its own tally with no env
+# plumbing, and two runs in one checkout cannot touch each other's.
+#
+# This paragraph described `$PPID` from the day it was written while the code beside it
+# keyed on `E2E_MODE`, so the property it promised was never true. What E2E_MODE actually
+# discriminates is ROLE, and roles repeat: `E2E_MODE=stops` runs six times in one
+# `just e2e`. Sequentially that is fine, because each run resets first — but it means the
+# name was never a per-run identity, and concurrency is where that shows.
+#
+# A shared path is worse than no guard, in both directions. Two drivers appending to one
+# file inflate each other's counts, so a driver whose branch had gone dead passes its
+# floor. And a second driver's reset wipes the first's tally mid-run, producing a red that
+# names the guard rather than the collision — `498 == 774` with all 774 checks printing
+# `ok`, which is indistinguishable from the silent-removal regression the guard exists to
+# catch. Two reviewers hit it independently on #249 and one wrote it up as a product
+# defect before the cause was found.
+#
+# `$PPID` and not `mktemp`: the path has to be recomputed identically by `check!`,
+# `reset_checks!` and `checks_ran_exactly!` without threading state through every scenario
+# function, and the pid is the one identity all three can derive for free. The MODE stays
+# in the name ahead of it so a leftover file still says which driver produced it.
 checks_log! : {} => Str
-checks_log! = |{}| ".e2e-checks.${env_or!("E2E_MODE", "e2e")}"
+checks_log! = |{}| ".e2e-checks.${env_or!("E2E_MODE", "e2e")}.$PPID"
 
 # Fails LOUDLY. sh! swallows exit codes, and a reset that silently does not happen leaves
 # a stale tally that makes the floor pass for a driver that ran nothing — the guard
@@ -6234,7 +6275,9 @@ reset_checks! = |{}| {
 checks_ran_at_least! : I64 => Try({}, _)
 checks_ran_at_least! = |floor| {
     ran = str_to_i64(Str.trim(sh!("wc -l 2>/dev/null < ${checks_log!({})} || echo 0")))
-    check!("this driver ran its checks (${I64.to_str(ran)} >= ${I64.to_str(floor)})", ran >= floor)
+    res = check!("this driver ran its checks (${I64.to_str(ran)} >= ${I64.to_str(floor)})", ran >= floor)
+    _ = sh!("rm -f ${checks_log!({})}")
+    res
 }
 
 # The EXACT variant, for a driver whose count is meant to be pinned rather than floored.
@@ -6252,10 +6295,18 @@ checks_ran_at_least! = |floor| {
 # number in every one of its six commits and no review round ever checked it against the
 # checks actually added. Relying on someone reading the diff was the weaker argument, and
 # the evidence against it is this file's own history.
+# ...and both variants REMOVE the tally when they are done with it. Per-process paths mean
+# one file per invocation rather than one per role, and `just e2e` starts fifteen of them
+# with pids that never repeat, so without this the checkout accumulates a file per driver
+# per run forever. Deleted AFTER the guard's own `check!`, which appends a line of its own —
+# deleting before it would leave a one-line file behind instead of none. The result is
+# bound and returned rather than `?`-chained, so a failing guard still cleans up.
 checks_ran_exactly! : I64 => Try({}, _)
 checks_ran_exactly! = |expected| {
     ran = str_to_i64(Str.trim(sh!("wc -l 2>/dev/null < ${checks_log!({})} || echo 0")))
-    check!("this driver ran exactly its checks (${I64.to_str(ran)} == ${I64.to_str(expected)})", ran == expected)
+    res = check!("this driver ran exactly its checks (${I64.to_str(ran)} == ${I64.to_str(expected)})", ran == expected)
+    _ = sh!("rm -f ${checks_log!({})}")
+    res
 }
 
 check! : Str, Bool => Try({}, _)
