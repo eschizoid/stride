@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(794)?
+    checks_ran_exactly!(807)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -343,6 +343,12 @@ run_scenarios! = |ctx| {
     # activities to complete against and a populated adherence window — so it runs after
     # everything that builds one, and before the two that rebuild the database.
     b_agent_loop!(ctx)?
+    # ...and immediately after it. NOT because it needs the loop's rich window — it seeds
+    # three of its five compared rows itself and reads nothing from activity_metrics. Its
+    # real dependencies are narrower and worth naming: b_plan!'s two skipped rows on
+    # ctx.today, which supply the other 2 of the 5, and the three probe dates being free of
+    # open sessions, which holds only because b_agent_loop! cleans up after itself.
+    b_week_plan!(ctx)?
     b_concurrency!(ctx)?
     b_migration!(ctx)?
     Ok({})
@@ -3888,6 +3894,142 @@ b_agent_loop! = |ctx| {
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${sid}; DELETE FROM planned_sessions WHERE id = ${sid_other}; DELETE FROM activity_metrics WHERE activity_id = 9220; DELETE FROM activities WHERE id = 9220;")
     check!("the loop left the plan exactly as it found it", str_to_i64(pj!(".data.adherence_28d.planned")) == pre_planned and str_to_i64(pj!(".data.adherence_28d.completed")) == base_completed and str_to_i64(pj!(".data.adherence_28d.unplanned_activities")) == pre_unplanned)?
     check!("...leaving no open session behind either, bystander included", str_to_i64(pj!(".data.open_sessions | length")) == base_open_len - 1)?
+    Ok({})
+}
+
+# `week` and `plan` read the same two tables and answer the same question about them, and
+# they are DELIBERATELY allowed to disagree in exactly one place. Nothing tested that (#250).
+#
+# The assertion is not "they agree". It is: for every session in the shared window they
+# classify identically, EXCEPT that an activity whose skip tombstone was superseded is
+# `unplanned` to `week` and is not counted as unplanned by `plan`. Plan.roc states the
+# divergence in a comment and gives the reason — for adherence, counting it would make one
+# ride both substituted and unplanned — and until now a comment was the whole enforcement.
+#
+# Its OWN scenario rather than a leg of the agent loop, which is the choice #220's issue
+# argued for: that loop's thesis is that ONE payload is self-consistent, and a cross-command
+# red there would be ambiguous between "plan drifted", "week drifted", and "the sanctioned
+# difference moved".
+#
+# Runs AFTER b_agent_loop! and before the database rebuilds, for the same reason it does:
+# the comparison needs a populated adherence window, and an empty one would make every set
+# equality below true.
+b_week_plan! : Ctx => Try({}, _)
+b_week_plan! = |ctx| {
+    pj! = |q| Str.trim(strjq!(ctx, ["plan"], q))
+    # ── half one: they agree everywhere else ────────────────────────────
+    #
+    # SEEDED, not borrowed, and that is the difference between this check and a green one
+    # that proves nothing. Measured at this point in the run, `plan_history_28d` holds TWO
+    # rows, both skipped with neither link set — so a comparison over the fixture as found
+    # would never exercise a `done` row, a `completed_activity_id`, or a substitute link,
+    # which is three quarters of what the two commands have to agree about. The floor was
+    # written larger than this window turned out to be, which is how the two-row window
+    # surfaced. (The exact habit number is development history and the commit message and
+    # this comment disagreed about it, so it is not recorded.)
+    #
+    # One session per classification, each on its OWN day: `week add` revises rather than
+    # inserts when the date already holds an open session, so two probes sharing a date
+    # collapse into one row and the set silently shrinks. The agent-loop scenario above
+    # records that trap after being caught by it.
+    # The highest id BEFORE this scenario builds anything, so the check below can tell an
+    # INSERT from a revision of a foreign row. `week add` revises when the date already
+    # holds an open session, and the three probe dates are not this scenario's to reserve:
+    # measured, wpa is today-3 which is b_agent_loop!'s ctx.d1, and wpc is today-5 which is
+    # its bystander's day. Two of three dates are shared with the scenario that runs
+    # immediately before. Comparing the three ids to EACH OTHER cannot see a revision — a
+    # foreign id is still distinct from the other two — and the cleanup sweep at the end
+    # would then DELETE another scenario's row.
+    wp_max_before = str_to_i64(Str.trim(sql!(ctx.db, "SELECT COALESCE(MAX(id),0) FROM planned_sessions;")))
+    wpa = Str.trim(sh!("TZ=${ctx.tz} date -v-3d +%F 2>/dev/null || TZ=${ctx.tz} date -d '3 days ago' +%F"))
+    wpb = Str.trim(sh!("TZ=${ctx.tz} date -v-4d +%F 2>/dev/null || TZ=${ctx.tz} date -d '4 days ago' +%F"))
+    wpc = Str.trim(sh!("TZ=${ctx.tz} date -v-5d +%F 2>/dev/null || TZ=${ctx.tz} date -d '5 days ago' +%F"))
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_watts,avg_hr) VALUES (9251,'wp done ride','Ride','${wpb}T07:00:00Z',3600,25000,190,145),(9252,'wp sub ride','Ride','${wpc}T07:00:00Z',3600,25000,190,145);")
+    wp_open = Str.trim(strjq!(ctx, ["week", "add", "${wpa}", "endurance", "wp open", "stays open"], ".data.id"))
+    wp_done = Str.trim(strjq!(ctx, ["week", "add", "${wpb}", "endurance", "wp done", "gets completed"], ".data.id"))
+    _ = strjq!(ctx, ["complete", wp_done, "9251"], ".data.id")
+    wp_skip = Str.trim(strjq!(ctx, ["week", "add", "${wpc}", "endurance", "wp skipped", "gets substituted"], ".data.id"))
+    _ = strjq!(ctx, ["skip", wp_skip, "swapped", "9252"], ".data.id")
+    check!("the three probe sessions are distinct rows, not one revised three times", wp_open != wp_done and wp_done != wp_skip and wp_open != wp_skip and wp_open != "" and wp_done != "" and wp_skip != "")?
+    check!("...and all three are rows this scenario INSERTED, not foreign rows it revised", str_to_i64(wp_open) > wp_max_before and str_to_i64(wp_done) > wp_max_before and str_to_i64(wp_skip) > wp_max_before)?
+    check!("...and they cover the two classifications with LINKS, which the fixture had none of", pj!("[.data.plan_history_28d[] | select(.id == ${wp_done}) | .status] | join(\",\")") == "done" and pj!("[.data.plan_history_28d[] | select(.id == ${wp_skip}) | .status] | join(\",\")") == "skipped")?
+    # Compared as SETS through jq over both payloads at once, rather than field by field in
+    # Roc. Two `strjq!` calls could not do it: `week all` covers the whole log while
+    # `plan_history_28d` covers 28 days, so one side is a superset and the assertion is
+    # "every plan row appears in week, unchanged" — a lookup per row, not a string equality.
+    pf = Str.trim(sh!("mktemp"))
+    wf = Str.trim(sh!("mktemp"))
+    _ = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' plan > '${pf}' 2>/dev/null")
+    _ = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' week all > '${wf}' 2>/dev/null")
+    # `// 0` on both link fields, on both sides, because null and absent must compare equal
+    # here. Measured, neither payload ever emits null — both queries COALESCE the links to
+    # 0 — so this is a harmless no-op kept for the shape rather than a fix for an observed
+    # mismatch. An earlier version of this sentence presented it as answering a measured
+    # fact, which is the class of claim this branch keeps having to correct.
+    mismatched = Str.trim(sh!("jq -rn --slurpfile p '${pf}' --slurpfile w '${wf}' '[$p[0].data.plan_history_28d[] | . as $s | (($w[0].data | map(select(.id == $s.id)) | first) // null) as $x | select($x == null or $x.status != $s.status or (($x.completed_activity_id // 0) != ($s.completed_activity_id // 0)) or (($x.substitute_activity_id // 0) != ($s.substitute_activity_id // 0))) | ($s.id | tostring)] | join(\",\")'"))
+    compared = Str.trim(sh!("jq -rn --slurpfile p '${pf}' '$p[0].data.plan_history_28d | length'"))
+    # NON-EMPTY first, and the order matters: an empty history makes the set equality below
+    # vacuously true, which is the exact shape this file keeps catching elsewhere. The floor
+    # is what this fixture actually holds at this point, not a round number.
+    # BOTH payloads measured, not just the left one. `sh!` returns stdout and discards the
+    # exit code, so if `wf` ends up without a `.data` array — empty file, crash, or an error
+    # envelope — the jq expression fails at `null | map(...)`, prints nothing, and
+    # `mismatched == ""` reads as PERFECT AGREEMENT. Review proved it: replacing the
+    # `week all` capture with `: > wf` left the suite green at 763, both agreement checks
+    # passing against an absent right-hand payload. `compared` reads only `pf`, so it
+    # guarded the left side and left the side the check is actually about unmeasured.
+    week_rows = Str.trim(sh!("jq -rn --slurpfile w '${wf}' '$w[0].data | length'"))
+    _ = sh!("rm -f '${pf}' '${wf}'")
+    check!("the two commands have a shared window to disagree about", str_to_i64(compared) >= 5)?
+    check!("...and both payloads were actually read, not just the left one", str_to_i64(week_rows) >= str_to_i64(compared))?
+    check!("week and plan classify every session in it identically", mismatched == "")?
+
+    # ── half two: the one sanctioned disagreement, in exactly its direction ──
+    #
+    # Built rather than borrowed. A superseded tombstone needs two sessions on ONE date: the
+    # first skipped WITH a substitute, the second alive. `week add` revises rather than
+    # inserts when the date already holds an OPEN session, so the order is load-bearing —
+    # the first must be skipped BEFORE the second is added, or the second silently becomes a
+    # revision of the first and there is only ever one row.
+    # Read BEFORE the probe exists, so the restore check at the end compares against the
+    # state to return TO rather than against a mid-probe number. Getting that wrong gives a
+    # cleanup assertion that is satisfied by the probe still being linked — it would read
+    # `base_unplanned - 1` either way, and could not tell a restored window from a leaked
+    # one. The agent-loop scenario above records the same trap, in the same words.
+    pre_unplanned = str_to_i64(pj!(".data.adherence_28d.unplanned_activities"))
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_watts,avg_hr) VALUES (9250,'divergence probe','Ride','${ctx.today}T07:00:00Z',3600,25000,190,145);")
+    base_unplanned = str_to_i64(pj!(".data.adherence_28d.unplanned_activities"))
+    check!("the probe activity starts out unplanned to plan, so the divergence is a CHANGE", base_unplanned == pre_unplanned + 1)?
+    dsid1 = Str.trim(strjq!(ctx, ["week", "add", "${ctx.today}", "endurance", "divergence probe session", "the one that will be skipped"], ".data.id"))
+    _ = strjq!(ctx, ["skip", dsid1, "swapped for the probe ride", "9250"], ".data.id")
+    dsid2 = Str.trim(strjq!(ctx, ["week", "add", "${ctx.today}", "endurance", "divergence successor", "supersedes the tombstone above"], ".data.id"))
+    # `dsid1` gets the same INSERT-not-revision term the three agreement probes got, and it
+    # needs it more than they do: it is added on ctx.today, a date that already holds two
+    # rows, and it inserts only because both are SKIPPED. The moment an earlier scenario
+    # leaves an OPEN session on today, `week add` revises it — `dsid1` becomes a foreign id,
+    # `dsid1 != dsid2` still passes, and the cleanup sweep below deletes another scenario's
+    # row. `dsid2` needs no term: `dsid1` is skipped by the time it is added, so it always
+    # inserts.
+    check!("the fixture really made two sessions on one date, not one revised twice", dsid1 != dsid2 and dsid1 != "" and dsid2 != "" and str_to_i64(dsid1) > wp_max_before)?
+    # `week`, not `week all`: the unplanned merge is scoped to the current week by
+    # construction (`WHERE :all = 0`), so `week all` never carries these rows at all.
+    check!("`week` calls the superseded substitute unplanned", Str.trim(strjq!(ctx, ["week"], "[.data[] | select(.activity_id == 9250) | .status] | join(\",\")")) == "unplanned")?
+    check!("...while `plan` does NOT count it, which is the sanctioned divergence", str_to_i64(pj!(".data.adherence_28d.unplanned_activities")) == base_unplanned - 1)?
+    # BOTH directions of that one row. Without this, `plan` dropping the activity for any
+    # unrelated reason would satisfy the check above — the count falling by one is also what
+    # a lost row looks like. The link is what makes it a substitution rather than an absence.
+    check!("...because it is still linked as the substitution it was", pj!("[.data.plan_history_28d[] | select(.substitute_activity_id == 9250) | .status] | join(\",\")") == "skipped")?
+    # Everything this scenario created, in one sweep: the divergence pair AND the three
+    # agreement probes. Split across two cleanups earlier, and the second one silently did
+    # not run when the first check failed — leaving five sessions and three activities for
+    # every scenario after this to inherit. One `?` short-circuits the rest of the function.
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${dsid1}, ${dsid2}, ${wp_open}, ${wp_done}, ${wp_skip}); DELETE FROM activity_metrics WHERE activity_id IN (9250,9251,9252); DELETE FROM activities WHERE id IN (9250,9251,9252);")
+    check!("the divergence probe left the window as it found it", str_to_i64(pj!(".data.adherence_28d.unplanned_activities")) == pre_unplanned)?
+    # Negative membership, so it needs the companion: `length == "0"` is also what an
+    # EMPTIED history returns, which is the degeneracy the agent-loop scenario documents at
+    # its bystander. History holds b_plan!'s two rows at this moment, so the companion is
+    # free.
+    check!("...and no probe session survived it", pj!("[.data.plan_history_28d[] | select(.id == ${wp_open} or .id == ${wp_done} or .id == ${wp_skip} or .id == ${dsid1} or .id == ${dsid2})] | length") == "0" and str_to_i64(pj!(".data.plan_history_28d | length")) > 0)?
     Ok({})
 }
 
