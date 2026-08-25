@@ -3049,25 +3049,39 @@ b_seed_analyze! = |ctx| {
     # undateable count does not see it either. The hoist answers the date dimension; this
     # is the time dimension of the same defect, wearing the same intent.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (949,'impossible time','Ride','Ride',(SELECT substr(start_local,1,10) FROM activities WHERE id=101) || 'T37:00:00Z',3600);")
-    check!("...and an impossible TIME is HOISTED into view, not sunk below the default limit", strjq!(ctx, ["activities"], "[.data[] | select(.id == 949)] | length") == "1")?
+    # `activities 3`, not the default 30. With a ten-row fixture there is no limit for a
+    # sunk row to fall below, so this assertion could not show what its name claims — and
+    # the limit interaction is exactly where the round-2 regression lived, untested
+    # anywhere else in the suite. Three rows makes absence real.
+    check!("...and an impossible TIME is HOISTED into view, not sunk below a small limit", strjq!(ctx, ["activities", "3"], "[.data[] | select(.id == 949)] | length") == "1")?
     # ...which is the property, not "it does not outrank". An earlier cut of this fix sank
     # the row instead: on a 737-row database it went to position 737, outside the default
     # limit of 30, uncounted by `doctor`, and still published as `date_known: true` — three
     # ways invisible, and measurably worse than doing nothing for a listing whose job is
     # surfacing what needs repair. Ranking wants such a row LAST; this listing wants it
     # FIRST, and #249 already answered which one `activities` is.
-    check!("...ahead of every readable row, which is what the hoist is for", str_to_i64(strjq!(ctx, ["activities"], "[.data[].id] | index(949)")) < str_to_i64(strjq!(ctx, ["activities"], "[.data[].id] | index(101)")))?
+    # `index(...) != null` FIRST, because jq returns null for an absent row and
+    # `str_to_i64("null")` is 0 — the BEST position. A row that vanished from the listing
+    # entirely scored as hoisted and both of these reported success, blind to precisely
+    # the sunk-below-the-limit failure they exist to catch. Latent only because this
+    # fixture is smaller than the default limit, which nothing asserts.
+    check!("...ahead of every readable row, which is what the hoist is for", strjq!(ctx, ["activities"], "[.data[].id] | (index(949) != null) and (index(949) < index(101))") == "true")?
     # ...and one whose bad time sorts LOW, which is the half a `T37` fixture cannot see.
     # `T37:00:00` sorts HIGH as a string, so under the defect it lands first among the
     # readable rows ANYWAY — present, and ahead of 101 — and both assertions above pass on
     # the code they were written to reject. `T00:99:00` is the other shape `rankable_sql`'s
     # comment names, and it sorts BELOW every real row, so only a real hoist lifts it.
     #
-    # Second instance of one rule in this PR: A FIXTURE WHOSE PLANTED VALUE SORTS HIGH TESTS
-    # THE ORDERING ONLY IN THE DIRECTION THAT WAS ALREADY WORKING. The candidate-shortlist
-    # fixture had the same flaw against the WHERE clause; this one had it against the key.
+    # The rule, stated for both directions because the first draft of it was backwards and
+    # would have made two CORRECT fixtures here vacuous: PLANT A VALUE THAT SORTS INTO THE
+    # POSITION THE DEFECT WOULD WRONGLY GIVE IT. A SINK site (an unrankable row must not
+    # win) needs a HIGH-sorting value — a low one never outranks anything, so nothing is
+    # observed. A HOIST site (a broken row must not hide) needs a LOW one — a high one lands
+    # near the top under the defect anyway and both orderings agree. The shortlist and
+    # streak fixtures are sink sites and correctly plant `T37`; this is a hoist site and
+    # needs `T00:99`.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (951,'impossible minute','Ride','Ride',(SELECT substr(start_local,1,10) FROM activities WHERE id=101) || 'T00:99:00Z',3600);")
-    check!("...including one whose bad time sorts LOW, where only a real hoist lifts it", str_to_i64(strjq!(ctx, ["activities"], "[.data[].id] | index(951)")) < str_to_i64(strjq!(ctx, ["activities"], "[.data[].id] | index(101)")))?
+    check!("...including one whose bad time sorts LOW, where only a real hoist lifts it", strjq!(ctx, ["activities"], "[.data[].id] | (index(951) != null) and (index(951) < index(101))") == "true")?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 951;")
     # ...and a well-formed year below 1000 is undateable too. This holds the SQL year bound
     # to the Roc one, and NOTHING held it: deleting ` OR substr(col,1,4) < '1000'` passed the
