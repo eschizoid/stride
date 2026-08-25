@@ -601,6 +601,44 @@ Plan :: [].{
                         SubstituteOf(cid) =>
                             Output.err_out!("activity_already_linked", "activity ${I64.to_str(activity_id)} substitutes session #${I64.to_str(cid)} — release it first: stride skip ${I64.to_str(cid)} \"<reason>\" none")
                         Free => {
+                            # WHAT THIS REPLACES, read before the write (#258). `complete`
+                            # on a session that is already `done` overwrote
+                            # `completed_activity_id` and returned a payload
+                            # indistinguishable from a first-time completion: the activity
+                            # that originally completed the session was gone, with no record
+                            # that anything had been replaced. A typo'd SESSION id in the
+                            # first argument did exactly what the comment above this function
+                            # says the existence checks exist to prevent — reported success,
+                            # and overwrote real history rather than creating a new row.
+                            #
+                            # NOT refused, and that is the part worth stating. `skip` answers
+                            # `session_done` on the same state, so refusing would look
+                            # consistent — but `skip`'s own message names re-completing as
+                            # the remedy for a mis-linked completion ("re-complete it: stride
+                            # complete <session> <activity>"). Refusing here would falsify
+                            # the only repair path stride documents, which is the class of
+                            # defect this codebase keeps fixing. The bug in the title is
+                            # SILENTLY, not overwrites.
+                            # BOTH judgment-tier links, because the UPDATE below destroys
+                            # both. Reading only `completed_activity_id` was worse than
+                            # reading neither: `substitute_activity_id` is NULLed by the
+                            # same statement, so on a session that was `skipped` with a
+                            # substitute the payload answered `replaced_activity: 0` — an
+                            # affirmative "nothing was replaced" about a call that had just
+                            # erased the only record that the athlete did that activity in
+                            # place of this session. Saying nothing was merely incomplete;
+                            # saying 0 is wrong, and wrong for exactly the consumer the
+                            # field was added for.
+                            prior = Sqlite.query!({
+                                path: Path.utf8(path),
+                                query: "SELECT COALESCE(completed_activity_id, 0) AS prior, COALESCE(substitute_activity_id, 0) AS sub FROM planned_sessions WHERE id = :pid",
+                                bindings: [{ name: ":pid", value: Integer(session_id) }],
+                                row: |cols| |stmt| {
+                                    p = Sqlite.i64("prior")(cols)(stmt)?
+                                    s = Sqlite.i64("sub")(cols)(stmt)?
+                                    Ok({ p, s })
+                                },
+                            })?
                             # write first, steal second: a failure between the two
                             # leaves only a dead tombstone link (self-healing), never
                             # a released link with nothing written in its place
@@ -612,11 +650,92 @@ Plan :: [].{
                                     { name: ":pid", value: Integer(session_id) },
                                 ],
                             })?
+                            # `replaced_activity` and `dropped_substitute` on EVERY arm,
+                            # always present, 0 when nothing was destroyed. Both report a
+                            # question a consumer has to ask on every completion — did this
+                            # call erase judgment-tier data? — so absence is indistinguishable
+                            # from a consumer that forgot to ask, which is the ambiguity
+                            # AGENTS.md's absence taxonomy exists to remove. 0 is safe as the
+                            # sentinel for the same reason `ftp_used > 0` is: both name
+                            # activity ids, and no activity has id 0.
+                            #
+                            # `released_substitute_of` is the one that stays OPTIONAL, and
+                            # not because a 0 would read as a session id — that argument is
+                            # equally true of the two above, which take 0 anyway. It is
+                            # optional because it reports an incidental side effect on a
+                            # DIFFERENT session, meaningful only when it happened; there is
+                            # no per-completion question it answers.
+                            #
+                            # `dropped_substitute`, NOT `released_substitute`, which is what
+                            # the first cut called it "reusing skip's name and meaning". The
+                            # name matched; the absence contract was the opposite. `skip`
+                            # OMITS `released_substitute` when nothing was released, and
+                            # `tests/e2e.roc` pins that with a `!contains` — so a consumer
+                            # that correctly learned `has("released_substitute")` there
+                            # would read "a substitute was released" on every completion,
+                            # including a plain first one. That is this field's own bug,
+                            # re-created across commands instead of within one.
+                            # `dropped_substitute` collides with nothing, and it is the word
+                            # the human line beside it already uses.
+                            #
+                            # `prior != 0` was here and did nothing: when `prior` is 0 the
+                            # else branch and `prior` are the same value, so the guard could
+                            # not change an outcome. An unfalsifiable clause reads as if it
+                            # guards something, which is the shape Config.roc's `numeric_key`
+                            # comment deletes rather than pins. The COALESCE is what makes 0
+                            # the absent case; nothing else needs to restate it.
+                            replaced = if prior.p != activity_id prior.p else 0
+                            # ...and `sub != activity_id` IS load-bearing: re-completing with
+                            # the activity that was already the substitute is a promotion,
+                            # not a loss, and reporting it as released would name a link the
+                            # caller still holds.
+                            released = if prior.s != activity_id prior.s else 0
+                            # ...and the note NAMES THE REPAIR, because this line is the only
+                            # place the erased id survives. Nothing stores it: `week` and
+                            # `plan` show the new `completed_activity_id`, the old one is
+                            # overwritten in place, and there is no audit row — so an
+                            # athlete who notices next week has shell scrollback and nothing
+                            # else. Printing the remedy while the id is still on screen is
+                            # what turns a notification into something they can act on, and
+                            # it is the pattern `skip`'s own refusal already uses. A durable
+                            # record needs a `superseded_activity_id` column and a
+                            # migration; that is a follow-up, and this is not a substitute
+                            # for it.
+                            #
+                            # The remedy is EXACTLY invertible on this row, and the reason is
+                            # worth writing down because nothing else records it:
+                            # `replaced_activity` and `dropped_substitute` are mutually
+                            # exclusive in every state the CLI can produce. Every write that
+                            # sets `completed_activity_id` NULLs `substitute_activity_id` in
+                            # the same statement, and the only write that SETS
+                            # `substitute_activity_id` — `skip`'s Sub arm — refuses a `done`
+                            # row. So a row being repaired here cannot also hold a substitute,
+                            # and there is nothing else on it left un-restored. (A test that
+                            # wants both non-zero is probing a hand-edited database.)
+                            #
+                            # It has a SECOND leg, and naming it is what makes this comment
+                            # self-defending: `skip`'s guard keys on `status = 'done'`, not on
+                            # `completed_activity_id`, so the invariant also needs
+                            # `completed_activity_id != 0 => status = 'done'`. That holds only
+                            # because the UPDATE below is the sole writer of the column and
+                            # sets both fields in one statement. Any future writer inherits
+                            # that obligation — set them together, or the skip guard is
+                            # bypassed, both columns can be set, and this comment and the
+                            # remedy's "nothing else left un-restored" go quietly false.
+                            # The e2e fixture asserts the pair count is 0 at the end, so the
+                            # invariant is measured rather than only claimed.
+                            #
+                            # "this session's completion", not "it": on the ReleasedFrom arm
+                            # the same call also clears a substitute link on a DIFFERENT
+                            # session, and re-running the remedy does not bring that back.
+                            # The bare pronoun sat one clause away from that sentence.
+                            replaced_note = if replaced != 0 " (replacing activity ${I64.to_str(replaced)}, whose completion of this session is now gone — `stride complete ${I64.to_str(session_id)} ${I64.to_str(replaced)}` puts this session's completion back)" else ""
+                            released_note = if released != 0 " (dropping substitute activity ${I64.to_str(released)}, which no longer stands in for this session)" else ""
                             match steal_dead_links!(path, activity_id, session_id)? {
                                 ReleasedFrom(holder) =>
-                                    Output.out!({ completed_session: session_id, activity: activity_id, released_substitute_of: holder }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)} (released its old substitute link on session #${I64.to_str(o.released_substitute_of)})")
+                                    Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released, released_substitute_of: holder }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note} (released its old substitute link on session #${I64.to_str(o.released_substitute_of)})")
                                 NothingReleased =>
-                                    Output.out!({ completed_session: session_id, activity: activity_id }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}")
+                                    Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note}")
                             }
                         }
                     }
@@ -698,14 +817,43 @@ Plan :: [].{
                             "planned session #${(session_id).to_str()} is '${session_type}' — done means evidence, so it needs an activity id (only rest days close without one).\n  stride complete ${(session_id).to_str()} <activity_id>${hint}",
                         )
                     } else {
+                        # THIS arm is `complete` too, and complete.json is one contract for
+                        # both. `replaced_activity` was added to the two-argument form only
+                        # and made required, which left this payload failing its own schema
+                        # — the one thing strictly worse than before the field existed. It
+                        # is caught by nothing: `just schema-check` and the e2e conformance
+                        # loop both select `mutates == false`, and ADR 0000 §9c names
+                        # `complete` as one of four payloads validated by neither. The e2e
+                        # check below is that missing oracle, not a courtesy.
+                        #
+                        # A bare rest completion links no activity, so `replaced_activity`
+                        # is honestly 0 — but the same UPDATE NULLs `substitute_activity_id`
+                        # here as in the two-argument form, so `dropped_substitute` has to
+                        # be read before the write on this arm as well.
+                        #
+                        # `0.I64`, not a bare `0`. Roc infers an unconstrained numeric
+                        # literal in a record as fractional, and the builtin JSON then
+                        # renders it `0.0` — so this ONE arm shipped a float under a key the
+                        # schema types as integer, and both gates were blind to it: the
+                        # validator's integer test is `floor($v) == $v`, which `0.0` passes,
+                        # and a `Str.contains(out, "\"replaced_activity\":0")` assertion is
+                        # satisfied by `0.0` as a prefix. Exactly the hazard the `1 == 1`
+                        # comment two lines down names for Bool, one field over.
+                        released = Sqlite.query!({
+                            path: Path.utf8(path),
+                            query: "SELECT COALESCE(substitute_activity_id, 0) AS sub FROM planned_sessions WHERE id = :pid",
+                            bindings: [{ name: ":pid", value: Integer(session_id) }],
+                            row: Sqlite.i64("sub"),
+                        })?
                         Sqlite.execute!({
                             path: Path.utf8(path),
                             query: "UPDATE planned_sessions SET status = 'done', substitute_activity_id = NULL WHERE id = :pid",
                             bindings: [{ name: ":pid", value: Integer(session_id) }],
                         })?
+                        released_note = if released != 0 " (dropping substitute activity ${I64.to_str(released)}, which no longer stands in for this session)" else ""
                         # rest must be Bool-TYPED (1 == 1), not a bare `True` tag — the new
                         # builtin JSON renders a bare tag as the string "True", not true.
-                        Output.out!({ completed_session: session_id, rest: 1 == 1 }, |p| "planned session #${(p.completed_session).to_str()} (rest) marked done")
+                        Output.out!({ completed_session: session_id, rest: 1 == 1, replaced_activity: 0.I64, dropped_substitute: released }, |p| "planned session #${(p.completed_session).to_str()} (rest) marked done${released_note}")
                     }
                 }
         }
