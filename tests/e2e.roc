@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(901)?
+    checks_ran_exactly!(903)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -4597,7 +4597,13 @@ b_plan! = |ctx| {
     # Running it is the stronger claim anyway: the overwrite is exactly invertible on this
     # row, because a row holding a completion cannot also hold a substitute (the
     # mutual-exclusivity note above), so nothing else on it is left un-restored.
-    check!("...and the remedy it prints names the right two ids in the right order", Str.contains(steal_human, "`stride complete ${replan} 302` puts this session's completion back"))?
+    check!("...and the remedy it prints names the right two ids in the right order", Str.contains(steal_human, "`stride complete ${replan} 302`"))?
+    # ...and separately, that its pronoun is SCOPED. Bundled into one check, a harmless
+    # reword failed under a label about ids, pointing the next reader at ids that are fine.
+    # This half is not decoration: the unscoped "puts it back" over-promised, because on
+    # this arm the same call also clears a substitute link on a DIFFERENT session and
+    # re-running does not bring that back.
+    check!("...with the pronoun scoped, since the cross-session damage is NOT undone by it", Str.contains(steal_human, "puts this session's completion back"))?
     _ = stride!(ctx.bin, ctx.home, ["complete", replan, "302"])
     check!("...and running it verbatim restores the completion it named", Str.trim(sql!(ctx.db, "SELECT COALESCE(completed_activity_id,0) FROM planned_sessions WHERE id = ${replan};")) == "302")?
     _ = stride!(ctx.bin, ctx.home, ["complete", replan, "300"])
@@ -4644,7 +4650,7 @@ b_plan! = |ctx| {
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date LIKE '2099-10-%'; DELETE FROM activities WHERE id IN (306, 307, 308, 309);")
     # a bare re-skip PRESERVES a substitute link (judgment-tier survives wording fixes)
     resess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "reskip probe", "r"], ".data.id"))
-    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (303,'probe spin','Ride','${ctx.d1}T09:00:00Z',1800,9000);")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (303,'probe spin','Ride','${ctx.d1}T09:00:00Z',1800,9000),(3050,'promotion probe act','Ride','${ctx.d2}T09:00:00Z',1800,9000),(3051,'promotion probe act 2','Ride','${ctx.d1}T10:00:00Z',1800,9000);")
     _ = stride!(ctx.bin, ctx.home, ["skip", resess, "first wording", "303"])
     reskip_out = stride!(ctx.bin, ctx.home, ["skip", resess, "second wording"])
     check!("bare re-skip keeps the substitute link", Str.trim(sql!(ctx.db, "SELECT COALESCE(substitute_activity_id,0) FROM planned_sessions WHERE id = ${resess};")) == "303")?
@@ -4687,16 +4693,28 @@ b_plan! = |ctx| {
     # input that separates it from a bare `prior.s`. Mutation found the gap exactly as it
     # did for `replaced` — `released = prior.s` survived both other checks, because the two
     # agree everywhere except here.
-    _ = sql!(ctx.db, "UPDATE planned_sessions SET substitute_activity_id = 303 WHERE id = ${resess};")
-    _promo = stride!(ctx.bin, ctx.home, ["complete", resess, "303"])
-    check!("...and promoting the substitute to the completion drops nothing", strjq!(ctx, ["complete", resess, "303"], ".data.dropped_substitute | tojson") == "0")?
-    # ...and the HUMAN line, which needs its own re-stage for the reason above: without it
-    # the substitute is already NULL and this assertion is true under any implementation.
-    # Review proved that: guarding the note on `prior.s != 0` while valuing it on `released`
-    # printed "dropping substitute activity 0" and the whole suite stayed green.
-    _ = sql!(ctx.db, "UPDATE planned_sessions SET substitute_activity_id = 303 WHERE id = ${resess};")
-    check!("...nor says so in the human line", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["complete", resess, "303"]), "dropping substitute")))?
-    _ = stride!(ctx.bin, ctx.home, ["complete", resess, "304"])
+    # Staged through `skip`, NOT by bolting a substitute onto this `done` row. The comment
+    # in Plan.roc says a row cannot hold both a completion and a substitute and that a test
+    # wanting both is probing a hand-edited database — and the first cut of this probe did
+    # exactly that, one block below the comment. A promotion is reachable in two commands.
+    promosess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d2}", "endurance", "promotion probe", "r"], ".data.id"))
+    _ = stride!(ctx.bin, ctx.home, ["skip", promosess, "did 305p instead", "3050"])
+    # ...and the payload is read from the run that HAD the substitute. `strjq!` re-invokes
+    # the command, so using it here measured a SECOND run — by which time the first had
+    # NULLed the link, making `dropped_substitute` 0 under every implementation. That is the
+    # third vacuous check this file has grown while closing the previous one, and all three
+    # were in EDITED assertions rather than new ones: a rewritten check carries the label
+    # and comment of the one that worked, which is what makes it invisible.
+    promo = stride!(ctx.bin, ctx.home, ["complete", promosess, "3050"])
+    check!("...and promoting the substitute to the completion drops nothing", Str.trim(sh!("printf '%s' '${promo}' | jq -r '.data.dropped_substitute | tojson'")) == "0")?
+    # ...and the HUMAN line needs its own staging for the same reason: after the line above
+    # the substitute is NULL, so a re-run asserts nothing. Review proved it — guarding the
+    # note on `prior.s != 0` while valuing it on `released` printed "dropping substitute
+    # activity 0" and the whole suite stayed green.
+    promo2 = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "promotion probe 2", "r"], ".data.id"))
+    _ = stride!(ctx.bin, ctx.home, ["skip", promo2, "did 3051 instead", "3051"])
+    check!("...nor says so in the human line", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["complete", promo2, "3051"]), "dropping substitute")))?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${promosess}, ${promo2}); DELETE FROM activities WHERE id IN (3050, 3051);")
     # the COMPLETION arm of the claim guard: an activity that already completed a
     # session refuses a second claim, naming the session and the permanence
     dc2sess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d2}", "endurance", "completion claim probe", "r"], ".data.id"))
@@ -4741,6 +4759,15 @@ b_plan! = |ctx| {
     # the NULL-link arm: a completed rest day refuses skip with its own wording —
     # this also pins the COALESCE that keeps a NULL from hard-failing the decoder
     check!("a completed rest day refuses skip in the NULL-link wording", Str.contains(stride!(ctx.bin, ctx.home, ["skip", restsess, "x"]), "completed rest day"))?
+    # ...and the INVARIANT the whole scenario above leans on, measured rather than claimed.
+    # `Plan.roc` states that a row cannot hold both a completion and a substitute, and
+    # #258's remedy is only exactly invertible because of it — "nothing else on that row
+    # left un-restored" is that sentence. It was written from reading two code paths; this
+    # is the fixture, which has just driven skip, complete, rest-complete, release, steal
+    # and promotion across many rows, agreeing. It is deliberately over the WHOLE table and
+    # not a window, so a row any earlier block left in the impossible state is caught here
+    # rather than by whoever relies on the invariant next.
+    check!("no row holds both a completion and a substitute, which the remedy depends on", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE COALESCE(completed_activity_id,0) <> 0 AND COALESCE(substitute_activity_id,0) <> 0;")) == "0")?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${today_sess}, ${extra_sess}, ${replan}, ${resess}, ${restsess}); DELETE FROM activities WHERE id IN (300, 303, 304);")
 
     # ── plan history + adherence (#158): planned-vs-actual from ONE call.

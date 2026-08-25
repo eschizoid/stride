@@ -713,6 +713,18 @@ Plan :: [].{
                             # and there is nothing else on it left un-restored. (A test that
                             # wants both non-zero is probing a hand-edited database.)
                             #
+                            # It has a SECOND leg, and naming it is what makes this comment
+                            # self-defending: `skip`'s guard keys on `status = 'done'`, not on
+                            # `completed_activity_id`, so the invariant also needs
+                            # `completed_activity_id != 0 => status = 'done'`. That holds only
+                            # because the UPDATE below is the sole writer of the column and
+                            # sets both fields in one statement. Any future writer inherits
+                            # that obligation — set them together, or the skip guard is
+                            # bypassed, both columns can be set, and this comment and the
+                            # remedy's "nothing else left un-restored" go quietly false.
+                            # The e2e fixture asserts the pair count is 0 at the end, so the
+                            # invariant is measured rather than only claimed.
+                            #
                             # "this session's completion", not "it": on the ReleasedFrom arm
                             # the same call also clears a substitute link on a DIFFERENT
                             # session, and re-running the remedy does not bring that back.
