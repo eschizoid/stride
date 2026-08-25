@@ -4,6 +4,12 @@
 
 # stride
 
+[![CI](https://github.com/eschizoid/stride/actions/workflows/build.yml/badge.svg)](https://github.com/eschizoid/stride/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/eschizoid/stride)](https://github.com/eschizoid/stride/releases)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-informational)](https://github.com/eschizoid/stride/actions/workflows/build.yml)
+[![Built with Roc](https://img.shields.io/badge/built%20with-Roc-7c4dff)](https://www.roc-lang.org)
+[![License](https://img.shields.io/github/license/eschizoid/stride)](LICENSE)
+
 stride answers the training questions Strava doesn't. Is my training actually polarized?
 Is my fitness climbing? When was my last *real* hard session? Is my FTP stale? It reads
 your own Strava history and computes the answers locally, into a SQLite file you own.
