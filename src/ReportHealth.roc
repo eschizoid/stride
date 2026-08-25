@@ -378,13 +378,24 @@ ReportHealth :: [].{
                     ["", "  → ${(p.strength_unrated).to_str()} strength-class sessions have no rating — `stride rate <id> <1-10>` scores them honestly"]
                 else
                     []
-            # EMPTIES DROPPED, so a line that has nothing to say costs no blank row. The
-            # undateable-activities line below is conditional — it is a fault count, and a
-            # "0 undateable" printed on every healthy run trains the eye to skip the row on
-            # the day it is not zero — and `else ""` in a joined list otherwise renders as
-            # an empty line rather than as nothing.
+            # A LIST that is empty or one element, exactly like `hint` above, rather than a
+            # string that is empty or a sentence. The conditional undateable line disappears
+            # when it has nothing to say, and `""` keeps meaning what it means everywhere
+            # else in this screen: a deliberate section spacer.
+            #
+            # The first version returned `else ""` and filtered the whole joined list for
+            # empties — which removed all SIX spacers, five here and one in `hint`, turning
+            # the screen into an undifferentiated wall and detaching the footer arrow. The
+            # two e2e checks that read this screen are `Str.contains` on single lines, so
+            # 785 checks stayed green through a regression that changed every section
+            # boundary on it.
+            undateable =
+                if p.undateable_activities > 0
+                    ["  activities with an unreadable date: ${(p.undateable_activities).to_str()} — `stride activities` lists them first; delete each by id and re-sync"]
+                else
+                    []
             Str.join_with(
-                List.keep_if(List.join([
+                List.join([
                     [
                         "",
                         "── stride doctor ─────────────────────────────",
@@ -422,26 +433,21 @@ ReportHealth :: [].{
                             "  would be recomputed by analyze: unknown — ${p.config_error}"
                         },
                         "  streams still pending: ${(p.pending_streams).to_str()} — run `stride sync` to keep draining them",
-                        # ONLY when there are any (#265). Every other line here reports a
-                        # number that is meaningful at zero — "0 not yet analyzed" is a
-                        # clean bill — but this one is a fault count, and printing "0
-                        # undateable" on every healthy run trains the eye to skip the row
-                        # on the day it is not zero. That is the same argument `plan`'s
-                        # freshness note makes for staying silent, and the same one this
-                        # file's own junk-filter line lost by always printing.
-                        #
-                        # Names the command rather than the ids: `activities` now leads
-                        # with these rows, so one pointer beats an unbounded list here.
-                        if p.undateable_activities > 0 {
-                            "  activities with an unreadable date: ${(p.undateable_activities).to_str()} — `stride activities` lists them first; delete each by id and re-sync"
-                        } else {
-                            ""
-                        },
+                    ],
+                    # ONLY when there are any (#265). Every other line here reports a number
+                    # that is meaningful at zero — "0 not yet analyzed" is a clean bill —
+                    # but this one is a fault count, and printing "0 undateable" on every
+                    # healthy run trains the eye to skip the row on the day it is not zero.
+                    # That is the same argument `plan`'s freshness note makes for staying
+                    # silent. Names the command rather than the ids, because `activities`
+                    # now leads with these rows.
+                    undateable,
+                    [
                         "  config: hr zones ${if p.zones_set "set" else "incomplete"}, ${(p.sport_zone_overrides).to_str()} per-sport zone key(s) set · ${(p.ftp_derived_sports).to_str()} sport(s) have a derived FTP (FTP is never configured — see summary)",
                         "  time: ${p.time}",
                     ],
                     hint,
-                ]), |line| !(Str.is_empty(line))),
+                ]),
                 "\n",
             )
         })

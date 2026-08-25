@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(785)?
+    checks_ran_exactly!(789)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2552,6 +2552,16 @@ b_seed_analyze! = |ctx| {
     # across a platform upgrade.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (941,'poisoned low','Ride','Ride','0000-0z-01T10:00:00Z',3600),(942,'stored empty','Ride','Ride','',3600),(947,'impossible low','Ride','Ride','1000-02-30T10:00:00Z',3600);")
     check!("...and an empty string, a lexically-low poisoned date and an impossible day surface too", strjq!(ctx, ["activities"], "[.data[0:4][].id] | sort | join(\",\")") == "940,941,942,947")?
+    # ...and `date_known` agrees with the REFUSAL rule on the one input where the two can
+    # diverge. '1000-02-30' is impossible but well FORMED, so no string inspection rejects
+    # it — only the bundled SQLite's date() does, and only since 3.46. That makes it the
+    # single input holding four SQL copies of the predicate to the Roc one, and it matters
+    # more than it did for the hoist: `date_known` is a PUBLISHED boolean SKILL.md tells the
+    # coach to trust for "is this date a hole", so a platform change that loosened date()
+    # would ship `date_known: true` on a row every computing command refuses — a contract
+    # statement contradicting the engine, where before it was only a sort order.
+    check!("...and `date_known` is false for the impossible day, holding SQL to the Roc rule", strjq!(ctx, ["activities"], "[.data[] | select(.id == 947) | .date_known] | join(\",\")") == "false")?
+    check!("...while a readable row says true, so the flag is not simply always false", strjq!(ctx, ["activities"], "[.data[] | select(.date_known == true)] | length > 0") == "true")?
     # ...and a READABLE lexically-low date is NOT hoisted, which is the other half of the
     # predicate. Without this the clause could hoist everything and still pass above.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (948,'readable low','Ride','Ride','1000-01-01T10:00:00Z',3600);")
@@ -2667,6 +2677,33 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,distance) VALUES (944,'reps probe','Ride','Ride',NULL,3600,20000);")
     _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (944,1,'work',0,720,200.0,'power'),(944,2,'work',900,720,200.0,'power'),(944,3,'work',1800,720,200.0,'power');")
     check!("`reps` refuses rather than answering 0 of 0 over a database that holds one", strjq!(ctx, ["reps"], ".error.code") == "unreadable_activity_date" and Str.contains(strjq!(ctx, ["reps"], ".error.message"), "944"))?
+    # ...and a poisoned COMPARABLE, which is a different site from the anchor and was the
+    # whole of #270: `reps` refused an unreadable anchor date and absorbed an unreadable
+    # comparable one, in the same screen. The comparables query has NO lower date bound
+    # (only `a2.start_local <= self.start_local`), so a second work-segmented row with a
+    # date that sorts under the anchor reaches it — no history needed, which is why this
+    # turned out cheap after I had written it off as needing one.
+    #
+    # The assertion is that the message names the COMPARABLE and not the anchor. Reverting
+    # the fix restores `.ok_or(0)`, which sorts that row to the epoch and answers at exit 0.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,distance) VALUES (949,'reps comparable','Ride','Ride','0000-0z-01T10:00:00Z',3600,20000);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (949,1,'work',0,720,200.0,'power'),(949,2,'work',900,720,200.0,'power'),(949,3,'work',1800,720,200.0,'power');")
+    _ = sql!(ctx.db, "UPDATE activities SET start_local = '${ctx.d1}T07:00:00Z' WHERE id = 944;")
+    check!("...and a poisoned COMPARABLE is refused too, naming it rather than the anchor", strjq!(ctx, ["reps"], ".error.code") == "unreadable_activity_date" and Str.contains(strjq!(ctx, ["reps"], ".error.message"), "949") and !(Str.contains(strjq!(ctx, ["reps"], ".error.message"), "944")))?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 949; DELETE FROM activities WHERE id = 949; UPDATE activities SET start_local = NULL WHERE id = 944;")
+    # `doctor`'s human screen keeps its SECTION SPACERS, which nothing pinned. The two
+    # checks that read this screen are `Str.contains` on single lines, so when a global
+    # empty-line filter — added so a conditional row could disappear when it had nothing to
+    # say — removed all of them, the suite stayed green at 785 through a change that altered
+    # every section boundary and detached the footer arrow.
+    #
+    # FIVE, not six, and a floor rather than an equality. Five are unconditional; the sixth
+    # belongs to `hint`, which fires only when there are unrated strength sessions and does
+    # not in this fixture. Pinning six went red here, which is the version of this check
+    # that would have had to be "fixed" by someone who did not know why the number moved.
+    # The regression this catches took the count to zero, so a floor discriminates it
+    # completely while surviving a fixture that gains or loses the conditional block.
+    check!("doctor's human screen keeps its section spacers", str_to_i64(Str.trim(sh!("HOME='${ctx.home}' '${ctx.bin}' doctor 2>/dev/null | grep -c '^$'"))) >= 5)?
     _ = sql!(ctx.db, "DELETE FROM activity_segments; INSERT INTO activity_segments SELECT * FROM seg_bak249; DROP TABLE seg_bak249; DELETE FROM activities WHERE id = 944;")
     check!("...with the segment table restored, so the probe leaves no state behind", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_segments;")) == seg_249)?
     # ...and the POISONED shape for `week`, alongside the NULL one asserted above. This used
