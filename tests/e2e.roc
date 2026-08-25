@@ -250,7 +250,35 @@ shutdown! = |_reason, _ctx| Ok({})
 
 run_all! : () => Try({}, _)
 run_all! = || {
+    # ── the litter sweep's safety property, probed through the SHIPPED CALL PATH (#266).
+    # Sentinels are planted BEFORE `reset_checks!` and read after it, so what is under test
+    # is "reset_checks! collects litter", not "sweep_litter! would if called". An earlier
+    # cut called `sweep_litter!` directly and passed while the call site was deleted:
+    # collection silently off in the three mock-backed drivers, both suites green. That is
+    # the same ladder this review has climbed twice already — round 1 asserted a
+    # re-derivation instead of the shipped file, this asserts the shipped function instead
+    # of the shipped call site.
+    #
+    # Replacing the pid-liveness loop with a blanket `rm -f .e2e-checks.*` was also green in
+    # both suites, and then produced `804 == 848` under two concurrent runs: #266 verbatim.
+    #
+    # `${mode}-sweepprobe` rather than a bare `sweepprobe`, which was NOT collision-free:
+    # `sweepprobe` is a valid `E2E_MODE`, so `E2E_MODE=sweepprobe` made the run's own tally
+    # the same file the probe deletes. It failed loudly rather than passing wrongly, but
+    # "cannot collide" was not what the code guaranteed. Suffixing the mode can never equal
+    # `.e2e-checks.<mode>.<pid>` for any mode, and still carries the two dots the sweep's
+    # glob requires.
+    probe_mypid = Str.trim(sh!("echo $PPID"))
+    probe_mode = "${env_or!("E2E_MODE", "e2e")}-sweepprobe"
+    _ = sh!("touch '.e2e-checks.${probe_mode}.${probe_mypid}' '.e2e-checks.${probe_mode}.999999' '.e2e-checks.${probe_mode}.notapid'")
     reset_checks!({})?
+    check!("the litter sweep keeps a tally whose owner is still running", Str.trim(sh!("[ -e '.e2e-checks.${probe_mode}.${probe_mypid}' ] && echo kept || echo swept")) == "kept")?
+    check!("...collects one whose owner is gone", Str.trim(sh!("[ -e '.e2e-checks.${probe_mode}.999999' ] && echo kept || echo swept")) == "swept")?
+    # ...and leaves a suffix that is not a pid alone. That is the shape a quoting regression
+    # produces — a literal `.e2e-checks.<mode>.$PPID` — and collecting it would hide exactly
+    # the defect `tally_is_scoped!` exists to catch.
+    check!("...and skips a suffix that is not a pid at all", Str.trim(sh!("[ -e '.e2e-checks.${probe_mode}.notapid' ] && echo kept || echo swept")) == "kept")?
+    _ = sh!("rm -f '.e2e-checks.${probe_mode}.'*")
     reset_sqlite_errors!({})
     # ── #266: the tally the guard at the end of this driver counts must belong to THIS
     # process. Asserted here rather than trusted, because the property was documented for
@@ -313,26 +341,6 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    # ── the litter sweep's own safety property, which nothing asserted (#266). Replacing
-    # the whole pid-liveness loop with the obvious `rm -f .e2e-checks.*` simplification was
-    # green in both suites — and then, under two concurrent runs, produced `804 == 848`:
-    # #266 verbatim, the under-count direction, one run's live tally deleted by the other's
-    # reset. Three rounds of this review found the same shape three times, a plausible edit
-    # reverting a safety property with both suites green; this is the last of them.
-    #
-    # It probes `sweep_litter!` itself, not a copy of its shell, for the reason that
-    # function's own comment gives. `sweepprobe` collides with neither `.e2e-checks.<mode>`
-    # nor this run's own tally, so `tally_is_scoped!` and the guard below are untouched.
-    mypid = Str.trim(sh!("echo $PPID"))
-    _ = sh!("touch '.e2e-checks.sweepprobe.${mypid}' '.e2e-checks.sweepprobe.999999' '.e2e-checks.sweepprobe.notapid'")
-    sweep_litter!({})
-    check!("the litter sweep keeps a tally whose owner is still running", Str.trim(sh!("[ -e '.e2e-checks.sweepprobe.${mypid}' ] && echo kept || echo swept")) == "kept")?
-    check!("...collects one whose owner is gone", Str.trim(sh!("[ -e '.e2e-checks.sweepprobe.999999' ] && echo kept || echo swept")) == "swept")?
-    # ...and leaves a suffix that is not a pid alone. That is the shape a quoting regression
-    # produces — a literal `.e2e-checks.<mode>.$PPID` — and collecting it would hide exactly
-    # the defect `tally_is_scoped!` exists to catch.
-    check!("...and skips a suffix that is not a pid at all", Str.trim(sh!("[ -e '.e2e-checks.sweepprobe.notapid' ] && echo kept || echo swept")) == "kept")?
-    _ = sh!("rm -f '.e2e-checks.sweepprobe.'*")
     tally_is_scoped!({})?
     checks_ran_exactly!(915)?
     Stdout.line!("ALL E2E CHECKS PASS")
@@ -6286,7 +6294,7 @@ tally_is_scoped! = |{}| {
 # quoting regression produces) from being collected as though its owner had died.
 sweep_litter! : {} => {}
 sweep_litter! = |{}| {
-    _ = sh!("for f in .e2e-checks.*.*; do [ -e \"$f\" ] || continue; p=$(printf %s \"$f\" | sed 's/.*\\.//'); case \"$p\" in ''|*[!0-9]*) continue ;; esac; ps -p \"$p\" >/dev/null 2>&1 || rm -f \"$f\"; done")
+    _ = sh!("command -v ps >/dev/null 2>&1 || exit 0; for f in .e2e-checks.*.*; do [ -e \"$f\" ] || continue; p=$(printf %s \"$f\" | sed 's/.*\\.//'); case \"$p\" in ''|*[!0-9]*) continue ;; esac; ps -p \"$p\" >/dev/null 2>&1 || rm -f \"$f\"; done")
     {}
 }
 
@@ -6315,11 +6323,6 @@ reset_checks! = |{}| {
     # A blanket `rm -f .e2e-checks.*` would delete a concurrent run's live tally, which is
     # the bug this PR closes — so the sweep asks whether each owner is still alive.
     #
-    # ...and sweep tallies whose OWNER IS GONE. A run that fails or is interrupted before
-    # its guard leaks its pid-named file, pids never repeat, and nothing else collects them.
-    # A blanket `rm -f .e2e-checks.*` would delete a concurrent run's live tally, which is
-    # the bug this PR closes — so the sweep asks whether each owner is still alive.
-    #
     # `ps -p`, NOT `kill -0`, and the comment here said the opposite for one commit. The
     # claim was that `kill -0` errs safe because it reports success for another user's pid
     # (EPERM), leaving an unfamiliar process alone. It does not: on this platform `kill -0`
@@ -6334,6 +6337,16 @@ reset_checks! = |{}| {
     # radius — it needs another user's concurrent run in a shared checkout — but the
     # comment asserted a verified safety property that measurement contradicts, in the PR
     # about exactly that. `ps -p` has the semantics the paragraph claimed all along.
+    #
+    # GUARDED on `ps` existing, because without that the fallback is not "the sweep stops
+    # working" but the blanket `rm` this PR removed: `ps -p` exits 127 when the binary is
+    # missing, `||` fires, and every tally goes — live ones included — with the sweep still
+    # exiting 0. Measured, on a PATH holding sh/sed/printf/rm but no ps: guarded, a live
+    # owner AND a dead owner are both KEPT; with ps present, live kept and dead collected.
+    # So it degrades to leak, never to destroy. `command` is a POSIX built-in, so the guard
+    # cannot itself be the missing thing. The case that motivates it is a minimal image
+    # (busybox `ps` may not support `-p`) rather than the runners in use — and the guard
+    # makes that question moot rather than needing an answer.
     #
     # It is also the only form that reaches the interrupt path: Ctrl-C during a 50-second
     # suite is the ordinary case, and no in-process cleanup can ever run there.
