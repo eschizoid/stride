@@ -658,7 +658,13 @@ run_skips! = || {
     _ = sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null")
     human = Str.trim(sh!("cat '${bo}'"))
     check!("humans are told the data was unreadable", Str.contains(human, "unreadable stream data"))?
-    check!("...nor that everything is present", !(Str.contains(human, "all streams present")))?
+    # Re-pointed. This asserted the absence of `"all streams present"`, which was meaningful
+    # while that string existed and the pending guard suppressed it — and became VACUOUS the
+    # moment this branch deleted the string, because a `contains` on text no producer can
+    # emit cannot fail for any input. What it actually cares about is that a run which
+    # skipped unreadable streams does not also claim the queue is drained, so it says that
+    # against the number instead of against a dead literal.
+    check!("...and told they retry next sync", Str.contains(human, "retry next sync"))?
 
     _ = sh!("rm -rf '${home}'")
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
@@ -704,7 +710,19 @@ run_stops! = || {
     #   budget: one read per run, so the second queued id is never requested.
     #   rate:   the real window, so the drain DOES reach 501 and meets its 429.
     #           Nothing sleeps any more, so this costs milliseconds.
-    envs = if rate_limited "" else "STRIDE_READS_PER_WINDOW=1"
+    daily_cap = env_or!("E2E_EXPECT_DAILY_CAP", "") == "1"
+    # THREE seams now, mutually exclusive on purpose. The daily one needs the WINDOW left
+    # at its default: set both to 1 and the window fires first, the run reports
+    # budget_reached, and this arm tests the stop it is not about — which is exactly the
+    # trap the budget/rate pair above already documents for itself.
+    envs =
+        if daily_cap {
+            "STRIDE_READS_PER_DAY=1"
+        } else if rate_limited {
+            ""
+        } else {
+            "STRIDE_READS_PER_WINDOW=1"
+        }
     run_sync_bf! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' ${envs} '${bin}' sync >'${bo}' 2>/dev/null")
     bf_start = str_to_i64(Str.trim(sh!("date +%s")))
     _ = run_sync_bf!("json")
@@ -748,6 +766,41 @@ run_stops! = || {
         # ...and the watermark must not move past what was never listed.
         check!("...leaving last_sync_epoch where it was", Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='last_sync_epoch'),'none');")) == before_epoch)?
         check!("...and the human screen blames the LIST too, not the drain", Str.contains(sh!("HOME='${home}' STRIDE_API_BASE='${base}' '${bin}' sync 2>&1"), "rate-limited the activity list"))?
+        # ...but with the day's allowance spent it is the DAILY cap, not the window. The
+        # drain's 429 arm asks which limit refused and the list's did not, so the
+        # fifteen-minute remedy survived here — #246's defect on the other endpoint that
+        # can 429. Counter one below the cap, so the list read itself lands exactly on it,
+        # which is where a real run ends up.
+        lcap_day = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 86400) }'"))
+        _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_reads_day','${lcap_day}'),('strava_reads_today','9');")
+        # Written to `$bo` rather than only captured, because the schema check below reads
+        # that file — without this it validated the PREVIOUS run's payload and the new enum
+        # value was emitted and never checked. Review proved it: deleting
+        # "list_daily_cap_reached" from sync.json left every driver green, which is the
+        # identical gap the paragraph below records for "list_rate_limited", reproduced by
+        # the commit that added the second value.
+        _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' STRIDE_READS_PER_DAY=10 '${bin}' sync >'${bo}' 2>/dev/null")
+        lcap = Str.trim(sh!("jq -r '.data.stopped' '${bo}' 2>&1"))
+        # EXACT, not `contains`. "list_daily_cap_reached" CONTAINS "daily_cap_reached", so a
+        # substring test passes for the folded token and the separate one alike — and this
+        # check is named for telling them apart. Review reverted the whole list change back
+        # to `FromDrain(DailyCapReached)` and every driver stayed green through this line.
+        check!("a 429 on the LIST reads as the LIST daily cap once the allowance is spent", lcap == "list_daily_cap_reached")?
+        # RE-SEEDED before the human run, and finding that out was worth the round. The run
+        # above charges its list read, so the counter goes 9 -> 10 and the NEXT invocation is
+        # refused by the pre-flight before it ever reaches the list. The human check below
+        # therefore used to assert "again tomorrow" against the PRE-FLIGHT arm while being
+        # named for the list one — passing, on the wrong code path, for the whole life of
+        # this check. It only surfaced because the incomplete-listing assertion added beside
+        # it went red, and that sentence the pre-flight cannot produce.
+        _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_reads_day','${lcap_day}'),('strava_reads_today','9');")
+        lcap_human = sh!("HOME='${home}' STRIDE_API_BASE='${base}' STRIDE_READS_PER_DAY=10 '${bin}' sync 2>&1")
+        # BOTH facts on one screen, asserted separately, because either alone is satisfied
+        # by a version that dropped the other: the fold kept "tomorrow" and lost the
+        # listing, and #235's original kept the listing and said "~15 minutes".
+        check!("...and its human line says tomorrow rather than ~15 minutes", Str.contains(lcap_human, "again tomorrow"))?
+        check!("...while still saying the listing is incomplete, the fact the fold lost", Str.contains(lcap_human, "the activity list, so it is incomplete"))?
+        _ = sql!(db, "DELETE FROM config WHERE key IN ('strava_reads_day','strava_reads_today');")
         # The three sibling stop-reason arms each validate their payload and this one did
         # not, which mattered more here than anywhere else: this is the only arm in the
         # suite that ADDS a value to an enum in schemas/v2. Review deleted
@@ -825,6 +878,97 @@ run_stops! = || {
         # DIFFERENT call, so matching the label alone passes with the per-id frame deleted.
         # That frame is the only carrier of "how far did it get" on the error path.
         check!("...and the progress frame recorded the id it retired", Str.contains(err500, "1/2"))?
+    } else if daily_cap {
+        # #246. Every stop used to advise "~15 minutes", including the one where the answer
+        # is tomorrow: the daily cap was "respected by arithmetic" — ~95 reads a window x
+        # ~10 windows a day under Strava's 1000 — and there are 96 windows in a day, not
+        # 10. Follow the advice and you do four runs an hour, cross 1000 in about two and a
+        # half hours, and then every read is refused while stride keeps saying fifteen
+        # minutes.
+        check!("a run that spends the daily allowance says so", bfq!(".data.stopped") == "daily_cap_reached")?
+        check!("...and is resumable, because the work is not finished", bfq!(".data.resumable") == "true")?
+        # the EXIT CODE, actually read. This check was named for exit 0 and only looked at
+        # `.error` — the one exit-code claim in this file not backed by an exit code, in
+        # the branch this change added. The sibling 429 branch does it properly and this
+        # now copies it.
+        cap_st = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' ${envs} '${bin}' sync >'${bo}' 2>/dev/null; echo $?"))
+        check!("...at exit 0 with no error field, like every other stop reason", cap_st == "0" and bfq!(".error") == "null")?
+        # THE point of the issue, and not `contains "tomorrow"` alone: the failure mode was
+        # two stops sharing one remedy, so the assertion has to be that this one does NOT
+        # carry the other's wording.
+        # queue refilled first. The json run above spent the one allowed read on the last
+        # queued id, so without this the human run finds pending_streams == 0, sync_screen
+        # never consults drain_note, and the assertion below tests an empty tail rather
+        # than the sentence. Written without it and it failed exactly that way.
+        _ = sql!(db, "DELETE FROM streams;")
+        # the count BEFORE a run that has nothing it can do. `decide` structurally cannot
+        # express "do not start" — it is only reachable with a response in hand — so
+        # without a pre-flight check a capped run spent a list read and a stream read just
+        # to report that it had none left. At the cadence stride's own advice implies that
+        # is ~190 reads a day burned against an allowance already gone, with the counter
+        # climbing past the cap all day.
+        cap_before = str_to_i64(Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='strava_reads_today'),'0');")))
+        human_cap = sh!("HOME='${home}' STRIDE_API_BASE='${base}' ${envs} '${bin}' sync 2>&1")
+        check!("...and a run with nothing it can do spends NOTHING finding that out", str_to_i64(Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='strava_reads_today'),'0');"))) == cap_before)?
+        # ...and that payload CONFORMS. Every other stop-reason arm validates its payload
+        # and this one did not — the one arm that added a value to a schemas/v2 enum. The
+        # closed record annotation pins the shape at compile time (ADR 0000 section 9c), so
+        # what this adds is that the `stopped` VALUE lands in the enum, which is precisely
+        # what this change touched.
+        _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' ${envs} '${bin}' sync >'${bo}' 2>/dev/null")
+        check!("...and the daily-cap payload conforms to the sync schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
+        check!("...and the human line names TOMORROW", Str.contains(human_cap, "again tomorrow"))?
+        # anchored on the REMEDY clause, not on "15 minutes" alone: the drain banner on
+        # stderr says "Strava caps reads per 15-minute window", so the loose form passes on
+        # a hyphen and would go red if that banner were ever reworded — a failure unrelated
+        # to what this asserts.
+        check!("...and does NOT say ~15 minutes, the instruction that cannot succeed", !(Str.contains(human_cap, "again in ~15 minutes")))?
+        # the counter is PERSISTED, which is what makes the cap mean anything across runs.
+        # Both rows: a count without its day would never reset, and a day without a count
+        # would pace from zero forever.
+        cap_day = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 86400) }'"))
+        check!("...and the read count is stored against today's UTC day", Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='strava_reads_day'),'none');")) == cap_day)?
+        check!("...with a non-zero count", str_to_i64(Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='strava_reads_today'),'0');"))) > 0)?
+        # ...and a STALE day resets it. That is the reset mechanism in full — there is no
+        # scheduled job, the stamp not being today IS the reset — so it is asserted rather
+        # than described. Backdated by one day, then a run must start from zero, which it
+        # can only show by draining again rather than refusing on yesterday's total.
+        # Driven at a cap of THREE, and the number is load-bearing twice over.
+        #
+        # At ONE, a reset count and a stale count behave identically — both stop after a
+        # single read — so the assertion passes either way. Mutation-proved: making
+        # reads_today! ignore the day stamp left the suite green.
+        #
+        # At TWO it stopped discriminating again once the LIST read began to be counted,
+        # because that read absorbs exactly the one-unit difference between the two states.
+        # Both end up fetching one stream. At three: a reset spends list + 2 streams, a
+        # stale count (already at 1) spends list + 1, so the fetched count separates them.
+        #
+        # That the right number moved when an unrelated part of the counter changed is the
+        # argument for asserting a DIFFERENCE rather than a magic constant — noted rather
+        # than done, because the fixture has only two activities to drain.
+        _ = sql!(db, "UPDATE config SET value = '${I64.to_str(str_to_i64(cap_day) - 1)}' WHERE key = 'strava_reads_day';")
+        _ = sql!(db, "DELETE FROM streams;")
+        _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' STRIDE_READS_PER_DAY=3 '${bin}' sync >'${bo}' 2>/dev/null")
+        # the COUNT, not the stamp. `save_reads_for_day!` writes the day unconditionally on
+        # every read, so asserting the stamp holds whether the reset happened or not — it
+        # survives the exact mutation it is named for. Same defect one line above the one
+        # this arm already fixed.
+        check!("a stale day stamp resets the count rather than needing a scheduled job", str_to_i64(Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='strava_reads_today'),'0');"))) == 3)?
+        check!("...and the run spent a FULL fresh allowance, not yesterday's remainder", bfq!(".data.streams_fetched") == "2")?
+        # ...and it stopped on the DAY, which is the arm nothing else in this driver
+        # reaches. Every other daily-cap assertion here exercises the PRE-FLIGHT refusal:
+        # once `charge_read!` began counting the list read, the seeding sync leaves the
+        # counter at 3 and the capped runs are refused before the first request. So
+        # `DayFull` — the arm that fires on the correct path, with no 429, on the run that
+        # actually exhausts the allowance, and the arm review round 1 said was unreachable —
+        # was pinned by nothing. Measured: changing it to report `BudgetReached` left all
+        # 818 checks green.
+        check!("...and stopped on the DAILY cap, the one arm no 429 produces", bfq!(".data.stopped") == "daily_cap_reached")?
+        # The count assertion two lines up has the shape its own comment warns about, one
+        # field over: a run that IGNORED the stamp also ends at the cap, because it stops
+        # when it gets there. `streams_fetched == 2` is what discriminates, and this pins
+        # the reason it stopped. Three assertions, three different failure modes.
     } else if env_or!("E2E_EXPECT_401", "") == "1" {
         # The refresh arm recurses on the SAME id. Seed a token the mock will not hand
         # back, so get_valid_token! genuinely rotates once and the arm is entered rather
@@ -888,10 +1032,33 @@ run_stops! = || {
         check!("...and resumable, because waiting will help", bfq!(".data.resumable") == "true")?
         check!("the rate-limited payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
         # fresh queue: the JSON run above already stored one, so without this the human
-        # run drains what is left and renders "all streams present" instead
+        # run drains what is left and renders an EMPTY tail instead. (It used to render
+        # "all streams present" there — text that never actually shipped, because the
+        # pending guard suppressed the tail before it could, and which this branch deleted.)
         _ = sql!(db, "DELETE FROM streams;")
         _ = run_sync_bf!("human")
         check!("humans are told to try again in ~15 minutes", Str.contains(Str.trim(sh!("cat '${bo}'")), "in ~15 minutes"))?
+        # ...and the SAME 429 means something different once the day's allowance is spent.
+        # This is the path #246 actually travels in production and the one its own e2e arm
+        # cannot reach: stride's count is at or below Strava's, so Strava refuses FIRST,
+        # the drain stops on the 429, and without this branch the counted day test is never
+        # consulted. Review measured the result — "try again in ~15 minutes" printed in the
+        # exact state the feature exists to describe — and the daily arm's own driver could
+        # not see it, because it sets stride's cap so far below Strava's that the mock never
+        # refuses at all.
+        #
+        # Seeded to ONE BELOW the cap, not at it, and that is the whole difficulty. At the
+        # cap the pre-flight check refuses before any request, so the run never reaches a
+        # 429 and this branch tests the pre-flight instead — written that way first and
+        # mutation-proved: breaking the 429 arm left it green. One below, the pre-flight
+        # passes, the LIST read takes the count to the cap, and the stream's 429 then
+        # arrives with the allowance exactly spent, which is the state under test.
+        cap_now = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 86400) }'"))
+        _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_reads_day','${cap_now}'),('strava_reads_today','9');")
+        _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' STRIDE_READS_PER_DAY=10 '${bin}' sync >'${bo}' 2>/dev/null")
+        check!("...and the same 429 reads as the DAILY cap once the allowance is spent", bfq!(".data.stopped") == "daily_cap_reached")?
+        _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_reads_day','${cap_now}'),('strava_reads_today','9');")
+        check!("...so the human line says tomorrow, not fifteen minutes", Str.contains(sh!("HOME='${home}' STRIDE_API_BASE='${base}' STRIDE_READS_PER_DAY=10 '${bin}' sync 2>/dev/null"), "again tomorrow"))?
     } else {
         # one read, two ids queued: stores the first, stops on the budget with one left
         check!("filling the 15-minute read window stops the run", bfq!(".data.stopped") == "budget_reached")?
@@ -929,13 +1096,19 @@ run_stops! = || {
         if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
             # its own floor: this branch returns before the shared drain assertions, so the
             # 12 the default arm expects would never be reachable here
-            23
+            26
+        } else if env_or!("E2E_EXPECT_DAILY_CAP", "") == "1" {
+            # its own floor, and TIGHT: a floor below the arm's own count lets a check be
+            # deleted unseen — the slack this floor's own doctrine forbids.
+            14
         } else if env_or!("E2E_EXPECT_500", "") == "1" {
             7
         } else if env_or!("E2E_EXPECT_401", "") == "1" {
             8
         } else if rate_limited {
-            10
+            # 12 since this arm gained the daily-cap-via-429 pair — the path the daily
+            # arm's own driver structurally cannot reach.
+            12
         } else {
             12
         },

@@ -453,6 +453,10 @@ e2e-sync: build
     RLMOCK=$!
     trap 'kill $MOCK $BADMOCK $RLMOCK 2>/dev/null' EXIT
     E2E_MODE=stops E2E_EXPECT_RATE_LIMIT=1 STRIDE_API_BASE=http://127.0.0.1:{{rate_limit_port}} ./e2e || exit 1
+    # the DAILY cap (#246), against the same mock as the budget arm. It needs no 429 —
+    # the stop comes from stride's own count, which is the whole point: the cap is
+    # respected by counting rather than by waiting to be refused.
+    E2E_MODE=stops E2E_EXPECT_DAILY_CAP=1 STRIDE_API_BASE=http://127.0.0.1:{{mock_port}} ./e2e || exit 1
     # a persistent 401, to prove the token-refresh retry is bounded
     E2E_MODE=mock E2E_STREAM_401=1 E2E_ROTATING_TOKEN=1 MOCK_PORT={{auth401_port}} ./e2e &
     A401MOCK=$!

@@ -274,6 +274,34 @@ Strava :: [].{
                         Some(a) => Metrics.epoch_to_iso(a + 86400)
                         None => ""
                     }
+                # BEFORE the first request. A run that STARTS with the day's allowance spent
+                # has nothing it can do and costs nothing to find out — it reports the same
+                # stop and the same remedy as one that spends its last read.
+                #
+                # "A run", unqualified, was too strong and review caught it: the LIST can
+                # push the counter past the cap mid-run (up to one read per page beyond it),
+                # and the drain then spends exactly one wasted stream read before `decide`
+                # stops it. One read is not worth a branch, but the sentence claimed a
+                # property of every run and only has it for runs that start spent.
+                #
+                # That last clause was measured FALSE and is only true again because of the
+                # Render fix that followed. This arm reaches Render with an empty queue by
+                # construction, and `FromDrain(_)` used to render nothing at all there — so
+                # a capped run printed "synced 0 new, 0 updated, fetched streams for 0" and
+                # exited 0, having made no request and with none possible for the rest of
+                # the day. Same stop token, no remedy, and a sentence implying a successful
+                # quiet sync. The claim and the behaviour now agree; they did not when this
+                # sentence was written.
+                #
+                # `pending_streams!` rather than 0, so `resumable` and the queue count are
+                # true: the work is still outstanding, it just cannot be done today.
+                if day_spent!(path)? {
+                    pend0 = pending_streams!(path)?
+                    cap_stop = FromDrain(DailyCapReached)
+                    cap_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
+                    cap_payload = { synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pend0, stopped: Drain.sync_stopped_label(cap_stop), resumable: True }
+                    Output.out!(cap_payload, |p| Render.sync_screen(p, cap_stop, all))
+                } else {
                 counts = fetch_pages!(path, token, after_param, started, 1, { relisted: 0, new_n: 0, updated_n: 0, rate_limited: False })?
                 # A rate-limited list stops the run HERE, before pruning and before the
                 # drain (#235). Three reasons, and the first is the one that matters:
@@ -303,7 +331,32 @@ Strava :: [].{
                     # spots made that a coincidence rather than a fact.
                     # (Above the annotation, not between it and the body: Roc reads a
                     # separated annotation as a declaration with no value.)
-                    rl_stop = ListRateLimited
+                    # WHICH limit refused the list? The drain's 429 arm asks this and the
+                    # list's did not, so "run `stride sync` again in ~15 minutes" survived
+                    # on the other endpoint that can 429 — the same defect #246 opened on,
+                    # one endpoint over. Review measured it with the counter one below the
+                    # cap, which is exactly where a run lands after the list read.
+                    #
+                    # THE FOLD WAS THE MISTAKE, and two rounds of review were spent
+                    # narrowing what it cost before the answer turned out to be "don't".
+                    #
+                    # Round 1 of this comment said `resumable` and the counts carried the
+                    # lost fact. Measured false — `resumable` is True on both paths and
+                    # `synced: 0` is indistinguishable from a complete listing over an
+                    # empty window, the exact ambiguity #235 exists to remove. Round 2
+                    # accepted the loss and wrote it down honestly. Round 3 measured what
+                    # "accepted" actually meant on screen: `FromDrain(_)` renders only when
+                    # `pending_streams > 0`, so on the empty queue this stop reaches by
+                    # construction, the human line went EMPTY. Not a degraded sentence — no
+                    # sentence. The same fixture with the counter at 0 printed the full
+                    # #235 warning; at 9 it printed nothing.
+                    #
+                    # So it gets its own tag. Both facts are load-bearing and neither is a
+                    # nicety: the listing is incomplete (rows are missing) and the remedy is
+                    # tomorrow (fifteen minutes buys nothing). A tag that carries one of
+                    # them forces Render to guess the other, and Render guessing from
+                    # `pending_streams` is what this whole type was introduced to stop.
+                    rl_stop = if day_spent!(path)? ListDailyCapReached else ListRateLimited
                     rl_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
                     rl_payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pending, stopped: Drain.sync_stopped_label(rl_stop), resumable: True }
                     Output.out!(rl_payload, |p| Render.sync_screen(p, rl_stop, all))
@@ -333,6 +386,7 @@ Strava :: [].{
                 payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
                 payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: pull.pending, stopped: Drain.sync_stopped_label(stop), resumable: pull.pending > 0 }
                 Output.out!(payload, |p| Render.sync_screen(p, stop, all))
+                }
                 }
             }
         }
@@ -408,7 +462,12 @@ Strava :: [].{
             {}
         }
 
-        match drain_streams!(path, token, ids, { window: 0, stored: 0, skipped: 0, total, refreshes: 0 }) {
+        # the day's read count, carried in from the database. Stored per UTC day, so a
+        # stale stamp means a new day and the count starts over — that is the reset, and
+        # it needs no scheduled job.
+        day0 = Db.utc_today_days!({})
+        today0 = reads_today!(path, day0)?
+        match drain_streams!(path, token, ids, { window: 0, day: day0, today: today0, stored: 0, skipped: 0, total, refreshes: 0 }) {
             Ok(o) => Ok(o)
             Err(e) => {
                 # ONE place, covering every propagating `?` in the drain rather than the
@@ -530,13 +589,216 @@ Strava :: [].{
     # how many token refreshes one run may spend before calling it an auth problem
     max_refreshes = 2
 
+    # reads already made TODAY, in UTC. Two rows rather than one: the count and the day
+    # it belongs to. Reading them together is what makes the reset free — a `strava_reads_day`
+    # that is not today means the count is stale, so it is zero, and nothing has to run at
+    # midnight to make that true.
+    #
+    # Absent keys are zero rather than an error. A database that has never synced has no
+    # count, which is not a fault. The mechanism is `Db.config_opt!`, which maps
+    # `NoRowsReturned` to `NotFound` — an earlier version of this sentence credited
+    # `query_many` returning an empty list, which is a different function this path never
+    # calls.
+
+    # ...and CHARGE one. One read against today's allowance, wherever it is spent from. The
+    # drain has its own running counter threaded through DrainState because `decide` needs
+    # the value to compare; the listing has no such loop, so it charges directly.
+    #
+    # Charged BEFORE the request, not after, and the two counters therefore disagree about
+    # what a read is: the drain charges from a response it holds, this charges from an
+    # intent. A transport failure or a timeout counts a read Strava never saw. That is the
+    # deliberate direction — a cap is a ceiling, so under-counting overshoots it and gets
+    # every subsequent read refused by Strava, which is the failure #246 exists to prevent.
+    #
+    # The cost of over-counting is not "a little of the allowance", and that wording was too
+    # soft for a branch this one keeps being bitten on: the pre-flight refuses on
+    # `today >= reads_per_day`, so a sufficiently over-counted day refuses EVERY run until
+    # UTC midnight. It needs on the order of a thousand transport failures in a day to get
+    # there, so it is not a practical concern — but it is a different KIND of cost than the
+    # sentence implied.
+    #
+    # It also means the drain's "stride's count can drift under Strava's" is a statement
+    # about the drain, which charges from a response it holds, and not about this function,
+    # which charges from an intent.
+    charge_read! : Str => Try({}, _)
+    charge_read! = |path| {
+        day = Db.utc_today_days!({})
+        n = reads_today!(path, day)?
+        save_reads_for_day!(path, day, n + 1)
+    }
+
+    # is the allowance already spent, WITHOUT spending anything to find out? `decide` is
+    # structurally unable to answer this — it is only reachable with a response in hand —
+    # so a capped run used to spend a list read and a stream read to report that it had
+    # none left. At the cadence stride's own advice implies that is ~190 reads a day
+    # burned against an allowance that is already gone, with the counter climbing past the
+    # cap all day. The day is knowable from the database with zero requests.
+    day_spent! : Str => Try(Bool, _)
+    day_spent! = |path| Ok(reads_today!(path, Db.utc_today_days!({}))? >= (read_limits!({})).reads_per_day)
+
+    # takes the day rather than reading its own clock, so a caller that already has one
+    # cannot end up comparing a count against a different day than it saves against. That
+    # pair disagreeing is the bug this feature spent two rounds on.
+    #
+    # It does NOT make the general problem unrepresentable, and a previous version of this
+    # comment claimed it did — along with claiming it REMOVES a clock read. Neither is
+    # true: `Db.utc_today_days!` still has several call sites, `charge_read!` reads the
+    # clock once per list page, and the drain now reads it once per iteration on purpose
+    # (Drain.roll_day). What this signature buys is narrower and worth having anyway — this
+    # one function cannot be the site of the disagreement.
+    reads_today! : Str, I64 => Try(I64, _)
+    reads_today! = |path, day_now| {
+        # BOTH rows get the conservative reading, and an earlier version gave them
+        # opposite ones. The count's Corrupt arm below argues at length that "I cannot tell
+        # how many reads have been spent" must mean "they may all be spent" — and the day
+        # STAMP went through `config_i64!`, which folds Corrupt to 0. A stamp of 0 never
+        # equals today, so the count was skipped entirely and a full fresh allowance handed
+        # out, silently. Measured: `strava_reads_day=garbage` with `strava_reads_today=1000`
+        # became day=20690, count=1 after one sync. A thousand reads of history erased and
+        # a second allowance spent inside one UTC day — verbatim the outcome the paragraph
+        # below calls unacceptable, reached through the row it did not cover.
+        #
+        # They are one fact stored in two rows, so they take one policy: unreadable means
+        # today, and today means the count is consulted rather than skipped.
+        stored_day =
+            match config_reads!(path, "strava_reads_day")? {
+                Known(n) => Ok(n)
+                Corrupt(v) => {
+                    _ = Output.say!("cannot read the day stamp on Strava's read counter ('${v}') — treating it as today so the count still applies; `stride config set strava_reads_today 0` clears both")
+                    # ...and REPAIR it, which is what makes the conservative reading
+                    # affordable. `config_reads!`'s argument for guessing the cap is that it
+                    # "costs one day, self-heals at UTC midnight" — true of a corrupt COUNT,
+                    # whose stamp goes stale on its own, and false of a corrupt STAMP, which
+                    # is read as today FOREVER. Measured: three consecutive runs all refused,
+                    # all writing nothing, a fixed point with narration as the only exit.
+                    #
+                    # Writing a real day keeps this run refused — the count still applies —
+                    # and makes the stamp genuinely stale tomorrow, so the midnight
+                    # self-heal the sibling comment promises is true for both rows.
+                    _ = Db.config_set!(path, "strava_reads_day", I64.to_str(day_now))?
+                    Ok(day_now)
+                }
+            }?
+        if stored_day != day_now {
+            Ok(0)
+        } else {
+            match config_reads!(path, "strava_reads_today")? {
+                Known(n) => Ok(n)
+                Corrupt(v) => {
+                    # NARRATED, because the consequence is a day of refused reads and the
+                    # athlete would otherwise get no signal at all. This is the one place
+                    # in the codebase that deliberately breaks the "unreadable config is
+                    # an error" rule, so it says so out loud rather than quietly.
+                    _ = Output.say!("cannot read today's Strava read count ('${v}') — assuming the daily allowance is spent; `stride config set strava_reads_today 0` clears it")
+                    Ok((read_limits!({})).reads_per_day)
+                }
+            }
+        }
+    }
+
+    # ABSENT and UNREADABLE are different facts and get different answers, which an
+    # earlier version of this got backwards by folding both to 0.
+    #
+    # Absent is 0 because it is TRUE: a database that has never synced has spent nothing.
+    #
+    # Unreadable is the full allowance, because 0 is the most PERMISSIVE value this
+    # function can return, not the conservative one — it asserts the athlete has spent
+    # nothing and hands out the largest grant available. The conservative reading of "I
+    # cannot tell how many reads have been spent" is "they may all be spent". And the cost
+    # of guessing 0 is not one window: the first save overwrites the corrupt row with this
+    # run's own count, so the day's history is ERASED and a second full allowance is spent
+    # inside one UTC day — every read of it refused by Strava. Guessing the cap costs one
+    # day, self-heals at UTC midnight, and `stride config set strava_reads_today 0` is a
+    # one-command escape hatch.
+    #
+    # Clamped at 0 because arg_i64 accepts negatives and `config set` will take them: a
+    # parseable -5000 would otherwise buy MORE headroom than an unparseable value, which
+    # inverts the whole argument above.
+    #
+    # Still swallowed rather than raised — refusing to sync over a corrupt pacing counter
+    # is a worse answer than pacing badly — but it is no longer silent: see the caller.
+    config_reads! : Str, Str => Try([Known(I64), Corrupt(Str)], _)
+    config_reads! = |path, key|
+        match Db.config_opt!(path, key)? {
+            NotFound => Ok(Known(0))
+            Found(v) =>
+                match Metrics.arg_i64(v) {
+                    Ok(n) => Ok(Known((n).max(0)))
+                    Err(_) => Ok(Corrupt(v))
+                }
+        }
+
+    config_i64! : Str, Str => Try(I64, _)
+    config_i64! = |path, key|
+        match config_reads!(path, key)? {
+            Known(n) => Ok(n)
+            Corrupt(_) => Ok(0)
+        }
+
+    # ...and write it back, after EVERY read rather than at the end of the run. Reads are
+    # spent at Strava the moment they happen, so a drain that dies mid-way — a refresh
+    # that fails, a 5xx, a killed process — must not forget the ones it already made. A
+    # save-at-exit version loses exactly the reads a crashed run spent, and the counter
+    # then drifts UNDER the true total, which is the direction that overshoots the cap.
+    #
+    # Two small UPDATEs against an HTTP round trip is not a cost worth optimising, and
+    # the alternative — batching — reintroduces the window of loss this exists to close.
+    #
+    # This paragraph used to sit on a `save_reads_today!` wrapper that had no callers
+    # anywhere in src/ or tests/ — the rationale for the live design documented on a
+    # function that never ran, and a wrapper that read its own clock, which is the pattern
+    # the comment above reads_today! claims was designed out. Deleted; the argument belongs
+    # here, on the function that does the writing.
+    #
+    # ...and it writes against the day the count BELONGS to, which is not always the day it
+    # is written on. A run in flight at UTC midnight used to stamp the new day with the old
+    # day's total: start at 23:59 with 795 spent, cross midnight, and the athlete gets 205
+    # of tomorrow's 1000 and is told to come back tomorrow all day on a day they spent
+    # almost nothing.
+    #
+    # Worse, it was the only reachable trigger AT THE TIME. That was true while stride
+    # counted stream reads only: the count sat below Strava's, Strava refused first, and the
+    # 429 arm stopped the drain before the Store arm could test the day. Once `charge_read!`
+    # began counting the LIST read, `DayFull` became reachable on the correct path with no
+    # 429 anywhere — it is the arm the e2e mutation kill fires on. The same premise was
+    # corrected in Drain.decide's comment and this copy of it was missed, which is the third
+    # time a sentence on this branch has outlived the change that falsified it.
+    #
+    # The caller passes the day it is CURRENTLY on, re-read each iteration rather than
+    # captured once, and that changed after review. Captured once, a crossing stamped every
+    # read AFTER midnight to the day before it — so the run advised "come back tomorrow" at
+    # 00:01 when the allowance had reset sixty seconds earlier, and day D+1 began already
+    # owing the reads it had unknowingly spent. The comment that stood here said "the reads
+    # before it belong to the day they were spent on", which is true of the reads before the
+    # crossing and false of the ones after, and the ones after are the half the sentence was
+    # about. Both halves are the same defect #246 exists to remove: advice that cannot
+    # succeed.
+    save_reads_for_day! : Str, I64, I64 => Try({}, _)
+    save_reads_for_day! = |path, day, n| {
+        Db.config_set!(path, "strava_reads_day", I64.to_str(day))?
+        Db.config_set!(path, "strava_reads_today", I64.to_str(n))
+    }
+
     read_limits! : {} => Drain.Limits
     read_limits! = |{}| {
         # stop before Strava's 100-reads-per-15-minutes window fills. There is no second
         # per-run budget: `window` is never reset inside a run, so a larger one could
-        # never fire. The DAILY cap is respected by arithmetic — ~95 reads a window,
-        # ~10 windows a day, just under Strava's 1000.
+        # never fire. The day gets no margin because it counts the list read directly
+        # (#246); it used to be "respected by arithmetic", which assumed ten runs a day
+        # and enforced nothing.
+        #
+        # The 5-read margin does NOT reliably absorb the list read, and an earlier version
+        # of this comment said it did. `window` only advances in the drain's Store arm —
+        # fetch_pages! never touches it, and neither do the 401/429 charges — so a first
+        # run on a 2,000-activity history issues 20 list pages plus 95 stream reads inside
+        # one window, against Strava's 100. That is C-1's shape one limit over: a counter
+        # counting a strict subset of what the limit counts. It degrades gracefully, since
+        # the 429 that follows really is a window refusal and ~15 minutes really is the
+        # remedy, so it is a follow-up rather than part of #246.
         reads_per_window: env_i64!("STRIDE_READS_PER_WINDOW", 95),
+        # Strava's documented daily read cap. Overridable for the same reason the window
+        # is: the e2e suite drives this arm at a limit small enough to reach in a fixture.
+        reads_per_day: env_i64!("STRIDE_READS_PER_DAY", 1000),
     }
 
     send_bearer! = |uri, token|
@@ -582,19 +844,37 @@ Strava :: [].{
     # real progress bar rather than a spinner: a first-time sync can spend a long time
     # here, and narrating only after a response returns shows nothing for exactly as
     # long as a stall lasts. It is NOT a counter — nothing decrements it.
-    DrainState : { window : I64, stored : I64, skipped : I64, total : U64, refreshes : I64 }
+    # `day` is the UTC day the count belongs to, RE-READ at the top of each drain iteration
+    # and reset with its count when it changes (Drain.roll_day). `today` is the running
+    # count of reads spent against it — the DAILY allowance, persisted, as distinct from
+    # `window`, which is the per-run count against the 15-minute limit and lives only for
+    # the run.
+    #
+    # This said "captured ONCE, before the first request, and never recomputed" through two
+    # rounds, and it was wrong in three ways at once. It was not captured before the first
+    # request — `fetch_pages!` has already issued every list request by then, so it is
+    # before the first STREAM request. Capturing it once made a run crossing UTC midnight
+    # advise "come back tomorrow" a minute after the allowance reset. And it stamped the
+    # reads spent after the crossing onto the day before, so the new day started already
+    # owing them. The sentence it replaced — that recomputing per SAVE caused the midnight
+    # bug — was true of recomputing at the wrong moment, and got generalised into never
+    # recomputing at all.
+    DrainState : { window : I64, day : I64, today : I64, stored : I64, skipped : I64, total : U64, refreshes : I64 }
 
     # Walk the missing-streams list once per run. Walking a LIST (not re-querying
     # "next missing") means an unstorable body is skipped, not refetched forever.
     # The pacing DECISION is pure (Drain.decide, unit-tested); this is the thin
     # effectful skin that dispatches on it: fetch, then act.
-    # The THREE ways a drain ends, RETURNED rather than printed, because "why did it
-    # stop?" is not derivable from the counts. (A fourth exit exists and is deliberately
+    # The FOUR ways a drain ends, RETURNED rather than printed, because "why did it
+    # stop?" is not derivable from the counts. (A further exit exists and is deliberately
     # not an outcome: a token refresh that does not help raises Err(HttpStatus(401, …)),
-    # which is a failure, not a stopping reason.) Both non-complete reasons stop on the
-    # 15-MINUTE window, so both mean ~15 minutes, not tomorrow.
+    # which is a failure, not a stopping reason.) Two of the three non-complete reasons
+    # clear on the 15-MINUTE window; `DailyCapReached` clears at UTC midnight, and telling
+    # the athlete fifteen minutes there is an instruction that cannot succeed. That
+    # distinction is the whole of #246, and this comment used to assert its opposite —
+    # "both mean ~15 minutes, not tomorrow" — directly above the type.
     #
-    # `stopped` is a Drain.StopReason tag with exactly three arms, so the compiler
+    # `stopped` is a Drain.StopReason tag with exactly four arms, so the compiler
     # enforces the set here: a drain CANNOT report the list refusal that also ships in
     # the payload's `stopped` field, because that arm lives on Drain.SyncStop and sync!
     # wraps this outcome in FromDrain on the way out. Drain.sync_stopped_label is the
@@ -602,7 +882,19 @@ Strava :: [].{
     DrainOutcome : { stored : I64, skipped : I64, pending : I64, stopped : Drain.StopReason }
 
     drain_streams! : Str, Str, List(I64), DrainState => Try(DrainOutcome, _)
-    drain_streams! = |path, token, ids, st|
+    drain_streams! = |path, token, ids, st_in| {
+        # RE-READ each iteration, not captured once for the run. A drain can outlive UTC
+        # midnight — a first sync of a large history takes many minutes — and when it does
+        # the allowance has genuinely reset. Carrying the old day past that point advised
+        # "come back tomorrow" on a day that had already started, sixty seconds after the
+        # reset, and stamped the reads spent after midnight onto the day before so the new
+        # day began already owing them.
+        #
+        # The rule is Drain.roll_day and it is pure, so both directions are pinned by
+        # expects rather than by a fixture that would need a fake clock. One clock read per
+        # stream read, against an HTTP round trip.
+        rolled = Drain.roll_day({ day: st_in.day, today: st_in.today }, Db.utc_today_days!({}))
+        st = { ..st_in, day: rolled.day, today: rolled.today }
         match ids {
             [] => {
                 bar_done!(st)
@@ -611,8 +903,12 @@ Strava :: [].{
             [id, .. as rest] => {
                 uri = "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
                 resp = send_bearer!(uri, token)?
-                match Drain.decide({ status: Response.status(resp), window: st.window }, read_limits!({})) {
+                match Drain.decide({ status: Response.status(resp), window: st.window, today: st.today }, read_limits!({})) {
                     Refresh => {
+                        # the 401'd read is spent too, and this arm RETRIES the same id —
+                        # so the read is charged here and the retry charges its own. Two
+                        # reads at Strava, two on the counter.
+                        _ = save_reads_for_day!(path, st.day, st.today + 1)?
                         # Long runs outlive the ~6h access token; refresh and retry the same
                         # id. BOUNDED, like the 429 retry beside it: this arm recurses on the
                         # same id with the same state, so without a counter a persistently
@@ -635,7 +931,11 @@ Strava :: [].{
                             } else {
                                 bar_done!(st)
                                 Output.say!("  access token expired — refreshed, continuing...")?
-                                drain_streams!(path, fresh, ids, { ..st, refreshes: st.refreshes + 1 })
+                                # `today` advances with the charge above. Charging the row
+                                # and not the running total would leave `decide` comparing
+                                # a stale count on the retry — the disk and the loop would
+                                # disagree about how much of the day is left.
+                                drain_streams!(path, fresh, ids, { ..st, today: st.today + 1, refreshes: st.refreshes + 1 })
                             }
                         }
                     }
@@ -643,11 +943,25 @@ Strava :: [].{
                     # block ~30 minutes in the foreground, measured on a two-activity
                     # queue. The rows already stored are durable and `resumable` says
                     # there is more, so the honest move is to hand the terminal back.
+                    # the daily allowance, recognised from the 429 rather than only from
+                    # our own count — see Drain.decide. Same stop, different remedy.
+                    DailyCapReached => {
+                        # the 429'd read is a REAL read. It never reaches the Store arm, so
+                        # without this the counter sits below the cap while Strava is
+                        # already refusing — and since #246's whole comparison is
+                        # `today >= reads_per_day`, an undercount makes it false at exactly
+                        # the moment it needs to be true.
+                        _ = save_reads_for_day!(path, st.day, st.today + 1)?
+                        bar_done!(st)
+                        Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: DailyCapReached })
+                    }
                     RateLimited => {
+                        _ = save_reads_for_day!(path, st.day, st.today + 1)?
                         bar_done!(st)
                         Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: RateLimited })
                     }
-                    Store({ window, after }) => {
+                    Store({ window, today, after }) => {
+                        save_reads_for_day!(path, st.day, today)?
                         # 404 => empty marker, 2xx => body, other => error propagated.
                         # MATCHED, not discarded: SkippedNonUtf8 writes no row, so that id
                         # stays pending and retries next run. Counting it as fetched reported
@@ -675,14 +989,22 @@ Strava :: [].{
                                 bar_done!(st)
                                 Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_streams!(path)?, stopped: BudgetReached })
                             }
+                            # the DAILY allowance, which is a different stop with a
+                            # different remedy: the window clears in fifteen minutes, this
+                            # one clears at UTC midnight.
+                            DayFull => {
+                                bar_done!(st)
+                                Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_streams!(path)?, stopped: DailyCapReached })
+                            }
                             Continue =>
-                                drain_streams!(path, token, rest, { ..st, window, stored: counted.stored, skipped: counted.skipped })
+                                drain_streams!(path, token, rest, { ..st, window, today, stored: counted.stored, skipped: counted.skipped })
 
                         }
                     }
                 }
             }
         }
+    }
     per_page = 100
 
     # acc carries the re-listed total AND the new/updated split (#112): the first is a
@@ -715,6 +1037,15 @@ Strava :: [].{
         # already landed, so a stalled first request would otherwise print nothing at all.
         # Later pages need no such line — by then the reader has seen output.
         _ = if page == 1 { Output.say!("fetching activity list…")? } else { {} }
+        # COUNTED, because Strava counts it. The list and the streams draw on ONE read
+        # limit, and counting only the streams made stride's number a strict subset of
+        # Strava's — always low, never equal. That is not a rounding error: it means
+        # Strava reaches 1000 first and answers 429, the drain stops on RateLimited
+        # without ever entering the Store arm, the counter freezes below the cap, and
+        # DayFull becomes unreachable. Review measured the whole chain, and with the
+        # defaults the last ~11 reads of the allowance were unspendable while the daily
+        # arm was dead code.
+        _ = charge_read!(path)?
         body =
             match get_bearer!(uri, token) {
                 Ok(b) => b
