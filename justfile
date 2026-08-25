@@ -294,7 +294,25 @@ schema-check: build
     acts=$(STRIDE_FORMAT=json ./stride activities 20 2>&1 || true)
     acode=$(printf '%s' "$acts" | jq -r '.error.code // empty' 2>/dev/null || true)
     ids=$(printf '%s' "$acts" | jq -r '.data[]?.id // empty' 2>/dev/null || true)
-    if [ -n "$acode" ]; then
+    # PARSEABILITY first, and it is a third branch rather than part of either. Both
+    # derivations above read the same string through jq with errors suppressed, so
+    # unparseable output leaves BOTH empty — `acode` empty skips the envelope branch, and
+    # `-z "$ids"` then reports "skipped (no activities yet)" at rc=0 about a database holding
+    # 736 activities. That is the same false statement fixed one commit ago, reached through
+    # a different door: the envelope branch catches a WELL-FORMED error and nothing caught
+    # malformed output. `// empty` cannot tell "jq parsed it and found no rows" from "jq
+    # could not parse it".
+    #
+    # Narrow but live. The recipe sets STRIDE_FORMAT=json itself, so it needs the JSON path
+    # to break for THIS command — a format regression scoped to `activities`, or `activities`
+    # gaining narration, since `2>&1` merges stderr into the parse and `analyze` already
+    # writes there. And it is the checker going quiet about a regression in the exact thing
+    # it checks: a JSON-mode break is a contract break, and the contract checker would have
+    # said "skipped" and exited 0. The `commands:` check above catches a GLOBAL JSON
+    # regression; one scoped to a single command slips past it.
+    if ! printf '%s' "$acts" | jq -e . >/dev/null 2>&1; then
+        echo "activity: cannot sample — \`activities\` did not return JSON"; rc=1
+    elif [ -n "$acode" ]; then
         # NOT "skipped (no activities yet)". `// empty` cannot tell "no rows" from "the
         # listing returned an envelope", and the old branch said the database was empty
         # while it held 737 activities — a diagnostic making a false statement, which is the
@@ -304,22 +322,44 @@ schema-check: build
         echo "activity: skipped (no activities yet)"
     else
         decl=$(STRIDE_FORMAT=json ./stride --json --help | jq -r '[.data.commands[] | select(.name == "activity") | .error_codes // []] | flatten | join(" ")' 2>/dev/null || true)
+        # The universal set, read so it can be REFUSED rather than trusted. Excluding it is
+        # currently a property of the TABLE — the block is safe only because no form declares
+        # a universal code in its own error_codes, which is true today and enforced nowhere.
+        # The day someone adds `internal_error` to a form's list, plausibly to make some
+        # other check go green, this silently returns to passing on it, and the comment
+        # explaining why that must never happen is three files from the change that does it.
+        # Held here instead, where it is stated.
+        uni=$(STRIDE_FORMAT=json ./stride --json --help | jq -r '(.data.universal_error_codes // []) | join(" ")' 2>/dev/null || true)
         validated=0
+        lastcode=""
         for id in $ids; do
             raw=$(STRIDE_FORMAT=json ./stride activity "$id" 2>&1 || true)
             code=$(printf '%s' "$raw" | jq -r '.error.code // empty' 2>/dev/null || true)
             if [ -z "$code" ]; then
+                # ONE payload, by design rather than by accident. The walk stops at the first
+                # row that yields one, so structural variation — a row with no streams, no
+                # segments, no metrics against one with all three — is never sampled. That
+                # was equally true before the walk existed; widening it means deciding what
+                # "enough shapes" is, which is its own conversation.
                 errs=$(printf '%s' "$raw" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/activity.json -f tools/validate.jq 2>&1 || true)
                 if [ -n "$errs" ]; then echo "activity $id:"; echo "$errs"; rc=1; else echo "activity $id: conforms"; fi
                 validated=1; break
             fi
+            lastcode="$code"
+            case " $uni " in
+                *" $code "*) echo "activity $id: refused with UNIVERSAL code $code, which is never a correct answer for a form"; rc=1; validated=1; break ;;
+            esac
             case " $decl " in
                 *" $code "*) echo "activity $id: refused with declared code $code — sampling the next row" ;;
                 *) echo "activity $id: refused with UNDECLARED code $code"; rc=1; validated=1; break ;;
             esac
         done
         if [ "$validated" = "0" ]; then
-            echo "activity: every sampled row refused, so activity.json was never validated against a payload"; rc=1
+            # rc=1, and provably not a false red: every form that sweeps activity dates has
+            # already FAILED in the forms loop above by the time this state is reachable, so
+            # this line can only ever agree with a red the recipe already is. Names the last
+            # code so the reader does not have to re-derive why.
+            echo "activity: every sampled row refused (last: $lastcode), so activity.json was never validated against a payload"; rc=1
         fi
     fi
     # the envelope schema covers BOTH arms, so this one is never skipped
