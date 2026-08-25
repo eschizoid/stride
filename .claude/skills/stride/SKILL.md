@@ -142,7 +142,7 @@ consume is a versioned envelope — including usage errors (`{"error":{"code":"u
 bare `stride --json`, which answers with the command table rather than the
 human help screen (#180). That table DESCRIBES rather than names (#219): one entry per
 callable form — `week` and `week add` are separate, because one reads and one writes —
-each carrying `{name, args:[{name,required}], mutates, network, interactive, schema}`. So
+each carrying `{name, args:[{name,required,example}], mutates, network, interactive, schema}`. So
 you can determine argument shape, whether a call writes, whether it needs Strava, and
 which file under `schemas/v2` the answer validates against, without reading this document.
 `interactive: true` marks the one form you must never call unattended (`auth`). Prefer

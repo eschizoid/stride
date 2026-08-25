@@ -36,7 +36,8 @@
               "type": "object",
               "required": [
                 "name",
-                "required"
+                "required",
+                "example"
               ],
               "additionalKeys": false,
               "properties": {
@@ -46,6 +47,10 @@
                 },
                 "required": {
                   "type": "boolean"
+                },
+                "example": {
+                  "type": "string",
+                  "description": "A value that SATISFIES this argument, so a caller does not have to invent one — the value lives beside the argument rather than in each checker (#257). Derived from the name where the name says it: a literal is itself, and an alternation yields its first alternative UNLESS that alternative is itself a metavariable, in which case the example is empty (`<activity_id|latest>` yields \"\", not \"activity_id\"). EMPTY means not statically knowable — the value has to come from the data — and a consumer must read it that way rather than as an empty argument."
                 }
               }
             }

@@ -217,7 +217,32 @@ Command := [
 	## One argument. Positional, with one exception: `sync`'s `--all` is a literal flag
 	## accepted in an argument position, so it lives here rather than only in `flags`. `name` is the placeholder as it appears in usage text;
 	## a value without angle brackets must be passed verbatim.
-	Arg : { name : Str, required : Bool }
+	##
+	## `example` is a value that SATISFIES this argument, and it exists so that the value
+	## comes from the same place the argument's existence does (#257). Three checkers kept
+	## their own answer to "what fills this placeholder" — the e2e mutation sweep's jq, the
+	## e2e schema sweep, and `just schema-check`'s `case` block — and they had already
+	## drifted: the sweep proved `config get 1` and `tte 1` do not write while schema-check
+	## executed `tte 300`, and for `config get` a key chosen at RUNTIME from `stride config`'s listing — which is not a fixed value and cannot be cited as one. The safety proof and the executed
+	## invocation were not the same call.
+	##
+	## It makes two defects structurally impossible rather than merely loud. #253's HIGH was
+	## a derived argument the command REJECTED, which read as a benign "skipped" at exit 0
+	## until the allowlist was inverted; with the value coming from the table there is
+	## nothing to reject. And #254's schema-check consequence — a hardcoded `<key>` filler
+	## whose staleness could only be caught by a rename — disappears with the filler.
+	##
+	## BOUNDARY, written into the type rather than promised past: this covers arguments with
+	## a STATIC valid value. `<activity_id>` has to come from the data, so `example` is empty
+	## there — a consumer must treat empty as "I cannot invoke this without looking at the
+	## database", not as "".
+	##
+	## `<export.zip|dir>` is empty for the same reason and it took a measurement to learn it.
+	## The derivation gave `export.zip`, which answers `unzip_failed`; a deliberately absent
+	## `/nonexistent/1` answers `no_activities_csv`. There is no path that satisfies this
+	## argument without a real Strava export on disk, so the honest answer is that it is not
+	## statically knowable — the same class as an activity id, reached by a different road.
+	Arg : { name : Str, required : Bool, example : Str }
 
 	## What a caller needs to INVOKE a command, not merely to name it (#219).
 	##
@@ -302,11 +327,46 @@ Command := [
 	verb_of : Str -> Str
 	verb_of = |name| (List.first(Str.split_on(name, " "))).ok_or(name)
 
+	## `req`/`opt` DERIVE the example from the name wherever the name already contains it,
+	## so the common case cannot drift: an alternation names its own valid values, a literal
+	## is its own example, and a flag is itself. Only the shapes whose valid values are not
+	## in the name — a date, a count, a config key — need `req_ex`/`opt_ex`, and those are
+	## the ones a reader should have to look at.
 	req : Str -> Arg
-	req = |name| { name, required: True }
+	req = |name| { name, required: True, example: example_of(name) }
 
 	opt : Str -> Arg
-	opt = |name| { name, required: False }
+	opt = |name| { name, required: False, example: example_of(name) }
+
+	## ...and the explicit forms, for an argument whose valid values the name does not spell.
+	req_ex : Str, Str -> Arg
+	req_ex = |name, example| { name, required: True, example }
+
+	opt_ex : Str, Str -> Arg
+	opt_ex = |name, example| { name, required: False, example }
+
+	## A value satisfying `name`, when the name says what it is.
+	##
+	## `<a|b|c>` -> `a`. That is the same reading `just schema-check`'s `case` block already
+	## did ("an alternation names its own valid values; take the first"), lifted to where the
+	## alternation is declared so the three consumers cannot each re-derive it differently.
+	##
+	## A bare literal — `all`, `--all` — is its own example. Anything else yields "", which
+	## a consumer must read as "not statically knowable", NOT as an empty argument: that is
+	## `<activity_id>`, whose value has to come from the data.
+	example_of : Str -> Str
+	example_of = |name|
+		if !(Str.starts_with(name, "<")) {
+			name
+		} else if Str.contains(name, "|") {
+			first = List.first(Str.split_on(Str.replace_each(Str.replace_each(name, "<", ""), ">", ""), "|"))
+			match first {
+				Ok(v) => if Str.contains(v, "_") "" else v
+				Err(_) => ""
+			}
+		} else {
+			""
+		}
 
 	## read-only, offline, non-interactive — the shape most commands have, so the table
 	## below states only the exceptions and each exception is visible at a glance.
@@ -327,12 +387,12 @@ Command := [
 		errs({ ..writes("auth", [], "auth.json"), network: True, interactive: True }, ["missing_client_creds", "network_unreachable", "not_authenticated", "rate_limited", "stdin_closed", "strava_error"]),
 		errs({ ..writes("sync", [opt("--all")], "sync.json"), network: True }, ["network_unreachable", "not_authenticated", "rate_limited", "strava_error", "unreadable_config"]),
 		errs(writes("analyze", [], "analyze.json"), ["missing_config", "unreadable_activity_date", "unreadable_config"]),
-		errs(writes("import", [req("<export.zip|dir>")], "import.json"), ["empty_csv", "no_activities_csv", "unzip_failed"]),
+		errs(writes("import", [req_ex("<export.zip|dir>", "")], "import.json"), ["empty_csv", "no_activities_csv", "unzip_failed"]),
 		errs(writes("rate", [req("<activity_id|latest>"), req("<1-10>")], "rate.json"), ["activity_not_found", "bad_id", "bad_rpe", "no_activities", "unreadable_activity_date"]),
-		errs(writes("week add", [req("<YYYY-MM-DD>"), req("<type>"), req("<detail>"), req("<rationale>")], "week_add.json"), ["bad_date"]),
+		errs(writes("week add", [req_ex("<YYYY-MM-DD>", "2099-01-01"), req_ex("<type>", "endurance"), req_ex("<detail>", "example"), req_ex("<rationale>", "example")], "week_add.json"), ["bad_date"]),
 		errs(writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"), ["activity_already_linked", "activity_not_found", "activity_required", "bad_id", "session_not_found"]),
 		errs(writes("skip", [req("<session_id>"), req("<reason>"), opt("<activity_id|none>")], "skip.json"), ["activity_already_linked", "activity_not_found", "bad_id", "session_done", "session_not_found"]),
-		errs(writes("config set", [req("<key>"), req("<value>")], "config.json"), ["bad_value", "derived_key", "unknown_key"]),
+		errs(writes("config set", [req_ex("<key>", "timezone"), req_ex("<value>", "UTC")], "config.json"), ["bad_value", "derived_key", "unknown_key"]),
 		errs(reads("summary", [], "summary.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
 		errs(reads("plan", [], "plan.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
 		## `stats` had no declared codes: its totals are a pure listing, until #249 found
@@ -343,7 +403,7 @@ Command := [
 		errs(reads("zones", [], "zones.json"), ["no_power_data"]),
 		errs(reads("pz", [], "zones.json"), ["no_power_data"]),
 		errs(reads("compare", [opt("<week|month>")], "compare.json"), ["bad_period", "no_data", "unreadable_activity_date", "unreadable_daily_load_day"]),
-		errs(reads("activities", [opt("<limit>"), opt("<sport>")], "activities.json"), ["bad_count"]),
+		errs(reads("activities", [opt_ex("<limit>", "5"), opt_ex("<sport>", "Ride")], "activities.json"), ["bad_count"]),
 		## `unreadable_activity_date` on the three forms #249 made REFUSE rather than report
 		## an empty date. The split is by what the form does with the date: `activities` and
 		## `top` list or rank and still report the row, so they gain no code; `activity`,
@@ -353,7 +413,7 @@ Command := [
 		## the metric set is CLOSED, so it is spelled out. A caller reading only this
 		## payload cannot guess it, and it is the one required argument here whose
 		## wrong value costs a round trip (`bad_metric`).
-		errs(reads("top", [req("<hr|tss|power|intensity|distance|time|output>"), opt("<limit>"), opt("<sport>")], "top.json"), ["bad_count", "bad_metric"]),
+		errs(reads("top", [req("<hr|tss|power|intensity|distance|time|output>"), opt_ex("<limit>", "5"), opt_ex("<sport>", "Ride")], "top.json"), ["bad_count", "bad_metric"]),
 		## DAYS of lookback, not a row count — `power-curve` returns a fixed set of
 		## points regardless, so `<n>` beside `activities`' `<n>` left two identical
 		## shapes meaning different things.
@@ -362,9 +422,9 @@ Command := [
 		## code, and nothing caught the gap: the e2e union check at tests/e2e.roc passes
 		## because summary, plan and compare declare it, so the union was satisfied by
 		## three other forms while this one was wrong — a check green for the wrong reason.
-		errs(reads("load", [opt("<days>")], "load.json"), ["bad_count", "unreadable_daily_load_day"]),
-		errs(reads("power-curve", [opt("<days>"), opt("<sport>")], "power_curve.json"), ["bad_count"]),
-		errs(reads("pc", [opt("<days>"), opt("<sport>")], "power_curve.json"), ["bad_count"]),
+		errs(reads("load", [opt_ex("<days>", "30")], "load.json"), ["bad_count", "unreadable_daily_load_day"]),
+		errs(reads("power-curve", [opt_ex("<days>", "30"), opt_ex("<sport>", "Ride")], "power_curve.json"), ["bad_count"]),
+		errs(reads("pc", [opt_ex("<days>", "30"), opt_ex("<sport>", "Ride")], "power_curve.json"), ["bad_count"]),
 		## A DATE, not a workout name. The parse arm BOUND this to a variable called
 		## `name` until this commit renamed it, and that binder is where an earlier draft
 		## of this table got `<name>` from — the
@@ -372,14 +432,14 @@ Command := [
 		## `no_workout_on_date`. Every other document in the repo says `[date]`; only
 		## this table said otherwise, and this table is the one an agent reads.
 		errs(reads("progress", [opt("<YYYY-MM-DD>"), opt("<asc|desc>")], "progress.json"), ["no_scorable_workouts", "no_workout_on_date", "unreadable_activity_date", "unscorable"]),
-		errs(reads("tte", [req("<watts>")], "tte.json"), ["bad_watts", "no_cp_fit"]),
+		errs(reads("tte", [req_ex("<watts>", "300")], "tte.json"), ["bad_watts", "no_cp_fit"]),
 		errs(reads("reps", [opt("<YYYY-MM-DD>")], "reps.json"), ["irregular_anchor", "no_detected_intervals", "no_intervals_on_date", "unreadable_activity_date"]),
 		errs(reads("season", [], "season.json"), ["no_activities", "unreadable_activity_date", "unreadable_daily_load_day"]),
 		## `week` had NO declared codes at all, and now has one: #249 made it refuse an
 		## unplanned activity whose date it used to sort to the epoch and list first.
 		errs(reads("week", [opt("all")], "week.json"), ["unreadable_activity_date"]),
 		reads("config", [], "config_list.json"),
-		errs(reads("config get", [req("<key>")], "config.json"), ["derived_key", "not_set", "unknown_key"]),
+		errs(reads("config get", [req_ex("<key>", "timezone")], "config.json"), ["derived_key", "not_set", "unknown_key"]),
 		reads("--version", [], "version.json"),
 		reads("--help", [], "commands.json"),
 		reads("-h", [], "commands.json"),
@@ -701,6 +761,27 @@ expect {
 # green; review caught THAT one too. The aliases share a variant with
 # their long form on purpose — deleting either arm still fails here, because the
 # name then falls through to the wrong-arguments usage error rather than its command.
+# example_of: the derivation from a placeholder's own text. Mutation-proved one clause at a
+# time, because the SITES that consume these values cannot tell a good example from a
+# merely-parseable one — `rate activity_id 5` parses fine and answers activity_not_found,
+# so every sweep stays green on a value no database can satisfy.
+expect Command.example_of("all") == "all"
+expect Command.example_of("--all") == "--all"
+# an alternation names its own valid values; take the FIRST. Taking the last is a different
+# but still-valid metric for `top`, which is exactly why no invocation-based check catches it.
+expect Command.example_of("<hr|tss|power|intensity|distance|time|output>") == "hr"
+expect Command.example_of("<week|month>") == "week"
+expect Command.example_of("<asc|desc>") == "asc"
+# ...unless the first alternative is a METAVARIABLE, in which case the alternation does not
+# name a usable value and the answer is "not statically knowable". `rate activity_id 5` is
+# the failure this clause prevents: it parses, so nothing downstream refuses it.
+expect Command.example_of("<activity_id|latest>") == ""
+expect Command.example_of("<activity_id|none>") == ""
+# ...and a bare placeholder never names its value
+expect Command.example_of("<key>") == ""
+expect Command.example_of("<YYYY-MM-DD>") == ""
+expect Command.example_of("<activity_id>") == ""
+
 expect match Command.parse(["stride", "init"]) { Ok(Init) => True  _ => False }
 expect match Command.parse(["stride", "auth"]) { Ok(Auth) => True  _ => False }
 expect match Command.parse(["stride", "sync"]) { Ok(Sync(False)) => True  _ => False }
