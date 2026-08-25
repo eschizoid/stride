@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(905)?
+    checks_ran_exactly!(908)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3845,6 +3845,48 @@ b_command_schemas! = |ctx| {
     # Same "pinned by name rather than absorbed into a count" move `schema_skipped` makes.
     dropped = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | select([.args[] | select(.example == \"\")] | length > 0) | .name' | sort | tr '\\n' ' '"))
     check!("...and only two forms have an argument the fill must drop (got: ${dropped})", dropped == "progress reps")?
+    # ── the ARITY bounds, for EVERY non-network form including the five above, using a junk
+    # token rather than an example (#257).
+    #
+    # The tension that kept these five out dissolves on one observation: `usage` is an ARITY
+    # verdict, not a VALUE verdict. Measured, a token satisfying nothing still separates the
+    # bounds cleanly —
+    #
+    #   activity x   -> activity_not_found      activity x x   -> usage
+    #   complete x x -> bad_id                  complete x x x -> usage
+    #   rate x x     -> bad_rpe                 rate x x x     -> usage
+    #   skip x x x   -> bad_id                  skip x x x x   -> usage
+    #   import x     -> no_activities_csv       import x x     -> usage
+    #
+    # `usage` appears at declared-arity+1 and never at or below it. So both bounds AND
+    # phantom protection are recoverable without inventing a value that satisfies anything.
+    # This is what `over` relied on before #257 — "the value only has to be one the parser
+    # accepts". The requirement that a value SATISFY its argument belongs to `badex`, the
+    # schema sweep and the mutation sweep, which make claims about payloads and writes, and
+    # the junk token is deliberately kept out of all three.
+    #
+    # Without this, a phantom optional argument on any of the five was invisible to every
+    # check in this file: they all open by excluding forms whose required args are
+    # unknowable, so `complete <session_id> <activity_id> <since>` published an argument the
+    # parser answers `usage` for, and nothing said so. That is a larger exposure than "arity
+    # is unchecked" — it is the declared argument list not corresponding to the parser.
+    junk = "| .name | \"x\""
+    phantom = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | [.name] + [.args[] ${junk}] + [\"x\"] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] || echo \"$line\"; done; true; } | tr '\\n' '|'"))
+    check!("one argument PAST what the table declares is always a usage error (bad: ${phantom})", phantom == "")?
+    # ...and the LOWER bound, which is what actually catches a phantom: exactly the declared
+    # count must NOT be a usage error. Without it, declaring one argument too many just
+    # shifts both probes up together — `complete <session_id> <activity_id> <since>` makes
+    # this build `complete x x x x`, still usage, still green, while `complete x x x` (the
+    # arity the table now advertises) answers usage and nothing asks.
+    shortfall = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | [.name] + [.args[] ${junk}] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true; } | tr '\\n' '|'"))
+    # THREE named exceptions, because for these the parser validates the VALUE at parse
+    # time, so `usage` there is a value verdict rather than an arity one — which is the
+    # limit of the observation this whole block rests on. `week` declares the literal `all`
+    # and refuses anything else; `reps` refuses a non-date; `progress` has dedicated
+    # `asc`/`desc` arms and refuses a second token that is neither. Pinned by name so a
+    # fourth is a line in the diff rather than a silent member.
+    check!("...and exactly what the table declares is never one, bar the three that parse-check their value (got: ${shortfall})", shortfall == "progress x x|reps x|week x|")?
+    check!("...and there were forms to test it on", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select(.network == false)] | length'")) != "0")?
     # ...and FIVE forms now have neither arity bound checked — `activity`, `complete`,
     # `import`, `rate`, `skip` — because each takes an id or a path that is not statically
     # knowable. On origin/main they were covered with invented values; #257 declines to
