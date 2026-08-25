@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(909)?
+    checks_ran_exactly!(910)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3886,9 +3886,9 @@ b_command_schemas! = |ctx| {
     # `asc`/`desc` arms and refuses a second token that is neither. Pinned by name so a
     # fourth is a line in the diff rather than a silent member.
     check!("...and exactly what the table declares is never one, bar the three that parse-check their value (got: ${shortfall})", shortfall == "progress x x|reps x|week x|")?
-    # ...and one REQUIRED argument short is always a usage error, which is the half the two
-    # bounds above cannot see: they move with the TOTAL argument count, so flipping an
-    # optional to required leaves both unmoved. That is not cosmetic — declaring
+    # ...and one REQUIRED argument short is always a usage error, which the two bounds above
+    # cannot see: they move with the TOTAL argument count, so flipping an optional to
+    # required leaves both unmoved. That is not cosmetic — declaring
     # `complete <activity_id>` required erases `CompleteRest`, a named constructor with its
     # own parse arm and its own declared `activity_required` code, which only makes sense
     # if the argument can be omitted. `skip` has the identical shape (`Skip` vs `SkipWith`).
@@ -3898,6 +3898,28 @@ b_command_schemas! = |ctx| {
     # arity fact in a way that being one over is not.
     required_short = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required)] | length > 0) | [.name] + [.args[] | select(.required) ${junk}][1:] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] || echo \"$line\"; done; true; } | tr '\\n' '|'"))
     check!("one REQUIRED argument short is always a usage error (bad: ${required_short})", required_short == "")?
+    # ...and exactly R required arguments is NEVER a usage error, which is the other half of
+    # the same bound. `usage@R-1` pins only "the true minimum is at least R": over-declaring
+    # R pushes the probe UP into live territory and fires, which is why flipping `complete`'s
+    # optional to required dies above — but UNDER-declaring R pushes it DOWN, away from the
+    # boundary, and stays green. Measured survivor: flipping `skip`'s `req("<reason>")` to
+    # `opt(...)` leaves the total at 3, so both total-driven bounds are unmoved, and drops R
+    # from 2 to 1, so `usage@R-1` probes bare `skip` and passes. The table then publishes
+    # `skip <session_id> [<reason>] [<activity_id|none>]` -- exactly the shape the
+    # `misordered` comment below describes as making `stride skip 1 12345` record 12345 as
+    # the REASON, exit 0, and never make the substitute link. `misordered` cannot catch it:
+    # [required, optional, optional] is a valid required-prefix.
+    #
+    # Bracketing R from both sides is also the only derived way to write down that the
+    # R-arity form is REACHABLE -- `CompleteRest` for `complete`, `Skip` for `skip`. `.args`
+    # records counts and requiredness; it does not record which arity belongs to which
+    # constructor, and [R, N-1] was claimed by nothing.
+    #
+    # No exception list here either: measured uniform across all 28 non-network forms today.
+    # At exactly R they answer a VALUE verdict rather than an arity one -- `complete x` is
+    # `bad_id`, `top x` is `bad_metric` -- and the zero-required forms answer `ok`.
+    required_exact = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | [.name] + [.args[] | select(.required) ${junk}] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true; } | tr '\\n' '|'"))
+    check!("...and exactly its required arguments is never a usage error (bad: ${required_exact})", required_exact == "")?
     check!("...and there were forms to test it on", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select(.network == false)] | length'")) != "0")?
     # ...and every declared example is a value the binary ACCEPTS, which the checks above
     # cannot tell: they assert the code is not `usage`, and every `bad_*` rejection passes
