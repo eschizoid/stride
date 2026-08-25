@@ -497,7 +497,7 @@ ReportSessions :: [].{
                 \\-- move on upgrades, and the e2e hoist fixtures are what hold the two
                 \\-- together across one. '1000-02-30' is in that set for exactly this
                 \\-- reason: it is the shape only the newer date() catches.
-                \\ORDER BY ${Report.date_known_sql}, ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC LIMIT ${(limit).to_str()}
+                \\ORDER BY ${Metrics.hoist_unrankable_sql("a.start_local")}, a.id DESC LIMIT ${(limit).to_str()}
             ,
             bindings: sf.binds,
             rows: |cols| |stmt| {

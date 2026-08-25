@@ -298,6 +298,9 @@ Plan :: [].{
                 \\                   OR NOT EXISTS (SELECT 1 FROM planned_sessions p3
                 \\                                  WHERE p3.target_date = ps.target_date
                 \\                                    AND (COALESCE(p3.status,'open') <> 'skipped' OR p3.id > ps.id)))))
+                    \\-- the flag is DEFENSIVE here: this order is discarded downstream by a
+                    \\-- List.sort_with over (day, rank, activity_id), a strict total order, so no
+                    \\-- database can make this clause observable. Kept in case that sort changes.
                 \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Asc)}
             ,
             bindings: [{ name: ":all", value: Integer(scope_all) }],

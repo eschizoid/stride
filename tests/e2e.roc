@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(866)?
+    checks_ran_exactly!(868)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3049,8 +3049,23 @@ b_seed_analyze! = |ctx| {
     # undateable count does not see it either. The hoist answers the date dimension; this
     # is the time dimension of the same defect, wearing the same intent.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (949,'impossible time','Ride','Ride',(SELECT substr(start_local,1,10) FROM activities WHERE id=101) || 'T37:00:00Z',3600);")
-    check!("...and an impossible TIME does not outrank a real row on its own day", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' activities 200 2>/dev/null | jq -r '[.data[] | select(.id == 101 or .id == 949) | .id][0]'")) == "101")?
-    check!("...while the undateable hoist still puts the unreadable DATE first", strjq!(ctx, ["activities"], ".data[0].id") == "947")?
+    check!("...and an impossible TIME is HOISTED into view, not sunk below the default limit", strjq!(ctx, ["activities"], "[.data[] | select(.id == 949)] | length") == "1")?
+    # ...which is the property, not "it does not outrank". An earlier cut of this fix sank
+    # the row instead: on a 737-row database it went to position 737, outside the default
+    # limit of 30, uncounted by `doctor`, and still published as `date_known: true` — three
+    # ways invisible, and measurably worse than doing nothing for a listing whose job is
+    # surfacing what needs repair. Ranking wants such a row LAST; this listing wants it
+    # FIRST, and #249 already answered which one `activities` is.
+    check!("...ahead of every readable row, which is what the hoist is for", str_to_i64(strjq!(ctx, ["activities"], "[.data[].id] | index(949)")) < str_to_i64(strjq!(ctx, ["activities"], "[.data[].id] | index(101)")))?
+    # ...and a well-formed year below 1000 is undateable too. This holds the SQL year bound
+    # to the Roc one, and NOTHING held it: deleting ` OR substr(col,1,4) < '1000'` passed the
+    # whole suite, because every sub-1000 fixture here is MALFORMED and so is caught by the
+    # round-trip half instead. This file already records that exact accident happening once —
+    # the two bodies of the rule drifted and one lost the year bound, so `week add 999-01-01`
+    # answered `bad_date` while every stored-date guard accepted it, in one binary.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (950,'readable pre-1000','Ride','Ride','0999-06-15T10:00:00Z',3600);")
+    check!("...and a well-formed year below 1000 is undateable, holding the SQL year bound to the Roc one", strjq!(ctx, ["activities"], "[.data[] | select(.id == 950) | .date_known] | join(\",\")") == "false")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 950;")
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 949;")
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (941,942,947,948);")
     # `top time`, NOT `top tss`, and the difference is the whole check. `top tss` filters on
@@ -5143,6 +5158,21 @@ b_doctor! = |ctx| {
     # ...and a strapped ride on top resets it to 0
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9404,'strapped ride','Ride','2099-03-04T10:00:00Z',3600,30000,0,140);")
     check!("a strapped ride resets the streak", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "0")?
+    # ...and an UNRANKABLE timestamp cannot head that walk (#255). This is the site where a
+    # wrong order is a wrong ANSWER rather than a wrong listing: the streak is a
+    # leading-prefix fold over `ORDER BY … LIMIT 200`, so the published number is a function
+    # of the order, not of the set. A strapless row with an impossible time dated on the
+    # newest day sorts to the head on the raw column and reopens a streak that a real
+    # strapped ride had just closed.
+    #
+    # Chosen because it is the last of the eight sites whose consequence is an answer. Of
+    # the five now unchecked, three have no observable consequence at all — Plan.roc:301's
+    # SQL order is discarded by `List.sort_with`, Analyze.roc:288 only affects batch
+    # composition and `converge_metrics!` runs to a fixed point, and the `progress` anchor's
+    # consumer reads `substr(start_local, 1, 10)` where a bad time cannot cross a day.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation) SELECT 9405,'strapless impossible time','Ride', substr(start_local,1,10) || 'T37:00:00Z',3600,20000,100 FROM activities WHERE id = 9404;")
+    check!("...and an unrankable timestamp cannot head the streak walk and reopen it", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "0")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 9405;")
     # device_watts = 0 is Strava flagging ESTIMATED watts; dated today so it lands in 30d
     est_before = sfloat(strjq!(ctx, ["doctor"], ".data.estimated_power_count_30d"))
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_watts,device_watts) VALUES (9405,'estimated watts','Ride','${ctx.today}T09:00:00Z',3600,30000,0,180,0);")
