@@ -200,6 +200,115 @@ EXPECTED_QUOTING=1
 # bogus command planted there is now reported at exit 1 instead of living there forever.
 EXPECTED_UNPARSED=45
 
+# ------------------------------------------- the trailing-token rule, and its self-test
+#
+# UP HERE, above the binary check and every pin, because it needs neither. It is pure
+# logic over hand-written strings, and everything that used to precede it could mask it:
+# on a table declaring no arguments the run exits 3 at the signature guard, and on a
+# renamed-`top` table it exited 3 at the old anchor, both before the self-test ran — so a
+# simultaneously broken rule went unreported in exactly the runs most likely to have
+# broken it. Nothing below can hide it now.
+# The rule itself, as a function, so the self-test below judges the SAME code the comparison
+# rather than a second copy of it. Returns 0 to accept the trailing token, 1 to refute.
+#   $1 the trailing token, $2 the command's declared arg spec (space-joined, in order)
+judge_trailing() {
+  _tok="$1"
+  _verdict=1
+  # `set -f` because `for _a in $2` is an unquoted expansion, which does word splitting AND
+  # PATHNAME EXPANSION. The spec is data, not a glob. Measured: case 9's `[<n>]` is a valid
+  # bracket pattern over `{<, n, >}`, so an untracked file named `n` in the repo root made
+  # the verdict `refute` and turned the whole run red — at exit 7, blaming the rule — while
+  # files named `n` and `<` made it accept for the wrong reason. The verdict was a function
+  # of working-directory contents in both directions. Today's table is glob-clean (no `*`,
+  # `?` or `[` in any declared arg name) so only the self-test was exposed, but a false red
+  # with a false diagnosis on the one guard whose job is to say the rule is broken is worse
+  # than the hole it was covering. Same class of hidden input as the locale the header
+  # spends a page eliminating.
+  #
+  # The verdict moves to a variable because an early `return` would leave `-f` set for the
+  # rest of the run, and `FILES` at the top of this file depends on globbing.
+  set -f
+  for _a in $2; do
+    case "$_a" in "!"*) _req=1; _a="${_a#!}" ;; *) _req=0 ;; esac
+    # a placeholder in a position the token can reach accepts it — its values are not
+    # enumerable from the table, which is the one thing the old rule had right
+    case "$_a" in *"<"*) _verdict=0; break ;; esac
+    [ "$_a" = "$_tok" ] && { _verdict=0; break; }
+    # ...and a REQUIRED arg the token did not match is where the walk stops: nothing after
+    # it is reachable, because reaching it would mean skipping something mandatory.
+    [ "$_req" = "1" ] && { _verdict=1; break; }
+  done
+  set +f
+  return "$_verdict"
+}
+
+# ...and PROVE it can refute, before trusting it on the real corpus. Every other guard in
+# this file asserts that its INPUTS are non-empty; none asserted that the JUDGEMENT works,
+# and a rule that accepts everything looks exactly like a corpus with nothing wrong in it.
+#
+# The sharpest argument for it is not the coverage number: the real corpus reaches this
+# rule EXACTLY ONCE, on `week all`, and that one is an accept. The refute path has no
+# corpus coverage at all, so without these cases a rule that accepted everything would be
+# indistinguishable from a clean tree — and "the corpus verdict is unchanged" is nearly
+# vacuous as evidence for the same reason.
+#
+# COUNTED, because a silent `sf` line and an `sf` line that never existed look identical.
+# Measured: reverting the rule to list-wide AND deleting the one case that pins it was
+# green — a complete revert, undetected. Every other pin in this file carries an exact
+# count for exactly this reason (EXPECTED_QUOTING, EXPECTED_UNPARSED, nargs vs nreal).
+selftest_fail=0
+selftest_ran=0
+sf() {  # description, token, spec, expected verdict (accept|refute)
+  selftest_ran=$((selftest_ran + 1))
+  if judge_trailing "$2" "$3"; then _got=accept; else _got=refute; fi
+  [ "$_got" = "$4" ] || { echo "command-claims: SELF-TEST FAILED — $1: judged '$2' against [$3] as $_got, expected $4" >&2; selftest_fail=1; }
+}
+# `!` marks a REQUIRED arg, the same encoding the ARGS file carries.
+sf "a required literal refutes anything else"     frobnicate "!all"                      refute
+sf "a required literal accepts itself"            all        "!all"                      accept
+sf "an OPTIONAL literal alone still refutes"      frobnicate "all"                       refute
+# ...and the soundness the position-1 rule got wrong. `week`'s `all` is optional, so a token
+# may legally fill position 2 by skipping it. Judging position 1 alone refused
+# `stride week ride` against `week [all] [<sport>]` — a false accusation, which this file
+# treats as the worse failure: the only way out of one without a marker is to degrade the
+# doc until the linter is satisfied.
+sf "an optional literal is SKIPPABLE, so a later placeholder is reachable" \
+                                                  ride       "all <sport>"               accept
+# ...but a REQUIRED arg stops the walk: nothing past it is reachable, because reaching it
+# would mean skipping something mandatory. This is the whole gain over the list-wide rule,
+# and the case the PR originally cited (`all <n>`) does NOT demonstrate it — `all` is
+# optional there, so accepting is correct.
+sf "a required literal blocks a placeholder behind it" \
+                                                  frobnicate "!bar <n>"                  refute
+sf "...however many follow it"                    frobnicate "!bar <n> <m>"              refute
+# THREE tokens, because two agree under a wrong implementation. Measured: `${2% *}` — all
+# tokens but the last — passes every two-token case with a byte-identical verdict
+# signature, passes the corpus, and IS #269's bug on a three-arg spec. The table already
+# declares three- and four-arg commands (`top`, `skip`, `week add`).
+sf "an optional literal FIRST, then two placeholders, is reachable at position 2" \
+                                                  frobnicate "all <n> <m>"               accept
+sf "a placeholder in position 1 accepts anything" frobnicate "!<metric> <limit>"         accept
+# ...and a placeholder is recognised ANYWHERE in the arg name, not only at its start. Every
+# name in today's table opens with `<`, so `case $_a in "<"*)` — starts-with — passes every
+# other case here and the whole corpus. A bracketed-optional spelling is the shape that
+# distinguishes them, and it is one naming convention away.
+sf "a placeholder is recognised anywhere in the name" \
+                                                  frobnicate "[<n>]"                     accept
+sf "no declared args refutes anything"            frobnicate ""                          refute
+# `sync` really declares `--all`, and it is required: false — so a token that is not `--all`
+# must be refuted, and `--all` itself accepted.
+sf "a flag is a literal like any other"           --all      "--all"                     accept
+sf "...and refutes a non-flag"                    frobnicate "--all"                     refute
+if [ "$selftest_ran" != "12" ]; then
+  echo "command-claims: the trailing-token self-test ran $selftest_ran cases, expected 12 — a case was deleted, and a silent one is indistinguishable from one that never existed" >&2
+  exit 7
+fi
+if [ "$selftest_fail" != "0" ]; then
+  echo "command-claims: the trailing-token rule does not judge as declared — refusing to run it against the docs" >&2
+  exit 7
+fi
+
+
 # The trap goes up FIRST, before any of them exist. Installed after the block, a failure on
 # the second or third mktemp leaks the ones already created — `exit 6` runs with no trap
 # armed. `rm -f ""` is a silent no-op (exit 0), so the unset placeholders cost nothing.
@@ -446,13 +555,53 @@ nargs=$(wc -l < "$ARGS" | tr -d ' ')
 # required literal blocking a placeholder behind it, has zero instances in the table and
 # zero corpus coverage, and lives only in the self-test. The day someone adds such a
 # command is the day this number moves and the rule starts doing real work.
-EXPECTED_REQUIRED=16
-# tab AND space: the ARGS rows are `name<TAB>arg arg ...`, so splitting on spaces alone
-# leaves the first arg glued to the command name and its marker invisible — measured, that
-# undercounted 16 as 6.
-nreq=$(tr " \t" "\n\n" < "$ARGS" | grep -c "^!" || true)
-if [ "$nreq" != "$EXPECTED_REQUIRED" ]; then
-  echo "command-claims: $nreq required-arg markers in the derived table, expected $EXPECTED_REQUIRED — either the extraction dropped/forged \`required\` (the trailing-token rule silently over-accepts without it) or an argument changed between required and optional. Confirm which and update EXPECTED_REQUIRED." >&2
+# A COUNT would not do. `EXPECTED_QUOTING`'s own comment records why — "the pin is a COUNT,
+# not an identity: with two or more markers, one could be moved and the count would not
+# notice" — and accepts that weakness explicitly because there is exactly one line in the
+# corpus it can hide anything on. That justification does not transfer: the markers here
+# span ten commands, so the same reasoning on these numbers reaches the opposite
+# conclusion. Measured under a bare total: drifting `week`'s `all` to required (+1) and
+# `tte`'s `<watts>` to optional (-1) nets 16 and runs green, and the guard whose message
+# promises to catch "an argument changed between required and optional" saw two of them and
+# said nothing. That flip is not cosmetic — it moves `week` from a skippable optional
+# literal to a blocking required one, on the one command the corpus exercises.
+#
+# So pin the DERIVATION, not its sum: one `name=positions` row per command that declares a
+# required arg. A wrong bump then shows up as a diff a reader can check, which is what
+# `EXPECTED_UNPARSED` already does with its twenty lines naming what it counts.
+#
+# POSITIONS and not counts, because order is the entire premise of the walk and a count is
+# blind to it. Reversing the arg order in the extraction above was a green one-line survivor
+# under the total: the self-test's specs are hand-written so it cannot see an extraction
+# change, and the corpus reaches the rule only on `week`, which declares one arg, where
+# reversal is the identity. Positions kill it — `complete` goes 1 to 2 and `skip` 1,2 to
+# 2,3 — while commands whose required args fill every slot (`week add`, `config set`) are
+# reversal-invariant on their own and could never have caught it alone.
+#
+# Worth knowing when this needs editing: NO command today declares a literal at position 1
+# followed by anything at all — `sync` (`--all`) and `week` (`all`) are the only commands
+# with a literal arg and each declares exactly one. So the walk's distinctive behaviour, a
+# required literal blocking a placeholder behind it, has zero instances in the table and
+# zero corpus coverage, and lives only in the self-test. The day someone adds such a
+# command is the day these rows move and the rule starts doing real work.
+EXPECTED_REQUIRED_SIG='activity=1 complete=1 config get=1 config set=1,2 import=1 rate=1,2 skip=1,2 top=1 tte=1 week add=1,2,3,4'
+# awk on the TAB, not `tr`: the ARGS rows are `name<TAB>arg arg ...` and a command name may
+# itself contain a space (`week add`, `config set`), so splitting on spaces alone both glues
+# the first arg to the name and mis-numbers every position after it.
+reqsig=$(awk -F'\t' '{ n = split($2, a, " "); s = ""; for (i = 1; i <= n; i++) if (substr(a[i], 1, 1) == "!") s = (s == "" ? i : s "," i); if (s != "") printf "%s=%s\n", $1, s }' "$ARGS" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
+# The empty case gets its own branch. A payload declaring no arguments at all yields an
+# empty signature, and neither half of the general message is true of it — nothing was
+# dropped from `required`, the whole `.args` side of the oracle is gone. `nargs != nreal`
+# cannot see it either, since all the rows still exist.
+if [ -z "$reqsig" ]; then
+  echo "command-claims: the derived table declares no arguments at all — the \`.args\` half of the oracle is empty, so the trailing-token rule has nothing to walk" >&2
+  exit 3
+fi
+if [ "$reqsig" != "$EXPECTED_REQUIRED_SIG" ]; then
+  echo "command-claims: required-arg signature changed." >&2
+  echo "  expected: $EXPECTED_REQUIRED_SIG" >&2
+  echo "  derived:  $reqsig" >&2
+  echo "command-claims: either the extraction dropped/forged \`required\` or reordered the args (the trailing-token rule silently over-accepts without the markers, and walks the wrong way without the order), or an argument genuinely changed between required and optional. Confirm which against the diff above, then update EXPECTED_REQUIRED_SIG." >&2
   exit 3
 fi
 
@@ -491,105 +640,6 @@ fi
 # is verifiable, `top hr` is a placeholder value, and `analyze frobnicate` and
 # `week frobnicate` are refutable. A command declaring ANY placeholder accepts any trailing
 # token, because a placeholder's whole point is that its values are not enumerable here.
-# The rule itself, as a function, so the self-test below judges the SAME code the loop runs
-# rather than a second copy of it. Returns 0 to accept the trailing token, 1 to refute.
-#   $1 the trailing token, $2 the command's declared arg spec (space-joined, in order)
-judge_trailing() {
-  _tok="$1"
-  _verdict=1
-  # `set -f` because `for _a in $2` is an unquoted expansion, which does word splitting AND
-  # PATHNAME EXPANSION. The spec is data, not a glob. Measured: case 9's `[<n>]` is a valid
-  # bracket pattern over `{<, n, >}`, so an untracked file named `n` in the repo root made
-  # the verdict `refute` and turned the whole run red — at exit 7, blaming the rule — while
-  # files named `n` and `<` made it accept for the wrong reason. The verdict was a function
-  # of working-directory contents in both directions. Today's table is glob-clean (no `*`,
-  # `?` or `[` in any declared arg name) so only the self-test was exposed, but a false red
-  # with a false diagnosis on the one guard whose job is to say the rule is broken is worse
-  # than the hole it was covering. Same class of hidden input as the locale the header
-  # spends a page eliminating.
-  #
-  # The verdict moves to a variable because an early `return` would leave `-f` set for the
-  # rest of the run, and `FILES` at the top of this file depends on globbing.
-  set -f
-  for _a in $2; do
-    case "$_a" in "!"*) _req=1; _a="${_a#!}" ;; *) _req=0 ;; esac
-    # a placeholder in a position the token can reach accepts it — its values are not
-    # enumerable from the table, which is the one thing the old rule had right
-    case "$_a" in *"<"*) _verdict=0; break ;; esac
-    [ "$_a" = "$_tok" ] && { _verdict=0; break; }
-    # ...and a REQUIRED arg the token did not match is where the walk stops: nothing after
-    # it is reachable, because reaching it would mean skipping something mandatory.
-    [ "$_req" = "1" ] && { _verdict=1; break; }
-  done
-  set +f
-  return "$_verdict"
-}
-
-# ...and PROVE it can refute, before trusting it on the real corpus. Every other guard in
-# this file asserts that its INPUTS are non-empty; none asserted that the JUDGEMENT works,
-# and a rule that accepts everything looks exactly like a corpus with nothing wrong in it.
-#
-# The sharpest argument for it is not the coverage number: the real corpus reaches this
-# rule EXACTLY ONCE, on `week all`, and that one is an accept. The refute path has no
-# corpus coverage at all, so without these cases a rule that accepted everything would be
-# indistinguishable from a clean tree — and "the corpus verdict is unchanged" is nearly
-# vacuous as evidence for the same reason.
-#
-# COUNTED, because a silent `sf` line and an `sf` line that never existed look identical.
-# Measured: reverting the rule to list-wide AND deleting the one case that pins it was
-# green — a complete revert, undetected. Every other pin in this file carries an exact
-# count for exactly this reason (EXPECTED_QUOTING, EXPECTED_UNPARSED, nargs vs nreal).
-selftest_fail=0
-selftest_ran=0
-sf() {  # description, token, spec, expected verdict (accept|refute)
-  selftest_ran=$((selftest_ran + 1))
-  if judge_trailing "$2" "$3"; then _got=accept; else _got=refute; fi
-  [ "$_got" = "$4" ] || { echo "command-claims: SELF-TEST FAILED — $1: judged '$2' against [$3] as $_got, expected $4" >&2; selftest_fail=1; }
-}
-# `!` marks a REQUIRED arg, the same encoding the ARGS file carries.
-sf "a required literal refutes anything else"     frobnicate "!all"                      refute
-sf "a required literal accepts itself"            all        "!all"                      accept
-sf "an OPTIONAL literal alone still refutes"      frobnicate "all"                       refute
-# ...and the soundness the position-1 rule got wrong. `week`'s `all` is optional, so a token
-# may legally fill position 2 by skipping it. Judging position 1 alone refused
-# `stride week ride` against `week [all] [<sport>]` — a false accusation, which this file
-# treats as the worse failure: the only way out of one without a marker is to degrade the
-# doc until the linter is satisfied.
-sf "an optional literal is SKIPPABLE, so a later placeholder is reachable" \
-                                                  ride       "all <sport>"               accept
-# ...but a REQUIRED arg stops the walk: nothing past it is reachable, because reaching it
-# would mean skipping something mandatory. This is the whole gain over the list-wide rule,
-# and the case the PR originally cited (`all <n>`) does NOT demonstrate it — `all` is
-# optional there, so accepting is correct.
-sf "a required literal blocks a placeholder behind it" \
-                                                  frobnicate "!bar <n>"                  refute
-sf "...however many follow it"                    frobnicate "!bar <n> <m>"              refute
-# THREE tokens, because two agree under a wrong implementation. Measured: `${2% *}` — all
-# tokens but the last — passes every two-token case with a byte-identical verdict
-# signature, passes the corpus, and IS #269's bug on a three-arg spec. The table already
-# declares three- and four-arg commands (`top`, `skip`, `week add`).
-sf "an optional literal FIRST, then two placeholders, is reachable at position 2" \
-                                                  frobnicate "all <n> <m>"               accept
-sf "a placeholder in position 1 accepts anything" frobnicate "!<metric> <limit>"         accept
-# ...and a placeholder is recognised ANYWHERE in the arg name, not only at its start. Every
-# name in today's table opens with `<`, so `case $_a in "<"*)` — starts-with — passes every
-# other case here and the whole corpus. A bracketed-optional spelling is the shape that
-# distinguishes them, and it is one naming convention away.
-sf "a placeholder is recognised anywhere in the name" \
-                                                  frobnicate "[<n>]"                     accept
-sf "no declared args refutes anything"            frobnicate ""                          refute
-# `sync` really declares `--all`, and it is required: false — so a token that is not `--all`
-# must be refuted, and `--all` itself accepted.
-sf "a flag is a literal like any other"           --all      "--all"                     accept
-sf "...and refutes a non-flag"                    frobnicate "--all"                     refute
-if [ "$selftest_ran" != "12" ]; then
-  echo "command-claims: the trailing-token self-test ran $selftest_ran cases, expected 12 — a case was deleted, and a silent one is indistinguishable from one that never existed" >&2
-  exit 7
-fi
-if [ "$selftest_fail" != "0" ]; then
-  echo "command-claims: the trailing-token rule does not judge as declared — refusing to run it against the docs" >&2
-  exit 7
-fi
 
 fail=0
 while IFS="$(printf '\t')" read -r file line cand; do
