@@ -599,6 +599,19 @@ skip=1,2
 top=1
 tte=1
 week add=1,2,3,4'
+# The three SIGNATURE diffs below accumulate into `sigfail` and this exits once at the end,
+# rather than each exiting on the spot. Not cosmetic: every check that exits 3 costs a full
+# rebuild-and-run cycle to reach the next one, so N moved signatures cost N round trips.
+# Measured bumps-to-converge before this: renaming a literal 1, adding a command with
+# optional placeholder args 1, with a required placeholder arg 2, and with a required
+# literal followed by a placeholder THREE — and that last shape is precisely the one this
+# file's other comment names as the day the walk starts doing real work. One run now names
+# every constant that needs updating.
+#
+# The two EMPTINESS branches above still exit immediately, and should: with no arguments at
+# all, or none marked required, the signature diffs downstream are noise rather than
+# information.
+sigfail=0
 # NEWLINE-separated, and the constant is written one row per line to match. Not space-
 # joined, because a command NAME may contain a space (`config get`) and the diff below has
 # to split the value back into entries. Not `|`-joined either, which is what this was and
@@ -637,7 +650,7 @@ if [ "$reqsig" != "$EXPECTED_REQUIRED_SIG" ]; then
   comm -23 "$SIGA" "$SIGB" | sed 's/^/  only in expected:  /' >&2
   comm -13 "$SIGA" "$SIGB" | sed 's/^/  only in derived:   /' >&2
   echo "command-claims: either the extraction dropped/forged \`required\` or reordered the args (the trailing-token rule silently over-accepts without the markers, and walks the wrong way without the order), or an argument genuinely changed between required and optional. Confirm each row above, then update EXPECTED_REQUIRED_SIG." >&2
-  exit 3
+  sigfail=1
 fi
 # ...and the PLACEHOLDER/LITERAL split survived, which the signature above cannot see. It
 # encodes requiredness and POSITION; `judge_trailing` branches FIRST on whether an arg NAME
@@ -690,7 +703,7 @@ if [ "$phsig" != "$EXPECTED_PLACEHOLDER_SIG" ]; then
   comm -23 "$SIGA" "$SIGB" | sed 's/^/  only in expected:  /' >&2
   comm -13 "$SIGA" "$SIGB" | sed 's/^/  only in derived:   /' >&2
   echo "command-claims: the extraction is mangling arg names, or an arg changed between placeholder and literal. That flips the rule's FIRST branch: all-placeholder accepts every trailing token, all-literal refuses every legal one. Confirm each row above against \`stride --json --help\`, then update EXPECTED_PLACEHOLDER_SIG." >&2
-  exit 3
+  sigfail=1
 fi
 
 # ...and the LITERALS still read as themselves. LAST of the four, deliberately: it is the
@@ -727,6 +740,11 @@ if [ "$littext" != "$EXPECTED_LITERALS" ]; then
   comm -23 "$SIGA" "$SIGB" | sed 's/^/  only in expected:  /' >&2
   comm -13 "$SIGA" "$SIGB" | sed 's/^/  only in derived:   /' >&2
   echo "command-claims: the rule compares a trailing token against a literal's exact text, so a rename here changes which references it accepts. Confirm each row above against \`stride --json --help\`, then update EXPECTED_LITERALS." >&2
+  sigfail=1
+fi
+
+if [ "$sigfail" != "0" ]; then
+  echo "command-claims: refusing to judge trailing tokens against a table whose declared shape does not match the pins above." >&2
   exit 3
 fi
 
