@@ -104,8 +104,13 @@ schema-check: build
     # A tab-delimited variable rather than a file because the loop that reads it runs under
     # `set -f`, and the lookup is an exact two-field match, so nothing here globs.
     ARGEX=$(STRIDE_FORMAT=json ./stride --help | jq -r '.data.commands[] | .name as $n | .args[]? | [$n, .name, .example] | @tsv')
-    case "$ARGEX" in
-      "") echo "schema-check: the help payload declares no argument examples — the TABLE is broken, not the payloads" >&2; exit 4 ;;
+    # FIELD 3, not the whole variable. `[$n, .name, .example] | @tsv` still emits a row per
+    # argument when every example is empty, so a `case "$ARGEX" in ""` guard fires only when
+    # the payload declares no argument ROWS at all — it could not detect the state its own
+    # message names. Measured: with every example emptied, ARGEX was 645 bytes and the guard
+    # stayed silent.
+    case "$(printf %s "$ARGEX" | cut -f3 | tr -d '\n')" in
+      "") echo "schema-check: the help payload declares argument rows but no examples — the TABLE is broken, not the payloads" >&2; exit 4 ;;
     esac
     STRIDE_FORMAT=json ./stride --help | jq -r '
         .data.commands[]
@@ -174,7 +179,7 @@ schema-check: build
                 # existence does. This block used to hold its own answer, and so did two
                 # sweeps in tests/e2e.roc, and the three had already drifted: the mutation
                 # sweep proved `config get 1` and `tte 1` do not write while this recipe
-                # executed `config get timezone` and `tte 300`. The safety proof and the
+                # executed `tte 300`, and for `config get` a key chosen at RUNTIME from `stride config`'s listing — which is not a fixed value and cannot be cited as one. The safety proof and the
                 # executed invocation were not the same call.
                 #
                 # It also makes #253's HIGH structurally impossible rather than merely loud:

@@ -223,7 +223,7 @@ Command := [
 	## their own answer to "what fills this placeholder" — the e2e mutation sweep's jq, the
 	## e2e schema sweep, and `just schema-check`'s `case` block — and they had already
 	## drifted: the sweep proved `config get 1` and `tte 1` do not write while schema-check
-	## executed `config get timezone` and `tte 300`. The safety proof and the executed
+	## executed `tte 300`, and for `config get` a key chosen at RUNTIME from `stride config`'s listing — which is not a fixed value and cannot be cited as one. The safety proof and the executed
 	## invocation were not the same call.
 	##
 	## It makes two defects structurally impossible rather than merely loud. #253's HIGH was
@@ -233,9 +233,15 @@ Command := [
 	## whose staleness could only be caught by a rename — disappears with the filler.
 	##
 	## BOUNDARY, written into the type rather than promised past: this covers arguments with
-	## a STATIC valid value. `<activity_id>` has to come from the data, so `activity` is
-	## excluded from the derivation today and `example` is empty there — a consumer must
-	## treat empty as "I cannot invoke this without looking at the database", not as "".
+	## a STATIC valid value. `<activity_id>` has to come from the data, so `example` is empty
+	## there — a consumer must treat empty as "I cannot invoke this without looking at the
+	## database", not as "".
+	##
+	## `<export.zip|dir>` is empty for the same reason and it took a measurement to learn it.
+	## The derivation gave `export.zip`, which answers `unzip_failed`; a deliberately absent
+	## `/nonexistent/1` answers `no_activities_csv`. There is no path that satisfies this
+	## argument without a real Strava export on disk, so the honest answer is that it is not
+	## statically knowable — the same class as an activity id, reached by a different road.
 	Arg : { name : Str, required : Bool, example : Str }
 
 	## What a caller needs to INVOKE a command, not merely to name it (#219).
@@ -381,7 +387,7 @@ Command := [
 		errs({ ..writes("auth", [], "auth.json"), network: True, interactive: True }, ["missing_client_creds", "network_unreachable", "not_authenticated", "rate_limited", "stdin_closed", "strava_error"]),
 		errs({ ..writes("sync", [opt("--all")], "sync.json"), network: True }, ["network_unreachable", "not_authenticated", "rate_limited", "strava_error", "unreadable_config"]),
 		errs(writes("analyze", [], "analyze.json"), ["missing_config", "unreadable_activity_date", "unreadable_config"]),
-		errs(writes("import", [req("<export.zip|dir>")], "import.json"), ["empty_csv", "no_activities_csv", "unzip_failed"]),
+		errs(writes("import", [req_ex("<export.zip|dir>", "")], "import.json"), ["empty_csv", "no_activities_csv", "unzip_failed"]),
 		errs(writes("rate", [req("<activity_id|latest>"), req("<1-10>")], "rate.json"), ["activity_not_found", "bad_id", "bad_rpe", "no_activities", "unreadable_activity_date"]),
 		errs(writes("week add", [req_ex("<YYYY-MM-DD>", "2099-01-01"), req_ex("<type>", "endurance"), req_ex("<detail>", "example"), req_ex("<rationale>", "example")], "week_add.json"), ["bad_date"]),
 		errs(writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"), ["activity_already_linked", "activity_not_found", "activity_required", "bad_id", "session_not_found"]),

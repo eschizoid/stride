@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(903)?
+    checks_ran_exactly!(904)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1531,7 +1531,7 @@ b_init_config! = |ctx| {
     _ = sql!("${ro_probe}/.stride/db.sqlite", "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (1,'ro probe','Ride','${ctx.d1}T10:00:00Z',3600,20000,180,180,140);")
     # FROM THE TABLE (#257), not from the placeholder TEXT. This jq used to re-derive a
     # value per shape — a date, a metric, a period, an RPE, else `1` — and it disagreed
-    # with `just schema-check`, which executed `config get timezone` and `tte 300` while
+    # with `just schema-check`, which executed `tte 300`, and for `config get` a key chosen at RUNTIME from `stride config`'s listing — which is not a fixed value and cannot be cited as one while
     # this proved `config get 1` and `tte 1` do not write. The safety proof and the
     # executed invocation were not the same call, which is the whole of #257.
     #
@@ -3795,17 +3795,20 @@ b_command_schemas! = |ctx| {
     # alone, which swept in `init` and `sync` — one writes to the fixture and the other
     # would reach for the network from the OFFLINE driver. A check written to close a gap
     # about the table was quietly writing to the database the rest of the suite reads.
-    schema_mismatch = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select(.network == false) | select([.args[] | select(.required)] | length == 0) | \"\\(.name)\\t\\(.schema)\"' | while IFS=$'\\t' read -r n sc; do out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null); echo \"$out\" | jq -e '.data' >/dev/null 2>&1 || continue; bad=$(echo \"$out\" | jq '.data' | jq -r --slurpfile schema schemas/v2/$sc -f tools/validate.jq 2>&1 | head -1); [ -z \"$bad\" ] || echo \"$n->$sc\"; done | tr '\\n' ' '"))
+    schema_mismatch = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | select(.name != \"config get\") | \"\\([.name] + [.args[] | select(.required) | .example] | join(\" \"))\\t\\(.schema)\"' | while IFS=$'\\t' read -r n sc; do out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null); echo \"$out\" | jq -e '.data' >/dev/null 2>&1 || continue; bad=$(echo \"$out\" | jq '.data' | jq -r --slurpfile schema schemas/v2/$sc -f tools/validate.jq 2>&1 | head -1); [ -z \"$bad\" ] || echo \"$n->$sc\"; done | tr '\\n' ' '"))
     check!("every form's payload conforms to the schema the TABLE names for it (bad: ${schema_mismatch})", schema_mismatch == "")?
     # ...and that loop validated a real number of forms rather than skipping them all.
     # Selected minus validated, NAMED. The guard was `validated != "0"`, which cannot see
     # the difference between 15 selected and 13 validated — the `|| continue` drops any
     # form whose call errors, so its schema goes unverified and swapping two skipped forms'
-    # schemas passed. `reps` is the one legitimate skip: it has no detected intervals on
-    # this fixture, so there is no payload to validate, and it is pinned by name rather
-    # than absorbed into a count.
-    schema_skipped = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select(.network == false) | select([.args[] | select(.required)] | length == 0) | .name' | while read -r n; do HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null | jq -e '.data' >/dev/null 2>&1 || printf '%s ' \"$n\"; done"))
-    check!("...and the only form with no payload to validate is the one with no intervals (got: ${schema_skipped})", schema_skipped == "reps")?
+    # schemas passed. TWO legitimate skips, both pinned by name rather than absorbed into a
+    # count: `reps` has no detected intervals on this fixture, and `tte 300` has no CP fit —
+    # the second appeared only when #257 widened this sweep to forms WITH required
+    # arguments, which is the coverage the `example` field bought. Before, a form needing an
+    # argument was dodged entirely rather than skipped, so `top`, `tte` and `config get`
+    # payloads were validated by nothing here.
+    schema_skipped = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | select(.name != \"config get\") | ([.name] + [.args[] | select(.required) | .example] | join(\" \"))' | while read -r n; do HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null | jq -e '.data' >/dev/null 2>&1 || printf '%s ' \"$n\"; done"))
+    check!("...and the only forms with no payload to validate are the two that legitimately have none (got: ${schema_skipped})", schema_skipped == "tte 300 reps")?
 
     # ── args arity, both bounds (#219) ──────────────────────────────────
     # The only dimension of the six with no derivation check until now, and the one with
@@ -3821,16 +3824,39 @@ b_command_schemas! = |ctx| {
     # answers usage.
     arity_probe = "${ctx.home}/.arity-probe"
     _ = sh!("rm -rf '${arity_probe}' && mkdir -p '${arity_probe}' && cp -R '${ctx.home}/.stride' '${arity_probe}/.stride'")
-    # A LITERAL argument is passed verbatim — `sync --all` and `week all` are tokens the
-    # user types, not slots to fill, and substituting "1" for them makes a usage error out
-    # of a correct invocation.
-    # ...and a FOURTH copy, which #257 named three of. This one filled the arity sweep,
-    # where the value only has to be one the parser accepts — but it disagreed with the
-    # other three all the same, and a fourth copy is what the issue says adding the field
-    # without removing the copies would produce.
+    # A LITERAL argument is passed verbatim, and that is now `example_of`'s job rather than
+    # this jq's: a literal is its own example, so `sync --all` and `week all` come back as
+    # themselves without a literal-vs-placeholder branch here. The branch this comment used
+    # to describe is gone with the second filler it lived in.
     fill = "| .example"
-    over = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.example == \"\")] | length == 0) | [.name] + [.args[] ${fill}] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true; } | tr '\\n' '|'"))
+    over = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | [.name] + [.args[] | select(.example != \"\") ${fill}] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true; } | tr '\\n' '|'"))
     check!("filling every argument the table declares is never a usage error (bad: ${over})", over == "")?
+    # ...and every declared example is a value the binary ACCEPTS, which the checks above
+    # cannot tell: they assert the code is not `usage`, and every `bad_*` rejection passes
+    # that. Measured, three explicit examples corrupted at once — `<days>` to
+    # "MUTANT_notanumber", `<value>` and `<type>` to nonsense — and `just test` AND
+    # `just schema-check` both stayed green while `stride load MUTANT_notanumber` answered
+    # `bad_count`. The published contract said that value satisfies the argument and the
+    # binary refused it.
+    #
+    # The `example_of` expects in Command.roc pin the DERIVED half; ten of the twelve
+    # examples are hand-written and were pinned by nothing. This is the half a human can get
+    # wrong, and one already was: `<export.zip|dir>` derived to `export.zip`, a RELATIVE path
+    # this very sweep would have executed from the repo root against a probe with a real
+    # database, on a mutating command.
+    #
+    # The rejected set, not just `usage`: a rejection is a rejection whichever code carries
+    # it, and `bad_count` is the one that actually occurred. The import codes are here for
+    # the same reason and by measurement, not anticipation — leaving them out let
+    # `<export.zip|dir>` keep its derived `export.zip`, which answers `unzip_failed`, and
+    # this check stayed green on a value that satisfies nothing.
+    #
+    # HAND-MAINTAINED, which is the one thing in this PR that is not derived. A code meaning
+    # "your argument was unusable" cannot be told from one meaning "this database has
+    # nothing to say" without the table saying which is which — and that is #257's own
+    # stated endgame, a `kind` on each declared error code, deliberately not attempted here.
+    badex = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | [.name] + [.args[] | select(.example != \"\") | .example] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); case \"$code\" in usage|bad_*|unknown_command|unknown_key|derived_key|unzip_failed|empty_csv|no_activities_csv) echo \"$line -> $code\" ;; esac; done; true; } | tr '\\n' '|'"))
+    check!("every example the table declares is a value the binary accepts (bad: ${badex})", badex == "")?
     # LOWER bound: one FEWER than the declared required count must BE a usage error.
     # Declaring an optional argument required is the mutation this catches — and it is
     # worse than it looks, because the schema loop selects on "no required args", so
@@ -3838,7 +3864,7 @@ b_command_schemas! = |ctx| {
     # never mentions it, since that only reports forms selected and then errored.
     under = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required)] | length > 0) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | [.name] + ([.args[] | select(.required) ${fill}] | .[0:-1]) | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] || echo \"$line\"; done; true; } | tr '\\n' '|'"))
     check!("...and one short of the required count always is (bad: ${under})", under == "")?
-    check!("...with forms on both sides of that, so neither swept nothing", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[] | select(.required)] | length > 0)] | length'")) != "0")?
+    check!("...with forms on both sides of that, so neither swept nothing", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[] | select(.required)] | length > 0) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0)] | length'")) != "0")?
     # The two NETWORK forms, which both probes skip — pinned as a value rather than
     # probed, because reaching them means coupling this check to the mock and losing the
     # purely-offline property, for a two-form and near-static exposure. `sync --all` is
@@ -3872,7 +3898,7 @@ b_command_schemas! = |ctx| {
     # locale-independent.
     misordered = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[].required] | . != (sort | reverse)) | .name] | join(\"|\")'"))
     check!("required arguments form a prefix — no optional one precedes a required one (bad: ${misordered})", misordered == "")?
-    check!("...and there were forms with required arguments to order", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[] | select(.required)] | length > 0)] | length'")) != "0")?
+    check!("...and there were forms with required arguments to order", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[] | select(.required)] | length > 0) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0)] | length'")) != "0")?
     # The OTHER array. Twelve rounds of this PR derived every field of `commands` from the
     # parser, the schema directory, the database and the payloads — and `flags` sat beside
     # it in the same `.data`, described by the same schema, read by the same agent, still
