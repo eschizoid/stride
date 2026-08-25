@@ -41,12 +41,23 @@ Config :: [].{
 	# answer "(not set)" again. Only the three real secrets need to be admitted, and that is
 	# all the redaction path requires.
 	#
-	# Fails CLOSED in the useful direction. A new key the engine starts reading that nobody
-	# adds here answers `unknown_key` on a key that works: annoying and visible. The reverse,
-	# a key listed here that nothing reads, is the silent trap — which is why this is derived
-	# from the read sites and not from the docs. `metrics_rev` sat here for exactly one
-	# revision on the strength of an AGENTS.md sentence; it is a Roc constant and an
-	# `activity_metrics` column, and has never been read from `config`.
+	# Fails CLOSED in the useful direction, but the cost of being WRONG here went up when
+	# `config set <key> ""` became a DELETE. A key the engine reads that is missing from
+	# this predicate used to answer `unknown_key` — annoying and visible. It is now
+	# removable, and reported as `removed: true` with "stride does not read it", which
+	# would be a false statement about a key it does read. Silent and destructive, not
+	# annoying and visible.
+	#
+	# Nothing is in that state today (every read site is covered, checked at the boundary),
+	# but two documented keys are waiting to enter it: `Metrics.threshold_pace_key` and
+	# `Metrics.model_key` describe `threshold_pace_<sport>` and `model_<sport>` as config
+	# keys for slices not yet wired up. Whoever wires one up MUST add it here in the same
+	# commit, or `config set threshold_pace_run ""` silently deletes live config.
+	#
+	# The reverse — a key listed here that nothing reads — is the older trap, which is why
+	# this is derived from the read sites and not from the docs. `metrics_rev` sat here for
+	# exactly one revision on the strength of an AGENTS.md sentence; it is a Roc constant
+	# and an `activity_metrics` column, and has never been read from `config`.
 	known_key : Str -> Bool
 	known_key = |k|
 		List.contains(secret_keys, k)
@@ -284,6 +295,28 @@ expect Config.known_key("hr_z1_max_standuppaddling") == True
 # wrong edit rather than a contrived one: README calls z5 "everything above hr_z4_max", so a
 # maintainer could reasonably think it belongs in the pattern. It does not; `hr_zone_key` is
 # called only with 1..4, and the globals are four literals.
+# user_settable: the split that makes the listing able to say which rows are YOURS. Every
+# clause pinned, because it shipped with none — and the mutant that dropped the zone clause
+# marked `hr_z1_max`..`hr_z4_max` "managed", i.e. "stride's own bookkeeping, not something
+# anyone configures", about the four lines README tells a new user to type. Suite green.
+# The two e2e checks pin one literal each (`timezone`, `last_sync_epoch`), so they cover
+# one of the three clauses and not the one covering the largest family.
+expect Config.user_settable("timezone") == True
+expect Config.user_settable("utc_offset_minutes") == True
+expect Config.user_settable("hr_z1_max") == True
+expect Config.user_settable("hr_z4_max") == True
+expect Config.user_settable("hr_z2_max_ride") == True
+# ...and stride's own bookkeeping is NOT yours, which is the whole point of the split
+expect Config.user_settable("last_sync_epoch") == False
+expect Config.user_settable("strava_access_token") == False
+expect Config.user_settable("strava_client_id") == False
+expect Config.user_settable("strava_reads_day") == False
+# ...nor is a derived key, nor a typo — both have their own status
+expect Config.user_settable("ftp_ride") == False
+expect Config.user_settable("timezon") == False
+expect Config.user_settable("hr_z5_max") == False
+expect Config.user_settable("") == False
+
 expect Config.known_key("hr_z5_max") == False
 expect Config.known_key("hr_z6_max") == False
 expect Config.known_key("hr_z7_max") == False

@@ -396,6 +396,11 @@ Metrics :: [].{
     # works in speeds). Per-sport `threshold_pace_<sport>` (threshold_pace_run, ...), same
     # built from the sport name, no hardcoded list. Zero-config derivation from a stored
     # best-sustained-pace column is a later slice.
+    #
+    # WHEN THAT SLICE LANDS: add this family to `Config.known_key` in the SAME commit.
+    # Until then these names are `unrecognised`, which is correct — but `config set
+    # <unrecognised> ""` DELETES the row, so a wired-up key that is not in `known_key` can
+    # be silently removed while the CLI says "stride does not read it".
     threshold_pace_key : Str -> Str
     threshold_pace_key = |sport|
         "threshold_pace_${Str.with_ascii_lowercased(sport)}"
