@@ -40,8 +40,18 @@ Strava :: [].{
     # failure — the URL is always printed as the manual fallback. exec_output! (not
     # exec!) so a failing launcher can't spew stderr into the auth instructions or
     # hand the inherited TTY to a console browser on headless boxes.
+    # ...and NOT when the token endpoint is a loopback mock. `STRIDE_API_BASE` is the e2e
+    # seam and humans never set it, so a loopback base means a test — while the authorize
+    # URL stays real always, which is what made `just test` open seven strava.com tabs on a
+    # dev machine and `just e2e-sync` an eighth. Silent in CI, where `open`/`xdg-open` do
+    # not exist and both arms take their Err path, so nothing noticed for as long as it has
+    # been true. Gated on the SAME allow-list `api_base!` uses, so a base stride would not
+    # talk to cannot suppress the browser either.
     open_browser! : Str => {}
     open_browser! = |url|
+        if Str.starts_with(api_base!({}), "http://127.0.0.1") or Str.starts_with(api_base!({}), "http://localhost") {
+            {}
+        } else
         match Cmd.new(OsStr.from_str("open")).arg(OsStr.from_str(url)).exec_output!() {
             Ok(_) => {}
             Err(_) =>

@@ -288,13 +288,19 @@ enforcement is `just e2e`, which runs `tools/validate.jq` against seeded fixture
 `just schema-check` runs the same validator against your own database and is the
 "does MY data conform" pass, local and not part of CI. Coverage is not total, and it now has three tiers rather than two. Four
 payloads (`complete`, `import`, `init`, `rate`) are validated by neither pass, so
-a key added to THOSE is currently caught by nothing. `auth` would have been a fifth when
-#259 gave it a payload — it is excluded from `just schema-check` three times over, since
-that recipe selects `mutates == false and network == false and interactive == false` and
-the command table sets all three the other way — but `just e2e-sync` drives it against the
-loopback mock, so it sits in `sync`'s tier rather than in the uncovered set. Any future
-command that gains a schema and is mutating, networked or interactive lands in that set by
-default, and this sentence is the only place that says so. `tte` is covered by the local recipe
+a key added to THOSE is currently caught by nothing. What those four share is not that they
+mutate — `analyze`, `config set`, `week add` and `skip` all mutate and are all validated —
+but that `just schema-check` DERIVES its form list from the command table filtered on
+`mutates == false and network == false and interactive == false`, so any command outside
+that filter gets no automatic coverage and has to be given an explicit `e2e` arm BY HAND.
+Six of the ten schema-bearing mutating commands have one; those four do not. #259 gave
+`auth` a payload and an `e2e-sync` arm in the same commit for that reason. That arm
+validates auth's payload against its schema and asserts the tokens it reports storing are
+in the database, which is narrower than `sync`'s coverage in the same recipe: `sync`'s
+payload is validated in eight places across four drivers, and — see the next paragraph —
+`sync` carries closed record annotations that make a key change a build error, where
+`auth`'s payload literal is unannotated with a `|_|` renderer and has no such guard.
+`tte` is covered by the local recipe
 but not by CI. `sync` is covered by a third pass: `just e2e-sync`, which drives it against loopback
 mocks and now runs in CI. That recipe was assumed to need a token and a live API and so
 was left out of CI for a long time; it needs neither — the mocks bind loopback, and the

@@ -402,7 +402,29 @@ run_sync! = || {
     # source pins the type — the only thing making this an integer is `TokenResp.expires_at`
     # two hops away in `decode_tokens`. The mock's value is deliberately not 0 or 1.
     check!("...with an expiry the validator itself cannot type-check", Str.trim(sh!("printf '%s' '${auth_ok}' | jq -r '.data.expires_at | tojson'")) == "9999999999")?
-    check!("...and the tokens it stored are never in the payload", !(Str.contains(auth_ok, "mock-access")) and !(Str.contains(auth_ok, "mock-refresh")))?
+    # ...and the EFFECT, not just the envelope. `authorized: true` is a claim about database
+    # state and nothing read the database: deleting `save_tokens!` left all four original
+    # checks green while `auth` reported success, printed "tokens stored", stored nothing,
+    # and the next `sync` answered not_authenticated.
+    #
+    # These replace a `!contains(out, "mock-access")` check that was an absence assertion
+    # three ways over. It passed on an error envelope, on an empty string and on a crash;
+    # it was redundant, because `additionalKeys: false` already rejects a token key; and it
+    # was fixture-coupled — renaming the mock's token made it permanently green while a
+    # payload that leaked one still passed it. The pair below asserts the tokens ARE in the
+    # db and the schema keeps them OUT of the payload, so the fixture literals are
+    # load-bearing in the direction that can fail.
+    adb = "${ahome}/.stride/db.sqlite"
+    check!("...and the tokens it says it stored are actually in the db", Str.trim(sql!(adb, "SELECT value FROM config WHERE key='strava_access_token';")) == "mock-access")?
+    check!("...both of them, since a dead refresh token bricks the next sync", Str.trim(sql!(adb, "SELECT value FROM config WHERE key='strava_refresh_token';")) == "mock-refresh")?
+    check!("...and the expiry it REPORTED is the one it persisted", Str.trim(sql!(adb, "SELECT value FROM config WHERE key='strava_expires_at';")) == "9999999999")?
+    # ...and the form the bug report actually names. Every check above uses
+    # STRIDE_FORMAT=json, which never reaches `--json`'s re-exec in app.roc — a different
+    # mechanism that has to preserve stdin (the paste), stdout (the envelope) and the exit
+    # code. A regression there breaks `stride auth --json | tail -1 | jq` verbatim while
+    # this driver reports its exact count.
+    auth_flag = Str.trim(sh!("echo fakecode | env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret HOME='${ahome}' STRIDE_API_BASE='${base}' '${bin}' auth --json 2>/dev/null | tail -1 | jq -r '.data.authorized'"))
+    check!("...and --json, the flag the bug report names, survives its re-exec with stdin", auth_flag == "true")?
     _ = sh!("rm -rf '${ahome}'")
 
     _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','stale-access'),('strava_refresh_token','stale-refresh'),('strava_expires_at','1');")
@@ -618,7 +640,7 @@ run_sync! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_at_least!(45)?
+    checks_ran_at_least!(48)?
     Stdout.line!("SYNC E2E CHECKS PASS")
 }
 
@@ -1609,7 +1631,16 @@ b_auth! = |ctx| {
     # string — the authorize URL fused to the `2)` that follows it, so the manual fallback
     # the flow depends on is not even selectable as a URL. Presence on a channel and
     # legibility are different properties, and only the first was asserted.
-    check!("...as separate lines, not one welded string", str_to_i64(Str.trim(sh!("${creds} STRIDE_FORMAT=human '${ctx.bin}' auth < /dev/null 2>/dev/null | wc -l | tr -d ' '"))) >= 6)?
+    #
+    # EXACT, not a floor. `>= 6` against an actual 8 left two mutants alive in the slack:
+    # welding only the second instruction block gives 7, and turning `human_write!`'s
+    # human branch into `Stdout.line!` — which deletes the entire reason that helper exists
+    # separately, since the prompt then stops sitting on the row the user types on — gives
+    # 9. Both passed a floor of 6, one of them under a check named "not one welded string".
+    # The objection to exact counts elsewhere in this file is that they cost a bump per
+    # added check; this is a fixed block of prose, not a growing tally, so it changes only
+    # when someone edits the screen, which is exactly when a look is wanted.
+    check!("...as separate lines, not one welded string, and not one line more", Str.trim(sh!("${creds} STRIDE_FORMAT=human '${ctx.bin}' auth < /dev/null 2>/dev/null | wc -l | tr -d ' '")) == "8")?
     check!("...with the authorize URL alone on its own line, since it is the manual fallback", Str.trim(sh!("${creds} STRIDE_FORMAT=human '${ctx.bin}' auth < /dev/null 2>/dev/null | grep -c '^   https://www.strava.com/oauth/authorize' | tr -d ' '")) == "1")?
     Ok({})
 }
