@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(857)?
+    checks_ran_exactly!(859)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1676,9 +1676,26 @@ b_auth! = |ctx| {
     # on the path, the invocation failed — and the loopback probe passed anyway, on exactly
     # that vacuity. The real-base probe failing is the only reason it was noticed.
     check!("a loopback token endpoint opens no browser — nothing on this machine is authorizing", Str.trim(sh!("rm -f '${stub}/opened'; PATH=\"${stub}:$PATH\" ${creds} '${ctx.bin}' auth < /dev/null 2>&1 | grep -qi 'stdin closed' && { [ -e '${stub}/opened' ] && echo opened || echo quiet; } || echo 'auth did not run'")) == "quiet")?
+    # ...and `localhost`, the OTHER spelling the gate accepts and the suite never uses.
+    # Every base string in this repo is `127.0.0.1` — seven mock instances in the justfile
+    # and the one above — so deleting the `localhost` disjunct was fully green while a
+    # contributor pointing a mock at `localhost:8799`, a spelling `api_base_allowed`
+    # explicitly permits, got a browser tab per run.
+    check!("...and the localhost spelling of loopback too, which no fixture otherwise uses", Str.trim(sh!("rm -f '${stub}/opened'; PATH=\"${stub}:$PATH\" env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret STRIDE_API_BASE=http://localhost:1 HOME='${ctx.home}' '${ctx.bin}' auth < /dev/null 2>&1 | grep -qi 'stdin closed' && { [ -e '${stub}/opened' ] && echo opened || echo quiet; } || echo 'auth did not run'")) == "quiet")?
     # ...and the half that matters more, because the inversion passed everything else: a
     # REAL base must still open one. Without this, "never open a browser" is green.
     check!("...while a real base still does, which is the whole flow", Str.trim(sh!("rm -f '${stub}/opened'; PATH=\"${stub}:$PATH\" env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret HOME='${ctx.home}' '${ctx.bin}' auth < /dev/null 2>&1 | grep -qi 'stdin closed' && { [ -e '${stub}/opened' ] && echo opened || echo quiet; } || echo 'auth did not run'")) == "opened")?
+    # ...and the xdg-open FALLBACK, which this PR made unreachable everywhere. Before the
+    # loopback base landed in `creds`, the seven b_auth! invocations set none, so on Linux
+    # CI `open` was absent and this arm executed seven times a run — executed, never
+    # asserted. Now the gate returns early for all seven and probe 2 supplies a working
+    # `open`, so nothing reaches it on any platform: a downgrade from weak coverage to
+    # none, on the arm carrying the documented hang hazard.
+    #
+    # A stub `open` that EXITS 1 drives it, with no PATH surgery beyond what is already
+    # here — `open_browser!` tries `open` first and falls through on Err.
+    _ = sh!("printf '#!/bin/sh\\nexit 1\\n' > '${stub}/open'; printf '#!/bin/sh\\ntouch \"${stub}/xdg\"\\n' > '${stub}/xdg-open'; chmod +x '${stub}/open' '${stub}/xdg-open'")
+    check!("...and a failing `open` falls through to xdg-open, the arm nothing else reaches", Str.trim(sh!("rm -f '${stub}/xdg'; PATH=\"${stub}:$PATH\" env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret HOME='${ctx.home}' '${ctx.bin}' auth < /dev/null 2>&1 | grep -qi 'stdin closed' && { sleep 1; [ -e '${stub}/xdg' ] && echo fellthrough || echo quiet; } || echo 'auth did not run'")) == "fellthrough")?
     _ = sh!("rm -rf '${stub}'")
     Ok({})
 }
