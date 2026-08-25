@@ -6283,7 +6283,8 @@ checks_log! = |{}| ".e2e-checks.${env_or!("E2E_MODE", "e2e")}.$PPID"
 # deleted it, so any statement about it is true under every implementation.
 #
 # The absence half is about the PRE-#266 shared name. `reset_checks!` removes it on entry
-# (see the note there), so finding it here means something in THIS run wrote it.
+# (see the note in `reset_checks!`), so finding it here means something in THIS run wrote
+# it.
 #
 # Called by every driver, not just `run_all!`. The other three guard with
 # `checks_ran_at_least!`, where collision-induced over-counting passes by construction — so
@@ -6327,7 +6328,8 @@ tally_is_scoped! = |{}| {
 # `$$` is the probing shell, guaranteed alive because it is the process asking. Measured
 # through the shipped binary against four `ps` variants, each stub sanity-checked before its
 # row was read: real `ps` → collects the dead owner; rejects `-p` → bails; accepts `-p` and
-# ignores it → reddens at check 2; uid-restricted `/proc` → bails on nothing, see below.
+# ignores it → reddens at check 2; uid-restricted `/proc` → never bails, which is the
+# another-user gap recorded further down this comment.
 #
 # `$$` and NOT `$PPID`. Review recommended `$PPID` on the theory that the sweep asks about
 # OTHER processes while `$$` only proves self-visibility, then retracted it after building a
@@ -6423,18 +6425,21 @@ reset_checks! = |{}| {
     # is collected.
     #
     # GUARDED on `ps -p` WORKING, via `ps_usable!`. Without a guard the fallback is not "the
-    # sweep stops working" but the blanket `rm` this PR removed: any non-zero `ps -p` makes
-    # `||` fire, and every tally goes — live ones included — with the sweep still exiting 0.
+    # sweep stops working" but the blanket `rm` this PR removed: unguarded, a non-zero
+    # `ps -p` fires the LOOP's own `|| rm -f "$f"`, so every tally goes — live ones included
+    # — with the sweep still exiting 0. `ps_usable!`'s `||` does the OPPOSITE on the same
+    # status: it bails. Two operators, opposite effects, so read each one's site.
     #
-    # Stated as an EXIT-STATUS PARTITION deliberately, because that needs no claim about what
-    # any `ps` implementation does: `ps -p $$` either exits 0 or it does not. Every non-zero
-    # bails — missing (127, which is POSIX for command-not-found and so a property of the
-    # SHELL rather than of one binary I stubbed), rejecting the flag, or visibility-
-    # restricted. The only case that proceeds is exit 0, and the uncovered case is then the
-    # one remaining cell — a `ps` that exits 0 without honouring `-p` — rather than a
-    # separate assertion about a platform. Measured, on a PATH holding sh/sed/printf/rm but
-    # no ps: guarded, a live owner AND a dead owner are both KEPT; with ps present, live kept
-    # and dead collected. So it degrades to leak, never to destroy.
+    # Stated as an EXIT-STATUS PARTITION deliberately, because that needs no claim about
+    # what any `ps` implementation does: `ps -p $$` either exits 0 or it does not. Every
+    # non-zero exit from the GUARD bails — missing (127, a shell property rather than this
+    # binary's), rejecting the flag, or visibility-restricted. The only case that proceeds
+    # is exit 0, and the uncovered case is then the one remaining cell — a `ps` that exits 0
+    # without honouring `-p` — rather than a separate assertion about a platform.
+    #
+    # Measured, on a PATH holding sh/sed/printf/rm but no ps: guarded, a live owner AND a
+    # dead owner are both KEPT; with ps present, live kept and dead collected. So it
+    # degrades to leak, never to destroy.
     #
     # The guard tests the CAPABILITY, not the binary's existence. An earlier version tested
     # `command -v ps` and justified itself by `command` being a POSIX built-in — true, and
