@@ -4,7 +4,8 @@
   "type": "object",
   "additionalKeys": false,
   "required": [
-    "completed_session"
+    "completed_session",
+    "replaced_activity"
   ],
   "properties": {
     "completed_session": {
@@ -15,6 +16,10 @@
     },
     "rest": {
       "type": "boolean"
+    },
+    "replaced_activity": {
+      "type": "integer",
+      "description": "The activity whose completion of this session was REPLACED by this call, or 0 if none was. `complete` on a session that is already `done` overwrites the link — it is the documented repair for a mis-linked completion, and `skip`'s own refusal message names it as such — but until #258 the payload was indistinguishable from a first-time completion, so a typo'd session id rewrote real history and reported plain success. Always present rather than optional: a consumer deciding whether history was rewritten must not have to tell an absent key from a zero."
     }
   }
 }

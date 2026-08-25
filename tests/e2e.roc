@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(869)?
+    checks_ran_exactly!(873)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3961,6 +3961,10 @@ b_agent_loop! = |ctx| {
     # session's story, say — every delta below would compare against an unchanged payload
     # and the failures would point at the assertions rather than at the cause.
     done_out = stride!(ctx.bin, ctx.home, ["complete", sid, "9220"])
+    # ...and it reports having replaced NOTHING, which is the zero direction of #258. Both
+    # directions are needed in one place, because a field that is always 0 — or always the
+    # activity — satisfies exactly one of them. The re-complete below is the other half.
+    check!("...reporting that this first completion replaced nothing", Str.contains(done_out, "\"replaced_activity\":0"))?
     check!("the session completes against a real activity (got ${Str.trim(done_out)})", Str.contains(done_out, "\"activity\":9220") and Str.contains(done_out, "\"completed_session\":${sid}"))?
     # The assertions a per-command test cannot make, because each of these
     # payload fields is computed by a DIFFERENT query and only their agreement is the
@@ -3977,6 +3981,28 @@ b_agent_loop! = |ctx| {
     # `done`, not `completed` — the status enum is open|done|skipped. Pinned against the
     # schema's own vocabulary, which is what a coach branches on.
     check!("...but keeps it in plan_history_28d, now done", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .status]") == "[\n  \"done\"\n]")?
+    # ...and the completion REPORTS that it replaced nothing (#258). `complete` on an
+    # already-done session overwrites `completed_activity_id` and used to return a payload
+    # indistinguishable from a first-time completion, so a typo'd SESSION id reported plain
+    # success and rewrote real history — the exact false-success the existence checks above
+    # this handler exist to prevent, reached through the other argument.
+    #
+    # Both directions in one place, because either alone is satisfied by a constant: this
+    # asserts 0 on a first completion, and the re-complete below asserts the prior id. A
+    # field that is always 0, or always the activity, passes exactly one of them.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (9222,'recomplete probe','Ride','${ctx.d2}T09:00:00Z',3600,21000,185,185,142);")
+    recomp = strjq!(ctx, ["complete", "${sid}", "9222"], ".data.replaced_activity")
+    check!("...and a RE-complete names the activity whose completion it just erased", recomp == "9220")?
+    # ...and re-completing with the SAME activity replaces nothing, which is the whole
+    # content of the `prior != activity_id` clause and the only case that separates it from
+    # a bare `prior`. Mutation-testing found that gap: `replaced = prior` survived both
+    # other checks, because on a FIRST completion `prior` is already 0, so the zero
+    # direction cannot tell the two apart. This is the input where they differ — without
+    # the clause, re-running the same command reports the activity as having replaced
+    # ITSELF, which reads as history lost when nothing changed.
+    check!("...while re-completing with the SAME activity replaces nothing", strjq!(ctx, ["complete", "${sid}", "9222"], ".data.replaced_activity") == "0")?
+    check!("...while the human line says so too, not just the payload", Str.contains(stride_human!(ctx.bin, ctx.home, ["complete", "${sid}", "9220"]), "replacing activity 9222"))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 9222; DELETE FROM activities WHERE id = 9222;")
     check!("...linked to the activity it was completed against", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .completed_activity_id]") == "[\n  9220\n]")?
     check!("...and dated by that activity, not by the session's target", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .completed_on]") == "[\n  \"${ctx.d2}\"\n]")?
     check!("...which is a different day from the target, so that check can tell them apart", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .target_date]") == "[\n  \"${ctx.d1}\"\n]")?

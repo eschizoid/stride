@@ -601,6 +601,30 @@ Plan :: [].{
                         SubstituteOf(cid) =>
                             Output.err_out!("activity_already_linked", "activity ${I64.to_str(activity_id)} substitutes session #${I64.to_str(cid)} — release it first: stride skip ${I64.to_str(cid)} \"<reason>\" none")
                         Free => {
+                            # WHAT THIS REPLACES, read before the write (#258). `complete`
+                            # on a session that is already `done` overwrote
+                            # `completed_activity_id` and returned a payload
+                            # indistinguishable from a first-time completion: the activity
+                            # that originally completed the session was gone, with no record
+                            # that anything had been replaced. A typo'd SESSION id in the
+                            # first argument did exactly what the comment above this function
+                            # says the existence checks exist to prevent — reported success,
+                            # and overwrote real history rather than creating a new row.
+                            #
+                            # NOT refused, and that is the part worth stating. `skip` answers
+                            # `session_done` on the same state, so refusing would look
+                            # consistent — but `skip`'s own message names re-completing as
+                            # the remedy for a mis-linked completion ("re-complete it: stride
+                            # complete <session> <activity>"). Refusing here would falsify
+                            # the only repair path stride documents, which is the class of
+                            # defect this codebase keeps fixing. The bug in the title is
+                            # SILENTLY, not overwrites.
+                            prior = Sqlite.query!({
+                                path: Path.utf8(path),
+                                query: "SELECT COALESCE(completed_activity_id, 0) AS prior FROM planned_sessions WHERE id = :pid",
+                                bindings: [{ name: ":pid", value: Integer(session_id) }],
+                                row: Sqlite.i64("prior"),
+                            })?
                             # write first, steal second: a failure between the two
                             # leaves only a dead tombstone link (self-healing), never
                             # a released link with nothing written in its place
@@ -612,11 +636,20 @@ Plan :: [].{
                                     { name: ":pid", value: Integer(session_id) },
                                 ],
                             })?
+                            # `replaced_activity` on BOTH arms, always present, 0 when
+                            # nothing was replaced. Not an optional key: a consumer deciding
+                            # whether history was rewritten must not have to tell an absent
+                            # key from a zero, which is the ambiguity AGENTS.md's absence
+                            # taxonomy exists to remove. `released_substitute_of` beside it
+                            # is optional because it names a DIFFERENT session, and a
+                            # meaningless 0 there would read as a session id.
+                            replaced = if prior != 0 and prior != activity_id prior else 0
+                            replaced_note = if replaced != 0 " (replacing activity ${I64.to_str(replaced)}, whose completion of this session is now gone)" else ""
                             match steal_dead_links!(path, activity_id, session_id)? {
                                 ReleasedFrom(holder) =>
-                                    Output.out!({ completed_session: session_id, activity: activity_id, released_substitute_of: holder }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)} (released its old substitute link on session #${I64.to_str(o.released_substitute_of)})")
+                                    Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, released_substitute_of: holder }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note} (released its old substitute link on session #${I64.to_str(o.released_substitute_of)})")
                                 NothingReleased =>
-                                    Output.out!({ completed_session: session_id, activity: activity_id }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}")
+                                    Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}")
                             }
                         }
                     }
