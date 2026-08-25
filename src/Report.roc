@@ -20,6 +20,27 @@ Report :: [].{
     # rtss: pace threshold derives from measured speed), medium = HR/RPE-scaled,
     # low = relative_effort (Strava's opaque estimate).
     high_models_sql = "'power_stream','weighted_watts','avg_watts','rtss'"
+
+    # "is this activity's stored date readable", in SQL, for the sites that cannot call
+    # Metrics.usable_date_days because they need the answer inside a query — the `activities`
+    # ORDER BY hoist, `date_known` on `activities` and `top`, and `doctor`'s undateable count.
+    #
+    # ONE constant because it was four byte-identical copies, and the count is not the
+    # argument. Review pinned the value of exactly ONE of them: the `1000-02-30` fixture
+    # holds the `activities` copy, `top` and `doctor` were validated only for the KEY's
+    # presence and type by the schema loop, and a predicate that drifted to always-0 — or a
+    # copy edited in one place — passed everything. Collapsing them makes that one fixture
+    # hold all four sites by construction, which is strictly better than three more value
+    # checks over four things that must agree.
+    #
+    # The ROUND TRIP through SQLite's own date(), plus the year bound. It agrees with
+    # usable_date_days on every shape measured, impossible-but-well-formed days included
+    # ('2026-02-30', '1000-02-30'), and that agreement is version-dependent: the system CLI
+    # here is 3.43.2 and returns '2026-02-30' verbatim, while the binary links 3.49.1 and
+    # does not. `date_known` is a PUBLISHED boolean SKILL.md tells the coach to trust, so the
+    # e2e fixture for '1000-02-30' — the one shape only the newer date() rejects — is what
+    # holds SQL to the Roc rule across a platform upgrade.
+    date_known_sql = "(CASE WHEN a.start_local IS NULL OR date(substr(a.start_local, 1, 10)) IS NOT substr(a.start_local, 1, 10) OR substr(a.start_local, 1, 4) < '1000' THEN 0 ELSE 1 END)"
     medium_models_sql = "'hr_zones','hr_avg','session_rpe'"
     low_models_sql = "'relative_effort'"
 

@@ -107,10 +107,7 @@ ReportHealth :: [].{
                 \\       -- and not a verdict — ADR 0012 puts "is this a problem?" on the
                 \\       -- coach's side — and `stride activities` now leads with these rows,
                 \\       -- so the pointer to the ids is a command rather than a list here.
-                \\       COALESCE(SUM(CASE WHEN a.start_local IS NULL
-                \\                           OR date(substr(a.start_local, 1, 10)) IS NOT substr(a.start_local, 1, 10)
-                \\                           OR substr(a.start_local, 1, 4) < '1000'
-                \\                         THEN 1 ELSE 0 END), 0) AS undateable
+                \\       COALESCE(SUM(1 - ${Report.date_known_sql}), 0) AS undateable
                 \\FROM activities a
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id

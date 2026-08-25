@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(789)?
+    checks_ran_exactly!(791)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2562,6 +2562,12 @@ b_seed_analyze! = |ctx| {
     # statement contradicting the engine, where before it was only a sort order.
     check!("...and `date_known` is false for the impossible day, holding SQL to the Roc rule", strjq!(ctx, ["activities"], "[.data[] | select(.id == 947) | .date_known] | join(\",\")") == "false")?
     check!("...while a readable row says true, so the flag is not simply always false", strjq!(ctx, ["activities"], "[.data[] | select(.date_known == true)] | length > 0") == "true")?
+    # `doctor`'s COUNT, which is the whole of #265 and had nothing asserting its behaviour.
+    # The schema loop validates the key's presence and type on `doctor` and `top`, so a
+    # predicate that drifted to always-0 passed everything. All four SQL sites now share
+    # `Report.date_known_sql`, so the fixture above holds them by construction — but the
+    # count is a different CONSUMER of that predicate and could be wired wrong on its own.
+    check!("`doctor` counts the undateable rows rather than reporting a clean engine", strjq!(ctx, ["doctor"], ".data.undateable_activities") == "4")?
     # ...and a READABLE lexically-low date is NOT hoisted, which is the other half of the
     # predicate. Without this the clause could hoist everything and still pass above.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (948,'readable low','Ride','Ride','1000-01-01T10:00:00Z',3600);")
@@ -2704,6 +2710,11 @@ b_seed_analyze! = |ctx| {
     # The regression this catches took the count to zero, so a floor discriminates it
     # completely while surviving a fixture that gains or loses the conditional block.
     check!("doctor's human screen keeps its section spacers", str_to_i64(Str.trim(sh!("HOME='${ctx.home}' '${ctx.bin}' doctor 2>/dev/null | grep -c '^$'"))) >= 5)?
+    # ...and ONE named spacer by adjacency, which the floor cannot hold. A floor decays: if
+    # this fixture ever gains an unrated strength session, `hint` fires, the count becomes 6,
+    # and losing an unconditional spacer would then still clear 5. Asserting that a specific
+    # section is preceded by a blank line is indifferent to the conditional block entirely.
+    check!("...including the one before `scored by`, which a floor alone cannot hold", Str.trim(sh!("HOME='${ctx.home}' '${ctx.bin}' doctor 2>/dev/null | grep -B1 '^  scored by' | head -1 | wc -c | tr -d ' '")) == "1")?
     _ = sql!(ctx.db, "DELETE FROM activity_segments; INSERT INTO activity_segments SELECT * FROM seg_bak249; DROP TABLE seg_bak249; DELETE FROM activities WHERE id = 944;")
     check!("...with the segment table restored, so the probe leaves no state behind", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_segments;")) == seg_249)?
     # ...and the POISONED shape for `week`, alongside the NULL one asserted above. This used

@@ -434,7 +434,7 @@ ReportSessions :: [].{
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, CASE WHEN a.start_local IS NULL OR date(substr(a.start_local, 1, 10)) IS NOT substr(a.start_local, 1, 10) OR substr(a.start_local, 1, 4) < '1000' THEN 0 ELSE 1 END AS date_known, a.sport_type AS sport, a.name AS name,
+                \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, a.sport_type AS sport, a.name AS name,
                 \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                 \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
@@ -497,10 +497,7 @@ ReportSessions :: [].{
                 \\-- move on upgrades, and the e2e hoist fixtures are what hold the two
                 \\-- together across one. '1000-02-30' is in that set for exactly this
                 \\-- reason: it is the shape only the newer date() catches.
-                \\ORDER BY (CASE WHEN a.start_local IS NULL
-                \\               OR date(substr(a.start_local, 1, 10)) IS NOT substr(a.start_local, 1, 10)
-                \\               OR substr(a.start_local, 1, 4) < '1000'
-                \\          THEN 0 ELSE 1 END), a.start_local DESC, a.id DESC LIMIT ${(limit).to_str()}
+                \\ORDER BY ${Report.date_known_sql}, a.start_local DESC, a.id DESC LIMIT ${(limit).to_str()}
             ,
             bindings: sf.binds,
             rows: |cols| |stmt| {
@@ -629,7 +626,7 @@ ReportSessions :: [].{
                 rows = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
-                        \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, CASE WHEN a.start_local IS NULL OR date(substr(a.start_local, 1, 10)) IS NOT substr(a.start_local, 1, 10) OR substr(a.start_local, 1, 4) < '1000' THEN 0 ELSE 1 END AS date_known, a.sport_type AS sport, a.name AS name,
+                        \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, a.sport_type AS sport, a.name AS name,
                         \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                         \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                         \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
