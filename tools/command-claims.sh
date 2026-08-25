@@ -589,63 +589,37 @@ nargs=$(wc -l < "$ARGS" | tr -d ' ')
 # required literal blocking a placeholder behind it, has zero instances in the table and
 # zero corpus coverage, and lives only in the self-test. The day someone adds such a
 # command is the day these rows move and the rule starts doing real work.
-EXPECTED_REQUIRED_SIG='activity=1|complete=1|config get=1|config set=1,2|import=1|rate=1,2|skip=1,2|top=1|tte=1|week add=1,2,3,4'
-# `|`-joined, not space-joined: a command NAME may contain a space (`config get`), so a
-# space-joined signature cannot be split back into its entries — which is what the diff
-# below needs in order to name the rows that moved.
-reqsig=$(awk -F'\t' '{ n = split($2, a, " "); s = ""; for (i = 1; i <= n; i++) if (substr(a[i], 1, 1) == "!") s = (s == "" ? i : s "," i); if (s != "") printf "%s=%s\n", $1, s }' "$ARGS" | LC_ALL=C sort | tr '\n' '|' | sed 's/|$//')
+EXPECTED_REQUIRED_SIG='activity=1
+complete=1
+config get=1
+config set=1,2
+import=1
+rate=1,2
+skip=1,2
+top=1
+tte=1
+week add=1,2,3,4'
+# NEWLINE-separated, and the constant is written one row per line to match. Not space-
+# joined, because a command NAME may contain a space (`config get`) and the diff below has
+# to split the value back into entries. Not `|`-joined either, which is what this was and
+# what needed a guard: a `|` anywhere in a name or a literal fragments one row into two, and
+# measurement showed both failure shapes. A `|` in a command name (`sy|nc`) garbled the
+# LITERALS diff 22 lines before the guard meant to catch it ran — a guard downstream of one
+# of its own consumers. Worse, a `|` inside a literal (`week=all|none`) split into
+# `week=all`, which MATCHES the expected row and is silently consumed by `comm`, leaving a
+# bare `none`: a diff that says one new thing appeared and nothing about the row that
+# actually changed. Newlines have neither shape, and need no guard: a newline in a name
+# would already have broken `$ARGS`, `$REAL` and `$NAMED` as one-row-per-line files and
+# every `wc -l` in this script, an invariant that is load-bearing everywhere else here.
+# `|`, by contrast, is a character six arg names carry today.
+reqsig=$(awk -F'\t' '{ n = split($2, a, " "); s = ""; for (i = 1; i <= n; i++) if (substr(a[i], 1, 1) == "!") s = (s == "" ? i : s "," i); if (s != "") printf "%s=%s\n", $1, s }' "$ARGS" | LC_ALL=C sort)
 # Two different emptinesses, and the general message is false of both. An empty SIGNATURE
 # means "no REQUIRED args", which is the likelier drift; an empty ARG COUNT means the
 # `.args` half of the oracle is gone entirely. `nargs != nreal` sees neither, because all
 # the rows still exist either way. Gate on the token count first so each gets its own
 # sentence — review reproduced the misdiagnosis by declaring every arg optional, on a table
 # where `top` plainly still declared three.
-# ...and the LITERALS still read as themselves. `judge_trailing` reads THREE properties of
-# an arg: requiredness (`!`), placeholder-ness (`*"<"*`), and — at `[ "$_a" = "$_tok" ]` —
-# the literal's exact TEXT. The first two are pinned positionally above; this is the third,
-# and it was pinned by nothing.
-#
-# Measured survivor: renaming `sync`'s `--all` to `frobnicate` leaves BOTH signatures
-# byte-identical and all three gates green, and `stride sync frobnicate` is then accepted
-# where the real table refutes it. Renaming `week`'s `all` to `every` is caught today, but
-# by the CORPUS rather than by any pin — `SKILL.md` names `stride week all`, the single
-# reference in the whole corpus that reaches the rule. Reword that line and the cover is
-# gone; `sync` never had one.
-#
-# TEXT here, unlike the placeholder names above, and the asymmetry is the rule's own: it
-# never reads a placeholder's name, so `<limit>` to `<count>` must stay free, and it
-# compares a literal's name directly, so `all` to `every` is a semantic change that should
-# be reviewed. Two entries today. It grows on exactly the day this file's other comment
-# names — the day someone declares a literal at position 1 followed by anything — which is
-# the same day literal text becomes load-bearing.
-EXPECTED_LITERALS='sync=--all|week=all'
-littext=$(awk -F'\t' '{ n = split($2, a, " "); for (i = 1; i <= n; i++) { t = a[i]; sub(/^!/, "", t); if (t !~ /</) printf "%s=%s\n", $1, t } }' "$ARGS" | LC_ALL=C sort | tr '\n' '|' | sed 's/|$//')
-if [ "$littext" != "$EXPECTED_LITERALS" ]; then
-  echo "command-claims: declared literals changed." >&2
-  printf '%s\n' "$EXPECTED_LITERALS" | tr '|' '\n' | LC_ALL=C sort > "$SIGA"
-  printf '%s\n' "$littext" | tr '|' '\n' | LC_ALL=C sort > "$SIGB"
-  comm -23 "$SIGA" "$SIGB" | sed 's/^/  only in expected:  /' >&2
-  comm -13 "$SIGA" "$SIGB" | sed 's/^/  only in derived:   /' >&2
-  echo "command-claims: the rule compares a trailing token against a literal's exact text, so a rename here changes which references it accepts. Confirm each row above against \`stride --json --help\`, then update EXPECTED_LITERALS." >&2
-  exit 3
-fi
 
-# ...and no command NAME contains the `|` the two signatures are joined on. It cannot today
-# — the six arg names that do (`<hr|tss|…>`) never reach either signature, which carries
-# positions and not names — and a `|` in a name is already fail-loud rather than a false
-# pass, splitting one row of the diff into two. But a split row reports a puzzle; this
-# reports a cause.
-#
-# `cut -f1 "$ARGS"` and NOT `$REAL`: the signatures are built from `$ARGS` field 1, and
-# `$REAL` is a SEPARATE jq pass that can disagree with it. Grepping `$REAL` checks a proxy
-# for the input rather than the input, and a `|` reaching `$ARGS` field 1 with `$REAL` clean
-# slips the guard entirely — landing as seven identical `only in derived: x` rows naming
-# nothing, which is a worse puzzle than the split row this exists to prevent. Field 1 and
-# not the whole file, because the enum arg names legitimately contain `|`.
-if cut -f1 "$ARGS" | grep -q "|"; then
-  echo "command-claims: a command name contains \`|\`, which is the separator both derived signatures are joined on — their diffs would split one row into two and name the wrong thing. Change the separator before landing that command." >&2
-  exit 3
-fi
 nargtok=$(awk -F'\t' '{ n = split($2, a, " "); for (i = 1; i <= n; i++) if (a[i] != "") c++ } END { print c + 0 }' "$ARGS")
 case "$nargtok" in ''|*[!0-9]*) echo "command-claims: could not count the table's declared arguments (got '$nargtok')" >&2; exit 3 ;; esac
 if [ "$nargtok" -eq 0 ]; then
@@ -658,8 +632,8 @@ if [ -z "$reqsig" ]; then
 fi
 if [ "$reqsig" != "$EXPECTED_REQUIRED_SIG" ]; then
   echo "command-claims: required-arg signature changed." >&2
-  printf '%s\n' "$EXPECTED_REQUIRED_SIG" | tr '|' '\n' | LC_ALL=C sort > "$SIGA"
-  printf '%s\n' "$reqsig" | tr '|' '\n' | LC_ALL=C sort > "$SIGB"
+  printf '%s\n' "$EXPECTED_REQUIRED_SIG" | LC_ALL=C sort > "$SIGA"
+  printf '%s\n' "$reqsig" | LC_ALL=C sort > "$SIGB"
   comm -23 "$SIGA" "$SIGB" | sed 's/^/  only in expected:  /' >&2
   comm -13 "$SIGA" "$SIGB" | sed 's/^/  only in derived:   /' >&2
   echo "command-claims: either the extraction dropped/forged \`required\` or reordered the args (the trailing-token rule silently over-accepts without the markers, and walks the wrong way without the order), or an argument genuinely changed between required and optional. Confirm each row above, then update EXPECTED_REQUIRED_SIG." >&2
@@ -691,15 +665,68 @@ fi
 # `/</` and not `/^</` — CONTAINS, matching `judge_trailing`'s `case "$_a" in *"<"*)` and
 # self-test case 9, "a placeholder is recognised anywhere in the name". The count used
 # starts-with, and that gap alone is the second survivor.
-EXPECTED_PLACEHOLDER_SIG='activities=1,2|activity=1|compare=1|complete=1,2|config get=1|config set=1,2|import=1|load=1|pc=1,2|power-curve=1,2|progress=1,2|rate=1,2|reps=1|skip=1,2,3|top=1,2,3|tte=1|week add=1,2,3,4'
-phsig=$(awk -F'\t' '{ n = split($2, a, " "); s = ""; for (i = 1; i <= n; i++) { t = a[i]; sub(/^!/, "", t); if (t ~ /</) s = (s == "" ? i : s "," i) } if (s != "") printf "%s=%s\n", $1, s }' "$ARGS" | LC_ALL=C sort | tr '\n' '|' | sed 's/|$//')
+EXPECTED_PLACEHOLDER_SIG='activities=1,2
+activity=1
+compare=1
+complete=1,2
+config get=1
+config set=1,2
+import=1
+load=1
+pc=1,2
+power-curve=1,2
+progress=1,2
+rate=1,2
+reps=1
+skip=1,2,3
+top=1,2,3
+tte=1
+week add=1,2,3,4'
+phsig=$(awk -F'\t' '{ n = split($2, a, " "); s = ""; for (i = 1; i <= n; i++) { t = a[i]; sub(/^!/, "", t); if (t ~ /</) s = (s == "" ? i : s "," i) } if (s != "") printf "%s=%s\n", $1, s }' "$ARGS" | LC_ALL=C sort)
 if [ "$phsig" != "$EXPECTED_PLACEHOLDER_SIG" ]; then
   echo "command-claims: placeholder signature changed." >&2
-  printf '%s\n' "$EXPECTED_PLACEHOLDER_SIG" | tr '|' '\n' | LC_ALL=C sort > "$SIGA"
-  printf '%s\n' "$phsig" | tr '|' '\n' | LC_ALL=C sort > "$SIGB"
+  printf '%s\n' "$EXPECTED_PLACEHOLDER_SIG" | LC_ALL=C sort > "$SIGA"
+  printf '%s\n' "$phsig" | LC_ALL=C sort > "$SIGB"
   comm -23 "$SIGA" "$SIGB" | sed 's/^/  only in expected:  /' >&2
   comm -13 "$SIGA" "$SIGB" | sed 's/^/  only in derived:   /' >&2
   echo "command-claims: the extraction is mangling arg names, or an arg changed between placeholder and literal. That flips the rule's FIRST branch: all-placeholder accepts every trailing token, all-literal refuses every legal one. Confirm each row above against \`stride --json --help\`, then update EXPECTED_PLACEHOLDER_SIG." >&2
+  exit 3
+fi
+
+# ...and the LITERALS still read as themselves. LAST of the four, deliberately: it is the
+# narrowest failure, so the emptiness branches and the two position signatures get to
+# speak first. Ordered the other way — which is where it landed when it was written — an
+# empty-args table and an all-placeholder table both reported "declared literals changed",
+# because every literal had indeed vanished. True, and the wrong cause.
+#
+# `judge_trailing` reads THREE properties of
+# an arg: requiredness (`!`), placeholder-ness (`*"<"*`), and — at `[ "$_a" = "$_tok" ]` —
+# the literal's exact TEXT. The first two are pinned positionally above; this is the third,
+# and it was pinned by nothing.
+#
+# Measured survivor: renaming `sync`'s `--all` to `frobnicate` leaves BOTH signatures
+# byte-identical and all three gates green, and `stride sync frobnicate` is then accepted
+# where the real table refutes it. Renaming `week`'s `all` to `every` is caught today, but
+# by the CORPUS rather than by any pin — `SKILL.md` names `stride week all`, the single
+# reference in the whole corpus that reaches the rule. Reword that line and the cover is
+# gone; `sync` never had one.
+#
+# TEXT here, unlike the placeholder names above, and the asymmetry is the rule's own: it
+# never reads a placeholder's name, so `<limit>` to `<count>` must stay free, and it
+# compares a literal's name directly, so `all` to `every` is a semantic change that should
+# be reviewed. Two entries today. It grows on exactly the day this file's other comment
+# names — the day someone declares a literal at position 1 followed by anything — which is
+# the same day literal text becomes load-bearing.
+EXPECTED_LITERALS='sync=--all
+week=all'
+littext=$(awk -F'\t' '{ n = split($2, a, " "); for (i = 1; i <= n; i++) { t = a[i]; sub(/^!/, "", t); if (t !~ /</) printf "%s=%s\n", $1, t } }' "$ARGS" | LC_ALL=C sort)
+if [ "$littext" != "$EXPECTED_LITERALS" ]; then
+  echo "command-claims: declared literals changed." >&2
+  printf '%s\n' "$EXPECTED_LITERALS" | LC_ALL=C sort > "$SIGA"
+  printf '%s\n' "$littext" | LC_ALL=C sort > "$SIGB"
+  comm -23 "$SIGA" "$SIGB" | sed 's/^/  only in expected:  /' >&2
+  comm -13 "$SIGA" "$SIGB" | sed 's/^/  only in derived:   /' >&2
+  echo "command-claims: the rule compares a trailing token against a literal's exact text, so a rename here changes which references it accepts. Confirm each row above against \`stride --json --help\`, then update EXPECTED_LITERALS." >&2
   exit 3
 fi
 
