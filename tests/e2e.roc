@@ -3611,18 +3611,61 @@ b_agent_loop! = |ctx| {
     # phantom that is none of them. An agent reading `open_sessions` would plan against a
     # session the athlete had already skipped.
     #
-    # CROSS-REFERENCED rather than enumerated, so it constrains rows nobody named. The safe
-    # form only judges ids present in BOTH arrays: `open_sessions` has no date filter while
-    # `plan_history_28d` is 28-day windowed, so a bare subtraction would flag any legitimate
-    # open session older than the window. That is not true of this fixture today, which is
-    # exactly the kind of thing that should not be depended on silently.
+    # CROSS-REFERENCED rather than enumerated, so it constrains rows nobody named.
+    # `open_sessions` has no date filter while `plan_history_28d` is windowed on BOTH sides
+    # (>= today-27 and <= today), so a bare subtraction would flag a legitimate open session
+    # outside that window. No such row exists in this fixture — which is exactly the kind of
+    # thing that must not be depended on silently, hence the explicit date restriction
+    # below rather than a membership one.
     #
-    # BEFORE the cleanup, and that is not cosmetic: run after it, the skipped session and
-    # the loop's own open rows are gone, both lists empty, and the overlap is trivially zero
-    # — the check passes having compared nothing. The vacuity guard below caught that on the
-    # first run, which is the only reason this paragraph exists.
-    check!("no session `open_sessions` offers is one plan_history calls anything but open", pj!("[.data.plan_history_28d[] | select(.status != \"open\") | .id] as $shut | [.data.open_sessions[].id] | map(select(. as $x | $shut | index($x))) | length") == "0")?
-    check!("...over two lists that both have rows, so an emptied payload cannot satisfy it", str_to_i64(pj!(".data.open_sessions | length")) > 0 and str_to_i64(pj!("[.data.plan_history_28d[] | select(.status != \"open\")] | length")) > 0)?
+    # BEFORE the cleanup, and that is not cosmetic: run after it, the loop's own open rows
+    # are gone, `open_sessions` is empty, and the overlap is trivially zero — the check
+    # passes having compared nothing. It is the FIRST conjunct of the guard that catches
+    # that; the shut-row side survives the cleanup untouched, because the rows it counts are
+    # b_plan!'s tombstones rather than anything this scenario or the loop created. An
+    # earlier version of this paragraph said "both lists empty" and named the loop's skipped
+    # session, which is deleted a hundred lines earlier and not by the cleanup at all.
+    # RESTRICTED BY DATE, not by membership, and the first version got that backwards.
+    #
+    # Restricting to ids present in BOTH arrays excludes exactly the class being hunted: a
+    # phantom is by definition a row history does not call open, so "only judge rows history
+    # mentions" lets through every phantom outside history's window. And history is bounded
+    # ABOVE by `:today` as well as below — so a session dated later this week, which is the
+    # primary use of `week add`, is invisible to it.
+    #
+    # Review proved it live. Widening `open_p` to
+    # `status='open' OR target_date > as_of` — a plausible "show me what's upcoming" change
+    # — left the full suite green with only b_plan!'s 8th-scenario guard neutralised, while
+    # `open_sessions` served four phantoms: two skipped sessions and two already done. That
+    # is verbatim the harm #251 names, past the check written to stop it.
+    #
+    # The sting is that the issue's own bare-subtraction sketch WOULD have caught it. The
+    # intersection was adopted to dodge a false positive this fixture cannot produce (there
+    # is no open session older than the window) and bought a false negative it populates.
+    # The date window is sound both ways: it excuses genuinely out-of-window rows, and it
+    # catches the documented phantom, the future-dated one, and an in-window open row that
+    # history omits entirely.
+    # AGAINST THE TABLE, not against the other array, and that took two wrong shapes to get
+    # to. Cross-referencing `plan_history_28d` cannot work in either form: it is windowed on
+    # both sides, so restricting to ids it mentions excludes every phantom outside the
+    # window, and restricting `open_sessions` to the window excludes them too. Measured —
+    # a widened `open_p` serving four phantoms dated 2099 passed BOTH shapes, because every
+    # one of them is outside the window that either side could see.
+    #
+    # `planned_sessions` has no window and is the thing the payload is a claim about, so
+    # the assertion is the invariant itself: nothing `open_sessions` offers may be anything
+    # but open in the table. That constrains rows nobody named, which is #251's subject,
+    # without inheriting a second query's date bounds.
+    open_ids = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' plan 2>/dev/null | jq -r '[.data.open_sessions[].id] | join(\",\")'"))
+    check!("nothing `open_sessions` offers is anything but open in planned_sessions", open_ids != "" and Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE id IN (${open_ids}) AND COALESCE(status,'open') <> 'open';")) == "0")?
+    # The guard is on the comparison DOMAIN, not on the arrays. Asserting both lists
+    # non-empty was entailed by checks that already ran above — `sid_other` is in
+    # `open_sessions`, `sid` is a done row in history — so it could not fail where it
+    # stands. What the check can actually fire on is an in-window row a mutant PROMOTES, so
+    # what has to exist is an overlap and a shut row for a phantom to occupy. Today those
+    # are b_plan!'s two tombstones on ctx.today, which this scenario neither creates nor
+    # names; if they move out of the window the documented mutation survives silently.
+    check!("...over lists that overlap, with a shut row a phantom could occupy", str_to_i64(pj!("[.data.open_sessions[].id] as $o | [.data.plan_history_28d[].id] | map(select(. as $x | $o | index($x))) | length")) > 0 and str_to_i64(pj!("[.data.plan_history_28d[] | select(.status == \"skipped\")] | length")) > 0)?
 
     # ── cleanup: the loop leaves no trace ───────────────────────────────
     # Deleted by id, and the deletion asserted — every counter this scenario moved has to
