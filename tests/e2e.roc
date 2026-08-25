@@ -3916,8 +3916,24 @@ b_command_schemas! = |ctx| {
     # constructor, and [R, N-1] was claimed by nothing.
     #
     # No exception list here either: measured uniform across all 28 non-network forms today.
-    # At exactly R they answer a VALUE verdict rather than an arity one -- `complete x` is
-    # `bad_id`, `top x` is `bad_metric` -- and the zero-required forms answer `ok`.
+    # At exactly R they answer a VALUE verdict rather than an arity one — `complete x` is
+    # `bad_id`, `top x` is `bad_metric` — and the zero-required forms answer `ok`.
+    #
+    # The invariant keeping this safe against MUTATING commands is not "the junk token makes
+    # it fail before it writes", which is what it looks like. That covers `import x`,
+    # `week add x x x x`, `config set x x`, `skip x x`, `rate x x` — all measured to leave
+    # the probe db byte-identical. It does NOT cover the R=0 forms, which get run bare with
+    # no junk token to fail on: review hashed the db around all 28 and found `analyze` DOES
+    # write. Those are covered by the SANDBOX, not by the token. Benign today — `analyze`
+    # already runs bare here via `over` and `shortfall`, and the 27 other probes return
+    # identical codes with it omitted — but a future mutating command declaring no required
+    # arguments gets run for real, and the junk-token reasoning would not flag it.
+    #
+    # And bracketing the two ends is sufficient only because every form's accepted-arity set
+    # is a CONTIGUOUS run — measured across 0..N+1 for all 28, no holes. Endpoints are not
+    # inherently sufficient: with two independently-declared optionals the parser accepts
+    # only together, `activities <limit>` would answer `usage` with both ends still green.
+    # Contiguity is what rules that out, and nothing here asserts contiguity.
     required_exact = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | [.name] + [.args[] | select(.required) ${junk}] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true; } | tr '\\n' '|'"))
     check!("...and exactly its required arguments is never a usage error (bad: ${required_exact})", required_exact == "")?
     check!("...and there were forms to test it on", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select(.network == false)] | length'")) != "0")?
