@@ -97,6 +97,16 @@ schema-check: build
     rejected=0
     forms=$(mktemp) || { echo "schema-check: mktemp failed"; exit 4; }
     trap 'rm -f "$forms"' EXIT
+    # command<TAB>arg<TAB>example, for the `case` block below. Derived, never written out:
+    # the value that satisfies an argument now lives beside the argument (#257), so this
+    # recipe no longer keeps a second answer that can drift from the table's.
+    #
+    # A tab-delimited variable rather than a file because the loop that reads it runs under
+    # `set -f`, and the lookup is an exact two-field match, so nothing here globs.
+    ARGEX=$(STRIDE_FORMAT=json ./stride --help | jq -r '.data.commands[] | .name as $n | .args[]? | [$n, .name, .example] | @tsv')
+    case "$ARGEX" in
+      "") echo "schema-check: the help payload declares no argument examples — the TABLE is broken, not the payloads" >&2; exit 4 ;;
+    esac
     STRIDE_FORMAT=json ./stride --help | jq -r '
         .data.commands[]
         | select(.mutates == false and .network == false and .interactive == false and .schema != "")
@@ -159,33 +169,24 @@ schema-check: build
         for a in $req; do
             v=""
             case "$a" in
-                # an alternation names its own valid values; take the first. This is why
-                # `top` needs no entry below — the table already says what it accepts.
-                *"|"*) v=$(printf '%s' "$a" | tr -d '<>' | cut -d'|' -f1) ;;
-                # everything else needs a value nothing in the table supplies. FAIL rather
-                # than skip on an unknown one: a new required argument must break this
-                # loudly, not quietly drop its form from the check.
-                "<watts>") v=300 ;;
-                # ASKED FOR, not hardcoded (#254). This was the literal `timezone`, and the
-                # skip on `not_set` below covered for it: on any database where that one key
-                # happened to be unset — a real state, measured on a copy of the live db with
-                # 736 activities and twelve other config rows — `config get` dropped out and
-                # the recipe still exited 0, having never validated config.json against real
-                # data. That is the silent-under-check this whole arm exists to prevent, and
-                # `unknown_key` does not reach it: the filler was a REAL key, just an empty one.
+                # FROM THE TABLE (#257). Every argument now declares an `example` — a value
+                # that satisfies it — so the value comes from the same place the argument's
+                # existence does. This block used to hold its own answer, and so did two
+                # sweeps in tests/e2e.roc, and the three had already drifted: the mutation
+                # sweep proved `config get 1` and `tte 1` do not write while this recipe
+                # executed `config get timezone` and `tte 300`. The safety proof and the
+                # executed invocation were not the same call.
                 #
-                # Taking the first key the binary says holds a value makes the filler
-                # unfalsifiable-by-staleness — retire `timezone` and this picks something else
-                # rather than skipping — and turns the empty case into a fact the recipe
-                # CHECKED (no config rows at all) rather than an error code that meant two
-                # things. `not_set` is out of the allowlist entirely as a result.
-                # CAPTURE ONCE, then classify — do not pipe an error envelope into `// empty`.
-                # A first cut did, and `2>/dev/null` plus `// empty` collapsed FOUR different
-                # situations into one empty string: no rows, rows that are all `derived` or
-                # `unrecognised`, no database, and a corrupt one. The last two then routed
-                # around the DATA FAULTS arm below — the arm that exists to say "the database
-                # holds a value the engine cannot read" — and got reported as "this database
-                # has no config set", which is a statement, and false.
+                # It also makes #253's HIGH structurally impossible rather than merely loud:
+                # a derived argument the command REJECTS read as a benign "skipped" at exit 0
+                # until the allowlist was inverted, and with the value coming from the table
+                # there is nothing to reject.
+                #
+                # An EMPTY example means "not statically knowable" — `<activity_id>`, whose
+                # value has to come from the data. That FAILS rather than skips, for the
+                # reason the old comment gave: a new required argument must break this
+                # loudly, not quietly drop its form from the check. `activity` is excluded
+                # from the loop above and handled separately for exactly that reason.
                 "<key>")
                     keyout=$(STRIDE_FORMAT=json ./stride config 2>&1)
                     keyerr=$(printf '%s' "$keyout" | jq -r '.error.code // empty' 2>/dev/null)
@@ -198,7 +199,10 @@ schema-check: build
                         v=$(printf '%s' "$keyout" | jq -r '[.data.keys[] | select(.status == "settable" or .status == "managed")][0].key // empty')
                         [ -z "$v" ] && nodata="no config key this database has set is one config get returns a payload for"
                     fi ;;
-                *) skipform="no value known for required argument $a" ;;
+                *)
+                    v=$(printf %s "$ARGEX" | awk -F"\t" -v c="$c" -v a="$a" '$1 == c && $2 == a { print $3; exit }')
+                    [ -z "$v" ] && skipform="no example declared for required argument $a — the command table must supply one"
+                    ;;
             esac
             inv="$inv $v"
         done

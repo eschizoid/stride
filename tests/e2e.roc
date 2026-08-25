@@ -1529,7 +1529,16 @@ b_init_config! = |ctx| {
     ro_probe = "${ctx.home}/.ro-probe"
     _ = sh!("rm -rf '${ro_probe}' && mkdir -p '${ro_probe}' && cp -R '${ctx.home}/.stride' '${ro_probe}/.stride'")
     _ = sql!("${ro_probe}/.stride/db.sqlite", "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (1,'ro probe','Ride','${ctx.d1}T10:00:00Z',3600,20000,180,180,140);")
-    fillers = "jq -r '.data.commands[] | select(.mutates == false) | [.name] + [.args[] | select(.required) | .name | if test(\"YYYY-MM-DD\") then \"${ctx.d1}\" elif test(\"hr\\\\|tss\") then \"tss\" elif test(\"week\\\\|month\") then \"week\" elif test(\"1-10\") then \"5\" else \"1\" end] | join(\" \")'"
+    # FROM THE TABLE (#257), not from the placeholder TEXT. This jq used to re-derive a
+    # value per shape — a date, a metric, a period, an RPE, else `1` — and it disagreed
+    # with `just schema-check`, which executed `config get timezone` and `tte 300` while
+    # this proved `config get 1` and `tte 1` do not write. The safety proof and the
+    # executed invocation were not the same call, which is the whole of #257.
+    #
+    # `select(.example != "")` on the required args: an empty example is `<activity_id>`,
+    # whose value comes from the data. Those forms drop out of the sweep rather than being
+    # invoked with a guess — the same boundary the type records.
+    fillers = "jq -r '.data.commands[] | select(.mutates == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | [.name] + [.args[] | select(.required) | .example] | join(\" \")'"
     dirty = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | ${fillers} | while read -r line; do before=$(sqlite3 '${ro_probe}/.stride/db.sqlite' .dump | shasum | cut -d' ' -f1); HOME='${ro_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line >/dev/null 2>&1; after=$(sqlite3 '${ro_probe}/.stride/db.sqlite' .dump | shasum | cut -d' ' -f1); [ \"$before\" = \"$after\" ] || echo \"$line\"; done; true"))
     check!("every form declaring mutates:false leaves the database contents unmoved", dirty == "")?
     # The guard that matters: how many forms REACHED their handler. Counting the jq list
@@ -3815,15 +3824,19 @@ b_command_schemas! = |ctx| {
     # A LITERAL argument is passed verbatim — `sync --all` and `week all` are tokens the
     # user types, not slots to fill, and substituting "1" for them makes a usage error out
     # of a correct invocation.
-    fill = "| .name | if test(\"^<\") then (if test(\"YYYY-MM-DD\") then \"${ctx.d1}\" elif test(\"hr[|]tss\") then \"tss\" elif test(\"week[|]month\") then \"week\" elif test(\"1-10\") then \"5\" elif test(\"asc[|]desc\") then \"asc\" elif test(\"zip[|]dir\") then \"/nonexistent/1\" else \"1\" end) else . end"
-    over = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | [.name] + [.args[] ${fill}] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true; } | tr '\\n' '|'"))
+    # ...and a FOURTH copy, which #257 named three of. This one filled the arity sweep,
+    # where the value only has to be one the parser accepts — but it disagreed with the
+    # other three all the same, and a fourth copy is what the issue says adding the field
+    # without removing the copies would produce.
+    fill = "| .example"
+    over = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.example == \"\")] | length == 0) | [.name] + [.args[] ${fill}] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true; } | tr '\\n' '|'"))
     check!("filling every argument the table declares is never a usage error (bad: ${over})", over == "")?
     # LOWER bound: one FEWER than the declared required count must BE a usage error.
     # Declaring an optional argument required is the mutation this catches — and it is
     # worse than it looks, because the schema loop selects on "no required args", so
     # marking one required drops a form out of validation entirely and `schema_skipped`
     # never mentions it, since that only reports forms selected and then errored.
-    under = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required)] | length > 0) | [.name] + ([.args[] | select(.required) ${fill}] | .[0:-1]) | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] || echo \"$line\"; done; true; } | tr '\\n' '|'"))
+    under = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required)] | length > 0) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | [.name] + ([.args[] | select(.required) ${fill}] | .[0:-1]) | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] || echo \"$line\"; done; true; } | tr '\\n' '|'"))
     check!("...and one short of the required count always is (bad: ${under})", under == "")?
     check!("...with forms on both sides of that, so neither swept nothing", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[] | select(.required)] | length > 0)] | length'")) != "0")?
     # The two NETWORK forms, which both probes skip — pinned as a value rather than
