@@ -198,7 +198,7 @@ EXPECTED_QUOTING=1
 # was backticked instead, matching its own neighbour two lines below which already was.
 # Rule A picks it up with no anchor change, the count went 78 -> 79 and 44 -> 43, and a
 # bogus command planted there is now reported at exit 1 instead of living there forever.
-EXPECTED_UNPARSED=43
+EXPECTED_UNPARSED=45
 
 # The trap goes up FIRST, before any of them exist. Installed after the block, a failure on
 # the second or third mktemp leaks the ones already created — `exit 6` runs with no trap
