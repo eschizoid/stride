@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(904)?
+    checks_ran_exactly!(905)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3795,7 +3795,7 @@ b_command_schemas! = |ctx| {
     # alone, which swept in `init` and `sync` — one writes to the fixture and the other
     # would reach for the network from the OFFLINE driver. A check written to close a gap
     # about the table was quietly writing to the database the rest of the suite reads.
-    schema_mismatch = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | select(.name != \"config get\") | \"\\([.name] + [.args[] | select(.required) | .example] | join(\" \"))\\t\\(.schema)\"' | while IFS=$'\\t' read -r n sc; do out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null); echo \"$out\" | jq -e '.data' >/dev/null 2>&1 || continue; bad=$(echo \"$out\" | jq '.data' | jq -r --slurpfile schema schemas/v2/$sc -f tools/validate.jq 2>&1 | head -1); [ -z \"$bad\" ] || echo \"$n->$sc\"; done | tr '\\n' ' '"))
+    schema_mismatch = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | \"\\([.name] + [.args[] | select(.required) | .example] | join(\" \"))\\t\\(.schema)\"' | while IFS=$'\\t' read -r n sc; do out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null); echo \"$out\" | jq -e '.data' >/dev/null 2>&1 || continue; bad=$(echo \"$out\" | jq '.data' | jq -r --slurpfile schema schemas/v2/$sc -f tools/validate.jq 2>&1 | head -1); [ -z \"$bad\" ] || echo \"$n->$sc\"; done | tr '\\n' ' '"))
     check!("every form's payload conforms to the schema the TABLE names for it (bad: ${schema_mismatch})", schema_mismatch == "")?
     # ...and that loop validated a real number of forms rather than skipping them all.
     # Selected minus validated, NAMED. The guard was `validated != "0"`, which cannot see
@@ -3807,7 +3807,7 @@ b_command_schemas! = |ctx| {
     # arguments, which is the coverage the `example` field bought. Before, a form needing an
     # argument was dodged entirely rather than skipped, so `top`, `tte` and `config get`
     # payloads were validated by nothing here.
-    schema_skipped = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | select(.name != \"config get\") | ([.name] + [.args[] | select(.required) | .example] | join(\" \"))' | while read -r n; do HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null | jq -e '.data' >/dev/null 2>&1 || printf '%s ' \"$n\"; done"))
+    schema_skipped = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | ([.name] + [.args[] | select(.required) | .example] | join(\" \"))' | while read -r n; do HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null | jq -e '.data' >/dev/null 2>&1 || printf '%s ' \"$n\"; done"))
     check!("...and the only forms with no payload to validate are the two that legitimately have none (got: ${schema_skipped})", schema_skipped == "tte 300 reps")?
 
     # ── args arity, both bounds (#219) ──────────────────────────────────
@@ -3831,6 +3831,26 @@ b_command_schemas! = |ctx| {
     fill = "| .example"
     over = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | [.name] + [.args[] | select(.example != \"\") ${fill}] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true; } | tr '\\n' '|'"))
     check!("filling every argument the table declares is never a usage error (bad: ${over})", over == "")?
+    # ...and the line it built really did fill EVERY declared argument, pinned by name where
+    # it legitimately cannot. The filter above drops args with an empty example, so an
+    # argument the table declares can vanish from the invocation silently — and that is the
+    # exact scenario this block's own comment names, with the same command: adding a third
+    # `<since>` to `activities` tells an agent to pass three, `stride activities 5 Ride X`
+    # answers usage, and the sweep would have run `activities 5 Ride` and reported ok.
+    # `origin/main` caught it because `fill` covered every arg; #257 stopped catching it and
+    # this restores it, as a reviewed exception list rather than a silent drop.
+    #
+    # `progress` and `reps` are the two legitimate ones: their only argument is an optional
+    # `<YYYY-MM-DD>`, which is not statically knowable, so the built line is shorter by one.
+    # Same "pinned by name rather than absorbed into a count" move `schema_skipped` makes.
+    dropped = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | select([.args[] | select(.example == \"\")] | length > 0) | .name' | sort | tr '\\n' ' '"))
+    check!("...and only two forms have an argument the fill must drop (got: ${dropped})", dropped == "progress reps")?
+    # ...and FIVE forms now have neither arity bound checked — `activity`, `complete`,
+    # `import`, `rate`, `skip` — because each takes an id or a path that is not statically
+    # knowable. On origin/main they were covered with invented values; #257 declines to
+    # invent, and that is the price. Stated rather than quietly skipped, the same way the
+    # networked forms are named a few lines up. `import` left `under` in this round
+    # specifically, as a direct consequence of marking `<export.zip|dir>` unknowable.
     # ...and every declared example is a value the binary ACCEPTS, which the checks above
     # cannot tell: they assert the code is not `usage`, and every `bad_*` rejection passes
     # that. Measured, three explicit examples corrupted at once — `<days>` to
@@ -3898,7 +3918,7 @@ b_command_schemas! = |ctx| {
     # locale-independent.
     misordered = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[].required] | . != (sort | reverse)) | .name] | join(\"|\")'"))
     check!("required arguments form a prefix — no optional one precedes a required one (bad: ${misordered})", misordered == "")?
-    check!("...and there were forms with required arguments to order", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[] | select(.required)] | length > 0) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0)] | length'")) != "0")?
+    check!("...and there were forms with required arguments to order", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[] | select(.required)] | length > 0)] | length'")) != "0")?
     # The OTHER array. Twelve rounds of this PR derived every field of `commands` from the
     # parser, the schema directory, the database and the payloads — and `flags` sat beside
     # it in the same `.data`, described by the same schema, read by the same agent, still
