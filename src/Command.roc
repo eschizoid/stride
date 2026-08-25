@@ -324,7 +324,7 @@ Command := [
 	specs : List(Spec)
 	specs = [
 		writes("init", [], "init.json"),
-		errs({ ..writes("auth", [], ""), network: True, interactive: True }, ["missing_client_creds", "network_unreachable", "not_authenticated", "rate_limited", "stdin_closed", "strava_error"]),
+		errs({ ..writes("auth", [], "auth.json"), network: True, interactive: True }, ["missing_client_creds", "network_unreachable", "not_authenticated", "rate_limited", "stdin_closed", "strava_error"]),
 		errs({ ..writes("sync", [opt("--all")], "sync.json"), network: True }, ["network_unreachable", "not_authenticated", "rate_limited", "strava_error", "unreadable_config"]),
 		errs(writes("analyze", [], "analyze.json"), ["missing_config", "unreadable_activity_date", "unreadable_config"]),
 		errs(writes("import", [req("<export.zip|dir>")], "import.json"), ["empty_csv", "no_activities_csv", "unzip_failed"]),

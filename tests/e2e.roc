@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(846)?
+    checks_ran_exactly!(852)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1550,6 +1550,33 @@ b_auth! = |ctx| {
     # mirror the bash: unset any real creds (env -u) and feed EOF on stdin
     out = sh!("env -u STRAVA_CLIENT_ID -u STRAVA_CLIENT_SECRET HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' auth < /dev/null")
     check!("credless auth gives setup guidance", Str.contains(out, "missing_client_creds"))?
+    # ── #259: with creds present, auth reaches the paste prompt and then hits EOF. That
+    # is `stdin_closed`, the code whose whole purpose is telling an unattended caller
+    # there was no terminal — so it is the code most likely to be PARSED rather than read,
+    # and it was the one the prompt collided with.
+    #
+    # stdout ALONE, deliberately: `sh!` merges the streams elsewhere in this file, which
+    # would hide the whole defect, since the bytes were always present — just on the wrong
+    # channel and the wrong line. 2>/dev/null is what makes this check able to fail.
+    creds = "env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret HOME='${ctx.home}'"
+    auth_stdout = Str.trim(sh!("${creds} STRIDE_FORMAT=json '${ctx.bin}' auth < /dev/null 2>/dev/null"))
+    check!("auth --json puts nothing but the envelope on stdout", Str.starts_with(auth_stdout, "{") and Str.ends_with(auth_stdout, "}"))?
+    # ...and it is ONE line, which `starts_with {` alone does not establish: the prompt was
+    # written without a newline, so the envelope shared its row and the whole thing still
+    # ended in `}`. This is the assertion the bug report's `| tail -1 | jq` stands for.
+    check!("...on one line, so `tail -1 | jq` parses it", Str.trim(sh!("${creds} STRIDE_FORMAT=json '${ctx.bin}' auth < /dev/null 2>/dev/null | wc -l | tr -d ' '")) == "1")?
+    check!("...carrying the code that says why", Str.contains(auth_stdout, "stdin_closed"))?
+    check!("...and it survives jq, which is the whole point", Str.trim(sh!("${creds} STRIDE_FORMAT=json '${ctx.bin}' auth < /dev/null 2>/dev/null | tail -1 | jq -r '.error.code' 2>&1")) == "stdin_closed")?
+    # the prose is not DELETED, only moved — a human running --json still needs to know
+    # what to paste. Asserting its presence on stderr is what separates "moved" from
+    # "suppressed", and a fix that just dropped the lines would pass every check above.
+    auth_stderr = sh!("${creds} STRIDE_FORMAT=json '${ctx.bin}' auth < /dev/null 2>&1 1>/dev/null")
+    check!("...while the paste instructions moved to stderr rather than vanishing", Str.contains(auth_stderr, "Copy the code=XXXX value") and Str.contains(auth_stderr, "code:"))?
+    # HUMAN mode is unchanged: the instructions are this command's primary output there,
+    # so they stay on stdout. Without this, "move the prose to stderr" unconditionally
+    # would pass everything above and leave `stride auth` printing nothing to a human.
+    auth_human = sh!("${creds} STRIDE_FORMAT=human '${ctx.bin}' auth < /dev/null 2>/dev/null")
+    check!("...and human mode still prints the instructions on stdout", Str.contains(auth_human, "Copy the code=XXXX value"))?
     Ok({})
 }
 
