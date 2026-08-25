@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(791)?
+    checks_ran_exactly!(794)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3459,6 +3459,12 @@ b_agent_loop! = |ctx| {
     check!("...linked to the activity it was completed against", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .completed_activity_id]") == "[\n  9220\n]")?
     check!("...and dated by that activity, not by the session's target", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .completed_on]") == "[\n  \"${ctx.d2}\"\n]")?
     check!("...which is a different day from the target, so that check can tell them apart", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .target_date]") == "[\n  \"${ctx.d1}\"\n]")?
+    # ...and its own CONTENTS, which nothing read. `open_sessions` got its session_type and
+    # detail pinned when this scenario was written; `plan_history_28d` did not, and review
+    # proved the gap rather than argued it: returning `bogus_hist_type` / `WRONG HIST DETAIL`
+    # for every history row was fully green at 692 == 692 with nothing neutralised (#251).
+    # These are the two fields an agent branches on to describe what was actually done.
+    check!("...carrying the type and detail it was created with, which nothing read before", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .session_type]") == "[\n  \"endurance\"\n]" and pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .detail]") == "[\n  \"agent loop probe\"\n]")?
     # `d1` is today-3 and `d2` today-1 by construction, so they can never coincide — the
     # guard that used to ride along here could not fail and read like it could. What makes
     # the check above discriminating is that completed_on is d2 while target_date is d1.
@@ -3590,6 +3596,112 @@ b_agent_loop! = |ctx| {
     # this and the probe above silently weakens to 1-of-30.
     check!("...and the date-refusal message names what it refused", Str.contains(stride!(ctx.bin, ctx.home, ["reps", "notadate"]), "notadate"))?
     _ = sh!("rm -f '${ctx.home}/.err-probe.out'")
+
+    # ── the rows this scenario did NOT create ───────────────────────────
+    #
+    # Everything above pins facts about three known ids, which leaves the payload
+    # unconstrained wherever the loop did not put something. Those are different shapes of
+    # assertion — "facts about known ids" versus "facts about the whole list" — and the
+    # second was missing entirely (#251).
+    #
+    # Measured during review of #242, not inferred: widening `open_p` to
+    # `status='open' OR (status='skipped' AND substitute_activity_id IS NULL)` serves a
+    # SKIPPED session as actionable, and the suite stayed green at 691 == 691 with only
+    # b_plan!'s incidental guard removed. Membership pinned by naming ids cannot see a
+    # phantom that is none of them. An agent reading `open_sessions` would plan against a
+    # session the athlete had already skipped.
+    #
+    # CROSS-REFERENCED rather than enumerated, so it constrains rows nobody named.
+    # `open_sessions` has no date filter while `plan_history_28d` is windowed on BOTH sides
+    # (>= today-27 and <= today), so a bare subtraction would flag a legitimate open session
+    # outside that window. No such row exists in this fixture — which is exactly the kind of
+    # thing that must not be depended on silently, hence the explicit date restriction
+    # below rather than a membership one.
+    #
+    # BEFORE the cleanup, and that is not cosmetic: run after it, the loop's own open rows
+    # are gone, `open_sessions` is empty, and the overlap is trivially zero — the check
+    # passes having compared nothing. It is the FIRST conjunct of the guard that catches
+    # that; the shut-row side survives the cleanup untouched, because the rows it counts are
+    # b_plan!'s tombstones rather than anything this scenario or the loop created. An
+    # earlier version of this paragraph said "both lists empty" and named the loop's skipped
+    # session, which is deleted a hundred lines earlier and not by the cleanup at all.
+    # RESTRICTED BY DATE, not by membership, and the first version got that backwards.
+    #
+    # Restricting to ids present in BOTH arrays excludes exactly the class being hunted: a
+    # phantom is by definition a row history does not call open, so "only judge rows history
+    # mentions" lets through every phantom outside history's window. And history is bounded
+    # ABOVE by `:today` as well as below — so a session dated later this week, which is the
+    # primary use of `week add`, is invisible to it.
+    #
+    # Review proved it live. Widening `open_p` to
+    # `status='open' OR target_date > as_of` — a plausible "show me what's upcoming" change
+    # — left the full suite green with only b_plan!'s 8th-scenario guard neutralised, while
+    # `open_sessions` served four phantoms: two skipped sessions and two already done. That
+    # is verbatim the harm #251 names, past the check written to stop it.
+    #
+    # The sting is that the issue's own bare-subtraction sketch WOULD have caught it. The
+    # intersection was adopted to dodge a false positive this fixture cannot produce (there
+    # is no open session older than the window) and bought a false negative it populates.
+    # The date window is sound both ways: it excuses genuinely out-of-window rows, and it
+    # catches the documented phantom, the future-dated one, and an in-window open row that
+    # history omits entirely.
+    # AGAINST THE TABLE, not against the other array, and that took two wrong shapes to get
+    # to. Cross-referencing `plan_history_28d` cannot work in either form: it is windowed on
+    # both sides, so restricting to ids it mentions excludes every phantom outside the
+    # window, and restricting `open_sessions` to the window excludes them too. Measured —
+    # a widened `open_p` serving four phantoms dated 2099 passed BOTH shapes, because every
+    # one of them is outside the window that either side could see.
+    #
+    # `planned_sessions` has no window and is the thing the payload is a claim about, so
+    # the assertion is the invariant itself: nothing `open_sessions` offers may be anything
+    # but open in the table. That constrains rows nobody named, which is #251's subject,
+    # without inheriting a second query's date bounds.
+    open_ids = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' plan 2>/dev/null | jq -r '[.data.open_sessions[].id] | join(\",\")'"))
+    # THREE conjuncts, and the third is not a spare. `id IN (…)` is silent about an offered
+    # id that resolves to NO row: `COUNT(*) WHERE id IN (7,999999) AND status <> 'open'` is 0
+    # because 999999 matches nothing. I argued that was closed by coincidence — every id
+    # `open_sessions` carries is checked by name upstream — and review proved the reasoning
+    # protects the wrong class. Named-id checks close TRANSFORMATION (shift every id and
+    # `index(${sid})` stops finding it); they structurally cannot close ADDITION, which is
+    # this issue's own thesis in one sentence: membership pinned by naming ids cannot see a
+    # row that is none of them. A fabricated id is a phantom with no row behind it.
+    #
+    # Measured: `open_p` gaining a synthesised `UNION ALL SELECT 999999, …` row — a
+    # plausible "suggested next session" feature on the array an agent reads to decide what
+    # to do — passed the whole suite including this check, and produces an id the agent will
+    # try to `complete` and cannot.
+    #
+    # The count equality also closes the direction the check had nothing to say about:
+    # open rows being DROPPED. Both sides are read from live state in the same breath, so it
+    # is not a delta and nothing rots when a fixture edit adds or removes a session — both
+    # sides move together. Between them the conjuncts cover promotion, fabrication,
+    # duplication and thinning.
+    #
+    # A third conjunct rather than a fourth check, deliberately: the tally stays 755, and
+    # #263 and this PR already collide on `checks_ran_exactly!`.
+    #
+    # One residual left alone: dropping one open row AND adding one fabricated id keeps the
+    # count equal. Closing it needs the explicit converse, and I cannot construct a mutation
+    # that loses one and gains one — that is the term this repo deletes, where the
+    # fabrication term is not.
+    check!("nothing `open_sessions` offers is anything but open in planned_sessions, and it offers every one of them", open_ids != "" and Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE id IN (${open_ids}) AND COALESCE(status,'open') <> 'open';")) == "0" and str_to_i64(pj!(".data.open_sessions | length")) == str_to_i64(Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE COALESCE(status,'open') = 'open';"))))?
+    # The guard measures the population the CHECK depends on, which is the table — and the
+    # previous version measured `plan_history_28d`, left over from when the check read it
+    # too. Those can no longer agree: history is windowed on both sides and the table is
+    # not. Review proved the mismatch with a matched pair. Re-date b_plan!'s tombstones out
+    # of the 28-day window and the check is undamaged while the guard fails, crying "no shut
+    # row a phantom could occupy" over a table holding seven of them; apply the same drift
+    # WITH the documented phantom and the check still goes red, because it sees all four
+    # promoted rows through the table regardless of date. A false alarm in the first case
+    # and an actively misleading one in the second.
+    #
+    # The overlap conjunct went with it. After the cleanup `open_sessions` is empty, so
+    # `open_ids != ""` inside the check already goes red — it guarded nothing the check does
+    # not guard itself.
+    #
+    # What genuinely disarms this check is a table with nothing to promote, and that is what
+    # is asserted. Measured: 7 non-open rows at this point.
+    check!("...over a non-empty offer, against a table holding non-open rows to promote", open_ids != "" and str_to_i64(Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE COALESCE(status,'open') <> 'open';"))) > 0)?
 
     # ── cleanup: the loop leaves no trace ───────────────────────────────
     # Deleted by id, and the deletion asserted — every counter this scenario moved has to
