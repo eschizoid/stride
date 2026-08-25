@@ -6317,42 +6317,44 @@ tally_is_scoped! = |{}| {
 # edit to either would have left the probe asserting the wrong world. Same lesson as this
 # file's round-1 defect, one level up: one definition, two call sites.
 #
-# Probe the CAPABILITY THE SWEEP NEEDS, which is the correction this line has now taken
-# twice. `command -v ps` tested EXISTENCE: a `ps` that exists but rejects `-p` passes it,
-# and then the sweep's `ps -p` fails for every pid and it deletes every tally including a
-# live owner's — the blanket behaviour this change removed, restored on exactly the
-# platform the guard was added to protect. `ps -p $$` tested SELF-VISIBILITY, which is
-# still the wrong subject: the sweep never asks about its own shell, it asks about OTHER
-# processes, and a `ps` can have the first capability without the second. Linux `/proc`
-# mounted `hidepid=1`/`hidepid=2` — hardened distros, several container runtimes — shows
-# you your own processes and hides everyone else's, exiting 1 rather than erroring. There
-# the self-probe passes, the sweep judges the live driver dead, and blanket-deletes.
+# Probe the CAPABILITY THE SWEEP NEEDS, not the binary's existence. `command -v ps` tested
+# EXISTENCE, and a `ps` that exists but rejects `-p` passes it — then the sweep's `ps -p`
+# fails for every pid and it deletes every tally including a live owner's, which is the
+# blanket behaviour this change removed, restored on exactly the platform the guard was
+# added to protect. Measured with a stub on PATH: `command -v ps` passes, the driver fails
+# `...owner is still running`, and the live sentinel is gone.
 #
-# `$PPID` is the driver: a live process that is NOT the probing shell, and guaranteed alive
-# because it is waiting on that shell. Measured through the shipped binary against four
-# `ps` variants, each stub verified live before its row was read:
+# `$$` is the probing shell, guaranteed alive because it is the process asking. Measured
+# through the shipped binary against four `ps` variants, each stub sanity-checked before its
+# row was read: real `ps` → collects the dead owner; rejects `-p` → bails; accepts `-p` and
+# ignores it → reddens at check 2; uid-restricted `/proc` → bails on nothing, see below.
 #
-#   variant                    `ps -p $$`                  `ps -p $PPID`
-#   real ps                    green, dead collected       green, dead collected
-#   exists, rejects -p         green, bails                green, bails
-#   accepts -p, ignores it     red at check 2              red at check 2
-#   sees only its caller       RED at check 1, live        green, bails
-#                              tally destroyed first
+# `$$` and NOT `$PPID`. Review recommended `$PPID` on the theory that the sweep asks about
+# OTHER processes while `$$` only proves self-visibility, then retracted it after building a
+# faithful stub: real `hidepid=1`/`hidepid=2` discriminates on UID, and a shell and its
+# parent always share one, so both forms succeed and the two are byte-identical on every
+# shape either of us could construct. `$$` also needs one assumption fewer — POSIX sets
+# `PPID` at shell init and does not update it on reparenting, so `ps -p $PPID` would name a
+# stale pid if the parent exited in between. That cannot happen here (the driver is blocked
+# waiting on this shell), but it is an argument `$$` does not have to make.
 #
-# Strictly dominant: it bails everywhere `$$` bails, plus the visibility-restricted case,
-# and regresses nothing. The ordering in that fourth row is what makes it worth a token —
-# the deletion happens and THEN check 1 reports it, so under concurrency another run's
-# tally is already gone by the time the red appears.
+# NOT covered, and NOT fixable from here: a tally owned by ANOTHER USER's live run. Under
+# uid-restricted `/proc` that process is invisible, `ps -p` fails, and the sweep judges it
+# dead and deletes it. Measured by planting `.e2e-checks.e2e.1` — pid 1, alive, root-owned —
+# and running the driver: DELETED, suite green at 851. Control, the same plant under the
+# real `ps`: KEPT. So the deletion is the visibility restriction and not the plant. This is
+# the same hole
+# recorded beside `sweep_litter!` as the EPERM gap, reached through visibility rather than
+# permission; the property is that another user's LIVE process can be indistinguishable from
+# a dead one, which is worth stating as the property rather than as whichever mechanism
+# reaches it, since the mechanism has now changed twice underneath it.
 #
-# NOT covered: a `ps` that accepts `-p`, ignores it, and exits 0 for anything. Tolerable
-# because it fails LOUDLY — measured, it reddens the suite at check 2 and destroys nothing.
-# A guard exists for the SILENT case. Covering it would need a pid guaranteed dead, and
-# 999999 is not reliably above `pid_max` on Linux. Described by BEHAVIOUR and not by naming
-# a platform: the earlier version of this comment asserted what busybox does on an unknown
-# option, which was reasoning rather than measurement, bought nothing, and had already been
-# written into the source as fact.
+# Also NOT covered: a `ps` that accepts `-p`, ignores it, and exits 0 for anything.
+# Tolerable because it fails LOUDLY — measured, it reddens the suite at check 2 and destroys
+# nothing. A guard exists for the SILENT case. Covering it would need a pid guaranteed dead,
+# and 999999 is not reliably above `pid_max` on Linux.
 ps_usable! : {} => Bool
-ps_usable! = |{}| Str.trim(sh!("ps -p $PPID >/dev/null 2>&1 && echo yes || echo no")) == "yes"
+ps_usable! = |{}| Str.trim(sh!("ps -p $$ >/dev/null 2>&1 && echo yes || echo no")) == "yes"
 
 sweep_litter! : {} => {}
 sweep_litter! = |{}| {
