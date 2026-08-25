@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(868)?
+    checks_ran_exactly!(869)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3057,6 +3057,18 @@ b_seed_analyze! = |ctx| {
     # surfacing what needs repair. Ranking wants such a row LAST; this listing wants it
     # FIRST, and #249 already answered which one `activities` is.
     check!("...ahead of every readable row, which is what the hoist is for", str_to_i64(strjq!(ctx, ["activities"], "[.data[].id] | index(949)")) < str_to_i64(strjq!(ctx, ["activities"], "[.data[].id] | index(101)")))?
+    # ...and one whose bad time sorts LOW, which is the half a `T37` fixture cannot see.
+    # `T37:00:00` sorts HIGH as a string, so under the defect it lands first among the
+    # readable rows ANYWAY — present, and ahead of 101 — and both assertions above pass on
+    # the code they were written to reject. `T00:99:00` is the other shape `rankable_sql`'s
+    # comment names, and it sorts BELOW every real row, so only a real hoist lifts it.
+    #
+    # Second instance of one rule in this PR: A FIXTURE WHOSE PLANTED VALUE SORTS HIGH TESTS
+    # THE ORDERING ONLY IN THE DIRECTION THAT WAS ALREADY WORKING. The candidate-shortlist
+    # fixture had the same flaw against the WHERE clause; this one had it against the key.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (951,'impossible minute','Ride','Ride',(SELECT substr(start_local,1,10) FROM activities WHERE id=101) || 'T00:99:00Z',3600);")
+    check!("...including one whose bad time sorts LOW, where only a real hoist lifts it", str_to_i64(strjq!(ctx, ["activities"], "[.data[].id] | index(951)")) < str_to_i64(strjq!(ctx, ["activities"], "[.data[].id] | index(101)")))?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 951;")
     # ...and a well-formed year below 1000 is undateable too. This holds the SQL year bound
     # to the Roc one, and NOTHING held it: deleting ` OR substr(col,1,4) < '1000'` passed the
     # whole suite, because every sub-1000 fixture here is MALFORMED and so is caught by the

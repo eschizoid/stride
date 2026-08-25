@@ -1866,7 +1866,6 @@ Metrics :: [].{
     # order-independent. The flag is pinned by the expects below and exists so a future ASC
     # caller whose order DOES matter inherits the right behaviour. That is insurance, and
     # naming it as such is more useful than a justification that does not hold.
-    # Two
     # A helper that is correct only half the time is the
     # shape this consolidation exists to remove.
     #
@@ -2756,6 +2755,12 @@ expect
 #
 # So the shape is pinned directly. The flag is always DESC regardless of the caller's
 # direction, which is exactly what makes one helper correct in both.
+# two_digit_in has no callers, and had no expects — an untested body justified by a comment
+# is a claim, not a record. These pin the Roc half of the divergence its comment describes:
+# SQLite `datetime()` accepts T24:00:00 and this does not.
+expect Metrics.two_digit_in("24", 23) == False
+expect Metrics.two_digit_in("23", 23) == True
+
 expect Str.contains(Metrics.rank_ts_sql("a.start_local", Asc), "END) DESC,")
 expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "END) DESC,")
 expect Str.ends_with(Metrics.rank_ts_sql("a.start_local", Asc), " ASC")
@@ -2773,6 +2778,14 @@ expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "THEN substr(a.s
 # the caller's column reaches every term — a helper that hardcoded one would be wrong at
 # the one site that ranks on a bare `start_local` rather than `a.start_local`
 expect !(Str.contains(Metrics.rank_ts_sql("start_local", Desc), "a.start_local"))
+
+# ...and the same three for the HOISTING twin, which shipped with none. Sharing `rankable_sql`
+# holds the PREDICATE across both helpers; the direction and the key are per-helper, and only
+# one of them was pinned. Shrinking this key to 1..10 while its guard stayed at 1..19 — the
+# identical mutant already closed for rank_ts_sql — passed the whole suite.
+expect Str.contains(Metrics.hoist_unrankable_sql("a.start_local"), "substr(a.start_local, 1, 19) DESC")
+expect Str.contains(Metrics.hoist_unrankable_sql("a.start_local"), "END) ASC,")
+expect !(Str.contains(Metrics.hoist_unrankable_sql("start_local"), "a.start_local"))
 
 expect Metrics.normalized_power(List.repeat(200.0, 10)).is_err()
 
