@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(791)?
+    checks_ran_exactly!(794)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3459,6 +3459,12 @@ b_agent_loop! = |ctx| {
     check!("...linked to the activity it was completed against", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .completed_activity_id]") == "[\n  9220\n]")?
     check!("...and dated by that activity, not by the session's target", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .completed_on]") == "[\n  \"${ctx.d2}\"\n]")?
     check!("...which is a different day from the target, so that check can tell them apart", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .target_date]") == "[\n  \"${ctx.d1}\"\n]")?
+    # ...and its own CONTENTS, which nothing read. `open_sessions` got its session_type and
+    # detail pinned when this scenario was written; `plan_history_28d` did not, and review
+    # proved the gap rather than argued it: returning `bogus_hist_type` / `WRONG HIST DETAIL`
+    # for every history row was fully green at 692 == 692 with nothing neutralised (#251).
+    # These are the two fields an agent branches on to describe what was actually done.
+    check!("...carrying the type and detail it was created with, which nothing read before", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .session_type]") == "[\n  \"endurance\"\n]" and pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .detail]") == "[\n  \"agent loop probe\"\n]")?
     # `d1` is today-3 and `d2` today-1 by construction, so they can never coincide — the
     # guard that used to ride along here could not fail and read like it could. What makes
     # the check above discriminating is that completed_on is d2 while target_date is d1.
@@ -3590,6 +3596,33 @@ b_agent_loop! = |ctx| {
     # this and the probe above silently weakens to 1-of-30.
     check!("...and the date-refusal message names what it refused", Str.contains(stride!(ctx.bin, ctx.home, ["reps", "notadate"]), "notadate"))?
     _ = sh!("rm -f '${ctx.home}/.err-probe.out'")
+
+    # ── the rows this scenario did NOT create ───────────────────────────
+    #
+    # Everything above pins facts about three known ids, which leaves the payload
+    # unconstrained wherever the loop did not put something. Those are different shapes of
+    # assertion — "facts about known ids" versus "facts about the whole list" — and the
+    # second was missing entirely (#251).
+    #
+    # Measured during review of #242, not inferred: widening `open_p` to
+    # `status='open' OR (status='skipped' AND substitute_activity_id IS NULL)` serves a
+    # SKIPPED session as actionable, and the suite stayed green at 691 == 691 with only
+    # b_plan!'s incidental guard removed. Membership pinned by naming ids cannot see a
+    # phantom that is none of them. An agent reading `open_sessions` would plan against a
+    # session the athlete had already skipped.
+    #
+    # CROSS-REFERENCED rather than enumerated, so it constrains rows nobody named. The safe
+    # form only judges ids present in BOTH arrays: `open_sessions` has no date filter while
+    # `plan_history_28d` is 28-day windowed, so a bare subtraction would flag any legitimate
+    # open session older than the window. That is not true of this fixture today, which is
+    # exactly the kind of thing that should not be depended on silently.
+    #
+    # BEFORE the cleanup, and that is not cosmetic: run after it, the skipped session and
+    # the loop's own open rows are gone, both lists empty, and the overlap is trivially zero
+    # — the check passes having compared nothing. The vacuity guard below caught that on the
+    # first run, which is the only reason this paragraph exists.
+    check!("no session `open_sessions` offers is one plan_history calls anything but open", pj!("[.data.plan_history_28d[] | select(.status != \"open\") | .id] as $shut | [.data.open_sessions[].id] | map(select(. as $x | $shut | index($x))) | length") == "0")?
+    check!("...over two lists that both have rows, so an emptied payload cannot satisfy it", str_to_i64(pj!(".data.open_sessions | length")) > 0 and str_to_i64(pj!("[.data.plan_history_28d[] | select(.status != \"open\")] | length")) > 0)?
 
     # ── cleanup: the loop leaves no trace ───────────────────────────────
     # Deleted by id, and the deletion asserted — every counter this scenario moved has to
