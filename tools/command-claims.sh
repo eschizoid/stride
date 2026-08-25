@@ -237,7 +237,13 @@ jq -r '.data.commands[].name' < "$HELP" > "$REAL" \
 #
 # One line per command, name<TAB>arg names joined by spaces, and pinned to REAL's line count
 # below so the two halves cannot silently disagree about which commands exist.
-jq -r '.data.commands[] | .name + "\t" + ([.args[]?.name] | join(" "))' < "$HELP" > "$ARGS" \
+# `required` is carried through, marked with a leading `!`, because the judgement below
+# cannot be sound without it: a trailing token may legally fill position 2 when position 1
+# is OPTIONAL, and `week`'s only declared arg (`all`) is exactly that. Dropping the flag —
+# which this line did — made the rule refuse `stride week ride` on a table declaring
+# `week [all] [<sport>]`, a legal invocation. The payload has carried `required` since
+# #219; nothing read it.
+jq -r '.data.commands[] | .name + "\t" + ([.args[]? | (if .required then "!" else "" end) + .name] | join(" "))' < "$HELP" > "$ARGS" \
   || { echo "command-claims: the help payload has no .data.commands[].args — the TABLE is broken, not the docs" >&2; exit 3; }
 
 # --------------------------------------------------------------- the corpus: the docs
@@ -422,6 +428,21 @@ fi
 # have opposite meanings: the first REFUTES a trailing token, the second would refute every
 # one of them. A jq shape change that empties one half and not the other lands here.
 nargs=$(wc -l < "$ARGS" | tr -d ' ')
+# ...and the REQUIRED MARKER survived the extraction. `judge_trailing`'s self-test uses
+# hand-written specs, so it cannot see the jq above stop emitting `!` — and without the
+# marker the walk finds no required arg, never stops, and accepts far more than it should.
+# Measured: dropping `(if .required then "!" else "" end)` was green in the self-test AND on
+# the corpus, because exactly one of the 80 references reaches the rule at all.
+#
+# Pinned on `top`, whose first arg is `required: true` and has been since #219. A command
+# with a required first arg is what the marker is FOR; if none exists, the table changed in
+# a way this rule needs to know about.
+topspec=$(awk -F"$(printf '\t')" '$1 == "top" { print $2; exit }' "$ARGS")
+case "$topspec" in
+  "!"*) ;;
+  *) echo "command-claims: \`top\` declares a required first argument, but its ARGS row is [$topspec] with no \`!\` marker — the extraction dropped \`required\`, and the trailing-token rule silently over-accepts without it" >&2; exit 3 ;;
+esac
+
 if [ "$nargs" != "$nreal" ]; then
   echo "command-claims: the table yielded $nreal names but $nargs arg rows — the two halves of the oracle disagree; refusing to judge trailing tokens against a partial table" >&2
   exit 3
@@ -461,36 +482,84 @@ fi
 # rather than a second copy of it. Returns 0 to accept the trailing token, 1 to refute.
 #   $1 the trailing token, $2 the command's declared arg spec (space-joined, in order)
 judge_trailing() {
-  _first="${2%% *}"
-  case "$_first" in *"<"*) return 0 ;; esac
-  [ "$_first" = "$1" ] && return 0
+  _tok="$1"
+  for _a in $2; do
+    case "$_a" in "!"*) _req=1; _a="${_a#!}" ;; *) _req=0 ;; esac
+    # a placeholder in a position the token can reach accepts it — its values are not
+    # enumerable from the table, which is the one thing the old rule had right
+    case "$_a" in *"<"*) return 0 ;; esac
+    [ "$_a" = "$_tok" ] && return 0
+    # ...and a REQUIRED arg the token did not match is where the walk stops: nothing after
+    # it is reachable, because reaching it would mean skipping something mandatory.
+    [ "$_req" = "1" ] && return 1
+  done
   return 1
 }
 
 # ...and PROVE it can refute, before trusting it on the real corpus. Every other guard in
-# this file asserts that its INPUTS are non-empty; none asserted that the judgement works,
+# this file asserts that its INPUTS are non-empty; none asserted that the JUDGEMENT works,
 # and a rule that accepts everything looks exactly like a corpus with nothing wrong in it.
-# That is not hypothetical here: the rule this replaces accepted any trailing token for 17
-# of 30 commands, and the case it was built for was one table change from reverting.
 #
-# The third case is that revert, pinned: `week` declaring `all` and then a placeholder must
-# still refute `frobnicate`, which is what positional buys and what list-wide lost.
+# The sharpest argument for it is not the coverage number: the real corpus reaches this
+# rule EXACTLY ONCE, on `week all`, and that one is an accept. The refute path has no
+# corpus coverage at all, so without these cases a rule that accepted everything would be
+# indistinguishable from a clean tree — and "the corpus verdict is unchanged" is nearly
+# vacuous as evidence for the same reason.
+#
+# COUNTED, because a silent `sf` line and an `sf` line that never existed look identical.
+# Measured: reverting the rule to list-wide AND deleting the one case that pins it was
+# green — a complete revert, undetected. Every other pin in this file carries an exact
+# count for exactly this reason (EXPECTED_QUOTING, EXPECTED_UNPARSED, nargs vs nreal).
 selftest_fail=0
+selftest_ran=0
 sf() {  # description, token, spec, expected verdict (accept|refute)
+  selftest_ran=$((selftest_ran + 1))
   if judge_trailing "$2" "$3"; then _got=accept; else _got=refute; fi
   [ "$_got" = "$4" ] || { echo "command-claims: SELF-TEST FAILED — $1: judged '$2' against [$3] as $_got, expected $4" >&2; selftest_fail=1; }
 }
-sf "a literal arg refutes anything else"          frobnicate "all"                       refute
-sf "a literal arg accepts itself"                 all        "all"                       accept
-sf "a literal FIRST still refutes, however many placeholders follow" \
-                                                  frobnicate "all <n>"                   refute
-sf "a placeholder in position 1 accepts anything" frobnicate "<metric> <limit>"          accept
+# `!` marks a REQUIRED arg, the same encoding the ARGS file carries.
+sf "a required literal refutes anything else"     frobnicate "!all"                      refute
+sf "a required literal accepts itself"            all        "!all"                      accept
+sf "an OPTIONAL literal alone still refutes"      frobnicate "all"                       refute
+# ...and the soundness the position-1 rule got wrong. `week`'s `all` is optional, so a token
+# may legally fill position 2 by skipping it. Judging position 1 alone refused
+# `stride week ride` against `week [all] [<sport>]` — a false accusation, which this file
+# treats as the worse failure: the only way out of one without a marker is to degrade the
+# doc until the linter is satisfied.
+sf "an optional literal is SKIPPABLE, so a later placeholder is reachable" \
+                                                  ride       "all <sport>"               accept
+# ...but a REQUIRED arg stops the walk: nothing past it is reachable, because reaching it
+# would mean skipping something mandatory. This is the whole gain over the list-wide rule,
+# and the case the PR originally cited (`all <n>`) does NOT demonstrate it — `all` is
+# optional there, so accepting is correct.
+sf "a required literal blocks a placeholder behind it" \
+                                                  frobnicate "!bar <n>"                  refute
+sf "...however many follow it"                    frobnicate "!bar <n> <m>"              refute
+# THREE tokens, because two agree under a wrong implementation. Measured: `${2% *}` — all
+# tokens but the last — passes every two-token case with a byte-identical verdict
+# signature, passes the corpus, and IS #269's bug on a three-arg spec. The table already
+# declares three- and four-arg commands (`top`, `skip`, `week add`).
+sf "an optional literal FIRST, then two placeholders, is reachable at position 2" \
+                                                  frobnicate "all <n> <m>"               accept
+sf "a placeholder in position 1 accepts anything" frobnicate "!<metric> <limit>"         accept
+# ...and a placeholder is recognised ANYWHERE in the arg name, not only at its start. Every
+# name in today's table opens with `<`, so `case $_a in "<"*)` — starts-with — passes every
+# other case here and the whole corpus. A bracketed-optional spelling is the shape that
+# distinguishes them, and it is one naming convention away.
+sf "a placeholder is recognised anywhere in the name" \
+                                                  frobnicate "[<n>]"                     accept
 sf "no declared args refutes anything"            frobnicate ""                          refute
+# `sync` really declares `--all`, and it is required: false — so a token that is not `--all`
+# must be refuted, and `--all` itself accepted.
 sf "a flag is a literal like any other"           --all      "--all"                     accept
 sf "...and refutes a non-flag"                    frobnicate "--all"                     refute
+if [ "$selftest_ran" != "12" ]; then
+  echo "command-claims: the trailing-token self-test ran $selftest_ran cases, expected 12 — a case was deleted, and a silent one is indistinguishable from one that never existed" >&2
+  exit 7
+fi
 if [ "$selftest_fail" != "0" ]; then
   echo "command-claims: the trailing-token rule does not judge as declared — refusing to run it against the docs" >&2
-  exit 3
+  exit 7
 fi
 
 fail=0
@@ -511,27 +580,40 @@ while IFS="$(printf '\t')" read -r file line cand; do
   [ "$p" = "$cand" ] && continue
   x="${cand#"$p" }"
   spec=$(awk -F"$(printf '\t')" -v n="$p" '$1 == n { print $2; exit }' "$ARGS")
-  # POSITIONAL, not list-wide (#269). `$x` is always the FIRST argument — `$cand` is at
-  # most two tokens by the ceiling asserted above, and a two-token `$p` with a two-token
-  # `$cand` exits at the equality test before here — so the only arg it can be is the one
-  # the table declares in position 1.
+  # POSITIONAL, not list-wide (#269), and positional means "any position the token can
+  # REACH" — not position 1. `$x` is a single token by construction (`$cand` is capped at
+  # two by the `tokens()` regex, and a two-token `$p` with a two-token `$cand` exits at the
+  # equality test above), so the question is which declared slots it could be filling.
   #
   # The old rule asked whether the command declared a placeholder ANYWHERE and accepted any
   # trailing token if so. That is right about placeholders and wrong about position: it
-  # judged only the 12 of 29 commands that declare no placeholder at all, and the other 17
-  # accepted anything. Worse, it was one table change from reverting the case it was built
-  # for — measured, adding a single `<n>` to `week`'s args made `stride week frobnicate`
-  # pass again, and nothing would have noticed.
+  # judged only the 13 of 30 commands that declare no placeholder at all, and blanket-
+  # accepted the other 17.
   #
-  # Positionally, `week` declares `all` at position 1, so `week frobnicate` stays refutable
-  # however many placeholders are appended after it. A placeholder IN position 1 still
-  # accepts anything, which is correct rather than a concession — that position genuinely
-  # takes a value the table cannot enumerate.
+  # A FIRST cut of this fix judged position 1 only, and that is unsound in the other
+  # direction. `week`'s `all` is `required: false`, so a token may legally fill position 2
+  # by skipping it — measured, against a table declaring `week [all] [<sport>]`,
+  # `stride week ride` is a legal invocation and position-1 judging reported it as naming a
+  # command the binary does not have. A false accusation is the worse failure here: this
+  # file's own note on the quoting markers says the only way out of one without a marker is
+  # to degrade the doc until the linter is satisfied.
+  #
+  # So `judge_trailing` walks the spec and stops at the first REQUIRED arg the token did not
+  # match, because nothing past that is reachable without skipping something mandatory. The
+  # gain over list-wide is exactly there: a required literal now BLOCKS a placeholder behind
+  # it, where the old rule saw the placeholder and accepted anything.
+  #
+  # Worth recording, because the issue and this PR's first revision both got it wrong:
+  # appending an optional `<n>` to `week` and then accepting `stride week frobnicate` is
+  # CORRECT under the sound rule, not a revert. `all` is optional, so position 2 is
+  # reachable, and a placeholder there really does take any value. The scenario that
+  # demonstrates the gain is a REQUIRED literal followed by a placeholder, which today's
+  # table does not contain — which is also why coverage is unchanged at 13 of 30.
   #
   # An empty `$spec` means the command declares no arguments, so any trailing token is
-  # refutable — the same meaning it had before, reached without a special case. The
-  # ARGS-vs-REAL row-count guard above is what makes an empty spec trustworthy: it separates
-  # "declares nothing" from "missing from the table", which mean opposite things here.
+  # refutable. The ARGS-vs-REAL row-count guard above is what makes an empty spec
+  # trustworthy: it separates "declares nothing" from "missing from the table", which mean
+  # opposite things here.
   judge_trailing "$x" "$spec" && continue
   echo "UNKNOWN  $file:$line  \`stride $cand\` — \`$p\` is a command, but it takes no \`$x\`"
   fail=1
