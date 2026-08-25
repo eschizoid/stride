@@ -124,6 +124,20 @@ jobs:
       # its only payload-vs-schema check in CI.
       - name: Run mock-backed e2e suite
         run: ROC=roc just e2e-sync
+      # Deterministic and network-free, so it runs BEFORE issue-claims: that one needs the
+      # tracker, and a GitHub outage there would otherwise mean this check — which can
+      # always run — never does.
+      #
+      # The oracle is the binary's own command table, which this job built two steps up.
+      # The SCRIPT, not `just command-claims`, and the difference is not cosmetic: the
+      # recipe depends on `build` for local use, `just` has no up-to-date check, and
+      # `roc build` is 16 of the recipe's 18 seconds — so through the recipe this step
+      # recompiles the binary "Build stride" already produced, and a compiler flake turns a
+      # DOCS check red under a message about docs. The rebuild bought nothing here: the
+      # script exits 6 naming the missing binary, and the job cannot reach this step without
+      # a successful build anyway.
+      - name: Check the commands the docs name against the command table
+        run: sh tools/command-claims.sh
       # Cheap, and it guards a class that has rotted twice: a comment asserting an issue
       # is still open when the tracker says closed (#165 found `#105 remains open` sitting
       # 560 lines above the same file saying it was fixed). GITHUB_TOKEN is enough — it

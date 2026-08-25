@@ -53,6 +53,16 @@ test:
 issue-claims:
     bash tools/issue-claims.sh
 
+# every `stride <command>` a doc NAMES is a claim that the binary HAS it, and nothing
+# checked it: #219 made the command table machine-readable so claims about the CLI could be
+# checked rather than trusted, and the docs were the half with no oracle. Needs a built
+# binary to ask, so it is its own recipe rather than part of `test` -- the same reason
+# schema-check is, and the same reason issue-claims is (that one needs `gh`). `sh`, not
+# `bash`, on purpose: the script is POSIX and running it under bash would let a bashism in
+# unnoticed.
+command-claims: build
+    sh tools/command-claims.sh
+
 # validate this machine's real payloads against the published contract
 # (schemas/v2/*.json). e2e runs the same validator against fixtures; this is the
 # "does MY data conform" pass, for after a schema or payload change. Depends on

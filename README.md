@@ -168,7 +168,7 @@ stride config set timezone America/Chicago    # optional: anchor "today" to your
                                               # local day (not UTC's). An IANA name
                                               # stays DST-correct automatically.
                                               # Fixed alternative, no DST tracking:
-                                              #   stride config set utc_offset_minutes -300
+                                              #   `stride config set utc_offset_minutes -300`
                                               # Precedence: timezone > offset > UTC.
                                               # `stride doctor` shows which is active.
 stride sync                                   # pull all activities + all stream history
