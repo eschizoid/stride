@@ -210,7 +210,8 @@ EXPECTED_UNPARSED=45
 # broken it. Nothing below can hide it now.
 #
 # The rule itself, as a function, so the self-test below judges the SAME code the comparison
-# loop runs rather than a second copy of it. Returns 0 to accept the trailing token, 1 to refute.
+# loop runs rather than a second copy of it. Returns 0 to accept the trailing token, 1 to
+# refute.
 #   $1 the trailing token, $2 the command's declared arg spec (space-joined, in order)
 judge_trailing() {
   _tok="$1"
@@ -350,8 +351,9 @@ jq -r '.data.commands[].name' < "$HELP" > "$REAL" \
 # One line per command, name<TAB>arg names joined by spaces, and pinned to REAL's line count
 # below so the two halves cannot silently disagree about which commands exist.
 # `required` is carried through, marked with a leading `!`, because `judge_trailing` (above,
-# at the top of the file) cannot be sound without it: a trailing token may legally fill position 2 when position 1
-# is OPTIONAL, and `week`'s only declared arg (`all`) is exactly that. Dropping the flag —
+# at the top of the file) cannot be sound without it: a trailing token may legally fill
+# position 2 when position 1 is OPTIONAL, and `week`'s only declared arg (`all`) is exactly
+# that. Dropping the flag —
 # which this line did — made the rule refuse `stride week ride` on a table declaring
 # `week [all] [<sport>]`, a legal invocation. The payload has carried `required` since
 # #219; nothing read it.
@@ -598,6 +600,15 @@ reqsig=$(awk -F'\t' '{ n = split($2, a, " "); s = ""; for (i = 1; i <= n; i++) i
 # the rows still exist either way. Gate on the token count first so each gets its own
 # sentence — review reproduced the misdiagnosis by declaring every arg optional, on a table
 # where `top` plainly still declared three.
+# ...and no command NAME contains the `|` the two signatures are joined on. It cannot today
+# — the six arg names that do (`<hr|tss|…>`) never reach either signature, which carries
+# positions and not names — and a `|` in a name is already fail-loud rather than a false
+# pass, splitting one row of the diff into two. But a split row reports a puzzle; this
+# reports a cause.
+if grep -q "|" "$REAL"; then
+  echo "command-claims: a command name contains \`|\`, which is the separator both derived signatures are joined on — their diffs would split one row into two and name the wrong thing. Change the separator before landing that command." >&2
+  exit 3
+fi
 nargtok=$(awk -F'\t' '{ n = split($2, a, " "); for (i = 1; i <= n; i++) if (a[i] != "") c++ } END { print c + 0 }' "$ARGS")
 case "$nargtok" in ''|*[!0-9]*) echo "command-claims: could not count the table's declared arguments (got '$nargtok')" >&2; exit 3 ;; esac
 if [ "$nargtok" -eq 0 ]; then
@@ -617,23 +628,41 @@ if [ "$reqsig" != "$EXPECTED_REQUIRED_SIG" ]; then
   echo "command-claims: either the extraction dropped/forged \`required\` or reordered the args (the trailing-token rule silently over-accepts without the markers, and walks the wrong way without the order), or an argument genuinely changed between required and optional. Confirm each row above, then update EXPECTED_REQUIRED_SIG." >&2
   exit 3
 fi
-# ...and the PLACEHOLDER/LITERAL split survived, which the signature cannot see. It encodes
-# requiredness and POSITION; `judge_trailing` branches FIRST on whether an arg NAME is a
-# placeholder, and nothing pinned names. Two measured one-line survivors in the extraction,
-# both leaving the signature byte-identical and all three gates green: mapping every arg to
-# `<x>` makes the rule accept everything reachable, so `stride week frobnicate` — the exact
-# bug this file exists to catch — passes while `analyze frobnicate` still refutes and the
-# run looks healthy; stripping the angle brackets makes every arg a literal, so legal
-# references like `stride top hr` and `stride compare month` are falsely accused.
+# ...and the PLACEHOLDER/LITERAL split survived, which the signature above cannot see. It
+# encodes requiredness and POSITION; `judge_trailing` branches FIRST on whether an arg NAME
+# is a placeholder, and nothing pinned that. Two measured one-line extraction survivors,
+# both leaving the required-signature byte-identical and all three gates green: mapping
+# every arg to `<x>` makes the rule accept everything reachable, so `stride week frobnicate`
+# — the bug this file exists to catch — passes while `analyze frobnicate` still refutes and
+# the run looks healthy; stripping the angle brackets makes every arg a literal and falsely
+# accuses `stride top hr` and `stride compare month`.
 #
-# A COUNT here, deliberately, unlike the signature above: shape belongs in the pin, arg NAME
-# TEXT does not. Folding `<`-ness per position would be stronger and would also trip on
-# renaming `<limit>` to `<count>`, which should stay free. 31 of 33; the two mutants give 33
-# and 0.
-EXPECTED_PLACEHOLDERS=31
-nplace=$(awk -F'\t' '{ n = split($2, a, " "); for (i = 1; i <= n; i++) { t = a[i]; sub(/^!/, "", t); if (t ~ /^</) c++ } } END { print c + 0 }' "$ARGS")
-if [ "$nplace" != "$EXPECTED_PLACEHOLDERS" ]; then
-  echo "command-claims: $nplace placeholder args in the derived table, expected $EXPECTED_PLACEHOLDERS — the extraction is mangling arg names, which flips the rule's first branch: all-placeholder accepts every trailing token, all-literal refuses every legal one. Confirm against \`stride --json --help\` before updating EXPECTED_PLACEHOLDERS." >&2
+# POSITIONS, not a count. A count was tried and review walked past it twice. Once by the
+# compensating flip this file already rejects counts for — `week`'s literal `all` to a
+# placeholder (+1), `tte`'s `<watts>` to a literal (−1), net 31, green. And once with no
+# compensation at all, which is worse: renaming `week`'s `all` to `all<n>` is a placeholder
+# to the rule and invisible to a starts-with count. 31 markers over 30 commands is twice the
+# surface this file rejected a count for at `EXPECTED_REQUIRED_SIG`, so the
+# `EXPECTED_QUOTING` justification does not transfer here either.
+#
+# The argument for the count was that a position pin would drag arg NAME TEXT into the pin
+# surface and trip on renaming `<limit>` to `<count>`. Measured, and false: a position
+# signature records which SLOTS hold placeholders and no name text at all, exactly as
+# `EXPECTED_REQUIRED_SIG` records which slots are required. The rename leaves it
+# byte-identical; both survivors above trip it.
+#
+# `/</` and not `/^</` — CONTAINS, matching `judge_trailing`'s `case "$_a" in *"<"*)` and
+# self-test case 9, "a placeholder is recognised anywhere in the name". The count used
+# starts-with, and that gap alone is the second survivor.
+EXPECTED_PLACEHOLDER_SIG='activities=1,2|activity=1|compare=1|complete=1,2|config get=1|config set=1,2|import=1|load=1|pc=1,2|power-curve=1,2|progress=1,2|rate=1,2|reps=1|skip=1,2,3|top=1,2,3|tte=1|week add=1,2,3,4'
+phsig=$(awk -F'\t' '{ n = split($2, a, " "); s = ""; for (i = 1; i <= n; i++) { t = a[i]; sub(/^!/, "", t); if (t ~ /</) s = (s == "" ? i : s "," i) } if (s != "") printf "%s=%s\n", $1, s }' "$ARGS" | LC_ALL=C sort | tr '\n' '|' | sed 's/|$//')
+if [ "$phsig" != "$EXPECTED_PLACEHOLDER_SIG" ]; then
+  echo "command-claims: placeholder signature changed." >&2
+  printf '%s\n' "$EXPECTED_PLACEHOLDER_SIG" | tr '|' '\n' | LC_ALL=C sort > "$SIGA"
+  printf '%s\n' "$phsig" | tr '|' '\n' | LC_ALL=C sort > "$SIGB"
+  comm -23 "$SIGA" "$SIGB" | sed 's/^/  only in expected:  /' >&2
+  comm -13 "$SIGA" "$SIGB" | sed 's/^/  only in derived:   /' >&2
+  echo "command-claims: the extraction is mangling arg names, or an arg changed between placeholder and literal. That flips the rule's FIRST branch: all-placeholder accepts every trailing token, all-literal refuses every legal one. Confirm each row above against \`stride --json --help\`, then update EXPECTED_PLACEHOLDER_SIG." >&2
   exit 3
 fi
 
@@ -674,12 +703,12 @@ fi
 #
 # The judgement itself is `judge_trailing`, at the top of this file. Do not restate its rule
 # here. The sentence that used to sit on this line — "a command declaring ANY placeholder
-# accepts any trailing token" — was true on main and became false with this file's first
-# commit, which replaced the list-wide test with a positional walk that stops at the first
-# REQUIRED argument. It survived four review rounds, and hoisting the rule 400 lines up is
-# what made it dangerous rather than merely stale: nothing adjacent contradicts it any more,
-# so a reader of this section gets superseded semantics stated as current, in the file whose
-# whole thesis is that comments are measurements.
+# accepts any trailing token" — was true on main and became false with this BRANCH's first
+# commit (`5052239`), which replaced the list-wide test with a positional walk that stops at
+# the first REQUIRED argument. It survived four review rounds, and hoisting the rule 400
+# lines up is what made it dangerous rather than merely stale: nothing adjacent contradicts
+# it any more, so a reader of this section gets superseded semantics stated as current, in
+# the file whose whole thesis is that comments are measurements.
 
 fail=0
 while IFS="$(printf '\t')" read -r file line cand; do
