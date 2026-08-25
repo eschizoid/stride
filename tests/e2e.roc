@@ -3657,7 +3657,34 @@ b_agent_loop! = |ctx| {
     # but open in the table. That constrains rows nobody named, which is #251's subject,
     # without inheriting a second query's date bounds.
     open_ids = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' plan 2>/dev/null | jq -r '[.data.open_sessions[].id] | join(\",\")'"))
-    check!("nothing `open_sessions` offers is anything but open in planned_sessions", open_ids != "" and Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE id IN (${open_ids}) AND COALESCE(status,'open') <> 'open';")) == "0")?
+    # THREE conjuncts, and the third is not a spare. `id IN (…)` is silent about an offered
+    # id that resolves to NO row: `COUNT(*) WHERE id IN (7,999999) AND status <> 'open'` is 0
+    # because 999999 matches nothing. I argued that was closed by coincidence — every id
+    # `open_sessions` carries is checked by name upstream — and review proved the reasoning
+    # protects the wrong class. Named-id checks close TRANSFORMATION (shift every id and
+    # `index(${sid})` stops finding it); they structurally cannot close ADDITION, which is
+    # this issue's own thesis in one sentence: membership pinned by naming ids cannot see a
+    # row that is none of them. A fabricated id is a phantom with no row behind it.
+    #
+    # Measured: `open_p` gaining a synthesised `UNION ALL SELECT 999999, …` row — a
+    # plausible "suggested next session" feature on the array an agent reads to decide what
+    # to do — passed the whole suite including this check, and produces an id the agent will
+    # try to `complete` and cannot.
+    #
+    # The count equality also closes the direction the check had nothing to say about:
+    # open rows being DROPPED. Both sides are read from live state in the same breath, so it
+    # is not a delta and nothing rots when a fixture edit adds or removes a session — both
+    # sides move together. Between them the conjuncts cover promotion, fabrication,
+    # duplication and thinning.
+    #
+    # A third conjunct rather than a fourth check, deliberately: the tally stays 755, and
+    # #263 and this PR already collide on `checks_ran_exactly!`.
+    #
+    # One residual left alone: dropping one open row AND adding one fabricated id keeps the
+    # count equal. Closing it needs the explicit converse, and I cannot construct a mutation
+    # that loses one and gains one — that is the term this repo deletes, where the
+    # fabrication term is not.
+    check!("nothing `open_sessions` offers is anything but open in planned_sessions, and it offers every one of them", open_ids != "" and Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE id IN (${open_ids}) AND COALESCE(status,'open') <> 'open';")) == "0" and str_to_i64(pj!(".data.open_sessions | length")) == str_to_i64(Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE COALESCE(status,'open') = 'open';"))))?
     # The guard measures the population the CHECK depends on, which is the table — and the
     # previous version measured `plan_history_28d`, left over from when the check read it
     # too. Those can no longer agree: history is windowed on both sides and the table is
