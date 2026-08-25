@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(908)?
+    checks_ran_exactly!(909)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3886,13 +3886,19 @@ b_command_schemas! = |ctx| {
     # `asc`/`desc` arms and refuses a second token that is neither. Pinned by name so a
     # fourth is a line in the diff rather than a silent member.
     check!("...and exactly what the table declares is never one, bar the three that parse-check their value (got: ${shortfall})", shortfall == "progress x x|reps x|week x|")?
+    # ...and one REQUIRED argument short is always a usage error, which is the half the two
+    # bounds above cannot see: they move with the TOTAL argument count, so flipping an
+    # optional to required leaves both unmoved. That is not cosmetic — declaring
+    # `complete <activity_id>` required erases `CompleteRest`, a named constructor with its
+    # own parse arm and its own declared `activity_required` code, which only makes sense
+    # if the argument can be omitted. `skip` has the identical shape (`Skip` vs `SkipWith`).
+    #
+    # NO exception list, unlike the upper bound's three: measured, all ten forms with a
+    # required argument answer `usage` one short. Being one argument shy is unambiguously an
+    # arity fact in a way that being one over is not.
+    required_short = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required)] | length > 0) | [.name] + [.args[] | select(.required) ${junk}][1:] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] || echo \"$line\"; done; true; } | tr '\\n' '|'"))
+    check!("one REQUIRED argument short is always a usage error (bad: ${required_short})", required_short == "")?
     check!("...and there were forms to test it on", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select(.network == false)] | length'")) != "0")?
-    # ...and FIVE forms now have neither arity bound checked — `activity`, `complete`,
-    # `import`, `rate`, `skip` — because each takes an id or a path that is not statically
-    # knowable. On origin/main they were covered with invented values; #257 declines to
-    # invent, and that is the price. Stated rather than quietly skipped, the same way the
-    # networked forms are named a few lines up. `import` left `under` in this round
-    # specifically, as a direct consequence of marking `<export.zip|dir>` unknowable.
     # ...and every declared example is a value the binary ACCEPTS, which the checks above
     # cannot tell: they assert the code is not `usage`, and every `bad_*` rejection passes
     # that. Measured, three explicit examples corrupted at once — `<days>` to
