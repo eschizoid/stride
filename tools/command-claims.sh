@@ -600,12 +600,49 @@ reqsig=$(awk -F'\t' '{ n = split($2, a, " "); s = ""; for (i = 1; i <= n; i++) i
 # the rows still exist either way. Gate on the token count first so each gets its own
 # sentence — review reproduced the misdiagnosis by declaring every arg optional, on a table
 # where `top` plainly still declared three.
+# ...and the LITERALS still read as themselves. `judge_trailing` reads THREE properties of
+# an arg: requiredness (`!`), placeholder-ness (`*"<"*`), and — at `[ "$_a" = "$_tok" ]` —
+# the literal's exact TEXT. The first two are pinned positionally above; this is the third,
+# and it was pinned by nothing.
+#
+# Measured survivor: renaming `sync`'s `--all` to `frobnicate` leaves BOTH signatures
+# byte-identical and all three gates green, and `stride sync frobnicate` is then accepted
+# where the real table refutes it. Renaming `week`'s `all` to `every` is caught today, but
+# by the CORPUS rather than by any pin — `SKILL.md` names `stride week all`, the single
+# reference in the whole corpus that reaches the rule. Reword that line and the cover is
+# gone; `sync` never had one.
+#
+# TEXT here, unlike the placeholder names above, and the asymmetry is the rule's own: it
+# never reads a placeholder's name, so `<limit>` to `<count>` must stay free, and it
+# compares a literal's name directly, so `all` to `every` is a semantic change that should
+# be reviewed. Two entries today. It grows on exactly the day this file's other comment
+# names — the day someone declares a literal at position 1 followed by anything — which is
+# the same day literal text becomes load-bearing.
+EXPECTED_LITERALS='sync=--all|week=all'
+littext=$(awk -F'\t' '{ n = split($2, a, " "); for (i = 1; i <= n; i++) { t = a[i]; sub(/^!/, "", t); if (t !~ /</) printf "%s=%s\n", $1, t } }' "$ARGS" | LC_ALL=C sort | tr '\n' '|' | sed 's/|$//')
+if [ "$littext" != "$EXPECTED_LITERALS" ]; then
+  echo "command-claims: declared literals changed." >&2
+  printf '%s\n' "$EXPECTED_LITERALS" | tr '|' '\n' | LC_ALL=C sort > "$SIGA"
+  printf '%s\n' "$littext" | tr '|' '\n' | LC_ALL=C sort > "$SIGB"
+  comm -23 "$SIGA" "$SIGB" | sed 's/^/  only in expected:  /' >&2
+  comm -13 "$SIGA" "$SIGB" | sed 's/^/  only in derived:   /' >&2
+  echo "command-claims: the rule compares a trailing token against a literal's exact text, so a rename here changes which references it accepts. Confirm each row above against \`stride --json --help\`, then update EXPECTED_LITERALS." >&2
+  exit 3
+fi
+
 # ...and no command NAME contains the `|` the two signatures are joined on. It cannot today
 # — the six arg names that do (`<hr|tss|…>`) never reach either signature, which carries
 # positions and not names — and a `|` in a name is already fail-loud rather than a false
 # pass, splitting one row of the diff into two. But a split row reports a puzzle; this
 # reports a cause.
-if grep -q "|" "$REAL"; then
+#
+# `cut -f1 "$ARGS"` and NOT `$REAL`: the signatures are built from `$ARGS` field 1, and
+# `$REAL` is a SEPARATE jq pass that can disagree with it. Grepping `$REAL` checks a proxy
+# for the input rather than the input, and a `|` reaching `$ARGS` field 1 with `$REAL` clean
+# slips the guard entirely — landing as seven identical `only in derived: x` rows naming
+# nothing, which is a worse puzzle than the split row this exists to prevent. Field 1 and
+# not the whole file, because the enum arg names legitimately contain `|`.
+if cut -f1 "$ARGS" | grep -q "|"; then
   echo "command-claims: a command name contains \`|\`, which is the separator both derived signatures are joined on — their diffs would split one row into two and name the wrong thing. Change the separator before landing that command." >&2
   exit 3
 fi
