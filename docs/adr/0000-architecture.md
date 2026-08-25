@@ -288,7 +288,13 @@ enforcement is `just e2e`, which runs `tools/validate.jq` against seeded fixture
 `just schema-check` runs the same validator against your own database and is the
 "does MY data conform" pass, local and not part of CI. Coverage is not total, and it now has three tiers rather than two. Four
 payloads (`complete`, `import`, `init`, `rate`) are validated by neither pass, so
-a key added to THOSE is currently caught by nothing. `tte` is covered by the local recipe
+a key added to THOSE is currently caught by nothing. `auth` would have been a fifth when
+#259 gave it a payload — it is excluded from `just schema-check` three times over, since
+that recipe selects `mutates == false and network == false and interactive == false` and
+the command table sets all three the other way — but `just e2e-sync` drives it against the
+loopback mock, so it sits in `sync`'s tier rather than in the uncovered set. Any future
+command that gains a schema and is mutating, networked or interactive lands in that set by
+default, and this sentence is the only place that says so. `tte` is covered by the local recipe
 but not by CI. `sync` is covered by a third pass: `just e2e-sync`, which drives it against loopback
 mocks and now runs in CI. That recipe was assumed to need a token and a live API and so
 was left out of CI for a long time; it needs neither — the mocks bind loopback, and the

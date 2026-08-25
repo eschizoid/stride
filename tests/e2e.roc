@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(852)?
+    checks_ran_exactly!(854)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -377,6 +377,33 @@ run_sync! = || {
     _ = sync_stride!(bin, home, base, ["config", "set", "hr_z2_max", "153"])
     _ = sync_stride!(bin, home, base, ["config", "set", "hr_z3_max", "168"])
     _ = sync_stride!(bin, home, base, ["config", "set", "hr_z4_max", "183"])
+
+    # ── auth, end to end against the mock (#259). The ONE payload path no other pass
+    # reaches: `just schema-check` selects `mutates == false and network == false and
+    # interactive == false`, and the command table sets all three the other way for `auth`,
+    # so this payload is validated by neither pass — the set ADR 0000 §9c enumerates.
+    #
+    # Without this arm the success envelope is pinned by nothing. Measured on the first
+    # cut: `Output.out!({ authorized: 1 == 2, expires_at: 0 }, ...)` — a successful auth
+    # reporting `authorized: false` — passed `just build`, `just e2e` and `just schema-check`
+    # at exit 0, and schema-check never printed the word "auth".
+    #
+    # It runs HERE rather than in `b_auth!` because it needs the mock's /oauth/token
+    # endpoint, which only this driver has. `b_auth!` keeps the refusal paths, which need
+    # no network.
+    ahome = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+    _ = sync_stride!(bin, ahome, base, ["init"])
+    auth_ok = Str.trim(sh!("echo fakecode | env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret HOME='${ahome}' STRIDE_API_BASE='${base}' STRIDE_FORMAT=json '${bin}' auth 2>/dev/null"))
+    check!("auth's success payload conforms to its schema", Str.trim(sh!("printf '%s' '${auth_ok}' | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/auth.json -f tools/validate.jq 2>&1")) == "")?
+    check!("...reporting the authorization it actually performed", Str.trim(sh!("printf '%s' '${auth_ok}' | jq -r '.data.authorized'")) == "true")?
+    # `tojson`, NOT `== "9999999999"`: the validator's integer test is `floor($v) == $v`,
+    # which `9999999999.0` passes, and a `"expires_at":9` substring passes too. The record
+    # literal carries no annotation and its render closure is `|_|`, so nothing in the
+    # source pins the type — the only thing making this an integer is `TokenResp.expires_at`
+    # two hops away in `decode_tokens`. The mock's value is deliberately not 0 or 1.
+    check!("...with an expiry the validator itself cannot type-check", Str.trim(sh!("printf '%s' '${auth_ok}' | jq -r '.data.expires_at | tojson'")) == "9999999999")?
+    check!("...and the tokens it stored are never in the payload", !(Str.contains(auth_ok, "mock-access")) and !(Str.contains(auth_ok, "mock-refresh")))?
+    _ = sh!("rm -rf '${ahome}'")
 
     _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','stale-access'),('strava_refresh_token','stale-refresh'),('strava_expires_at','1');")
 
@@ -591,7 +618,7 @@ run_sync! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_at_least!(41)?
+    checks_ran_at_least!(45)?
     Stdout.line!("SYNC E2E CHECKS PASS")
 }
 
@@ -1577,6 +1604,13 @@ b_auth! = |ctx| {
     # would pass everything above and leave `stride auth` printing nothing to a human.
     auth_human = sh!("${creds} STRIDE_FORMAT=human '${ctx.bin}' auth < /dev/null 2>/dev/null")
     check!("...and human mode still prints the instructions on stdout", Str.contains(auth_human, "Copy the code=XXXX value"))?
+    # ...as LINES, which `Str.contains` cannot see. Swapping human mode's `Stdout.line!`
+    # for `Stdout.write!` left the suite green while welding the whole screen into one
+    # string — the authorize URL fused to the `2)` that follows it, so the manual fallback
+    # the flow depends on is not even selectable as a URL. Presence on a channel and
+    # legibility are different properties, and only the first was asserted.
+    check!("...as separate lines, not one welded string", str_to_i64(Str.trim(sh!("${creds} STRIDE_FORMAT=human '${ctx.bin}' auth < /dev/null 2>/dev/null | wc -l | tr -d ' '"))) >= 6)?
+    check!("...with the authorize URL alone on its own line, since it is the manual fallback", Str.trim(sh!("${creds} STRIDE_FORMAT=human '${ctx.bin}' auth < /dev/null 2>/dev/null | grep -c '^   https://www.strava.com/oauth/authorize' | tr -d ' '")) == "1")?
     Ok({})
 }
 
