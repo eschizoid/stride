@@ -273,7 +273,21 @@ run_all! = || {
     _ = sh!("touch '.e2e-checks.${probe_mode}.${probe_mypid}' '.e2e-checks.${probe_mode}.999999' '.e2e-checks.${probe_mode}.notapid'")
     reset_checks!({})?
     check!("the litter sweep keeps a tally whose owner is still running", Str.trim(sh!("[ -e '.e2e-checks.${probe_mode}.${probe_mypid}' ] && echo kept || echo swept")) == "kept")?
-    check!("...collects one whose owner is gone", Str.trim(sh!("[ -e '.e2e-checks.${probe_mode}.999999' ] && echo kept || echo swept")) == "swept")?
+    # ...CONDITIONALLY, because asserting collection unconditionally cancels the `ps` guard
+    # on the one platform that guard exists for. Measured on a PATH with no `ps`: the suite
+    # died here, at check 2 of 851, before a single assertion about stride ran — under a
+    # message about litter collection, which is the attribution complaint this whole change
+    # is about. The sweep is a tidy-up by its own comment; the probe was promoting it to a
+    # gate on everything.
+    #
+    # This asserts the DEGRADATION instead: with `ps`, the dead owner's file is collected;
+    # without it, nothing is. Both are the correct outcome for their world, and the guard
+    # becomes detectable on the ps-less one — remove it there and the blanket sweep deletes
+    # the LIVE sentinel, failing check 1. On a normal PATH the guard stays undetectable,
+    # which is inherent: a suite that has `ps` cannot observe what happens without it, the
+    # same shape as the EPERM gap recorded beside `sweep_litter!`.
+    ps_ok = Str.trim(sh!("command -v ps >/dev/null 2>&1 && echo yes || echo no")) == "yes"
+    check!("...collects one whose owner is gone, or with no `ps` collects nothing at all", Str.trim(sh!("[ -e '.e2e-checks.${probe_mode}.999999' ] && echo kept || echo swept")) == (if ps_ok "swept" else "kept"))?
     # ...and leaves a suffix that is not a pid alone. That is the shape a quoting regression
     # produces — a literal `.e2e-checks.<mode>.$PPID` — and collecting it would hide exactly
     # the defect `tally_is_scoped!` exists to catch.
