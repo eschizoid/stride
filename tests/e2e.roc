@@ -305,7 +305,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    checks_ran_exactly!(859)?
+    checks_ran_exactly!(862)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -4508,6 +4508,32 @@ b_plan! = |ctx| {
     near_refusal = stride!(ctx.bin, ctx.home, ["complete", near_id])
     check!("a refusal lists the activity ids actually near that date", Str.contains(near_refusal, "Activities near that date"))?
     check!("...naming the real activity, not a placeholder", Str.contains(near_refusal, "101"))?
+    # ...and an UNRANKABLE timestamp cannot be candidate #1 (#255). This list is the write
+    # path's shortlist — the caller picks from it and the pick becomes
+    # `completed_activity_id` — and it ranked on the whole column, so a valid date with an
+    # impossible time sorted above every real row. `T37:00:00` is the shape
+    # `export_date_to_iso` is documented to have produced from `"25:00:00 PM"`.
+    #
+    # Measured, same fixture, ordering reverted: the impossible row is offered FIRST, ahead
+    # of a real activity on the same day. The rule that fixes it is #247's — the guard's
+    # domain must equal its consumer's — so the ranker orders on the same expression the
+    # rankability test validates, and unrankable rows sort last rather than being excluded:
+    # a row that needs repair must stay visible.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (7701,'impossible time','Ride','${near_date}T37:00:00Z',3600,20000);")
+    # Which id appears FIRST in the hint, read through the shell — the file has no
+    # string-index helper and adding one for a single comparison is more surface than the
+    # assertion is worth.
+    first_cand = Str.trim(sh!("HOME='${ctx.home}' '${ctx.bin}' complete ${near_id} 2>&1 | grep -oE '^  (101|7701)  ' | head -1 | tr -d ' '"))
+    check!("...ranking a real timestamp above an unrankable one", first_cand == "101")?
+    check!("...while still LISTING the unrankable row, which needs repair rather than hiding", Str.contains(stride!(ctx.bin, ctx.home, ["complete", near_id]), "7701"))?
+    # ...and a bad DATE with a fine time, which is the other half of the rule. The time
+    # half cannot subsume it: `datetime()` accepts the impossible `2026-02-30` on the CLI's
+    # 3.43.2, which is the version split `date_known_sql_for` records. Without this the
+    # date half can be deleted from the predicate and the suite stays green — measured.
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 7701;")
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (7702,'impossible date','Ride','1000-02-30T09:00:00Z',3600,20000);")
+    check!("...and an unreadable DATE loses to a real one too, not only an unreadable time", Str.trim(sh!("HOME='${ctx.home}' '${ctx.bin}' complete ${near_id} 2>&1 | grep -oE '^  (101|7702)  ' | head -1 | tr -d ' '")) == "101")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 7702;")
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${near_id};")
     check!("rest bare complete", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "3"]), "\"rest\":true"))?
     check!("rest is done in db", Str.trim(sql!(ctx.db, "SELECT status FROM planned_sessions WHERE id=3;")) == "done")?

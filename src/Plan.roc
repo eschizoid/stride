@@ -298,7 +298,7 @@ Plan :: [].{
                 \\                   OR NOT EXISTS (SELECT 1 FROM planned_sessions p3
                 \\                                  WHERE p3.target_date = ps.target_date
                 \\                                    AND (COALESCE(p3.status,'open') <> 'skipped' OR p3.id > ps.id)))))
-                \\ORDER BY a.start_local
+                \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Asc)}
             ,
             bindings: [{ name: ":all", value: Integer(scope_all) }],
             rows: |cols| |stmt| {
@@ -647,7 +647,7 @@ Plan :: [].{
                 \\JOIN planned_sessions p ON p.id = :pid
                 \\WHERE a.start_local >= date(p.target_date, '-1 day')
                 \\  AND a.start_local <  date(p.target_date, '+2 day')
-                \\ORDER BY a.start_local DESC, a.id DESC
+                \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC
                 \\LIMIT 5
             ,
             bindings: [{ name: ":pid", value: Integer(session_id) }],
@@ -944,7 +944,7 @@ Plan :: [].{
                         \\       COALESCE(m.load_model, '') AS load_model
                         \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                         \\WHERE a.start_local >= :cutoff
-                        \\ORDER BY a.start_local DESC, a.id DESC
+                        \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC
                     ,
                     bindings: [{ name: ":cutoff", value: String(cutoff14) }],
                     rows: |cols| |stmt| {

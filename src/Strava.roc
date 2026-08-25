@@ -472,7 +472,7 @@ Strava :: [].{
                 \\SELECT a.id AS id FROM activities a
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\WHERE s.activity_id IS NULL AND a.moving_time > 0
-                \\ORDER BY a.start_local DESC
+                \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}
             ,
             bindings: [],
             rows: Sqlite.i64("id"),

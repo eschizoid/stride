@@ -285,7 +285,7 @@ Analyze :: [].{
                 \\LEFT JOIN ratings r ON r.activity_id = a.id
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\${pending_where(zones_case)}
-                \\ORDER BY a.start_local, a.id LIMIT 64
+                \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Asc)}, a.id LIMIT 64
             ,
             bindings: [
                 { name: ":rev", value: Integer(metrics_rev) },

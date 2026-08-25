@@ -1825,6 +1825,58 @@ Metrics :: [].{
     # site that goes on to use the value takes this one, and none of them ends up with a
     # second parse whose failure arm is unreachable — which is a silent-drop arm sitting in
     # code, waiting for the predicate to be weakened.
+    # ── the SQL twins of usable_date_days, for the sites that need the answer INSIDE a
+    # query. They live beside the Roc rule they have to agree with, and in a module every
+    # caller can import: `Analyze` and `Strava` also rank on this column and cannot import
+    # `Report`, which imports them.
+
+    # "is this activity's stored date readable", over a caller-named column.
+    #
+    # The ROUND TRIP through SQLite's own date(), plus the year bound. It agrees with
+    # usable_date_days on every shape measured, impossible-but-well-formed days included
+    # ('2026-02-30', '1000-02-30'), and that agreement is version-dependent: the system CLI
+    # is 3.43.2 and returns '2026-02-30' verbatim, while the binary links 3.49.1 and does
+    # not. `date_known` is a PUBLISHED boolean SKILL.md tells the coach to trust, so the
+    # e2e fixture for '1000-02-30' — the one shape only the newer date() rejects — is what
+    # holds SQL to the Roc rule across a platform upgrade.
+    date_known_sql_for : Str -> Str
+    date_known_sql_for = |col| "(CASE WHEN ${col} IS NULL OR date(substr(${col}, 1, 10)) IS NOT substr(${col}, 1, 10) OR substr(${col}, 1, 4) < '1000' THEN 0 ELSE 1 END)"
+
+    # "is this timestamp RANKABLE", and the ordering that uses it — emitted together, as one
+    # clause, because #247 showed that is the only form that stays correct (#255).
+    #
+    # `rate latest` compared `MAX(start_local)` as a string, so a malformed timestamp
+    # outranked every real one and the rating landed on the wrong activity. The rule that
+    # fixed it is structural: THE GUARD'S DOMAIN MUST EQUAL ITS CONSUMER'S. #247 re-derived
+    # that invariant four times and came up short each time — day vs day, day vs timestamp,
+    # ten characters vs the whole string, nineteen vs the whole string — and only stopped
+    # once the guard and the ranker became the same expression. Eight other queries ordered
+    # on the whole column with no such guarantee.
+    #
+    # TWO terms, always both, which is why this returns the clause rather than a predicate a
+    # caller has to remember to pair with a key. The flag sorts DESC unconditionally so
+    # unrankable rows go last in EITHER direction: NULL is SQLite's smallest value, so a
+    # bare `key DESC` would put them last but a bare `key ASC` would put them FIRST, and two
+    # of these sites order ascending. A helper that is correct only half the time is the
+    # shape this consolidation exists to remove.
+    #
+    # The date half is `date_known_sql_for`, not a second spelling of it. The TIME half is
+    # `datetime(...) IS NOT NULL`, which rejects `37:00:00` and `09:99:00` — the shapes
+    # `export_date_to_iso` is documented to have produced from `"25:00:00 PM"` — while
+    # accepting a bare date, which is rankable and sorts as midnight. It cannot subsume the
+    # date half: `datetime()` accepts the impossible `2026-02-30` on 3.43.2, the same
+    # version split `date_known_sql_for` records above.
+    rank_ts_sql : Str, [Asc, Desc] -> Str
+    rank_ts_sql = |col, dir| {
+        d =
+            match dir {
+                Asc => "ASC"
+                Desc => "DESC"
+            }
+        ok = "${date_known_sql_for(col)} = 1 AND datetime(substr(${col}, 1, 19)) IS NOT NULL"
+        "(CASE WHEN ${ok} THEN 1 ELSE 0 END) DESC, (CASE WHEN ${ok} THEN substr(${col}, 1, 19) ELSE NULL END) ${d}"
+    }
+
     usable_date_days : Str -> Try(I64, _)
     usable_date_days = |s|
         match date_str_to_days(s) {
@@ -2642,6 +2694,26 @@ expect
     }
 
 # NP requires at least 30 samples
+# rank_ts_sql emits TWO terms, and the FLAG is the half no fixture can reach from a DESC
+# site: NULL is SQLite's smallest value, so `key DESC` already puts unrankable rows last
+# and dropping the flag is invisible there. It is `key ASC` that inverts — unrankable
+# FIRST — and two of the sites using this order ascending. Measured: dropping the flag
+# survived the whole suite, because the only behavioural fixture is a DESC site.
+#
+# So the shape is pinned directly. The flag is always DESC regardless of the caller's
+# direction, which is exactly what makes one helper correct in both.
+expect Str.contains(Metrics.rank_ts_sql("a.start_local", Asc), "END) DESC,")
+expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "END) DESC,")
+expect Str.ends_with(Metrics.rank_ts_sql("a.start_local", Asc), " ASC")
+expect Str.ends_with(Metrics.rank_ts_sql("a.start_local", Desc), " DESC")
+# ...and both halves of rankability are present. Each is separately deletable and each
+# survived a fixture aimed only at the other.
+expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "datetime(substr(a.start_local, 1, 19)) IS NOT NULL")
+expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "date(substr(a.start_local, 1, 10))")
+# the caller's column reaches every term — a helper that hardcoded one would be wrong at
+# the one site that ranks on a bare `start_local` rather than `a.start_local`
+expect !(Str.contains(Metrics.rank_ts_sql("start_local", Desc), "a.start_local"))
+
 expect Metrics.normalized_power(List.repeat(200.0, 10)).is_err()
 
 # riding exactly at FTP for one hour == 100 TSS

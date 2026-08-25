@@ -783,7 +783,7 @@ ReportSessions :: [].{
                 \\FROM activity_segments s JOIN activities a ON a.id = s.activity_id
                 \\WHERE s.kind = 'work' AND (:d = '' OR substr(a.start_local, 1, 10) = :d)
                 \\GROUP BY s.activity_id
-                \\ORDER BY a.start_local DESC, a.id DESC LIMIT 1
+                \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC LIMIT 1
             ,
             bindings: [{ name: ":d", value: String(date_arg) }],
             rows: |cols| |stmt| {
@@ -1052,7 +1052,7 @@ ReportSessions :: [].{
                     query:
                         \\SELECT COALESCE(substr(a.start_local, 1, 10), '') AS d, a.name AS name, a.id AS id
                         \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
-                        \\ORDER BY a.start_local DESC, a.id DESC LIMIT 1
+                        \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC LIMIT 1
                     ,
                     bindings: [],
                     rows: |cols| |stmt| {
