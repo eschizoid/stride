@@ -6317,20 +6317,42 @@ tally_is_scoped! = |{}| {
 # edit to either would have left the probe asserting the wrong world. Same lesson as this
 # file's round-1 defect, one level up: one definition, two call sites.
 #
-# `ps -p $$` and NOT `command -v ps`. Busybox HAS `ps`, so `command -v` finds it and the
-# guard never fires — and busybox `ps` rejects `-p`, so the sweep's `ps -p` fails for every
-# pid and it deletes every tally including a live owner's. That is the blanket behaviour
-# this change removed, back on exactly the platform the guard was added to protect.
-# Measured with a stub on PATH: `command -v ps` passes, the driver fails
-# `...owner is still running`, and the live sentinel is gone. `$$` is the probing shell, so
-# it is guaranteed alive, and the probe covers `ps` ABSENT and `ps` WITHOUT `-p` alike.
+# Probe the CAPABILITY THE SWEEP NEEDS, which is the correction this line has now taken
+# twice. `command -v ps` tested EXISTENCE: a `ps` that exists but rejects `-p` passes it,
+# and then the sweep's `ps -p` fails for every pid and it deletes every tally including a
+# live owner's — the blanket behaviour this change removed, restored on exactly the
+# platform the guard was added to protect. `ps -p $$` tested SELF-VISIBILITY, which is
+# still the wrong subject: the sweep never asks about its own shell, it asks about OTHER
+# processes, and a `ps` can have the first capability without the second. Linux `/proc`
+# mounted `hidepid=1`/`hidepid=2` — hardened distros, several container runtimes — shows
+# you your own processes and hides everyone else's, exiting 1 rather than erroring. There
+# the self-probe passes, the sweep judges the live driver dead, and blanket-deletes.
 #
-# NOT covered: a `ps` that accepts `-p`, ignores it, and exits 0 for anything. Detecting
-# that needs a pid guaranteed dead, and 999999 is not reliably above `pid_max` on Linux.
-# Busybox's actual behaviour on an unknown option is to print usage and exit non-zero,
-# which is the covered case, so the uncovered one is the pathological variant.
+# `$PPID` is the driver: a live process that is NOT the probing shell, and guaranteed alive
+# because it is waiting on that shell. Measured through the shipped binary against four
+# `ps` variants, each stub verified live before its row was read:
+#
+#   variant                    `ps -p $$`                  `ps -p $PPID`
+#   real ps                    green, dead collected       green, dead collected
+#   exists, rejects -p         green, bails                green, bails
+#   accepts -p, ignores it     red at check 2              red at check 2
+#   sees only its caller       RED at check 1, live        green, bails
+#                              tally destroyed first
+#
+# Strictly dominant: it bails everywhere `$$` bails, plus the visibility-restricted case,
+# and regresses nothing. The ordering in that fourth row is what makes it worth a token —
+# the deletion happens and THEN check 1 reports it, so under concurrency another run's
+# tally is already gone by the time the red appears.
+#
+# NOT covered: a `ps` that accepts `-p`, ignores it, and exits 0 for anything. Tolerable
+# because it fails LOUDLY — measured, it reddens the suite at check 2 and destroys nothing.
+# A guard exists for the SILENT case. Covering it would need a pid guaranteed dead, and
+# 999999 is not reliably above `pid_max` on Linux. Described by BEHAVIOUR and not by naming
+# a platform: the earlier version of this comment asserted what busybox does on an unknown
+# option, which was reasoning rather than measurement, bought nothing, and had already been
+# written into the source as fact.
 ps_usable! : {} => Bool
-ps_usable! = |{}| Str.trim(sh!("ps -p $$ >/dev/null 2>&1 && echo yes || echo no")) == "yes"
+ps_usable! = |{}| Str.trim(sh!("ps -p $PPID >/dev/null 2>&1 && echo yes || echo no")) == "yes"
 
 sweep_litter! : {} => {}
 sweep_litter! = |{}| {
