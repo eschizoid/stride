@@ -285,8 +285,8 @@ run_all! = || {
     # world, and the guard becomes detectable on the degraded one — remove it there and the
     # blanket sweep deletes the LIVE sentinel, failing check 1. Where `ps -p` works the
     # guard stays undetectable, which is inherent: a suite with a working `ps` cannot
-    # observe what happens without one, the same shape as the EPERM gap recorded beside
-    # `sweep_litter!`. Note the corollary — on a degraded platform, unwiring the sweep and
+    # observe what happens without one, the same shape as the EPERM gap recorded inside
+    # `reset_checks!`. Note the corollary — on a degraded platform, unwiring the sweep and
     # bailing out of it produce the same program, so unwiring is undetectable there too.
     # That is not a hole: detection lapses exactly where the thing detected stops existing.
     #
@@ -6417,15 +6417,24 @@ reset_checks! = |{}| {
     # So the sweep treated "alive but not mine" as dead and deleted the file. Narrow blast
     # radius — it needs another user's concurrent run in a shared checkout — but the
     # comment asserted a verified safety property that measurement contradicts, in the PR
-    # about exactly that. `ps -p` has the semantics the paragraph claimed all along.
+    # about exactly that. On a default `/proc`, `ps -p` has the semantics the paragraph
+    # claimed all along — but not on a restricted one; see the another-user gap recorded
+    # beside `ps_usable!`, where a live process of another user is invisible and its tally
+    # is collected.
     #
     # GUARDED on `ps -p` WORKING, via `ps_usable!`. Without a guard the fallback is not "the
-    # sweep stops working" but the blanket `rm` this PR removed: `ps -p` exits 127 when the
-    # binary is missing and non-zero when it rejects `-p`, `||` fires either way, and every
-    # tally goes — live ones included — with the sweep still exiting 0. Measured, on a PATH
-    # holding sh/sed/printf/rm but no ps: guarded, a live owner AND a dead owner are both
-    # KEPT; with ps present, live kept and dead collected. So it degrades to leak, never to
-    # destroy.
+    # sweep stops working" but the blanket `rm` this PR removed: any non-zero `ps -p` makes
+    # `||` fire, and every tally goes — live ones included — with the sweep still exiting 0.
+    #
+    # Stated as an EXIT-STATUS PARTITION deliberately, because that needs no claim about what
+    # any `ps` implementation does: `ps -p $$` either exits 0 or it does not. Every non-zero
+    # bails — missing (127, which is POSIX for command-not-found and so a property of the
+    # SHELL rather than of one binary I stubbed), rejecting the flag, or visibility-
+    # restricted. The only case that proceeds is exit 0, and the uncovered case is then the
+    # one remaining cell — a `ps` that exits 0 without honouring `-p` — rather than a
+    # separate assertion about a platform. Measured, on a PATH holding sh/sed/printf/rm but
+    # no ps: guarded, a live owner AND a dead owner are both KEPT; with ps present, live kept
+    # and dead collected. So it degrades to leak, never to destroy.
     #
     # The guard tests the CAPABILITY, not the binary's existence. An earlier version tested
     # `command -v ps` and justified itself by `command` being a POSIX built-in — true, and
@@ -6433,7 +6442,7 @@ reset_checks! = |{}| {
     # destroys everything. This paragraph said so for two commits after the code stopped
     # doing it.
     #
-    # It is also the only form that reaches the interrupt path: Ctrl-C during a 50-second
+    # The sweep is also the only form that reaches the interrupt path: Ctrl-C during a 50-second
     # suite is the ordinary case, and no in-process cleanup can ever run there.
     #
     # Pid reuse is why this is a tidy-up rather than a correctness measure: the scoped
