@@ -1863,9 +1863,20 @@ Metrics :: [].{
     # The date half is `date_known_sql_for`, not a second spelling of it. The TIME half is
     # `datetime(...) IS NOT NULL`, which rejects `37:00:00` and `09:99:00` — the shapes
     # `export_date_to_iso` is documented to have produced from `"25:00:00 PM"` — while
-    # accepting a bare date, which is rankable and sorts as midnight. It cannot subsume the
-    # date half: `datetime()` accepts the impossible `2026-02-30` on 3.43.2, the same
-    # version split `date_known_sql_for` records above.
+    # accepting a bare date, which is rankable and sorts as midnight.
+    #
+    # It cannot subsume the date half, and this holds on BOTH sqlite versions in play rather
+    # than being version-contingent as an earlier draft of this said. `2026-02-30T09:00:00`
+    # is non-NULL to `datetime()` on 3.43.2 (verbatim) and on 3.49.1 (NORMALISED to
+    # `2026-03-02 09:00:00`), so the row is rankable either way. Normalised, not rejected,
+    # is the mechanism worth stating: `date_known_sql_for` catches an impossible day because
+    # it is a round-TRIP EQUALITY test, not a NULL test — which is exactly why a reader who
+    # assumes `datetime()` rejects impossible dates reaches the wrong conclusion.
+    #
+    # One edge the "rejects impossible times" framing does not cover: `T24:00:00` is
+    # non-NULL on 3.49.1 and therefore rankable. It happens to sort correctly, and
+    # `export_date_to_iso` now refuses hour > 23 so no new writes produce it; legacy rows
+    # could. Not a defect, just not the universal the sentence above implies.
     rank_ts_sql : Str, [Asc, Desc] -> Str
     rank_ts_sql = |col, dir| {
         d =
@@ -2710,6 +2721,12 @@ expect Str.ends_with(Metrics.rank_ts_sql("a.start_local", Desc), " DESC")
 # survived a fixture aimed only at the other.
 expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "datetime(substr(a.start_local, 1, 19)) IS NOT NULL")
 expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "date(substr(a.start_local, 1, 10))")
+# ...and the KEY's own domain, which is the invariant this whole change is about turned
+# on the helper enforcing it. Shrinking the key to `substr(col, 1, 10)` while leaving the
+# guard at 1..19 passed the entire suite: guard domain 19, consumer domain 10, inside
+# `rank_ts_sql`. It collapses every intra-day comparison to a tie, which falls through to
+# `a.id` at six sites and to NOTHING at Plan.roc:301 and Strava.roc:475.
+expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "THEN substr(a.start_local, 1, 19) ELSE NULL END")
 # the caller's column reaches every term — a helper that hardcoded one would be wrong at
 # the one site that ranks on a bare `start_local` rather than `a.start_local`
 expect !(Str.contains(Metrics.rank_ts_sql("start_local", Desc), "a.start_local"))
