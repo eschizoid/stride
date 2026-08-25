@@ -11,7 +11,8 @@
 /.e2e-sqlfail
 /.e2e-sqlfail.err
 # per-check tally, so a driver can assert it ran the checks it contains (#232);
-# reset on entry to each driver rather than removed at the end, so a run leaves it behind
+# scoped per process and removed by the guard that reads it (#266); a run that FAILS before
+# its guard still leaves one, which is why the glob stays broad
 /.e2e-checks*
 
 # scratch build binaries from build/debug cycles (only /stride is kept)

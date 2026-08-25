@@ -260,18 +260,6 @@ run_all! = || {
     # Two halves, and both are needed. The positive one alone passes if the path gains a
     # pid AND keeps the shared name; the negative one alone passes on any machine where
     # no run has ever created the shared file, which on a fresh checkout is every machine.
-    # RESOLVE the path and compare it against this process's pid. An earlier cut asserted
-    # file existence instead — "the shared name is not in use" and "the scoped file exists"
-    # — and BOTH survived reverting the path to the shared name, because `reset_checks!`
-    # deletes whatever `checks_log!` names immediately before, so "that file does not exist
-    # yet" is true under every implementation, and "that file exists now" is true as soon
-    # as any check has appended to it, whatever it is called. Two assertions about the same
-    # file, neither able to tell which file it was.
-    #
-    # `sh -c` is a child of this binary, so `$PPID` inside it is this driver's pid — the
-    # same expansion `checks_log!` relies on, read back independently here.
-    mypid = Str.trim(sh!("echo $PPID"))
-    check!("the tally path carries this process's pid, so two runs cannot share it", mypid != "" and Str.ends_with(Str.trim(sh!("echo \"${checks_log!({})}\"")), ".${mypid}"))?
     bin = env_or!("STRIDE_BIN", "./stride")
     home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
     # Anchor the harness to the SAME clock the binary will use. These used to be
@@ -325,12 +313,7 @@ run_all! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
-    # ...and nothing wrote to the shared name along the way. AT THE END, deliberately: a
-    # driver's very first check runs just after `reset_checks!` has deleted that file, so
-    # asserting its absence there is true under every implementation — measured, it
-    # survived reverting the whole fix. By here, hundreds of appends have happened, so a
-    # `check!` that also wrote to the shared path would have created it.
-    check!("nothing wrote to the shared tally name two concurrent runs would collide on", Str.trim(sh!("[ -e '.e2e-checks.${env_or!("E2E_MODE", "e2e")}' ] && echo shared || echo scoped")) == "scoped")?
+    tally_is_scoped!({})?
     checks_ran_exactly!(912)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
@@ -672,6 +655,7 @@ run_sync! = || {
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
+    tally_is_scoped!({})?
     checks_ran_at_least!(50)?
     Stdout.line!("SYNC E2E CHECKS PASS")
 }
@@ -756,6 +740,7 @@ run_skips! = || {
     _ = sh!("rm -rf '${home}'")
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     reset_sqlite_errors!({})
+    tally_is_scoped!({})?
     checks_ran_at_least!(16)?
     Stdout.line!("SKIPS E2E CHECKS PASS")
 }
@@ -1179,6 +1164,7 @@ run_stops! = || {
     # Per MODE. run_stops! has three branches of very different size, and a single floor
     # has to be the smallest of them — which makes it loosest where the branch is biggest.
     # At a shared floor of 8 the budget branch could lose a third of its checks unseen.
+    tally_is_scoped!({})?
     checks_ran_at_least!(
         if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
             # its own floor: this branch returns before the shared drain assertions, so the
@@ -6236,12 +6222,53 @@ is_nonempty = |s| !(Str.is_empty(Str.trim(s))) and Str.trim(s) != "null"
 checks_log! : {} => Str
 checks_log! = |{}| ".e2e-checks.${env_or!("E2E_MODE", "e2e")}.$PPID"
 
+# Asserts on the FILE, not on the string `checks_log!` returns, and that distinction is the
+# whole value of this function. A first cut resolved the path through a separate `sh -c` and
+# compared it to `$PPID` read back the same way — so it never observed the file the appends
+# land in. Review then made the natural "harden the shell" edit, single-quoting the path at
+# the four sites that touch it, which stops `$PPID` expanding: every run appended to a file
+# literally named `.e2e-checks.e2e.$PPID`, two concurrent runs corrupted each other exactly
+# as #266 describes (`1629 == 848` and `22 == 848`), and BOTH new checks printed `ok`.
+#
+# So this looks for the file whose name carries this process's pid, and requires it to be
+# non-empty — which only the real append path can make true. It runs at the END of a driver,
+# after hundreds of appends, for the same reason: at the start `reset_checks!` has just
+# deleted it, so any statement about it is true under every implementation.
+#
+# The absence half is about the PRE-#266 shared name. `reset_checks!` removes it on entry
+# (see the note there), so finding it here means something in THIS run wrote it.
+#
+# Called by every driver, not just `run_all!`. The other three guard with
+# `checks_ran_at_least!`, where collision-induced over-counting passes by construction — so
+# they are the ones that structurally cannot notice a shared tally, and leaving them out put
+# the assertion only where a collision was already detectable. Measured: scoping the path
+# per-process for the default mode alone and leaving sync/skips/stops on the fixed name was
+# green in both suites.
+tally_is_scoped! : {} => Try({}, _)
+tally_is_scoped! = |{}| {
+    mypid = Str.trim(sh!("echo $PPID"))
+    mode = env_or!("E2E_MODE", "e2e")
+    check!("this driver's appends landed in a tally named for its own process", mypid != "" and Str.trim(sh!("[ -s '.e2e-checks.${mode}.${mypid}' ] && echo yes || echo no")) == "yes")?
+    check!("...and nothing in this run wrote the shared name two runs would collide on", Str.trim(sh!("[ -e '.e2e-checks.${mode}' ] && echo shared || echo scoped")) == "scoped")
+}
+
 # Fails LOUDLY. sh! swallows exit codes, and a reset that silently does not happen leaves
 # a stale tally that makes the floor pass for a driver that ran nothing — the guard
 # failing in the one direction it exists to prevent. So verify the file is gone.
 reset_checks! : {} => Try({}, _)
 reset_checks! = |{}| {
     _ = sh!("rm -f ${checks_log!({})}")
+    # ...and the PRE-#266 name, once, on entry. Every checkout that ever ran the old code
+    # holds a stale `.e2e-checks.<mode>` — the old design left it behind deliberately, and
+    # `.gitignore` said so — so the end-of-driver assertion that nothing wrote that name
+    # would fire on the first run after upgrading, in a worktree where nothing did. That is
+    # a red naming the guard rather than the cause, which is the exact failure this whole
+    # change exists to remove, reintroduced by the guard added to remove it. Measured: 18 of
+    # 19 sibling worktrees on this machine held one.
+    #
+    # Removing it HERE and asserting its absence at the END is what makes the assertion mean
+    # "this run did not write it" rather than "this directory happens to be clean".
+    _ = sh!("rm -f .e2e-checks.${env_or!("E2E_MODE", "e2e")}")
     left = Str.trim(sh!("wc -l 2>/dev/null < ${checks_log!({})} || echo 0"))
     if left == "0" {
         Ok({})
