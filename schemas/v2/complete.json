@@ -6,7 +6,7 @@
   "required": [
     "completed_session",
     "replaced_activity",
-    "released_substitute"
+    "dropped_substitute"
   ],
   "properties": {
     "completed_session": {
@@ -22,9 +22,9 @@
       "type": "integer",
       "description": "The activity whose completion of this session was REPLACED by this call, or 0 if none was. `complete` on a session that is already `done` overwrites the link — it is the documented repair for a mis-linked completion, and `skip`'s own refusal message names it as such — but until #258 the payload was indistinguishable from a first-time completion, so a typo'd session id rewrote real history and reported plain success. Always present rather than optional: a consumer deciding whether history was rewritten must not have to tell an absent key from a zero. 0 is a safe sentinel for the same reason `ftp_used > 0` is the house discriminator (AGENTS.md) — this names an activity id, and no activity has id 0."
     },
-    "released_substitute": {
+    "dropped_substitute": {
       "type": "integer",
-      "description": "The activity that was standing in for this session as a substitute and no longer is, or 0 if none was. `complete` NULLs `substitute_activity_id` on both forms, so completing a session that had been `skipped` with a substitute destroys the only record that the athlete did that activity in its place. Same name and meaning as `skip`'s key. Silent when the substitute IS the completing activity: that is a promotion, not a loss, and the caller still holds the link."
+      "description": "The activity that was standing in for this session as a substitute and no longer is, or 0 if none was. `complete` NULLs `substitute_activity_id` on every form, so completing a session that had been `skipped` with a substitute destroys the only record that the athlete did that activity in its place. Reports 0 rather than being omitted, unlike `skip`.s `released_substitute` \u2014 which is why it does NOT reuse that name: the two would share a key and disagree about what absence means, so a consumer using `has()` (correct on `skip`) would read a release on every completion. Silent when the substitute IS the completing activity: that is a promotion, not a loss, and the caller still holds the link."
     },
     "released_substitute_of": {
       "type": "integer",

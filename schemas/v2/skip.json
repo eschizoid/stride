@@ -15,7 +15,8 @@
       "type": "string"
     },
     "substitute_activity": {
-      "type": "integer"
+      "type": "integer",
+      "description": "The activity done in place of this session. Spelled without `_id` here while `plan.json` and `week.json` require `substitute_activity_id` for the same concept — the payload is the outlier, not this schema, and the schema is what moved because renaming a payload key is a field REMOVAL and would bump the envelope version (ADR 0000 §9c) while fixing the doc is free. Do NOT 'finish the job' by renaming the other two: that would be a real break dressed as consistency. Retiring the second spelling belongs behind a future bump."
     },
     "released_substitute": {
       "type": "integer"

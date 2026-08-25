@@ -650,7 +650,7 @@ Plan :: [].{
                                     { name: ":pid", value: Integer(session_id) },
                                 ],
                             })?
-                            # `replaced_activity` and `released_substitute` on EVERY arm,
+                            # `replaced_activity` and `dropped_substitute` on EVERY arm,
                             # always present, 0 when nothing was destroyed. Both report a
                             # question a consumer has to ask on every completion — did this
                             # call erase judgment-tier data? — so absence is indistinguishable
@@ -666,6 +666,18 @@ Plan :: [].{
                             # DIFFERENT session, meaningful only when it happened; there is
                             # no per-completion question it answers.
                             #
+                            # `dropped_substitute`, NOT `released_substitute`, which is what
+                            # the first cut called it "reusing skip's name and meaning". The
+                            # name matched; the absence contract was the opposite. `skip`
+                            # OMITS `released_substitute` when nothing was released, and
+                            # `tests/e2e.roc` pins that with a `!contains` — so a consumer
+                            # that correctly learned `has("released_substitute")` there
+                            # would read "a substitute was released" on every completion,
+                            # including a plain first one. That is this field's own bug,
+                            # re-created across commands instead of within one.
+                            # `dropped_substitute` collides with nothing, and it is the word
+                            # the human line beside it already uses.
+                            #
                             # `prior != 0` was here and did nothing: when `prior` is 0 the
                             # else branch and `prior` are the same value, so the guard could
                             # not change an outcome. An unfalsifiable clause reads as if it
@@ -678,13 +690,24 @@ Plan :: [].{
                             # not a loss, and reporting it as released would name a link the
                             # caller still holds.
                             released = if prior.s != activity_id prior.s else 0
-                            replaced_note = if replaced != 0 " (replacing activity ${I64.to_str(replaced)}, whose completion of this session is now gone)" else ""
+                            # ...and the note NAMES THE REPAIR, because this line is the only
+                            # place the erased id survives. Nothing stores it: `week` and
+                            # `plan` show the new `completed_activity_id`, the old one is
+                            # overwritten in place, and there is no audit row — so an
+                            # athlete who notices next week has shell scrollback and nothing
+                            # else. Printing the remedy while the id is still on screen is
+                            # what turns a notification into something they can act on, and
+                            # it is the pattern `skip`'s own refusal already uses. A durable
+                            # record needs a `superseded_activity_id` column and a
+                            # migration; that is a follow-up, and this is not a substitute
+                            # for it.
+                            replaced_note = if replaced != 0 " (replacing activity ${I64.to_str(replaced)}, whose completion of this session is now gone — `stride complete ${I64.to_str(session_id)} ${I64.to_str(replaced)}` puts it back)" else ""
                             released_note = if released != 0 " (dropping substitute activity ${I64.to_str(released)}, which no longer stands in for this session)" else ""
                             match steal_dead_links!(path, activity_id, session_id)? {
                                 ReleasedFrom(holder) =>
-                                    Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, released_substitute: released, released_substitute_of: holder }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note} (released its old substitute link on session #${I64.to_str(o.released_substitute_of)})")
+                                    Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released, released_substitute_of: holder }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note} (released its old substitute link on session #${I64.to_str(o.released_substitute_of)})")
                                 NothingReleased =>
-                                    Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, released_substitute: released }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note}")
+                                    Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note}")
                             }
                         }
                     }
@@ -777,8 +800,17 @@ Plan :: [].{
                         #
                         # A bare rest completion links no activity, so `replaced_activity`
                         # is honestly 0 — but the same UPDATE NULLs `substitute_activity_id`
-                        # here as in the two-argument form, so `released_substitute` has to
+                        # here as in the two-argument form, so `dropped_substitute` has to
                         # be read before the write on this arm as well.
+                        #
+                        # `0.I64`, not a bare `0`. Roc infers an unconstrained numeric
+                        # literal in a record as fractional, and the builtin JSON then
+                        # renders it `0.0` — so this ONE arm shipped a float under a key the
+                        # schema types as integer, and both gates were blind to it: the
+                        # validator's integer test is `floor($v) == $v`, which `0.0` passes,
+                        # and a `Str.contains(out, "\"replaced_activity\":0")` assertion is
+                        # satisfied by `0.0` as a prefix. Exactly the hazard the `1 == 1`
+                        # comment two lines down names for Bool, one field over.
                         released = Sqlite.query!({
                             path: Path.utf8(path),
                             query: "SELECT COALESCE(substitute_activity_id, 0) AS sub FROM planned_sessions WHERE id = :pid",
@@ -793,7 +825,7 @@ Plan :: [].{
                         released_note = if released != 0 " (dropping substitute activity ${I64.to_str(released)}, which no longer stands in for this session)" else ""
                         # rest must be Bool-TYPED (1 == 1), not a bare `True` tag — the new
                         # builtin JSON renders a bare tag as the string "True", not true.
-                        Output.out!({ completed_session: session_id, rest: 1 == 1, replaced_activity: 0, released_substitute: released }, |p| "planned session #${(p.completed_session).to_str()} (rest) marked done${released_note}")
+                        Output.out!({ completed_session: session_id, rest: 1 == 1, replaced_activity: 0.I64, dropped_substitute: released }, |p| "planned session #${(p.completed_session).to_str()} (rest) marked done${released_note}")
                     }
                 }
         }
