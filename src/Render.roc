@@ -828,9 +828,34 @@ Render :: [].{
         # the compiler and the schema witness force, leave this line alone, and the suite
         # is 382/382 green while every complete run with a skipped stream prints the
         # duplicated clause these five lines exist to suppress.
+        # `states_skips`, not `stop != FromDrain(Complete)`. The question here is "does this
+        # reason's own note already state the skip count", which is a property of the REASON
+        # — the same argument that moved the empty-queue decision into `drain_note`. An
+        # inequality against a literal tag was the last reason-shaped test in this file
+        # outside an exhaustive match, and the compiler said nothing about it: a new reason
+        # took the print-the-clause branch by default, and review measured a run printing
+        # the clause twice in two wordings, which is verbatim what the comment above says
+        # these five lines exist to prevent.
+        # The match returns the CLAUSE, not a boolean about it, so there is no `!` (which
+        # does not apply to a tag union here) and no bare `1 == 1` (which warns on an
+        # untyped literal). One exhaustive shape, and a new reason must answer.
+        skip_clause = " (${I64.to_str(p.streams_skipped)} had unreadable stream data)"
+        skip_for_reason = |r|
+            match r {
+                # Complete's own note names the skipped count, so repeating it here is the
+                # duplication these lines exist to prevent.
+                Complete => ""
+                BudgetReached => skip_clause
+                RateLimited => skip_clause
+                DailyCapReached => skip_clause
+            }
         skip_note =
-            if p.streams_skipped > 0 and stop != FromDrain(Complete) {
-                " (${I64.to_str(p.streams_skipped)} had unreadable stream data)"
+            if p.streams_skipped > 0 {
+                match stop {
+                    FromDrain(r) => skip_for_reason(r)
+                    ListRateLimited => skip_clause
+                    ListDailyCapReached => skip_clause
+                }
             } else {
                 ""
             }
@@ -2058,16 +2083,28 @@ expect Drain.stopped_label(DailyCapReached) == "daily_cap_reached"
 expect Drain.sync_stopped_label(ListRateLimited) == "list_rate_limited"
 
 # No label may appear RAW in the human line — the failure this whole thread of work is
-# about. Enumerated by hand and, unusually, that is fine here: a fifth arm cannot slip
-# past this guard by being absent from the list, because a fifth arm does not compile
-# until sync_screen and drain_note both have a branch for it, and a branch that exists is
-# a branch that runs. Two earlier shapes did not have that property — `==` against a
-# literal, and a Str->tag lookup — and under both, review added an arm, satisfied every
-# compile error, and still shipped `— auth_expired — 9 to go`.
+# about. Enumerated by hand, and that is a COST rather than a free pass — this comment used
+# to argue it was free, on two premises that are both false.
+#
+# It said a fifth arm "does not compile until sync_screen and drain_note both have a branch
+# for it". Those are branches on two DIFFERENT types: a new SyncStop arm forces sync_screen
+# and sync_stopped_label, a new StopReason arm forces stopped_label and drain_note. Naming
+# one site from each set as though they were one set is what made the argument look sound.
+#
+# And "a branch that exists is a branch that runs" is not "the label is absent from the
+# output" — the compiler makes you write a branch, not a correct one, which is the entire
+# reason this guard exists. `ListDailyCapReached` proved both: it got its forced sync_screen
+# branch and was still missing from this list, which is the thing the sentence said could
+# not happen. Review found it, along with three prose surfaces missing from the sweep below.
+#
+# The two earlier shapes were worse — `==` against a literal, and a Str->tag lookup — and
+# under both, review added an arm, satisfied every compile error, and still shipped
+# `— auth_expired — 9 to go`. This one is better and still hand-maintained: when you add an
+# arm to either type, add it here too.
 #
 # Both `pending` shapes, because the tail dispatches on pending_streams too.
 expect {
-    stops = [FromDrain(Complete), FromDrain(BudgetReached), FromDrain(RateLimited), FromDrain(DailyCapReached), ListRateLimited]
+    stops = [FromDrain(Complete), FromDrain(BudgetReached), FromDrain(RateLimited), FromDrain(DailyCapReached), ListRateLimited, ListDailyCapReached]
     List.all(
         stops,
         |t| {
@@ -2089,10 +2126,17 @@ expect {
         Render.drain_note(Complete, 5),
         Render.drain_note(BudgetReached, 40),
         Render.drain_note(RateLimited, 40),
+        # the daily cap, BOTH pending shapes. Its empty-queue arm is the one that says
+        # something where the other three say nothing, so it is prose the others are not.
+        Render.drain_note(DailyCapReached, 0),
+        Render.drain_note(DailyCapReached, 40),
         # the list-refusal sentence is a prose surface of its own — it does not come
         # through drain_note, so a sweep over drain_note's arms alone would miss it.
         Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False),
         Render.sync_screen({ synced: 100, new_activities: 100, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 100, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False),
+        # ...and the list-plus-spent-day sentence, which is a fourth prose surface this
+        # branch added and which joined neither sweep until review counted them.
+        Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, stopped: Drain.sync_stopped_label(ListDailyCapReached), resumable: True }, ListDailyCapReached, False),
         # freshness_note is a prose surface too, and ADR 0012's own consequences say the
         # sweep is where a new one joins. Every arm, including the empty one: an arm that
         # is only exercised on a broken config is exactly the one nobody would think to

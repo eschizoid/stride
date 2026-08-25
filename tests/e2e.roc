@@ -658,7 +658,13 @@ run_skips! = || {
     _ = sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null")
     human = Str.trim(sh!("cat '${bo}'"))
     check!("humans are told the data was unreadable", Str.contains(human, "unreadable stream data"))?
-    check!("...nor that everything is present", !(Str.contains(human, "all streams present")))?
+    # Re-pointed. This asserted the absence of `"all streams present"`, which was meaningful
+    # while that string existed and the pending guard suppressed it — and became VACUOUS the
+    # moment this branch deleted the string, because a `contains` on text no producer can
+    # emit cannot fail for any input. What it actually cares about is that a run which
+    # skipped unreadable streams does not also claim the queue is drained, so it says that
+    # against the number instead of against a dead literal.
+    check!("...nor that everything is present", Str.contains(human, "to go") or Str.contains(human, "retry next sync"))?
 
     _ = sh!("rm -rf '${home}'")
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
@@ -1026,7 +1032,9 @@ run_stops! = || {
         check!("...and resumable, because waiting will help", bfq!(".data.resumable") == "true")?
         check!("the rate-limited payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
         # fresh queue: the JSON run above already stored one, so without this the human
-        # run drains what is left and renders "all streams present" instead
+        # run drains what is left and renders an EMPTY tail instead. (It used to render
+        # "all streams present" there — text that never actually shipped, because the
+        # pending guard suppressed the tail before it could, and which this branch deleted.)
         _ = sql!(db, "DELETE FROM streams;")
         _ = run_sync_bf!("human")
         check!("humans are told to try again in ~15 minutes", Str.contains(Str.trim(sh!("cat '${bo}'")), "in ~15 minutes"))?
