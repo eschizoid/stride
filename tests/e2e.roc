@@ -3940,7 +3940,8 @@ b_week_plan! = |ctx| {
     # immediately before. Comparing the three ids to EACH OTHER cannot see a revision — a
     # foreign id is still distinct from the other two — and the cleanup sweep at the end
     # would then DELETE another scenario's row.
-    wp_max_before = str_to_i64(Str.trim(sql!(ctx.db, "SELECT COALESCE(MAX(id),0) FROM planned_sessions;")))    wpa = Str.trim(sh!("TZ=${ctx.tz} date -v-3d +%F 2>/dev/null || TZ=${ctx.tz} date -d '3 days ago' +%F"))
+    wp_max_before = str_to_i64(Str.trim(sql!(ctx.db, "SELECT COALESCE(MAX(id),0) FROM planned_sessions;")))
+    wpa = Str.trim(sh!("TZ=${ctx.tz} date -v-3d +%F 2>/dev/null || TZ=${ctx.tz} date -d '3 days ago' +%F"))
     wpb = Str.trim(sh!("TZ=${ctx.tz} date -v-4d +%F 2>/dev/null || TZ=${ctx.tz} date -d '4 days ago' +%F"))
     wpc = Str.trim(sh!("TZ=${ctx.tz} date -v-5d +%F 2>/dev/null || TZ=${ctx.tz} date -d '5 days ago' +%F"))
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_watts,avg_hr) VALUES (9251,'wp done ride','Ride','${wpb}T07:00:00Z',3600,25000,190,145),(9252,'wp sub ride','Ride','${wpc}T07:00:00Z',3600,25000,190,145);")
@@ -4002,7 +4003,14 @@ b_week_plan! = |ctx| {
     dsid1 = Str.trim(strjq!(ctx, ["week", "add", "${ctx.today}", "endurance", "divergence probe session", "the one that will be skipped"], ".data.id"))
     _ = strjq!(ctx, ["skip", dsid1, "swapped for the probe ride", "9250"], ".data.id")
     dsid2 = Str.trim(strjq!(ctx, ["week", "add", "${ctx.today}", "endurance", "divergence successor", "supersedes the tombstone above"], ".data.id"))
-    check!("the fixture really made two sessions on one date, not one revised twice", dsid1 != dsid2 and dsid1 != "" and dsid2 != "")?
+    # `dsid1` gets the same INSERT-not-revision term the three agreement probes got, and it
+    # needs it more than they do: it is added on ctx.today, a date that already holds two
+    # rows, and it inserts only because both are SKIPPED. The moment an earlier scenario
+    # leaves an OPEN session on today, `week add` revises it — `dsid1` becomes a foreign id,
+    # `dsid1 != dsid2` still passes, and the cleanup sweep below deletes another scenario's
+    # row. `dsid2` needs no term: `dsid1` is skipped by the time it is added, so it always
+    # inserts.
+    check!("the fixture really made two sessions on one date, not one revised twice", dsid1 != dsid2 and dsid1 != "" and dsid2 != "" and str_to_i64(dsid1) > wp_max_before)?
     # `week`, not `week all`: the unplanned merge is scoped to the current week by
     # construction (`WHERE :all = 0`), so `week all` never carries these rows at all.
     check!("`week` calls the superseded substitute unplanned", Str.trim(strjq!(ctx, ["week"], "[.data[] | select(.activity_id == 9250) | .status] | join(\",\")")) == "unplanned")?
