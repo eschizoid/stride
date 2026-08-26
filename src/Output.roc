@@ -192,6 +192,22 @@ Output :: [].{
         Err(Exit(error_status))
     }
 
+    # The setup remedy for a client credential that is neither in the environment nor
+    # stored. ONE definition, because it has two call sites: `auth!`, which met this first,
+    # and the boundary arm in `app.roc` that catches the same tag surfacing from
+    # `get_valid_token!`'s refresh branch. Two spellings of one remedy is how they drift.
+    #
+    # NOT split into a `_msg` half. ONE pair in this file earns that split:
+    # `unreadable_config_msg`, which `ReportHealth` also calls to embed the prose in a
+    # PAYLOAD rather than an error. The other three — `unreadable_activity_date_msg`,
+    # `unreadable_activity_time_msg`, `unreadable_daily_load_day_msg` — have a single caller
+    # each, so they are the shape-matching this note is about, not the precedent for it. An
+    # earlier version of this comment said the pairs "elsewhere" earn it, generalising from
+    # the one example that does; review measured the other three.
+    missing_client_creds! : Str => Try({}, _)
+    missing_client_creds! = |name|
+        Output.err_out!("missing_client_creds", "${name} not set and no stored credentials yet — create a (free) Strava API app at strava.com/settings/api, then run:\n  STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth")
+
     # unconfigured zones/FTP: JSON error for tools, the setup help for humans
     # The value is THERE and cannot be parsed -- naming the key and echoing the stored
     # text is the whole point, because `config get` will happily show it back and the
