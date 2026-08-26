@@ -1041,18 +1041,29 @@ Metrics :: [].{
     lens_score : Lens, ProgressRow -> Try(F64, [Unscorable])
     lens_score = |lens, r|
         match lens {
+            # `valid_hr`, not `avg_hr > 0.0`. The 35-220 bpm bound lives in this same module
+            # and the DECOUPLING path already applies it — so the codebase disbelieved a
+            # number in one place and built a training verdict on it in another. Measured on
+            # the real database: two rides recording 18.0 and 31.3 bpm produced
+            # "improving (221%)" and "88% below your best" on a workout whose every other
+            # session sits near 0.85. The tell was already on screen — the `drift` column
+            # printed `-` for exactly those two rows, because decoupling had refused them
+            # (#294).
+            #
+            # Both lenses that read HR, not just EF: a speed/HR score divides by the same
+            # number and is wrong in the same way.
             # EF is NP-per-heartbeat, so it is only comparable when np_w really IS normalized
             # power. The ladder stores whichever power rung won, so a row scored from plain
             # avg_watts would put avg-watts-per-beat on the same trend line as NP-per-beat and
             # invent a fake improvement for anyone whose newer rides have streams.
             Ef =>
-                if r.np_w > 0.0 and r.avg_hr > 0.0 and np_like(r.load_model) {
+                if r.np_w > 0.0 and valid_hr(r.avg_hr) and np_like(r.load_model) {
                     Ok(r.np_w / r.avg_hr)
                 } else {
                     Err(Unscorable)
                 }
             SpeedHr =>
-                if r.distance_m > 0.0 and r.avg_hr > 0.0 and r.moving_time > 0 {
+                if r.distance_m > 0.0 and valid_hr(r.avg_hr) and r.moving_time > 0 {
                     Ok((r.distance_m / r.moving_time.to_f64() * 60.0) / r.avg_hr)
                 } else {
                     Err(Unscorable)
@@ -1190,6 +1201,16 @@ Metrics :: [].{
     valid_hr : F64 -> Bool
     valid_hr = |hr|
         hr >= 35.0 and hr <= 220.0
+
+    # the bound the EF and speed/HR lenses now share with decoupling. An 18 bpm average is
+    # not a light session, it is a broken reading — and trusting it produced "improving
+    # (221%)" on a workout whose every other session sits near 0.85 (#294).
+    expect Metrics.valid_hr(140.0)
+    expect !(Metrics.valid_hr(18.0)) and !(Metrics.valid_hr(31.3))
+    expect !(Metrics.valid_hr(0.0)) and !(Metrics.valid_hr(221.0))
+    # the boundary is INCLUSIVE at both ends, which is what separates this from `> 0`
+    expect Metrics.valid_hr(35.0) and Metrics.valid_hr(220.0)
+    expect !(Metrics.valid_hr(34.9)) and !(Metrics.valid_hr(220.1))
 
     # ── aerobic decoupling / Pw:HR drift (#94) ──────────────────────────
     #

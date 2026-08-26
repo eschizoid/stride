@@ -1172,6 +1172,14 @@ ReportSessions :: [].{
                 SpeedHr => "needs distance and HR"
                 Rpe => "needs a rating"
             }
+            # the same requirement with a plural subject. The counted arm picks between them
+            # on the COUNT, not on the arm — "1 need distance and HR" was the first cut, and
+            # a rule that is right for 27 and wrong for 1 is not number agreement.
+            needs_plural = match lens {
+                Ef => "need power and HR"
+                SpeedHr => "need distance and HR"
+                Rpe => "need a rating"
+            }
             # ...and the scope half names the RIGHT gate. Both auto-name kinds truncate, for
             # opposite reasons: `SimilarDistance` drops rides whose distance is more than 10%
             # from the anchor's, while `LoneNoDistance` drops EVERYTHING because the anchor
@@ -1180,7 +1188,22 @@ ReportSessions :: [].{
             # this clause existed.
             hidden_reason =
                 if scope_dropped > 0 and lens_dropped > 0 {
-                    "${g.scope_why}, or ${needs}"
+                    # COUNTED, not "or". The payload carries `hidden_scope` and `hidden_lens`
+                    # because the two causes license opposite actions — a lens drop is
+                    # fixable at the source, a scope drop is not — and that argument applies
+                    # to the ATHLETE at least as strongly as to the coaching agent: they are
+                    # the one who would go wear the strap. "or" is compatible with 22/1 and
+                    # with 1/22 while the engine knows it is 17/6, so the machine surface was
+                    # precise and the person was under-told (#300).
+                    #
+                    # It also fixes the grammar the disjunction forced: counting the subsets
+                    # makes both halves predicate on ROWS, so the number agrees (`need`, not
+                    # `needs`). Only the both-causes arm changes — 35 rendered lines, on a
+                    # verdict line already outside `render_table`'s 80-column budget, so the
+                    # "two numbers read worse" objection that keeps the render at one total
+                    # does not reach here.
+                    lens_verb = if lens_dropped == 1 needs else needs_plural
+                    "${U64.to_str(scope_dropped)} ${g.scope_why}, ${U64.to_str(lens_dropped)} ${lens_verb}"
                 } else if scope_dropped > 0 {
                     g.scope_why
                 } else {

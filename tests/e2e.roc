@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(942)?
+    checks_ran_exactly!(946)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -5753,6 +5753,40 @@ b_progress_b! = |ctx| {
     _ = seed_power_stream!(ctx.db, 213, 1300, 170)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("auto-name distance-gated to 2 sessions", strjq!(ctx, ["progress", "2025-03-01"], ".data.groups[0].sessions | length") == "2")?
+    # ── #294: an impossible heart rate is not a light session ─────────────────────
+    #
+    # `lens_score` tested `avg_hr > 0.0` while `valid_hr` (35-220 bpm) sat in the same
+    # module and the DECOUPLING path already applied it — so the codebase disbelieved a
+    # number in one place and built a training verdict on it in another. On the real
+    # database two rides recording 18.0 and 31.3 bpm produced "improving (221%)" and "88%
+    # below your best" on a workout whose every other session sits near 0.85, while the
+    # `drift` column printed `-` for exactly those two rows because decoupling refused them.
+    #
+    # 18 bpm here, not 34: a value just outside the bound would pass on an off-by-one and
+    # tells the reader nothing about WHY the bound exists. This is the shape that occurs.
+    _ = seed_ride!(ctx.db, "231", "HR Sanity Class", "2025-02-01T08:00:00Z", "3600", "20000", "150", "140")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (232,'HR Sanity Class','Ride','2025-02-08T08:00:00Z',3600,20000,155,155,18);")
+    _ = seed_ride!(ctx.db, "233", "HR Sanity Class", "2025-02-15T08:00:00Z", "3600", "20000", "160", "145")
+    _ = seed_power_stream!(ctx.db, 231, 1300, 150)
+    _ = seed_power_stream!(ctx.db, 232, 1300, 155)
+    _ = seed_power_stream!(ctx.db, 233, 1300, 160)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # the 18 bpm row would score 155/18 = 8.6 against ~1.1 for the real ones, so under the
+    # old predicate it becomes the "best" session and every trend reads off it
+    check!("an 18 bpm ride is refused by the EF lens, not scored as the best session", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .sessions | length] | join(\",\")") == "2")?
+    check!("...and it is DECLARED withheld rather than silently dropped", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .hidden_lens] | join(\",\")") == "1")?
+    check!("...and no session scores off it", sfloat(strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .sessions[].score] | max")) < 3.0)?
+    # ...and the SPEED/HR lens too, which the EF fixture cannot reach. Both arms divide by
+    # the same number and are wrong in the same way, but only one of them had an oracle:
+    # reverting the speed/HR arm alone left the whole suite green. A distance-carrying,
+    # power-free group takes that lens.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (241,'HR Sanity Row','Rowing','2025-02-01T09:00:00Z',3600,12000,140),(242,'HR Sanity Row','Rowing','2025-02-08T09:00:00Z',3600,12000,18),(243,'HR Sanity Row','Rowing','2025-02-15T09:00:00Z',3600,12000,145);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("an 18 bpm row is refused by the speed/HR lens as well", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity Row\")) | .sessions | length] | join(\",\")") == "2")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (241,242,243); DELETE FROM activities WHERE id IN (241,242,243);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (231,232,233); DELETE FROM streams WHERE activity_id IN (231,232,233); DELETE FROM activities WHERE id IN (231,232,233);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("40km ride excluded", sfloat(strjq!(ctx, ["progress", "2025-03-01"], ".data.groups[0].sessions | map(.distance_m) | max")) < 30000.0)?
     check!("progress human empty-date guard", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "1999-01-01"]), "no workout found"))?
     check!("unscorable workout explains lens", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", ctx.d1]), "can't be compared"))?
