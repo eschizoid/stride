@@ -238,7 +238,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 23
+    schema_version = 24
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -266,6 +266,18 @@ Db :: [].{
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN ftp_used REAL")?
         alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN status TEXT")?
         alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN skipped_reason TEXT")?
+        # #274: what `complete` erased. Before this, an overwrite was REPORTED — `#258` made
+        # the payload name `replaced_activity` and the human line print the command that
+        # restores it — but the record lived in one line of stdout, once. `week` and `plan`
+        # show the new `completed_activity_id`; the old one was gone from the row, so an
+        # athlete who notices a week later has shell scrollback and nothing else. That is
+        # the scenario the original report opens with, a typo'd session id.
+        #
+        # The narrow form deliberately: LAST value only, on the row. An audit table would
+        # also cover repeated overwrites and the cross-session `ReleasedFrom` case, at the
+        # cost of a table nothing else reads. One column is enough for the typo, and #258's
+        # invertibility argument is already scoped to "this session's completion".
+        alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN superseded_activity_id INTEGER")?
         # v3: metrics record the HR zone bounds they were computed with, so a zone-
         # config change invalidates + recomputes (like ftp_used does for FTP)
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN zones_used TEXT")?

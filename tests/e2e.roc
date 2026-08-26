@@ -4378,6 +4378,26 @@ b_agent_loop! = |ctx| {
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (9222,'recomplete probe','Ride','${ctx.d2}T09:00:00Z',3600,21000,185,185,142);")
     recomp = strjq!(ctx, ["complete", "${sid}", "9222"], ".data.replaced_activity")
     check!("...and a RE-complete names the activity whose completion it just erased", recomp == "9220")?
+    # ...and the erased id is RECORDED, not just reported. That sentence was the whole of
+    # #274: the payload named it and the human line printed the command that restores it,
+    # but the record lived in one line of stdout, once — `week` and `plan` showed the NEW
+    # completion and the old one was gone from the row, so noticing a week later left shell
+    # scrollback as the only copy.
+    #
+    # Asserted on the COLUMN and on the PAYLOAD, because they can fail apart: writing the
+    # column without publishing it leaves the record unreachable by any consumer, and
+    # publishing a field the UPDATE never wrote would report 0 forever.
+    check!("...and records it on the row rather than only in the payload", Str.trim(sql!(ctx.db, "SELECT COALESCE(superseded_activity_id,0) FROM planned_sessions WHERE id = ${sid};")) == "9220")?
+    check!("...and publishes it, so a consumer can read it back a week later", strjq!(ctx, ["week", "all"], "[.data[] | select(.id == ${sid}) | .superseded_activity_id] | join(\",\")") == "9220")?
+    # ...and a FIRST completion records nothing, which is what `NULLIF` is for: an unset
+    # completion reads as 0 through COALESCE, and storing 0 would claim a completion was
+    # erased when the session had none. Staged as its own session rather than reusing one
+    # above — `sid` has been completed twice by this point, so it can only show the
+    # overwrite direction, and a check that cannot show both is half a check.
+    fresh_sid = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d2}", "endurance", "first-completion probe", "r"], ".data.id"))
+    _ = stride!(ctx.bin, ctx.home, ["complete", fresh_sid, "9221"])
+    check!("...while a session completed once has nothing superseded", strjq!(ctx, ["week", "all"], "[.data[] | select(.id == ${fresh_sid}) | .superseded_activity_id] | join(\",\")") == "0")?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${fresh_sid};")
     # ...and re-completing with the SAME activity replaces nothing, which is the whole
     # content of the `prior != activity_id` clause and the only case that separates it from
     # a bare `prior`. Mutation-testing found that gap: `replaced = prior` survived both
