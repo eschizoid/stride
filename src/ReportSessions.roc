@@ -1138,7 +1138,7 @@ ReportSessions :: [].{
         _ = List.map_try(prows, |r| (Metrics.usable_date_days(r.date)).map_err(|_| BadActivityDate(r.date, r.id)))?
         labeled =
             List.keep_oks(Metrics.group_progress(prows), |g| Metrics.anchor_filter(g, date))
-           .map(|g| { name: Render.progress_group_label(g.name, g.kind), rows: g.rows, total: g.total, kind: g.kind })
+           .map(|g| { name: Render.progress_group_label(g.name, g.kind), rows: g.rows, total: g.total, scope_why: g.scope_why })
         # choose each group's lens, keep only rows it can score; drop unscorable groups
         keep_scored = |lens, g| {
             kept = List.keep_if(g.rows, |r| Metrics.lens_score(lens, r).is_ok())
@@ -1178,21 +1178,16 @@ ReportSessions :: [].{
             # recorded no distance at all and nothing can be matched to it. Reporting the
             # second as "a different distance" was false on `2026-08-14` — measured before
             # this clause existed.
-            scope_why = match g.kind {
-                LoneNoDistance => "this session recorded no distance, so none could be matched to it"
-                SimilarDistance(_) => "a different distance for this workout"
-                Exact => "not shown"
-            }
             hidden_reason =
                 if scope_dropped > 0 and lens_dropped > 0 {
-                    "${scope_why}, or ${needs}"
+                    "${g.scope_why}, or ${needs}"
                 } else if scope_dropped > 0 {
-                    scope_why
+                    g.scope_why
                 } else {
                     needs
                 }
             hidden = scope_dropped + lens_dropped
-            if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, lens, rows: kept, anchor_ok, all_days, hidden, hidden_reason })
+            if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, lens, rows: kept, anchor_ok, all_days, hidden, hidden_reason, scope_dropped, lens_dropped })
         }
         scored = List.keep_oks(labeled, |g|
             match Metrics.progress_lens(g.rows) {
@@ -1251,6 +1246,18 @@ ReportSessions :: [].{
                     # agent reads. A group holding one session with `hidden: 10` is not a
                     # workout done once (#292).
                     hidden: g.hidden,
+                    # ...and its two causes, because they license OPPOSITE actions and the
+                    # single integer cannot separate them. Review decomposed all 693 real
+                    # groups: 265 notes are pure lens, 16 pure scope, 35 BOTH — and on those
+                    # 35 the loss is severe (`Morning Ride (~44.5 km rides)` hides 28, of
+                    # which 27 are scope and 1 is lens, indistinguishable from a group hiding
+                    # 10 that are all lens). A lens drop is fixable at the source — wear the
+                    # strap, rate the session; a scope drop is not fixable and is not even
+                    # about the same slice of training. Split in the PAYLOAD only: the human
+                    # line keeps one number because two would read worse, and the payload is
+                    # where anyone branches.
+                    hidden_lens: g.lens_dropped,
+                    hidden_scope: g.scope_dropped,
                     # scores/trends upstream are computed on chronological rows; the sort
                     # only changes the ORDER sessions are listed in
                     # progress sessions carry NO power_known/hr_known: rows exist only

@@ -21,6 +21,8 @@
         "type": "object",
         "required": [
           "hidden",
+          "hidden_lens",
+          "hidden_scope",
           "lens",
           "name",
           "sessions"
@@ -30,6 +32,14 @@
           "hidden": {
             "type": "integer",
             "description": "How many sessions of this workout are NOT in `sessions`. Zero means `sessions` is the complete history for this group; non-zero means it is not, and reading `sessions | length` as the whole history is then wrong. Two gates can withhold a row and this counts BOTH: the group's SCOPE (an auto-named group is matched by distance, so rides more than 10% away are a different group — and if the anchor recorded no distance at all, nothing can be matched to it), and the group's LENS (EF needs power and HR, speed/HR needs distance and HR, RPE needs a rating). The human render states the count and which gate applied; this is the machine half of the same statement."
+          },
+          "hidden_lens": {
+            "type": "integer",
+            "description": "How many of `hidden` were withheld by the group's LENS — the session exists in this workout's history but the lens cannot score it (EF needs power+HR, speed/HR needs distance+HR, RPE needs a rating). This is the FIXABLE half: wear the strap, rate the session, and the row joins the table."
+          },
+          "hidden_scope": {
+            "type": "integer",
+            "description": "How many of `hidden` were withheld by the group's SCOPE — the session belongs to a different slice of this workout. Auto-named groups (`Morning Ride` and friends) are matched by distance, so a ride more than 10% from the anchor's is a different group; and if the anchor recorded no distance at all, nothing can be matched to it. NOT fixable at the source, and not about the same training as the rows shown. `hidden_lens + hidden_scope == hidden`."
           },
           "lens": {
             "type": "string",

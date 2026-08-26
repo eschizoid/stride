@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(926)?
+    checks_ran_exactly!(927)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2313,6 +2313,22 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (108,'drift run','Run','${ctx.d1}T07:00:00Z',1300,4000);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("...and the count is the real number, not a constant", strjq!(ctx, ["progress", "${ctx.d2}"], "[.data.groups[] | select(.name | contains(\"drift run\")) | .hidden] | join(\",\")") == "1")?
+    # ...and the SCOPE gate, which the checks above cannot reach. `drift run` is an EXACT
+    # name, so `anchor_filter` never truncates it and `scope_dropped` is 0 by construction —
+    # every assertion so far observes only the lens half. Review mutation-proved the gap:
+    # `hidden = scope_dropped + lens_dropped` reduced to `hidden = lens_dropped` left the
+    # whole suite green while restoring the "first session of this workout" falsehood on
+    # real data.
+    #
+    # An AUTO-NAMED group is what reaches it. `Morning Ride` matches by distance, so a ride
+    # more than 10% from the anchor's is a different group: anchor at 20 km, sibling at 40 km,
+    # and the sibling is withheld by SCOPE while being perfectly scorable. Both halves are
+    # asserted separately AND against their sum, because a build that moved a count from one
+    # field to the other would satisfy any single one of the three.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (109,'Morning Ride','Ride','${ctx.d2}T06:00:00Z',3600,20000,140),(110,'Morning Ride','Ride','${ctx.d1}T06:00:00Z',3600,40000,141);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("the scope gate is counted too, and reported apart from the lens gate", strjq!(ctx, ["progress", "${ctx.d2}"], "[.data.groups[] | select(.name | startswith(\"Morning Ride\")) | (.hidden_scope == 1) and (.hidden_lens == 0) and (.hidden == .hidden_scope + .hidden_lens)] | join(\",\")") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (109,110); DELETE FROM activities WHERE id IN (109,110);")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id=108; DELETE FROM activities WHERE id=108;")
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (104,105,106); DELETE FROM activity_metrics WHERE activity_id IN (104,105,106); DELETE FROM streams WHERE activity_id IN (104,105,106); DELETE FROM activities WHERE id IN (104,105,106);")
 

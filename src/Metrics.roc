@@ -974,19 +974,25 @@ Metrics :: [].{
     # ALONE, which forced "one session, nothing hidden" and printed "first session of this
     # workout, nothing to compare against yet" over a name with 29 rows in the log (#291's
     # own sentence, reached through the distance gate instead of the lens filter).
-    anchor_filter : { name : Str, rows : List(ProgressRow) }, Str -> Try({ name : Str, kind : [Exact, SimilarDistance(F64), LoneNoDistance], rows : List(ProgressRow), total : U64 }, [NoAnchor])
+    # `scope_why` travels WITH the truncation instead of being reconstructed from `kind`
+    # downstream. The reconstruction needed an arm for `Exact`, which never truncates — a
+    # dead branch holding a placeholder string, and the wrong kind of placeholder: if anyone
+    # ever gave `Exact` a truncation, the note would read "(5 hidden: not shown)", which is
+    # gibberish that renders and exits 0. Empty here means "this kind cannot withhold rows",
+    # and the caller only ever reads it when it measured a drop.
+    anchor_filter : { name : Str, rows : List(ProgressRow) }, Str -> Try({ name : Str, kind : [Exact, SimilarDistance(F64), LoneNoDistance], rows : List(ProgressRow), total : U64, scope_why : Str }, [NoAnchor])
     anchor_filter = |g, date|
         match List.find_first(g.rows, |r| r.date == date) {
             Err(_) => Err(NoAnchor)
             Ok(anchor) => {
                 total = List.len(g.rows)
                 if !(is_auto_name(g.name)) {
-                    Ok({ name: g.name, kind: Exact, rows: g.rows, total })
+                    Ok({ name: g.name, kind: Exact, rows: g.rows, total, scope_why: "" })
                 } else if anchor.distance_m <= 0.0 {
-                    Ok({ name: g.name, kind: LoneNoDistance, rows: [anchor], total })
+                    Ok({ name: g.name, kind: LoneNoDistance, rows: [anchor], total, scope_why: "this session recorded no distance, so none could be matched to it" })
                 } else {
                     kept = List.keep_if(g.rows, |r| (r.distance_m - anchor.distance_m).abs() <= anchor.distance_m * 0.10)
-                    Ok({ name: g.name, kind: SimilarDistance(anchor.distance_m), rows: kept, total })
+                    Ok({ name: g.name, kind: SimilarDistance(anchor.distance_m), rows: kept, total, scope_why: "a different distance for this workout" })
                 }
             }
         }
@@ -3286,7 +3292,15 @@ expect {
 }
 
 # anchor_filter: exact names pass through; auto-names gate to ±10% of anchor distance;
-# distance-less auto-name anchors show alone; off-date anchors drop the group
+# distance-less auto-name anchors show alone; off-date anchors drop the group.
+#
+# `total` and `scope_why` are BOUND rather than swallowed. The `..` stays — Roc needs it,
+# since the record also carries `name` — but the two fields under test are named, which is
+# the difference that matters. They were, and the
+# `..` is why: `total` is what makes the hidden count see this truncation at all, and a
+# mutation setting `LoneNoDistance`'s `total` to 1 restored the "first session of this
+# workout" falsehood with every gate green. `total` differs from `List.len(rows)` on both
+# truncating kinds, which is the whole point of carrying it.
 expect {
     pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     exact = Metrics.anchor_filter({ name: "Class X", rows: [pr("Class X", "2025-01-01", 0.0)] }, "2025-01-01")
@@ -3294,15 +3308,15 @@ expect {
     lone = Metrics.anchor_filter({ name: "Morning Ride", rows: [pr("Morning Ride", "2025-01-01", 0.0), pr("Morning Ride", "2025-02-01", 21000.0)] }, "2025-01-01")
     off = Metrics.anchor_filter({ name: "Class X", rows: [pr("Class X", "2025-01-01", 0.0)] }, "2025-09-09")
     ok_exact = match exact {
-        Ok({ kind: Exact, rows, .. }) => List.len(rows) == 1
+        Ok({ kind: Exact, rows, total, scope_why, .. }) => List.len(rows) == 1 and total == 1 and scope_why == ""
         _ => False
     }
     ok_gated = match gated {
-        Ok({ kind: SimilarDistance(d), rows, .. }) => List.len(rows) == 2 and (d - 20000.0).abs() < 0.001
+        Ok({ kind: SimilarDistance(d), rows, total, scope_why, .. }) => List.len(rows) == 2 and total == 3 and (d - 20000.0).abs() < 0.001 and Str.contains(scope_why, "different distance")
         _ => False
     }
     ok_lone = match lone {
-        Ok({ kind: LoneNoDistance, rows, .. }) => List.len(rows) == 1
+        Ok({ kind: LoneNoDistance, rows, total, scope_why, .. }) => List.len(rows) == 1 and total == 2 and Str.contains(scope_why, "recorded no distance")
         _ => False
     }
     ok_off = match off {
