@@ -189,7 +189,7 @@ Command := [
 			[_, "complete", ..] => Err(Usage("complete <session_id> [activity_id]"))
 			[_, "skip", ..] => Err(Usage("skip <session_id> \"<reason>\" [activity_id|none]"))
 			[_, "activity", ..] => Err(Usage("activity <activity_id>"))
-			[_, "config", ..] => Err(Usage("config get <key>  |  config set <key> <value>"))
+			[_, "config", ..] => Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>"))
 			# asking for help — bare, or by any of the conventional spellings —
 			# is not a failure and must not become one (#163 broke `--help` by
 			# deleting the old catch-all that had silently served it)
@@ -718,15 +718,24 @@ expect
 		Ok(ConfigList) => True
 		_ => False
 	}
-# ...while a WRONG config form is still a Usage error, so the arm above did not eat them
+# ...while a WRONG config form is still a Usage error, so the arm above did not eat them.
+# The usage string names all THREE verbs now — it enumerated two while this change added a
+# third, and `config unset` is precisely the verb a reader reaches for after the new
+# `bad_value` message points them at it. Both existing expects pinned the exact string, so
+# the omission would have been a silent lie only in the message, not in the guard (#276).
+expect
+	match Command.parse(["stride", "config", "unset"]) {
+		Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>")) => True
+		_ => False
+	}
 expect
 	match Command.parse(["stride", "config", "get"]) {
-		Err(Usage("config get <key>  |  config set <key> <value>")) => True
+		Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>")) => True
 		_ => False
 	}
 expect
 	match Command.parse(["stride", "config", "set", "timezone"]) {
-		Err(Usage("config get <key>  |  config set <key> <value>")) => True
+		Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>")) => True
 		_ => False
 	}
 expect

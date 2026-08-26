@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(937)?
+    checks_ran_exactly!(939)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1978,6 +1978,18 @@ b_config_ftp! = |ctx| {
     # against "hr_z3_max_ride was not stored".
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z3_max_ride", "165"])
     check!("...and it says the global applies again, not that a default does", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "unset", "hr_z3_max_ride"]), "global bound applies"))?
+    # ...and the CLIENT-credential branch, which was the one that shipped a false sentence.
+    # `strava_client_id` fell to the `known_key` catch-all and was told stride "will
+    # recompute or re-fetch it as needed" — measured false: the next `sync` answers
+    # `missing_client_creds` and asks the user to supply it by hand. Its sibling
+    # `strava_client_secret` had the truthful sentence, and the two fail identically (#276).
+    #
+    # Both members asserted, because the defect was that one of a pair was routed and the
+    # other was not, and a check on either alone would have passed before the fix.
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "strava_client_id", "probe-id"])
+    check!("removing a client credential says the user must supply it, not that stride will", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "unset", "strava_client_id"]), "until you supply it again"))?
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "strava_client_secret", "probe-secret"])
+    check!("...and its sibling says the same thing", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "unset", "strava_client_secret"]), "until you supply it again"))?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max_ride", "155"])
     # ── bare `config` lists what is set. Its first job is answering "which config do I
     # have?", which nothing did; its second is being the source `just schema-check` fills

@@ -599,16 +599,29 @@ config_unset! = |key| {
                 "${p.key} was not stored, so there was nothing to remove"
             } else if Config.is_derived(p.key) {
                 "${p.key} removed — stride derives it from your power history anyway; `stride summary` shows the current value"
-            } else if p.key == "strava_client_secret" {
-                "${p.key} removed — stride cannot re-authenticate until you supply STRAVA_CLIENT_SECRET again and run `stride auth`"
+            } else if Config.is_client_credential(p.key) {
+                # BOTH client credentials, by predicate rather than by name and position.
+                # `strava_client_id` reached the `known_key` catch-all and was told "stride
+                # reads this key and will recompute or re-fetch it as needed" — measured
+                # false: the next `sync` answers `missing_client_creds` and asks the user to
+                # supply it by hand, which is the opposite. Its sibling got the truthful
+                # sentence, and the two fail identically.
+                #
+                # Ordering was also the wrong mechanism: moving the special case below
+                # `is_secret` made it unreachable and restored the false sentence with the
+                # suite fully green, because only one of these branches is asserted anywhere.
+                "${p.key} removed — stride cannot re-authenticate until you supply it again and run `stride auth`"
             } else if Config.is_secret(p.key) {
                 "${p.key} removed — stride is no longer authenticated; run `stride auth` to reconnect"
             } else if Config.is_zone_key(p.key) and Str.contains(p.key, "_max_") {
                 "${p.key} removed — the global bound applies to this sport again"
             } else if Config.is_zone_key(p.key) {
                 "${p.key} removed — stride needs this bound; `summary` and `analyze` refuse until it is set again"
-            } else if p.key == "timezone" {
-                "${p.key} removed — stride reads dates as UTC until one is set"
+            } else if p.key == "timezone" or p.key == "utc_offset_minutes" {
+                # `utc_offset_minutes` belongs HERE, not in the catch-all. It is user config —
+                # one of the three settable families — never recomputed and never re-fetched,
+                # and removing it collapses to the same state as removing `timezone`.
+                "${p.key} removed — stride reads dates as UTC until a zone or offset is set"
             } else if Config.known_key(p.key) {
                 "${p.key} removed — stride reads this key and will recompute or re-fetch it as needed"
             } else {
