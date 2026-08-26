@@ -1209,6 +1209,12 @@ ReportSessions :: [].{
                 groups: List.map(scored, |g| {
                     name: g.name,
                     lens: lens_name(g.lens),
+                    # ...and how many sessions of this workout the lens could NOT score, so
+                    # `sessions` is never read as the whole history. The human render says it
+                    # and the payload did not — and the payload is the half the coaching
+                    # agent reads. A group holding one session with `hidden: 10` is not a
+                    # workout done once (#292).
+                    hidden: g.hidden,
                     # scores/trends upstream are computed on chronological rows; the sort
                     # only changes the ORDER sessions are listed in
                     # progress sessions carry NO power_known/hr_known: rows exist only

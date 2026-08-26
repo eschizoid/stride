@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(924)?
+    checks_ran_exactly!(925)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2295,6 +2295,16 @@ b_seed_analyze! = |ctx| {
     # progress rows carry the per-session drift with its known flag (#135), pinned
     # PER SESSION so a flag inversion cannot pass on some other session's row
     check!("the drift run's session is known and positive", strjq!(ctx, ["progress", "${ctx.d2}"], "[.data.groups[] | select(.name | contains(\"drift run\")) | .sessions[] | select(.date == \"${ctx.d2}\")] | .[0] | (.decoupling_known == true and .decoupling_pct > 0)") == "true")?
+    # ...and every group publishes `hidden`, so `sessions | length` is never read as the
+    # whole history. The human render states it; the payload did not, and the payload is the
+    # half the coaching agent reads — a group holding one session with `hidden: 10` is a
+    # workout done eleven times, not once (#292).
+    #
+    # Asserted as PRESENT-ON-EVERY-GROUP rather than on one, because the field is required by
+    # the schema and a producer that emitted it for some groups and not others would still
+    # satisfy a single-group check. `has("hidden")` and not `.hidden >= 0`: absent reads as
+    # null in jq, and `null >= 0` is false, so the shape check is the one that speaks.
+    check!("every progress group publishes its hidden count", strjq!(ctx, ["progress", "${ctx.d2}"], "[.data.groups[] | has(\"hidden\")] | all") == "true")?
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (104,105,106); DELETE FROM activity_metrics WHERE activity_id IN (104,105,106); DELETE FROM streams WHERE activity_id IN (104,105,106); DELETE FROM activities WHERE id IN (104,105,106);")
 
     # ── sport words (#150): human words widen to Strava families, and an empty

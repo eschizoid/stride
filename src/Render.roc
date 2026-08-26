@@ -653,11 +653,20 @@ Render :: [].{
         # late and pct_change dutifully reports a real 0% — "holding steady" reads as a
         # measured finding when it is the absence of one. State the score and stop.
         verdict =
-            if List.len(rows) == 1 {
+            if List.len(rows) == 1 and hidden == 0 {
                 # "one comparable session" read as though it were pointing at some OTHER
                 # session to compare with. The single row IS this session — there is simply
                 # no history behind it yet (#96).
                 "→ ${short} ${pfmt(avg)} — first session of this workout, nothing to compare against yet"
+            } else if List.len(rows) == 1 {
+                # ...but only when there IS no history. `hidden_note` reached the multi-row
+                # arm alone, so a workout whose lens could score exactly one session claimed
+                # "first session, nothing to compare against yet" while the rest sat in the
+                # log unscored — worse than the silence the note was added to remove, because
+                # it asserts the absence rather than omitting it. Measured on the real
+                # database: `progress 2026-07-30` said that of a workout with ELEVEN sessions,
+                # ten of them unrated, and eight group-variants reached this arm (#291).
+                "→ ${short} ${pfmt(avg)} — the only session this lens can score${hidden_note}; the rest are in your log, unscored by it"
             } else {
                 "→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${U64.to_str(List.len(rows))} sessions${hidden_note} — ${label}${pct_str}"
             }
@@ -1666,6 +1675,23 @@ expect {
     hid = Render.progress_section("X", rows, "2026-01-16", Ef, Asc, [dayof("2025-10-05"), dayof("2025-12-06"), dayof("2026-01-16")], 1)
     none = Render.progress_section("X", rows, "2026-01-16", Ef, Asc, [dayof("2025-10-05"), dayof("2026-01-16")], 0)
     Str.contains(hid, "2 sessions (1 hidden: no HR)") and Str.contains(none, "2 sessions —")
+}
+
+# A lone row means "first session, nothing to compare against" ONLY when nothing was
+# hidden. Both arms asserted, and the hidden arm asserts the ABSENCE of the first-session
+# wording as well as the presence of its own: the defect was that the false sentence was
+# printed, so a check that only looked for the new text would pass on a build that printed
+# both. No live database row exercises the hidden==0 arm today, which is why it is pinned
+# here rather than in e2e (#291).
+expect {
+    pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
+    lone = [pr("2025-01-01", 1.5)]
+    genuine = Render.progress_section("X", lone, "2025-01-01", Ef, Asc, [], 0)
+    withheld = Render.progress_section("X", lone, "2025-01-01", Ef, Asc, [], 10)
+    Str.contains(genuine, "first session of this workout")
+    and !(Str.contains(genuine, "the only session this lens can score"))
+    and Str.contains(withheld, "the only session this lens can score (10 hidden: no HR)")
+    and !(Str.contains(withheld, "first session of this workout"))
 }
 
 # the best row's value + full 12-block bar stay on ONE line: terse headers keep the
