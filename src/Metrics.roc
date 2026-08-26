@@ -1710,6 +1710,35 @@ Metrics :: [].{
     }
 
     # "2026-07-25T15:30:21Z" (or "2026-07-25") -> epoch day number
+    # The widest spacing between CONSECUTIVE REAL sessions strictly between two rendered
+    # ones. `progress` filters out rides its lens cannot score, and the gap marker used to be
+    # folded over what SURVIVED — so a dropped ride merged its two neighbouring intervals
+    # into one and the table announced a break the athlete never took. Measured on real data:
+    # a 2025-12-06 ride with no HR was dropped from an EF group, turning 62 days + 41 days
+    # into a single 103-day span and printing `··· = a break over 90 days`.
+    #
+    # `all_days` is every session in the group before filtering, ascending. Walking p -> the
+    # real sessions in between -> d and taking the LARGEST step means a marker still appears
+    # when the real break is real, even if a dropped ride sits inside it.
+    max_real_gap : List(I64), I64, I64 -> I64
+    max_real_gap = |all_days, p, d| {
+        between = List.keep_if(all_days, |x| x > p and x < d)
+        walked = List.append(between, d)
+        st = List.fold(walked, { prev: p, worst: 0.I64 }, |acc, x| {
+            step = x - acc.prev
+            { prev: x, worst: if step > acc.worst step else acc.worst }
+        })
+        st.worst
+    }
+
+    expect Metrics.max_real_gap([], 0, 103) == 103
+    # the measured case: one dropped ride inside the span, so neither real leg is a break
+    expect Metrics.max_real_gap([62], 0, 103) == 62
+    # ...and a real break survives a dropped ride sitting inside it
+    expect Metrics.max_real_gap([10], 0, 200) == 190
+    # the largest step wins wherever it falls, not the first or last
+    expect Metrics.max_real_gap([5, 100], 0, 110) == 95
+
     date_str_to_days : Str -> Try(I64, [BadDate])
     date_str_to_days = |s| {
         date_part = List.first(Str.split_on(s, "T")).ok_or(s)
