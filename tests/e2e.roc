@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(928)?
+    checks_ran_exactly!(929)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -4419,6 +4419,16 @@ b_agent_loop! = |ctx| {
     # the clause, re-running the same command reports the activity as having replaced
     # ITSELF, which reads as history lost when nothing changed.
     check!("...while re-completing with the SAME activity replaces nothing", strjq!(ctx, ["complete", "${sid}", "9222"], ".data.replaced_activity") == "0")?
+    # ...and the RECORD that re-run did not make still stands. The check above reads
+    # `replaced_activity` from the payload, which was already correct before the fix — the
+    # payload was never the bug. The COLUMN was: an unconditional write made a no-op re-run
+    # overwrite the genuine erased id with the current one, so the record survived a week of
+    # scrollback and died to a repeated command. Nothing read the column after that call,
+    # and reverting the guard left the suite green at 928.
+    #
+    # Same shape as the gap the comment above records — "mutation-testing found that gap:
+    # `replaced = prior` survived both other checks" — one field over, again.
+    check!("...and the record that re-run did not make still stands", Str.trim(sql!(ctx.db, "SELECT COALESCE(superseded_activity_id,0) FROM planned_sessions WHERE id = ${sid};")) == "9220")?
     # ...on the HUMAN line as well, which the JSON assertion above does not reach. Review
     # proved the gap: changing the note's guard from `replaced != 0` to `prior != 0` while
     # leaving the VALUE as `replaced` left the payload correct and made the sentence read
@@ -4764,7 +4774,7 @@ b_week_plan! = |ctx| {
     # 0 — so this is a harmless no-op kept for the shape rather than a fix for an observed
     # mismatch. An earlier version of this sentence presented it as answering a measured
     # fact, which is the class of claim this branch keeps having to correct.
-    mismatched = Str.trim(sh!("jq -rn --slurpfile p '${pf}' --slurpfile w '${wf}' '[$p[0].data.plan_history_28d[] | . as $s | (($w[0].data | map(select(.id == $s.id)) | first) // null) as $x | select($x == null or $x.status != $s.status or (($x.completed_activity_id // 0) != ($s.completed_activity_id // 0)) or (($x.substitute_activity_id // 0) != ($s.substitute_activity_id // 0))) | ($s.id | tostring)] | join(\",\")'"))
+    mismatched = Str.trim(sh!("jq -rn --slurpfile p '${pf}' --slurpfile w '${wf}' '[$p[0].data.plan_history_28d[] | . as $s | (($w[0].data | map(select(.id == $s.id)) | first) // null) as $x | select($x == null or $x.status != $s.status or (($x.completed_activity_id // 0) != ($s.completed_activity_id // 0)) or (($x.substitute_activity_id // 0) != ($s.substitute_activity_id // 0)) or (($x.superseded_activity_id // 0) != ($s.superseded_activity_id // 0))) | ($s.id | tostring)] | join(\",\")'"))
     compared = Str.trim(sh!("jq -rn --slurpfile p '${pf}' '$p[0].data.plan_history_28d | length'"))
     # NON-EMPTY first, and the order matters: an empty history makes the set equality below
     # vacuously true, which is the exact shape this file keeps catching elsewhere. The floor
