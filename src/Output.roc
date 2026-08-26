@@ -208,7 +208,6 @@ Output :: [].{
     missing_client_creds! = |name|
         Output.err_out!("missing_client_creds", "${name} not set and no stored credentials yet — create a (free) Strava API app at strava.com/settings/api, then run:\n  STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth")
 
-    # unconfigured zones/FTP: JSON error for tools, the setup help for humans
     # The value is THERE and cannot be parsed -- naming the key and echoing the stored
     # text is the whole point, because `config get` will happily show it back and the
     # athlete has no other way to see why it is being ignored.
@@ -375,6 +374,7 @@ Output :: [].{
         Err(Exit(error_status))
     }
 
+    # unconfigured zones/FTP: JSON error for tools, the setup help for humans
     missing_config! : {} => Try({}, _)
     missing_config! = |{}| {
         (if json_mode!({})
