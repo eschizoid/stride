@@ -1148,7 +1148,13 @@ ReportSessions :: [].{
                     Ok(a) => Metrics.lens_score(lens, a).is_ok()
                     Err(_) => False
                 }
-            if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, lens, rows: kept, anchor_ok })
+            # `all_days` is every session in the group BEFORE the lens filter, so the gap
+            # marker can be folded over the real chronology rather than over what survived.
+            # `hidden` is what the footer reports. Both are carried from here because this is
+            # the only place that still knows what was thrown away.
+            all_days = List.keep_oks(g.rows, |r| Metrics.date_str_to_days(r.date))
+            hidden = List.len(g.rows) - List.len(kept)
+            if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, lens, rows: kept, anchor_ok, all_days, hidden })
         }
         scored = List.keep_oks(labeled, |g|
             match Metrics.progress_lens(g.rows) {
@@ -1234,7 +1240,7 @@ ReportSessions :: [].{
                 } else {
                     "⚠ a session on ${date} isn't shown in its own table — the lens chosen for its group can't score it (needs power+HR, distance+HR, or a rating), so the trend(s) below exclude it\n\n"
                 }
-            Stdout.line!("${note}${Str.join_with(List.map(scored, |g| Render.progress_section(g.name, g.rows, date, g.lens, sort)), "\n\n")}")
+            Stdout.line!("${note}${Str.join_with(List.map(scored, |g| Render.progress_section(g.name, g.rows, date, g.lens, sort, g.all_days, g.hidden)), "\n\n")}")
         }
     }
 }

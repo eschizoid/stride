@@ -522,8 +522,8 @@ Render :: [].{
 
     # one workout's table + trend verdict, rendered through its sport-aware lens
     # (power->EF, distance->speed/HR, rated->RPE; RPE is lower-is-better)
-    progress_section : Str, List(Metrics.ProgressRow), Str, [Ef, SpeedHr, Rpe], [Asc, Desc] -> Str
-    progress_section = |name, rows, asked, lens, sort| {
+    progress_section : Str, List(Metrics.ProgressRow), Str, [Ef, SpeedHr, Rpe], [Asc, Desc], List(I64), U64 -> Str
+    progress_section = |name, rows, asked, lens, sort, all_days, hidden| {
         higher = Metrics.lens_higher_better(lens)
         sc = |row| Metrics.lens_score(lens, row).ok_or(0.0)
         scores = List.map(rows, sc)
@@ -580,8 +580,14 @@ Render :: [].{
         body_rows = {
             folded = List.fold(rows, { prev: -1000000.I64, cells: [] }, |acc, row| {
                 days = Metrics.date_str_to_days(row.date).ok_or(acc.prev)
+                # ...against the UNFILTERED series, not against the rows that survived the
+                # lens. `rows` here has had every unscorable session removed, so folding the
+                # gap over it merges the intervals either side of a dropped ride into one and
+                # announces a break that did not happen — the legend says "a break over 90
+                # days", a claim about training, so an artifact here is a false statement
+                # rather than an ambiguous glyph.
                 with_gap =
-                    if acc.prev > -1000000 and days - acc.prev > 90 {
+                    if acc.prev > -1000000 and Metrics.max_real_gap(all_days, acc.prev, days) > 90 {
                         List.append(acc.cells, gap_row)
                     } else {
                         acc.cells
@@ -610,6 +616,22 @@ Render :: [].{
             Err(NoBaseline) => False
         }
         label = trend_label(improved, declined)
+        # Sessions the lens could not score are absent from the table and from every
+        # figure on this line. Saying so is the difference between a filtered view and a
+        # wrong one: silence here reads as "this is all of them". Named by the lens, because
+        # WHY a session is unscorable is the actionable part — an EF group drops rides with
+        # no heart rate, and the athlete can fix that at the source.
+        hidden_note =
+            if hidden == 0 {
+                ""
+            } else {
+                missing = match lens {
+                    Ef => "no HR"
+                    SpeedHr => "no HR or distance"
+                    Rpe => "unrated"
+                }
+                " (${U64.to_str(hidden)} hidden: ${missing})"
+            }
         avg = Metrics.mean(scores)
         short = match lens {
             Ef => "ef"
@@ -637,7 +659,7 @@ Render :: [].{
                 # no history behind it yet (#96).
                 "→ ${short} ${pfmt(avg)} — first session of this workout, nothing to compare against yet"
             } else {
-                "→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${U64.to_str(List.len(rows))} sessions — ${label}${pct_str}"
+                "→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${U64.to_str(List.len(rows))} sessions${hidden_note} — ${label}${pct_str}"
             }
         footer = "${legend}\nbar = scaled worst→best · ◀ marks the asked date · ··· = a break over 90 days"
         "── ${name} ──\n${table}\n\n${verdict}${last_vs_best(rows, lens)}\n\n${footer}"
@@ -1585,19 +1607,65 @@ expect {
 
 expect Render.progress_group_label("Morning Ride", SimilarDistance(31400.0)) == "Morning Ride (~31.4 km rides)"
 
-# EF lens: gap row for >90-day breaks, asked marker, last-vs-best all present
+# EF lens: gap row for >90-day breaks, asked marker, last-vs-best all present.
+#
+# The gap half COUNTS markers. It used to read `Str.contains(s, "···")`, which could never
+# fail: the legend line ends with `··· = a break over 90 days`, so that substring is in
+# every rendering. Measured — moving the two rows to 31 days apart, no gap at all, left this
+# expect green while its own comment said it tested a >90-day break. Counting separates the
+# legend's one mention from the gap row's seven cells.
+#
+# `all_days` is populated rather than `[]`, so this exercises the real fold instead of the
+# degenerate `d - p` path an empty series falls back to.
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
-    s = Render.progress_section("X", [pr("2025-01-01", 1.5), pr("2025-08-01", 1.2)], "2025-08-01", Ef, Asc)
-    Str.contains(s, "···") and Str.contains(s, "2025-08-01 ◀") and Str.contains(s, "below your best") and Str.contains(s, "declining")
+    dayof = |x| Metrics.date_str_to_days(x).ok_or(0)
+    s = Render.progress_section("X", [pr("2025-01-01", 1.5), pr("2025-08-01", 1.2)], "2025-08-01", Ef, Asc, [dayof("2025-01-01"), dayof("2025-08-01")], 0)
+    marks = List.len(Str.split_on(s, "···")) - 1
+    marks == 8 and Str.contains(s, "2025-08-01 ◀") and Str.contains(s, "below your best") and Str.contains(s, "declining")
 }
 
 # a single session states its score and stops: comparing a value to itself yields a real
 # 0%, and "holding steady" would read as a measured finding rather than an absent one
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
-    s = Render.progress_section("X", [pr("2025-01-01", 1.5)], "2025-01-01", Ef, Asc)
+    s = Render.progress_section("X", [pr("2025-01-01", 1.5)], "2025-01-01", Ef, Asc, [], 0)
     Str.contains(s, "first session of this workout, nothing to compare against yet") and !(Str.contains(s, "holding steady")) and !(Str.contains(s, "(0%)"))
+}
+
+# The gap marker is folded over the UNFILTERED series. Both halves asserted, because
+# asserting only the suppression would pass on a build that never draws a marker at all.
+#
+# The measured shape from the real database: a ride with no HR on 2025-12-06 sits between
+# two scorable ones, so the real legs are 62 and 41 days and neither is a break, while the
+# rendered rows are 103 days apart. `all_days` is DERIVED with the same function the fold
+# uses — hardcoding day numbers put them on a different epoch, the filter matched nothing,
+# and both cases drew a marker.
+expect {
+    pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
+    rendered = [pr("2025-10-05", 1.5), pr("2026-01-16", 1.6)]
+    # the dropped 2025-12-06 ride is present in all_days and absent from the rows
+    dayof = |x| Metrics.date_str_to_days(x).ok_or(0)
+    with_dropped = Render.progress_section("X", rendered, "2026-01-16", Ef, Asc, [dayof("2025-10-05"), dayof("2025-12-06"), dayof("2026-01-16")], 1)
+    # ...and with nothing dropped, the same two rows ARE 103 days apart and DO get a marker
+    without = Render.progress_section("X", rendered, "2026-01-16", Ef, Asc, [dayof("2025-10-05"), dayof("2026-01-16")], 0)
+    # COUNTED, not `Str.contains`: the legend line ends with "··· = a break over 90 days",
+    # so a plain substring test is true of every rendering and the suppression half of this
+    # expect passed for the wrong reason. Counting separates the table's marker row from the
+    # legend's one mention.
+    marks = |x| List.len(Str.split_on(x, "···")) - 1
+    marks(with_dropped) == 1 and marks(without) == 8
+}
+
+# ...and the footer says what it withheld rather than presenting a filtered count as a
+# total. Named by lens, since WHY a session is unscorable is what the athlete can act on.
+expect {
+    pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
+    rows = [pr("2025-10-05", 1.5), pr("2026-01-16", 1.6)]
+    dayof = |x| Metrics.date_str_to_days(x).ok_or(0)
+    hid = Render.progress_section("X", rows, "2026-01-16", Ef, Asc, [dayof("2025-10-05"), dayof("2025-12-06"), dayof("2026-01-16")], 1)
+    none = Render.progress_section("X", rows, "2026-01-16", Ef, Asc, [dayof("2025-10-05"), dayof("2026-01-16")], 0)
+    Str.contains(hid, "2 sessions (1 hidden: no HR)") and Str.contains(none, "2 sessions —")
 }
 
 # the best row's value + full 12-block bar stay on ONE line: terse headers keep the
@@ -1605,7 +1673,7 @@ expect {
 # widest-column victim of squeeze-and-word-wrap (a split bar reads as broken output)
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
-    s = Render.progress_section("X", [pr("2025-01-01", 1.2), pr("2025-02-01", 1.66)], "2025-02-01", Ef, Asc)
+    s = Render.progress_section("X", [pr("2025-01-01", 1.2), pr("2025-02-01", 1.66)], "2025-02-01", Ef, Asc, [], 0)
     Str.contains(s, "1.66 ████████████")
 }
 
@@ -1614,7 +1682,7 @@ expect {
 # computed chronologically (1.2 → 1.66 reads as improving, not declining)
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
-    s = Render.progress_section("X", [pr("2025-01-01", 1.2), pr("2025-02-01", 1.66)], "2025-02-01", Ef, Desc)
+    s = Render.progress_section("X", [pr("2025-01-01", 1.2), pr("2025-02-01", 1.66)], "2025-02-01", Ef, Desc, [], 0)
     before_old = List.first(Str.split_on(s, "2025-01-01")).ok_or("")
     Str.contains(before_old, "2025-02-01") and Str.contains(s, "improving")
 }
@@ -1639,7 +1707,7 @@ expect List.all(
 # RPE lens is lower-is-better: RPE dropping 8 -> 6 reads as improving, "above your easiest"
 expect {
     pr = |date, rpe| { name: "Lift", date, sport: "WeightTraining", distance_m: 0.0, moving_time: 2700, np_w: 0.0, avg_hr: 0.0, rpe, output_kj: 0.0, tss: 0.0, load_model: "session_rpe", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
-    s = Render.progress_section("Lift", [pr("2025-01-01", 8.0), pr("2025-02-01", 6.0), pr("2025-03-01", 7.0)], "2025-03-01", Rpe, Asc)
+    s = Render.progress_section("Lift", [pr("2025-01-01", 8.0), pr("2025-02-01", 6.0), pr("2025-03-01", 7.0)], "2025-03-01", Rpe, Asc, [], 0)
     Str.contains(s, "│ rpe") and Str.contains(s, "improving") and Str.contains(s, "above your easiest")
 }
 
