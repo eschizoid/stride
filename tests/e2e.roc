@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(946)?
+    checks_ran_exactly!(951)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -5758,8 +5758,8 @@ b_progress_b! = |ctx| {
     # `lens_score` tested `avg_hr > 0.0` while `valid_hr` (35-220 bpm) sat in the same
     # module and the DECOUPLING path already applied it — so the codebase disbelieved a
     # number in one place and built a training verdict on it in another. On the real
-    # database two rides recording 18.0 and 31.3 bpm produced "improving (221%)" and "88%
-    # below your best" on a workout whose every other session sits near 0.85, while the
+    # database two ROWING sessions recording 18.0 and 31.3 bpm produced "improving (221%)"
+    # and "88% below your best" on a workout whose other sessions sit near 0.85, while the
     # `drift` column printed `-` for exactly those two rows because decoupling refused them.
     #
     # 18 bpm here, not 34: a value just outside the bound would pass on an off-by-one and
@@ -5782,8 +5782,54 @@ b_progress_b! = |ctx| {
     # power-free group takes that lens.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (241,'HR Sanity Row','Rowing','2025-02-01T09:00:00Z',3600,12000,140),(242,'HR Sanity Row','Rowing','2025-02-08T09:00:00Z',3600,12000,18),(243,'HR Sanity Row','Rowing','2025-02-15T09:00:00Z',3600,12000,145);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    check!("an 18 bpm row is refused by the speed/HR lens as well", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity Row\")) | .sessions | length] | join(\",\")") == "2")?
+    # the LENS is pinned alongside the count. Without it the check establishes only that a
+    # row went missing, and the coupling to the speed/HR arm is carried by mutation rather
+    # than by the assertion — true today, invisible to anyone reading the check tomorrow.
+    check!("an 18 bpm row is refused by the speed/HR lens as well", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity Row\")) | \"\\(.lens)/\\(.sessions | length)\"] | join(\",\")") == "speed_hr/2")?
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (241,242,243); DELETE FROM activities WHERE id IN (241,242,243);")
+    # ── #300's half: the COMBINED reason, which nothing asserted. Review mutation-proved
+    # that: inverting the agreement rule to `if lens_dropped == 1 needs_plural else needs`
+    # — literally the "1 need distance and HR" defect the comment above argues against —
+    # left `just test` at rc 0 and 931 == 931, and so did deleting both counts and
+    # rendering the bare `"${g.scope_why}, ${lens_verb}"`. The whole feature could be
+    # removed without a single check noticing.
+    #
+    # Reaching the both-causes arm needs an AUTO-NAMED group, because only those truncate
+    # by distance: `is_auto_name` keys on the first word, so "Evening Ride" qualifies and
+    # "HR Sanity Class" above does not. A distinct prefix from the existing `Morning Ride`
+    # fixtures on purpose — groups are keyed by NAME, so reusing it would silently change
+    # the totals the scope-only check upstream pins.
+    _ = seed_ride!(ctx.db, "271", "Evening Ride", "2025-05-02T18:00:00Z", "3600", "20000", "150", "140")
+    _ = seed_ride!(ctx.db, "272", "Evening Ride", "2025-05-09T18:00:00Z", "3600", "20000", "155", "18")
+    _ = seed_ride!(ctx.db, "273", "Evening Ride", "2025-05-16T18:00:00Z", "3600", "20000", "160", "145")
+    _ = seed_ride!(ctx.db, "274", "Evening Ride", "2025-05-05T18:00:00Z", "3600", "40000", "150", "140")
+    _ = seed_power_stream!(ctx.db, 271, 1300, 150)
+    _ = seed_power_stream!(ctx.db, 272, 1300, 155)
+    _ = seed_power_stream!(ctx.db, 273, 1300, 160)
+    _ = seed_power_stream!(ctx.db, 274, 1300, 150)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # anchored on the 20 km ride: the 40 km one is outside the 10% band (SCOPE), the 18 bpm
+    # one is inside it and refused by the lens (LENS). One of each, which is the arm that
+    # renders both counts.
+    ev_split = strjq!(ctx, ["progress", "2025-05-16"], "[.data.groups[] | select(.name | startswith(\"Evening Ride\")) | \"\\(.hidden_scope)/\\(.hidden_lens)/\\(.hidden)\"] | join(\",\")")
+    check!("a group hidden by BOTH gates counts each cause, and they sum to the total", ev_split == "1/1/2")?
+    ev_human = stride_human!(ctx.bin, ctx.home, ["progress", "2025-05-16"])
+    # The counts are asserted IN the sentence, not just in the payload. "or" was compatible
+    # with 1/1 and with 22/1 alike, which is the whole of #300: the machine surface knew the
+    # split and the person was told a disjunction.
+    check!("...and the human line carries both numbers, not a disjunction", Str.contains(ev_human, "2 hidden: 1 a different distance for this workout, 1 needs power and HR"))?
+    check!("...and does not offer the reader a guess between the two causes", !(Str.contains(ev_human, "a different distance for this workout, or")))?
+    # ...and the AGREEMENT rule, on the boundary that decides it. A second lens-dropped ride
+    # moves the count to 2 and the verb must move with it. Pinning only the singular case
+    # would accept the inverted rule, since that renders correctly for exactly one count.
+    _ = seed_ride!(ctx.db, "275", "Evening Ride", "2025-05-12T18:00:00Z", "3600", "20000", "158", "20")
+    _ = seed_power_stream!(ctx.db, 275, 1300, 158)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    ev_human2 = stride_human!(ctx.bin, ctx.home, ["progress", "2025-05-16"])
+    check!("...and two lens-dropped rows take the plural verb, which the count-1 case cannot show", Str.contains(ev_human2, "1 a different distance for this workout, 2 need power and HR"))?
+    check!("...and not the singular one the inverted rule would print here", !(Str.contains(ev_human2, "2 needs power and HR")))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (271,272,273,274,275); DELETE FROM streams WHERE activity_id IN (271,272,273,274,275); DELETE FROM activities WHERE id IN (271,272,273,274,275);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (231,232,233); DELETE FROM streams WHERE activity_id IN (231,232,233); DELETE FROM activities WHERE id IN (231,232,233);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
