@@ -184,7 +184,7 @@ emit JSON results too (`{synced, new_activities, updated_activities, pruned, str
 streams_skipped, pending_streams, stopped, resumable}` / `{computed, stream_errors, form_tsb, form_tsb_known, form_state,
 form_delta_7d, form_delta_known, converged}`), and `stride config get <key> --json` emits `{key, value}` (or the `not_set`
 error envelope) — that is how you read `timezone` back, which governs what "today"
-means for every date below.
+means for every date below. `stride config unset <key> --json` REMOVES a stored key, emitting `{key, removed}` — `removed: false` means it was already absent, which is not an error. Use it rather than `config set <key> ""`: an empty value is refused for every key class now, because it used to mean three different things depending on the key and two of them left no way to remove a row at all (a per-sport zone override could not be dropped, and an empty write to a token left a row reading as SET).
 
 ## Query commands (add `--json` to every one of these)
 

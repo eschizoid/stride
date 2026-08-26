@@ -440,6 +440,7 @@ dispatch! = |cmd|
         Command.ConfigList => config_list!({})
         Command.ConfigGet(key) => config_show!(key)
         Command.ConfigSet(key, val) => config_store!(key, val)
+        Command.ConfigUnset(key) => config_unset!(key)
 
     }
 
@@ -601,6 +602,47 @@ removal! = |key| {
     )
 }
 
+# `config unset <key>` — DELETE for every key class, which is the whole point of the verb.
+#
+# `removal!` above does the same deletion but is worded for keys stride does not read
+# ("stride does not read it"), which is false for `hr_z2_max_ride`. Splitting the message
+# rather than the mechanism: one sentence per class, one DELETE.
+#
+# It refuses nothing. `config set` still guards what the engine parses — `numeric_refusal`
+# for the numeric keys, `derived_key` for the computed ones — and those guards are about
+# WRITING a value the engine cannot use. Removing a row cannot produce an unusable value,
+# so a key being derived or numeric has nothing to say about deleting it, and #254 already
+# made that argument for the `!known_key` half.
+config_unset! : Str => Try({}, _)
+config_unset! = |key| {
+    path = Db.open_db!({})?
+    existed =
+        match Db.config_opt!(path, key)? {
+            Found(_) => 1 == 1
+            NotFound => 1 == 2
+        }
+    Db.config_delete!(path, key)?
+    Output.out!(
+        { key, removed: existed },
+        |p|
+            if !(p.removed) {
+                "${p.key} was not stored, so there was nothing to remove"
+            } else if Config.is_derived(p.key) {
+                "${p.key} removed — stride derives it from your power history anyway; `stride summary` shows the current value"
+            } else if Config.is_secret(p.key) {
+                # A credential has no default to fall back TO. Saying so is the difference
+                # between "this setting reverted" and "you are logged out", which are not the
+                # same news — and `sync` will answer `not_authenticated` locally rather than
+                # spending a request to be told by Strava.
+                "${p.key} removed — stride is no longer authenticated; run `stride auth` to reconnect"
+            } else if Config.known_key(p.key) {
+                "${p.key} removed — stride will fall back to its default for it"
+            } else {
+                "${p.key} removed — stride does not read it"
+            },
+    )
+}
+
 unknown_key_message : Str -> Str
 unknown_key_message = |key|
     "${key} is not a key stride reads. ${Config.known_key_summary} `stride config` lists what this database has set."
@@ -645,8 +687,23 @@ config_store! = |key, val|
     #
     # The row must already be absent-or-junk for this to fire, so it cannot clear a key the
     # engine reads: those take the normal path and `numeric_refusal` still guards them.
-    if val == "" and !(Config.known_key(key))
-        removal!(key)
+    if val == ""
+        # An empty value is not a WRITE, and `config set` now says so instead of guessing
+        # what you meant. It used to mean three things by key class: removal for keys stride
+        # does not read, `bad_value` for numeric ones (so a per-sport zone override could not
+        # be dropped at all), and an empty WRITE for managed free-text ones — which left a
+        # row reading as SET, so `sync` spent a network round trip to be told 401 by Strava
+        # instead of answering locally (#276).
+        #
+        # It also broke the contract: the removal payload is `{key, removed}` while
+        # `config set` declares `config.json`, which requires `value`. Measured — the removal
+        # form failed its own schema on both counts, and `just schema-check` never saw it
+        # because the recipe fills `<value>` with a real value. `config unset` carries the
+        # removal shape under its own schema now, so each verb emits one shape.
+        Output.err_out!(
+            "bad_value",
+            "an empty value is not a setting — use `stride config unset ${key}` to remove the row, or give ${key} a value",
+        )
     # refuse the keys the engine derives — storing one would confirm a change that never
     # happens, since sport_ftp! reads power history and not config (ADR 0005)
     else if Config.is_derived(key)

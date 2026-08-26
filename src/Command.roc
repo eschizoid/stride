@@ -44,6 +44,7 @@ Command := [
 	SkipWith(Str, Str, Str),
 	ConfigGet(Str),
 	ConfigSet(Str, Str),
+	ConfigUnset(Str),
 	ConfigList,
 ].{
 
@@ -167,6 +168,12 @@ Command := [
 			# so it cannot be stale, and the skip is decided by an EMPTY LIST — a fact the
 			# recipe checks — instead of by an error code that could mean two things.
 			[_, "config"] => Ok(ConfigList)
+			# BEFORE the `set` arm and matched on its own literal: `config unset <key>` is a
+			# distinct verb, not `set` with a magic value. `config set <key> ""` used to mean
+			# removal for unrecognised keys, refusal for numeric ones and an empty WRITE for
+			# managed free-text ones — three behaviours on one gesture, and only one of them
+			# was removal (#276).
+			[_, "config", "unset", key] => Ok(ConfigUnset(key))
 			[_, "config", "set", key, val] => Ok(ConfigSet(key, val))
 			[_, "--version"] => Ok(Version)
 			[_, "week", ..] => Err(Usage("week add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `week` for this week's sessions, `week all` for the whole log"))
@@ -393,6 +400,11 @@ Command := [
 		errs(writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"), ["activity_already_linked", "activity_not_found", "activity_required", "bad_id", "session_not_found"]),
 		errs(writes("skip", [req("<session_id>"), req("<reason>"), opt("<activity_id|none>")], "skip.json"), ["activity_already_linked", "activity_not_found", "bad_id", "session_done", "session_not_found"]),
 		errs(writes("config set", [req_ex("<key>", "timezone"), req_ex("<value>", "UTC")], "config.json"), ["bad_value", "derived_key", "unknown_key"]),
+		# `config unset` declares NO error codes beyond the universal ones. It refuses
+		# nothing: `unknown_key` cannot apply because deleting a key stride does not read is
+		# the point, `derived_key` and `bad_value` are about WRITING a value the engine
+		# cannot use, and removing a row produces no value at all (#276).
+		errs(writes("config unset", [req_ex("<key>", "timezone")], "config_unset.json"), []),
 		errs(reads("summary", [], "summary.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
 		errs(reads("plan", [], "plan.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
 		## `stats` had no declared codes: its totals are a pure listing, until #249 found

@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(932)?
+    checks_ran_exactly!(933)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2011,28 +2011,41 @@ b_config_ftp! = |ctx| {
     # write left a leftover permanently unreachable — unreadable, unwritable, and before
     # marking, unlistable, with sqlite3 the only way out.
     #
+    # `config unset`, not `config set <key> ""`. That gesture meant THREE things by key
+    # class — removal for keys stride does not read, `bad_value` for numeric ones, and an
+    # empty WRITE for managed free-text ones — so there was no CLI way to drop a per-sport
+    # zone override at all, and an empty write to a token left a row reading as SET, which
+    # made `sync` spend a request to be told 401 rather than answering locally (#276).
+    #
+    # It also broke the contract: the removal payload is `{key, removed}` while `config set`
+    # declares `config.json`, which REQUIRES `value`. Measured — the removal form failed its
+    # own schema on both counts, and `just schema-check` never saw it because the recipe
+    # fills `<value>` with a real value, so that form was never exercised. One verb, one
+    # shape, each with its own schema.
+    #
     # It DELETES rather than storing "". The empty write was worse than nothing for the
     # family that most needed it: `numeric_key` calls anything `hr_z*` Decimal, so an empty
     # value was refused with `bad_value` — and the misspelled zone keys are the population
     # #254's own tightening created. Worse, `Analyze.load_config!` requires every `hr_z*`
     # key to parse as F64, so an empty row does not sit inert, it kills `analyze` outright.
-    check!("...and clearing an unrecognised row is allowed", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", ""]), "\"removed\":true"))?
+    check!("...and clearing an unrecognised row is allowed", Str.contains(stride!(ctx.bin, ctx.home, ["config", "unset", "timezon"]), "\"removed\":true"))?
     check!("...which DELETES it rather than emptying it, so nothing can choke on the row", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'timezon';")) == "0")?
-    check!("...and it reaches the zone misspellings, which an empty write could not", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_maxx", ""]), "\"removed\""))?
+    check!("...and it reaches the zone misspellings, which an empty write could not", Str.contains(stride!(ctx.bin, ctx.home, ["config", "unset", "hr_z1_maxx"]), "\"removed\""))?
     # ...and the DERIVED family, which `is_derived` refused before this arm ran. Those are
     # the rows the schema itself calls most likely to be on a real database.
-    check!("...and a derived row, which derived_key refused before it", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", ""]), "\"removed\":true"))?
+    check!("...and a derived row, which derived_key refused before it", Str.contains(stride!(ctx.bin, ctx.home, ["config", "unset", "ftp_ride"]), "\"removed\":true"))?
     check!("...leaving it gone rather than emptied", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'ftp_ride';")) == "0")?
     # ...while it is not an ENTRANCE. An empty write was `INSERT OR REPLACE`, so
     # `config set qwertyuiop ""` CREATED a row for a key that never existed — invisible in
     # the listing, unreadable by `config get`. The CLI could manufacture exactly the class
     # of row the marking exists to expose.
-    check!("...and removing a key that was never there creates nothing", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "qwertyuiop", ""]), "\"removed\":false"))?
+    check!("...and removing a key that was never there creates nothing", Str.contains(stride!(ctx.bin, ctx.home, ["config", "unset", "qwertyuiop"]), "\"removed\":false"))?
     check!("...and really creates nothing", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'qwertyuiop';")) == "0")?
     check!("...while a NON-empty write to an unrecognised key is still refused", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", "again"]), "unknown_key"))?
     # ...and clearing a key the engine DOES read is not this path: it stores an empty value
     # and the normal guards apply, so removal can never silently wipe live config.
-    check!("...and an empty write to a key stride reads is not a removal", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", ""]), "bad_value"))?
+    check!("...and an empty value is refused for EVERY key class now, pointing at the verb that removes", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", ""]), "config unset hr_z1_max") and Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", ""]), "config unset timezon"))?
+    check!("...and it leaves the row it refused to write alone", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'hr_z1_max';")) == "1")?
     # ── the two cell shapes `Sqlite.str` cannot decode, both reachable because `value` is
     # declared TEXT with no NOT NULL and TEXT affinity converts INTEGER and REAL but not
     # blobs. Each answered `internal_error` — "this is a bug, not the data and not the
@@ -5930,7 +5943,13 @@ b_doctor! = |ctx| {
     # LAST statement of this body, so it leaked the blank zone into every scenario after
     # it, which is the actual reason it needs a restore. It asserts the equivalence now
     # rather than sitting there as dead code wearing a test's clothes.
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ""])
+    # Staged with SQL rather than `config set timezone ""`, which is now refused for every
+    # key class (#276). The equivalence being asserted is about how `Db.roc` READS the
+    # column — an empty cell and an absent row both collapse to `NoTz` — and that is still
+    # reachable: an older stride wrote empty cells, and a hand-edited or restored database
+    # can hold one. Routing it through the CLI only ever tested the write path, which is the
+    # half that changed.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('timezone', '');")
     check!("empty timezone is the absent state, not an invalid one", strjq!(ctx, ["doctor"], ".data.time_ok") == "true" and Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UTC"))?
     # restore before returning: three scenarios run after this one, and leaving the zone
     # blank -- or on the unresolvable name set just above, which also resolves to UTC --
