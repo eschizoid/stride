@@ -661,10 +661,22 @@ Plan :: [].{
                                 # would reintroduce the read-then-write gap that #258's
                                 # `prior` read exists inside; SQL sees the old row.
                                 #
-                                # `NULLIF(..., 0)` because an unset completion reads as 0
-                                # through COALESCE elsewhere, and recording 0 would claim a
-                                # completion was erased when the session had none (#274).
-                                query: "UPDATE planned_sessions SET superseded_activity_id = NULLIF(COALESCE(completed_activity_id, 0), 0), completed_activity_id = :aid, status = 'done', substitute_activity_id = NULL WHERE id = :pid",
+                                # `NOT IN (0, :aid)` — the SAME clause `replaced_activity`
+                                # uses, for the same reason. 0 because an unset completion
+                                # reads as 0 through COALESCE elsewhere, and recording it
+                                # would claim a completion was erased when there was none.
+                                # `:aid` because re-completing with the SAME activity erases
+                                # nothing: an unconditional write there set
+                                # `superseded == completed`, which reads as "this activity
+                                # replaced itself" — the exact misreading `prior != activity_id`
+                                # was added to prevent, re-created one field over — and, worse,
+                                # DESTROYED the genuine erased id from the earlier overwrite.
+                                # The record survived a week of scrollback and died to a
+                                # repeated command.
+                                #
+                                # `ELSE superseded_activity_id` and not NULL: a no-op re-run
+                                # must leave the record standing, which is the whole point.
+                                query: "UPDATE planned_sessions SET superseded_activity_id = CASE WHEN COALESCE(completed_activity_id, 0) NOT IN (0, :aid) THEN completed_activity_id ELSE superseded_activity_id END, completed_activity_id = :aid, status = 'done', substitute_activity_id = NULL WHERE id = :pid",
                                 bindings: [
                                     { name: ":aid", value: Integer(activity_id) },
                                     { name: ":pid", value: Integer(session_id) },
@@ -710,17 +722,18 @@ Plan :: [].{
                             # not a loss, and reporting it as released would name a link the
                             # caller still holds.
                             released = if prior.s != activity_id prior.s else 0
-                            # ...and the note NAMES THE REPAIR, because this line is the only
-                            # place the erased id survives. Nothing stores it: `week` and
-                            # `plan` show the new `completed_activity_id`, the old one is
-                            # overwritten in place, and there is no audit row — so an
-                            # athlete who notices next week has shell scrollback and nothing
-                            # else. Printing the remedy while the id is still on screen is
-                            # what turns a notification into something they can act on, and
-                            # it is the pattern `skip`'s own refusal already uses. A durable
-                            # record needs a `superseded_activity_id` column and a
-                            # migration; that is a follow-up, and this is not a substitute
-                            # for it.
+                            # ...and the note NAMES THE REPAIR, so it is actionable while
+                            # the id is still on screen — the pattern `skip`'s own refusal
+                            # already uses.
+                            #
+                            # It used to be the ONLY place the erased id survived: nothing
+                            # stored it, `week` and `plan` showed the new
+                            # `completed_activity_id`, and an athlete who noticed next week
+                            # had shell scrollback and nothing else. #274 added
+                            # `superseded_activity_id`, written in the same UPDATE, so the
+                            # record now outlives the line. The cross-session `ReleasedFrom`
+                            # case is still not covered, which is why the sentence below
+                            # scopes itself to this session.
                             #
                             # The remedy is EXACTLY invertible on this row, and the reason is
                             # worth writing down because nothing else records it:

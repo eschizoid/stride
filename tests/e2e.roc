@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(927)?
+    checks_ran_exactly!(928)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -4394,10 +4394,23 @@ b_agent_loop! = |ctx| {
     # erased when the session had none. Staged as its own session rather than reusing one
     # above — `sid` has been completed twice by this point, so it can only show the
     # overwrite direction, and a check that cannot show both is half a check.
+    # Its OWN activity, because 9221 does not exist here — it is inserted at the sync
+    # scenario, deleted two lines later, and not re-inserted until 45 lines BELOW this
+    # point. The completion was refused, nothing was written, and the check passed on a
+    # session that had never been completed at all while its name said "completed once".
+    # `_ = stride!(...)` discarding the result is the mechanism that hid it.
+    #
+    # And asserted on the COLUMN with `typeof`, not on the payload. The payload publishes
+    # `COALESCE(superseded_activity_id, 0)`, and storing NULL rather than 0 is the whole
+    # effect of the guard — so a payload check erases exactly the distinction it claims to
+    # test. Review mutation-proved both halves: writing a sentinel on every first completion
+    # left the suite green at 927.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9231,'first-completion probe','Ride','${ctx.d2}T06:30:00Z',1800,9000);")
     fresh_sid = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d2}", "endurance", "first-completion probe", "r"], ".data.id"))
-    _ = stride!(ctx.bin, ctx.home, ["complete", fresh_sid, "9221"])
-    check!("...while a session completed once has nothing superseded", strjq!(ctx, ["week", "all"], "[.data[] | select(.id == ${fresh_sid}) | .superseded_activity_id] | join(\",\")") == "0")?
-    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${fresh_sid};")
+    fresh_out = stride!(ctx.bin, ctx.home, ["complete", fresh_sid, "9231"])
+    check!("...and the probe session really completed (got ${Str.trim(fresh_out)})", Str.contains(fresh_out, "\"activity\":9231"))?
+    check!("...while a session completed once has NULL superseded, not 0", Str.trim(sql!(ctx.db, "SELECT typeof(superseded_activity_id) FROM planned_sessions WHERE id = ${fresh_sid};")) == "null")?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${fresh_sid}; DELETE FROM activities WHERE id = 9231;")
     # ...and re-completing with the SAME activity replaces nothing, which is the whole
     # content of the `prior != activity_id` clause and the only case that separates it from
     # a bare `prior`. Mutation-testing found that gap: `replaced = prior` survived both
