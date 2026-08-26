@@ -2021,8 +2021,23 @@ b_config_ftp! = |ctx| {
     # answer a fully-routed build gives. Mutation-proved both ways: dropping
     # `strava_expires_at` from `is_session_credential` reports `probed=10 unrouted=1`, and
     # adding an unrouted key to `plain_keys` reports `probed=11 unrouted=1`.
-    unset_sweep = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; { awk '/plain_keys = \\[/,/\\]/' src/Config.roc; awk '/secret_keys = \\[/,/\\]/' src/Config.roc; } | grep -o '\"[a-z_]*\"' | tr -d '\"' > $h/keys; n=0; u=0; while read -r k; do n=$((n+1)); HOME=$h '${ctx.bin}' config set \"$k\" 7 >/dev/null 2>&1; m=$(HOME=$h '${ctx.bin}' config unset \"$k\" 2>&1 | head -1); case \"$m\" in *'starts refusing'*) u=$((u+1));; esac; done < $h/keys; echo \"probed=$n unrouted=$u\""))
-    check!("every key config reads reaches a routed `config unset` branch, enumerated from Config.roc", unset_sweep == "probed=10 unrouted=0")?
+    #
+    # Two ways this sweep could have gone quiet while printing the passing string, both
+    # found by review of the sweep itself rather than of the code it guards:
+    #
+    #   • the extraction was `"[a-z_]*"`, with no digits, so a member carrying one was
+    #     dropped BEFORE `probed` counted it. `probed` guards against matching zero keys;
+    #     it cannot see the match dropping some, because dropping one and adding none
+    #     leaves 10. `hr_z5_max_probe` added to `plain_keys` reproduced it exactly — an
+    #     unrouted key, `probed=10 unrouted=0`, whole suite green. This repo already names
+    #     config keys with digits, so it is not a hypothetical alphabet.
+    #
+    #   • `config set` discards its exit code, and a key that never got stored answers
+    #     "was not stored, so there was nothing to remove" — which contains no routing
+    #     sentence, so it scored as ROUTED. `unseeded` is asserted at 0 so the probe has
+    #     to prove it could speak before its silence counts as a pass.
+    unset_sweep = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; { awk '/plain_keys = \\[/,/\\]/' src/Config.roc; awk '/secret_keys = \\[/,/\\]/' src/Config.roc; } | grep -o '\"[a-z0-9_]*\"' | tr -d '\"' > $h/keys; n=0; u=0; z=0; while read -r k; do n=$((n+1)); HOME=$h '${ctx.bin}' config set \"$k\" 7 >/dev/null 2>&1; m=$(HOME=$h '${ctx.bin}' config unset \"$k\" 2>&1 | head -1); case \"$m\" in *'starts refusing'*) u=$((u+1));; esac; case \"$m\" in *'was not stored'*) z=$((z+1));; esac; done < $h/keys; echo \"probed=$n unrouted=$u unseeded=$z\""))
+    check!("every key config reads reaches a routed `config unset` branch, enumerated from Config.roc", unset_sweep == "probed=10 unrouted=0 unseeded=0")?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max_ride", "155"])
     # ── bare `config` lists what is set. Its first job is answering "which config do I
     # have?", which nothing did; its second is being the source `just schema-check` fills
