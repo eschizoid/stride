@@ -103,7 +103,7 @@ Strava :: [].{
         match (client_cred!(path, "STRAVA_CLIENT_ID", "strava_client_id"), client_cred!(path, "STRAVA_CLIENT_SECRET", "strava_client_secret")) {
             (Ok(client_id), Ok(client_secret)) => auth_flow!(path, client_id, client_secret)
             (Err(MissingEnv(name)), _) | (_, Err(MissingEnv(name))) =>
-                Output.err_out!("missing_client_creds", "${name} not set and no stored credentials yet — create a (free) Strava API app at strava.com/settings/api, then run:\n  STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth")
+                Output.missing_client_creds!(name)
 
             (Err(other), _) | (_, Err(other)) => Err(other)
 

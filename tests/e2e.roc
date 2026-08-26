@@ -1673,6 +1673,25 @@ b_auth! = |ctx| {
     # mirror the bash: unset any real creds (env -u) and feed EOF on stdin
     out = sh!("env -u STRAVA_CLIENT_ID -u STRAVA_CLIENT_SECRET HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' auth < /dev/null")
     check!("credless auth gives setup guidance", Str.contains(out, "missing_client_creds"))?
+    # ...and SYNC does too, which is the half that was missing. `Strava.client_cred!` raises
+    # `MissingEnv` from both `auth!` and `get_valid_token!`'s refresh branch; only `auth!`
+    # handled it, so credless `sync` answered `internal_error: unhandled failure:
+    # MissingEnv("STRAVA_CLIENT_ID") — please open an issue`, for a state one `stride auth`
+    # fixes. `internal_error` is a universal code, so the envelope validated and the schema
+    # apparatus saw nothing wrong (#279).
+    #
+    # Asserted on the CODE and against `internal_error` explicitly. The remedy text is
+    # shared with the auth arm above, so a check on wording alone would pass on the old
+    # behaviour the moment the catch-all happened to quote it.
+    # Staged, because the bug needs tokens PRESENT and creds ABSENT: with no tokens at all
+    # `sync` short-circuits at `not_authenticated` and never reaches the refresh branch —
+    # measured, the first version of this check asserted against exactly that and failed.
+    # The state is reachable: a database authed before the creds were persisted, or a
+    # partial restore. An EXPIRED token is what forces the refresh.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_access_token','stale'),('strava_refresh_token','r'),('strava_expires_at','1'); DELETE FROM config WHERE key IN ('strava_client_id','strava_client_secret');")
+    sync_out = sh!("env -u STRAVA_CLIENT_ID -u STRAVA_CLIENT_SECRET HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' sync")
+    check!("credless sync gives the same setup guidance, not internal_error", Str.contains(sync_out, "\"code\":\"missing_client_creds\"") and !(Str.contains(sync_out, "internal_error")))?
+    _ = sql!(ctx.db, "DELETE FROM config WHERE key IN ('strava_access_token','strava_refresh_token','strava_expires_at');")
     # ── #259: with creds present, auth reaches the paste prompt and then hits EOF. That
     # is `stdin_closed`, the code whose whole purpose is telling an unattended caller
     # there was no terminal — so it is the code most likely to be PARSED rather than read,

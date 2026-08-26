@@ -304,6 +304,18 @@ run_command! = |cmd|
         # each call site: several commands load config, and the remedy is identical for
         # all of them -- name the key, echo the stored text (#206).
         Err(UnreadableConfig(key, raw)) => Output.unreadable_config!(key, raw)
+        # ...and its sibling tag from the same function. `Strava.client_cred!` raises
+        # `MissingEnv` when a client credential is in neither the environment nor the db.
+        # `auth!` handled it and nothing else did, so the SAME tag raised from
+        # `get_valid_token!`'s refresh branch fell to the catch-all: `sync` answered
+        # `internal_error: unhandled failure: MissingEnv("STRAVA_CLIENT_ID") — please open
+        # an issue`, for a state `stride auth` fixes in one command.
+        #
+        # This is the defect the `UnreadableConfig` note above records, one tag over and in
+        # the same function -- which is why this arm sits beside it rather than at the
+        # refresh site. `internal_error` is a universal code, so the envelope validated and
+        # nothing in the schema apparatus flagged it (#279).
+        Err(MissingEnv(name)) => Output.missing_client_creds!(name)
         # A stored date the engine refuses to guess at. Same reasoning as the config arm
         # above -- converted HERE, at the one boundary, because four commands can RAISE
         # these tags (`season` both, `summary` and `plan` through the ramp anchor,
