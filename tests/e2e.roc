@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(955)?
+    checks_ran_exactly!(957)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3337,6 +3337,22 @@ b_seed_analyze! = |ctx| {
     # statement contradicting the engine, where before it was only a sort order.
     check!("...and `date_known` is false for the impossible day, holding SQL to the Roc rule", strjq!(ctx, ["activities"], "[.data[] | select(.id == 947) | .date_known] | join(\",\")") == "false")?
     check!("...while a readable row says true, so the flag is not simply always false", strjq!(ctx, ["activities"], "[.data[] | select(.date_known == true)] | length > 0") == "true")?
+    # ...and a BLOB `start_local`, which took the whole command down. `substr()` on a BLOB
+    # returns a BLOB, so the decode raised `UnexpectedType(Bytes)` and `activities` answered
+    # `internal_error` — the "please open an issue" path — for a row the athlete can see and
+    # delete. The listing whose entire job since #249 is surfacing rows that need repair was
+    # the one command that could not open the file.
+    #
+    # `config get` already reported the same class of cell as DATA (`tests/e2e.roc`'s own
+    # BLOB check pins that), so the codebase had decided the question and then contradicted
+    # itself one command over. `CAST(... AS TEXT)` makes the read total; the existing
+    # `date_known` predicate then rejects the value on its own terms (#296).
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (951,'blob date','Ride','Ride',CAST(x'DEADBEEF' AS BLOB),3600);")
+    check!("a BLOB start_local does not take the listing down", strjq!(ctx, ["activities"], ".data | length") != "" and !(Str.contains(strjq!(ctx, ["activities"], ".error.code // \"none\""), "internal_error")))?
+    check!("...and the row surfaces as unreadable rather than vanishing", strjq!(ctx, ["activities"], "[.data[] | select(.id == 951) | (.date_known == false) and (.rankable == false)] | join(\",\")") == "true")?
+    # deleted immediately: `doctor`'s undateable count is pinned at 4 twelve lines below, and
+    # a probe row that outlives its own checks moves a number asserted for another reason.
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 951;")
     # `doctor`'s COUNT, which is the whole of #265 and had nothing asserting its behaviour.
     # The schema loop validates the key's presence and type on `doctor` and `top`, so a
     # predicate that drifted to always-0 passed everything. All four SQL sites now share
