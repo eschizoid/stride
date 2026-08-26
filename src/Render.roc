@@ -1607,11 +1607,22 @@ expect {
 
 expect Render.progress_group_label("Morning Ride", SimilarDistance(31400.0)) == "Morning Ride (~31.4 km rides)"
 
-# EF lens: gap row for >90-day breaks, asked marker, last-vs-best all present
+# EF lens: gap row for >90-day breaks, asked marker, last-vs-best all present.
+#
+# The gap half COUNTS markers. It used to read `Str.contains(s, "···")`, which could never
+# fail: the legend line ends with `··· = a break over 90 days`, so that substring is in
+# every rendering. Measured — moving the two rows to 31 days apart, no gap at all, left this
+# expect green while its own comment said it tested a >90-day break. Counting separates the
+# legend's one mention from the gap row's seven cells.
+#
+# `all_days` is populated rather than `[]`, so this exercises the real fold instead of the
+# degenerate `d - p` path an empty series falls back to.
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
-    s = Render.progress_section("X", [pr("2025-01-01", 1.5), pr("2025-08-01", 1.2)], "2025-08-01", Ef, Asc, [], 0)
-    Str.contains(s, "···") and Str.contains(s, "2025-08-01 ◀") and Str.contains(s, "below your best") and Str.contains(s, "declining")
+    dayof = |x| Metrics.date_str_to_days(x).ok_or(0)
+    s = Render.progress_section("X", [pr("2025-01-01", 1.5), pr("2025-08-01", 1.2)], "2025-08-01", Ef, Asc, [dayof("2025-01-01"), dayof("2025-08-01")], 0)
+    marks = List.len(Str.split_on(s, "···")) - 1
+    marks == 8 and Str.contains(s, "2025-08-01 ◀") and Str.contains(s, "below your best") and Str.contains(s, "declining")
 }
 
 # a single session states its score and stops: comparing a value to itself yields a real
