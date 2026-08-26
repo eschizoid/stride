@@ -201,15 +201,17 @@ Output :: [].{
     ## carried a truncated copy of the string until this was extracted — one that had
     ## dropped the remedy, which README describes as the thing every gap states.
     # The setup remedy for a client credential that is neither in the environment nor
-    # stored. ONE definition, because it now has two call sites: `auth!`, which met this
-    # first, and the boundary arm in `app.roc` that catches the same tag raised from
+    # stored. ONE definition, because it has two call sites: `auth!`, which met this first,
+    # and the boundary arm in `app.roc` that catches the same tag surfacing from
     # `get_valid_token!`'s refresh branch. Two spellings of one remedy is how they drift.
-    missing_client_creds_msg : Str -> Str
-    missing_client_creds_msg = |name|
-        "${name} not set and no stored credentials yet — create a (free) Strava API app at strava.com/settings/api, then run:\n  STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth"
-
+    #
+    # NOT split into a `_msg` half. The `_msg`/`_!` pairs elsewhere earn the split by having
+    # a second consumer that embeds the prose in a PAYLOAD rather than an error —
+    # `unreadable_config_msg` is called from `ReportHealth` for exactly that. This one had a
+    # single caller, so the split was shape-matching, not sharing.
     missing_client_creds! : Str => Try({}, _)
-    missing_client_creds! = |name| Output.err_out!("missing_client_creds", Output.missing_client_creds_msg(name))
+    missing_client_creds! = |name|
+        Output.err_out!("missing_client_creds", "${name} not set and no stored credentials yet — create a (free) Strava API app at strava.com/settings/api, then run:\n  STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth")
 
     unreadable_config_msg : Str, Str -> Str
     unreadable_config_msg = |key, raw|

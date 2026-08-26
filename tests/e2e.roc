@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(922)?
+    checks_ran_exactly!(924)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1689,8 +1689,21 @@ b_auth! = |ctx| {
     # The state is reachable: a database authed before the creds were persisted, or a
     # partial restore. An EXPIRED token is what forces the refresh.
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_access_token','stale'),('strava_refresh_token','r'),('strava_expires_at','1'); DELETE FROM config WHERE key IN ('strava_client_id','strava_client_secret');")
-    sync_out = sh!("env -u STRAVA_CLIENT_ID -u STRAVA_CLIENT_SECRET HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' sync")
+    sync_out = sh!("env -u STRAVA_CLIENT_ID -u STRAVA_CLIENT_SECRET STRIDE_API_BASE=http://127.0.0.1:1 HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' sync")
     check!("credless sync gives the same setup guidance, not internal_error", Str.contains(sync_out, "\"code\":\"missing_client_creds\"") and !(Str.contains(sync_out, "internal_error")))?
+    # ...and names WHICH credential, which is the property the boundary arm's comment says it
+    # depends on: the arm keys on the TAG, so it is only ever right because every value the
+    # tag can carry is a client-credential variable. Nothing asserted that until now. Safe
+    # against the wording hazard above — under the mutation this exists to catch, the CODE
+    # half goes red first.
+    check!("...and names the variable the caller has to set", Str.contains(sync_out, "STRAVA_CLIENT_ID"))?
+    # ...and `sync` DECLARES the code it can now raise. Modelled on `load`'s guard above,
+    # because review measured that nothing else catches it: dropping `missing_client_creds`
+    # from sync's `error_codes` left `just test`, `just command-claims` and `just
+    # schema-check` all green. The two schema directions are DECLARED->CONTRACT and
+    # CONTRACT->DECLARED, and the code stays attributed via `auth`, so both remain satisfied
+    # while `sync` emits something it does not declare.
+    check!("...and `sync` DECLARES the code it can raise", Str.contains(strjq!(ctx, ["--help"], "[.data.commands[] | select(.name == \"sync\") | .error_codes[]]"), "missing_client_creds"))?
     _ = sql!(ctx.db, "DELETE FROM config WHERE key IN ('strava_access_token','strava_refresh_token','strava_expires_at');")
     # ── #259: with creds present, auth reaches the paste prompt and then hits EOF. That
     # is `stdin_closed`, the code whose whole purpose is telling an unattended caller
