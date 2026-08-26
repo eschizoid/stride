@@ -1675,10 +1675,10 @@ b_auth! = |ctx| {
     check!("credless auth gives setup guidance", Str.contains(out, "missing_client_creds"))?
     # ...and SYNC does too, which is the half that was missing. `Strava.client_cred!` raises
     # `MissingEnv` from both `auth!` and `get_valid_token!`'s refresh branch; only `auth!`
-    # handled it, so credless `sync` answered `internal_error: unhandled failure:
+    # handled it, so credless `sync` answered
     # `internal_error: unhandled failure: MissingEnv("STRAVA_CLIENT_ID") — please open an
     # issue with the command you ran`, for a state one `stride auth` fixes.
-    # fixes. `internal_error` is a universal code, so the envelope validated and the schema
+    # `internal_error` is a universal code, so the envelope validated and the schema
     # apparatus saw nothing wrong (#279).
     #
     # Asserted on the CODE and against `internal_error` explicitly. The remedy text is
