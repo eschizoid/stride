@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(920)?
+    checks_ran_exactly!(921)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3200,7 +3200,27 @@ b_seed_analyze! = |ctx| {
     # between them rather than a fault in either: a check on the unrankable line alone would
     # have passed on the version that dangled.
     doc_h = sh!("HOME='${ctx.home}' '${ctx.bin}' doctor 2>/dev/null")
-    check!("doctor's human screen carries both date-health lines, the wider one as a remainder", Str.contains(doc_h, "activities with an unreadable date: 4") and Str.contains(doc_h, "cannot order in time: 1 more"))?
+    check!("doctor's human screen carries both date-health lines, the wider one as a remainder", Str.contains(doc_h, "activities with an unreadable date: 4 —") and Str.contains(doc_h, "cannot order in time: 1 more"))?
+    # ...and the ALONE branch, in its own database, because the check above cannot reach it.
+    # It asserts the undateable line, which only renders when `undateable > 0` — so it pins
+    # the PAIRED branch by definition, and the dangling wart only exists when `undateable`
+    # is 0. Review mutation-proved the gap: reverting just the self-contained branch to
+    # "N more … same repair" left the suite green at 920 == 920. That is the same shape as
+    # the wart itself — a guard that cannot fail for the case it was written for.
+    #
+    # A separate HOME rather than a reorder of the fixture above: reaching `undateable == 0`
+    # there means deleting rows that later checks still need (`activity 940`), and a scoped
+    # delete-and-restore is more moving parts than one throwaway database.
+    #
+    # `—` anchors the undateable pin too. Unanchored, "unreadable date: 4" also matches 40
+    # and 44 — measured — while the remainder pin was already anchored by its trailing
+    # " more". `tests/e2e.roc:2730` anchors the same way with a trailing newline.
+    alone_home = Str.trim(sh!("mktemp -d"))
+    _ = stride!(ctx.bin, alone_home, ["init"])
+    _ = sql!("${alone_home}/.stride/db.sqlite", "INSERT INTO activities (id,name,sport_type,start_local,moving_time) VALUES (960,'alone clock probe','Ride','2099-04-01T37:00:00Z',3600);")
+    alone_h = sh!("HOME='${alone_home}' '${ctx.bin}' doctor 2>/dev/null")
+    check!("...and stands on its own when nothing undateable precedes it", Str.contains(alone_h, "cannot order in time: 1 —") and Str.contains(alone_h, "`stride activities` lists them first") and !(Str.contains(alone_h, " more")) and !(Str.contains(alone_h, "unreadable date")))?
+    _ = sh!("rm -rf '${alone_home}'")
     # ...and one whose bad time sorts LOW, which is the half a `T37` fixture cannot see.
     # `T37:00:00` sorts HIGH as a string, so under the defect it lands first among the
     # readable rows ANYWAY — present, and ahead of 101 — and both assertions above pass on
