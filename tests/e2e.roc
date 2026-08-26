@@ -3212,6 +3212,11 @@ b_seed_analyze! = |ctx| {
     # there means deleting rows that later checks still need (`activity 940`), and a scoped
     # delete-and-restore is more moving parts than one throwaway database.
     #
+    # The " more" absence is NARROWED to the whole clause. As a whole-screen absence it was
+    # a false-RED surface — a future doctor line saying "3 more sessions" anywhere would red
+    # this check with a message about the date-health line — and review measured that
+    # narrowing costs nothing: the mutation that adds " more" to this line still fails.
+    #
     # `—` anchors the undateable pin too. Unanchored, "unreadable date: 4" also matches 40
     # and 44 — measured — while the remainder pin was already anchored by its trailing
     # " more". `tests/e2e.roc:2730` anchors the same way with a trailing newline.
@@ -3219,7 +3224,7 @@ b_seed_analyze! = |ctx| {
     _ = stride!(ctx.bin, alone_home, ["init"])
     _ = sql!("${alone_home}/.stride/db.sqlite", "INSERT INTO activities (id,name,sport_type,start_local,moving_time) VALUES (960,'alone clock probe','Ride','2099-04-01T37:00:00Z',3600);")
     alone_h = sh!("HOME='${alone_home}' '${ctx.bin}' doctor 2>/dev/null")
-    check!("...and stands on its own when nothing undateable precedes it", Str.contains(alone_h, "cannot order in time: 1 —") and Str.contains(alone_h, "`stride activities` lists them first") and !(Str.contains(alone_h, " more")) and !(Str.contains(alone_h, "unreadable date")))?
+    check!("...and stands on its own when nothing undateable precedes it", Str.contains(alone_h, "cannot order in time: 1 —") and Str.contains(alone_h, "`stride activities` lists them first") and !(Str.contains(alone_h, "cannot order in time: 1 more")) and !(Str.contains(alone_h, "unreadable date")))?
     _ = sh!("rm -rf '${alone_home}'")
     # ...and one whose bad time sorts LOW, which is the half a `T37` fixture cannot see.
     # `T37:00:00` sorts HIGH as a string, so under the defect it lands first among the
