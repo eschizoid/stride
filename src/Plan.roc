@@ -208,6 +208,7 @@ Plan :: [].{
                 \\SELECT id AS id, COALESCE(created_at,'') AS created_at, COALESCE(target_date,'') AS target_date,
                 \\       COALESCE(session_type,'') AS session_type, COALESCE(detail,'') AS detail,
                 \\       COALESCE(rationale,'') AS rationale, COALESCE(completed_activity_id,0) AS completed_activity_id,
+                \\       COALESCE(superseded_activity_id,0) AS superseded_activity_id,
                 \\       COALESCE(status,'open') AS status, COALESCE(skipped_reason,'') AS skipped_reason,
                 \\       COALESCE(substitute_activity_id,0) AS substitute_activity_id,
                 \\       COALESCE((SELECT substr(a.start_local,1,10) FROM activities a WHERE a.id = planned_sessions.completed_activity_id), '') AS done_date
@@ -224,11 +225,12 @@ Plan :: [].{
                 detail = Sqlite.str("detail")(cols)(stmt)?
                 rationale = Sqlite.str("rationale")(cols)(stmt)?
                 completed_activity_id = Sqlite.i64("completed_activity_id")(cols)(stmt)?
+                superseded_activity_id = Sqlite.i64("superseded_activity_id")(cols)(stmt)?
                 status = Sqlite.str("status")(cols)(stmt)?
                 skipped_reason = Sqlite.str("skipped_reason")(cols)(stmt)?
                 substitute_activity_id = Sqlite.i64("substitute_activity_id")(cols)(stmt)?
                 done_date = Sqlite.str("done_date")(cols)(stmt)?
-                Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, status, skipped_reason, substitute_activity_id, done_date })
+                Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, superseded_activity_id, status, skipped_reason, substitute_activity_id, done_date })
             },
         })?
         # newest-first from SQL, flipped to calendar order for display. `Render.reverse_list`
@@ -252,6 +254,12 @@ Plan :: [].{
             detail: p.detail,
             rationale: p.rationale,
             completed_activity_id: p.completed_activity_id,
+            # ...and what a re-completion erased, 0 when nothing was. Published rather than
+            # kept internal because the whole defect was that the erased id existed only in
+            # one line of stdout, once: `week` and `plan` showed the NEW completion and the
+            # old one was gone from the row, so noticing a week later left shell scrollback
+            # as the only record (#274).
+            superseded_activity_id: p.superseded_activity_id,
             # 0 on session rows — only unplanned rows carry a bare activity_id
             activity_id: 0.I64,
             status: p.status,
@@ -366,6 +374,9 @@ Plan :: [].{
             detail: Str.trim_end("${u.aname} — ${Render.mins(u.mt)}${load_part}"),
             rationale: "",
             completed_activity_id: 0.I64,
+            # an unplanned row was never completed through a session, so nothing on it could
+            # have been superseded
+            superseded_activity_id: 0.I64,
             activity_id: u.aid,
             status: "unplanned",
             skipped_reason: "",
@@ -644,7 +655,28 @@ Plan :: [].{
                             # a released link with nothing written in its place
                             _ = Sqlite.execute!({
                                 path: Path.utf8(path),
-                                query: "UPDATE planned_sessions SET completed_activity_id = :aid, status = 'done', substitute_activity_id = NULL WHERE id = :pid",
+                                # `superseded_activity_id` is written in the SAME statement,
+                                # from the column's own prior value, so it can never disagree
+                                # with what was erased. Computing it in Roc and binding it
+                                # would reintroduce the read-then-write gap that #258's
+                                # `prior` read exists inside; SQL sees the old row.
+                                #
+                                # `NOT IN (0, :aid)` — the SAME clause `replaced_activity`
+                                # uses, for the same reason. 0 because an unset completion
+                                # reads as 0 through COALESCE elsewhere, and recording it
+                                # would claim a completion was erased when there was none.
+                                # `:aid` because re-completing with the SAME activity erases
+                                # nothing: an unconditional write there set
+                                # `superseded == completed`, which reads as "this activity
+                                # replaced itself" — the exact misreading `prior != activity_id`
+                                # was added to prevent, re-created one field over — and, worse,
+                                # DESTROYED the genuine erased id from the earlier overwrite.
+                                # The record survived a week of scrollback and died to a
+                                # repeated command.
+                                #
+                                # `ELSE superseded_activity_id` and not NULL: a no-op re-run
+                                # must leave the record standing, which is the whole point.
+                                query: "UPDATE planned_sessions SET superseded_activity_id = CASE WHEN COALESCE(completed_activity_id, 0) NOT IN (0, :aid) THEN completed_activity_id ELSE superseded_activity_id END, completed_activity_id = :aid, status = 'done', substitute_activity_id = NULL WHERE id = :pid",
                                 bindings: [
                                     { name: ":aid", value: Integer(activity_id) },
                                     { name: ":pid", value: Integer(session_id) },
@@ -690,17 +722,18 @@ Plan :: [].{
                             # not a loss, and reporting it as released would name a link the
                             # caller still holds.
                             released = if prior.s != activity_id prior.s else 0
-                            # ...and the note NAMES THE REPAIR, because this line is the only
-                            # place the erased id survives. Nothing stores it: `week` and
-                            # `plan` show the new `completed_activity_id`, the old one is
-                            # overwritten in place, and there is no audit row — so an
-                            # athlete who notices next week has shell scrollback and nothing
-                            # else. Printing the remedy while the id is still on screen is
-                            # what turns a notification into something they can act on, and
-                            # it is the pattern `skip`'s own refusal already uses. A durable
-                            # record needs a `superseded_activity_id` column and a
-                            # migration; that is a follow-up, and this is not a substitute
-                            # for it.
+                            # ...and the note NAMES THE REPAIR, so it is actionable while
+                            # the id is still on screen — the pattern `skip`'s own refusal
+                            # already uses.
+                            #
+                            # It used to be the ONLY place the erased id survived: nothing
+                            # stored it, `week` and `plan` showed the new
+                            # `completed_activity_id`, and an athlete who noticed next week
+                            # had shell scrollback and nothing else. #274 added
+                            # `superseded_activity_id`, written in the same UPDATE, so the
+                            # record now outlives the line. The cross-session `ReleasedFrom`
+                            # case is still not covered, which is why the sentence below
+                            # scopes itself to this session.
                             #
                             # The remedy is EXACTLY invertible on this row, and the reason is
                             # worth writing down because nothing else records it:
@@ -1162,6 +1195,7 @@ Plan :: [].{
                         \\       COALESCE(p.status,'open') AS status,
                         \\       COALESCE(p.skipped_reason,'') AS skipped_reason,
                         \\       COALESCE(p.completed_activity_id, 0) AS completed_activity_id,
+                        \\       COALESCE(p.superseded_activity_id, 0) AS superseded_activity_id,
                         \\       COALESCE(p.substitute_activity_id, 0) AS substitute_activity_id,
                         \\       COALESCE(substr(a.start_local, 1, 10), '') AS completed_on
                         \\FROM planned_sessions p
@@ -1178,9 +1212,10 @@ Plan :: [].{
                         status = Sqlite.str("status")(cols)(stmt)?
                         skipped_reason = Sqlite.str("skipped_reason")(cols)(stmt)?
                         completed_activity_id = Sqlite.i64("completed_activity_id")(cols)(stmt)?
+                        superseded_activity_id = Sqlite.i64("superseded_activity_id")(cols)(stmt)?
                         substitute_activity_id = Sqlite.i64("substitute_activity_id")(cols)(stmt)?
                         completed_on = Sqlite.str("completed_on")(cols)(stmt)?
-                        Ok({ id, target_date, session_type, detail, status, skipped_reason, completed_activity_id, substitute_activity_id, completed_on })
+                        Ok({ id, target_date, session_type, detail, status, skipped_reason, completed_activity_id, superseded_activity_id, substitute_activity_id, completed_on })
                     },
                 })?
                 # counts the coach should not re-derive: raw integers only (#154 —

@@ -1,6 +1,6 @@
 {
   "title": "plan",
-  "description": "The planning bundle. `summary` is intentionally typed loosely here \u2014 it is the summary payload and is validated against schemas/v2/summary.json in the same run; this validator has no $ref, so cross-file composition happens at the call site rather than being faked with a duplicated copy that would drift.",
+  "description": "The planning bundle. `summary` is intentionally typed loosely here — it is the summary payload and is validated against schemas/v2/summary.json in the same run; this validator has no $ref, so cross-file composition happens at the call site rather than being faked with a duplicated copy that would drift.",
   "type": "object",
   "additionalKeys": false,
   "required": [
@@ -150,28 +150,35 @@
       "items": {
         "type": "object",
         "required": [
-          "id",
-          "target_date",
-          "session_type",
-          "detail",
-          "status",
-          "skipped_reason",
           "completed_activity_id",
+          "completed_on",
+          "detail",
+          "id",
+          "session_type",
+          "skipped_reason",
+          "status",
           "substitute_activity_id",
-          "completed_on"
+          "superseded_activity_id",
+          "target_date"
         ],
         "additionalKeys": false,
         "properties": {
-          "id": {
+          "completed_activity_id": {
             "type": "integer"
           },
-          "target_date": {
+          "completed_on": {
             "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
           },
           "session_type": {
             "type": "string"
           },
-          "detail": {
+          "skipped_reason": {
             "type": "string"
           },
           "status": {
@@ -182,16 +189,14 @@
               "skipped"
             ]
           },
-          "skipped_reason": {
-            "type": "string"
-          },
-          "completed_activity_id": {
-            "type": "integer"
-          },
           "substitute_activity_id": {
             "type": "integer"
           },
-          "completed_on": {
+          "superseded_activity_id": {
+            "type": "integer",
+            "description": "The completion this session had BEFORE the current one replaced it, or 0 if none was ever replaced. `stride complete` on an already-done session overwrites `completed_activity_id` in place; the payload reports `replaced_activity` and the human line prints the command that restores it, but before this column that record lived in one line of stdout, once — so an athlete who noticed a week later had shell scrollback and nothing else. LAST value only: a second overwrite replaces it, and the cross-session case (a completion that also released another session's substitute link) is not covered here. 0 rather than absent, per the same rule as `completed_activity_id` — no activity has id 0, so the sentinel is unambiguous."
+          },
+          "target_date": {
             "type": "string"
           }
         }
@@ -234,7 +239,7 @@
       }
     },
     "data_freshness": {
-      "description": "Whether the facts in this payload are current, as four measurements rather than a verdict \u2014 what counts as too stale depends on the question being asked, and ADR 0012 puts that judgement on the coach's side of the line. Present so a planning turn need not spend a second call on `doctor`.",
+      "description": "Whether the facts in this payload are current, as four measurements rather than a verdict — what counts as too stale depends on the question being asked, and ADR 0012 puts that judgement on the coach's side of the line. Present so a planning turn need not spend a second call on `doctor`.",
       "type": "object",
       "required": [
         "newest_activity",
@@ -251,15 +256,15 @@
         },
         "last_sync": {
           "type": "string",
-          "description": "When the last successful `sync` BEGAN, as a UTC ISO timestamp \u2014 the stamp is taken before the activity listing \u2014 or \"\" when sync has never run, when the stored value will not parse, and when it is negative. This is the payload's only full timestamp and its only UTC value; every other date here is a bare local YYYY-MM-DD. Compare it against the current date: that is the one field that detects an install where nothing has run in days."
+          "description": "When the last successful `sync` BEGAN, as a UTC ISO timestamp — the stamp is taken before the activity listing — or \"\" when sync has never run, when the stored value will not parse, and when it is negative. This is the payload's only full timestamp and its only UTC value; every other date here is a bare local YYYY-MM-DD. Compare it against the current date: that is the one field that detects an install where nothing has run in days."
         },
         "activities_awaiting_metrics": {
           "type": "integer",
-          "description": "How many rows `analyze` would recompute right now. Shares the predicate `analyze` selects on, so beyond rows never scored it counts rows whose FTP, threshold pace, zones, metrics_rev or underlying activity inputs have changed since they were scored \u2014 a newly arrived stream being the commonest. Never fewer than doctor's `unanalyzed`, which counts only rows with no metrics at all, and equal to it in the ordinary case. Meaningless unless activities_awaiting_metrics_known is true."
+          "description": "How many rows `analyze` would recompute right now. Shares the predicate `analyze` selects on, so beyond rows never scored it counts rows whose FTP, threshold pace, zones, metrics_rev or underlying activity inputs have changed since they were scored — a newly arrived stream being the commonest. Never fewer than doctor's `unanalyzed`, which counts only rows with no metrics at all, and equal to it in the ordinary case. Meaningless unless activities_awaiting_metrics_known is true."
         },
         "activities_awaiting_metrics_known": {
           "type": "boolean",
-          "description": "False when the count could not be computed at all \u2014 the metrics predicate needs the full zone config, and an unparseable per-sport HR-zone override makes it unreadable. The count is 0 in that case and must NOT be read as \"nothing to do\". `plan` deliberately degrades here rather than failing, so one bad optional config key cannot cost the whole planning bundle; `analyze` is the command that reports the underlying error."
+          "description": "False when the count could not be computed at all — the metrics predicate needs the full zone config, and an unparseable per-sport HR-zone override makes it unreadable. The count is 0 in that case and must NOT be read as \"nothing to do\". `plan` deliberately degrades here rather than failing, so one bad optional config key cannot cost the whole planning bundle; `analyze` is the command that reports the underlying error."
         },
         "activities_awaiting_streams": {
           "type": "integer",

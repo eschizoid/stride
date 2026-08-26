@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(927)?
+    checks_ran_exactly!(932)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -4378,6 +4378,39 @@ b_agent_loop! = |ctx| {
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (9222,'recomplete probe','Ride','${ctx.d2}T09:00:00Z',3600,21000,185,185,142);")
     recomp = strjq!(ctx, ["complete", "${sid}", "9222"], ".data.replaced_activity")
     check!("...and a RE-complete names the activity whose completion it just erased", recomp == "9220")?
+    # ...and the erased id is RECORDED, not just reported. That sentence was the whole of
+    # #274: the payload named it and the human line printed the command that restores it,
+    # but the record lived in one line of stdout, once — `week` and `plan` showed the NEW
+    # completion and the old one was gone from the row, so noticing a week later left shell
+    # scrollback as the only copy.
+    #
+    # Asserted on the COLUMN and on the PAYLOAD, because they can fail apart: writing the
+    # column without publishing it leaves the record unreachable by any consumer, and
+    # publishing a field the UPDATE never wrote would report 0 forever.
+    check!("...and records it on the row rather than only in the payload", Str.trim(sql!(ctx.db, "SELECT COALESCE(superseded_activity_id,0) FROM planned_sessions WHERE id = ${sid};")) == "9220")?
+    check!("...and publishes it, so a consumer can read it back a week later", strjq!(ctx, ["week", "all"], "[.data[] | select(.id == ${sid}) | .superseded_activity_id] | join(\",\")") == "9220")?
+    # ...and a FIRST completion records nothing, which is what `NULLIF` is for: an unset
+    # completion reads as 0 through COALESCE, and storing 0 would claim a completion was
+    # erased when the session had none. Staged as its own session rather than reusing one
+    # above — `sid` has been completed twice by this point, so it can only show the
+    # overwrite direction, and a check that cannot show both is half a check.
+    # Its OWN activity, because 9221 does not exist here — it is inserted at the sync
+    # scenario, deleted two lines later, and not re-inserted until 45 lines BELOW this
+    # point. The completion was refused, nothing was written, and the check passed on a
+    # session that had never been completed at all while its name said "completed once".
+    # `_ = stride!(...)` discarding the result is the mechanism that hid it.
+    #
+    # And asserted on the COLUMN with `typeof`, not on the payload. The payload publishes
+    # `COALESCE(superseded_activity_id, 0)`, and storing NULL rather than 0 is the whole
+    # effect of the guard — so a payload check erases exactly the distinction it claims to
+    # test. Review mutation-proved both halves: writing a sentinel on every first completion
+    # left the suite green at 927.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9231,'first-completion probe','Ride','${ctx.d2}T06:30:00Z',1800,9000);")
+    fresh_sid = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d2}", "endurance", "first-completion probe", "r"], ".data.id"))
+    fresh_out = stride!(ctx.bin, ctx.home, ["complete", fresh_sid, "9231"])
+    check!("...and the probe session really completed (got ${Str.trim(fresh_out)})", Str.contains(fresh_out, "\"activity\":9231"))?
+    check!("...while a session completed once has NULL superseded, not 0", Str.trim(sql!(ctx.db, "SELECT typeof(superseded_activity_id) FROM planned_sessions WHERE id = ${fresh_sid};")) == "null")?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${fresh_sid}; DELETE FROM activities WHERE id = 9231;")
     # ...and re-completing with the SAME activity replaces nothing, which is the whole
     # content of the `prior != activity_id` clause and the only case that separates it from
     # a bare `prior`. Mutation-testing found that gap: `replaced = prior` survived both
@@ -4386,6 +4419,16 @@ b_agent_loop! = |ctx| {
     # the clause, re-running the same command reports the activity as having replaced
     # ITSELF, which reads as history lost when nothing changed.
     check!("...while re-completing with the SAME activity replaces nothing", strjq!(ctx, ["complete", "${sid}", "9222"], ".data.replaced_activity") == "0")?
+    # ...and the RECORD that re-run did not make still stands. The check above reads
+    # `replaced_activity` from the payload, which was already correct before the fix — the
+    # payload was never the bug. The COLUMN was: an unconditional write made a no-op re-run
+    # overwrite the genuine erased id with the current one, so the record survived a week of
+    # scrollback and died to a repeated command. Nothing read the column after that call,
+    # and reverting the guard left the suite green at 928.
+    #
+    # Same shape as the gap the comment above records — "mutation-testing found that gap:
+    # `replaced = prior` survived both other checks" — one field over, again.
+    check!("...and the record that re-run did not make still stands", Str.trim(sql!(ctx.db, "SELECT COALESCE(superseded_activity_id,0) FROM planned_sessions WHERE id = ${sid};")) == "9220")?
     # ...on the HUMAN line as well, which the JSON assertion above does not reach. Review
     # proved the gap: changing the note's guard from `replaced != 0` to `prior != 0` while
     # leaving the VALUE as `replaced` left the payload correct and made the sentence read
@@ -4726,12 +4769,12 @@ b_week_plan! = |ctx| {
     wf = Str.trim(sh!("mktemp"))
     _ = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' plan > '${pf}' 2>/dev/null")
     _ = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' week all > '${wf}' 2>/dev/null")
-    # `// 0` on both link fields, on both sides, because null and absent must compare equal
+    # `// 0` on all three link fields, on both sides, because null and absent must compare equal
     # here. Measured, neither payload ever emits null — both queries COALESCE the links to
     # 0 — so this is a harmless no-op kept for the shape rather than a fix for an observed
     # mismatch. An earlier version of this sentence presented it as answering a measured
     # fact, which is the class of claim this branch keeps having to correct.
-    mismatched = Str.trim(sh!("jq -rn --slurpfile p '${pf}' --slurpfile w '${wf}' '[$p[0].data.plan_history_28d[] | . as $s | (($w[0].data | map(select(.id == $s.id)) | first) // null) as $x | select($x == null or $x.status != $s.status or (($x.completed_activity_id // 0) != ($s.completed_activity_id // 0)) or (($x.substitute_activity_id // 0) != ($s.substitute_activity_id // 0))) | ($s.id | tostring)] | join(\",\")'"))
+    mismatched = Str.trim(sh!("jq -rn --slurpfile p '${pf}' --slurpfile w '${wf}' '[$p[0].data.plan_history_28d[] | . as $s | (($w[0].data | map(select(.id == $s.id)) | first) // null) as $x | select($x == null or $x.status != $s.status or (($x.completed_activity_id // 0) != ($s.completed_activity_id // 0)) or (($x.substitute_activity_id // 0) != ($s.substitute_activity_id // 0)) or (($x.superseded_activity_id // 0) != ($s.superseded_activity_id // 0))) | ($s.id | tostring)] | join(\",\")'"))
     compared = Str.trim(sh!("jq -rn --slurpfile p '${pf}' '$p[0].data.plan_history_28d | length'"))
     # NON-EMPTY first, and the order matters: an empty history makes the set equality below
     # vacuously true, which is the exact shape this file keeps catching elsewhere. The floor
