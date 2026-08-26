@@ -408,9 +408,19 @@ ReportHealth :: [].{
             # clock did not, while this section reported only the date population and read as
             # "nothing else is wrong". Printed as the REMAINDER, not the total — the two
             # populations are nested, and showing 4 under 3 invites the reader to subtract.
+            # SELF-CONTAINED when it prints alone. "N more" and "same repair" both point back
+            # at the undateable line above, which is suppressed at zero — so on a database
+            # whose only fault is an unusable clock, this line said "1 more" than nothing and
+            # "same repair" as nothing, and carried neither the `stride activities` pointer
+            # nor the repair instruction, both of which it was borrowing. That is exactly the
+            # single-bad-row case this change exists to surface, and on the real 737-row
+            # database it is the ONLY path such a row can take (0 undateable).
             unrankable =
                 if p.unrankable_activities > p.undateable_activities
-                    ["  activities the engine cannot order in time: ${(p.unrankable_activities - p.undateable_activities).to_str()} more — a readable date with an unusable clock; same repair"]
+                    if p.undateable_activities > 0
+                        ["  activities the engine cannot order in time: ${(p.unrankable_activities - p.undateable_activities).to_str()} more — a readable date with an unusable clock; same repair"]
+                    else
+                        ["  activities the engine cannot order in time: ${(p.unrankable_activities).to_str()} — a readable date with an unusable clock; `stride activities` lists them first; delete each by id and re-sync"]
                 else
                     []
             Str.join_with(

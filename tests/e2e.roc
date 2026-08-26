@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(919)?
+    checks_ran_exactly!(920)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3190,6 +3190,17 @@ b_seed_analyze! = |ctx| {
     # DIFFER on this fixture — asserting only the new one would pass on a build that had
     # widened the old one instead.
     check!("`doctor` counts the unrankable rows, and separately from the undateable ones", strjq!(ctx, ["doctor"], "(.data.unrankable_activities > .data.undateable_activities) and (.data.undateable_activities == 4)") == "true")?
+    # ...and the HUMAN screen carries both, which nothing checked. Review mutation-proved
+    # that: replacing the whole unrankable conditional with `[]` left `just test` green at
+    # 919 == 919. The old undateable line was equally uncovered, which is why a wart in the
+    # new one — "1 more" and "same repair" both pointing at a suppressed line — reached
+    # review rather than a red suite.
+    #
+    # Both lines asserted TOGETHER against one render, because the wart was a relationship
+    # between them rather than a fault in either: a check on the unrankable line alone would
+    # have passed on the version that dangled.
+    doc_h = sh!("HOME='${ctx.home}' '${ctx.bin}' doctor 2>/dev/null")
+    check!("doctor's human screen carries both date-health lines, the wider one as a remainder", Str.contains(doc_h, "activities with an unreadable date: 4") and Str.contains(doc_h, "cannot order in time: 1 more"))?
     # ...and one whose bad time sorts LOW, which is the half a `T37` fixture cannot see.
     # `T37:00:00` sorts HIGH as a string, so under the defect it lands first among the
     # readable rows ANYWAY — present, and ahead of 101 — and both assertions above pass on
