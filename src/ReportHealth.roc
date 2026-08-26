@@ -117,7 +117,7 @@ ReportHealth :: [].{
                 \\       -- verdicts — ADR 0012 puts "is this a problem?" on the coach's side —
                 \\       -- and the pointer to the ids is a command rather than a list here.
                 \\       COALESCE(SUM(1 - ${Report.date_known_sql}), 0) AS undateable,
-                \\       COALESCE(SUM(CASE WHEN ${Metrics.rankable_sql("a.start_local")} THEN 0 ELSE 1 END), 0) AS unrankable
+                \\       COALESCE(SUM(CASE WHEN ${Report.rankable_sql} THEN 0 ELSE 1 END), 0) AS unrankable
                 \\FROM activities a
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
@@ -403,6 +403,16 @@ ReportHealth :: [].{
                     ["  activities with an unreadable date: ${(p.undateable_activities).to_str()} — `stride activities` lists them first; delete each by id and re-sync"]
                 else
                     []
+            # ...and the WIDER count on its own line, because the JSON half alone left #282
+            # live on the SCREEN: `activities` led with rows whose date parsed fine and whose
+            # clock did not, while this section reported only the date population and read as
+            # "nothing else is wrong". Printed as the REMAINDER, not the total — the two
+            # populations are nested, and showing 4 under 3 invites the reader to subtract.
+            unrankable =
+                if p.unrankable_activities > p.undateable_activities
+                    ["  activities the engine cannot order in time: ${(p.unrankable_activities - p.undateable_activities).to_str()} more — a readable date with an unusable clock; same repair"]
+                else
+                    []
             Str.join_with(
                 List.join([
                     [
@@ -451,6 +461,7 @@ ReportHealth :: [].{
                     # silent. Names the command rather than the ids, because `activities`
                     # now leads with these rows.
                     undateable,
+                    unrankable,
                     [
                         "  config: hr zones ${if p.zones_set "set" else "incomplete"}, ${(p.sport_zone_overrides).to_str()} per-sport zone key(s) set · ${(p.ftp_derived_sports).to_str()} sport(s) have a derived FTP (FTP is never configured — see summary)",
                         "  time: ${p.time}",

@@ -19,9 +19,9 @@
       "name",
       "np_w",
       "power_known",
+      "rankable",
       "relative_effort",
       "sport",
-      "time_known",
       "tss",
       "z1_s",
       "z2_s",
@@ -87,15 +87,15 @@
       "power_known": {
         "type": "boolean"
       },
+      "rankable": {
+        "type": "boolean",
+        "description": "Whether the engine will give this row a ranking position. False means `start_local` is unusable as a timestamp — either its DATE half is unreadable (see `date_known`) or its TIME half is, as in `2026-08-23T37:00:00Z`, which has a perfectly readable date. These are the rows `stride activities` HOISTS to the top as needing repair, so this is the field that says why row one is row one. `rankable` means chronologically orderable: a row can be unrankable and still appear on a `top` leaderboard, carrying the same needs-repair meaning `date_known` does. It licenses no magnitude — unlike the `_known` flags, which each vouch for a value published beside them."
+      },
       "relative_effort": {
         "type": "number"
       },
       "sport": {
         "type": "string"
-      },
-      "time_known": {
-        "type": "boolean",
-        "description": "Whether the TIME half of the row's stored `start_local` is usable. `date_known AND time_known` is exactly the predicate every ranking site in the engine requires, so this is what tells a consumer that a row with a readable DATE is still refused a ranking position — `2026-08-23T37:00:00Z` is hoisted to the top of `activities` as needing repair and has `date_known: true`. Additive rather than widening `date_known`, which is literally correct about such a row: the date component IS readable, and it is a published boolean SKILL.md tells the coach to trust, so changing its meaning in place would have left the name describing the old one."
       },
       "tss": {
         "type": "number"
