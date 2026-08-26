@@ -27,6 +27,7 @@
     "time_ok",
     "unanalyzed",
     "undateable_activities",
+    "unrankable_activities",
     "with_hr",
     "with_power",
     "with_streams",
@@ -124,6 +125,14 @@
       "type": "integer",
       "description": "Activities with no metrics row at all — never scored. A COVERAGE number, matching its neighbours here, which all report what the data has rather than whether it is current. It is NOT what `analyze` would recompute: see awaiting_metrics, which is never smaller WHENEVER awaiting_metrics_known is true. When that flag is false this field can exceed it, because the other count is 0 and means nothing."
     },
+    "undateable_activities": {
+      "type": "integer",
+      "description": "Activities whose `start_local` cannot be read — NULL, empty, malformed, or a year before 1000. These are the rows that make `analyze`, `summary`, `season`, `plan`, `stats` and `week` refuse with `unreadable_activity_date`, and doctor reported a clean engine beside them until #265. A COUNT, not a verdict: the remedy is per-row, so `stride activities` lists them first and each is repaired by deleting it by id and re-syncing. Zero on a healthy database, and the human screen omits the line entirely at zero rather than printing a row the eye learns to skip."
+    },
+    "unrankable_activities": {
+      "type": "integer",
+      "description": "How many activities the engine refuses a ranking position — exactly the rows published with `rankable: false`, and exactly the population `stride activities` hoists to the top as needing repair. Distinct from `undateable_activities`, which counts the rows with `date_known: false` and is a SUBSET: after #255 the hoist grew a time half and the count did not, so a row at the very top of the listing was reported as zero undateable (#282). Each count corresponds to one row flag, so the two can be cross-checked against the listing. A COUNT and not a verdict — ADR 0012 puts 'is this a problem?' on the coach's side."
+    },
     "with_hr": {
       "type": "number"
     },
@@ -138,10 +147,6 @@
     },
     "zones_set": {
       "type": "boolean"
-    },
-    "undateable_activities": {
-      "type": "integer",
-      "description": "Activities whose `start_local` cannot be read — NULL, empty, malformed, or a year before 1000. These are the rows that make `analyze`, `summary`, `season`, `plan`, `stats` and `week` refuse with `unreadable_activity_date`, and doctor reported a clean engine beside them until #265. A COUNT, not a verdict: the remedy is per-row, so `stride activities` lists them first and each is repaired by deleting it by id and re-syncing. Zero on a healthy database, and the human screen omits the line entirely at zero rather than printing a row the eye learns to skip."
     }
   }
 }

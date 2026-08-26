@@ -102,12 +102,22 @@ ReportHealth :: [].{
                 \\       -- all refused — every one of those messages naming a remedy the
                 \\       -- user has to apply BY ID, which doctor had and did not say.
                 \\       --
-                \\       -- Same predicate as the ORDER BY hoist in ReportSessions, and it has
-                \\       -- to be: this counts what those commands refuse over. It is a COUNT
-                \\       -- and not a verdict — ADR 0012 puts "is this a problem?" on the
-                \\       -- coach's side — and `stride activities` now leads with these rows,
-                \\       -- so the pointer to the ids is a command rather than a list here.
-                \\       COALESCE(SUM(1 - ${Report.date_known_sql}), 0) AS undateable
+                \\       -- TWO counts, because there are two populations and this file used to
+                \\       -- claim they were one. The comment here said "same predicate as the
+                \\       -- ORDER BY hoist in ReportSessions, and it has to be" — true when it
+                \\       -- was written, false from #255, which gave the hoist a TIME half the
+                \\       -- count never grew. A row like 2026-08-23T37:00:00Z was hoisted to the
+                \\       -- top of `activities` as needing repair while doctor reported zero
+                \\       -- undateable, so the listing led with a row the health report said
+                \\       -- nothing was wrong with (#282).
+                \\       --
+                \\       -- `undateable` keeps its narrow meaning, matching the published
+                \\       -- `date_known`; `unrankable` is the hoist's own predicate, so it
+                \\       -- counts exactly what `activities` leads with. Both are COUNTS and not
+                \\       -- verdicts — ADR 0012 puts "is this a problem?" on the coach's side —
+                \\       -- and the pointer to the ids is a command rather than a list here.
+                \\       COALESCE(SUM(1 - ${Report.date_known_sql}), 0) AS undateable,
+                \\       COALESCE(SUM(CASE WHEN ${Report.rankable_sql} THEN 0 ELSE 1 END), 0) AS unrankable
                 \\FROM activities a
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
@@ -121,7 +131,8 @@ ReportHealth :: [].{
                 unanalyzed = Sqlite.i64("unanalyzed")(cols)(stmt)?
                 zero_load = Sqlite.i64("zero_load")(cols)(stmt)?
                 undateable = Sqlite.i64("undateable")(cols)(stmt)?
-                Ok({ total, with_hr, with_power, with_streams, unanalyzed, zero_load, undateable })
+                unrankable = Sqlite.i64("unrankable")(cols)(stmt)?
+                Ok({ total, with_hr, with_power, with_streams, unanalyzed, zero_load, undateable, unrankable })
             },
         })?
         models = Sqlite.query_many!({
@@ -320,6 +331,7 @@ ReportHealth :: [].{
             unanalyzed: cov.unanalyzed,
             zero_load: cov.zero_load,
             undateable_activities: cov.undateable,
+            unrankable_activities: cov.unrankable,
             rated: rated_total,
             strength_unrated: strength_unrated.to_i64_wrap(),
             scored_by: models,
@@ -391,6 +403,26 @@ ReportHealth :: [].{
                     ["  activities with an unreadable date: ${(p.undateable_activities).to_str()} — `stride activities` lists them first; delete each by id and re-sync"]
                 else
                     []
+            # ...and the WIDER count on its own line, because the JSON half alone left #282
+            # live on the SCREEN: `activities` led with rows whose date parsed fine and whose
+            # clock did not, while this section reported only the date population and read as
+            # "nothing else is wrong". Printed as the REMAINDER, not the total — the two
+            # populations are nested, and showing 4 under 3 invites the reader to subtract.
+            # SELF-CONTAINED when it prints alone. "N more" and "same repair" both point back
+            # at the undateable line above, which is suppressed at zero — so on a database
+            # whose only fault is an unusable clock, this line said "1 more" than nothing and
+            # "same repair" as nothing, and carried neither the `stride activities` pointer
+            # nor the repair instruction, both of which it was borrowing. That is exactly the
+            # single-bad-row case this change exists to surface, and on the real 737-row
+            # database it is the ONLY path such a row can take (0 undateable).
+            unrankable =
+                if p.unrankable_activities > p.undateable_activities
+                    if p.undateable_activities > 0
+                        ["  activities the engine cannot order in time: ${(p.unrankable_activities - p.undateable_activities).to_str()} more — a readable date with an unusable clock; same repair"]
+                    else
+                        ["  activities the engine cannot order in time: ${(p.unrankable_activities).to_str()} — a readable date with an unusable clock; `stride activities` lists them first; delete each by id and re-sync"]
+                else
+                    []
             Str.join_with(
                 List.join([
                     [
@@ -439,6 +471,7 @@ ReportHealth :: [].{
                     # silent. Names the command rather than the ids, because `activities`
                     # now leads with these rows.
                     undateable,
+                    unrankable,
                     [
                         "  config: hr zones ${if p.zones_set "set" else "incomplete"}, ${(p.sport_zone_overrides).to_str()} per-sport zone key(s) set · ${(p.ftp_derived_sports).to_str()} sport(s) have a derived FTP (FTP is never configured — see summary)",
                         "  time: ${p.time}",

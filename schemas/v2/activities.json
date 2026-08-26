@@ -19,6 +19,7 @@
       "name",
       "np_w",
       "power_known",
+      "rankable",
       "relative_effort",
       "sport",
       "tss",
@@ -36,6 +37,10 @@
       },
       "date": {
         "type": "string"
+      },
+      "date_known": {
+        "type": "boolean",
+        "description": "Whether `date` could be read. False means the row's stored `start_local` is NULL, empty, malformed, or dated before year 1000 — `date` is then an empty string, which is a HOLE and not a value. Needed because an empty date string already means something else in this contract: SKILL.md documents `last_hard_session_date` as `'' = none on record`, so without this flag a consumer cannot tell 'no such thing exists' from 'it exists and its date is unreadable'. #249 chose to REPORT these rows rather than refuse, because a listing cannot turn a wrong date into a wrong answer, and hoists them to the top so no limit hides them; this is the field that says which ones they are."
       },
       "distance_m": {
         "type": "number"
@@ -82,6 +87,10 @@
       "power_known": {
         "type": "boolean"
       },
+      "rankable": {
+        "type": "boolean",
+        "description": "Whether the engine will give this row a ranking position. False means `start_local` is unusable as a timestamp — either its DATE half is unreadable (see `date_known`) or its TIME half is, as in `2026-08-23T37:00:00Z`, which has a perfectly readable date. These are the rows `stride activities` HOISTS to the top as needing repair, so this is the field that says why row one is row one. `rankable` means chronologically orderable: a row can be unrankable and still appear on a `top` leaderboard, carrying the same needs-repair meaning `date_known` does. It licenses no magnitude — unlike the `_known` flags, which each vouch for a value published beside them."
+      },
       "relative_effort": {
         "type": "number"
       },
@@ -108,10 +117,6 @@
       },
       "zones_known": {
         "type": "boolean"
-      },
-      "date_known": {
-        "type": "boolean",
-        "description": "Whether `date` could be read. False means the row's stored `start_local` is NULL, empty, malformed, or dated before year 1000 — `date` is then an empty string, which is a HOLE and not a value. Needed because an empty date string already means something else in this contract: SKILL.md documents `last_hard_session_date` as `'' = none on record`, so without this flag a consumer cannot tell 'no such thing exists' from 'it exists and its date is unreadable'. #249 chose to REPORT these rows rather than refuse, because a listing cannot turn a wrong date into a wrong answer, and hoists them to the top so no limit hides them; this is the field that says which ones they are."
       }
     }
   }

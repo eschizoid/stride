@@ -44,6 +44,31 @@ Report :: [].{
     # to agree with — `Analyze` and `Strava` also rank on this column and cannot import
     # Report, which imports them. This stays as the name four sites already use.
     date_known_sql = Metrics.date_known_sql_for("a.start_local")
+    # ...and the row's RANKABILITY, published beside it, for the same four-copies argument.
+    # After #255 the engine's notion of "usable timestamp" grew a time half and the published
+    # flag did not follow: `2026-08-23T37:00:00Z` is hoisted to the top of `activities` as
+    # needing repair, refused a ranking position at eight sites, and published as
+    # `date_known: true`. The listing put it first and the flag beside it said nothing was
+    # wrong (#281).
+    #
+    # `rankable`, NOT a `time_known` sibling, and the reason is the contract's own convention:
+    # every `_known` flag in this codebase names a value published NEXT TO IT whose magnitude
+    # it licenses — `power_known`/`np_w`, `hr_known`/`avg_hr`, `date_known`/`date` — and
+    # SKILL.md states that normatively ("trust the flag, never the magnitude"). `top` takes
+    # `time` as a METRIC SELECTOR and publishes `moving_time` on the same row, so a
+    # `time_known` there reads as licensing `moving_time` and a coach applying the documented
+    # rule would discard a perfectly good duration on the leaderboard it just ranked by.
+    # Measured: a planted row published `moving_time=999999` with `time_known=False`.
+    #
+    # A `time_known` conjunct also could not be described honestly. It was false for a row
+    # whose date is unreadable and whose clock text is fine (`2026-13-45T10:30:00Z`), and TRUE
+    # for two of the shapes `date_known` rejects (`0001-05-05`, `2026-02-30`) — so its `false`
+    # conflated causes a consumer cannot separate.
+    #
+    # This is the whole predicate, so the consumer composes nothing, and it is the word the
+    # engine already uses (`rankable_sql`, `hoist_unrankable_sql`, `unrankable_activities`)
+    # rather than a fourth name for one idea.
+    rankable_sql = Metrics.rankable_sql("a.start_local")
     medium_models_sql = "'hr_zones','hr_avg','session_rpe'"
     low_models_sql = "'relative_effort'"
 

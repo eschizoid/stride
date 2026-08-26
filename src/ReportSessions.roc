@@ -434,7 +434,7 @@ ReportSessions :: [].{
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, a.sport_type AS sport, a.name AS name,
+                \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, ${Report.rankable_sql} AS rankable, a.sport_type AS sport, a.name AS name,
                 \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                 \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
@@ -504,6 +504,7 @@ ReportSessions :: [].{
                 id = Sqlite.i64("id")(cols)(stmt)?
                 date = Sqlite.str("date")(cols)(stmt)?
                 date_known = Sqlite.i64("date_known")(cols)(stmt)?
+                rankable = Sqlite.i64("rankable")(cols)(stmt)?
                 sport = Sqlite.str("sport")(cols)(stmt)?
                 name = Sqlite.str("name")(cols)(stmt)?
                 moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
@@ -524,7 +525,7 @@ ReportSessions :: [].{
                 hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
                 zones_known = Sqlite.i64("zones_known")(cols)(stmt)?
                 load_model = Sqlite.str("load_model")(cols)(stmt)?
-                Ok({ id, date, date_known: date_known != 0, sport, name, moving_time, distance_m, tss, load_model, np_w, power_known: power_known != 0, intensity, intensity_known: intensity_known != 0, z1_s, z2_s, z3_s, z4_s, z5_s, zones_known: zones_known != 0, hard_s, relative_effort, avg_hr, hr_known: hr_known != 0 })
+                Ok({ id, date, date_known: date_known != 0, rankable: rankable != 0, sport, name, moving_time, distance_m, tss, load_model, np_w, power_known: power_known != 0, intensity, intensity_known: intensity_known != 0, z1_s, z2_s, z3_s, z4_s, z5_s, zones_known: zones_known != 0, hard_s, relative_effort, avg_hr, hr_known: hr_known != 0 })
             },
         })?
         if Output.json_mode!({})
@@ -626,7 +627,7 @@ ReportSessions :: [].{
                 rows = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
-                        \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, a.sport_type AS sport, a.name AS name,
+                        \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, ${Report.rankable_sql} AS rankable, a.sport_type AS sport, a.name AS name,
                         \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                         \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                         \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
@@ -644,6 +645,7 @@ ReportSessions :: [].{
                         id = Sqlite.i64("id")(cols)(stmt)?
                         date = Sqlite.str("date")(cols)(stmt)?
                         date_known = Sqlite.i64("date_known")(cols)(stmt)?
+                        rankable = Sqlite.i64("rankable")(cols)(stmt)?
                         sport = Sqlite.str("sport")(cols)(stmt)?
                         name = Sqlite.str("name")(cols)(stmt)?
                         moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
@@ -656,7 +658,7 @@ ReportSessions :: [].{
                         power_known = Sqlite.i64("power_known")(cols)(stmt)?
                         intensity_known = Sqlite.i64("intensity_known")(cols)(stmt)?
                         hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
-                        Ok({ id, date, date_known: date_known != 0, sport, name, moving_time, distance_m, tss, np_w, power_known: power_known != 0, intensity, intensity_known: intensity_known != 0, avg_hr, hr_known: hr_known != 0, output_kj })
+                        Ok({ id, date, date_known: date_known != 0, rankable: rankable != 0, sport, name, moving_time, distance_m, tss, np_w, power_known: power_known != 0, intensity, intensity_known: intensity_known != 0, avg_hr, hr_known: hr_known != 0, output_kj })
                     },
                 })?
                 if Output.json_mode!({})
