@@ -44,6 +44,10 @@ Report :: [].{
     # to agree with — `Analyze` and `Strava` also rank on this column and cannot import
     # Report, which imports them. This stays as the name four sites already use.
     date_known_sql = Metrics.date_known_sql_for("a.start_local")
+    # ...and its sibling, for the same reason and the same four-copies argument. `date_known`
+    # answers "is the DATE readable"; this answers "is the TIME usable", and the two together
+    # are exactly what every ranking site requires (#281).
+    time_known_sql = Metrics.time_known_sql_for("a.start_local")
     medium_models_sql = "'hr_zones','hr_avg','session_rpe'"
     low_models_sql = "'relative_effort'"
 

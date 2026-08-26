@@ -102,12 +102,22 @@ ReportHealth :: [].{
                 \\       -- all refused — every one of those messages naming a remedy the
                 \\       -- user has to apply BY ID, which doctor had and did not say.
                 \\       --
-                \\       -- Same predicate as the ORDER BY hoist in ReportSessions, and it has
-                \\       -- to be: this counts what those commands refuse over. It is a COUNT
-                \\       -- and not a verdict — ADR 0012 puts "is this a problem?" on the
-                \\       -- coach's side — and `stride activities` now leads with these rows,
-                \\       -- so the pointer to the ids is a command rather than a list here.
-                \\       COALESCE(SUM(1 - ${Report.date_known_sql}), 0) AS undateable
+                \\       -- TWO counts, because there are two populations and this file used to
+                \\       -- claim they were one. The comment here said "same predicate as the
+                \\       -- ORDER BY hoist in ReportSessions, and it has to be" — true when it
+                \\       -- was written, false from #255, which gave the hoist a TIME half the
+                \\       -- count never grew. A row like 2026-08-23T37:00:00Z was hoisted to the
+                \\       -- top of `activities` as needing repair while doctor reported zero
+                \\       -- undateable, so the listing led with a row the health report said
+                \\       -- nothing was wrong with (#282).
+                \\       --
+                \\       -- `undateable` keeps its narrow meaning, matching the published
+                \\       -- `date_known`; `unrankable` is the hoist's own predicate, so it
+                \\       -- counts exactly what `activities` leads with. Both are COUNTS and not
+                \\       -- verdicts — ADR 0012 puts "is this a problem?" on the coach's side —
+                \\       -- and the pointer to the ids is a command rather than a list here.
+                \\       COALESCE(SUM(1 - ${Report.date_known_sql}), 0) AS undateable,
+                \\       COALESCE(SUM(CASE WHEN ${Metrics.rankable_sql("a.start_local")} THEN 0 ELSE 1 END), 0) AS unrankable
                 \\FROM activities a
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
@@ -121,7 +131,8 @@ ReportHealth :: [].{
                 unanalyzed = Sqlite.i64("unanalyzed")(cols)(stmt)?
                 zero_load = Sqlite.i64("zero_load")(cols)(stmt)?
                 undateable = Sqlite.i64("undateable")(cols)(stmt)?
-                Ok({ total, with_hr, with_power, with_streams, unanalyzed, zero_load, undateable })
+                unrankable = Sqlite.i64("unrankable")(cols)(stmt)?
+                Ok({ total, with_hr, with_power, with_streams, unanalyzed, zero_load, undateable, unrankable })
             },
         })?
         models = Sqlite.query_many!({
@@ -320,6 +331,7 @@ ReportHealth :: [].{
             unanalyzed: cov.unanalyzed,
             zero_load: cov.zero_load,
             undateable_activities: cov.undateable,
+            unrankable_activities: cov.unrankable,
             rated: rated_total,
             strength_unrated: strength_unrated.to_i64_wrap(),
             scored_by: models,

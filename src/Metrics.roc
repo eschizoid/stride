@@ -1927,6 +1927,33 @@ Metrics :: [].{
 
     # "is this timestamp rankable", alone, so the two orderings below cannot spell it
     # differently. Both halves are needed and neither subsumes the other — see rank_ts_sql.
+    # "is this timestamp's TIME half usable" — the other half of rankable, published so a
+    # consumer can tell the two apart. `date_known AND time_known` is exactly `rankable_sql`,
+    # by construction: this IS its second conjunct.
+    #
+    # It exists because after #255 the engine grew a notion of "usable timestamp" with a time
+    # half, and the published flag did not follow. A row like `2026-08-23T37:00:00Z` — the
+    # shape `export_date_to_iso` is documented to have produced from `"25:00:00 PM"` — is
+    # hoisted to the top of `activities` as needing repair, refused a ranking position at
+    # eight other sites, and published as `date_known: true`. The listing put it first and
+    # the flag beside it said nothing was wrong (#281).
+    #
+    # ADDITIVE rather than widening `date_known`, deliberately. `date_known` is literally
+    # correct about such a row — the date component IS readable — and it is a published
+    # boolean SKILL.md instructs the coach to trust. Widening it would have kept one key and
+    # silently changed what every existing consumer's reading of it means, with the name left
+    # describing the old meaning. Two honest flags cost a key and lie to nobody.
+    #
+    # NOT independent of date_known: a row whose DATE half is unreadable also fails this,
+    # since `datetime()` parses the whole prefix. That is what makes the conjunction exact
+    # rather than approximate, and it is why this is `time_known` and not `time_valid`.
+    time_known_sql_for : Str -> Str
+    time_known_sql_for = |col| "(CASE WHEN datetime(substr(${col}, 1, 19)) IS NOT NULL THEN 1 ELSE 0 END)"
+
+    expect Metrics.time_known_sql_for("x") == "(CASE WHEN datetime(substr(x, 1, 19)) IS NOT NULL THEN 1 ELSE 0 END)"
+    # the conjunction IS rankable_sql, spelled out — if these drift the flags stop composing
+    expect Metrics.rankable_sql("c") == "${Metrics.date_known_sql_for("c")} = 1 AND datetime(substr(c, 1, 19)) IS NOT NULL"
+
     rankable_sql : Str -> Str
     rankable_sql = |col| "${date_known_sql_for(col)} = 1 AND datetime(substr(${col}, 1, 19)) IS NOT NULL"
 

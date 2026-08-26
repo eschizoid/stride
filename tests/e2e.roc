@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(916)?
+    checks_ran_exactly!(919)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3151,8 +3151,12 @@ b_seed_analyze! = |ctx| {
     # undateable rows to the top, and among everything below it the tie-break was the raw
     # column — so a valid date with an impossible TIME still outranked every real row on
     # its own day, and nothing marked it: `date_known` is 1 for that row, so `doctor`'s
-    # undateable count does not see it either. The hoist answers the date dimension; this
+    # undateable count did not see it either. The hoist answers the date dimension; this
     # is the time dimension of the same defect, wearing the same intent.
+    #
+    # BOTH halves of that sentence are now closed, and asserted below: `time_known` is the
+    # published flag for the time dimension, and `doctor`'s `unrankable_activities` is the
+    # count over the population the hoist leads with (#281, #282).
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (949,'impossible time','Ride','Ride',(SELECT substr(start_local,1,10) FROM activities WHERE id=101) || 'T37:00:00Z',3600);")
     # `activities 3`, not the default 30. With a ten-row fixture there is no limit for a
     # sunk row to fall below, so this assertion could not show what its name claims — and
@@ -3171,6 +3175,21 @@ b_seed_analyze! = |ctx| {
     # the sunk-below-the-limit failure they exist to catch. Latent only because this
     # fixture is smaller than the default limit, which nothing asserts.
     check!("...ahead of every readable row, which is what the hoist is for", strjq!(ctx, ["activities"], "[.data[].id] | (index(949) != null) and (index(949) < index(101))") == "true")?
+    # ...and the FLAGS say why, which is what the listing could not do before. `date_known`
+    # stays TRUE on this row and that is correct — the date component really is readable —
+    # so the pair is asserted together: a check on `time_known` alone would pass on a build
+    # that had simply widened `date_known` and broken every existing consumer's reading of
+    # it, which is the resolution #281 explicitly did not take.
+    check!("...and the row publishes date_known TRUE with time_known FALSE, so the pair says which half is broken", strjq!(ctx, ["activities"], "[.data[] | select(.id == 949) | (.date_known == true) and (.time_known == false)] | join(\",\")") == "true")?
+    # ...and a readable row says true for BOTH, so neither flag is simply a constant.
+    check!("...while a readable row is true on both halves", strjq!(ctx, ["activities"], "[.data[] | select(.id == 101) | (.date_known == true) and (.time_known == true)] | join(\",\")") == "true")?
+    # ...and `doctor` COUNTS it. This is the half that reported a clean engine while the
+    # listing led with the row: `undateable_activities` is `SUM(1 - date_known)`, which is 0
+    # for a row whose date half is fine. `unrankable_activities` derives from the hoist's own
+    # predicate, so it counts exactly what `activities` leads with, and the two counts
+    # DIFFER on this fixture — asserting only the new one would pass on a build that had
+    # widened the old one instead.
+    check!("`doctor` counts the unrankable rows, and separately from the undateable ones", strjq!(ctx, ["doctor"], "(.data.unrankable_activities > .data.undateable_activities) and (.data.undateable_activities == 4)") == "true")?
     # ...and one whose bad time sorts LOW, which is the half a `T37` fixture cannot see.
     # `T37:00:00` sorts HIGH as a string, so under the defect it lands first among the
     # readable rows ANYWAY — present, and ahead of 101 — and both assertions above pass on
