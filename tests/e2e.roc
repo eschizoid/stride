@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(933)?
+    checks_ran_exactly!(937)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1959,6 +1959,26 @@ b_config_ftp! = |ctx| {
     check!("config set refuses an unknown key rather than storing it", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", "America/Chicago"]), "unknown_key"))?
     check!("...and stores nothing, so get and set cannot disagree", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'timezon';")) == "0")?
     check!("...while a real key still writes", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max_ride", "155"]), "hr_z2_max_ride"))?
+    # ...and it can be REMOVED, which is the scenario #276 opens with and which nothing
+    # asserted. `config set hr_z2_max_ride ""` answered `bad_value` — `numeric_key` calls
+    # anything starting `hr_z` a Decimal — so `sqlite3` was the only way to drop a per-sport
+    # override. Setting it back to the global value is not equivalent: it PINS the number,
+    # so a later change to `hr_z2_max` stops propagating, and removing the override is the
+    # whole reason the per-sport family exists.
+    #
+    # The MESSAGE is asserted too, on the branch that distinguishes it from a global bound.
+    # `hr_z1_max` and `hr_z2_max_ride` are both zone keys and both `known_key`, and the
+    # first version of this command told both "stride will fall back to its default" — true
+    # for one, false for the other, which is how the wrong sentence shipped.
+    unset_out = stride!(ctx.bin, ctx.home, ["config", "unset", "hr_z2_max_ride"])
+    check!("a per-sport override can be REMOVED, which `config set <key> \"\"` could not do", Str.contains(unset_out, "\"removed\":true"))?
+    check!("...and the row is gone, not emptied", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'hr_z2_max_ride';")) == "0")?
+    # Stored first: an absent key takes the not-stored branch, so the message under test
+    # would never render — the first version of this check asserted the global-bound wording
+    # against "hr_z3_max_ride was not stored".
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z3_max_ride", "165"])
+    check!("...and it says the global applies again, not that a default does", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "unset", "hr_z3_max_ride"]), "global bound applies"))?
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max_ride", "155"])
     # ── bare `config` lists what is set. Its first job is answering "which config do I
     # have?", which nothing did; its second is being the source `just schema-check` fills
     # `config get <key>` from, so that recipe can no longer skip on a stale literal.
@@ -2042,10 +2062,15 @@ b_config_ftp! = |ctx| {
     check!("...and removing a key that was never there creates nothing", Str.contains(stride!(ctx.bin, ctx.home, ["config", "unset", "qwertyuiop"]), "\"removed\":false"))?
     check!("...and really creates nothing", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'qwertyuiop';")) == "0")?
     check!("...while a NON-empty write to an unrecognised key is still refused", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", "again"]), "unknown_key"))?
-    # ...and clearing a key the engine DOES read is not this path: it stores an empty value
-    # and the normal guards apply, so removal can never silently wipe live config.
+    # ...and an empty value is refused for EVERY key class, not just the ones stride reads.
+    # This comment used to say the opposite one line above the check — "it stores an empty
+    # value and the normal guards apply" — describing the arm this change replaced.
     check!("...and an empty value is refused for EVERY key class now, pointing at the verb that removes", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", ""]), "config unset hr_z1_max") and Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", ""]), "config unset timezon"))?
-    check!("...and it leaves the row it refused to write alone", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'hr_z1_max';")) == "1")?
+    # `SELECT value`, not `COUNT(*)`. The count cannot see a VALUE, so it passed on a build
+    # where the refusal ALSO wrote `value=''` — review mutated exactly that and this check
+    # printed ok while the row read `hr_z1_max|`. A check that cannot observe the thing it
+    # is named for is the sixth of its kind on this branch today.
+    check!("...and it leaves the row it refused to write alone, value intact", Str.trim(sql!(ctx.db, "SELECT COALESCE(value,'(null)') FROM config WHERE key = 'hr_z1_max';")) != "" and Str.trim(sql!(ctx.db, "SELECT COALESCE(value,'(null)') FROM config WHERE key = 'hr_z1_max';")) != "(null)")?
     # ── the two cell shapes `Sqlite.str` cannot decode, both reachable because `value` is
     # declared TEXT with no NOT NULL and TEXT affinity converts INTEGER and REAL but not
     # blobs. Each answered `internal_error` — "this is a bug, not the data and not the
@@ -2644,6 +2669,16 @@ b_seed_analyze! = |ctx| {
     # On main this was the line that actually caused #200 -- it flipped the binary to
     # Chicago for the whole remainder of the run while the harness was still on UTC.
     check!("config conforms", validate!("config set timezone ${ctx.tz}", "config") == "")?
+    # ...and the REMOVAL shape, under its own schema. `schema-check` cannot cover it:
+    # `config unset` is `mutates: true`, so that recipe excludes it by construction, and
+    # review mutation-proved the consequence — adding a bogus field to the payload left
+    # `just test`, `just schema-check` and `just command-claims` all green while
+    # `validate.jq` rejected it. `schemas/v2/config_unset.json` was decorative, which is the
+    # same gap #276 exists to close, reproduced for the new verb.
+    #
+    # A key that is NOT stored, so the fixture is not disturbed and `removed: false` — the
+    # branch a `removed: true` probe would leave unvalidated — is the one under the schema.
+    check!("config unset conforms", validate!("config unset nosuchkey_probe", "config_unset") == "")?
     act_sess = Str.trim(strjq!(ctx, ["week", "add", "2099-11-11", "endurance", "schema action probe", "r"], ".data.id"))
     check!("week add conforms", validate!("week add 2099-11-12 endurance d r", "week_add") == "")?
     check!("skip conforms", validate!("skip ${act_sess} \"probe reason\"", "skip") == "")?

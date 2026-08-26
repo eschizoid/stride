@@ -574,45 +574,6 @@ config_list! = |{}| {
                 ),
     )
 }
-
-# One message for both verbs, so `config set timezon x` and `config get timezon` cannot
-# drift into disagreeing about whether the key exists.
-#
-# It NAMES the keys rather than pointing at `stride doctor`, which the first cut did and
-# which does not have the answer: doctor reports "hr zones set, 0 per-sport zone key(s)
-# set" — counts, not names — so a reader who mistyped `hr_z2_max_rid` and followed the
-# advice would learn how many zone keys exist and not one of their names. Advice that
-# sends the reader somewhere the answer is not is worse than no advice.
-# `config set <key> ""` on a key the engine does not read: delete the row and say what
-# happened. Reports whether there was anything there, because "removed" and "there was
-# nothing to remove" are different facts and a caller clearing a leftover wants to know
-# which one it got — the same absence taxonomy the rest of the CLI keeps.
-removal! : Str => Try({}, _)
-removal! = |key| {
-    path = Db.open_db!({})?
-    existed =
-        match Db.config_opt!(path, key)? {
-            Found(_) => 1 == 1
-            NotFound => 1 == 2
-        }
-    Db.config_delete!(path, key)?
-    Output.out!(
-        { key, removed: existed },
-        |p| if p.removed "${p.key} removed — stride does not read it" else "${p.key} was not stored; stride does not read it either",
-    )
-}
-
-# `config unset <key>` — DELETE for every key class, which is the whole point of the verb.
-#
-# `removal!` above does the same deletion but is worded for keys stride does not read
-# ("stride does not read it"), which is false for `hr_z2_max_ride`. Splitting the message
-# rather than the mechanism: one sentence per class, one DELETE.
-#
-# It refuses nothing. `config set` still guards what the engine parses — `numeric_refusal`
-# for the numeric keys, `derived_key` for the computed ones — and those guards are about
-# WRITING a value the engine cannot use. Removing a row cannot produce an unusable value,
-# so a key being derived or numeric has nothing to say about deleting it, and #254 already
-# made that argument for the `!known_key` half.
 config_unset! : Str => Try({}, _)
 config_unset! = |key| {
     path = Db.open_db!({})?
@@ -622,6 +583,15 @@ config_unset! = |key| {
             NotFound => 1 == 2
         }
     Db.config_delete!(path, key)?
+    # ONE branch per OUTCOME, not per key class. The first version keyed on `known_key` and
+    # told every recognised key "stride will fall back to its default for it" — measured
+    # false for half of them: removing `hr_z1_max` makes `summary` and `analyze` exit 1 with
+    # `missing_config`, and there is no default to fall back to. The same sentence is TRUE
+    # for `hr_z2_max_ride`, which does fall back to the global. One predicate, two truth
+    # values, chosen by something that cannot tell them apart (#276).
+    #
+    # A per-sport override is `hr_zN_max_<sport>` and the global it defers to is
+    # `hr_zN_max`; `is_zone_key` accepts both, so the underscore AFTER `max` separates them.
     Output.out!(
         { key, removed: existed },
         |p|
@@ -629,14 +599,18 @@ config_unset! = |key| {
                 "${p.key} was not stored, so there was nothing to remove"
             } else if Config.is_derived(p.key) {
                 "${p.key} removed — stride derives it from your power history anyway; `stride summary` shows the current value"
+            } else if p.key == "strava_client_secret" {
+                "${p.key} removed — stride cannot re-authenticate until you supply STRAVA_CLIENT_SECRET again and run `stride auth`"
             } else if Config.is_secret(p.key) {
-                # A credential has no default to fall back TO. Saying so is the difference
-                # between "this setting reverted" and "you are logged out", which are not the
-                # same news — and `sync` will answer `not_authenticated` locally rather than
-                # spending a request to be told by Strava.
                 "${p.key} removed — stride is no longer authenticated; run `stride auth` to reconnect"
+            } else if Config.is_zone_key(p.key) and Str.contains(p.key, "_max_") {
+                "${p.key} removed — the global bound applies to this sport again"
+            } else if Config.is_zone_key(p.key) {
+                "${p.key} removed — stride needs this bound; `summary` and `analyze` refuse until it is set again"
+            } else if p.key == "timezone" {
+                "${p.key} removed — stride reads dates as UTC until one is set"
             } else if Config.known_key(p.key) {
-                "${p.key} removed — stride will fall back to its default for it"
+                "${p.key} removed — stride reads this key and will recompute or re-fetch it as needed"
             } else {
                 "${p.key} removed — stride does not read it"
             },
@@ -666,27 +640,14 @@ numeric_refusal = |key, val|
 
 config_store! : Str, Str => Try({}, _)
 config_store! = |key, val|
-    # FIRST, and before every other guard including `is_derived`: an EMPTY value on a key
-    # the engine does not read is a REMOVAL, and it deletes the row (#254).
-    #
-    # First, because two guards below reject it otherwise and between them they covered
-    # most of the population this needs to serve. `numeric_key` classifies anything
-    # starting `hr_z` as Decimal, so `config set hr_z1_maxx ""` answered `bad_value` — and
-    # the misspelled zone keys are precisely the rows #254's tightened `zone_shape`
-    # orphaned. `is_derived` rejected `ftp_ride`, which the listing's own schema calls the
-    # rows most likely to be on a real database. Removing an ignored row is the opposite
-    # of "confirming a change that never happens", so `derived_key` has nothing to say here.
-    #
-    # DELETE, not `value = ''`, which was the first cut and was worse than nothing for the
-    # zone family: `Analyze.load_config!` requires every `hr_z*` key to parse as F64, so one
-    # empty row kills `analyze` outright, and the error it prints names `config set` as the
-    # remedy — the one command that could no longer fix it. An empty write was also an
-    # ENTRANCE: `INSERT OR REPLACE` meant `config set qwertyuiop ""` created a row for a key
-    # that never existed, invisible in the listing and unreadable by `config get`. The CLI
-    # could manufacture exactly the class of row the marking exists to expose.
-    #
-    # The row must already be absent-or-junk for this to fire, so it cannot clear a key the
-    # engine reads: those take the normal path and `numeric_refusal` still guards them.
+    # An empty value is REFUSED for every key class, and the removal it used to mean lives
+    # in `config unset`. The block that stood here described the old arm in the present
+    # tense -- "an EMPTY value on a key the engine does not read is a REMOVAL", "DELETE, not
+    # `value = ''`", and "the row must already be absent-or-junk for this to fire, so it
+    # cannot clear a key the engine reads" -- the last of which the new arm contradicts
+    # outright, since it fires for every key. The history is worth keeping and lives in
+    # #276 and in `config_unset!`'s own comment; restating deleted behaviour four lines
+    # above its replacement is how a reader gets told the opposite of what runs.
     if val == ""
         # An empty value is not a WRITE, and `config set` now says so instead of guessing
         # what you meant. It used to mean three things by key class: removal for keys stride
@@ -698,7 +659,10 @@ config_store! = |key, val|
         # It also broke the contract: the removal payload is `{key, removed}` while
         # `config set` declares `config.json`, which requires `value`. Measured — the removal
         # form failed its own schema on both counts, and `just schema-check` never saw it
-        # because the recipe fills `<value>` with a real value. `config unset` carries the
+        # because the form is `mutates: true` and that recipe covers read-only forms only.
+        # The site that DID exercise it with a real value is `validate!("config set timezone
+        # ...")` in the e2e suite -- naming schema-check here would send a reader to fix a
+        # recipe that must never invoke `config set` at all. `config unset` carries the
         # removal shape under its own schema now, so each verb emits one shape.
         Output.err_out!(
             "bad_value",

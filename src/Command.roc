@@ -168,8 +168,11 @@ Command := [
 			# so it cannot be stale, and the skip is decided by an EMPTY LIST — a fact the
 			# recipe checks — instead of by an error code that could mean two things.
 			[_, "config"] => Ok(ConfigList)
-			# BEFORE the `set` arm and matched on its own literal: `config unset <key>` is a
-			# distinct verb, not `set` with a magic value. `config set <key> ""` used to mean
+			# Its own literal, and a distinct verb rather than `set` with a magic value. NOT
+			# order-dependent — review moved this arm below `set` and everything stayed green,
+			# because the two are disjoint by arity (4 argv entries vs 5) as well as by
+			# literal. A rule no test can falsify is not a guard, which is the argument
+			# `Config.roc` already makes about `known_key`. `config set <key> ""` used to mean
 			# removal for unrecognised keys, refusal for numeric ones and an empty WRITE for
 			# managed free-text ones — three behaviours on one gesture, and only one of them
 			# was removal (#276).
@@ -673,6 +676,12 @@ expect
 		Ok(ConfigGet("ftp")) => True
 		_ => False
 	}
+expect
+	match Command.parse(["stride", "config", "unset", "hr_z2_max_ride"]) {
+		Ok(ConfigUnset("hr_z2_max_ride")) => True
+		_ => False
+	}
+
 expect
 	match Command.parse(["stride", "config", "set", "ftp", "250"]) {
 		Ok(ConfigSet("ftp", "250")) => True
