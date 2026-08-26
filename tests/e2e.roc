@@ -1676,7 +1676,7 @@ b_auth! = |ctx| {
     # ...and SYNC does too, which is the half that was missing. `Strava.client_cred!` raises
     # `MissingEnv` from both `auth!` and `get_valid_token!`'s refresh branch; only `auth!`
     # handled it, so credless `sync` answered `internal_error: unhandled failure:
-    # MissingEnv("STRAVA_CLIENT_ID") — please open an issue`, for a state one `stride auth`
+    # MissingEnv("STRAVA_CLIENT_ID") — please open an issue with the command you ran`, for a state one `stride auth`
     # fixes. `internal_error` is a universal code, so the envelope validated and the schema
     # apparatus saw nothing wrong (#279).
     #
@@ -1693,11 +1693,20 @@ b_auth! = |ctx| {
     check!("credless sync gives the same setup guidance, not internal_error", Str.contains(sync_out, "\"code\":\"missing_client_creds\"") and !(Str.contains(sync_out, "internal_error")))?
     # ...and names WHICH credential, which is the property the boundary arm's comment says it
     # depends on: the arm keys on the TAG, so it is only ever right because every value the
-    # tag can carry is a client-credential variable. Nothing asserted that until now. Safe
-    # against the wording hazard above — under the mutation this exists to catch, the CODE
-    # half goes red first.
-    check!("...and names the variable the caller has to set", Str.contains(sync_out, "STRAVA_CLIENT_ID"))?
-    # ...and `sync` DECLARES the code it can now raise. Modelled on `load`'s guard above,
+    # tag can carry is a client-credential variable.
+    #
+    # `"STRAVA_CLIENT_ID not set"`, not the bare name. The remedy's static tail is
+    # `STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth`, so the bare name is
+    # present for EVERY value of `name` and the check could not fail. Review mutation-proved
+    # it: an arm passing `"SOME_OTHER_VAR"` produced a message opening with that variable and
+    # this check still reported ok, at 919 == 919. The space before `not set` is what
+    # discriminates the interpolated name from the boilerplate.
+    #
+    # Still safe against the wording hazard: under the arm-removal mutation the message is
+    # `unhandled failure: MissingEnv(...)`, which contains no `... not set`, so both halves
+    # go red and the CODE half is not load-bearing alone.
+    check!("...and names the variable the caller has to set", Str.contains(sync_out, "STRAVA_CLIENT_ID not set"))?
+    # ...and `sync` DECLARES the code it can now raise. Same construct as `load`'s guard,
     # because review measured that nothing else catches it: dropping `missing_client_creds`
     # from sync's `error_codes` left `just test`, `just command-claims` and `just
     # schema-check` all green. The two schema directions are DECLARED->CONTRACT and

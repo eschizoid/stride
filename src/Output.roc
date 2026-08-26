@@ -205,10 +205,13 @@ Output :: [].{
     # and the boundary arm in `app.roc` that catches the same tag surfacing from
     # `get_valid_token!`'s refresh branch. Two spellings of one remedy is how they drift.
     #
-    # NOT split into a `_msg` half. The `_msg`/`_!` pairs elsewhere earn the split by having
-    # a second consumer that embeds the prose in a PAYLOAD rather than an error —
-    # `unreadable_config_msg` is called from `ReportHealth` for exactly that. This one had a
-    # single caller, so the split was shape-matching, not sharing.
+    # NOT split into a `_msg` half. ONE pair in this file earns that split:
+    # `unreadable_config_msg`, which `ReportHealth` also calls to embed the prose in a
+    # PAYLOAD rather than an error. The other three — `unreadable_activity_date_msg`,
+    # `unreadable_activity_time_msg`, `unreadable_daily_load_day_msg` — have a single caller
+    # each, so they are the shape-matching this note is about, not the precedent for it. An
+    # earlier version of this comment said the pairs "elsewhere" earn it, generalising from
+    # the one example that does; review measured the other three.
     missing_client_creds! : Str => Try({}, _)
     missing_client_creds! = |name|
         Output.err_out!("missing_client_creds", "${name} not set and no stored credentials yet — create a (free) Strava API app at strava.com/settings/api, then run:\n  STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth")

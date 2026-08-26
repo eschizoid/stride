@@ -304,23 +304,27 @@ run_command! = |cmd|
         # each call site: several commands load config, and the remedy is identical for
         # all of them -- name the key, echo the stored text (#206).
         Err(UnreadableConfig(key, raw)) => Output.unreadable_config!(key, raw)
-        # ...and the sibling tag from the same FILE. `Strava.client_cred!` raises
+        # ...and the sibling tag. `Strava.client_cred!` raises
         # `MissingEnv` when a client credential is in neither the environment nor the db.
         # `auth!` handled it and nothing else did, so the SAME tag raised from
-        # `get_valid_token!`'s refresh branch fell to the catch-all: `sync` answered
+        # `get_valid_token!`'s refresh branch surfaced through the catch-all: `sync` answered
         # `internal_error: unhandled failure: MissingEnv("STRAVA_CLIENT_ID") — please open an
         # issue with the command you ran`, for a state `stride auth` fixes in one command.
         #
         # This is the defect the `UnreadableConfig` note above records, one tag over -- which
-        # is why this arm sits beside it rather than at the refresh site. Not literally the
-        # same FUNCTION: `UnreadableConfig` is raised inside `get_valid_token!`, while
-        # `MissingEnv` is raised inside `client_cred!` and only SURFACES through it. `internal_error` is a universal code, so the envelope validated and
+        # is why this arm sits beside it rather than at the refresh site. Siblings by FAILURE
+        # SHAPE and by sharing this boundary, not by locality — `UnreadableConfig` has five
+        # raise sites across `Strava.roc` and `Analyze.roc`, so a claim that the two tags come
+        # from one function, or even one file, does not survive a grep. What they share is
+        # that several commands can raise them and the remedy is identical for all of them.
+        #
+        # `internal_error` is a universal code, so the envelope validated and
         # nothing in the schema apparatus flagged it (#279).
         #
         # Safe to key on the TAG rather than the name because `MissingEnv` has exactly one
-        # raiser — `Strava.client_cred!` — and that function is called four times, on three
-        # lines (`Strava.roc:103` carries two), every one of them passing `STRAVA_CLIENT_ID`
-        # or `STRAVA_CLIENT_SECRET`. So every value
+        # raiser — `Strava.client_cred!` — and that function is called four times on three
+        # lines, the tuple match in `auth!` carrying two of them, every one passing
+        # `STRAVA_CLIENT_ID` or `STRAVA_CLIENT_SECRET`. So every value
         # this arm can see is a client credential and the remedy always fits. That is the
         # property it depends on: raise `MissingEnv` for some other variable and this arm
         # will hand out Strava API setup instructions for it.
