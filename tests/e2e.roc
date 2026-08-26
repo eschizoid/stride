@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(915)?
+    checks_ran_exactly!(916)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -4880,8 +4880,23 @@ b_plan! = |ctx| {
     # same statement NULLs `substitute_activity_id`, so `prior.s` does not. Copying the
     # `replaced` check's shape one field over without the re-stage yields an assertion that
     # holds for every implementation — which is what happened, and review caught it.
-    _ = sql!(ctx.db, "UPDATE planned_sessions SET substitute_activity_id = 303 WHERE id = ${resess};")
-    check!("...in the human line too", Str.contains(stride_human!(ctx.bin, ctx.home, ["complete", resess, "304"]), "dropping substitute activity 303"))?
+    # STAGED, not hand-edited. This used to bolt `substitute_activity_id = 303` onto
+    # `resess`, which is already `done` with activity 304 — a row holding both a completion
+    # and a substitute, the exact pairing `Plan.roc` declares impossible and whose
+    # impossibility makes #258's remedy exactly invertible. It was consumed on the next line
+    # so nothing observed it, but the promotion probe was moved off that shape for this
+    # reason and this one was left behind: the only place in the suite that created the pair
+    # was a test asserting the code never creates it.
+    #
+    # Its own session and its own activity, because both of the obvious reuses are taken:
+    # 304 is `resess`'s completion and 300 is `replan`'s, so completing with either answers
+    # `activity_already_linked`. 303 is free — the completion above consumed it as a
+    # substitute rather than linking it.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (3055,'human line drop probe','Ride','2099-11-02T07:00:00Z',1800,9000);")
+    hsess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d2}", "endurance", "human line drop probe", "r"], ".data.id"))
+    _ = stride!(ctx.bin, ctx.home, ["skip", hsess, "did 303 instead", "303"])
+    check!("...in the human line too", Str.contains(stride_human!(ctx.bin, ctx.home, ["complete", hsess, "3055"]), "dropping substitute activity 303"))?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${hsess}; DELETE FROM activities WHERE id = 3055;")
     # ...while a completion that destroyed no substitute says 0 rather than going silent —
     # the always-present half, without which a constant-303 field would pass the check above.
     #
@@ -5836,6 +5851,28 @@ b_concurrency! = |ctx| {
     # rows left by earlier scenarios, so it proved nothing about the run under contention.
     _ = sql!(ctx.db, "DELETE FROM activity_metrics;")
     _ = sql!(ctx.db, "DELETE FROM daily_load;")
+    # WAITS FOR THE LOCK, not for the clock. This was `sleep 1`, and its own comment said
+    # what was wrong with it: "without it the two might not overlap and the check would pass
+    # without ever testing contention." On a loaded runner, a cold page cache or a slow
+    # container, sqlite3 may not have applied its `BEGIN` within that second — and then all
+    # three assertions below pass against no contention at all. Two of them (`no busy error`,
+    # `rebuilt daily_load under contention`) are meaningless without a live lock and the
+    # third is trivially true, so the whole scenario reports green on exactly the failure it
+    # exists to catch.
+    #
+    # The holder now ANNOUNCES itself from inside the transaction: `SELECT 987654321` after
+    # the `BEGIN`, with sqlite3's stdout captured instead of discarded. Seeing that number
+    # proves statements are executing within the transaction, which is the condition the
+    # scenario needs. A bare number and not a quoted string because this lives inside a Roc
+    # string inside a shell string, and `'HOLDER-READY'` would need three levels of quote
+    # nesting; 987654321 cannot collide with the `COUNT(*)` line above it.
+    #
+    # BOUNDED and LOUD: 100 polls at 0.1s, then `HOLDSTATE=timeout` into the captured output
+    # and a check that fails on it. A timeout that fell through silently would be the old
+    # behaviour with extra steps. Measured — readiness arrives after 1 poll (0.1s), so this
+    # is also faster than the second it replaces; and with the holder replaced by a process
+    # that never reads the fifo, the loop reports `NEVER-READY` rather than proceeding.
+    #
     # A FIFO, not a backgrounded pipeline: `$!` on a pipeline is the last command in some
     # shells and the subshell in others, so `kill $!` could leave sqlite3 alive holding the
     # transaction and block every test after this one. Feeding sqlite3 from a fifo makes it
@@ -5854,11 +5891,12 @@ b_concurrency! = |ctx| {
     # exported in the developer's shell and not on CI, so it passed locally and
     # failed there; since #181 nothing infers the mode from ambient state, and
     # pinning it explicitly is the whole story.
-    held = Str.trim(sh!("f='${ctx.home}/hold.fifo'; rm -f \"$f\"; mkfifo \"$f\"; sqlite3 '${ctx.db}' < \"$f\" > /dev/null 2>&1 & holder=$!; exec 3> \"$f\"; printf 'BEGIN;\\nSELECT COUNT(*) FROM activities;\\n' >&3; sleep 1; HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' analyze > '${ctx.home}/held.out' 2>&1; exec 3>&-; wait $holder 2>/dev/null; rm -f \"$f\"; cat '${ctx.home}/held.out'"))
+    held = Str.trim(sh!("f='${ctx.home}/hold.fifo'; o='${ctx.home}/hold.out'; rm -f \"$f\" \"$o\"; mkfifo \"$f\"; sqlite3 '${ctx.db}' < \"$f\" > \"$o\" 2>&1 & holder=$!; exec 3> \"$f\"; printf 'BEGIN;\\nSELECT COUNT(*) FROM activities;\\nSELECT 987654321;\\n' >&3; i=0; while [ $i -lt 100 ]; do grep -q 987654321 \"$o\" 2>/dev/null && break; i=$((i+1)); sleep 0.1; done; grep -q 987654321 \"$o\" 2>/dev/null && echo HOLDSTATE=ready || echo HOLDSTATE=timeout; HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' analyze > '${ctx.home}/held.out' 2>&1; exec 3>&-; wait $holder 2>/dev/null; rm -f \"$f\" \"$o\"; cat '${ctx.home}/held.out'"))
     # NOT schema_version: the ERROR envelope carries that too, so matching it would accept
     # the very failure this scenario exists to catch. `converged` appears only in analyze's
     # success payload, and daily_load — emptied above, rebuilt by analyze alone — proves
     # THIS run wrote under contention rather than some earlier one.
+    check!("the reader really held the lock before analyze ran", Str.contains(held, "HOLDSTATE=ready"))?
     check!("analyze finishes while a reader holds the db", Str.contains(held, "\"converged\":true"))?
     check!("no busy error under a held read lock", !(Str.contains(held, "Busy")) and !(Str.contains(held, "locked")) and !(Str.contains(held, "\"error\"")))?
     check!("and it rebuilt daily_load under contention", str_to_i64(Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM daily_load;"))) > 0)?
