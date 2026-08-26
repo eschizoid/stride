@@ -4769,7 +4769,7 @@ b_week_plan! = |ctx| {
     wf = Str.trim(sh!("mktemp"))
     _ = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' plan > '${pf}' 2>/dev/null")
     _ = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' week all > '${wf}' 2>/dev/null")
-    # `// 0` on both link fields, on both sides, because null and absent must compare equal
+    # `// 0` on all three link fields, on both sides, because null and absent must compare equal
     # here. Measured, neither payload ever emits null — both queries COALESCE the links to
     # 0 — so this is a harmless no-op kept for the shape rather than a fix for an observed
     # mismatch. An earlier version of this sentence presented it as answering a measured
