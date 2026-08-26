@@ -5873,6 +5873,24 @@ b_concurrency! = |ctx| {
     # is also faster than the second it replaces; and with the holder replaced by a process
     # that never reads the fifo, the loop reports `NEVER-READY` rather than proceeding.
     #
+    # A `sleep` that rejects a fractional argument does not break this safely-quietly: the
+    # sleep returns non-zero, the loop spins its 100 iterations and reports `timeout`, and
+    # the check goes RED. Wrong on such a platform, but loudly wrong, which is the direction
+    # this file chooses everywhere else.
+    #
+    # PROOF THE SIGNAL MEANS WHAT IT CLAIMS, measured rather than reasoned. Seeing the
+    # sentinel proves a statement ran after `BEGIN`; it is a separate question whether a
+    # READ LOCK is therefore held. Driven on a scratch database, holder ready, then a write
+    # attempted from a second connection:
+    #
+    #   journal_mode=delete   readiness=ready   write -> `database is locked (5)`
+    #   journal_mode=wal      readiness=ready   write -> succeeds
+    #
+    # So the lock is real — it blocks a writer wherever blocking is the semantics — and the
+    # green this scenario asserts is WAL's doing rather than an absence of contention. That
+    # contrast is also what makes the three checks below discriminating: in rollback-journal
+    # mode this same fixture goes red.
+    #
     # A FIFO, not a backgrounded pipeline: `$!` on a pipeline is the last command in some
     # shells and the subshell in others, so `kill $!` could leave sqlite3 alive holding the
     # transaction and block every test after this one. Feeding sqlite3 from a fifo makes it
