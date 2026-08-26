@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(939)?
+    checks_ran_exactly!(942)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1990,6 +1990,39 @@ b_config_ftp! = |ctx| {
     check!("removing a client credential says the user must supply it, not that stride will", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "unset", "strava_client_id"]), "until you supply it again"))?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "strava_client_secret", "probe-secret"])
     check!("...and its sibling says the same thing", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "unset", "strava_client_secret"]), "until you supply it again"))?
+    # ...and the SESSION credential that is not a secret. `strava_expires_at` is the third
+    # member of the trio `auth` writes in one statement, but `secret_keys` holds only two —
+    # it is a timestamp, so it is deliberately not redacted — and that one-key gap put it on
+    # the catch-all being told stride would "re-fetch it as needed". `Strava.roc` reads it
+    # through the same `token_field!` that maps a missing row to `NotAuthed`, so removing it
+    # makes `sync` answer `not_authenticated`, exactly as removing the token does.
+    #
+    # Probed in a scratch HOME: seeding and dropping this key in the shared fixture would
+    # leave the suite's auth state at whatever the probe happened to end on.
+    expires_msg = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; HOME=$h '${ctx.bin}' config set strava_expires_at 1 >/dev/null 2>&1; HOME=$h '${ctx.bin}' config unset strava_expires_at 2>&1 | head -1"))
+    check!("removing the session expiry says stride is no longer authenticated, as removing the token does", Str.contains(expires_msg, "no longer authenticated"))?
+    # ...and the per-sport branch's OTHER half. "the global bound applies to this sport
+    # again" is true only when a global bound exists; with none set, `summary` and `analyze`
+    # answer `missing_config`, which is the opposite of a fallback. The check above pins the
+    # PRESENT case against the fixture, which sets all four globals; a fresh HOME has none,
+    # so the two together cover both sides of the condition rather than one.
+    no_global_msg = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; HOME=$h '${ctx.bin}' config set hr_z2_max_ride 155 >/dev/null 2>&1; HOME=$h '${ctx.bin}' config unset hr_z2_max_ride 2>&1 | head -1"))
+    check!("...and with no global set it says so, instead of promising a fallback that is not there", Str.contains(no_global_msg, "no global bound is set"))?
+    # ── The routing table itself, ENUMERATED from `Config.plain_keys` + `Config.secret_keys`
+    # rather than named here. Three consecutive review rounds shipped a false sentence on
+    # this command — `strava_client_id`, `utc_offset_minutes`, `strava_expires_at` — and
+    # each time the checks above passed, because a hand-written check can only name keys its
+    # author already thought of, and the member that was missed is by definition the one
+    # nobody thought of. Reading the list from the source is what makes the sweep see a key
+    # that no one remembered to route.
+    #
+    # `probed` is asserted, not just `unrouted`. If the awk range stops matching — a rename,
+    # a reformat — the loop runs zero times and reports `unrouted=0`, which is the same
+    # answer a fully-routed build gives. Mutation-proved both ways: dropping
+    # `strava_expires_at` from `is_session_credential` reports `probed=10 unrouted=1`, and
+    # adding an unrouted key to `plain_keys` reports `probed=11 unrouted=1`.
+    unset_sweep = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; { awk '/plain_keys = \\[/,/\\]/' src/Config.roc; awk '/secret_keys = \\[/,/\\]/' src/Config.roc; } | grep -o '\"[a-z_]*\"' | tr -d '\"' > $h/keys; n=0; u=0; while read -r k; do n=$((n+1)); HOME=$h '${ctx.bin}' config set \"$k\" 7 >/dev/null 2>&1; m=$(HOME=$h '${ctx.bin}' config unset \"$k\" 2>&1 | head -1); case \"$m\" in *'starts refusing'*) u=$((u+1));; esac; done < $h/keys; echo \"probed=$n unrouted=$u\""))
+    check!("every key config reads reaches a routed `config unset` branch, enumerated from Config.roc", unset_sweep == "probed=10 unrouted=0")?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max_ride", "155"])
     # ── bare `config` lists what is set. Its first job is answering "which config do I
     # have?", which nothing did; its second is being the source `just schema-check` fills

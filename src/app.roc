@@ -582,6 +582,21 @@ config_unset! = |key| {
             Found(_) => 1 == 1
             NotFound => 1 == 2
         }
+    # Q1: a per-sport override falls back to the GLOBAL bound — when one exists. Read that
+    # before the closure, beside `existed`, and let the message capture it: the payload and
+    # `config_unset.json` stay a two-field `{key, removed}`. I had deferred this claiming it
+    # "needs a database read inside the message closure, a different shape"; the read fits
+    # here, and the claim was wrong.
+    global_present =
+        match Str.split_first(key, "_max_") {
+            Ok({ before, .. }) =>
+                match Db.config_opt!(path, "${before}_max")? {
+                    Found(_) => True
+                    NotFound => False
+                }
+
+            Err(_) => False
+        }
     Db.config_delete!(path, key)?
     # ONE branch per OUTCOME, not per key class. The first version keyed on `known_key` and
     # told every recognised key "stride will fall back to its default for it" — measured
@@ -611,10 +626,12 @@ config_unset! = |key| {
                 # `is_secret` made it unreachable and restored the false sentence with the
                 # suite fully green, because only one of these branches is asserted anywhere.
                 "${p.key} removed — stride cannot re-authenticate until you supply it again and run `stride auth`"
-            } else if Config.is_secret(p.key) {
+            } else if Config.is_session_credential(p.key) or Config.is_secret(p.key) {
                 "${p.key} removed — stride is no longer authenticated; run `stride auth` to reconnect"
-            } else if Config.is_zone_key(p.key) and Str.contains(p.key, "_max_") {
+            } else if Config.is_zone_key(p.key) and Str.contains(p.key, "_max_") and global_present {
                 "${p.key} removed — the global bound applies to this sport again"
+            } else if Config.is_zone_key(p.key) and Str.contains(p.key, "_max_") {
+                "${p.key} removed — and no global bound is set for that zone, so `summary` and `analyze` refuse until one is"
             } else if Config.is_zone_key(p.key) {
                 "${p.key} removed — stride needs this bound; `summary` and `analyze` refuse until it is set again"
             } else if p.key == "timezone" or p.key == "utc_offset_minutes" {
@@ -622,8 +639,17 @@ config_unset! = |key| {
                 # one of the three settable families — never recomputed and never re-fetched,
                 # and removing it collapses to the same state as removing `timezone`.
                 "${p.key} removed — stride reads dates as UTC until a zone or offset is set"
+            } else if Config.is_bookkeeping(p.key) {
+                "${p.key} removed — stride recomputes or re-fetches this one as needed"
             } else if Config.known_key(p.key) {
-                "${p.key} removed — stride reads this key and will recompute or re-fetch it as needed"
+                # The catch-all is now the SAFE default rather than the unrouted default.
+                # It used to promise "recompute or re-fetch", which was false for whichever
+                # `known_key` member had not been routed yet — `strava_client_id`,
+                # `utc_offset_minutes` and `strava_expires_at` in three consecutive rounds,
+                # each found by enumerating the list rather than by anything in the code.
+                # This sentence is true of every key that reaches it, so a member added
+                # tomorrow and not routed inherits a weaker message rather than a lie.
+                "${p.key} removed — stride reads this key; run `stride doctor` if a command starts refusing"
             } else {
                 "${p.key} removed — stride does not read it"
             },
