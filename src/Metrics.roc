@@ -3296,11 +3296,11 @@ expect {
 #
 # `total` and `scope_why` are BOUND rather than swallowed. The `..` stays — Roc needs it,
 # since the record also carries `name` — but the two fields under test are named, which is
-# the difference that matters. They were, and the
-# `..` is why: `total` is what makes the hidden count see this truncation at all, and a
-# mutation setting `LoneNoDistance`'s `total` to 1 restored the "first session of this
-# workout" falsehood with every gate green. `total` differs from `List.len(rows)` on both
-# truncating kinds, which is the whole point of carrying it.
+# the difference that matters — they were swallowed before, and that is why `total` could
+# be broken unnoticed: `total` is what makes the hidden count see this truncation at all,
+# and a mutation setting `LoneNoDistance`'s `total` to 1 restored the "first session of
+# this workout" falsehood with every gate green. `total` differs from `List.len(rows)` on
+# both truncating kinds, which is the whole point of carrying it.
 expect {
     pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     exact = Metrics.anchor_filter({ name: "Class X", rows: [pr("Class X", "2025-01-01", 0.0)] }, "2025-01-01")

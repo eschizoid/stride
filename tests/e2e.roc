@@ -2323,12 +2323,21 @@ b_seed_analyze! = |ctx| {
     # An AUTO-NAMED group is what reaches it. `Morning Ride` matches by distance, so a ride
     # more than 10% from the anchor's is a different group: anchor at 20 km, sibling at 40 km,
     # and the sibling is withheld by SCOPE while being perfectly scorable. Both halves are
-    # asserted separately AND against their sum, because a build that moved a count from one
-    # field to the other would satisfy any single one of the three.
+    # asserted separately AND against their sum. The identity is not decorative arithmetic:
+    # under the mutation that drops the scope half from `hidden`, both split fields are
+    # untouched, so `hidden_scope == 1` and `hidden_lens == 0` still hold and the identity is
+    # the ONLY assertion that reads `hidden` itself. Review removed just that conjunct and
+    # the mutation went green again.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (109,'Morning Ride','Ride','${ctx.d2}T06:00:00Z',3600,20000,140),(110,'Morning Ride','Ride','${ctx.d1}T06:00:00Z',3600,40000,141);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("the scope gate is counted too, and reported apart from the lens gate", strjq!(ctx, ["progress", "${ctx.d2}"], "[.data.groups[] | select(.name | startswith(\"Morning Ride\")) | (.hidden_scope == 1) and (.hidden_lens == 0) and (.hidden == .hidden_scope + .hidden_lens)] | join(\",\")") == "true")?
+    # ...and REBUILD, because `daily_load` is derived and keyed by day: deleting the rows
+    # leaves their TSS behind. Review measured +55 TSS on each of d1 and d2 and CTL a third
+    # higher, surviving out of this scenario into the 24 that share this database — reaching
+    # no assertion today, because an intervening `analyze` happens to rebuild before the CTL
+    # consumers run, and a trap for whoever adds the next CTL check in that window.
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (109,110); DELETE FROM activities WHERE id IN (109,110);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id=108; DELETE FROM activities WHERE id=108;")
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (104,105,106); DELETE FROM activity_metrics WHERE activity_id IN (104,105,106); DELETE FROM streams WHERE activity_id IN (104,105,106); DELETE FROM activities WHERE id IN (104,105,106);")
 
