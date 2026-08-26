@@ -315,6 +315,13 @@ run_command! = |cmd|
         # the same function -- which is why this arm sits beside it rather than at the
         # refresh site. `internal_error` is a universal code, so the envelope validated and
         # nothing in the schema apparatus flagged it (#279).
+        #
+        # Safe to key on the TAG rather than the name because `MissingEnv` has exactly one
+        # raiser — `Strava.client_cred!` — and that function is called from exactly three
+        # sites, all passing `STRAVA_CLIENT_ID` or `STRAVA_CLIENT_SECRET`. So every value
+        # this arm can see is a client credential and the remedy always fits. That is the
+        # property it depends on: raise `MissingEnv` for some other variable and this arm
+        # will hand out Strava API setup instructions for it.
         Err(MissingEnv(name)) => Output.missing_client_creds!(name)
         # A stored date the engine refuses to guess at. Same reasoning as the config arm
         # above -- converted HERE, at the one boundary, because four commands can RAISE
