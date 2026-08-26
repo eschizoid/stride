@@ -1138,7 +1138,7 @@ ReportSessions :: [].{
         _ = List.map_try(prows, |r| (Metrics.usable_date_days(r.date)).map_err(|_| BadActivityDate(r.date, r.id)))?
         labeled =
             List.keep_oks(Metrics.group_progress(prows), |g| Metrics.anchor_filter(g, date))
-           .map(|g| { name: Render.progress_group_label(g.name, g.kind), rows: g.rows })
+           .map(|g| { name: Render.progress_group_label(g.name, g.kind), rows: g.rows, total: g.total, kind: g.kind })
         # choose each group's lens, keep only rows it can score; drop unscorable groups
         keep_scored = |lens, g| {
             kept = List.keep_if(g.rows, |r| Metrics.lens_score(lens, r).is_ok())
@@ -1152,11 +1152,47 @@ ReportSessions :: [].{
                 }
             # `all_days` is every session in the group BEFORE the lens filter, so the gap
             # marker can be folded over the real chronology rather than over what survived.
-            # `hidden` is what the footer reports. Both are carried from here because this is
-            # the only place that still knows what was thrown away.
             all_days = List.keep_oks(g.rows, |r| Metrics.date_str_to_days(r.date))
-            hidden = List.len(g.rows) - List.len(kept)
-            if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, lens, rows: kept, anchor_ok, all_days, hidden })
+            # `hidden` counts everything the reader cannot see, from BOTH gates. It used to be
+            # `List.len(g.rows) - List.len(kept)`, which measured only the lens filter — and
+            # `g.rows` has already been truncated by `anchor_filter`, so a group scoped down
+            # from 29 rows to 1 reported `hidden: 0` and printed "first session of this
+            # workout, nothing to compare against yet". Counting from `g.total` is what makes
+            # "zero means this is the whole history" a true sentence rather than a hopeful one.
+            scope_dropped = g.total - List.len(g.rows)
+            lens_dropped = List.len(g.rows) - List.len(kept)
+            # ...and the REASON is derived here, where both causes are still distinguishable,
+            # rather than guessed from the lens downstream. The lens half names what the lens
+            # REQUIRES, not which field was missing: `lens_score` rejects an EF row for three
+            # separate reasons (no power, no HR, or a load model that is not NP-derived), and
+            # reporting all three as "no HR" was measurably false — 7 of 10 rows in one real
+            # group carried heart rates between 95 and 132 bpm.
+            needs = match lens {
+                Ef => "needs power and HR"
+                SpeedHr => "needs distance and HR"
+                Rpe => "needs a rating"
+            }
+            # ...and the scope half names the RIGHT gate. Both auto-name kinds truncate, for
+            # opposite reasons: `SimilarDistance` drops rides whose distance is more than 10%
+            # from the anchor's, while `LoneNoDistance` drops EVERYTHING because the anchor
+            # recorded no distance at all and nothing can be matched to it. Reporting the
+            # second as "a different distance" was false on `2026-08-14` — measured before
+            # this clause existed.
+            scope_why = match g.kind {
+                LoneNoDistance => "this session recorded no distance, so none could be matched to it"
+                SimilarDistance(_) => "a different distance for this workout"
+                Exact => "not shown"
+            }
+            hidden_reason =
+                if scope_dropped > 0 and lens_dropped > 0 {
+                    "${scope_why}, or ${needs}"
+                } else if scope_dropped > 0 {
+                    scope_why
+                } else {
+                    needs
+                }
+            hidden = scope_dropped + lens_dropped
+            if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, lens, rows: kept, anchor_ok, all_days, hidden, hidden_reason })
         }
         scored = List.keep_oks(labeled, |g|
             match Metrics.progress_lens(g.rows) {
@@ -1248,7 +1284,7 @@ ReportSessions :: [].{
                 } else {
                     "⚠ a session on ${date} isn't shown in its own table — the lens chosen for its group can't score it (needs power+HR, distance+HR, or a rating), so the trend(s) below exclude it\n\n"
                 }
-            Stdout.line!("${note}${Str.join_with(List.map(scored, |g| Render.progress_section(g.name, g.rows, date, g.lens, sort, g.all_days, g.hidden)), "\n\n")}")
+            Stdout.line!("${note}${Str.join_with(List.map(scored, |g| Render.progress_section(g.name, g.rows, date, g.lens, sort, g.all_days, g.hidden, g.hidden_reason)), "\n\n")}")
         }
     }
 }

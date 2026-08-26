@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(925)?
+    checks_ran_exactly!(926)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2305,6 +2305,15 @@ b_seed_analyze! = |ctx| {
     # satisfy a single-group check. `has("hidden")` and not `.hidden >= 0`: absent reads as
     # null in jq, and `null >= 0` is false, so the shape check is the one that speaks.
     check!("every progress group publishes its hidden count", strjq!(ctx, ["progress", "${ctx.d2}"], "[.data.groups[] | has(\"hidden\")] | all") == "true")?
+    # ...and it carries the COUNT, not just the key. Review mutation-proved the gap: pinning
+    # `hidden: 0` in the payload left `just test` and `just schema-check` both green, because
+    # every group in the fixture was already 0 and the value was never observed. One more row
+    # of the same shape — same name, same date family, no `avg_hr`, so the EF lens refuses it
+    # — makes the difference visible.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (108,'drift run','Run','${ctx.d1}T07:00:00Z',1300,4000);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("...and the count is the real number, not a constant", strjq!(ctx, ["progress", "${ctx.d2}"], "[.data.groups[] | select(.name | contains(\"drift run\")) | .hidden] | join(\",\")") == "1")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id=108; DELETE FROM activities WHERE id=108;")
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (104,105,106); DELETE FROM activity_metrics WHERE activity_id IN (104,105,106); DELETE FROM streams WHERE activity_id IN (104,105,106); DELETE FROM activities WHERE id IN (104,105,106);")
 
     # ── sport words (#150): human words widen to Strava families, and an empty

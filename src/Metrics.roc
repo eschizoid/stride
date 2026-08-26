@@ -968,19 +968,27 @@ Metrics :: [].{
     # are different routes under one name, so only sessions within ±10% of the anchor's
     # distance compare — and with no distance recorded, only the anchor itself shows.
     # Groups whose anchor isn't on the asked date drop entirely.
-    anchor_filter : { name : Str, rows : List(ProgressRow) }, Str -> Try({ name : Str, kind : [Exact, SimilarDistance(F64), LoneNoDistance], rows : List(ProgressRow) }, [NoAnchor])
+    # `total` is the group's size BEFORE this truncation, and it is carried because the
+    # count of what a reader cannot see is computed downstream from `rows` — so every row
+    # this function drops was invisible to it. `LoneNoDistance` truncates to the anchor
+    # ALONE, which forced "one session, nothing hidden" and printed "first session of this
+    # workout, nothing to compare against yet" over a name with 29 rows in the log (#291's
+    # own sentence, reached through the distance gate instead of the lens filter).
+    anchor_filter : { name : Str, rows : List(ProgressRow) }, Str -> Try({ name : Str, kind : [Exact, SimilarDistance(F64), LoneNoDistance], rows : List(ProgressRow), total : U64 }, [NoAnchor])
     anchor_filter = |g, date|
         match List.find_first(g.rows, |r| r.date == date) {
             Err(_) => Err(NoAnchor)
-            Ok(anchor) =>
+            Ok(anchor) => {
+                total = List.len(g.rows)
                 if !(is_auto_name(g.name)) {
-                    Ok({ name: g.name, kind: Exact, rows: g.rows })
+                    Ok({ name: g.name, kind: Exact, rows: g.rows, total })
                 } else if anchor.distance_m <= 0.0 {
-                    Ok({ name: g.name, kind: LoneNoDistance, rows: [anchor] })
+                    Ok({ name: g.name, kind: LoneNoDistance, rows: [anchor], total })
                 } else {
                     kept = List.keep_if(g.rows, |r| (r.distance_m - anchor.distance_m).abs() <= anchor.distance_m * 0.10)
-                    Ok({ name: g.name, kind: SimilarDistance(anchor.distance_m), rows: kept })
+                    Ok({ name: g.name, kind: SimilarDistance(anchor.distance_m), rows: kept, total })
                 }
+            }
         }
 
     # confidence tiers (high = measured power OR distance-measured pace, medium = HR/RPE, low = relative_effort,

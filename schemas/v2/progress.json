@@ -29,7 +29,7 @@
         "properties": {
           "hidden": {
             "type": "integer",
-            "description": "How many sessions of this workout the group's lens could NOT score, and which are therefore absent from `sessions`. Zero means `sessions` is the complete history. Non-zero means it is not: an EF group drops rides without heart rate, a speed/HR group drops those without HR or distance, an RPE group drops unrated ones. Read `sessions | length` as the whole history only when this is 0 — a group holding one session with `hidden: 10` is a workout done eleven times, not once."
+            "description": "How many sessions of this workout are NOT in `sessions`. Zero means `sessions` is the complete history for this group; non-zero means it is not, and reading `sessions | length` as the whole history is then wrong. Two gates can withhold a row and this counts BOTH: the group's SCOPE (an auto-named group is matched by distance, so rides more than 10% away are a different group — and if the anchor recorded no distance at all, nothing can be matched to it), and the group's LENS (EF needs power and HR, speed/HR needs distance and HR, RPE needs a rating). The human render states the count and which gate applied; this is the machine half of the same statement."
           },
           "lens": {
             "type": "string",
