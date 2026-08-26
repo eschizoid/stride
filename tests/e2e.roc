@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(924)?
+    checks_ran_exactly!(927)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2295,6 +2295,50 @@ b_seed_analyze! = |ctx| {
     # progress rows carry the per-session drift with its known flag (#135), pinned
     # PER SESSION so a flag inversion cannot pass on some other session's row
     check!("the drift run's session is known and positive", strjq!(ctx, ["progress", "${ctx.d2}"], "[.data.groups[] | select(.name | contains(\"drift run\")) | .sessions[] | select(.date == \"${ctx.d2}\")] | .[0] | (.decoupling_known == true and .decoupling_pct > 0)") == "true")?
+    # ...and every group publishes `hidden`, so `sessions | length` is never read as the
+    # whole history. The human render states it; the payload did not, and the payload is the
+    # half the coaching agent reads — a group holding one session with `hidden: 10` is a
+    # workout done eleven times, not once (#292).
+    #
+    # Asserted as PRESENT-ON-EVERY-GROUP rather than on one, because the field is required by
+    # the schema and a producer that emitted it for some groups and not others would still
+    # satisfy a single-group check. `has("hidden")` and not `.hidden >= 0`: absent reads as
+    # null in jq, and `null >= 0` is false, so the shape check is the one that speaks.
+    check!("every progress group publishes its hidden count", strjq!(ctx, ["progress", "${ctx.d2}"], "[.data.groups[] | has(\"hidden\")] | all") == "true")?
+    # ...and it carries the COUNT, not just the key. Review mutation-proved the gap: pinning
+    # `hidden: 0` in the payload left `just test` and `just schema-check` both green, because
+    # every group in the fixture was already 0 and the value was never observed. One more row
+    # of the same shape — same name, same date family, no `avg_hr`, so the EF lens refuses it
+    # — makes the difference visible.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (108,'drift run','Run','${ctx.d1}T07:00:00Z',1300,4000);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("...and the count is the real number, not a constant", strjq!(ctx, ["progress", "${ctx.d2}"], "[.data.groups[] | select(.name | contains(\"drift run\")) | .hidden] | join(\",\")") == "1")?
+    # ...and the SCOPE gate, which the checks above cannot reach. `drift run` is an EXACT
+    # name, so `anchor_filter` never truncates it and `scope_dropped` is 0 by construction —
+    # every assertion so far observes only the lens half. Review mutation-proved the gap:
+    # `hidden = scope_dropped + lens_dropped` reduced to `hidden = lens_dropped` left the
+    # whole suite green while restoring the "first session of this workout" falsehood on
+    # real data.
+    #
+    # An AUTO-NAMED group is what reaches it. `Morning Ride` matches by distance, so a ride
+    # more than 10% from the anchor's is a different group: anchor at 20 km, sibling at 40 km,
+    # and the sibling is withheld by SCOPE while being perfectly scorable. Both halves are
+    # asserted separately AND against their sum. The identity is not decorative arithmetic:
+    # under the mutation that drops the scope half from `hidden`, both split fields are
+    # untouched, so `hidden_scope == 1` and `hidden_lens == 0` still hold and the identity is
+    # the ONLY assertion that reads `hidden` itself. Review removed just that conjunct and
+    # the mutation went green again.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (109,'Morning Ride','Ride','${ctx.d2}T06:00:00Z',3600,20000,140),(110,'Morning Ride','Ride','${ctx.d1}T06:00:00Z',3600,40000,141);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("the scope gate is counted too, and reported apart from the lens gate", strjq!(ctx, ["progress", "${ctx.d2}"], "[.data.groups[] | select(.name | startswith(\"Morning Ride\")) | (.hidden_scope == 1) and (.hidden_lens == 0) and (.hidden == .hidden_scope + .hidden_lens)] | join(\",\")") == "true")?
+    # ...and REBUILD, because `daily_load` is derived and keyed by day: deleting the rows
+    # leaves their TSS behind. Review measured +55 TSS on each of d1 and d2 and CTL a third
+    # higher, surviving out of this scenario into the 24 that share this database — reaching
+    # no assertion today, because an intervening `analyze` happens to rebuild before the CTL
+    # consumers run, and a trap for whoever adds the next CTL check in that window.
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (109,110); DELETE FROM activities WHERE id IN (109,110);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id=108; DELETE FROM activities WHERE id=108;")
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (104,105,106); DELETE FROM activity_metrics WHERE activity_id IN (104,105,106); DELETE FROM streams WHERE activity_id IN (104,105,106); DELETE FROM activities WHERE id IN (104,105,106);")
 
     # ── sport words (#150): human words widen to Strava families, and an empty
