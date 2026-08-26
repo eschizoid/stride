@@ -192,14 +192,6 @@ Output :: [].{
         Err(Exit(error_status))
     }
 
-    # unconfigured zones/FTP: JSON error for tools, the setup help for humans
-    # The value is THERE and cannot be parsed -- naming the key and echoing the stored
-    # text is the whole point, because `config get` will happily show it back and the
-    # athlete has no other way to see why it is being ignored.
-    ## The pure half, so a caller that must NOT exit can render the same sentence.
-    ## `doctor` reports this condition in its payload rather than dying on it, and
-    ## carried a truncated copy of the string until this was extracted — one that had
-    ## dropped the remedy, which README describes as the thing every gap states.
     # The setup remedy for a client credential that is neither in the environment nor
     # stored. ONE definition, because it has two call sites: `auth!`, which met this first,
     # and the boundary arm in `app.roc` that catches the same tag surfacing from
@@ -216,6 +208,14 @@ Output :: [].{
     missing_client_creds! = |name|
         Output.err_out!("missing_client_creds", "${name} not set and no stored credentials yet — create a (free) Strava API app at strava.com/settings/api, then run:\n  STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth")
 
+    # unconfigured zones/FTP: JSON error for tools, the setup help for humans
+    # The value is THERE and cannot be parsed -- naming the key and echoing the stored
+    # text is the whole point, because `config get` will happily show it back and the
+    # athlete has no other way to see why it is being ignored.
+    ## The pure half, so a caller that must NOT exit can render the same sentence.
+    ## `doctor` reports this condition in its payload rather than dying on it, and
+    ## carried a truncated copy of the string until this was extracted — one that had
+    ## dropped the remedy, which README describes as the thing every gap states.
     unreadable_config_msg : Str, Str -> Str
     unreadable_config_msg = |key, raw|
         "${key} is set to '${raw}', which is not a number — fix it with `stride config set ${key} <value>`"

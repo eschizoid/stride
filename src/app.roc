@@ -306,15 +306,15 @@ run_command! = |cmd|
         Err(UnreadableConfig(key, raw)) => Output.unreadable_config!(key, raw)
         # ...and the sibling tag. `Strava.client_cred!` raises
         # `MissingEnv` when a client credential is in neither the environment nor the db.
-        # `auth!` handled it and nothing else did, so the SAME tag raised from
-        # `get_valid_token!`'s refresh branch surfaced through the catch-all: `sync` answered
+        # `auth!` handled it and nothing else did, so the SAME tag SURFACING through
+        # `get_valid_token!`'s refresh branch fell to the catch-all: `sync` answered
         # `internal_error: unhandled failure: MissingEnv("STRAVA_CLIENT_ID") — please open an
         # issue with the command you ran`, for a state `stride auth` fixes in one command.
         #
         # This is the defect the `UnreadableConfig` note above records, one tag over -- which
         # is why this arm sits beside it rather than at the refresh site. Siblings by FAILURE
-        # SHAPE and by sharing this boundary, not by locality — `UnreadableConfig` has five
-        # raise sites across `Strava.roc` and `Analyze.roc`, so a claim that the two tags come
+        # SHAPE and by sharing this boundary, not by locality — `UnreadableConfig` is raised
+        # at four sites across `Strava.roc` and `Analyze.roc`, so a claim that the two tags come
         # from one function, or even one file, does not survive a grep. What they share is
         # that several commands can raise them and the remedy is identical for all of them.
         #

@@ -1676,7 +1676,8 @@ b_auth! = |ctx| {
     # ...and SYNC does too, which is the half that was missing. `Strava.client_cred!` raises
     # `MissingEnv` from both `auth!` and `get_valid_token!`'s refresh branch; only `auth!`
     # handled it, so credless `sync` answered `internal_error: unhandled failure:
-    # MissingEnv("STRAVA_CLIENT_ID") — please open an issue with the command you ran`, for a state one `stride auth`
+    # `internal_error: unhandled failure: MissingEnv("STRAVA_CLIENT_ID") — please open an
+    # issue with the command you ran`, for a state one `stride auth` fixes.
     # fixes. `internal_error` is a universal code, so the envelope validated and the schema
     # apparatus saw nothing wrong (#279).
     #
@@ -1703,8 +1704,11 @@ b_auth! = |ctx| {
     # discriminates the interpolated name from the boilerplate.
     #
     # Still safe against the wording hazard: under the arm-removal mutation the message is
-    # `unhandled failure: MissingEnv(...)`, which contains no `... not set`, so both halves
-    # go red and the CODE half is not load-bearing alone.
+    # `unhandled failure: MissingEnv(...)`, which contains no `... not set`, so this check
+    # would fail on its own — it does not lean on the code check above for its safety. Not
+    # "both go red": `check!` is `?`-chained, so the first failure aborts the driver and the
+    # second never runs. Measured — arm-removal reports one FAIL (the code check) and stops;
+    # the wrong-variable mutation reports one FAIL (this check) with the code check green.
     check!("...and names the variable the caller has to set", Str.contains(sync_out, "STRAVA_CLIENT_ID not set"))?
     # ...and `sync` DECLARES the code it can now raise. Same construct as `load`'s guard,
     # because review measured that nothing else catches it: dropping `missing_client_creds`
