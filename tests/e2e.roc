@@ -5968,8 +5968,9 @@ b_progress_b! = |ctx| {
     # #287 fixed a fabricated gap marker by folding over the UNFILTERED day series, and its
     # only guards were direct calls to `Render.progress_section` with hand-built arguments.
     # Setting `all_days = []` in `ReportSessions.roc` reverts the fix and brings the bug back
-    # on real data — and left 915 e2e checks and 684 expects green, because nothing drove the
-    # path from the query through `keep_scored` into the renderer.
+    # on real data — and left 927 e2e checks and every expect suite green, because nothing
+    # drove the path from the query through `keep_scored` into the renderer. (915 was the
+    # tally when that mutation was first run, five commits back; re-measured at this base.)
     #
     # Three rides, the middle one with NO heart rate so the EF lens refuses it. Real spacing
     # is 62 then 41 days — neither a break. The two SHOWN rows are 103 days apart, so a fold
@@ -5987,7 +5988,12 @@ b_progress_b! = |ctx| {
     # 1 = the legend alone. Counted, not `Str.contains`, for the reason above.
     check!("a dropped ride does not fabricate a gap between the rows that remain (marks: ${U64.to_str(gp_marks)})", gp_marks == 1)?
     # ...and the dropped ride is DECLARED, so this is a filtered view rather than a wrong one
-    check!("...and the group says one session was withheld", Str.contains(gap_probe, "1 hidden"))?
+    # the FULL clause, not `"1 hidden"`. Review mutation-proved the weakness: with ten more
+    # HR-less rides the render said "(11 hidden: needs power and HR)" and this check still
+    # printed ok, because `"11 hidden"` contains `"1 hidden"`. The stronger form is already
+    # the house style one file over in `Render.roc`'s own expect. A check whose name
+    # overstates its assertion is the exact failure this PR exists to remove.
+    check!("...and the group says one session was withheld", Str.contains(gap_probe, "(1 hidden: needs power and HR)"))?
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (221,222,223); DELETE FROM streams WHERE activity_id IN (221,222,223); DELETE FROM activities WHERE id IN (221,222,223);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     _ = seed_ride!(ctx.db, "203", "Test Class", "2025-07-01T10:00:00Z", "3600", "20000", "150", "150")
