@@ -593,6 +593,7 @@ EXPECTED_REQUIRED_SIG='activity=1
 complete=1
 config get=1
 config set=1,2
+config unset=1
 import=1
 rate=1,2
 skip=1,2
@@ -684,6 +685,7 @@ compare=1
 complete=1,2
 config get=1
 config set=1,2
+config unset=1
 import=1
 load=1
 pc=1,2

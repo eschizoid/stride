@@ -58,21 +58,28 @@ Config :: [].{
 	# this is derived from the read sites and not from the docs. `metrics_rev` sat here for
 	# exactly one revision on the strength of an AGENTS.md sentence; it is a Roc constant
 	# and an `activity_metrics` column, and has never been read from `config`.
+	# Hoisted out of `known_key` so it can be ENUMERATED, not just queried. `config unset`
+	# writes one sentence per key, and three consecutive review rounds shipped a false one
+	# — `strava_client_id`, then `utc_offset_minutes`, then `strava_expires_at` — because
+	# checking the routing meant hand-typing this membership from memory and being one
+	# short each time. A predicate can only answer about a key you already thought of.
+	# `tests/e2e.roc` walks this list and asserts every member reaches a routed branch, so
+	# a key added here without a matching branch fails the suite instead of a later round.
+	plain_keys : List(Str)
+	plain_keys = [
+		"timezone",
+		"utc_offset_minutes",
+		"last_sync_epoch",
+		"strava_client_id",
+		"strava_expires_at",
+		"strava_reads_today",
+		"strava_reads_day",
+	]
+
 	known_key : Str -> Bool
 	known_key = |k|
 		List.contains(secret_keys, k)
-		or List.contains(
-			[
-				"timezone",
-				"utc_offset_minutes",
-				"last_sync_epoch",
-				"strava_client_id",
-				"strava_expires_at",
-				"strava_reads_today",
-				"strava_reads_day",
-			],
-			k,
-		)
+		or List.contains(plain_keys, k)
 		or is_zone_key(k)
 
 	# Of the keys the engine reads, the ones a PERSON sets. The rest — `last_sync_epoch`,
@@ -110,6 +117,39 @@ Config :: [].{
 	# "(not set)" — the defect this predicate exists to remove.
 	is_zone_key : Str -> Bool
 	is_zone_key = |k| zone_shape(Str.to_utf8(k))
+
+	# A CLIENT credential is one the user supplies; a SESSION credential is one stride
+	# obtains and refreshes for itself. Both are secrets and both redact, but they differ in
+	# the only thing a removal message cares about: what happens next. Deleting a session
+	# token means re-authenticate; deleting a client credential means the user has to hand it
+	# back before `auth` can even run.
+	#
+	# An EXPLICIT list, not a suffix rule, for the reason `known_key`'s own comment already
+	# gives about `is_secret`: that rule is deliberately fail-OPEN so an unlisted future
+	# secret is still redacted, and reusing it to pick a SENTENCE inverts a harmless
+	# over-redaction into a false statement. Picking wording is recognition, not redaction.
+	is_client_credential : Str -> Bool
+	is_client_credential = |k| List.contains(["strava_client_id", "strava_client_secret"], k)
+
+	# ...and the SESSION half: what `auth` writes and `sync` refreshes. Three keys, not the
+	# two `is_secret` covers — `strava_expires_at` is read through the same `token_field!`
+	# that maps `NotFound` to `NotAuthed`, and `auth` writes all three in one statement, so
+	# deleting it produces the same news as deleting the token itself.
+	#
+	# It is deliberately NOT in `secret_keys`: it is a timestamp, and putting it there to
+	# reach this branch would change REDACTION to fix WORDING. Two lists, because the two
+	# questions are different.
+	is_session_credential : Str -> Bool
+	is_session_credential = |k| List.contains(["strava_access_token", "strava_refresh_token", "strava_expires_at"], k)
+
+	# stride's own bookkeeping: the keys it really does recompute or re-fetch. Named
+	# EXPLICITLY so the catch-all below stops being where unrouted keys land — that is what
+	# let `strava_client_id`, `utc_offset_minutes` and `strava_expires_at` each inherit a
+	# false sentence in three consecutive rounds, every time because a hand-typed list of
+	# `known_key`'s members was one short.
+	is_bookkeeping : Str -> Bool
+	is_bookkeeping = |k| List.contains(["last_sync_epoch", "strava_reads_today", "strava_reads_day"], k)
+
 
 	# bytes: h r _ z <digit> _ m a x, then either end-of-key or `_` and a non-empty suffix
 	zone_shape : List(U8) -> Bool

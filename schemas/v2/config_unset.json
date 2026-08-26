@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "key",
+    "removed"
+  ],
+  "properties": {
+    "key": {
+      "type": "string",
+      "description": "The key that was asked for, echoed back verbatim. Not validated against the known-key list: `config unset` deletes for every key class, so a key stride has never read is as valid a target as one it does."
+    },
+    "removed": {
+      "type": "boolean",
+      "description": "Whether a row actually existed and was deleted. False means the key was already absent — not an error, because the requested end state (no row) is the state you are now in. Distinguishing the two matters for a caller that wants to know whether it changed anything, which is why this is a flag rather than a silent success."
+    }
+  }
+}

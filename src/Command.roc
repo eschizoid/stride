@@ -44,6 +44,7 @@ Command := [
 	SkipWith(Str, Str, Str),
 	ConfigGet(Str),
 	ConfigSet(Str, Str),
+	ConfigUnset(Str),
 	ConfigList,
 ].{
 
@@ -167,6 +168,15 @@ Command := [
 			# so it cannot be stale, and the skip is decided by an EMPTY LIST — a fact the
 			# recipe checks — instead of by an error code that could mean two things.
 			[_, "config"] => Ok(ConfigList)
+			# Its own literal, and a distinct verb rather than `set` with a magic value. NOT
+			# order-dependent — review moved this arm below `set` and everything stayed green,
+			# because the two are disjoint by arity (4 argv entries vs 5) as well as by
+			# literal. A rule no test can falsify is not a guard, which is the argument
+			# `Config.roc` already makes about `known_key`. `config set <key> ""` used to mean
+			# removal for unrecognised keys, refusal for numeric ones and an empty WRITE for
+			# managed free-text ones — three behaviours on one gesture, and only one of them
+			# was removal (#276).
+			[_, "config", "unset", key] => Ok(ConfigUnset(key))
 			[_, "config", "set", key, val] => Ok(ConfigSet(key, val))
 			[_, "--version"] => Ok(Version)
 			[_, "week", ..] => Err(Usage("week add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `week` for this week's sessions, `week all` for the whole log"))
@@ -179,7 +189,7 @@ Command := [
 			[_, "complete", ..] => Err(Usage("complete <session_id> [activity_id]"))
 			[_, "skip", ..] => Err(Usage("skip <session_id> \"<reason>\" [activity_id|none]"))
 			[_, "activity", ..] => Err(Usage("activity <activity_id>"))
-			[_, "config", ..] => Err(Usage("config get <key>  |  config set <key> <value>"))
+			[_, "config", ..] => Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>"))
 			# asking for help — bare, or by any of the conventional spellings —
 			# is not a failure and must not become one (#163 broke `--help` by
 			# deleting the old catch-all that had silently served it)
@@ -393,6 +403,11 @@ Command := [
 		errs(writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"), ["activity_already_linked", "activity_not_found", "activity_required", "bad_id", "session_not_found"]),
 		errs(writes("skip", [req("<session_id>"), req("<reason>"), opt("<activity_id|none>")], "skip.json"), ["activity_already_linked", "activity_not_found", "bad_id", "session_done", "session_not_found"]),
 		errs(writes("config set", [req_ex("<key>", "timezone"), req_ex("<value>", "UTC")], "config.json"), ["bad_value", "derived_key", "unknown_key"]),
+		# `config unset` declares NO error codes beyond the universal ones. It refuses
+		# nothing: `unknown_key` cannot apply because deleting a key stride does not read is
+		# the point, `derived_key` and `bad_value` are about WRITING a value the engine
+		# cannot use, and removing a row produces no value at all (#276).
+		errs(writes("config unset", [req_ex("<key>", "timezone")], "config_unset.json"), []),
 		errs(reads("summary", [], "summary.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
 		errs(reads("plan", [], "plan.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
 		## `stats` had no declared codes: its totals are a pure listing, until #249 found
@@ -662,6 +677,12 @@ expect
 		_ => False
 	}
 expect
+	match Command.parse(["stride", "config", "unset", "hr_z2_max_ride"]) {
+		Ok(ConfigUnset("hr_z2_max_ride")) => True
+		_ => False
+	}
+
+expect
 	match Command.parse(["stride", "config", "set", "ftp", "250"]) {
 		Ok(ConfigSet("ftp", "250")) => True
 		_ => False
@@ -697,15 +718,24 @@ expect
 		Ok(ConfigList) => True
 		_ => False
 	}
-# ...while a WRONG config form is still a Usage error, so the arm above did not eat them
+# ...while a WRONG config form is still a Usage error, so the arm above did not eat them.
+# The usage string names all THREE verbs now — it enumerated two while this change added a
+# third, and `config unset` is precisely the verb a reader reaches for after the new
+# `bad_value` message points them at it. Both existing expects pinned the exact string, so
+# the omission would have been a silent lie only in the message, not in the guard (#276).
+expect
+	match Command.parse(["stride", "config", "unset"]) {
+		Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>")) => True
+		_ => False
+	}
 expect
 	match Command.parse(["stride", "config", "get"]) {
-		Err(Usage("config get <key>  |  config set <key> <value>")) => True
+		Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>")) => True
 		_ => False
 	}
 expect
 	match Command.parse(["stride", "config", "set", "timezone"]) {
-		Err(Usage("config get <key>  |  config set <key> <value>")) => True
+		Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>")) => True
 		_ => False
 	}
 expect

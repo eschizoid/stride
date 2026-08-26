@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(932)?
+    checks_ran_exactly!(942)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1959,6 +1959,89 @@ b_config_ftp! = |ctx| {
     check!("config set refuses an unknown key rather than storing it", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", "America/Chicago"]), "unknown_key"))?
     check!("...and stores nothing, so get and set cannot disagree", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'timezon';")) == "0")?
     check!("...while a real key still writes", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max_ride", "155"]), "hr_z2_max_ride"))?
+    # ...and it can be REMOVED, which is the scenario #276 opens with and which nothing
+    # asserted. `config set hr_z2_max_ride ""` answered `bad_value` — `numeric_key` calls
+    # anything starting `hr_z` a Decimal — so `sqlite3` was the only way to drop a per-sport
+    # override. Setting it back to the global value is not equivalent: it PINS the number,
+    # so a later change to `hr_z2_max` stops propagating, and removing the override is the
+    # whole reason the per-sport family exists.
+    #
+    # The MESSAGE is asserted too, on the branch that distinguishes it from a global bound.
+    # `hr_z1_max` and `hr_z2_max_ride` are both zone keys and both `known_key`, and the
+    # first version of this command told both "stride will fall back to its default" — true
+    # for one, false for the other, which is how the wrong sentence shipped.
+    unset_out = stride!(ctx.bin, ctx.home, ["config", "unset", "hr_z2_max_ride"])
+    check!("a per-sport override can be REMOVED, which `config set <key> \"\"` could not do", Str.contains(unset_out, "\"removed\":true"))?
+    check!("...and the row is gone, not emptied", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'hr_z2_max_ride';")) == "0")?
+    # Stored first: an absent key takes the not-stored branch, so the message under test
+    # would never render — the first version of this check asserted the global-bound wording
+    # against "hr_z3_max_ride was not stored".
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z3_max_ride", "165"])
+    check!("...and it says the global applies again, not that a default does", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "unset", "hr_z3_max_ride"]), "global bound applies"))?
+    # ...and the CLIENT-credential branch, which was the one that shipped a false sentence.
+    # `strava_client_id` fell to the `known_key` catch-all and was told stride "will
+    # recompute or re-fetch it as needed" — measured false: the next `sync` answers
+    # `missing_client_creds` and asks the user to supply it by hand. Its sibling
+    # `strava_client_secret` had the truthful sentence, and the two fail identically (#276).
+    #
+    # Both members asserted, because the defect was that one of a pair was routed and the
+    # other was not, and a check on either alone would have passed before the fix.
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "strava_client_id", "probe-id"])
+    check!("removing a client credential says the user must supply it, not that stride will", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "unset", "strava_client_id"]), "until you supply it again"))?
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "strava_client_secret", "probe-secret"])
+    check!("...and its sibling says the same thing", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "unset", "strava_client_secret"]), "until you supply it again"))?
+    # ...and the SESSION credential that is not a secret. `strava_expires_at` is the third
+    # member of the trio `auth` writes in one statement, but `secret_keys` holds only two —
+    # it is a timestamp, so it is deliberately not redacted — and that one-key gap put it on
+    # the catch-all being told stride would "re-fetch it as needed". `Strava.roc` reads it
+    # through the same `token_field!` that maps a missing row to `NotAuthed`, so removing it
+    # makes `sync` answer `not_authenticated`, exactly as removing the token does.
+    #
+    # Probed in a scratch HOME: seeding and dropping this key in the shared fixture would
+    # leave the suite's auth state at whatever the probe happened to end on.
+    expires_msg = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; HOME=$h '${ctx.bin}' config set strava_expires_at 1 >/dev/null 2>&1; HOME=$h '${ctx.bin}' config unset strava_expires_at 2>&1 | head -1"))
+    check!("removing the session expiry says stride is no longer authenticated, as removing the token does", Str.contains(expires_msg, "no longer authenticated"))?
+    # ...and the per-sport branch's OTHER half. "the global bound applies to this sport
+    # again" is true only when a global bound exists; with none set, `summary` and `analyze`
+    # answer `missing_config`, which is the opposite of a fallback. The check above pins the
+    # PRESENT case against the fixture, which sets all four globals; a fresh HOME has none,
+    # so the two together cover both sides of the condition rather than one.
+    no_global_msg = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; HOME=$h '${ctx.bin}' config set hr_z2_max_ride 155 >/dev/null 2>&1; HOME=$h '${ctx.bin}' config unset hr_z2_max_ride 2>&1 | head -1"))
+    check!("...and with no global set it says so, instead of promising a fallback that is not there", Str.contains(no_global_msg, "no global bound is set"))?
+    # ── The routing table itself, ENUMERATED from `Config.plain_keys` + `Config.secret_keys`
+    # rather than named here. Three consecutive review rounds shipped a false sentence on
+    # this command — `strava_client_id`, `utc_offset_minutes`, `strava_expires_at` — and
+    # each time the checks above passed, because a hand-written check can only name keys its
+    # author already thought of, and the member that was missed is by definition the one
+    # nobody thought of. Reading the list from the source is what makes the sweep see a key
+    # that no one remembered to route.
+    #
+    # `probed` is asserted, not just `unrouted`. If the awk range stops matching — a rename,
+    # a reformat — the loop runs zero times and reports `unrouted=0`, which is the same
+    # answer a fully-routed build gives. Mutation-proved both ways: dropping
+    # `strava_expires_at` from `is_session_credential` reports `probed=10 unrouted=1`, and
+    # adding an unrouted key to `plain_keys` reports `probed=11 unrouted=1`.
+    #
+    # Two ways this sweep could have gone quiet while printing the passing string, both
+    # found by review of the sweep itself rather than of the code it guards:
+    #
+    #   • the extraction was a character class, `"[a-z_]*"`, with no digits, so a member
+    #     carrying one was
+    #     dropped BEFORE `probed` counted it. `probed` guards against matching zero keys;
+    #     it cannot see the match dropping some, because dropping one and adding none
+    #     leaves 10. `hr_z5_max_probe` added to `plain_keys` reproduced it exactly — an
+    #     unrouted key, `probed=10 unrouted=0`, whole suite green. It is now `"[^"]*"`,
+    #     which has no alphabet to be wrong about: widening the class to `[a-z0-9_]` would
+    #     still be a guess about future names, and a wrong guess is exactly what `probed`
+    #     cannot see. All three forms extract the same 10 keys today.
+    #
+    #   • `config set` discards its exit code, and a key that never got stored answers
+    #     "was not stored, so there was nothing to remove" — which contains no routing
+    #     sentence, so it scored as ROUTED. `unseeded` is asserted at 0 so the probe has
+    #     to prove it could speak before its silence counts as a pass.
+    unset_sweep = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; { awk '/plain_keys = \\[/,/\\]/' src/Config.roc; awk '/secret_keys = \\[/,/\\]/' src/Config.roc; } | grep -o '\"[^\"]*\"' | tr -d '\"' > $h/keys; n=0; u=0; z=0; while read -r k; do n=$((n+1)); HOME=$h '${ctx.bin}' config set \"$k\" 7 >/dev/null 2>&1; m=$(HOME=$h '${ctx.bin}' config unset \"$k\" 2>&1 | head -1); case \"$m\" in *'starts refusing'*) u=$((u+1));; esac; case \"$m\" in *'was not stored'*) z=$((z+1));; esac; done < $h/keys; echo \"probed=$n unrouted=$u unseeded=$z\""))
+    check!("every LISTED config key reaches a routed `config unset` branch, enumerated from Config.roc", unset_sweep == "probed=10 unrouted=0 unseeded=0")?
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max_ride", "155"])
     # ── bare `config` lists what is set. Its first job is answering "which config do I
     # have?", which nothing did; its second is being the source `just schema-check` fills
     # `config get <key>` from, so that recipe can no longer skip on a stale literal.
@@ -2011,28 +2094,46 @@ b_config_ftp! = |ctx| {
     # write left a leftover permanently unreachable — unreadable, unwritable, and before
     # marking, unlistable, with sqlite3 the only way out.
     #
+    # `config unset`, not `config set <key> ""`. That gesture meant THREE things by key
+    # class — removal for keys stride does not read, `bad_value` for numeric ones, and an
+    # empty WRITE for managed free-text ones — so there was no CLI way to drop a per-sport
+    # zone override at all, and an empty write to a token left a row reading as SET, which
+    # made `sync` spend a request to be told 401 rather than answering locally (#276).
+    #
+    # It also broke the contract: the removal payload is `{key, removed}` while `config set`
+    # declares `config.json`, which REQUIRES `value`. Measured — the removal form failed its
+    # own schema on both counts, and `just schema-check` never saw it because the recipe
+    # fills `<value>` with a real value, so that form was never exercised. One verb, one
+    # shape, each with its own schema.
+    #
     # It DELETES rather than storing "". The empty write was worse than nothing for the
     # family that most needed it: `numeric_key` calls anything `hr_z*` Decimal, so an empty
     # value was refused with `bad_value` — and the misspelled zone keys are the population
     # #254's own tightening created. Worse, `Analyze.load_config!` requires every `hr_z*`
     # key to parse as F64, so an empty row does not sit inert, it kills `analyze` outright.
-    check!("...and clearing an unrecognised row is allowed", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", ""]), "\"removed\":true"))?
+    check!("...and clearing an unrecognised row is allowed", Str.contains(stride!(ctx.bin, ctx.home, ["config", "unset", "timezon"]), "\"removed\":true"))?
     check!("...which DELETES it rather than emptying it, so nothing can choke on the row", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'timezon';")) == "0")?
-    check!("...and it reaches the zone misspellings, which an empty write could not", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_maxx", ""]), "\"removed\""))?
+    check!("...and it reaches the zone misspellings, which an empty write could not", Str.contains(stride!(ctx.bin, ctx.home, ["config", "unset", "hr_z1_maxx"]), "\"removed\""))?
     # ...and the DERIVED family, which `is_derived` refused before this arm ran. Those are
     # the rows the schema itself calls most likely to be on a real database.
-    check!("...and a derived row, which derived_key refused before it", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", ""]), "\"removed\":true"))?
+    check!("...and a derived row, which derived_key refused before it", Str.contains(stride!(ctx.bin, ctx.home, ["config", "unset", "ftp_ride"]), "\"removed\":true"))?
     check!("...leaving it gone rather than emptied", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'ftp_ride';")) == "0")?
     # ...while it is not an ENTRANCE. An empty write was `INSERT OR REPLACE`, so
     # `config set qwertyuiop ""` CREATED a row for a key that never existed — invisible in
     # the listing, unreadable by `config get`. The CLI could manufacture exactly the class
     # of row the marking exists to expose.
-    check!("...and removing a key that was never there creates nothing", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "qwertyuiop", ""]), "\"removed\":false"))?
+    check!("...and removing a key that was never there creates nothing", Str.contains(stride!(ctx.bin, ctx.home, ["config", "unset", "qwertyuiop"]), "\"removed\":false"))?
     check!("...and really creates nothing", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'qwertyuiop';")) == "0")?
     check!("...while a NON-empty write to an unrecognised key is still refused", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", "again"]), "unknown_key"))?
-    # ...and clearing a key the engine DOES read is not this path: it stores an empty value
-    # and the normal guards apply, so removal can never silently wipe live config.
-    check!("...and an empty write to a key stride reads is not a removal", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", ""]), "bad_value"))?
+    # ...and an empty value is refused for EVERY key class, not just the ones stride reads.
+    # This comment used to say the opposite one line above the check — "it stores an empty
+    # value and the normal guards apply" — describing the arm this change replaced.
+    check!("...and an empty value is refused for EVERY key class now, pointing at the verb that removes", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", ""]), "config unset hr_z1_max") and Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", ""]), "config unset timezon"))?
+    # `SELECT value`, not `COUNT(*)`. The count cannot see a VALUE, so it passed on a build
+    # where the refusal ALSO wrote `value=''` — review mutated exactly that and this check
+    # printed ok while the row read `hr_z1_max|`. A check that cannot observe the thing it
+    # is named for is the sixth of its kind on this branch today.
+    check!("...and it leaves the row it refused to write alone, value intact", Str.trim(sql!(ctx.db, "SELECT COALESCE(value,'(null)') FROM config WHERE key = 'hr_z1_max';")) != "" and Str.trim(sql!(ctx.db, "SELECT COALESCE(value,'(null)') FROM config WHERE key = 'hr_z1_max';")) != "(null)")?
     # ── the two cell shapes `Sqlite.str` cannot decode, both reachable because `value` is
     # declared TEXT with no NOT NULL and TEXT affinity converts INTEGER and REAL but not
     # blobs. Each answered `internal_error` — "this is a bug, not the data and not the
@@ -2631,6 +2732,16 @@ b_seed_analyze! = |ctx| {
     # On main this was the line that actually caused #200 -- it flipped the binary to
     # Chicago for the whole remainder of the run while the harness was still on UTC.
     check!("config conforms", validate!("config set timezone ${ctx.tz}", "config") == "")?
+    # ...and the REMOVAL shape, under its own schema. `schema-check` cannot cover it:
+    # `config unset` is `mutates: true`, so that recipe excludes it by construction, and
+    # review mutation-proved the consequence — adding a bogus field to the payload left
+    # `just test`, `just schema-check` and `just command-claims` all green while
+    # `validate.jq` rejected it. `schemas/v2/config_unset.json` was decorative, which is the
+    # same gap #276 exists to close, reproduced for the new verb.
+    #
+    # A key that is NOT stored, so the fixture is not disturbed and `removed: false` — the
+    # branch a `removed: true` probe would leave unvalidated — is the one under the schema.
+    check!("config unset conforms", validate!("config unset nosuchkey_probe", "config_unset") == "")?
     act_sess = Str.trim(strjq!(ctx, ["week", "add", "2099-11-11", "endurance", "schema action probe", "r"], ".data.id"))
     check!("week add conforms", validate!("week add 2099-11-12 endurance d r", "week_add") == "")?
     check!("skip conforms", validate!("skip ${act_sess} \"probe reason\"", "skip") == "")?
@@ -5930,7 +6041,13 @@ b_doctor! = |ctx| {
     # LAST statement of this body, so it leaked the blank zone into every scenario after
     # it, which is the actual reason it needs a restore. It asserts the equivalence now
     # rather than sitting there as dead code wearing a test's clothes.
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ""])
+    # Staged with SQL rather than `config set timezone ""`, which is now refused for every
+    # key class (#276). The equivalence being asserted is about how `Db.roc` READS the
+    # column — an empty cell and an absent row both collapse to `NoTz` — and that is still
+    # reachable: an older stride wrote empty cells, and a hand-edited or restored database
+    # can hold one. Routing it through the CLI only ever tested the write path, which is the
+    # half that changed.
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('timezone', '');")
     check!("empty timezone is the absent state, not an invalid one", strjq!(ctx, ["doctor"], ".data.time_ok") == "true" and Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UTC"))?
     # restore before returning: three scenarios run after this one, and leaving the zone
     # blank -- or on the unresolvable name set just above, which also resolves to UTC --
