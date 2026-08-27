@@ -608,9 +608,46 @@ Metrics :: [].{
             if zone_total > 0 {
                 Ok({ t: hr_tss(input.zones), m: "hr_zones" })
             } else {
+                # The bound is `valid_hr`, and this rung is the last one in the ladder that
+                # scored training LOAD from a summary avg_hr without it. The two `progress` lenses got the
+                # bound in #294, `activity`'s EF in #305, decoupling had it already — and
+                # load is the consumer that propagates furthest, into CTL, ATL and every
+                # form verdict downstream.
+                #
+                # NOT the last consumer full stop, which is what an earlier version of this
+                # comment claimed in four places. `top hr` ranks on `a.avg_hr > 0` — the
+                # exact predicate `valid_hr` replaces — and on the real database
+                # `stride top hr 700` returns the same three rows #294 and #305 refuse.
+                # Review found it by planting a value and diffing all 26 command payloads,
+                # not by reading, which is the third time on this repo that a "last site"
+                # claim was wrong and the third time behaviour rather than reading found it.
+                # Tracked in #315.
+                #
+                # Measured before the bound, on a session with the STREAM REMOVED so this
+                # rung is reached — that is a precondition, not a detail: with the stream in
+                # place all three values give 43.0444 through `hr_zones` and the summary
+                # average is never read. With it removed and only `avg_hr` changed,
+                # 139.2 bpm gave tss 42.3042, 250 gave 76.9167, 18 gave 23.0750. An impossible
+                # reading produced nearly double the athlete's real load and nothing marked
+                # it (#313).
+                #
+                # Reachable in normal operation, not only through `import`. A freshly listed
+                # activity whose stream has not been drained yet — a sync stopped by the rate
+                # limit or the daily cap, which `doctor` reports in its undrained-streams line —
+                # has no zone seconds, so `analyze` takes this rung. Measured: that state on
+                # the before-binary scored 42.3042 through `hr_avg`. It self-heals, and that
+                # is measured too — restoring the stream and re-analyzing gives 43.0444
+                # through `hr_zones` — so the window is transient rather than permanent. An
+                # earlier version of this comment called it import-only.
+                #
+                # Refused means `NoHr`, not zero and not unknown: an impossible average is
+                # no usable heart rate, which is the case this arm already has a name for.
+                # The ladder falls to its next rung exactly as it does for a session that
+                # never carried HR at all, so the outcome is a rung the reader can see in
+                # `load_model` rather than a silent number.
                 match input.avg_hr {
-                    Ok(hr) => Ok({ t: hr_tss(all_seconds_in_zone(input.moving_time, zone_of(hr, input.zb))), m: "hr_avg" })
-                    Err(_) => Err(NoHr)
+                    Ok(hr) if valid_hr(hr) => Ok({ t: hr_tss(all_seconds_in_zone(input.moving_time, zone_of(hr, input.zb))), m: "hr_avg" })
+                    _ => Err(NoHr)
                 }
             }
         rpe_scored =
@@ -3000,6 +3037,39 @@ expect {
 expect {
     r = Metrics.tss_ladder({ ..Metrics.ladder_base, weighted_watts: Ok(190.0), avg_hr: Ok(150.0), ftp: 0.0 })
     (r.tss - 55.0).abs() < 0.001 and r.model == "hr_avg"
+}
+
+# ...and an IMPOSSIBLE average does not reach that rung. This is the last ladder rung that
+# scored training LOAD from a summary average unguarded — not the last consumer of one,
+# which `top hr` still is (#315).
+#
+# Measured on a real session with the STREAM REMOVED so the rung is reached, then only
+# `avg_hr` changed: 139.2 bpm gave tss 42.3042, 250 gave 76.9167, 18 gave 23.0750. The
+# stream removal is a precondition, not a detail: with it in place all three give 43.0444
+# through `hr_zones` and the summary average is never read, so a reader following an
+# earlier version of this line reproduced nothing and would have concluded the fix inert.
+#
+# Refused means the ladder falls to its NEXT rung, so `load_model` stops saying `hr_avg` —
+# the reader can see which rung answered, rather than getting a silent number.
+expect {
+    hi = Metrics.tss_ladder({ ..Metrics.ladder_base, avg_hr: Ok(250.0), rpe: Ok(7.0) })
+    lo = Metrics.tss_ladder({ ..Metrics.ladder_base, avg_hr: Ok(18.0), rpe: Ok(7.0) })
+    # Names the rung that DOES answer, and its number. `!= "hr_avg"` was the first form and
+    # it is absence-only: the rejected design — refused HR scoring 0 with model "none",
+    # which WINS and blocks the rpe rung — satisfies it, and review proved that passes at
+    # 279/279 with no count fall. The whole point of this change is which rung answers, so
+    # the expect has to say which.
+    hi.model == "session_rpe" and lo.model == "session_rpe"
+    and (hi.tss - 70.0).abs() < 0.001
+    and (lo.tss - 70.0).abs() < 0.001
+}
+
+# the bound is INCLUSIVE at both ends here, the same as everywhere else it is applied —
+# 35 and 220 still score through the HR rung
+expect {
+    lo_edge = Metrics.tss_ladder({ ..Metrics.ladder_base, avg_hr: Ok(35.0) })
+    hi_edge = Metrics.tss_ladder({ ..Metrics.ladder_base, avg_hr: Ok(220.0) })
+    lo_edge.model == "hr_avg" and hi_edge.model == "hr_avg"
 }
 
 # power present, no FTP, no HR: honest zero (not a fabricated power-0), model "none"
