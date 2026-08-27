@@ -35,8 +35,8 @@ ReportSessions :: [].{
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, a.sport_type AS sport,
-                \\       COALESCE(a.sport_family, a.sport_type) AS family, a.name AS name,
+                \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, COALESCE(CAST(a.sport_type AS TEXT), '') AS sport,
+                \\       COALESCE(CAST(a.sport_family AS TEXT), CAST(a.sport_type AS TEXT), '') AS family, COALESCE(CAST(a.name AS TEXT), '') AS name,
                 \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                 \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
@@ -46,12 +46,12 @@ ReportSessions :: [].{
                 \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
                 \\       CAST(COALESCE(m.decoupling_pct, 0) AS REAL) AS decoupling_pct,
                 \\       CASE WHEN m.decoupling_pct IS NULL THEN 0 ELSE 1 END AS decoupling_known,
-                \\       COALESCE(m.decoupling_signal, '') AS decoupling_signal,
+                \\       COALESCE(CAST(m.decoupling_signal AS TEXT), '') AS decoupling_signal,
                 \\       CASE WHEN m.normalized_power IS NULL THEN 0 ELSE 1 END AS power_known,
                 \\       CASE WHEN m.intensity_factor IS NULL THEN 0 ELSE 1 END AS intensity_known,
                 \\       CASE WHEN a.avg_hr IS NULL THEN 0 ELSE 1 END AS hr_known,
                 \\       CASE WHEN COALESCE(m.hr_samples_total, 0) > 0 THEN 1 ELSE 0 END AS zones_known,
-                \\       COALESCE(m.load_model, '') AS load_model
+                \\       COALESCE(CAST(m.load_model AS TEXT), '') AS load_model
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE a.id = :id LIMIT 1
             ,
@@ -106,7 +106,7 @@ ReportSessions :: [].{
                 _ = (Metrics.usable_date_days(a.date)).map_err(|_| BadActivityDate(a.date, a.id))?
                 raw_rows = Sqlite.query_many!({
                     path: Path.utf8(path),
-                    query: "SELECT raw_json AS raw FROM streams WHERE activity_id = :id",
+                    query: "SELECT COALESCE(CAST(raw_json AS TEXT), '') AS raw FROM streams WHERE activity_id = :id",
                     bindings: [{ name: ":id", value: Integer(aid) }],
                     rows: Sqlite.str("raw"),
                 })?
@@ -125,7 +125,7 @@ ReportSessions :: [].{
                 seg_rows = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
-                        \\SELECT ordinal, kind, start_s, dur_s, CAST(avg_signal AS REAL) AS avg_signal, signal,
+                        \\SELECT ordinal, COALESCE(CAST(kind AS TEXT), '') AS kind, start_s, dur_s, CAST(avg_signal AS REAL) AS avg_signal, COALESCE(CAST(signal AS TEXT), '') AS signal,
                         \\       CAST(COALESCE(peak_hr, 0) AS REAL) AS peak_hr, CAST(COALESCE(avg_hr, 0) AS REAL) AS avg_hr,
                         \\       CAST(COALESCE(rec_drop_60s, 0) AS REAL) AS rec_drop,
                         \\       CASE WHEN rec_drop_60s IS NULL THEN 0 ELSE 1 END AS rec_drop_known
@@ -485,7 +485,7 @@ ReportSessions :: [].{
             # column two tokens from two bare ones would otherwise reasonably conclude the
             # whole projection had been checked. That inference is what produced the
             # "three sites" estimate when there were five.
-                \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, ${Report.rankable_sql} AS rankable, a.sport_type AS sport, a.name AS name,
+                \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, ${Report.rankable_sql} AS rankable, COALESCE(CAST(a.sport_type AS TEXT), '') AS sport, COALESCE(CAST(a.name AS TEXT), '') AS name,
                 \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                 \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
@@ -502,7 +502,7 @@ ReportSessions :: [].{
                 \\       CASE WHEN m.intensity_factor IS NULL THEN 0 ELSE 1 END AS intensity_known,
                 \\       CASE WHEN a.avg_hr IS NULL THEN 0 ELSE 1 END AS hr_known,
                 \\       CASE WHEN COALESCE(m.hr_samples_total, 0) > 0 THEN 1 ELSE 0 END AS zones_known,
-                \\       COALESCE(m.load_model, '') AS load_model
+                \\       COALESCE(CAST(m.load_model AS TEXT), '') AS load_model
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE (1=1${sf.frag})
                 \\-- undateable rows FIRST, and that is the whole reason `activities` is
@@ -638,7 +638,7 @@ ReportSessions :: [].{
     known_sports! = |path|
         Sqlite.query_many!({
             path: Path.utf8(path),
-            query: "SELECT DISTINCT sport_type AS s FROM activities WHERE sport_type IS NOT NULL AND sport_type <> '' ORDER BY s",
+            query: "SELECT DISTINCT COALESCE(CAST(sport_type AS TEXT), '') AS s FROM activities WHERE sport_type IS NOT NULL AND sport_type <> '' ORDER BY s",
             bindings: [],
             rows: Sqlite.str("s"),
         })
@@ -696,7 +696,7 @@ ReportSessions :: [].{
             # column two tokens from two bare ones would otherwise reasonably conclude the
             # whole projection had been checked. That inference is what produced the
             # "three sites" estimate when there were five.
-                        \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, ${Report.rankable_sql} AS rankable, a.sport_type AS sport, a.name AS name,
+                        \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, ${Report.rankable_sql} AS rankable, COALESCE(CAST(a.sport_type AS TEXT), '') AS sport, COALESCE(CAST(a.name AS TEXT), '') AS name,
                         \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                         \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                         \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
@@ -846,11 +846,11 @@ ReportSessions :: [].{
         anchor = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, a.name AS name,
-                \\       COALESCE(a.sport_family, a.sport_type) AS fam,
+                \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, COALESCE(CAST(a.name AS TEXT), '') AS name,
+                \\       COALESCE(CAST(a.sport_family AS TEXT), CAST(a.sport_type AS TEXT), '') AS fam,
                 \\       COUNT(*) AS reps, CAST(AVG(s.dur_s) AS INTEGER) AS mean_dur,
                 \\       MIN(s.dur_s) AS min_dur, MAX(s.dur_s) AS max_dur,
-                \\       COALESCE(MIN(s.signal), '') AS signal
+                \\       COALESCE(CAST(MIN(s.signal) AS TEXT), '') AS signal
                 \\FROM activity_segments s JOIN activities a ON a.id = s.activity_id
                 \\WHERE s.kind = 'work' AND (:d = '' OR substr(a.start_local, 1, 10) = :d)
                 \\GROUP BY s.activity_id
@@ -920,7 +920,7 @@ ReportSessions :: [].{
                 sessions = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
-                        \\SELECT a2.id AS id, COALESCE(substr(a2.start_local, 1, 10), '') AS date, a2.name AS name,
+                        \\SELECT a2.id AS id, COALESCE(CAST(substr(a2.start_local, 1, 10) AS TEXT), '') AS date, COALESCE(CAST(a2.name AS TEXT), '') AS name,
                         \\       COUNT(*) AS reps,
                         \\       CAST(AVG(s.avg_signal) AS REAL) AS mean_w,
                         \\       CAST(AVG(s.dur_s) AS INTEGER) AS mean_dur,
@@ -1010,7 +1010,7 @@ ReportSessions :: [].{
                         \\       -- 'power' or 'pace'); COALESCE keeps the decoder
                         \\       -- total, and '' is declared in the schema rather
                         \\       -- than manufactured outside it
-                        \\       COALESCE(signal, '') AS signal,
+                        \\       COALESCE(CAST(signal AS TEXT), '') AS signal,
                         \\       CAST(COALESCE(avg_hr, 0) AS REAL) AS avg_hr,
                         \\       CASE WHEN avg_hr IS NULL THEN 0 ELSE 1 END AS hr_known,
                         \\       CAST(COALESCE(rec_drop_60s, 0) AS REAL) AS rec_drop,
@@ -1123,7 +1123,7 @@ ReportSessions :: [].{
                 latest = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
-                        \\SELECT COALESCE(substr(a.start_local, 1, 10), '') AS d, a.name AS name, a.id AS id
+                        \\SELECT COALESCE(CAST(substr(a.start_local, 1, 10) AS TEXT), '') AS d, COALESCE(CAST(a.name AS TEXT), '') AS name, a.id AS id
                         \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
                         \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC LIMIT 1
                     ,
@@ -1155,13 +1155,13 @@ ReportSessions :: [].{
         prows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.name AS name, a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, COALESCE(a.sport_type, '') AS sport,
+                \\SELECT COALESCE(CAST(a.name AS TEXT), '') AS name, a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, COALESCE(CAST(a.sport_type AS TEXT), '') AS sport,
                 \\       CAST(COALESCE(a.distance,0) AS REAL) AS distance_m, a.moving_time AS moving_time,
                 \\       CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w, CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
                 \\       CAST(COALESCE(rt.rpe,0) AS REAL) AS rpe,
                 \\       CAST(COALESCE(a.avg_watts * a.moving_time / 1000.0, 0) AS REAL) AS output_kj,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss,
-                \\       COALESCE(m.load_model, '') AS load_model,
+                \\       COALESCE(CAST(m.load_model AS TEXT), '') AS load_model,
                 \\       CAST(COALESCE(m.decoupling_pct, 0) AS REAL) AS decoupling_pct,
                 \\       CASE WHEN m.decoupling_pct IS NULL THEN 0 ELSE 1 END AS decoupling_known
                 \\FROM activities a
@@ -1308,7 +1308,7 @@ ReportSessions :: [].{
             } else {
                 on_date = Sqlite.query_many!({
                     path: Path.utf8(path),
-                    query: "SELECT name AS name, id AS id FROM activities WHERE substr(start_local, 1, 10) = :date LIMIT 1",
+                    query: "SELECT COALESCE(CAST(name AS TEXT), '') AS name, id AS id FROM activities WHERE substr(start_local, 1, 10) = :date LIMIT 1",
                     bindings: [{ name: ":date", value: String(date) }],
                     rows: |cols| |stmt| {
                         name = Sqlite.str("name")(cols)(stmt)?

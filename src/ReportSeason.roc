@@ -72,7 +72,7 @@ ReportSeason :: [].{
         day_rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT COALESCE(day, '') AS day, CAST(COALESCE(tss, 0) AS REAL) AS tss,
+                \\SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(COALESCE(tss, 0) AS REAL) AS tss,
                 \\       CAST(COALESCE(ctl, 0) AS REAL) AS ctl,
                 \\       CAST(COALESCE(atl, 0) AS REAL) AS atl,
                 \\       CAST(COALESCE(tsb, 0) AS REAL) AS tsb
@@ -103,7 +103,7 @@ ReportSeason :: [].{
                 path: Path.utf8(path),
                 query:
                     \\SELECT COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date,
-                    \\       COALESCE(a.sport_family, a.sport_type) AS fam,
+                    \\       COALESCE(CAST(a.sport_family AS TEXT), CAST(a.sport_type AS TEXT), '') AS fam,
                     \\       COUNT(*) AS n,
                     \\       -- the house fallback (see zone_sum!): the pi_* split when the activity
                     \\       -- has one -- power-derived with watts, pace-derived for a distance
@@ -163,7 +163,7 @@ ReportSeason :: [].{
             month_load = Sqlite.query_many!({
                 path: Path.utf8(path),
                 query:
-                    \\SELECT substr(day, 1, 7) AS month, CAST(COALESCE(SUM(tss), 0) AS REAL) AS load
+                    \\SELECT substr(CAST(day AS TEXT), 1, 7) AS month, CAST(COALESCE(SUM(tss), 0) AS REAL) AS load
                     \\FROM daily_load GROUP BY month ORDER BY month
                 ,
                 bindings: [],

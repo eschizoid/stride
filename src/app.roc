@@ -544,7 +544,7 @@ config_list! = |{}| {
     path = Db.open_db!({})?
     rows = Sqlite.query_many!({
         path: Path.utf8(path),
-        query: "SELECT key AS k FROM config WHERE COALESCE(CAST(value AS TEXT), '') <> '' ORDER BY key",
+        query: "SELECT COALESCE(CAST(key AS TEXT), '') AS k FROM config WHERE COALESCE(CAST(value AS TEXT), '') <> '' ORDER BY key",
         bindings: [],
         rows: Sqlite.str("k"),
     })?

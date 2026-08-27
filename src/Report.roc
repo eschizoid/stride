@@ -190,7 +190,7 @@ Report :: [].{
         } else {
             days = if period == "month" 28 else 7
             label = if period == "month" "28d" else "7d"
-            match Sqlite.query!({ path: Path.utf8(path), query: "SELECT COALESCE(day, '') AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sqlite.str("day") }) {
+            match Sqlite.query!({ path: Path.utf8(path), query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sqlite.str("day") }) {
                 Err(NoRowsReturned) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
                 Err(e) => Err(e)
                 Ok(latest_day) => {
@@ -475,7 +475,7 @@ Report :: [].{
         latest =
             match Sqlite.query!({
                 path: Path.utf8(path),
-                query: "SELECT COALESCE(day, '') AS day, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
+                query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
                 bindings: [],
                 row: |cols| |stmt| {
                     day = Sqlite.str("day")(cols)(stmt)?
@@ -521,7 +521,7 @@ Report :: [].{
         sports = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.sport_type AS sport, COUNT(*) AS sessions, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
+                \\SELECT COALESCE(CAST(a.sport_type AS TEXT), '') AS sport, COUNT(*) AS sessions, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
                 \\       COALESCE(SUM(a.moving_time),0) AS moving_time, CAST(COALESCE(SUM(a.distance),0) AS REAL) AS distance_m,
                 \\       COALESCE(MAX(substr(CAST(a.start_local AS TEXT), 1, 10)), '') AS last_date
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
@@ -669,7 +669,7 @@ Report :: [].{
         # window moves the truncation point, it does not remove it.
         ramp_rows = Sqlite.query_many!({
             path: Path.utf8(path),
-            query: "SELECT COALESCE(day, '') AS day, CAST(ctl AS REAL) AS ctl, CAST(tsb AS REAL) AS tsb FROM daily_load WHERE day >= :cutoff ORDER BY day DESC",
+            query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(ctl AS REAL) AS ctl, CAST(tsb AS REAL) AS tsb FROM daily_load WHERE day >= :cutoff ORDER BY day DESC",
             bindings: [{ name: ":cutoff", value: String(Metrics.days_to_date_str(anchor - 30)) }],
             rows: |cols| |stmt| {
                 d = Sqlite.str("day")(cols)(stmt)?
@@ -845,7 +845,7 @@ Report :: [].{
         path = Db.open_db!({})?
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
-            query: "SELECT COALESCE(day, '') AS day, tss AS tss, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT ${(days).to_str()}",
+            query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, tss AS tss, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT ${(days).to_str()}",
             bindings: [],
             rows: |cols| |stmt| {
                 day = Sqlite.str("day")(cols)(stmt)?

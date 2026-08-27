@@ -80,6 +80,13 @@ jobs:
         shell: bash
         run: sh tools/skill-shapes.sh
 
+      # Same job and the same reason: reads source only, so it must not sit behind a build.
+      # It also belongs on every OS — the SKILL.md gate was green on macOS and Linux while
+      # broken on Windows three separate ways, and only the matrix ever showed it.
+      - name: Check every TEXT decode is CAST to TEXT
+        shell: bash
+        run: sh tools/blob-safety.sh
+
       # The pure modules carry the logic and the tests. app.roc
       # has no expects (its effectful ones can't run under the test runner), so it
       # is validated by `check` above.

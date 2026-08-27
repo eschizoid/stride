@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(966)?
+    checks_ran_exactly!(967)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3406,6 +3406,31 @@ b_seed_analyze! = |ctx| {
     # handled code for another — it has to keep both, and reverting any of the seven CASTs
     # puts `internal_error` into the string.
     check!("...and the six other commands reading that column degrade instead of crashing", blob_cmds == "unreadable_activity_date unreadable_daily_load_day")?
+    # ...and the CLASS, which #296 fixed one column of. A blob is possible in every TEXT
+    # column — SQLite's TEXT affinity converts INTEGER and REAL but not blobs — and the same
+    # `Sqlite.str` decode answers `UnexpectedType(Bytes)` wherever it meets one. Measured
+    # before #307: `activities.sport_type` crashed 7 commands, `daily_load.day` 5,
+    # `activities.name` 3, and `planned_sessions.target_date` took `plan` down.
+    #
+    # Planted in three columns at once, because the point is the class rather than any one
+    # of them. The assertion is that NO command answers `internal_error` — "this is a bug,
+    # not your data" — about a fault that is entirely the data.
+    #
+    # What this check does NOT do, stated because measuring it is what stopped it shipping
+    # as more than it is: it does not discriminate every individual projection. Reverting
+    # ONE `sport_type` CAST — the one in the `progress` group query — leaves it green,
+    # because this fixture never anchors a group on the planted row. Reverting the file's
+    # text CASTs together fails it. So this guards the CLASS behaviourally, and
+    # `tools/blob-safety.sh` is what guards each site: it pairs every `Sqlite.str` decode
+    # with the projection producing its alias and fails on a bare column. The two are
+    # complementary and neither is sufficient — which is how a fix for one column shipped
+    # while eleven more sites read the same way.
+    _ = sql!(ctx.db, "UPDATE activities SET sport_type = CAST(x'DEADBEEF' AS BLOB), name = CAST(x'C0FFEE' AS BLOB) WHERE id = 952;")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (954,'blob class','Ride','Ride','2026-04-01T08:00:00Z',3600);")
+    _ = sql!(ctx.db, "UPDATE activities SET sport_type = CAST(x'DEADBEEF' AS BLOB) WHERE id = 954;")
+    class_codes = Str.trim(sh!("for c in summary plan stats doctor activities progress season load compare week; do HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $c 2>&1 | jq -r '.error.code // \"ok\"'; done | grep -c internal_error"))
+    check!("a blob in sport_type or name crashes nothing, which #296 fixed for one column only", class_codes == "0")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 954;")
     # deleted immediately: `doctor`'s undateable count is pinned at 4 twelve lines below, and
     # a probe row that outlives its own checks moves a number asserted for another reason.
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 952;")

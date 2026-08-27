@@ -67,7 +67,7 @@ ReportHealth :: [].{
         Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT sport_type AS sport, COUNT(*) AS sessions,
+                \\SELECT COALESCE(CAST(sport_type AS TEXT), '') AS sport, COUNT(*) AS sessions,
                 \\       CAST(SUM(moving_time) / 3600.0 AS REAL) AS hours,
                 \\       CAST(COALESCE(SUM(distance), 0) / 1000.0 AS REAL) AS km
                 \\FROM activities WHERE start_local >= :cutoff
@@ -137,7 +137,7 @@ ReportHealth :: [].{
         })?
         models = Sqlite.query_many!({
             path: Path.utf8(path),
-            query: "SELECT COALESCE(load_model, 'unknown (pre-provenance)') AS model, COUNT(*) AS n FROM activity_metrics GROUP BY load_model ORDER BY n DESC, load_model",
+            query: "SELECT COALESCE(CAST(load_model AS TEXT), 'unknown (pre-provenance)') AS model, COUNT(*) AS n FROM activity_metrics GROUP BY load_model ORDER BY n DESC, load_model",
             bindings: [],
             rows: |cols| |stmt| {
                 model = Sqlite.str("model")(cols)(stmt)?
@@ -200,7 +200,7 @@ ReportHealth :: [].{
         # list can't drift from Sports.class
         sports = Sqlite.query_many!({
             path: Path.utf8(path),
-            query: "SELECT COALESCE(a.sport_type, '') AS sport, CASE WHEN r.activity_id IS NULL THEN 0 ELSE 1 END AS rated FROM activities a LEFT JOIN ratings r ON r.activity_id = a.id",
+            query: "SELECT COALESCE(CAST(a.sport_type AS TEXT), '') AS sport, CASE WHEN r.activity_id IS NULL THEN 0 ELSE 1 END AS rated FROM activities a LEFT JOIN ratings r ON r.activity_id = a.id",
             bindings: [],
             rows: |cols| |stmt| {
                 sport = Sqlite.str("sport")(cols)(stmt)?
@@ -219,7 +219,7 @@ ReportHealth :: [].{
         recent_hr = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT COALESCE(sport_type, '') AS sport,
+                \\SELECT COALESCE(CAST(sport_type AS TEXT), '') AS sport,
                 \\       CASE WHEN COALESCE(avg_hr, 0) > 0 THEN 1 ELSE 0 END AS has_hr
                 \\FROM activities ORDER BY ${Metrics.rank_ts_sql("start_local", Desc)}, id DESC LIMIT 200
             ,
