@@ -281,7 +281,7 @@ Every item here cost a debugging session at least once — they are not style op
   endurance ranks measured power/HR first (`Sports.class`).
 - HR samples outside 35–220 bpm are junk — filtered at analyze. The same bound is applied
   again at report time to a session's `avg_hr` (`Metrics.valid_hr`), which is what keeps an
-  18 bpm average from being scored as a session's best EF.
+  18 bpm average from being scored as the GROUP's best EF.
 - `activity_metrics.ftp_used` drives auto-recompute on FTP change — any new metric
   input must join that invalidation story.
 - CTL/ATL/TSB extend through **today** (rest days decay fatigue in the engine).

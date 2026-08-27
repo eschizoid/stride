@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(951)?
+    checks_ran_exactly!(953)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -5822,12 +5822,38 @@ b_progress_b! = |ctx| {
     # ...and the AGREEMENT rule, on the boundary that decides it. A second lens-dropped ride
     # moves the count to 2 and the verb must move with it. Pinning only the singular case
     # would accept the inverted rule, since that renders correctly for exactly one count.
+    #
+    # To re-prove either of these, mutate ONLY the verb string it names — `needs_plural`'s
+    # `Ef` arm for the plural check, `needs`' for the singular. Each then fails alone, with
+    # every other check green, because the two branches are independent strings. Do NOT
+    # reach for "revert the rule and neutralise the earlier checks": `check!` returns `Err`
+    # into a `?`, so the first failure aborts the run and shadows everything after it, and
+    # neutralising by DELETING a check orphans its binding and turns the run into a build
+    # failure that prints nothing like a failed suite. Both traps were hit writing this.
     _ = seed_ride!(ctx.db, "275", "Evening Ride", "2025-05-12T18:00:00Z", "3600", "20000", "158", "20")
     _ = seed_power_stream!(ctx.db, 275, 1300, 158)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     ev_human2 = stride_human!(ctx.bin, ctx.home, ["progress", "2025-05-16"])
     check!("...and two lens-dropped rows take the plural verb, which the count-1 case cannot show", Str.contains(ev_human2, "1 a different distance for this workout, 2 need power and HR"))?
     check!("...and not the singular one the inverted rule would print here", !(Str.contains(ev_human2, "2 needs power and HR")))?
+    # ...and the SpeedHr arm, which is the one the real database actually renders. Review
+    # measured that: all 35 both-cause groups on it take `speed_hr`, 8 singular and 27
+    # plural, and both strings render today. The Evening Ride block above proves the
+    # mechanism on `Ef` — and replacing either SpeedHr string with garbage left the whole
+    # suite green, because `needs`/`needs_plural` are three-armed matches and a fixture on
+    # one arm tests a SIBLING of the case the rule fires on, not the case itself.
+    #
+    # Rowing with distance and HR and no power takes this lens, the same way the "HR Sanity
+    # Row" group above does.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (281,'Evening Row','Rowing','2025-06-02T18:00:00Z',3600,12000,140),(282,'Evening Row','Rowing','2025-06-09T18:00:00Z',3600,12000,18),(283,'Evening Row','Rowing','2025-06-16T18:00:00Z',3600,12000,145),(284,'Evening Row','Rowing','2025-06-05T18:00:00Z',3600,24000,140);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    row_human = stride_human!(ctx.bin, ctx.home, ["progress", "2025-06-16"])
+    check!("the speed/HR arm renders its own singular verb, not the EF arm's", Str.contains(row_human, "1 a different distance for this workout, 1 needs distance and HR"))?
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (285,'Evening Row','Rowing','2025-06-12T18:00:00Z',3600,12000,20);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("...and its plural verb, which is what 27 of the 35 real groups print", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-06-16"]), "1 a different distance for this workout, 2 need distance and HR"))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (281,282,283,284,285); DELETE FROM activities WHERE id IN (281,282,283,284,285);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (271,272,273,274,275); DELETE FROM streams WHERE activity_id IN (271,272,273,274,275); DELETE FROM activities WHERE id IN (271,272,273,274,275);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     _ = stride!(ctx.bin, ctx.home, ["analyze"])

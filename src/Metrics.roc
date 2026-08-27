@@ -1206,7 +1206,16 @@ Metrics :: [].{
     # not a light session, it is a broken reading — and trusting it produced "improving
     # (221%)" on a workout whose other sessions sit near 0.85 — seven of them did; the
     # eighth scored 1.38 off an 86.4 bpm average, and it is that session, not the 18 bpm
-    # one, which becomes the group's legitimate best once the bound is applied (#294).
+    # one, which becomes the group's best once the bound is applied (#294).
+    #
+    # "Best" and not "legitimate best": review measured that session's own stream and found
+    # 42% dropout, an in-band mean of 147.7 bpm against the stored 86.4, and an honest EF of
+    # 0.81 — which would not be the best either. It is the same artifact as the 18 bpm row,
+    # landing INSIDE the bound instead of outside it, and it is a class: of 670 stream-
+    # carrying activities, 14 store an average more than 15 bpm below their in-band stream
+    # mean and 11 of those are inside 35-220, so this bound refuses 3 and misses 11. The
+    # root-cause version scores from the stream-derived in-band mean when a stream exists,
+    # which the engine already computes for decoupling. Tracked in #305.
     expect Metrics.valid_hr(140.0)
     expect !(Metrics.valid_hr(18.0)) and !(Metrics.valid_hr(31.3))
     expect !(Metrics.valid_hr(0.0)) and !(Metrics.valid_hr(221.0))
