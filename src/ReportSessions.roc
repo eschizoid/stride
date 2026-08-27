@@ -418,8 +418,19 @@ ReportSessions :: [].{
                     # opened. When they differ the recorded value is named beside it rather
                     # than dropped — that number is what the device reported and the athlete
                     # may be comparing against Strava.
+                    # Compared as RENDERED, not as floats. Deciding on unrounded values what to
+                    # print rounded made this note repeat itself — 161.461 against 161.2 is a
+                    # difference of 0.26 and prints "avg 161 (recorded 161)". Measured: the note
+                    # fired on 490 activities and said nothing on 336 of them.
+                    #
+                    # ...and only when a reading was actually RECORDED. A stream-only session
+                    # stores no average, `COALESCE` makes it 0.0, and "(recorded 0)" states a
+                    # measurement of zero where `avg 0` merely read as absent — the numeric-0
+                    # invariant in Output.roc and ADR 0009 is that a stored 0 here means NOT
+                    # AVAILABLE. `hr_known` is the field that answers whether one exists, which
+                    # is exactly what it is for.
                     recorded_note =
-                        if (a.avg_hr_scored - a.avg_hr).abs() < 0.05 {
+                        if !(a.hr_known) or Render.fmt0(a.avg_hr_scored) == Render.fmt0(a.avg_hr) {
                             ""
                         } else {
                             " (recorded ${Render.fmt0(a.avg_hr)})"
