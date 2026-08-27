@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(967)?
+    checks_ran_exactly!(969)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2323,6 +2323,27 @@ b_seed_analyze! = |ctx| {
     # value beside it harmless; something reads the number.
     check!("an 18 bpm session publishes no EF verdict of its own", strjq!(ctx, ["activity", "96"], ".data.baselines.ef.known") == "false")?
     check!("...and no EF NUMBER either, which the flag alone does not guarantee", strjq!(ctx, ["activity", "96"], ".data.baselines.ef.current") == "0")?
+    # ...and the LOAD LADDER's HR rung, which #313 bounded and which nothing at the binary
+    # level guarded. Review measured that: with the guard reverted, `just e2e` alone passes
+    # all 966 checks while an impossible heart rate scores training load again. The pure
+    # expects were the entire gate, and `src/Analyze.roc` — the call site — is not in the
+    # `roc test` list at all, so nothing covered the wiring either.
+    #
+    # Two rows, and the second is the non-vacuity half. 471 carries an impossible average
+    # and must fall through to `relative_effort`; 472 carries a plausible one and must reach
+    # `hr_avg`, which is what proves the fixture gets to the HR rung at all rather than 471
+    # passing because some other rung answered. No watts and no stream on either, because
+    # the rung is only reached when there are no zone seconds.
+    #
+    # NOT probe 96 above: it carries `avg_watts 185` with a derived FTP, so it scores through
+    # the power rung and never reaches this one. Review pointed at it first from reading the
+    # fixture, then corrected that from running it.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_hr,relative_effort) VALUES (471,'HR Rung Impossible','Workout','2025-10-01T08:00:00Z',2769,250,33),(472,'HR Rung Plausible','Workout','2025-10-08T08:00:00Z',2769,139.2,33);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("an impossible avg_hr falls through the load ladder's HR rung", strjq!(ctx, ["activity", "471"], ".data.load_model") == "relative_effort")?
+    check!("...while a plausible one still reaches it, so the fixture proves it can", strjq!(ctx, ["activity", "472"], ".data.load_model") == "hr_avg")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (471,472); DELETE FROM activities WHERE id IN (471,472);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # `sample_count`, not the median: the count is what the comparables filter changes, and
     # it discriminates. Probe 96 carries real watts and a real duration, so with a plausible
     # heart rate it WOULD be 101's second EF comparable — measured, the same fixture with

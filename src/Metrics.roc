@@ -609,7 +609,7 @@ Metrics :: [].{
                 Ok({ t: hr_tss(input.zones), m: "hr_zones" })
             } else {
                 # The bound is `valid_hr`, and this rung is the last one in the ladder that
-                # scored training LOAD from a summary average without it. The two `progress` lenses got the
+                # scored training LOAD from a summary avg_hr without it. The two `progress` lenses got the
                 # bound in #294, `activity`'s EF in #305, decoupling had it already — and
                 # load is the consumer that propagates furthest, into CTL, ATL and every
                 # form verdict downstream.
@@ -623,8 +623,11 @@ Metrics :: [].{
                 # claim was wrong and the third time behaviour rather than reading found it.
                 # Tracked in #315.
                 #
-                # Measured before the bound, same session with only `avg_hr` changed:
-                # 139.2 bpm gave tss 42.3, 250 gave 76.92, 18 gave 23.0750. An impossible
+                # Measured before the bound, on a session with the STREAM REMOVED so this
+                # rung is reached — that is a precondition, not a detail: with the stream in
+                # place all three values give 43.0444 through `hr_zones` and the summary
+                # average is never read. With it removed and only `avg_hr` changed,
+                # 139.2 bpm gave tss 42.3042, 250 gave 76.9167, 18 gave 23.0750. An impossible
                 # reading produced nearly double the athlete's real load and nothing marked
                 # it (#313).
                 #
