@@ -732,7 +732,17 @@ ReportSessions :: [].{
                         \\       CASE WHEN a.avg_hr IS NULL THEN 0 ELSE 1 END AS hr_known
                         \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                         \\WHERE ${col} > 0${bound_sql}${sport_where}
-                        \\ORDER BY ${col} DESC, a.id DESC LIMIT ${(limit).to_str()}
+                        # ORDER BY casts too, and that is not redundant with the bound. Casting only inside the
+                        # bound re-admitted the BLOB and non-numeric-TEXT rows it was there to keep (a BLOB of
+                        # "100" IS a plausible reading), but left them sorted RAW — and SQLite orders BLOB
+                        # above TEXT above every number, so the rows the bound had just rescued landed at
+                        # rank 1. `top hr 3` led with that 100 bpm BLOB over a 171 bpm reading. Fixing the
+                        # bound is what introduced this; the two casts have to move together.
+                        #
+                        # The count subquery below repeats this ORDER BY deliberately: it counts what the
+                        # LIMIT excludes, so it has to walk the rows in the same order this one does. Change
+                        # one and the other is wrong, silently — the number just drifts.
+                        \\ORDER BY CAST(${col} AS REAL) DESC, a.id DESC LIMIT ${(limit).to_str()}
                     ,
                     bindings: sport_binding,
                     rows: |cols| |stmt| {
@@ -765,6 +775,12 @@ ReportSessions :: [].{
                     # activities, but none with heart rate (hr) data" while both rows HAVE
                     # heart-rate data. This is the function that once denied the existence of
                     # runs while listing Run in the same sentence.
+                    # Note this count has NO LIMIT, unlike the one under the ranking table. The two
+                    # answer different questions and are allowed to disagree. Under a table, "N were
+                    # implausible" means "N would have been in the rows you are looking at" — scoped to
+                    # the window. Here there is no table, so the question is whether the sport has any
+                    # readings at all, and a limit would make the answer depend on a number the athlete
+                    # picked for a list that came back empty.
                     n_excluded =
                         if Str.is_empty(bound) {
                             0
@@ -827,7 +843,7 @@ ReportSessions :: [].{
                         } else {
                             Sqlite.query!({
                                 path: Path.utf8(path),
-                                query: "SELECT COUNT(*) AS n FROM (SELECT ${col} AS v FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE ${col} > 0${sport_where} ORDER BY ${col} DESC, a.id DESC LIMIT ${(limit).to_str()}) WHERE NOT (${Str.replace_each(bound, "@", "v")})",
+                                query: "SELECT COUNT(*) AS n FROM (SELECT ${col} AS v FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE ${col} > 0${sport_where} ORDER BY CAST(${col} AS REAL) DESC, a.id DESC LIMIT ${(limit).to_str()}) WHERE NOT (${Str.replace_each(bound, "@", "v")})",
                                 bindings: sport_binding,
                                 row: Sqlite.i64("n"),
                             })?
