@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(986)?
+    checks_ran_exactly!(987)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2286,21 +2286,28 @@ b_seed_analyze! = |ctx| {
     top_ids = strjq!(ctx, ["top", "hr", "400"], "[.data[].id] | join(\",\")")
     check!("top hr excludes an impossible reading", !(Str.contains(top_ids, "481")))?
     check!("...while its plausible neighbour still ranks, so the bound removed a row", Str.contains(top_ids, "482"))?
-    # ...and the exclusion is STATED. `progress` counts what it hides (#286), `activities`
+    # ...and the exclusion is STATED. `progress` counts what it hides (#295, for #286), `activities`
     # marks what it cannot rank (#304); a ranking that silently drops history the athlete has
     # seen has the same "absence states something false" problem #286 is about.
-    # The COUNT, not just the presence of the line. `1` is the planted row and nothing else:
-    # this fixture has exactly one out-of-band heart rate, so a count that drifts — from a
-    # bound applied to the wrong column, or a query that stopped matching the ranking's —
-    # changes this number. The first version asserted only that the phrase appeared, which a
-    # wrong count satisfies just as well.
-    check!("...and says how many it excluded, rather than dropping them silently", Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "400"]), "1 session(s) excluded"))?
-    # ...and a metric with NO bound stays silent. This one is structurally true rather than
-    # measured — an empty `bound` makes the count `present - present`, so it is 0 by
-    # construction — and it is kept as documentation of that invariant, not as a guard.
-    # Review of #314 taught the distinction the hard way; the honest label matters more than
-    # the check.
-    check!("...and a metric without a bound says nothing, which is true by construction", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "tss", "5"]), "session(s) excluded")))?
+    # The COUNT, with a LEADING boundary. `Str.contains(h, "1 of this")` is satisfied by
+    # "11 of this" — review proved that against the previous form by adding 10 to the
+    # derivation and watching all four checks pass while the binary rendered eleven. The
+    # newline pins the digit's left edge, which is the same fix #293 made for "1 hidden"
+    # matching "11 hidden" and the third time this collision has landed in this suite.
+    check!("...and says how many it excluded, rather than dropping them silently", Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "400"]), "\n1 of this ranking's"))?
+    # ...and a metric with NO bound stays silent. Genuinely a guard, not the structural note
+    # an earlier version called it: giving `tss` a bound makes this fail, which review
+    # demonstrated — so it pins that the feature stays off for metrics that have no bound.
+    #
+    # It needs a bound the fixture can actually violate. Review's first attempt used
+    # `tss BETWEEN 35 AND 220`, and the three tss rows here are 110.8, 80.0 and 55.0 — all
+    # inside it — so the suite stayed green and the label looked confirmed.
+    check!("...and a metric without a bound says nothing", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "tss", "5"]), "of this ranking's")))?
+    # ...and the count tracks a SPORT FILTER. Nothing exercised that, and review measured the
+    # cost: dropping `${sport_where}` from the count query alone left the suite green while
+    # `stride top hr 700 rowing` printed its table and then died with
+    # "unknown parameter: :sp0" at exit 1.
+    check!("...and the count survives a sport filter", Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "400", "ride"]), "of this ranking's"))?
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (481,482); DELETE FROM activities WHERE id IN (481,482);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("plan recent rows carry the flag set", strjq!(ctx, ["plan"], "[.data.recent_activities_14d[] | has(\"power_known\") and has(\"zones_known\") and has(\"load_model\")] | all") == "true")?
