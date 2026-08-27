@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(966)?
+    checks_ran_exactly!(967)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3406,6 +3406,79 @@ b_seed_analyze! = |ctx| {
     # handled code for another — it has to keep both, and reverting any of the seven CASTs
     # puts `internal_error` into the string.
     check!("...and the six other commands reading that column degrade instead of crashing", blob_cmds == "unreadable_activity_date unreadable_daily_load_day")?
+    # ...and the CLASS, which #296 fixed one column of. A blob is possible in every TEXT
+    # column — SQLite's TEXT affinity converts INTEGER and REAL but not blobs — and the same
+    # `Sqlite.str` decode answers `UnexpectedType(Bytes)` wherever it meets one. Measured
+    # before #307: `activities.sport_type` crashed 7 commands, `daily_load.day` 5,
+    # `activities.name` 3, and `planned_sessions.target_date` took `plan` down.
+    #
+    # Planted in three columns at once, because the point is the class rather than any one
+    # of them. The assertion is that NO command answers `internal_error` — "this is a bug,
+    # not your data" — about a fault that is entirely the data.
+    #
+    # What this check does NOT do, stated because measuring it is what stopped it shipping
+    # as more than it is: it does not discriminate every individual projection. Reverting
+    # ONE `sport_type` CAST — the one in the `progress` group query — leaves it green,
+    # because this fixture never anchors a group on the planted row. Reverting the file's
+    # text CASTs together fails it. So this guards the CLASS behaviourally, and
+    # `tools/blob-safety.sh` is what guards each site: it pairs every string decode with the
+    # projection producing its alias and fails on a bare column.
+    #
+    # How much this check misses, measured rather than estimated. Review reverted the CASTs
+    # one FILE at a time: reverting `ReportHealth.roc` or `ReportSessions.roc` fails it, and
+    # reverting `Analyze`, `Plan`, `Report`, `ReportSeason` or `app` leaves it green — 34 of
+    # 57 changed lines are revertible with the whole suite passing. The lint catches every
+    # one. So the two are genuinely complementary, and an earlier version of this comment
+    # said "the file's text CASTs reverted together fail it" as though that were a general
+    # property; it holds for two files of seven.
+    #
+    # Neither is sufficient alone, which is how a fix for one column shipped while eleven
+    # more sites read the same way — and how that fix left `progress` and `week` still
+    # crashing on the column it was about.
+    _ = sql!(ctx.db, "UPDATE activities SET sport_type = CAST(x'DEADBEEF' AS BLOB), name = CAST(x'C0FFEE' AS BLOB) WHERE id = 952;")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (954,'blob class','Ride','Ride','2026-04-01T08:00:00Z',3600);")
+    _ = sql!(ctx.db, "UPDATE activities SET sport_type = CAST(x'DEADBEEF' AS BLOB) WHERE id = 954;")
+    # In a scratch HOME with the UNDATEABLE ROWS REMOVED, and that is the whole reason this
+    # probe works. The shared fixture permanently holds four malformed dates — pinned by
+    # `doctor`'s `undateable_activities == 4` twelve lines below — so `guard_activity_dates!`
+    # refuses first and six of these ten commands answer `unreadable_activity_date` without
+    # ever projecting the blobbed column.
+    #
+    # The `daily_load` guard has to be cleared too, and for the same reason: it fires ahead
+    # of the activity read, so with bad days present `plan` and `summary` answer
+    # `unreadable_daily_load_day` and never reach the column under test. Both guards, or the
+    # probe measures whichever refuses first. Review measured it: with BOTH of round 2's live
+    # crashes reintroduced, the whole suite stayed green at 964. This check was reading the
+    # date guard, not the decodes, which is how those two shipped.
+    #
+    # The blob is `CAST(<col> AS BLOB)` — bytes that ARE the valid value. A junk blob like
+    # `x'DEADBEEF'` trips the content guards and degrades gracefully, so it can never reach
+    # the decode either. That is a bad import binding text as a blob, and it is the probe
+    # shape that found both of round 2's crashes.
+    #
+    # The `DELETE` filters on calendar VALIDITY, not just date shape, and that clause is
+    # what makes this probe reach `Plan.roc`'s `MAX(` site. `1000-02-30T00:00:00Z` matches
+    # the shape GLOB — it is well-formed and impossible — so a shape-only filter left it in,
+    # `canonical_activity_day` rejected it, and the guard refused before the blobbed row was
+    # ever projected. `date('1000-02-30')` returns it unchanged, which is why the round-trip
+    # goes through `julianday`: that normalises it to 1000-03-02 and the mismatch flags it.
+    #
+    # I had this boundary attributed to the wrong mechanism — that `date_known_sql` reads the
+    # raw column and so refuses a blobbed date. It does read the raw column, deliberately
+    # (#304), but `guard_activity_dates!` projects the CAST value, so a blob whose bytes are
+    # a valid timestamp passes the guard. Both hold at once. The blocker was always the
+    # shape-only filter, and it was one clause from being closed while I was explaining why
+    # it could not be.
+    #
+    # What this still does NOT cover is `Analyze.roc`'s `nullable_str` site: `analyze` prints
+    # progress lines before its JSON, so `jq` cannot parse the stream and the result is
+    # dropped from the count silently. Adding it needs both the command AND a `grep '^{' |
+    # tail -1` filter, and my attempt at that broke an unrelated check upstream for a reason
+    # I did not isolate — so it is stated rather than half-done. That site is covered by
+    # `tools/blob-safety.sh` and by direct measurement on a real database.
+    class_codes = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; /bin/cp -f '${ctx.db}' $h/.stride/db.sqlite; sqlite3 $h/.stride/db.sqlite \"DELETE FROM activities WHERE start_local IS NULL OR start_local NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]*' OR COALESCE(strftime('%Y-%m-%d', julianday(substr(CAST(start_local AS TEXT),1,10))),'x') <> substr(CAST(start_local AS TEXT),1,10); DELETE FROM daily_load WHERE day IS NULL OR day NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'; UPDATE activities SET sport_type = CAST(sport_type AS BLOB), name = CAST(name AS BLOB), start_local = CAST(start_local AS BLOB) WHERE id = (SELECT id FROM activities ORDER BY start_local DESC LIMIT 1); UPDATE daily_load SET day = CAST(day AS BLOB) WHERE day = (SELECT MAX(day) FROM daily_load);\" >/dev/null 2>&1; for c in summary plan stats doctor activities progress season load compare week; do HOME=$h STRIDE_FORMAT=json '${ctx.bin}' $c 2>&1 | jq -r '.error.code // \"ok\"'; done | grep -c internal_error"))
+    check!("a blob in any TEXT column crashes nothing, in a window where the date guard passes (got: ${class_codes})", class_codes == "0")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 954;")
     # deleted immediately: `doctor`'s undateable count is pinned at 4 twelve lines below, and
     # a probe row that outlives its own checks moves a number asserted for another reason.
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 952;")

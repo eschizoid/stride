@@ -48,7 +48,7 @@ Analyze :: [].{
                 # yet), and the empty list says so without an error to translate.
                 form_rows = Sqlite.query_many!({
                     path: Path.utf8(path),
-                    query: "SELECT COALESCE(day, '') AS day, CAST(tsb AS REAL) AS tsb FROM daily_load ORDER BY day DESC LIMIT 10",
+                    query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(tsb AS REAL) AS tsb FROM daily_load ORDER BY day DESC LIMIT 10",
                     bindings: [],
                     rows: |cols| |stmt| {
                         day = Sqlite.str("day")(cols)(stmt)?
@@ -273,9 +273,9 @@ Analyze :: [].{
                 \\-- it just wrote, drops it from the walk, and refuses naming it — which is
                 \\-- also what stops an unscored NULL-dated row slipping past both guards.
                 \\SELECT a.id AS id, COALESCE(CAST(a.start_local AS TEXT), '') AS start, a.moving_time AS mt,
-                \\       COALESCE(a.sport_type, '') AS sport,
+                \\       COALESCE(CAST(a.sport_type AS TEXT), '') AS sport,
                 \\       CAST(a.relative_effort AS REAL) AS re, CAST(a.avg_watts AS REAL) AS aw, CAST(a.avg_hr AS REAL) AS ahr,
-                \\       CAST(a.weighted_avg_watts AS REAL) AS waw, CAST(r.rpe AS REAL) AS rpe, s.raw_json AS raw,
+                \\       CAST(a.weighted_avg_watts AS REAL) AS waw, CAST(r.rpe AS REAL) AS rpe, COALESCE(CAST(s.raw_json AS TEXT), '') AS raw,
                 \\       COALESCE(a.device_watts, 1) AS dw,
                 \\       CAST(ROUND(${period_ftp_sql}) AS REAL) AS pftp,
                 \\       CAST(ROUND((${period_threshold_sql}) * 1000) AS REAL) / 1000.0 AS pthr,
@@ -536,7 +536,7 @@ Analyze :: [].{
     load_config_raw! = |path|
         Sqlite.query_many!({
             path: Path.utf8(path),
-            query: "SELECT key AS k, COALESCE(value, '') AS v FROM config",
+            query: "SELECT COALESCE(CAST(key AS TEXT), '') AS k, COALESCE(CAST(value AS TEXT), '') AS v FROM config",
             bindings: [],
             rows: |cols| |stmt| {
                 k = Sqlite.str("k")(cols)(stmt)?
@@ -580,7 +580,7 @@ Analyze :: [].{
     sport_zone_sigs! = |path, cfg, g| {
         sports = Sqlite.query_many!({
             path: Path.utf8(path),
-            query: "SELECT DISTINCT sport_type AS s FROM activities WHERE sport_type IS NOT NULL AND sport_type <> ''",
+            query: "SELECT DISTINCT COALESCE(CAST(sport_type AS TEXT), '') AS s FROM activities WHERE sport_type IS NOT NULL AND sport_type <> ''",
             bindings: [],
             rows: Sqlite.str("s"),
         })?

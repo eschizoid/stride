@@ -68,6 +68,12 @@ command-claims: build
 skill-shapes:
     sh tools/skill-shapes.sh
 
+# Every TEXT column decoded by `Sqlite.str` or `Sqlite.nullable_str` must be projected
+# through CAST(... AS TEXT).
+# Reads source only — no binary, no database.
+blob-safety:
+    sh tools/blob-safety.sh
+
 # validate this machine's real payloads against the published contract
 # (schemas/v2/*.json). e2e runs the same validator against fixtures; this is the
 # "does MY data conform" pass, for after a schema or payload change. Depends on
