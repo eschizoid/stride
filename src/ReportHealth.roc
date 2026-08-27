@@ -127,13 +127,32 @@ ReportHealth :: [].{
                 # implausible value in the `activity` payload is the other half of #312 and
                 # is not this change; #319 carries it.
                 #
+                # `a.avg_hr`, not `COALESCE(m.avg_hr_stream, a.avg_hr)`. The stream term was here
+                # and was DEAD: `avg_hr_stream` is non-NULL only when the filtered samples span
+                # half the session, which needs two samples with a positive gap between them,
+                # and `time_in_zones` attributes every positive gap to some zone — so a non-NULL
+                # stream mean implies the zone arm is already true. It is also a mean of
+                # `valid_hr`-filtered samples, so it satisfies the scalar arm by construction.
+                # Whenever the COALESCE preferred the stream, both arms were true regardless;
+                # whenever it did not, it WAS `a.avg_hr`. Measured: rows where the two
+                # predicates differ, 0; rows with a stream mean and no zone seconds, 0. Review
+                # dropped the term from each site in turn and the suite stayed green both times,
+                # and no fixture could have closed that — the branch is unreachable.
+                #
+                # Removing it also makes the count reconcilable, which the version with it was
+                # not: every field the predicate reads is published by `activities --json`, so
+                #   jq '[.data[] | select(((.avg_hr>=35) and (.avg_hr<=220))
+                #        or ((.z1_s+.z2_s+.z3_s+.z4_s+.z5_s)>0))] | length'
+                # reproduces this number exactly. With the stream term it took 738 `activity`
+                # calls, because `avg_hr_scored` is not on the listing payload.
+                #
                 # The bound comes from `Metrics.valid_hr_sql` rather than being written out.
                 # The CAST it brings is load-bearing: SQLite sorts a BLOB above every number,
                 # so a bare `avg_hr BETWEEN 35 AND 220` is FALSE for a BLOB holding the bytes
                 # "100" — a session every other consumer reads through a CAST and scores at
                 # 100 bpm. `> 0` was TRUE for it. Fixing an over-count by introducing an
                 # under-count on the same value class is not a fix.
-                \\       COALESCE(SUM(CASE WHEN ${Metrics.usable_hr_sql("COALESCE(m.avg_hr_stream, a.avg_hr)", "COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0)")} THEN 1 ELSE 0 END), 0) AS with_hr,
+                \\       COALESCE(SUM(CASE WHEN ${Metrics.usable_hr_sql("a.avg_hr", "COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0)")} THEN 1 ELSE 0 END), 0) AS with_hr,
                 \\       COALESCE(SUM(CASE WHEN COALESCE(a.avg_watts, a.weighted_avg_watts, 0) > 0 THEN 1 ELSE 0 END), 0) AS with_power,
                 \\       COALESCE(SUM(CASE WHEN s.activity_id IS NOT NULL AND s.raw_json <> '{}' THEN 1 ELSE 0 END), 0) AS with_streams,
                 \\       COALESCE(SUM(CASE WHEN m.activity_id IS NULL THEN 1 ELSE 0 END), 0) AS unanalyzed,
@@ -279,7 +298,7 @@ ReportHealth :: [].{
                 # The join is what the stream half needs. This query read `FROM activities`
                 # alone, so it could only ever see the stored average, which is the number
                 # #311 established the engine does not score from.
-                \\       CASE WHEN ${Metrics.usable_hr_sql("COALESCE(m.avg_hr_stream, a.avg_hr)", "COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0)")} THEN 1 ELSE 0 END AS has_hr
+                \\       CASE WHEN ${Metrics.usable_hr_sql("a.avg_hr", "COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0)")} THEN 1 ELSE 0 END AS has_hr
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC LIMIT 200
             ,

@@ -367,7 +367,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1023)?
+    checks_ran_exactly!(1024)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6263,12 +6263,12 @@ b_progress_b! = |ctx| {
     # The SQL side carries the CAST and the stream fallback because the implementation does.
     # Written bare it would still pass here — nothing out of band is BLOB-stored at this
     # point — and then fail confusingly the first time someone planted one.
-    check!("doctor counts usable heart rates, not merely present ones", strjq!(ctx, ["doctor"], ".data.with_hr") == Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE CAST(COALESCE(m.avg_hr_stream, a.avg_hr) AS REAL) BETWEEN 35 AND 220;")))?
+    check!("doctor counts usable heart rates, not merely present ones", strjq!(ctx, ["doctor"], ".data.with_hr") == Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE CAST(a.avg_hr AS REAL) BETWEEN 35 AND 220;")))?
     # ...and the relation is not vacuous: with the 18 bpm row present the two predicates give
     # different answers, which is what makes the check above mean anything. Without this the
     # first check passes on any fixture where nothing is out of band — measured, that is the
     # state of the fixture at the doctor block, where the first version of this sat.
-    check!("...and the fixture can tell the shipped predicate from the presence test it replaced", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE COALESCE(avg_hr,0) > 0;")) != Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE (CAST(COALESCE(m.avg_hr_stream, a.avg_hr) AS REAL) BETWEEN 35 AND 220 OR COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0) > 0);")))?
+    check!("...and the fixture can tell the shipped predicate from the presence test it replaced", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE COALESCE(avg_hr,0) > 0;")) != Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE (CAST(a.avg_hr AS REAL) BETWEEN 35 AND 220 OR COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0) > 0);")))?
     # ...and both halves of the predicate, proven by DELTA rather than by restating the
     # implementation's own SQL in the test. The relation above can only ever detect drift
     # BETWEEN the two expressions, never a defect they share — and the defect they shared was
@@ -6302,14 +6302,24 @@ b_progress_b! = |ctx| {
     # 'hr_zones'`, counted in `medium (HR / RPE)` and excluded from `with_hr` in the same run.
     # Review dropped the zone arm and the suite stayed green, because every other fixture
     # reaching `with_hr` is classified by a scalar.
-    _ = seed_ride!(ctx.db, "239", "Doctor Zone Only", "2025-02-19T09:00:00Z", "3600", "30000", "200", "18")
-    _ = seed_power_hr_stream!(ctx.db, 239, 1300, 200, 150)
+    _ = seed_ride!(ctx.db, "239", "Doctor Zone Only", "2025-02-19T09:00:00Z", "3600", "30000", "0", "18")
+    _ = seed_hr_stream!(ctx.db, 239, 1300, 150)
+    # NULL, not 0: `seed_ride!` writes both watts columns, and a stored 0 still satisfies the
+    # ladder's `weighted_watts` rung, which then scored tss 0 through a power model on a
+    # session with no meter. Absence has to be absence here for the HR rung to be reached.
+    _ = sql!(ctx.db, "UPDATE activities SET avg_watts = NULL, weighted_avg_watts = NULL WHERE id = 239;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    check_near!("a stream-rescued, a BLOB-stored and a zone-only reading all count as usable", sfloat(strjq!(ctx, ["doctor"], ".data.with_hr")) - sfloat(before_hr), 3.0, 0.001)?
+    check_near!("a zone-classified, a BLOB-stored and an HR-only reading all count as usable", sfloat(strjq!(ctx, ["doctor"], ".data.with_hr")) - sfloat(before_hr), 3.0, 0.001)?
     # ...and 239 really is classified by the ZONE arm alone rather than by a scalar that
     # slipped through. Without this, the check above would still pass if the gate stopped
     # refusing that stream, and the zone arm would go back to being untested.
     check!("...and the zone-only row has no usable scalar, so only the zone arm can count it", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE a.id = 239 AND m.avg_hr_stream IS NULL AND NOT (CAST(a.avg_hr AS REAL) BETWEEN 35 AND 220) AND COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0) > 0;")) == "1")?
+    # ...and it is scored `hr_zones`, which is what makes it the live row's shape rather than
+    # merely a row with zone seconds. The earlier version seeded it with watts, so the ladder
+    # took the power rung and the comment claiming `hr_zones` was describing a different row.
+    # Scored this way it reproduces the contradiction end to end: the same payload counts it
+    # in `medium (HR / RPE)` and, before this change, excluded it from `with_hr`.
+    check!("...and its load really was computed FROM heart rate, which is the contradiction", strjq!(ctx, ["activity", "239"], ".data.load_model") == "hr_zones")?
     # ...and `has_hr` agrees, which is the site that had no coverage at all. It is a separate
     # query on a separate predicate, and reverting it alone left the whole suite green. A row
     # doctor calls strapless in one field while counting it as usable in another would put two
@@ -6328,15 +6338,16 @@ b_progress_b! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("an unusable reading OPENS a strapless streak rather than resetting it", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "1")?
     # ...and 238 covers the half 237 cannot: 237 has NO stream, so it exercises only the
-    # scalar bound, and reverting the streak site's stream/zone arm alone left the whole suite
-    # green. 238 has an impossible stored average AND a full-coverage stream, so the fallback
-    # is the only thing that can classify it — and the row would otherwise be counted as
-    # usable by `with_hr` while being called strapless by the streak, which is precisely what
-    # `schemas/v2/doctor.json` publishes as a guarantee about these two fields.
+    # scalar bound, and reverting the streak site's zone arm alone left the whole suite green.
+    # 238 has an impossible stored average AND a stream, so the ZONE arm is what classifies it
+    # — an earlier version of this comment said the stream fallback was, which was wrong and
+    # described a term that has since been removed as dead. Without 238 the row would be
+    # counted as usable by `with_hr` while being called strapless by the streak, which is
+    # exactly what `schemas/v2/doctor.json` publishes as a guarantee about these two fields.
     _ = seed_ride!(ctx.db, "238", "Doctor Rescued Strap", "2026-08-28T09:00:00Z", "1300", "12000", "200", "18")
     _ = seed_power_hr_stream!(ctx.db, 238, 1300, 200, 150)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    check!("a stream-rescued session RESETS the streak, as the coverage count says it should", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "0")?
+    check!("a session with usable zone seconds RESETS the streak, as the coverage count says", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "0")?
     _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 238; DELETE FROM activity_segments WHERE activity_id = 238; DELETE FROM activity_metrics WHERE activity_id = 238; DELETE FROM activities WHERE id = 238;")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 237; DELETE FROM activities WHERE id = 237;")
     _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id IN (235,236,239); DELETE FROM activity_segments WHERE activity_id IN (235,236,239); DELETE FROM activity_metrics WHERE activity_id IN (235,236,239); DELETE FROM activities WHERE id IN (235,236,239);")
@@ -7353,6 +7364,18 @@ seed_sparse_power_hr_stream! = |db, id, n, step, w, hr| {
     watts = Str.join_with(List.map(int_seq(n), |_| U64.to_str(w)), ",")
     hrs = Str.join_with(List.map(int_seq(n), |_| U64.to_str(hr)), ",")
     raw = "{\"time\":{\"data\":[${times}]},\"watts\":{\"data\":[${watts}]},\"heartrate\":{\"data\":[${hrs}]}}"
+    _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
+    {}
+}
+
+# HR ONLY — no watts. Zeroing the summary avg_watts is not enough to reach the ladder's HR
+# rungs: the ladder scores from the STREAM, so a watts stream keeps the power rung whatever the
+# summary says. A session with a strap and no meter is the only way to make `hr_zones` win.
+seed_hr_stream! : Str, I64, U64, U64 => {}
+seed_hr_stream! = |db, id, n, hr| {
+    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
+    hrs = Str.join_with(List.map(int_seq(n), |_| U64.to_str(hr)), ",")
+    raw = "{\"time\":{\"data\":[${times}]},\"heartrate\":{\"data\":[${hrs}]}}"
     _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
     {}
 }
