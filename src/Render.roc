@@ -531,10 +531,17 @@ Render :: [].{
     # which is the stronger fix: there is no version of the code where the sentence and the
     # comparison disagree. The inclusivity — `>` and not `>=`, so exactly 90 is NOT a break
     # — is pinned separately in `tests/e2e.roc`, because a constant cannot express it.
-    # Nineteen comment lines across `Render.roc`, `Metrics.roc` and `tests/e2e.roc` quote
-    # the literal 90. Most are historical narrative and stay true whatever this becomes, but
-    # they do NOT follow this constant — only the operator and the legend do. Moving this
-    # number means reading those too.
+    #
+    # Comment lines across `Render.roc`, `Metrics.roc` and `tests/e2e.roc` quote the literal
+    # 90. Most are historical narrative and stay true whatever this becomes, but they do NOT
+    # follow this constant — only the operator and the legend do, so moving the number means
+    # reading those too.
+    #
+    # Deliberately uncounted. An earlier version said "nineteen", which was wrong twice over:
+    # the figure was an undercount of the file it was measured on, and the commit that wrote
+    # it changed the set it was counting, in the same edit. A count of comments quoting a
+    # number drifts whenever anyone edits one of them — including the edit that states the
+    # count. That is the argument that produced this constant, applied to its own comment.
     gap_days : I64
     gap_days = 90
 
