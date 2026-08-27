@@ -201,7 +201,13 @@ respond! = |req, _ctx| {
         } else if Str.contains(uri, "/activities/501/") {
             # a realistic 1 Hz stream (1300 samples, constant 200W, HR sawtooth 120–179): long enough that
             # best_20min_w -> derived FTP 190 -> TSS ~110.8. See mock_power_stream_json.
-            Ok(mock_json(mock_power_stream_json(1300, 200)))
+            # 3600 samples, matching activity 501's declared moving_time. At 1300 the stream
+            # spanned 0.36 of the session and #311's coverage gate refused it — silently, since
+            # 501's only assertions are about TSS. 501 is this suite's one stream-only-HR ride,
+            # the case that change exists to enable, so any HR assertion added here would have
+            # quietly exercised the fallback instead. Lengthening the STREAM rather than
+            # shortening moving_time, which would move 501's pinned TSS.
+            Ok(mock_json(mock_power_stream_json(3600, 200)))
         } else if env_or!("E2E_BAD_STREAM", "") == "1" {
             # 200 with a body that is NOT UTF-8 — store_stream_response! returns
             # SkippedNonUtf8 and writes no row, so the id stays pending and retries
@@ -361,7 +367,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1006)?
+    checks_ran_exactly!(1009)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2544,6 +2550,31 @@ b_seed_analyze! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("a stream that stops early is refused, not averaged over its surviving prefix", strjq!(ctx, ["activity", "613"], ".data.baselines.ef.known") == "false")?
     check!("...and the row falls back to its stored reading, which the bound then refuses", strjq!(ctx, ["activity", "613"], ".data.baselines.ef.current") == "0")?
+    # ...and the gate's UPPER edge, which 613 cannot reach. 613 pins that a span of 0.36 is
+    # refused; nothing pinned that anything is ACCEPTED, so raising the threshold from 0.5 to
+    # 0.9 left the suite green while silently refusing 12 more real sessions — including
+    # 12841836491, the one whose 1.385 correction is this change's whole showcase.
+    #
+    # 614 is deliberately SPARSE: 289 samples every 5 s across 1440 s of a 2400 s ride. Two
+    # properties in one row. Span is 0.6, just over the threshold, so raising the threshold
+    # refuses it. And the sample COUNT is 289 against a session of 2400 s, so a count rule
+    # refuses it too — which is the only fixture here that can tell span from count, every
+    # other HR stream being 1 Hz where the two are the same number. Review swapped the rule
+    # for a count and the suite stayed green.
+    #
+    # A stored 18 so the row cannot score by falling back: if it scores at all, it scored
+    # from the stream, and the gate let it.
+    _ = seed_ride!(ctx.db, "614", "Stream HR Sparse", "2026-02-13T09:00:00Z", "2400", "20000", "200", "18")
+    _ = seed_sparse_power_hr_stream!(ctx.db, 614, 289, 5, 200, 150)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check_near!("a sparse stream that COVERS the session is accepted, unlike a dense one that stops", sfloat(strjq!(ctx, ["activity", "614"], ".data.baselines.ef.current")), 200.0 / 150.0, 0.01)?
+    check!("...and it publishes the divisor on the activity payload too, not only on progress", strjq!(ctx, ["activity", "614"], ".data.avg_hr_scored") == "150")?
+    # ...and the human line names BOTH, because it shares a screen with an EF verdict and the
+    # two numbers disagreeing with nothing to distinguish them is the gap this change opened.
+    # `progress` and `activity` printed 148 and 86 for one session with no label on either.
+    check!("...and the human line shows the scored average with the recorded one named", Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "614"]), "avg 150 (recorded 18)"))?
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 614; DELETE FROM activity_segments WHERE activity_id = 614; DELETE FROM activity_metrics WHERE activity_id = 614; DELETE FROM activities WHERE id = 614;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 613; DELETE FROM activity_segments WHERE activity_id = 613; DELETE FROM activity_metrics WHERE activity_id = 613; DELETE FROM activities WHERE id = 613;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 612; DELETE FROM activity_segments WHERE activity_id = 612; DELETE FROM activity_metrics WHERE activity_id = 612; DELETE FROM activities WHERE id = 612;")
@@ -7148,6 +7179,21 @@ seed_power_stream! = |db, id, n, w| {
 # two disagree — which is the whole of #311. In the real data they disagree because of
 # dropout (a session storing 86.4 whose own stream means 147.7 across 42% missing samples);
 # a constant stream reproduces the disagreement without reproducing the dropout.
+# power + HR at a SPARSE cadence: one sample every `step` seconds. Two things need this and
+# neither can be built from a 1 Hz stream. It separates SPAN from COUNT — every other HR
+# fixture here is 1 Hz, where the two are the same number, so the coverage gate's central
+# design decision was untestable — and it reaches the gate's upper edge, which a dense stream
+# can only approach by being short, which is the low edge again.
+seed_sparse_power_hr_stream! : Str, I64, U64, U64, U64, U64 => {}
+seed_sparse_power_hr_stream! = |db, id, n, step, w, hr| {
+    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i * step)), ",")
+    watts = Str.join_with(List.map(int_seq(n), |_| U64.to_str(w)), ",")
+    hrs = Str.join_with(List.map(int_seq(n), |_| U64.to_str(hr)), ",")
+    raw = "{\"time\":{\"data\":[${times}]},\"watts\":{\"data\":[${watts}]},\"heartrate\":{\"data\":[${hrs}]}}"
+    _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
+    {}
+}
+
 seed_power_hr_stream! : Str, I64, U64, U64, U64 => {}
 seed_power_hr_stream! = |db, id, n, w, hr| {
     times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")

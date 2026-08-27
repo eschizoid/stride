@@ -412,8 +412,20 @@ ReportSessions :: [].{
                         Stdout.line!("power  1min ${Render.fmt0(detail.best_60)}W · 3min ${Render.fmt0(detail.best_180)}W · 5min ${Render.fmt0(detail.best_300)}W · 20min ${Render.fmt0(detail.best_1200)}W")?
                     else
                         Ok({})?
+                    # the SCORED average, for the same reason `progress`'s hr column shows it:
+                    # this line sits on the screen that also prints an EF verdict, and the
+                    # two disagreeing with nothing to say which is which is the gap #311
+                    # opened. When they differ the recorded value is named beside it rather
+                    # than dropped — that number is what the device reported and the athlete
+                    # may be comparing against Strava.
+                    recorded_note =
+                        if (a.avg_hr_scored - a.avg_hr).abs() < 0.05 {
+                            ""
+                        } else {
+                            " (recorded ${Render.fmt0(a.avg_hr)})"
+                        }
                     (if detail.max_hr > 0
-                        Stdout.line!("hr     max ${Render.fmt0(detail.max_hr)} · avg ${Render.fmt0(a.avg_hr)}")
+                        Stdout.line!("hr     max ${Render.fmt0(detail.max_hr)} · avg ${Render.fmt0(a.avg_hr_scored)}${recorded_note}")
                     else
                         Ok({}))?
                     # detected structure — absent line when nothing detected (honest absence)

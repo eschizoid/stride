@@ -655,7 +655,7 @@ Analyze :: [].{
         # analyzing the same 738 activities before and after leaves `activity_metrics`
         # byte-identical on every column but this one, and `daily_load` byte-identical
         # outright. No TSS, CTL, ATL or form verdict moves.
-        # ...and it is NULL unless the surviving samples SPAN most of the session. A mean over
+        # ...and it is NULL unless the surviving samples span AT LEAST HALF the session. A mean over
         # unrepresentative samples is the same bug this column exists to fix, moved one table
         # over — and without this gate it lands harder, because nothing downstream can see it.
         # Measured on the real database: of the three sessions whose stored average is
@@ -674,14 +674,27 @@ Analyze :: [].{
         # The threshold sits in a gap, not on a guess. The surviving spans on the real data
         # are 0.003, 0.20 and 0.24 for the three broken straps, and 0.58 upward for the eleven
         # sessions this column exists to rescue. Nothing lands between 0.25 and 0.58.
+        # The denominator is the LONGER of the session's moving time and the stream's own
+        # extent, not moving time alone. `moving_time` excludes stops while stream timestamps
+        # are elapsed, so a stop-heavy session divides a long span by a short session and the
+        # ratio inflates. Measured: 35 of 672 streams run longer than their moving time, by up
+        # to 1.198x, which drops the effective floor to about 0.42 — small here, and larger for
+        # an outdoor rider who stops for coffee. Taking the max costs nothing on the truncation
+        # case this gate is for, where the surviving span is the SHORT side either way.
+        hr_extent =
+            match (List.first(hr_raw), List.last(hr_raw)) {
+                (Ok(f), Ok(l)) => l.t - f.t
+                _ => 0
+            }
+        hr_denom = if hr_extent > row.mt hr_extent else row.mt
         hr_span_ok =
             match (List.first(hr_pairs), List.last(hr_pairs)) {
-                (Ok(f), Ok(l)) if row.mt > 0 =>
+                (Ok(f), Ok(l)) if hr_denom > 0 =>
                     # `hr_pairs` comes from `stream_pairs`, which preserves the stream's own
                     # order, and Strava's time series is ascending — so first and last are the
                     # extremes. Guarded anyway: a non-ascending stream yields a negative span,
                     # which fails the comparison rather than passing it by accident.
-                    (l.t - f.t).to_f64() >= 0.5 * (row.mt).to_f64()
+                    (l.t - f.t).to_f64() >= 0.5 * (hr_denom).to_f64()
 
                 _ => False
             }
