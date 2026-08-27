@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(982)?
+    checks_ran_exactly!(986)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2274,6 +2274,35 @@ b_seed_analyze! = |ctx| {
     # on the HR-only row.
     check!("hr row: intensity absent too", strjq!(ctx, ["activity", "102"], "(.data.intensity_known == false) and (.data.power_known == false)") == "true")?
     check!("top rows carry the trio", strjq!(ctx, ["top", "tss", "3"], "[.data[] | has(\"power_known\") and has(\"intensity_known\") and has(\"hr_known\")] | all") == "true")?
+    # ...and `top hr` no longer ranks on presence alone. `WHERE ${col} > 0` is a presence
+    # test, and `stride top hr 700` on the real database returned the same three readings
+    # #294 taught `progress` to refuse and #305 taught `activity` to refuse — ordered so a
+    # 250 bpm one leads, published as the athlete's BEST heart-rate session (#315).
+    #
+    # 481 is out of band and must not appear; 482 is a plausible neighbour and must, which
+    # is what proves the bound removed a row rather than the query returning nothing.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_hr) VALUES (481,'Top Bound Impossible','Ride','2025-11-01T08:00:00Z',3600,250),(482,'Top Bound Plausible','Ride','2025-11-08T08:00:00Z',3600,171);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    top_ids = strjq!(ctx, ["top", "hr", "400"], "[.data[].id] | join(\",\")")
+    check!("top hr excludes an impossible reading", !(Str.contains(top_ids, "481")))?
+    check!("...while its plausible neighbour still ranks, so the bound removed a row", Str.contains(top_ids, "482"))?
+    # ...and the exclusion is STATED. `progress` counts what it hides (#286), `activities`
+    # marks what it cannot rank (#304); a ranking that silently drops history the athlete has
+    # seen has the same "absence states something false" problem #286 is about.
+    # The COUNT, not just the presence of the line. `1` is the planted row and nothing else:
+    # this fixture has exactly one out-of-band heart rate, so a count that drifts — from a
+    # bound applied to the wrong column, or a query that stopped matching the ranking's —
+    # changes this number. The first version asserted only that the phrase appeared, which a
+    # wrong count satisfies just as well.
+    check!("...and says how many it excluded, rather than dropping them silently", Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "400"]), "1 session(s) excluded"))?
+    # ...and a metric with NO bound stays silent. This one is structurally true rather than
+    # measured — an empty `bound` makes the count `present - present`, so it is 0 by
+    # construction — and it is kept as documentation of that invariant, not as a guard.
+    # Review of #314 taught the distinction the hard way; the honest label matters more than
+    # the check.
+    check!("...and a metric without a bound says nothing, which is true by construction", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "tss", "5"]), "session(s) excluded")))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (481,482); DELETE FROM activities WHERE id IN (481,482);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("plan recent rows carry the flag set", strjq!(ctx, ["plan"], "[.data.recent_activities_14d[] | has(\"power_known\") and has(\"zones_known\") and has(\"load_model\")] | all") == "true")?
 
     # ── personal baselines (#160): 101 vs its own prior comparables. Probe 99

@@ -616,16 +616,25 @@ ReportSessions :: [].{
     # metric keyword => its ORDER BY column + human table header. The column is HARDCODED
     # per keyword, so no user input ever reaches the SQL; an unknown metric errors before
     # any query. Single source of truth so column and header can't drift apart.
-    top_metric : Str -> Try({ col : Str, header : Str }, [BadMetric])
+    top_metric : Str -> Try({ col : Str, header : Str, bound : Str }, [BadMetric])
     top_metric = |m|
         match m {
-            "hr" => Ok({ col: "a.avg_hr", header: "heart rate (hr)" })
-            "tss" => Ok({ col: "m.tss", header: "load" })
-            "power" => Ok({ col: "m.normalized_power", header: "power (np)" })
-            "intensity" => Ok({ col: "m.intensity_factor", header: "intensity (if)" })
-            "distance" => Ok({ col: "a.distance", header: "distance (km)" })
-            "time" => Ok({ col: "a.moving_time", header: "time (min)" })
-            "output" => Ok({ col: "(a.avg_watts * a.moving_time)", header: "output (kj)" }) # total work (Peloton kJ)
+            # `bound` is the plausibility predicate for this metric's column, empty when the
+            # column has none. `> 0` is presence, not plausibility, and `top` ranked on
+            # presence alone — so `stride top hr 700` returned the same three readings #294
+            # taught `progress` to refuse and #305 taught `activity` to refuse, ordered so a
+            # 250 bpm one would lead (#315).
+            #
+            # Per metric rather than on the shared `> 0` clause, because it is a per-column
+            # fact: `valid_hr`'s 35-220 says nothing about watts or kilometres, and no
+            # equivalent bound exists for them.
+            "hr" => Ok({ col: "a.avg_hr", header: "heart rate (hr)", bound: " AND a.avg_hr >= 35 AND a.avg_hr <= 220" })
+            "tss" => Ok({ col: "m.tss", header: "load", bound: "" })
+            "power" => Ok({ col: "m.normalized_power", header: "power (np)", bound: "" })
+            "intensity" => Ok({ col: "m.intensity_factor", header: "intensity (if)", bound: "" })
+            "distance" => Ok({ col: "a.distance", header: "distance (km)", bound: "" })
+            "time" => Ok({ col: "a.moving_time", header: "time (min)", bound: "" })
+            "output" => Ok({ col: "(a.avg_watts * a.moving_time)", header: "output (kj)", bound: "" }) # total work (Peloton kJ)
             _ => Err(BadMetric)
 
         }
@@ -671,7 +680,7 @@ ReportSessions :: [].{
             Err(_) =>
                 Output.err_out!("bad_metric", "unknown metric '${metric}' — use: hr, tss, power, intensity, distance, time, output")
 
-            Ok({ col, header }) => {
+            Ok({ col, header, bound }) => {
                 sf = Report.sport_filter_sql(sport_filter)
                 sport_where = sf.frag
                 sport_binding = sf.binds
@@ -706,7 +715,7 @@ ReportSessions :: [].{
                         \\       CASE WHEN m.intensity_factor IS NULL THEN 0 ELSE 1 END AS intensity_known,
                         \\       CASE WHEN a.avg_hr IS NULL THEN 0 ELSE 1 END AS hr_known
                         \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
-                        \\WHERE ${col} > 0${sport_where}
+                        \\WHERE ${col} > 0${bound}${sport_where}
                         \\ORDER BY ${col} DESC, a.id DESC LIMIT ${(limit).to_str()}
                     ,
                     bindings: sport_binding,
@@ -752,7 +761,42 @@ ReportSessions :: [].{
                         # refusing, and a blank cell is indistinguishable from a wrapped-name
                         # continuation row.
                         List.map(rows, |r| [(if Str.is_empty(r.date) "-" else r.date), r.sport, val(r), r.name]),
-                    ))
+                    ))?
+                    # ...and SAY how many the bound removed. `progress` counts what it hides
+                    # (#286), `activities` marks what it cannot rank (#304); the rule this
+                    # repo keeps arriving at is refuse the number, state the refusal. A
+                    # ranking that silently drops history the athlete has already seen has
+                    # the same "absence states something false" problem #286 is about.
+                    #
+                    # Only when the bound actually removed something, and only for a metric
+                    # that HAS a bound — an empty `bound` can exclude nothing, so the count
+                    # is structurally 0 and the line never renders.
+                    # DERIVED from `bound` by difference, not by repeating its numbers. The
+                    # first cut ran a second query with `35` and `220` written out again, and
+                    # a mutation proved the cost: giving `tss` a bound left the count at 0,
+                    # because the count was measuring heart-rate limits against load values.
+                    # Two expressions of one rule drift, and this one would drift silently —
+                    # the ranking would exclude rows while the line said nothing.
+                    excluded =
+                        if Str.is_empty(bound) {
+                            0
+                        } else {
+                            cnt! = |extra|
+                                Sqlite.query!({
+                                    path: Path.utf8(path),
+                                    query: "SELECT COUNT(*) AS n FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE ${col} > 0${extra}${sport_where}",
+                                    bindings: sport_binding,
+                                    row: Sqlite.i64("n"),
+                                })
+                            present = cnt!("")?
+                            kept = cnt!(bound)?
+                            present - kept
+                        }
+                    if excluded > 0 {
+                        Stdout.line!("\n${I64.to_str(excluded)} session(s) excluded — ${header} outside 35-220, which `progress` and `activity` also refuse")
+                    } else {
+                        Ok({})
+                    }
                 }
             }
         }
