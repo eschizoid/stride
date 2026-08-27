@@ -522,6 +522,20 @@ Render :: [].{
 
     # one workout's table + trend verdict, rendered through its sport-aware lens
     # (power->EF, distance->speed/HR, rated->RPE; RPE is lower-is-better)
+    # ONE number for the operator and for the sentence describing it. `··· = a break over 90
+    # days` is a user-facing claim about what the glyph means, and nothing pinned it: review
+    # changed the legend to "over 60 days", left the comparison at `> 90`, and the whole
+    # suite stayed green — Render's expects at their full count, e2e at 963. A grep found
+    # the string in exactly one place, the code, so the two could drift silently and the
+    # legend would go on describing a threshold the engine had stopped using.
+    #
+    # Deriving both from this makes that drift impossible rather than merely detectable,
+    # which is the stronger fix: there is no version of the code where the sentence and the
+    # comparison disagree. The inclusivity — `>` and not `>=`, so exactly 90 is NOT a break
+    # — is pinned separately in `tests/e2e.roc`, because a constant cannot express it.
+    gap_days : I64
+    gap_days = 90
+
     progress_section : Str, List(Metrics.ProgressRow), Str, [Ef, SpeedHr, Rpe], [Asc, Desc], List(I64), U64, Str -> Str
     progress_section = |name, rows, asked, lens, sort, all_days, hidden, hidden_reason| {
         higher = Metrics.lens_higher_better(lens)
@@ -587,7 +601,7 @@ Render :: [].{
                 # days", a claim about training, so an artifact here is a false statement
                 # rather than an ambiguous glyph.
                 with_gap =
-                    if acc.prev > -1000000 and Metrics.max_real_gap(all_days, acc.prev, days) > 90 {
+                    if acc.prev > -1000000 and Metrics.max_real_gap(all_days, acc.prev, days) > gap_days {
                         List.append(acc.cells, gap_row)
                     } else {
                         acc.cells
@@ -670,7 +684,7 @@ Render :: [].{
             } else {
                 "→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${U64.to_str(List.len(rows))} sessions${hidden_note} — ${label}${pct_str}"
             }
-        footer = "${legend}\nbar = scaled worst→best · ◀ marks the asked date · ··· = a break over 90 days"
+        footer = "${legend}\nbar = scaled worst→best · ◀ marks the asked date · ··· = a break over ${I64.to_str(gap_days)} days"
         "── ${name} ──\n${table}\n\n${verdict}${last_vs_best(rows, lens)}\n\n${footer}"
     }
 
