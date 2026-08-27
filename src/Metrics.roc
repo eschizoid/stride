@@ -1290,12 +1290,36 @@ Metrics :: [].{
     # mean and 11 of those are inside 35-220, so this bound refuses 3 and misses 11. The
     # root-cause version scores from the stream-derived in-band mean when a stream exists,
     # which the engine already computes for decoupling. Tracked in #311, which is where the root-cause version lives; #305 fixed only the half this bound can see.
+    # The same bound as SQL, for the consumers that decide in the query rather than in Roc.
+    # Placed here rather than in `Report` on purpose: this is where 35 and 220 are written,
+    # and a generator that lives in a different file from the numbers it encodes is two
+    # expressions of one rule wearing a helper's name. Same shape as `date_known_sql_for`
+    # and `rankable_sql`, which `Report` binds rather than defines.
+    #
+    # The CAST is the whole reason this is a function and not a string constant. Every other
+    # consumer of `avg_hr` reads it through one — `CAST(a.avg_hr AS REAL)` in the analyze
+    # projection, in the `activity` query, in `Db.roc` — because SQLite sorts a BLOB above
+    # every number, so a bare `avg_hr BETWEEN 35 AND 220` is FALSE for a BLOB holding the
+    # bytes "100" while the rest of the engine scores that session at 100 bpm. `> 0`, the
+    # predicate this replaces, was TRUE for it. Fixing an over-count by introducing an
+    # under-count on the same value class is not a fix, and review confirmed it on a
+    # snapshot: 669 bare, 671 cast, 674 under `> 0`.
+    #
+    # Takes the column expression rather than a name so a caller can pass a subquery alias
+    # or `@` for #315's template.
+    valid_hr_sql : Str -> Str
+    valid_hr_sql = |col|
+        "CAST(${col} AS REAL) BETWEEN 35 AND 220"
+
     expect Metrics.valid_hr(140.0)
     expect !(Metrics.valid_hr(18.0)) and !(Metrics.valid_hr(31.3))
     expect !(Metrics.valid_hr(0.0)) and !(Metrics.valid_hr(221.0))
     # the boundary is INCLUSIVE at both ends, which is what separates this from `> 0`
     expect Metrics.valid_hr(35.0) and Metrics.valid_hr(220.0)
     expect !(Metrics.valid_hr(34.9)) and !(Metrics.valid_hr(220.1))
+    # the SQL twin carries the same bounds, inclusively, and wraps whatever it is given
+    expect Metrics.valid_hr_sql("a.avg_hr") == "CAST(a.avg_hr AS REAL) BETWEEN 35 AND 220"
+    expect Metrics.valid_hr_sql("v") == "CAST(v AS REAL) BETWEEN 35 AND 220"
 
     # ── aerobic decoupling / Pw:HR drift (#94) ──────────────────────────
     #

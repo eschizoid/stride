@@ -367,7 +367,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1018)?
+    checks_ran_exactly!(1021)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6249,17 +6249,67 @@ b_progress_b! = |ctx| {
     #
     # Placed HERE, inside the HR-sanity fixture, because this is where an out-of-band row
     # exists. Three attempts to build one in the doctor block instead each polluted a
-    # planned-session check two hundred lines downstream, failing at "in plan_history_28d, as
-    # open" — a name that mentions neither heart rate nor doctor.
+    # planned-session check downstream in EXECUTION order — it runs later, though it sits
+    # earlier in the file — failing at "in plan_history_28d, as open", a name that mentions
+    # neither heart rate nor doctor.
     #
-    # A RELATION against SQL rather than a pinned number, so it needs no mutation and cannot
-    # pollute, and it fails the moment the predicate drifts from the one written here.
-    check!("doctor counts usable heart rates, not merely present ones", strjq!(ctx, ["doctor"], ".data.with_hr") == Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE avg_hr BETWEEN 35 AND 220;")))?
+    # A RELATION against SQL rather than a pinned number, so it cannot pollute and it fails
+    # the moment the predicate drifts from the one written here. Its limit is worth stating
+    # because the first version of this change was caught by it and shouldn't have been: a
+    # relation restating the implementation detects drift BETWEEN the two expressions and
+    # never a defect they SHARE. The delta checks below are what cover that; this one covers
+    # the case those cannot, where the count is right for the wrong population.
+    #
+    # The SQL side carries the CAST and the stream fallback because the implementation does.
+    # Written bare it would still pass here — nothing out of band is BLOB-stored at this
+    # point — and then fail confusingly the first time someone planted one.
+    check!("doctor counts usable heart rates, not merely present ones", strjq!(ctx, ["doctor"], ".data.with_hr") == Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE CAST(COALESCE(m.avg_hr_stream, a.avg_hr) AS REAL) BETWEEN 35 AND 220;")))?
     # ...and the relation is not vacuous: with the 18 bpm row present the two predicates give
     # different answers, which is what makes the check above mean anything. Without this the
     # first check passes on any fixture where nothing is out of band — measured, that is the
     # state of the fixture at the doctor block, where the first version of this sat.
     check!("...and the fixture can tell the two predicates apart", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE COALESCE(avg_hr,0) > 0;")) != Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE avg_hr BETWEEN 35 AND 220;")))?
+    # ...and both halves of the predicate, proven by DELTA rather than by restating the
+    # implementation's own SQL in the test. The relation above can only ever detect drift
+    # BETWEEN the two expressions, never a defect they share — and the defect they shared was
+    # real: written without a CAST, `avg_hr BETWEEN 35 AND 220` is FALSE for a BLOB, because
+    # SQLite sorts a BLOB above every number. The predicate it replaced, `> 0`, was TRUE for
+    # one. So the first version of this change fixed an over-count by introducing an
+    # under-count on the same value class, and no relation check could see it.
+    #
+    # 235 is the stream case: an impossible STORED average with a clean 150 stream, which the
+    # engine scores from (#311). 236 is the CAST case: a BLOB holding the bytes "100", which
+    # every other consumer reads through a CAST and treats as 100 bpm.
+    before_hr = strjq!(ctx, ["doctor"], ".data.with_hr")
+    _ = seed_ride!(ctx.db, "235", "Doctor Stream HR", "2025-02-16T09:00:00Z", "3600", "30000", "200", "18")
+    _ = seed_power_hr_stream!(ctx.db, 235, 1300, 200, 150)
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_watts,weighted_avg_watts,avg_hr) VALUES (236,'Doctor Blob HR','Ride','2025-02-17T09:00:00Z',3600,30000,200,200,x'313030');")
+    # POWER only, deliberately. Given an HR stream this row would be rescued by the stream
+    # fallback and the CAST would never see the BLOB — which is exactly what the first
+    # version did, and it passed against the missing-CAST mutation it exists to catch.
+    _ = seed_power_stream!(ctx.db, 236, 1300, 200)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check_near!("both a stream-rescued and a BLOB-stored reading count as usable", sfloat(strjq!(ctx, ["doctor"], ".data.with_hr")) - sfloat(before_hr), 2.0, 0.001)?
+    # ...and `has_hr` agrees, which is the site that had no coverage at all. It is a separate
+    # query on a separate predicate, and reverting it alone left the whole suite green. A row
+    # doctor calls strapless in one field while counting it as usable in another would put two
+    # contradictory sentences in one run.
+    check!("...and the streak site agrees with the coverage site about the same rows", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "0")?
+    # ...and that agreement is not free. The check above holds under `> 0` as well — a BLOB
+    # is greater than 0 and so is a stored 18 — so on its own it left `has_hr` exactly as
+    # uncovered as before, which reverting that one site and watching the suite stay green
+    # demonstrated. 237 is the row the two predicates answer differently: an impossible
+    # stored average with NO stream, so nothing can rescue it. `> 0` calls it strapped and
+    # resets the streak; the bound calls it strapless and opens one.
+    # Dated past the fixture's newest row (102, 2026-08-26): the streak walks newest-first,
+    # so a row planted behind a strapped one is never reached and the check reads 0 whatever
+    # the predicate does. Measured that way first.
+    _ = seed_ride!(ctx.db, "237", "Doctor Broken Strap", "2026-08-27T09:00:00Z", "3600", "30000", "200", "18")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("an unusable reading OPENS a strapless streak rather than resetting it", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "1")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 237; DELETE FROM activities WHERE id = 237;")
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id IN (235,236); DELETE FROM activity_segments WHERE activity_id IN (235,236); DELETE FROM activity_metrics WHERE activity_id IN (235,236); DELETE FROM activities WHERE id IN (235,236);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("an 18 bpm ride is refused by the EF lens, not scored as the best session", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .sessions | length] | join(\",\")") == "2")?
     check!("...and it is DECLARED withheld rather than silently dropped", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .hidden_lens] | join(\",\")") == "1")?
     check!("...and no session scores off it", sfloat(strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .sessions[].score] | max")) < 3.0)?

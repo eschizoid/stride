@@ -92,18 +92,37 @@ ReportHealth :: [].{
             query:
                 \\SELECT COUNT(*) AS total,
                 # `BETWEEN 35 AND 220`, not `> 0`. This is a COVERAGE count — how many
-                # sessions the engine can actually use a heart rate from — and `> 0` is a
-                # presence test, so it counted the three readings `progress` (#294),
-                # `activity` (#305) and the load ladder (#313) all refuse. Measured: 672
-                # against 669 in band, wrong in the direction that HIDES the problem, since
-                # the athlete reads it as coverage they have.
+                # sessions the engine can actually USE a heart rate from, which `> 0` — a
+                # presence test — was not measuring. Measured on a snapshot: 672 present,
+                # 669 with a plausible stored average, 672 once the stream is consulted.
                 #
-                # Deliberately NOT the `hr_known` flag beside it. AGENTS.md states the
-                # `_known` convention codebase-wide — companions decode from the STORED NULL
-                # — so `hr_known` is behaving as documented and narrowing it here would break
-                # that rule for one field of five. Marking an implausible value in the
-                # payload is a separate contract decision, tracked in #312.
-                \\       COALESCE(SUM(CASE WHEN a.avg_hr BETWEEN 35 AND 220 THEN 1 ELSE 0 END), 0) AS with_hr,
+                # It consults the stream, and that is the correction rather than a detail.
+                # The bare stored bound was tried first and made this payload contradict
+                # itself: three sessions have nonzero HR ZONE seconds and would have been
+                # excluded from `with_hr`, and one of them carries `load_model = 'hr_zones'`
+                # — its entire training load computed FROM heart rate — while sitting in the
+                # same payload's `medium (HR / RPE)` count. "The engine cannot use a heart
+                # rate here" and "the engine computed this session's load from heart rate"
+                # cannot both be true. Under `> 0` that number was 0, so the narrowing
+                # INTRODUCED the disagreement. `avg_hr_stream` (#311) is what the engine
+                # actually scores from, so counting what it scores from is what makes the
+                # count answer its own description.
+                #
+                # `hr_known` beside it does NOT move. AGENTS.md states the `_known`
+                # convention codebase-wide — companions decode from the STORED NULL — so it
+                # is behaving as documented, and narrowing it would break that rule for one
+                # field of five. The two fields answer different questions on purpose: one
+                # is "was a heart rate recorded", this is "can one be used". Marking an
+                # implausible value in the `activity` payload is the other half of #312 and
+                # is not this change; #319 carries it.
+                #
+                # The bound comes from `Metrics.valid_hr_sql` rather than being written out.
+                # The CAST it brings is load-bearing: SQLite sorts a BLOB above every number,
+                # so a bare `avg_hr BETWEEN 35 AND 220` is FALSE for a BLOB holding the bytes
+                # "100" — a session every other consumer reads through a CAST and scores at
+                # 100 bpm. `> 0` was TRUE for it. Fixing an over-count by introducing an
+                # under-count on the same value class is not a fix.
+                \\       COALESCE(SUM(CASE WHEN ${Metrics.valid_hr_sql("COALESCE(m.avg_hr_stream, a.avg_hr)")} THEN 1 ELSE 0 END), 0) AS with_hr,
                 \\       COALESCE(SUM(CASE WHEN COALESCE(a.avg_watts, a.weighted_avg_watts, 0) > 0 THEN 1 ELSE 0 END), 0) AS with_power,
                 \\       COALESCE(SUM(CASE WHEN s.activity_id IS NOT NULL AND s.raw_json <> '{}' THEN 1 ELSE 0 END), 0) AS with_streams,
                 \\       COALESCE(SUM(CASE WHEN m.activity_id IS NULL THEN 1 ELSE 0 END), 0) AS unanalyzed,
@@ -231,12 +250,27 @@ ReportHealth :: [].{
         recent_hr = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT COALESCE(CAST(sport_type AS TEXT), '') AS sport,
-                # same bound, same reason: a 0.2 bpm row was BREAKING a strapless streak
-                # that is genuinely unbroken, so the streak under-reported how long the
-                # athlete had gone without usable heart-rate data
-                \\       CASE WHEN avg_hr BETWEEN 35 AND 220 THEN 1 ELSE 0 END AS has_hr
-                \\FROM activities ORDER BY ${Metrics.rank_ts_sql("start_local", Desc)}, id DESC LIMIT 200
+                \\SELECT COALESCE(CAST(a.sport_type AS TEXT), '') AS sport,
+                # Same predicate as `with_hr`, and it has to be: a session counted as having
+                # usable HR up there and as strapless down here would put two contradictory
+                # sentences in one `doctor` run.
+                #
+                # The claim this comment used to make — that a 0.2 bpm row was breaking a
+                # genuinely unbroken streak — was false, and inherited unchecked from #312's
+                # issue body. The only 0.2 bpm row in the live database is a `Workout`, and
+                # `Metrics.hr_missing_streak` filters StrengthLike out before it walks, so
+                # that row never touched the streak. Measured: truncate a snapshot so it is
+                # newest with two strapless endurance rows behind it and the streak reads 2
+                # both before and after. Only rewriting its sport to `Ride` makes the change
+                # bite at all. The reason to bound this site is the one above — agreement
+                # with `with_hr` — not a symptom that was never there.
+                #
+                # The join is what the stream half needs. This query read `FROM activities`
+                # alone, so it could only ever see the stored average, which is the number
+                # #311 established the engine does not score from.
+                \\       CASE WHEN ${Metrics.valid_hr_sql("COALESCE(m.avg_hr_stream, a.avg_hr)")} THEN 1 ELSE 0 END AS has_hr
+                \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
+                \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC LIMIT 200
             ,
             bindings: [],
             rows: |cols| |stmt| {

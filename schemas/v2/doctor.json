@@ -134,7 +134,8 @@
       "description": "How many activities the engine refuses a ranking position — exactly the rows published with `rankable: false`, and exactly the population `stride activities` hoists to the top as needing repair. Distinct from `undateable_activities`, which counts the rows with `date_known: false` and is a SUBSET: after #255 the hoist grew a time half and the count did not, so a row at the very top of the listing was reported as zero undateable (#282). Each count corresponds to one row flag, so the two can be cross-checked against the listing. A COUNT and not a verdict — ADR 0012 puts 'is this a problem?' on the coach's side."
     },
     "with_hr": {
-      "type": "number"
+      "type": "number",
+      "description": "How many activities the engine can actually USE a heart rate from — NOT how many recorded one. The predicate is `Metrics.valid_hr_sql` over `COALESCE(avg_hr_stream, avg_hr)`: the 35-220 bound the `progress` lenses, `activity`'s `baselines.ef` and the load ladder all share, applied to the value the engine SCORES from, which after #311 is the in-band mean of the session's HR stream when one exists. It was a bare presence test (`> 0`) until #312, so it counted readings every consumer refuses and the athlete read the gap as coverage they had. Deliberately NOT the same question as `hr_known` on an activity payload, which decodes from the stored NULL and answers 'was a heart rate recorded' — a session can be `hr_known: true` and absent from this count. `hr_missing_streak` uses the same predicate, so the two fields in this payload always agree about a given row. A COUNT and not a verdict, per ADR 0012."
     },
     "with_power": {
       "type": "integer"
