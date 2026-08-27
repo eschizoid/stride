@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(960)?
+    checks_ran_exactly!(963)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -5963,6 +5963,41 @@ b_progress_b! = |ctx| {
     check!("bare progress has sessions", sfloat(strjq!(ctx, ["progress"], ".data.groups[0].sessions | length")) >= 1.0)?
     check!("rowing anchor uses speed_hr lens", strjq!(ctx, ["progress"], ".data.groups[0].lens") == "speed_hr")?
     check!("SpeedHr lens shows pace column", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress"]), "pace (min/km)"))?
+    # ── #293: the gap fold END TO END, which nothing exercised ────────────────────
+    #
+    # #287 fixed a fabricated gap marker by folding over the UNFILTERED day series, and its
+    # only guards were direct calls to `Render.progress_section` with hand-built arguments.
+    # Setting `all_days = []` in `ReportSessions.roc` reverts the fix and brings the bug back
+    # on real data — and left 927 e2e checks and every expect suite green, because nothing
+    # drove the path from the query through `keep_scored` into the renderer. (915 was the
+    # tally when that mutation was first run, five commits back; re-measured at this base.)
+    #
+    # Three rides, the middle one with NO heart rate so the EF lens refuses it. Real spacing
+    # is 62 then 41 days — neither a break. The two SHOWN rows are 103 days apart, so a fold
+    # over survivors prints `···` and a fold over the real series does not. That is the whole
+    # defect, staged reachably.
+    _ = seed_ride!(ctx.db, "221", "Gap Probe Class", "2025-01-05T08:00:00Z", "3600", "20000", "150", "140")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts) VALUES (222,'Gap Probe Class','Ride','2025-03-08T08:00:00Z',3600,20000,155,155);")
+    _ = seed_ride!(ctx.db, "223", "Gap Probe Class", "2025-04-18T08:00:00Z", "3600", "20000", "160", "145")
+    _ = seed_power_stream!(ctx.db, 221, 1300, 150)
+    _ = seed_power_stream!(ctx.db, 222, 1300, 155)
+    _ = seed_power_stream!(ctx.db, 223, 1300, 160)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    gap_probe = stride_human!(ctx.bin, ctx.home, ["progress", "2025-04-18"])
+    gp_marks = List.len(Str.split_on(gap_probe, "···")) - 1
+    # 1 = the legend alone. Counted, not `Str.contains`, for the reason above.
+    check!("a dropped ride does not fabricate a gap between the rows that remain (marks: ${U64.to_str(gp_marks)})", gp_marks == 1)?
+    # ...and the dropped ride is DECLARED, so this is a filtered view rather than a wrong one.
+    #
+    # The assertion pins the FULL clause, not `"1 hidden"`. Review mutation-proved the
+    # weakness: with ten more HR-less rides the render said "(11 hidden: needs power
+    # and HR)" and this check still printed ok, because `"11 hidden"` contains
+    # `"1 hidden"`. The stronger form is already the house style one file over, in
+    # `Render.roc`'s own expect. A check whose name overstates its assertion is the exact
+    # failure this PR exists to remove.
+    check!("...and the group says one session was withheld", Str.contains(gap_probe, "(1 hidden: needs power and HR)"))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (221,222,223); DELETE FROM streams WHERE activity_id IN (221,222,223); DELETE FROM activities WHERE id IN (221,222,223);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     _ = seed_ride!(ctx.db, "203", "Test Class", "2025-07-01T10:00:00Z", "3600", "20000", "150", "150")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     prog_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-01"])
@@ -5973,7 +6008,53 @@ b_progress_b! = |ctx| {
     # went terse: the split bar looked broken and unreadable)
     check!("best session renders full ef bar unwrapped", Str.contains(prog_h, "1.40 ████████████"))?
     check!("asked-date row carries marker on the date", Str.contains(prog_h, "2025-07-01 ◀"))?
-    check!("far-apart sessions show gap row", Str.contains(prog_h, "···"))?
+    # COUNTS the marker. `Str.contains(prog_h, "···")` could never fail: the legend line
+    # ends with `··· = a break over 90 days`, so the glyph is in every rendering. Measured —
+    # changing the fold's `> 90` to `> 90000` disables the marker entirely and this check
+    # still printed ok, with the whole suite green. Third instance of this trap in the
+    # REPO — the two before it are in `src/Render.roc`, at the expects that narrate their
+    # own `Str.contains(s, "···")` to count conversion. In THIS file it is the first, and
+    # the previous commit's message claimed to have corrected that wording while its diff
+    # touched only the tally line and the hidden-count check (#293).
+    #
+    # 8 = one legend mention plus the gap row's seven cells, which is coupled to the EF
+    # column count: add a column and this fails for a reason that has nothing to do with
+    # gaps. `Render.roc` carries the same coupling in its own expect.
+    #
+    # The `···` sentinel block ~350 lines down does NOT narrate this trap, though an
+    # earlier version of this comment said it did. It documents a different vacuous pass —
+    # a negation that never matched because `render_table` pads cells — and its assertion
+    # is an ABSENCE, which is structurally immune to the legend problem rather than an
+    # instance of avoiding it. So this was an unknown, not a straight miss.
+    gap_marks = List.len(Str.split_on(prog_h, "···")) - 1
+    check!("far-apart sessions show a gap ROW, not just the legend (marks: ${U64.to_str(gap_marks)})", gap_marks == 8)?
+    # ...and the BOUNDARY that decides it, which the count above cannot see. `Render.roc`
+    # draws the row on `max_real_gap(...) > gap_days`, and review measured that relaxing it to
+    # `>= 90` leaves the whole suite green: this fixture's gaps are 151 and 30 days, so no
+    # comparison lands on 90 and the operator is free to move. That is the last of #293's
+    # four bullets — the speed/HR and RPE verb strings, which that issue names in one
+    # bullet, are pinned as of #303.
+    #
+    # A scratch HOME rather than the shared fixture: the pair has to be EXACTLY 90 days
+    # apart, and adding it here would move `gap_marks` and the session counts three checks
+    # up. 2025-01-01 to 2025-04-01 is 90 days, so a correct `> 90` draws NO row and the only
+    # mark is the legend's one, so the probe reads `1/2`; relaxing the operator draws the row
+    # and it reads `2/2`.
+    gap_90 = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; HOME=$h '${ctx.bin}' init >/dev/null 2>&1; HOME=$h '${ctx.bin}' config set hr_z1_max 130 >/dev/null 2>&1; HOME=$h '${ctx.bin}' config set hr_z2_max 150 >/dev/null 2>&1; HOME=$h '${ctx.bin}' config set hr_z3_max 165 >/dev/null 2>&1; HOME=$h '${ctx.bin}' config set hr_z4_max 180 >/dev/null 2>&1; sqlite3 $h/.stride/db.sqlite \"INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (961,'Boundary Class','Ride','2025-01-01T10:00:00Z',3600,20000,180,180,150),(962,'Boundary Class','Ride','2025-04-01T10:00:00Z',3600,20000,210,210,150);\" >/dev/null 2>&1; HOME=$h '${ctx.bin}' analyze >/dev/null 2>&1; out=$(HOME=$h '${ctx.bin}' progress 2025-04-01 2>&1); printf '%s/%s' \"$(printf '%s' \"$out\" | grep -c '···')\" \"$(printf '%s' \"$out\" | grep -c '^│ 2025-')\""))
+    # BOTH numbers, and the second is the whole point. `1` alone means "one line holds the
+    # glyph", which is equally true of a group holding ONE row, where no 90-day comparison
+    # happens at all — review demonstrated that on the `>= 90` binary by dropping `avg_hr`
+    # from ride 962, so the lens refused it, the group fell to one row, and this check went
+    # green on the exact defect it exists to catch. The probe has to state that both rides
+    # survived every gate before its mark count means anything.
+    #
+    # `1/2` = one legend mention, no gap row, two rendered session rows; relaxing the
+    # operator gives `2/2`. `grep -c` counts LINES, and the gap row is ONE line carrying
+    # seven glyphs, so the reachable values here are 0, 1 and 2 — never 8. An earlier
+    # version of this comment said 8, borrowed from the two neighbouring checks that count
+    # GLYPHS with `Str.split_on`: the same mental-model slip this block exists to warn
+    # about, made while writing the warning.
+    check!("a gap of exactly 90 days draws NO gap row, with both rides still rendered", gap_90 == "1/2")?
     check!("progress desc lists newest session first", strjq!(ctx, ["progress", "2025-07-01", "desc"], ".data.groups[0].sessions[0].date") == "2025-07-01")?
     # The verdict must be computed on the CHRONOLOGICAL series regardless of display order:
     # this fixture rises 1.20 -> 1.40 -> falls, and reads "declining" either way. Asserting
