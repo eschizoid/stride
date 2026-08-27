@@ -434,6 +434,13 @@ ReportSessions :: [].{
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
+            # `a.sport_type` and `a.name` are NOT wrapped, and that is a known gap rather than
+            # an audit: a BLOB in either crashes this same SELECT exactly as `start_local`
+            # did (#307). The repair for those is at the decode boundary, not another CAST
+            # per column, so it is tracked separately — but a reader seeing one wrapped
+            # column two tokens from two bare ones would otherwise reasonably conclude the
+            # whole projection had been checked. That inference is what produced the
+            # "three sites" estimate when there were five.
                 \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, ${Report.rankable_sql} AS rankable, a.sport_type AS sport, a.name AS name,
                 \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
@@ -627,6 +634,13 @@ ReportSessions :: [].{
                 rows = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
+            # `a.sport_type` and `a.name` are NOT wrapped, and that is a known gap rather than
+            # an audit: a BLOB in either crashes this same SELECT exactly as `start_local`
+            # did (#307). The repair for those is at the decode boundary, not another CAST
+            # per column, so it is tracked separately — but a reader seeing one wrapped
+            # column two tokens from two bare ones would otherwise reasonably conclude the
+            # whole projection had been checked. That inference is what produced the
+            # "three sites" estimate when there were five.
                         \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, ${Report.rankable_sql} AS rankable, a.sport_type AS sport, a.name AS name,
                         \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                         \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,

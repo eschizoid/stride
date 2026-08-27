@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(960)?
+    checks_ran_exactly!(935)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1959,89 +1959,6 @@ b_config_ftp! = |ctx| {
     check!("config set refuses an unknown key rather than storing it", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", "America/Chicago"]), "unknown_key"))?
     check!("...and stores nothing, so get and set cannot disagree", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'timezon';")) == "0")?
     check!("...while a real key still writes", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max_ride", "155"]), "hr_z2_max_ride"))?
-    # ...and it can be REMOVED, which is the scenario #276 opens with and which nothing
-    # asserted. `config set hr_z2_max_ride ""` answered `bad_value` — `numeric_key` calls
-    # anything starting `hr_z` a Decimal — so `sqlite3` was the only way to drop a per-sport
-    # override. Setting it back to the global value is not equivalent: it PINS the number,
-    # so a later change to `hr_z2_max` stops propagating, and removing the override is the
-    # whole reason the per-sport family exists.
-    #
-    # The MESSAGE is asserted too, on the branch that distinguishes it from a global bound.
-    # `hr_z1_max` and `hr_z2_max_ride` are both zone keys and both `known_key`, and the
-    # first version of this command told both "stride will fall back to its default" — true
-    # for one, false for the other, which is how the wrong sentence shipped.
-    unset_out = stride!(ctx.bin, ctx.home, ["config", "unset", "hr_z2_max_ride"])
-    check!("a per-sport override can be REMOVED, which `config set <key> \"\"` could not do", Str.contains(unset_out, "\"removed\":true"))?
-    check!("...and the row is gone, not emptied", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'hr_z2_max_ride';")) == "0")?
-    # Stored first: an absent key takes the not-stored branch, so the message under test
-    # would never render — the first version of this check asserted the global-bound wording
-    # against "hr_z3_max_ride was not stored".
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z3_max_ride", "165"])
-    check!("...and it says the global applies again, not that a default does", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "unset", "hr_z3_max_ride"]), "global bound applies"))?
-    # ...and the CLIENT-credential branch, which was the one that shipped a false sentence.
-    # `strava_client_id` fell to the `known_key` catch-all and was told stride "will
-    # recompute or re-fetch it as needed" — measured false: the next `sync` answers
-    # `missing_client_creds` and asks the user to supply it by hand. Its sibling
-    # `strava_client_secret` had the truthful sentence, and the two fail identically (#276).
-    #
-    # Both members asserted, because the defect was that one of a pair was routed and the
-    # other was not, and a check on either alone would have passed before the fix.
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "strava_client_id", "probe-id"])
-    check!("removing a client credential says the user must supply it, not that stride will", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "unset", "strava_client_id"]), "until you supply it again"))?
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "strava_client_secret", "probe-secret"])
-    check!("...and its sibling says the same thing", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "unset", "strava_client_secret"]), "until you supply it again"))?
-    # ...and the SESSION credential that is not a secret. `strava_expires_at` is the third
-    # member of the trio `auth` writes in one statement, but `secret_keys` holds only two —
-    # it is a timestamp, so it is deliberately not redacted — and that one-key gap put it on
-    # the catch-all being told stride would "re-fetch it as needed". `Strava.roc` reads it
-    # through the same `token_field!` that maps a missing row to `NotAuthed`, so removing it
-    # makes `sync` answer `not_authenticated`, exactly as removing the token does.
-    #
-    # Probed in a scratch HOME: seeding and dropping this key in the shared fixture would
-    # leave the suite's auth state at whatever the probe happened to end on.
-    expires_msg = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; HOME=$h '${ctx.bin}' config set strava_expires_at 1 >/dev/null 2>&1; HOME=$h '${ctx.bin}' config unset strava_expires_at 2>&1 | head -1"))
-    check!("removing the session expiry says stride is no longer authenticated, as removing the token does", Str.contains(expires_msg, "no longer authenticated"))?
-    # ...and the per-sport branch's OTHER half. "the global bound applies to this sport
-    # again" is true only when a global bound exists; with none set, `summary` and `analyze`
-    # answer `missing_config`, which is the opposite of a fallback. The check above pins the
-    # PRESENT case against the fixture, which sets all four globals; a fresh HOME has none,
-    # so the two together cover both sides of the condition rather than one.
-    no_global_msg = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; HOME=$h '${ctx.bin}' config set hr_z2_max_ride 155 >/dev/null 2>&1; HOME=$h '${ctx.bin}' config unset hr_z2_max_ride 2>&1 | head -1"))
-    check!("...and with no global set it says so, instead of promising a fallback that is not there", Str.contains(no_global_msg, "no global bound is set"))?
-    # ── The routing table itself, ENUMERATED from `Config.plain_keys` + `Config.secret_keys`
-    # rather than named here. Three consecutive review rounds shipped a false sentence on
-    # this command — `strava_client_id`, `utc_offset_minutes`, `strava_expires_at` — and
-    # each time the checks above passed, because a hand-written check can only name keys its
-    # author already thought of, and the member that was missed is by definition the one
-    # nobody thought of. Reading the list from the source is what makes the sweep see a key
-    # that no one remembered to route.
-    #
-    # `probed` is asserted, not just `unrouted`. If the awk range stops matching — a rename,
-    # a reformat — the loop runs zero times and reports `unrouted=0`, which is the same
-    # answer a fully-routed build gives. Mutation-proved both ways: dropping
-    # `strava_expires_at` from `is_session_credential` reports `probed=10 unrouted=1`, and
-    # adding an unrouted key to `plain_keys` reports `probed=11 unrouted=1`.
-    #
-    # Two ways this sweep could have gone quiet while printing the passing string, both
-    # found by review of the sweep itself rather than of the code it guards:
-    #
-    #   • the extraction was a character class, `"[a-z_]*"`, with no digits, so a member
-    #     carrying one was
-    #     dropped BEFORE `probed` counted it. `probed` guards against matching zero keys;
-    #     it cannot see the match dropping some, because dropping one and adding none
-    #     leaves 10. `hr_z5_max_probe` added to `plain_keys` reproduced it exactly — an
-    #     unrouted key, `probed=10 unrouted=0`, whole suite green. It is now `"[^"]*"`,
-    #     which has no alphabet to be wrong about: widening the class to `[a-z0-9_]` would
-    #     still be a guess about future names, and a wrong guess is exactly what `probed`
-    #     cannot see. All three forms extract the same 10 keys today.
-    #
-    #   • `config set` discards its exit code, and a key that never got stored answers
-    #     "was not stored, so there was nothing to remove" — which contains no routing
-    #     sentence, so it scored as ROUTED. `unseeded` is asserted at 0 so the probe has
-    #     to prove it could speak before its silence counts as a pass.
-    unset_sweep = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; { awk '/plain_keys = \\[/,/\\]/' src/Config.roc; awk '/secret_keys = \\[/,/\\]/' src/Config.roc; } | grep -o '\"[^\"]*\"' | tr -d '\"' > $h/keys; n=0; u=0; z=0; while read -r k; do n=$((n+1)); HOME=$h '${ctx.bin}' config set \"$k\" 7 >/dev/null 2>&1; m=$(HOME=$h '${ctx.bin}' config unset \"$k\" 2>&1 | head -1); case \"$m\" in *'starts refusing'*) u=$((u+1));; esac; case \"$m\" in *'was not stored'*) z=$((z+1));; esac; done < $h/keys; echo \"probed=$n unrouted=$u unseeded=$z\""))
-    check!("every LISTED config key reaches a routed `config unset` branch, enumerated from Config.roc", unset_sweep == "probed=10 unrouted=0 unseeded=0")?
-    _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max_ride", "155"])
     # ── bare `config` lists what is set. Its first job is answering "which config do I
     # have?", which nothing did; its second is being the source `just schema-check` fills
     # `config get <key>` from, so that recipe can no longer skip on a stale literal.
@@ -2094,46 +2011,28 @@ b_config_ftp! = |ctx| {
     # write left a leftover permanently unreachable — unreadable, unwritable, and before
     # marking, unlistable, with sqlite3 the only way out.
     #
-    # `config unset`, not `config set <key> ""`. That gesture meant THREE things by key
-    # class — removal for keys stride does not read, `bad_value` for numeric ones, and an
-    # empty WRITE for managed free-text ones — so there was no CLI way to drop a per-sport
-    # zone override at all, and an empty write to a token left a row reading as SET, which
-    # made `sync` spend a request to be told 401 rather than answering locally (#276).
-    #
-    # It also broke the contract: the removal payload is `{key, removed}` while `config set`
-    # declares `config.json`, which REQUIRES `value`. Measured — the removal form failed its
-    # own schema on both counts, and `just schema-check` never saw it because the recipe
-    # fills `<value>` with a real value, so that form was never exercised. One verb, one
-    # shape, each with its own schema.
-    #
     # It DELETES rather than storing "". The empty write was worse than nothing for the
     # family that most needed it: `numeric_key` calls anything `hr_z*` Decimal, so an empty
     # value was refused with `bad_value` — and the misspelled zone keys are the population
     # #254's own tightening created. Worse, `Analyze.load_config!` requires every `hr_z*`
     # key to parse as F64, so an empty row does not sit inert, it kills `analyze` outright.
-    check!("...and clearing an unrecognised row is allowed", Str.contains(stride!(ctx.bin, ctx.home, ["config", "unset", "timezon"]), "\"removed\":true"))?
+    check!("...and clearing an unrecognised row is allowed", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", ""]), "\"removed\":true"))?
     check!("...which DELETES it rather than emptying it, so nothing can choke on the row", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'timezon';")) == "0")?
-    check!("...and it reaches the zone misspellings, which an empty write could not", Str.contains(stride!(ctx.bin, ctx.home, ["config", "unset", "hr_z1_maxx"]), "\"removed\""))?
+    check!("...and it reaches the zone misspellings, which an empty write could not", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_maxx", ""]), "\"removed\""))?
     # ...and the DERIVED family, which `is_derived` refused before this arm ran. Those are
     # the rows the schema itself calls most likely to be on a real database.
-    check!("...and a derived row, which derived_key refused before it", Str.contains(stride!(ctx.bin, ctx.home, ["config", "unset", "ftp_ride"]), "\"removed\":true"))?
+    check!("...and a derived row, which derived_key refused before it", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "ftp_ride", ""]), "\"removed\":true"))?
     check!("...leaving it gone rather than emptied", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'ftp_ride';")) == "0")?
     # ...while it is not an ENTRANCE. An empty write was `INSERT OR REPLACE`, so
     # `config set qwertyuiop ""` CREATED a row for a key that never existed — invisible in
     # the listing, unreadable by `config get`. The CLI could manufacture exactly the class
     # of row the marking exists to expose.
-    check!("...and removing a key that was never there creates nothing", Str.contains(stride!(ctx.bin, ctx.home, ["config", "unset", "qwertyuiop"]), "\"removed\":false"))?
+    check!("...and removing a key that was never there creates nothing", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "qwertyuiop", ""]), "\"removed\":false"))?
     check!("...and really creates nothing", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'qwertyuiop';")) == "0")?
     check!("...while a NON-empty write to an unrecognised key is still refused", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", "again"]), "unknown_key"))?
-    # ...and an empty value is refused for EVERY key class, not just the ones stride reads.
-    # This comment used to say the opposite one line above the check — "it stores an empty
-    # value and the normal guards apply" — describing the arm this change replaced.
-    check!("...and an empty value is refused for EVERY key class now, pointing at the verb that removes", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", ""]), "config unset hr_z1_max") and Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", ""]), "config unset timezon"))?
-    # `SELECT value`, not `COUNT(*)`. The count cannot see a VALUE, so it passed on a build
-    # where the refusal ALSO wrote `value=''` — review mutated exactly that and this check
-    # printed ok while the row read `hr_z1_max|`. A check that cannot observe the thing it
-    # is named for is the sixth of its kind on this branch today.
-    check!("...and it leaves the row it refused to write alone, value intact", Str.trim(sql!(ctx.db, "SELECT COALESCE(value,'(null)') FROM config WHERE key = 'hr_z1_max';")) != "" and Str.trim(sql!(ctx.db, "SELECT COALESCE(value,'(null)') FROM config WHERE key = 'hr_z1_max';")) != "(null)")?
+    # ...and clearing a key the engine DOES read is not this path: it stores an empty value
+    # and the normal guards apply, so removal can never silently wipe live config.
+    check!("...and an empty write to a key stride reads is not a removal", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", ""]), "bad_value"))?
     # ── the two cell shapes `Sqlite.str` cannot decode, both reachable because `value` is
     # declared TEXT with no NOT NULL and TEXT affinity converts INTEGER and REAL but not
     # blobs. Each answered `internal_error` — "this is a bug, not the data and not the
@@ -2732,16 +2631,6 @@ b_seed_analyze! = |ctx| {
     # On main this was the line that actually caused #200 -- it flipped the binary to
     # Chicago for the whole remainder of the run while the harness was still on UTC.
     check!("config conforms", validate!("config set timezone ${ctx.tz}", "config") == "")?
-    # ...and the REMOVAL shape, under its own schema. `schema-check` cannot cover it:
-    # `config unset` is `mutates: true`, so that recipe excludes it by construction, and
-    # review mutation-proved the consequence — adding a bogus field to the payload left
-    # `just test`, `just schema-check` and `just command-claims` all green while
-    # `validate.jq` rejected it. `schemas/v2/config_unset.json` was decorative, which is the
-    # same gap #276 exists to close, reproduced for the new verb.
-    #
-    # A key that is NOT stored, so the fixture is not disturbed and `removed: false` — the
-    # branch a `removed: true` probe would leave unvalidated — is the one under the schema.
-    check!("config unset conforms", validate!("config unset nosuchkey_probe", "config_unset") == "")?
     act_sess = Str.trim(strjq!(ctx, ["week", "add", "2099-11-11", "endurance", "schema action probe", "r"], ".data.id"))
     check!("week add conforms", validate!("week add 2099-11-12 endurance d r", "week_add") == "")?
     check!("skip conforms", validate!("skip ${act_sess} \"probe reason\"", "skip") == "")?
@@ -3863,26 +3752,6 @@ b_seed_analyze! = |ctx| {
     _ = sql!(an_db, "DELETE FROM activity_metrics WHERE activity_id = 804; DELETE FROM activities WHERE id = 804;")
     _ = sh!("rm -rf '${an_home}'")
     _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = 'not-a-date';")
-    # ...and the SEVENTH wrapped site, `ReportSeason.roc:105`, which nothing covered.
-    # It goes HERE and not in `b_seed_analyze!` for one reason, and it is a POSITION
-    # reason rather than a fixture-content one: a BLOB sorts above every TEXT value, so
-    # `GROUP BY date, fam ORDER BY date, fam` reaches its group LAST, and `season` stops
-    # at the FIRST unreadable date it meets. Any other bad date in the table therefore
-    # answers before the BLOB is ever projected, and the check passes with the CAST
-    # reverted. `b_seed_analyze!` carries four malformed dates by design, which is why
-    # four attempts to site the check there each produced a vacuous one.
-    #
-    # At this line every activity date is usable, and that is not an assumption: the
-    # `activity 933` check twenty lines below only passes because 'garbage-da' is the
-    # LOWEST bad date present, which is false if any other exists. So the state this
-    # check needs is already asserted by a check that was here before it.
-    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (953,'blob date','Ride','Ride',CAST(x'DEADBEEF' AS BLOB),3600);")
-    check!("a BLOB activity date is refused by name on `season`, not internal_error", strjq!(ctx, ["season"], ".error.code") == "unreadable_activity_date")?
-    # The anti-vacuity half, and the half that makes the mutation bite: the code alone
-    # would still read `unreadable_activity_date` if some OTHER row answered first, so
-    # only naming the row proves the walk reached the BLOB group and decoded it.
-    check!("...naming the BLOB row, which only a projection that reached it can do", Str.contains(strjq!(ctx, ["season"], ".error.message"), "activity 953"))?
-    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 953;")
     # ...and the SAME rule on the other date-parsing site. Absorbing this one
     # dropped the activity from sessions, polarization AND the threshold range
     # with no trace at exit 0 -- a silent wrong answer rather than a loud refusal.
@@ -5818,144 +5687,6 @@ b_progress_b! = |ctx| {
     _ = seed_power_stream!(ctx.db, 213, 1300, 170)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("auto-name distance-gated to 2 sessions", strjq!(ctx, ["progress", "2025-03-01"], ".data.groups[0].sessions | length") == "2")?
-    # ── #294: an impossible heart rate is not a light session ─────────────────────
-    #
-    # `lens_score` tested `avg_hr > 0.0` while `valid_hr` (35-220 bpm) sat in the same
-    # module and the DECOUPLING path already applied it — so the codebase disbelieved a
-    # number in one place and built a training verdict on it in another. On the real
-    # database two ROWING sessions recording 18.0 and 31.3 bpm produced "improving (221%)"
-    # and "88% below your best" on a workout whose other sessions sit near 0.85, while the
-    # `drift` column printed `-` for exactly those two rows because decoupling refused them.
-    #
-    # 18 bpm here, not 34: a value just outside the bound would pass on an off-by-one and
-    # tells the reader nothing about WHY the bound exists. This is the shape that occurs.
-    _ = seed_ride!(ctx.db, "231", "HR Sanity Class", "2025-02-01T08:00:00Z", "3600", "20000", "150", "140")
-    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (232,'HR Sanity Class','Ride','2025-02-08T08:00:00Z',3600,20000,155,155,18);")
-    _ = seed_ride!(ctx.db, "233", "HR Sanity Class", "2025-02-15T08:00:00Z", "3600", "20000", "160", "145")
-    _ = seed_power_stream!(ctx.db, 231, 1300, 150)
-    _ = seed_power_stream!(ctx.db, 232, 1300, 155)
-    _ = seed_power_stream!(ctx.db, 233, 1300, 160)
-    _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    # the 18 bpm row would score 155/18 = 8.6 against ~1.1 for the real ones, so under the
-    # old predicate it becomes the "best" session and every trend reads off it
-    check!("an 18 bpm ride is refused by the EF lens, not scored as the best session", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .sessions | length] | join(\",\")") == "2")?
-    check!("...and it is DECLARED withheld rather than silently dropped", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .hidden_lens] | join(\",\")") == "1")?
-    check!("...and no session scores off it", sfloat(strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .sessions[].score] | max")) < 3.0)?
-    # ...and the SPEED/HR lens too, which the EF fixture cannot reach. Both arms divide by
-    # the same number and are wrong in the same way, but only one of them had an oracle:
-    # reverting the speed/HR arm alone left the whole suite green. A distance-carrying,
-    # power-free group takes that lens.
-    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (241,'HR Sanity Row','Rowing','2025-02-01T09:00:00Z',3600,12000,140),(242,'HR Sanity Row','Rowing','2025-02-08T09:00:00Z',3600,12000,18),(243,'HR Sanity Row','Rowing','2025-02-15T09:00:00Z',3600,12000,145);")
-    _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    # the LENS is pinned alongside the count. Without it the check establishes only that a
-    # row went missing, and the coupling to the speed/HR arm is carried by mutation rather
-    # than by the assertion — true today, invisible to anyone reading the check tomorrow.
-    check!("an 18 bpm row is refused by the speed/HR lens as well", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity Row\")) | \"\\(.lens)/\\(.sessions | length)\"] | join(\",\")") == "speed_hr/2")?
-    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (241,242,243); DELETE FROM activities WHERE id IN (241,242,243);")
-    # ── #300's half: the COMBINED reason, which nothing asserted. Review mutation-proved
-    # that: inverting the agreement rule to `if lens_dropped == 1 needs_plural else needs`
-    # — literally the "1 need distance and HR" defect the comment above argues against —
-    # left `just test` at rc 0 and 931 == 931, and so did deleting both counts and
-    # rendering the bare `"${g.scope_why}, ${lens_verb}"`. The whole feature could be
-    # removed without a single check noticing.
-    #
-    # Reaching the both-causes arm needs an AUTO-NAMED group, because only those truncate
-    # by distance: `is_auto_name` keys on the first word, so "Evening Ride" qualifies and
-    # "HR Sanity Class" above does not. A distinct prefix from the existing `Morning Ride`
-    # fixtures on purpose — groups are keyed by NAME, so reusing it would silently change
-    # the totals the scope-only check upstream pins.
-    _ = seed_ride!(ctx.db, "271", "Evening Ride", "2025-05-02T18:00:00Z", "3600", "20000", "150", "140")
-    _ = seed_ride!(ctx.db, "272", "Evening Ride", "2025-05-09T18:00:00Z", "3600", "20000", "155", "18")
-    _ = seed_ride!(ctx.db, "273", "Evening Ride", "2025-05-16T18:00:00Z", "3600", "20000", "160", "145")
-    _ = seed_ride!(ctx.db, "274", "Evening Ride", "2025-05-05T18:00:00Z", "3600", "40000", "150", "140")
-    _ = seed_power_stream!(ctx.db, 271, 1300, 150)
-    _ = seed_power_stream!(ctx.db, 272, 1300, 155)
-    _ = seed_power_stream!(ctx.db, 273, 1300, 160)
-    _ = seed_power_stream!(ctx.db, 274, 1300, 150)
-    _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    # anchored on the 20 km ride: the 40 km one is outside the 10% band (SCOPE), the 18 bpm
-    # one is inside it and refused by the lens (LENS). One of each, which is the arm that
-    # renders both counts.
-    ev_split = strjq!(ctx, ["progress", "2025-05-16"], "[.data.groups[] | select(.name | startswith(\"Evening Ride\")) | \"\\(.hidden_scope)/\\(.hidden_lens)/\\(.hidden)\"] | join(\",\")")
-    check!("a group hidden by BOTH gates counts each cause, and they sum to the total", ev_split == "1/1/2")?
-    ev_human = stride_human!(ctx.bin, ctx.home, ["progress", "2025-05-16"])
-    # The counts are asserted IN the sentence, not just in the payload. "or" was compatible
-    # with 1/1 and with 22/1 alike, which is the whole of #300: the machine surface knew the
-    # split and the person was told a disjunction.
-    check!("...and the human line carries both numbers, not a disjunction", Str.contains(ev_human, "2 hidden: 1 a different distance for this workout, 1 needs power and HR"))?
-    check!("...and does not offer the reader a guess between the two causes", !(Str.contains(ev_human, "a different distance for this workout, or")))?
-    # ...and the AGREEMENT rule, on the boundary that decides it. A second lens-dropped ride
-    # moves the count to 2 and the verb must move with it. Pinning only the singular case
-    # would accept the inverted rule, since that renders correctly for exactly one count.
-    #
-    # To re-prove either of these, mutate ONLY the verb string it names — `needs_plural`'s
-    # `Ef` arm for the plural check, `needs`' for the singular. Each then fails alone, with
-    # every other check green, because the two branches are independent strings. Do NOT
-    # reach for "revert the rule and neutralise the earlier checks": `check!` returns `Err`
-    # into a `?`, so the first failure aborts the run and shadows everything after it, and
-    # neutralising by DELETING a check orphans its binding and turns the run into a build
-    # failure that prints nothing like a failed suite. Neutralise by changing a CONDITION,
-    # never by deleting the line — the condition form is a legitimate technique and the only
-    # option for a check with no single-branch string to mutate. Both traps were hit here.
-    _ = seed_ride!(ctx.db, "275", "Evening Ride", "2025-05-12T18:00:00Z", "3600", "20000", "158", "20")
-    _ = seed_power_stream!(ctx.db, 275, 1300, 158)
-    _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    ev_human2 = stride_human!(ctx.bin, ctx.home, ["progress", "2025-05-16"])
-    check!("...and two lens-dropped rows take the plural verb, which the count-1 case cannot show", Str.contains(ev_human2, "1 a different distance for this workout, 2 need power and HR"))?
-    check!("...and not the singular one the inverted rule would print here", !(Str.contains(ev_human2, "2 needs power and HR")))?
-    # ...and the SpeedHr arm, which is the one the real database actually renders. Review
-    # measured that: all 35 both-cause groups on it take `speed_hr`, 8 singular and 27
-    # plural, and both strings render today. The Evening Ride block above proves the
-    # mechanism on `Ef` — and replacing either SpeedHr string with garbage left the whole
-    # suite green, because `needs`/`needs_plural` are three-armed matches and a fixture on
-    # one arm tests a SIBLING of the case the rule fires on, not the case itself.
-    #
-    # Rowing with distance and HR and no power takes this lens, the same way the "HR Sanity
-    # Row" group above does.
-    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (281,'Evening Row','Rowing','2025-06-02T18:00:00Z',3600,12000,140),(282,'Evening Row','Rowing','2025-06-09T18:00:00Z',3600,12000,18),(283,'Evening Row','Rowing','2025-06-16T18:00:00Z',3600,12000,145),(284,'Evening Row','Rowing','2025-06-05T18:00:00Z',3600,24000,140);")
-    _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    row_human = stride_human!(ctx.bin, ctx.home, ["progress", "2025-06-16"])
-    check!("the speed/HR arm renders its own singular verb, not the EF arm's", Str.contains(row_human, "1 a different distance for this workout, 1 needs distance and HR"))?
-    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (285,'Evening Row','Rowing','2025-06-12T18:00:00Z',3600,12000,20);")
-    _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    check!("...and its plural verb, which is what 27 of the 35 real groups print", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-06-16"]), "1 a different distance for this workout, 2 need distance and HR"))?
-    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (281,282,283,284,285); DELETE FROM activities WHERE id IN (281,282,283,284,285);")
-    _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    # ...and the THIRD arm. I was about to write that the Rpe combined arm is unreachable by
-    # construction, on the strength of an earlier finding that `LoneNoDistance` plus a lens
-    # drop cannot happen — that kind truncates `rows` to the anchor, so a lens drop empties
-    # `kept` into `Err(Skip)`. Review showed the reasoning conflates a KIND with a LENS. The
-    # combined arm is reached through `SimilarDistance`, a different kind, and `Rpe` is a
-    # lens; nothing about the lens decides which kind `anchor_filter` returns.
-    #
-    # The real constraint is the non-obvious part and is why this fixture looks the way it
-    # does: NO row may be SpeedHr-scorable. Every row here carries distance and moving_time,
-    # so that means no row may carry a valid HR — `progress_lens` picks SpeedHr on
-    # `List.any`, and one strapped session anywhere in the group takes the lens away from
-    # Rpe. A pool swim logged without a strap, which is not contrived: the real database has
-    # 20 rpe-lens groups, one already auto-named and one recorded distance away from
-    # rendering this exact arm.
-    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (291,'Evening Swim','Swim','2025-07-01T18:00:00Z',3600,2000),(292,'Evening Swim','Swim','2025-07-08T18:00:00Z',3600,9000),(293,'Evening Swim','Swim','2025-07-15T18:00:00Z',3600,2000),(294,'Evening Swim','Swim','2025-07-22T18:00:00Z',3600,2000),(295,'Evening Swim','Swim','2025-07-29T18:00:00Z',3600,2000);")
-    _ = sql!(ctx.db, "INSERT INTO ratings (activity_id,rpe,rated_at) VALUES (291,7.0,'2025-07-01'),(295,6.0,'2025-07-29');")
-    _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    check!("the rpe arm renders its plural verb too", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-29"]), "1 a different distance for this workout, 2 need a rating"))?
-    _ = sql!(ctx.db, "INSERT INTO ratings (activity_id,rpe,rated_at) VALUES (294,5.0,'2025-07-22');")
-    _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    check!("...and its singular verb, so all three lenses are pinned on both sides of the count", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-29"]), "1 a different distance for this workout, 1 needs a rating"))?
-    # `ratings` too — first fixture to write `ctx.db`'s `ratings`, which is the load-bearing
-    # part and not the same as "first to write ratings at all": the `an_db` sandbox has its
-    # own at ~3642, and the `rate` fixture below writes one on purpose and deliberately
-    # asserts it SURVIVES. So no existing cleanup covers these rows, and without this line
-    # three of them live on into every later check under a fully green suite — measured,
-    # dropping just this clause leaves 940 == 940 while the residue dump grows by three
-    # INSERTs.
-    _ = sql!(ctx.db, "DELETE FROM ratings WHERE activity_id IN (291,292,293,294,295); DELETE FROM activity_metrics WHERE activity_id IN (291,292,293,294,295); DELETE FROM activities WHERE id IN (291,292,293,294,295);")
-    _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (271,272,273,274,275); DELETE FROM streams WHERE activity_id IN (271,272,273,274,275); DELETE FROM activities WHERE id IN (271,272,273,274,275);")
-    _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (231,232,233); DELETE FROM streams WHERE activity_id IN (231,232,233); DELETE FROM activities WHERE id IN (231,232,233);")
-    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("40km ride excluded", sfloat(strjq!(ctx, ["progress", "2025-03-01"], ".data.groups[0].sessions | map(.distance_m) | max")) < 30000.0)?
     check!("progress human empty-date guard", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "1999-01-01"]), "no workout found"))?
     check!("unscorable workout explains lens", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", ctx.d1]), "can't be compared"))?
@@ -6244,13 +5975,7 @@ b_doctor! = |ctx| {
     # LAST statement of this body, so it leaked the blank zone into every scenario after
     # it, which is the actual reason it needs a restore. It asserts the equivalence now
     # rather than sitting there as dead code wearing a test's clothes.
-    # Staged with SQL rather than `config set timezone ""`, which is now refused for every
-    # key class (#276). The equivalence being asserted is about how `Db.roc` READS the
-    # column — an empty cell and an absent row both collapse to `NoTz` — and that is still
-    # reachable: an older stride wrote empty cells, and a hand-edited or restored database
-    # can hold one. Routing it through the CLI only ever tested the write path, which is the
-    # half that changed.
-    _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('timezone', '');")
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ""])
     check!("empty timezone is the absent state, not an invalid one", strjq!(ctx, ["doctor"], ".data.time_ok") == "true" and Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UTC"))?
     # restore before returning: three scenarios run after this one, and leaving the zone
     # blank -- or on the unresolvable name set just above, which also resolves to UTC --

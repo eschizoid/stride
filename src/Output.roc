@@ -265,6 +265,15 @@ Output :: [].{
     # is the same defect this comment's own paragraph above records for 'garbage-da', one
     # value further along.
     #
+    # A BLOB `start_local` is the FOURTH instance and it is not fixed here: the parenthetical
+    # renders the decoded bytes, and no TEXT literal can ever match a BLOB, so
+    # `WHERE start_local = '<those bytes>'` matches zero rows by construction rather than by
+    # accident. Recorded rather than repaired, because the id-based remedy leads for exactly
+    # this reason and the handle is decorative in that case — but by this file's own standard,
+    # calling the parenthetical "the reproduction handle" is wrong for a BLOB, and saying so
+    # is what stops a fifth instance being written on the assumption it is right. These rows
+    # only reach this message at all because #296 stopped them crashing first.
+    #
     # It says NULL-or-empty rather than picking one, and that is deliberate rather than lazy:
     # the COALESCE has already collapsed the two by the time anything gets here, and the
     # distinction is not actionable — both repair the same way, by id. Carrying
