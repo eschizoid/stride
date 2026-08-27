@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(957)?
+    checks_ran_exactly!(958)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3347,12 +3347,60 @@ b_seed_analyze! = |ctx| {
     # BLOB check pins that), so the codebase had decided the question and then contradicted
     # itself one command over. `CAST(... AS TEXT)` makes the read total; the existing
     # `date_known` predicate then rejects the value on its own terms (#296).
-    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (951,'blob date','Ride','Ride',CAST(x'DEADBEEF' AS BLOB),3600);")
-    check!("a BLOB start_local does not take the listing down", strjq!(ctx, ["activities"], ".data | length") != "" and !(Str.contains(strjq!(ctx, ["activities"], ".error.code // \"none\""), "internal_error")))?
-    check!("...and the row surfaces as unreadable rather than vanishing", strjq!(ctx, ["activities"], "[.data[] | select(.id == 951) | (.date_known == false) and (.rankable == false)] | join(\",\")") == "true")?
+    # id 952, not 951: `tests/e2e.roc:3350` already uses 951 for the "impossible minute"
+    # fixture. Safe today only because this block's DELETE runs first, which is a coupling
+    # nobody reading either block would see.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (952,'blob date','Ride','Ride',CAST(x'DEADBEEF' AS BLOB),3600);")
+    # The row-shape assertion runs FIRST. `check!` returns `Err` and the caller uses `?`, so
+    # whichever check runs first SHADOWS the rest under any mutation that breaks both — the
+    # crash check used to be first, and reverting the CAST failed it and stopped the run, so
+    # this one never executed and a mutation pass could not tell it from a vacuous check.
+    check!("a BLOB start_local surfaces as unreadable rather than vanishing", strjq!(ctx, ["activities"], "[.data[] | select(.id == 952) | (.date_known == false) and (.rankable == false)] | join(\",\")") == "true")?
+    check!("...and does not take the listing down", strjq!(ctx, ["activities"], ".data | length") != "" and !(Str.contains(strjq!(ctx, ["activities"], ".error.code // \"none\""), "internal_error")))?
+    # ...and the SIX other commands that read the same column through a different query.
+    # `activities` was the only one the first cut repaired: `summary`, `plan`, `stats`,
+    # `compare`, `season` and `week` all still answered `internal_error` on this exact row,
+    # because the fix was applied where the issue was REPORTED rather than everywhere the
+    # column is projected. Enumerated by running every command in the table against a
+    # planted BLOB, not by reading the source — 105 references across 12 files is not a list
+    # anyone reads correctly.
+    #
+    # `unreadable_activity_date` is the project's own graceful-degradation code, so this
+    # asserts the contract #296 asked for rather than merely the absence of a crash. The
+    # sharpest of the seven was `Report.roc:343`, `guard_activity_dates!` — the guard whose
+    # entire job is turning an unreadable date into that very code, killed by the thing it
+    # exists to catch.
+    blob_cmds = Str.trim(sh!("for c in summary plan stats compare season week; do HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $c 2>&1 | jq -r '.error.code // \"ok\"'; done | sort -u | tr '\n' ' '"))
+    # The exact SET is pinned, not just the absence of `internal_error`. Two codes appear:
+    # `unreadable_activity_date` from the activity reads, and `unreadable_daily_load_day`
+    # from the commands that go through `daily_load`, whose `day` column is rebuilt from
+    # `start_local` and so inherits the bad value. Both are the engine's own graceful codes.
+    # Asserting the set rather than a negation means a revert cannot pass by swapping one
+    # handled code for another — it has to keep both, and reverting any of the seven CASTs
+    # puts `internal_error` into the string.
+    check!("...and the six other commands reading that column degrade instead of crashing", blob_cmds == "unreadable_activity_date unreadable_daily_load_day")?
+    # ...and `ReportSeason.roc:105`, which this suite does NOT cover. Stated rather than
+    # papered over, because four successive attempts to cover it each produced a check that
+    # passed with the CAST reverted, and a check that cannot fail is worse than none.
+    #
+    # The site is load-bearing — measured directly, not argued. On a snapshot of a real
+    # database with one BLOB row planted, the wrapped build answers
+    # `unreadable_activity_date` and reverting that one line answers `internal_error`.
+    #
+    # What blocks the fixture is that `season` stops at the first unreadable date it meets,
+    # and this fixture carries four by design — malformed but readable as TEXT, so they are
+    # caught earlier and the run never projects the BLOB. The real database has none. The
+    # four attempts removed, in order: the bad `daily_load` days, then the missing
+    # `activity_metrics` row the query JOINs against, then the other malformed-date
+    # activities, each in an isolated copy so the shared fixture stayed untouched. Every one
+    # still passed under mutation, so the remaining blocker is something none of those
+    # named, and guessing at a fifth is how a vacuous check gets shipped.
+    #
+    # The honest coverage claim for this PR is therefore: six of the seven wrapped sites are
+    # mutation-proved by this suite, and the seventh by direct measurement on real data.
     # deleted immediately: `doctor`'s undateable count is pinned at 4 twelve lines below, and
     # a probe row that outlives its own checks moves a number asserted for another reason.
-    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 951;")
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 952;")
     # `doctor`'s COUNT, which is the whole of #265 and had nothing asserting its behaviour.
     # The schema loop validates the key's presence and type on `doctor` and `top`, so a
     # predicate that drifted to always-0 passed everything. All four SQL sites now share
