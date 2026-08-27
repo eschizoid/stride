@@ -238,7 +238,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 24
+    schema_version = 25
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -284,6 +284,15 @@ Db :: [].{
         # v4: metrics record the algorithm revision they were computed with, so a
         # change to the math itself (metrics_rev bump) invalidates + recomputes
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN metrics_rev INTEGER")?
+        # v25: the in-band MEAN of this session's HR stream, or NULL when no stream (or no
+        # sample inside 35-220) exists. Computed tier, never ingested: `activities.avg_hr` is
+        # what Strava reported and stays that way, because a re-sync would overwrite any
+        # correction written there and the fix would silently un-apply. That is the mirror-tier
+        # rule in AGENTS.md ("a re-sync would silently wipe it"), not ADR 0006, which is about
+        # which device formats stride parses and says nothing about tiers. This is
+        # the value the SCORING lenses divide by; the display surfaces still publish the
+        # stored one. #311.
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN avg_hr_stream REAL")?
         # v6: metrics record WHICH ladder rung scored them (load provenance)
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN load_model TEXT")?
         # v8: drop load_confidence — it was a pure function of load_model (v7), so storing

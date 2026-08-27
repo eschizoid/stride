@@ -987,7 +987,7 @@ Metrics :: [].{
     # than in a second guard query over the same WHERE clause because two expressions that
     # must select the same rows are exactly the seam #243 spent its last three rounds
     # closing — the guard's domain has to BE the consumer's domain, not merely match it.
-    ProgressRow : { name : Str, date : Str, sport : Str, distance_m : F64, moving_time : I64, np_w : F64, avg_hr : F64, rpe : F64, output_kj : F64, tss : F64, load_model : Str, decoupling_pct : F64, decoupling_known : Bool, id : I64 }
+    ProgressRow : { name : Str, date : Str, sport : Str, distance_m : F64, moving_time : I64, np_w : F64, avg_hr : F64, avg_hr_scored : F64, rpe : F64, output_kj : F64, tss : F64, load_model : Str, decoupling_pct : F64, decoupling_known : Bool, id : I64 }
 
     # split rows (already sorted by name) into per-workout runs
     group_progress : List(ProgressRow) -> List({ name : Str, rows : List(ProgressRow) })
@@ -1093,15 +1093,31 @@ Metrics :: [].{
             # power. The ladder stores whichever power rung won, so a row scored from plain
             # avg_watts would put avg-watts-per-beat on the same trend line as NP-per-beat and
             # invent a fake improvement for anyone whose newer rides have streams.
+            # `avg_hr_scored`, not `avg_hr`. They differ only when the session carried an HR
+            # stream, in which case this is the mean of the samples `valid_hr` accepted and
+            # `avg_hr` is what Strava's summary reported. The bound above catches a session
+            # whose STORED average is impossible; it is blind to one whose stored average is
+            # a plausible number computed from broken data, and a census on the real database
+            # measured those at 11 against the bound's 3. That census lives in this PR's
+            # commit message and in `tests/e2e.roc`, NOT in this module — the measured claim
+            # under `valid_hr` names the two rowing sessions it can see, which is the visible
+            # half rather than the count, and an earlier version of this sentence sent readers
+            # there for a number that is not written there. Scoring from the stream is the
+            # root-cause half (#311); the bound stays because a session with no usable stream
+            # still has nothing but the summary to offer.
+            #
+            # SCORING only. `avg_hr` is what the tables and JSON print, and it stays the
+            # stored number — the athlete's device reported it, and `activities --json` is
+            # documented as the surface that publishes readings raw.
             Ef =>
-                if r.np_w > 0.0 and valid_hr(r.avg_hr) and np_like(r.load_model) {
-                    Ok(r.np_w / r.avg_hr)
+                if r.np_w > 0.0 and valid_hr(r.avg_hr_scored) and np_like(r.load_model) {
+                    Ok(r.np_w / r.avg_hr_scored)
                 } else {
                     Err(Unscorable)
                 }
             SpeedHr =>
-                if r.distance_m > 0.0 and valid_hr(r.avg_hr) and r.moving_time > 0 {
-                    Ok((r.distance_m / r.moving_time.to_f64() * 60.0) / r.avg_hr)
+                if r.distance_m > 0.0 and valid_hr(r.avg_hr_scored) and r.moving_time > 0 {
+                    Ok((r.distance_m / r.moving_time.to_f64() * 60.0) / r.avg_hr_scored)
                 } else {
                     Err(Unscorable)
                 }
@@ -2707,7 +2723,7 @@ Metrics :: [].{
 
 # lens selection: power ride -> Ef, run with pace+HR -> SpeedHr, rated strength -> Rpe
 expect {
-    row = |sport, np, dist, mt, rpe| { name: "X", date: "2025-01-01", sport, distance_m: dist, moving_time: mt, np_w: np, avg_hr: 150.0, rpe, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
+    row = |sport, np, dist, mt, rpe| { name: "X", date: "2025-01-01", sport, distance_m: dist, moving_time: mt, np_w: np, avg_hr: 150.0, avg_hr_scored: 150.0, rpe, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     Metrics.progress_lens([row("Ride", 200.0, 0.0, 3600, 0.0)]) == Ef
     and Metrics.progress_lens([row("Run", 0.0, 10000.0, 3000, 0.0)]) == SpeedHr
     and Metrics.progress_lens([row("WeightTraining", 0.0, 0.0, 2700, 7.0)]) == Rpe
@@ -2719,7 +2735,7 @@ expect {
 # the same column, and trending it against NP invents an improvement. Same watts, same HR:
 # provenance alone decides.
 expect {
-    row = |lm| { name: "X", date: "2025-01-01", sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: 200.0, avg_hr: 150.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: lm, decoupling_pct: 0.0, decoupling_known: False, id: 0 }
+    row = |lm| { name: "X", date: "2025-01-01", sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: 200.0, avg_hr: 150.0, avg_hr_scored: 150.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: lm, decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     Metrics.lens_score(Ef, row("power_stream")).is_ok()
     and Metrics.lens_score(Ef, row("avg_watts")).is_err()
     and Metrics.lens_score(Ef, row("weighted_watts")).is_ok()
@@ -2731,11 +2747,34 @@ expect {
 # passed with identical counts and only the e2e caught it. These two assert the lenses
 # THEMSELVES, so the unit suite is no longer blind to the exact defect.
 expect {
-    hr_row = |hr| { name: "X", date: "2025-01-01", sport: "Ride", distance_m: 12000.0, moving_time: 3600, np_w: 200.0, avg_hr: hr, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
+    hr_row = |hr| { name: "X", date: "2025-01-01", sport: "Ride", distance_m: 12000.0, moving_time: 3600, np_w: 200.0, avg_hr: hr, avg_hr_scored: hr, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     Metrics.lens_score(Ef, hr_row(150.0)).is_ok()
     and Metrics.lens_score(Ef, hr_row(18.0)).is_err()
     and Metrics.lens_score(SpeedHr, hr_row(150.0)).is_ok()
     and Metrics.lens_score(SpeedHr, hr_row(18.0)).is_err()
+}
+
+# ...and that the lenses read `avg_hr_scored` rather than `avg_hr`. Every other fixture in
+# this file sets the two equal, which is exactly the shape that cannot tell them apart — the
+# whole of #311 is a one-token change at two call sites, and a suite where both fields always
+# agree stays green if the token is reverted. These rows disagree deliberately, in BOTH
+# directions, so neither substitution passes:
+#
+#   - stored impossible, stream fine: the case #311 exists for. Must SCORE, and score from
+#     the stream (200/147.7), not refuse on the 86.4 the summary reported.
+#   - stored fine, stream impossible: must REFUSE. A session can have a plausible summary and
+#     a stream of dropout; scoring it from the summary would be the same bug facing the other
+#     way, and swapping the field back would make this one pass while the first still fails.
+expect {
+    split = |stored, stream| { name: "X", date: "2025-01-01", sport: "Ride", distance_m: 12000.0, moving_time: 3600, np_w: 200.0, avg_hr: stored, avg_hr_scored: stream, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
+    scored = match Metrics.lens_score(Ef, split(86.4, 147.7)) {
+        Ok(v) => v
+        Err(_) => 0.0
+    }
+    (scored - 200.0 / 147.7).abs() < 0.000001
+    and Metrics.lens_score(Ef, split(150.0, 18.0)).is_err()
+    and Metrics.lens_score(SpeedHr, split(86.4, 147.7)).is_ok()
+    and Metrics.lens_score(SpeedHr, split(150.0, 18.0)).is_err()
 }
 
 # swim TSS cubes the speed ratio (drag), running squares it. At IF 1.2 for one hour that is
@@ -2881,7 +2920,7 @@ expect {
 
 # EF = NP/HR; RPE is lower-is-better
 expect {
-    r = { name: "X", date: "d", sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: 300.0, avg_hr: 150.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
+    r = { name: "X", date: "d", sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: 300.0, avg_hr: 150.0, avg_hr_scored: 150.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     (Metrics.lens_score(Ef, r).ok_or(0.0) - 2.0).abs() < 0.001 and Metrics.lens_higher_better(Ef) and !(Metrics.lens_higher_better(Rpe))
 }
 
@@ -3422,7 +3461,7 @@ expect Metrics.is_auto_name("Morning Ride") and Metrics.is_auto_name("Lunch Grav
 
 # group_progress: adjacent same-name rows fold into one group per workout
 expect {
-    pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
+    pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, avg_hr_scored: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     gs = Metrics.group_progress([pr("A", "2025-01-01", 0.0), pr("A", "2025-02-01", 0.0), pr("B", "2025-03-01", 0.0)])
     List.len(gs) == 2 and List.first(gs).map_ok(|g| List.len(g.rows) == 2).ok_or(False)
 }
@@ -3438,7 +3477,7 @@ expect {
 # this workout" falsehood with every gate green. `total` differs from `List.len(rows)` on
 # both truncating kinds, which is the whole point of carrying it.
 expect {
-    pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
+    pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, avg_hr_scored: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     exact = Metrics.anchor_filter({ name: "Class X", rows: [pr("Class X", "2025-01-01", 0.0)] }, "2025-01-01")
     gated = Metrics.anchor_filter({ name: "Morning Ride", rows: [pr("Morning Ride", "2025-01-01", 20000.0), pr("Morning Ride", "2025-02-01", 21000.0), pr("Morning Ride", "2025-03-01", 40000.0)] }, "2025-01-01")
     lone = Metrics.anchor_filter({ name: "Morning Ride", rows: [pr("Morning Ride", "2025-01-01", 0.0), pr("Morning Ride", "2025-02-01", 21000.0)] }, "2025-01-01")

@@ -627,6 +627,83 @@ Analyze :: [].{
         # DERIVED FTP, the power curve, or the intensity split. Drop it wholesale.
         watts_raw = if row.dw Streams.stream_pairs(streams.time, streams.watts) else []
         watts_pairs = List.keep_if(watts_raw, |p| Metrics.valid_watts(p.v))
+
+        # The in-band mean of the stream, which is the number the SCORING lenses divide by
+        # when it exists (#311). `hr_pairs` is already `valid_hr`-filtered, so this is a mean
+        # over exactly the samples the engine believes — dropout and sensor-dead stretches
+        # are gone rather than averaged in, which is the whole failure this addresses: a
+        # session storing 86.4 whose own stream means 147.7 across 42% dropout.
+        #
+        # NULL, never 0.0, when there is nothing to average: 0.0 is not a possible heart rate
+        # but it IS what `COALESCE(...,0)` produces at every read site, so a stored 0 would be
+        # indistinguishable from "no stream" only by accident. Absence stays absence.
+        #
+        # An UNWEIGHTED mean, unlike `time_in_zones`, which walks the same `hr_pairs` weighting
+        # each sample by the gap to the next with a 30 s cap. Measured across all 672 streams,
+        # the two differ by at most 2.58 bpm and by more than 1 bpm on ten of them, so the
+        # choice is not load-bearing — but the two ARE different estimators over one list, and
+        # a reader comparing this line against the zone walk should not have to discover that.
+        #
+        # The LOAD LADDER never sees this value, and the reason is not the one first written
+        # here. That argument said `hr_avg` fires only when zone seconds are zero, which means
+        # no usable samples, which means no mean to prefer — and it is false: `time_in_zones`
+        # accumulates the gap BETWEEN consecutive samples, so a one-sample stream yields zero
+        # zone seconds while this mean is perfectly well defined. Review planted one and the
+        # ladder took `hr_avg` with `avg_hr_stream` populated beside it. The true reason is
+        # narrower and firmer: `tss_ladder` reads `input.avg_hr`, which is filled from the
+        # STORED summary and is not touched here. Verified behaviourally rather than argued —
+        # analyzing the same 738 activities before and after leaves `activity_metrics`
+        # byte-identical on every column but this one, and `daily_load` byte-identical
+        # outright. No TSS, CTL, ATL or form verdict moves.
+        # ...and it is NULL unless the surviving samples span AT LEAST HALF the session. A mean over
+        # unrepresentative samples is the same bug this column exists to fix, moved one table
+        # over — and without this gate it lands harder, because nothing downstream can see it.
+        # Measured on the real database: of the three sessions whose stored average is
+        # impossible, one kept 563 of 2688 samples spanning t=14..576 of a 2700 s row. Its
+        # "in-band mean" is the mean of the first nine minutes before the strap died, and at
+        # 84.8 bpm it is plausible enough that no bound would ever question it. Admitting it
+        # replaced a 1.385 EF outlier with a 1.400 one in #305's own headline example.
+        #
+        # SPAN and not sample COUNT, which was the first version and conflates two different
+        # things. A stream sampled every five seconds keeps a fifth of a session's worth of
+        # samples with a perfectly healthy strap; on the real data 15 of the 17 rows a count
+        # ratio would have refused are exactly that, and their stream mean agrees with the
+        # stored average to within a couple of bpm. Span separates them: a sparse stream still
+        # covers the session, a dead strap covers a prefix.
+        #
+        # The threshold sits in a gap, not on a guess. The surviving spans on the real data
+        # are 0.003, 0.20 and 0.24 for the three broken straps, and 0.58 upward for the eleven
+        # sessions this column exists to rescue. Nothing lands between 0.25 and 0.58.
+        # The denominator is the LONGER of the session's moving time and the stream's own
+        # extent, not moving time alone. `moving_time` excludes stops while stream timestamps
+        # are elapsed, so a stop-heavy session divides a long span by a short session and the
+        # ratio inflates. Measured: 35 of 672 streams run longer than their moving time, by up
+        # to 1.198x, which drops the effective floor to about 0.42 — small here, and larger for
+        # an outdoor rider who stops for coffee. Taking the max costs nothing on the truncation
+        # case this gate is for, where the surviving span is the SHORT side either way.
+        hr_extent =
+            match (List.first(hr_raw), List.last(hr_raw)) {
+                (Ok(f), Ok(l)) => l.t - f.t
+                _ => 0
+            }
+        hr_denom = if hr_extent > row.mt hr_extent else row.mt
+        hr_span_ok =
+            match (List.first(hr_pairs), List.last(hr_pairs)) {
+                (Ok(f), Ok(l)) if hr_denom > 0 =>
+                    # `hr_pairs` comes from `stream_pairs`, which preserves the stream's own
+                    # order, and Strava's time series is ascending — so first and last are the
+                    # extremes. Guarded anyway: a non-ascending stream yields a negative span,
+                    # which fails the comparison rather than passing it by accident.
+                    (l.t - f.t).to_f64() >= 0.5 * (hr_denom).to_f64()
+
+                _ => False
+            }
+        avg_hr_stream_binding =
+            if List.is_empty(hr_pairs) or !(hr_span_ok) {
+                Null
+            } else {
+                Real(List.fold(hr_pairs, 0.0, |acc, p| acc + p.v) / (List.len(hr_pairs)).to_f64())
+            }
         # #92 sample-validity counters. Counted against `*_raw`, which for watts is ALREADY
         # empty when the stream is estimated — so the wholesale #73 exclusion contributes
         # 0 dropped of 0 total rather than reading as 100% junk. Only samples a validity
@@ -812,8 +889,8 @@ Analyze :: [].{
             path: Path.utf8(path),
             query:
                 \\INSERT OR REPLACE INTO activity_metrics
-                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped, mt_used, dist_used, elev_used, aw_used, ahr_used, waw_used, re_used, dw_used, sport_used, start_used, stream_len_used, decoupling_pct, decoupling_signal)
-                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :thru, :hrt, :hrd, :wt, :wd, :umt, :udist, :uelev, :uaw, :uahr, :uwaw, :ure, :udw, :usport, :ustart, :uslen, :decoup, :dsig)
+                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped, mt_used, dist_used, elev_used, aw_used, ahr_used, waw_used, re_used, dw_used, sport_used, start_used, stream_len_used, decoupling_pct, decoupling_signal, avg_hr_stream)
+                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :thru, :hrt, :hrd, :wt, :wd, :umt, :udist, :uelev, :uaw, :uahr, :uwaw, :ure, :udw, :usport, :ustart, :uslen, :decoup, :dsig, :ahrs)
             ,
             bindings: [
                 { name: ":umt", value: Integer(row.s_mt) },
@@ -831,6 +908,7 @@ Analyze :: [].{
                 # here (a perfectly steady session) and the two must stay distinguishable
                 { name: ":decoup", value: match decoupling { Known(d) => Real(d)  Unknown => Null } },
                 { name: ":dsig", value: decoupling_signal_val },
+                { name: ":ahrs", value: avg_hr_stream_binding },
                 { name: ":hrt", value: Integer((hr_total).to_i64_wrap()) },
                 { name: ":hrd", value: Integer((hr_dropped).to_i64_wrap()) },
                 { name: ":wt", value: Integer((watts_total).to_i64_wrap()) },
@@ -1081,5 +1159,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 31
+    metrics_rev = 32
 }

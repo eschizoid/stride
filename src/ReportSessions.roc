@@ -44,6 +44,7 @@ ReportSessions :: [].{
                 \\       COALESCE(m.z1_s,0) AS z1_s, COALESCE(m.z2_s,0) AS z2_s, COALESCE(m.z3_s,0) AS z3_s,
                 \\       COALESCE(m.z4_s,0) AS z4_s, COALESCE(m.z5_s,0) AS z5_s,
                 \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
+                \\       CAST(COALESCE(m.avg_hr_stream, a.avg_hr, 0) AS REAL) AS avg_hr_scored,
                 \\       CAST(COALESCE(m.decoupling_pct, 0) AS REAL) AS decoupling_pct,
                 \\       CASE WHEN m.decoupling_pct IS NULL THEN 0 ELSE 1 END AS decoupling_known,
                 \\       COALESCE(CAST(m.decoupling_signal AS TEXT), '') AS decoupling_signal,
@@ -74,6 +75,7 @@ ReportSessions :: [].{
                 z4_s = Sqlite.i64("z4_s")(cols)(stmt)?
                 z5_s = Sqlite.i64("z5_s")(cols)(stmt)?
                 avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
+                avg_hr_scored = Sqlite.f64("avg_hr_scored")(cols)(stmt)?
                 # split into value + flag in SQL rather than a nullable decoder: 0.0 is a
                 # REAL result here (a perfectly steady session), so the flag is the only
                 # thing that separates "flat" from "no power meter" (#94)
@@ -85,7 +87,7 @@ ReportSessions :: [].{
                 hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
                 zones_known = Sqlite.i64("zones_known")(cols)(stmt)?
                 load_model = Sqlite.str("load_model")(cols)(stmt)?
-                Ok({ id, date, sport, family, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr, decoupling_pct, decoupling_known: decoupling_known != 0, decoupling_signal, power_known: power_known != 0, intensity_known: intensity_known != 0, hr_known: hr_known != 0, zones_known: zones_known != 0, load_model })
+                Ok({ id, date, sport, family, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr, avg_hr_scored, decoupling_pct, decoupling_known: decoupling_known != 0, decoupling_signal, power_known: power_known != 0, intensity_known: intensity_known != 0, hr_known: hr_known != 0, zones_known: zones_known != 0, load_model })
             },
         })?
         match List.first(rows) {
@@ -209,7 +211,7 @@ ReportSessions :: [].{
                     query:
                         \\SELECT CAST(COALESCE(m.normalized_power, 0) AS REAL) AS np,
                         \\       CASE WHEN m.normalized_power IS NULL THEN 0 ELSE 1 END AS np_known,
-                        \\       CAST(COALESCE(a2.avg_hr, 0) AS REAL) AS hr,
+                        \\       CAST(COALESCE(m.avg_hr_stream, a2.avg_hr, 0) AS REAL) AS hr,
                         \\       CAST(COALESCE(m.decoupling_pct, 0) AS REAL) AS dec_pct,
                         \\       CASE WHEN m.decoupling_pct IS NULL THEN 0 ELSE 1 END AS dec_known
                         \\FROM activities a2 JOIN activity_metrics m ON m.activity_id = a2.id
@@ -266,7 +268,14 @@ ReportSessions :: [].{
                 # rebuttal itself imprecise. The
                 # bound is `Metrics.valid_hr`, shared with the two `progress` lenses and with
                 # decoupling, so there is one definition of an impossible heart rate.
-                cur_ef = if a.power_known and a.hr_known and Metrics.valid_hr(a.avg_hr) a.np_w / a.avg_hr else 0.0
+                # `a.hr_known` is gone from this gate rather than joined by a second flag. It reads
+                # the STORED NULL, which is the documented `_known` contract and stays that way —
+                # but the divisor is now `avg_hr_scored`, and a session can carry an HR stream
+                # while its summary average is NULL, so the two no longer agree. The conjunct was
+                # redundant anyway: `COALESCE(...,0)` makes an absent reading 0.0 and `valid_hr`
+                # already refuses it. Dropping it cannot widen the old path; it is what lets a
+                # stream-only session score. (#311)
+                cur_ef = if a.power_known and Metrics.valid_hr(a.avg_hr_scored) a.np_w / a.avg_hr_scored else 0.0
                 # one metric block: current + own-history median + rank + change.
                 # percentile is direction-free (documented at Metrics.percentile_of).
                 # known = current-side presence AND a non-empty sample set; a
@@ -295,7 +304,7 @@ ReportSessions :: [].{
                     # `ef.known: false` rather than a number nothing marks. That is the
                     # marking half of #305: the reader gets an absent measurement instead of
                     # a 100th-percentile verdict computed from 18 bpm.
-                    ef: metric_block(ef_samples, cur_ef, a.power_known and a.hr_known and Metrics.valid_hr(a.avg_hr)),
+                    ef: metric_block(ef_samples, cur_ef, a.power_known and Metrics.valid_hr(a.avg_hr_scored)),
                     np: metric_block(np_samples, a.np_w, a.power_known),
                     decoupling: metric_block(dec_samples, a.decoupling_pct, a.decoupling_known),
                 }
@@ -336,6 +345,7 @@ ReportSessions :: [].{
                         power_bests: { w60: detail.best_60, w180: detail.best_180, w300: detail.best_300, w1200: detail.best_1200 },
                         max_hr: detail.max_hr,
                         avg_hr: a.avg_hr,
+                        avg_hr_scored: a.avg_hr_scored,
                         hr_known: a.hr_known,
                         # summary avg_hr can exist while NO zone breakdown does (no HR
                         # stream): an all-zero z-vector is absence unless zones_known
@@ -402,8 +412,31 @@ ReportSessions :: [].{
                         Stdout.line!("power  1min ${Render.fmt0(detail.best_60)}W · 3min ${Render.fmt0(detail.best_180)}W · 5min ${Render.fmt0(detail.best_300)}W · 20min ${Render.fmt0(detail.best_1200)}W")?
                     else
                         Ok({})?
+                    # the SCORED average, for the same reason `progress`'s hr column shows it:
+                    # this line sits on the screen that also prints an EF verdict, and the
+                    # two disagreeing with nothing to say which is which is the gap #311
+                    # opened. When they differ the recorded value is named beside it rather
+                    # than dropped — that number is what the device reported and the athlete
+                    # may be comparing against Strava.
+                    # Compared as RENDERED, not as floats. Deciding on unrounded values what to
+                    # print rounded made this note repeat itself — 161.461 against 161.2 is a
+                    # difference of 0.26 and prints "avg 161 (recorded 161)". Measured: the note
+                    # fired on 490 activities and said nothing on 336 of them.
+                    #
+                    # ...and only when a reading was actually RECORDED. A stream-only session
+                    # stores no average, `COALESCE` makes it 0.0, and "(recorded 0)" states a
+                    # measurement of zero where `avg 0` merely read as absent — the numeric-0
+                    # invariant in Output.roc and ADR 0009 is that a stored 0 here means NOT
+                    # AVAILABLE. `hr_known` is the field that answers whether one exists, which
+                    # is exactly what it is for.
+                    recorded_note =
+                        if !(a.hr_known) or Render.fmt0(a.avg_hr_scored) == Render.fmt0(a.avg_hr) {
+                            ""
+                        } else {
+                            " (recorded ${Render.fmt0(a.avg_hr)})"
+                        }
                     (if detail.max_hr > 0
-                        Stdout.line!("hr     max ${Render.fmt0(detail.max_hr)} · avg ${Render.fmt0(a.avg_hr)}")
+                        Stdout.line!("hr     max ${Render.fmt0(detail.max_hr)} · avg ${Render.fmt0(a.avg_hr_scored)}${recorded_note}")
                     else
                         Ok({}))?
                     # detected structure — absent line when nothing detected (honest absence)
@@ -1269,6 +1302,7 @@ ReportSessions :: [].{
                 \\SELECT COALESCE(CAST(a.name AS TEXT), '') AS name, a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, COALESCE(CAST(a.sport_type AS TEXT), '') AS sport,
                 \\       CAST(COALESCE(a.distance,0) AS REAL) AS distance_m, a.moving_time AS moving_time,
                 \\       CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w, CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
+                \\       CAST(COALESCE(m.avg_hr_stream, a.avg_hr, 0) AS REAL) AS avg_hr_scored,
                 \\       CAST(COALESCE(rt.rpe,0) AS REAL) AS rpe,
                 \\       CAST(COALESCE(a.avg_watts * a.moving_time / 1000.0, 0) AS REAL) AS output_kj,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss,
@@ -1291,13 +1325,14 @@ ReportSessions :: [].{
                 moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
                 np_w = Sqlite.f64("np_w")(cols)(stmt)?
                 avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
+                avg_hr_scored = Sqlite.f64("avg_hr_scored")(cols)(stmt)?
                 rpe = Sqlite.f64("rpe")(cols)(stmt)?
                 output_kj = Sqlite.f64("output_kj")(cols)(stmt)?
                 tss = Sqlite.f64("tss")(cols)(stmt)?
                 load_model = Sqlite.str("load_model")(cols)(stmt)?
                 dpct = Sqlite.f64("decoupling_pct")(cols)(stmt)?
                 dknown = Sqlite.i64("decoupling_known")(cols)(stmt)?
-                Ok({ name, date: row_date, sport, distance_m, moving_time, np_w, avg_hr, rpe, output_kj, tss, load_model, decoupling_pct: dpct, decoupling_known: dknown == 1, id: row_id })
+                Ok({ name, date: row_date, sport, distance_m, moving_time, np_w, avg_hr, avg_hr_scored, rpe, output_kj, tss, load_model, decoupling_pct: dpct, decoupling_known: dknown == 1, id: row_id })
             },
         })?
         # REFUSES, because `progress` does not list dates — it computes a TREND across them,
@@ -1469,6 +1504,7 @@ ReportSessions :: [].{
                         score: Metrics.lens_score(g.lens, r).ok_or(0.0),
                         np_w: r.np_w,
                         avg_hr: r.avg_hr,
+                        avg_hr_scored: r.avg_hr_scored,
                         distance_m: r.distance_m,
                         moving_time: r.moving_time,
                         rpe: r.rpe,

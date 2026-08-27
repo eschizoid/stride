@@ -201,7 +201,13 @@ respond! = |req, _ctx| {
         } else if Str.contains(uri, "/activities/501/") {
             # a realistic 1 Hz stream (1300 samples, constant 200W, HR sawtooth 120–179): long enough that
             # best_20min_w -> derived FTP 190 -> TSS ~110.8. See mock_power_stream_json.
-            Ok(mock_json(mock_power_stream_json(1300, 200)))
+            # 3600 samples, matching activity 501's declared moving_time. At 1300 the stream
+            # spanned 0.36 of the session and #311's coverage gate refused it — silently, since
+            # 501's only assertions are about TSS. 501 is this suite's one stream-only-HR ride,
+            # the case that change exists to enable, so any HR assertion added here would have
+            # quietly exercised the fallback instead. Lengthening the STREAM rather than
+            # shortening moving_time, which would move 501's pinned TSS.
+            Ok(mock_json(mock_power_stream_json(3600, 200)))
         } else if env_or!("E2E_BAD_STREAM", "") == "1" {
             # 200 with a body that is NOT UTF-8 — store_stream_response! returns
             # SkippedNonUtf8 and writes no row, so the id stays pending and retries
@@ -361,7 +367,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(993)?
+    checks_ran_exactly!(1016)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2458,6 +2464,173 @@ b_seed_analyze! = |ctx| {
     # `avg_hr` 140 instead of 18 reads 2 here.
     check!("...and its EF does not enter a neighbour's comparables, which would move the median", strjq!(ctx, ["activity", "101"], ".data.baselines.ef.sample_count") == "1")?
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (96,97,98,99); DELETE FROM activity_metrics WHERE activity_id IN (96,97,98,99); DELETE FROM activities WHERE id IN (96,97,98,99);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # ── #311: EF is scored from the STREAM's in-band mean, not the stored summary average.
+    #
+    # The 35-220 bound refuses a session whose STORED average is impossible. It is blind to
+    # one whose stored average is a plausible number computed from broken data, and on the
+    # real database those outnumber it 11 to 3 — measured again on a snapshot here: of 672
+    # stream-carrying sessions, 14 store an average more than 15 bpm from their own in-band
+    # stream mean and 11 of those sit inside the bound. One of the 11 is the highest
+    # remaining EF sample in #305's own headline example, which is why this is the other
+    # half of #305 rather than a smaller follow-on.
+    #
+    # 611 stores 86 and streams 150. 86 is PLAUSIBLE — that is the point, and it is what
+    # makes this fixture different from every HR fixture above it: the bound cannot see this
+    # row, so a check that only pins the bound passes whether or not #311 exists.
+    # moving_time 1300 to match the 1300-sample stream. The stream must SPAN the session or
+    # the coverage gate refuses it — which these fixtures discovered the hard way at 3600 s
+    # against a 1300 s stream, a span of 0.36 against the 0.5 the gate wants.
+    _ = seed_ride!(ctx.db, "611", "Stream HR Ride", "2026-02-10T09:00:00Z", "1300", "12000", "200", "86")
+    _ = seed_power_hr_stream!(ctx.db, 611, 1300, 200, 150)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # 200/150 = 1.3333 from the stream; 200/86 = 2.3256 from the summary. Asserted as a
+    # NUMBER rather than a bound, because "roughly right" would accept either divisor at a
+    # loose enough tolerance and both are the same order of magnitude.
+    check_near!("EF divides by the stream's in-band mean, not the stored average", sfloat(strjq!(ctx, ["activity", "611"], ".data.baselines.ef.current")), 200.0 / 150.0, 0.01)?
+    # ...and the stored value is still what the payload PUBLISHES. #311 changes scoring only;
+    # a reader comparing stride against Strava must still see the number the device reported,
+    # and `activity` is one of the surfaces documented as echoing it raw.
+    check!("...while the payload still publishes the stored average unchanged", strjq!(ctx, ["activity", "611"], ".data.avg_hr") == "86")?
+    # 612 is the same shape with an IMPOSSIBLE stored average. It carries two properties 611
+    # cannot: a row the bound already refused now scores, from its stream — and `hr_known`
+    # has something to be wrong about. Asserted on 611, that field is vacuous: 86 is
+    # plausible, so narrowing `_known` to mean usability would leave it true and the check
+    # would pass on the drift it claims to catch. 18 is the value that discriminates.
+    _ = seed_ride!(ctx.db, "612", "Stream HR Refused", "2026-02-11T09:00:00Z", "1300", "12000", "200", "18")
+    _ = seed_power_hr_stream!(ctx.db, 612, 1300, 200, 150)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check_near!("a session the bound REFUSED scores too, once its stream is read", sfloat(strjq!(ctx, ["activity", "612"], ".data.baselines.ef.current")), 200.0 / 150.0, 0.01)?
+    check!("...and it publishes an EF verdict again, which #305 had to withhold", strjq!(ctx, ["activity", "612"], ".data.baselines.ef.known") == "true")?
+    # ...and `hr_known` still decodes from the stored NULL rather than from usability. The
+    # gate on `cur_ef` dropped its `hr_known` conjunct — a session can stream HR with a NULL
+    # summary — so this pins that the FIELD did not move with it. Narrowing `_known` was
+    # rejected once already (AGENTS.md states the convention for all five companions).
+    # ...and the PROGRESS site, which is where the whole user-visible change lives and which
+    # had no check at all: deleting `m.avg_hr_stream, ` from that one query left the entire
+    # suite green. The unit expect pins `lens_score`'s field CHOICE against hand-built rows;
+    # nothing pinned that `progress` ever fills the field from the stream.
+    #
+    # 612 stores 18, so under the stored average the EF lens refuses it and the group reports
+    # it in `hidden_lens`. Scored from its 150 stream it appears in `sessions[]` instead, and
+    # the score is 200/150. Both halves asserted: a check on `hidden_lens` alone would pass if
+    # the row vanished entirely.
+    # ...and the COMPARABLES site, the third of the three scoring queries and the other one
+    # that was revertable in a single token while the suite stayed green. The two e2e checks
+    # above read `ef.current`, which comes from `cur_ef` — the anchor's own divisor — and
+    # never from the comparables set, so neither could see it.
+    #
+    # 612's only comparable is 611 (same family, same duration band, one day earlier), so its
+    # baseline median IS 611's EF sample and the assertion is exact rather than statistical.
+    # `sample_count` is pinned alongside because a median over the wrong NUMBER of rows can
+    # land on the right value by coincidence, and because it is what would change first if a
+    # later fixture drifted into this band.
+    check!("...and 612 has exactly one comparable, which is what makes the median exact", strjq!(ctx, ["activity", "612"], ".data.baselines.ef.sample_count") == "1")?
+    check_near!("the comparables site scores from the stream too, not the stored average", sfloat(strjq!(ctx, ["activity", "612"], ".data.baselines.ef.baseline_median")), 200.0 / 150.0, 0.001)?
+    check_near!("progress scores the row from the stream too, not only activity", sfloat(strjq!(ctx, ["progress", "2026-02-11"], "[.data.groups[] | select(.name == \"Stream HR Refused\") | .sessions[0].score] | first")), 200.0 / 150.0, 0.01)?
+    check!("...and it is in sessions[] rather than counted as hidden", strjq!(ctx, ["progress", "2026-02-11"], "[.data.groups[] | select(.name == \"Stream HR Refused\") | .hidden_lens] | first") == "0")?
+    # ...and the hr COLUMN shows the divisor. Showing the stored 18 beside a score of 1.33
+    # makes the legend under the table ("per heartbeat") false on that row, and puts the
+    # divisor nowhere the reader can reach.
+    check!("...and the payload publishes the divisor beside the stored reading", strjq!(ctx, ["progress", "2026-02-11"], "[.data.groups[] | select(.name == \"Stream HR Refused\") | .sessions[0] | \"\\(.avg_hr)/\\(.avg_hr_scored)\"] | first") == "18/150")?
+    check!("...and the human hr column shows the scored one, which the legend describes", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2026-02-11"]), "150"))?
+    check!("...while hr_known still reports what was RECORDED, not what was usable", strjq!(ctx, ["activity", "612"], ".data.hr_known") == "true")?
+    # ...and the COVERAGE GATE, which is what keeps this change from re-admitting the rows
+    # #305 removed. 613 is the shape the gate exists for: a 3600 s session carrying a stream
+    # that stops after 1300 s, which is what a strap dying mid-ride looks like. Its surviving
+    # samples average a perfectly plausible 150, so no bound would ever question the number —
+    # it is only unrepresentative, which is exactly the failure this column was introduced to
+    # fix and would otherwise have reproduced one table over.
+    #
+    # Measured on the real database before this gate existed: admitting such a row replaced a
+    # 1.385 EF outlier with a 1.400 one in #305's own headline example and handed the mean of
+    # a dead strap's first nine minutes to 33 other sessions' comparables.
+    _ = seed_ride!(ctx.db, "613", "Stream HR Truncated", "2026-02-12T09:00:00Z", "3600", "30000", "200", "18")
+    _ = seed_power_hr_stream!(ctx.db, 613, 1300, 200, 150)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("a stream that stops early is refused, not averaged over its surviving prefix", strjq!(ctx, ["activity", "613"], ".data.baselines.ef.known") == "false")?
+    check!("...and the row falls back to its stored reading, which the bound then refuses", strjq!(ctx, ["activity", "613"], ".data.baselines.ef.current") == "0")?
+    # ...and the gate's UPPER edge, which 613 cannot reach. 613 pins that a span of 0.36 is
+    # refused; nothing pinned that anything is ACCEPTED, so raising the threshold from 0.5 to
+    # 0.9 left the suite green while silently refusing 12 more real sessions — including
+    # 12841836491, the one whose 1.385 correction is this change's whole showcase.
+    #
+    # 614 is deliberately SPARSE: 289 samples every 5 s across 1440 s of a 2400 s ride. Two
+    # properties in one row. Span is 0.6, just over the threshold, so raising the threshold
+    # refuses it. And the sample COUNT is 289 against a session of 2400 s, so a count rule
+    # refuses it too — which is the only fixture here that can tell span from count, every
+    # other HR stream being 1 Hz where the two are the same number. Review swapped the rule
+    # for a count and the suite stayed green.
+    #
+    # A stored 18 so the row cannot score by falling back: if it scores at all, it scored
+    # from the stream, and the gate let it.
+    _ = seed_ride!(ctx.db, "614", "Stream HR Sparse", "2026-02-13T09:00:00Z", "2400", "20000", "200", "18")
+    _ = seed_sparse_power_hr_stream!(ctx.db, 614, 289, 5, 200, 150)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check_near!("a sparse stream that COVERS the session is accepted, unlike a dense one that stops", sfloat(strjq!(ctx, ["activity", "614"], ".data.baselines.ef.current")), 200.0 / 150.0, 0.01)?
+    check!("...and it publishes the divisor on the activity payload too, not only on progress", strjq!(ctx, ["activity", "614"], ".data.avg_hr_scored") == "150")?
+    # ...and the human line names BOTH, because it shares a screen with an EF verdict and the
+    # two numbers disagreeing with nothing to distinguish them is the gap this change opened.
+    # `progress` and `activity` printed 148 and 86 for one session with no label on either.
+    check!("...and the human line shows the scored average with the recorded one named", Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "614"]), "avg 150 (recorded 18)"))?
+    # ...and the gate's DENOMINATOR, which is `max(stream extent, moving_time)` rather than
+    # moving time alone. Reverting it to `row.mt` left the suite green: no fixture had a stream
+    # running longer than its session, so nothing could tell the two apart.
+    #
+    # 615 is the stop-heavy shape the max() is for — 1600 s of elapsed stream against 600 s of
+    # moving time, a ride with a long stop in it. Its strap is live for 500 s in the middle.
+    # Against moving_time alone that reads as 500/600 = 0.83 and passes comfortably; against
+    # the stream's own extent it is 500/1600 = 0.31 and is refused, which is the honest answer
+    # — 500 seconds of heart rate across a 1600-second recording is not coverage.
+    _ = seed_ride!(ctx.db, "615", "Stream HR Paused", "2026-02-14T09:00:00Z", "600", "6000", "200", "18")
+    _ = seed_windowed_hr_stream!(ctx.db, 615, 1601, 550, 1050, 200, 150)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # `avg_hr_scored` and `ef.current`, NOT `ef.known`. 615 has no comparables, so `known` is
+    # false whatever the gate does — the first version of this check asserted it and passed
+    # against the very mutation it was written to catch. `avg_hr_scored` states the gate's
+    # effect directly: 18 means it fell back to the stored reading.
+    check!("a long stop does not turn a short strap window into coverage", strjq!(ctx, ["activity", "615"], ".data.avg_hr_scored") == "18")?
+    check!("...and nothing is scored from it, which is what falling back to an 18 bpm reading means", strjq!(ctx, ["activity", "615"], ".data.baselines.ef.current") == "0")?
+    # ...and the two ways the recorded-note goes wrong, neither of which 614 can show: it
+    # differs from its stored reading by 132 bpm, so the note fires under any rule.
+    #
+    # 616 stores 150.4 against a 150 stream. The values differ by 0.4 — enough for a float
+    # comparison — but both RENDER as "150", so deciding on the unrounded pair prints
+    # "avg 150 (recorded 150)". Measured on the real database, that fired on 490 activities
+    # and said nothing on 336 of them.
+    _ = seed_ride!(ctx.db, "616", "Stream HR Rounds Same", "2026-02-15T09:00:00Z", "1300", "12000", "200", "150.4")
+    _ = seed_power_hr_stream!(ctx.db, 616, 1300, 200, 150)
+    # 617 records NO average at all — a stream-only session. `COALESCE` makes that 0.0, so an
+    # unguarded note prints "(recorded 0)", asserting a measurement of zero where `avg 0` had
+    # merely read as absent. The numeric-0 invariant (Output.roc, ADR 0009) is that a stored 0
+    # here means NOT AVAILABLE, and `hr_known` is the field that says so.
+    _ = seed_ride!(ctx.db, "617", "Stream HR Unrecorded", "2026-02-16T09:00:00Z", "1300", "12000", "200", "150")
+    _ = seed_power_hr_stream!(ctx.db, 617, 1300, 200, 150)
+    _ = sql!(ctx.db, "UPDATE activities SET avg_hr = NULL WHERE id = 617;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # Each of these two checks depends on a fixture LITERAL that nothing asserted, so a silent
+    # edit to either disarmed it while the suite stayed green — the same shape as 615's
+    # `ef.known` oracle, which was true for a reason other than the one it named. Review
+    # demonstrated both: retarget 617's UPDATE to a nonexistent id and its check starts passing
+    # by the rounding path instead of the hr_known path, after which the guard mutation is
+    # green too; change 616's stored 150.4 to 150 and the unrounded-comparison mutation is
+    # green. The preconditions are asserted from the same payload the checks already read.
+    check!("616 really does differ as a float while agreeing as a string, which is its whole point", strjq!(ctx, ["activity", "616"], ".data.avg_hr") == "150.4" and strjq!(ctx, ["activity", "616"], ".data.avg_hr_scored") == "150")?
+    check!("...and 617 really recorded nothing, so its check runs the hr_known path", strjq!(ctx, ["activity", "617"], ".data.hr_known") == "false")?
+    check!("the note stays silent when both values render the same", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "616"]), "(recorded")))?
+    check!("...and a session that recorded nothing is not given a recorded ZERO", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "617"]), "(recorded")))?
+    # ...and neither check is passing because the line vanished: 616 still prints its average.
+    check!("...while both still print the scored average itself", Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "616"]), "avg 150") and Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "617"]), "avg 150"))?
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id IN (616,617); DELETE FROM activity_segments WHERE activity_id IN (616,617); DELETE FROM activity_metrics WHERE activity_id IN (616,617); DELETE FROM activities WHERE id IN (616,617);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 615; DELETE FROM activity_segments WHERE activity_id = 615; DELETE FROM activity_metrics WHERE activity_id = 615; DELETE FROM activities WHERE id = 615;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 614; DELETE FROM activity_segments WHERE activity_id = 614; DELETE FROM activity_metrics WHERE activity_id = 614; DELETE FROM activities WHERE id = 614;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 613; DELETE FROM activity_segments WHERE activity_id = 613; DELETE FROM activity_metrics WHERE activity_id = 613; DELETE FROM activities WHERE id = 613;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 612; DELETE FROM activity_segments WHERE activity_id = 612; DELETE FROM activity_metrics WHERE activity_id = 612; DELETE FROM activities WHERE id = 612;")
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 611; DELETE FROM activity_segments WHERE activity_id = 611; DELETE FROM activity_metrics WHERE activity_id = 611; DELETE FROM activities WHERE id = 611;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # #93: ramp carries BOTH fields, and a short history reports an honest 0 rather than
     # today's whole CTL — which is what treating "no data 7 days back" as a CTL of 0 would
@@ -7053,6 +7226,50 @@ seed_power_stream! = |db, id, n, w| {
     _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
     {}
 }
+# power + HR where the HR is in band only inside a WINDOW, the rest of the samples reading 0.
+# The stream's extent and its usable span are then different numbers, which is the only way to
+# exercise the coverage gate's denominator: everywhere else the two coincide and `moving_time`
+# versus `max(extent, moving_time)` cannot be told apart.
+seed_windowed_hr_stream! : Str, I64, U64, U64, U64, U64, U64 => {}
+seed_windowed_hr_stream! = |db, id, n, lo, hi, w, hr| {
+    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
+    watts = Str.join_with(List.map(int_seq(n), |_| U64.to_str(w)), ",")
+    hrs = Str.join_with(List.map(int_seq(n), |i| U64.to_str(if i >= lo and i < hi hr else 0)), ",")
+    raw = "{\"time\":{\"data\":[${times}]},\"watts\":{\"data\":[${watts}]},\"heartrate\":{\"data\":[${hrs}]}}"
+    _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
+    {}
+}
+
+# power + HR at a SPARSE cadence: one sample every `step` seconds. Two things need this and
+# neither can be built from a 1 Hz stream. It separates SPAN from COUNT — every other HR
+# fixture here is 1 Hz, where the two are the same number, so the coverage gate's central
+# design decision was untestable — and it reaches the gate's upper edge, which a dense stream
+# can only approach by being short, which is the low edge again.
+seed_sparse_power_hr_stream! : Str, I64, U64, U64, U64, U64 => {}
+seed_sparse_power_hr_stream! = |db, id, n, step, w, hr| {
+    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i * step)), ",")
+    watts = Str.join_with(List.map(int_seq(n), |_| U64.to_str(w)), ",")
+    hrs = Str.join_with(List.map(int_seq(n), |_| U64.to_str(hr)), ",")
+    raw = "{\"time\":{\"data\":[${times}]},\"watts\":{\"data\":[${watts}]},\"heartrate\":{\"data\":[${hrs}]}}"
+    _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
+    {}
+}
+
+# power + HR stream: constant watts and constant HR. The point of the pair is that the
+# ride's STORED summary avg_hr is set independently by the fixture, so a check can make the
+# two disagree — which is the whole of #311. In the real data they disagree because of
+# dropout (a session storing 86.4 whose own stream means 147.7 across 42% missing samples);
+# a constant stream reproduces the disagreement without reproducing the dropout.
+seed_power_hr_stream! : Str, I64, U64, U64, U64 => {}
+seed_power_hr_stream! = |db, id, n, w, hr| {
+    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
+    watts = Str.join_with(List.map(int_seq(n), |_| U64.to_str(w)), ",")
+    hrs = Str.join_with(List.map(int_seq(n), |_| U64.to_str(hr)), ",")
+    raw = "{\"time\":{\"data\":[${times}]},\"watts\":{\"data\":[${watts}]},\"heartrate\":{\"data\":[${hrs}]}}"
+    _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
+    {}
+}
+
 # interval-shaped power stream: warmup, reps x (work_s @ work_w / rec_s @ rec_w), cooldown
 seed_interval_stream! : Str, I64 => {}
 seed_interval_stream! = |db, id| {
