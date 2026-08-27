@@ -214,7 +214,8 @@ if [ "${1:-}" = "--refresh" ]; then
   #
   # Temp files rather than `<(...)`: this is /bin/sh, and process substitution is a bashism
   # that parses as a syntax error here rather than failing at run time.
-  awk -F'\t' '$4=="doc" {print $1"  "$2}' "$PINS" | sort > "$tmp/was_doc"
+  tr -d '\r' < "$PINS" > "$tmp/pins.lf.refresh"
+  awk -F'\t' '$4=="doc" {print $1"  "$2}' "$tmp/pins.lf.refresh" | sort > "$tmp/was_doc"
   awk -F'\t' '$4!="doc" {print $1"  "$2}' "$tmp/new" | sort > "$tmp/now_not"
   comm -12 "$tmp/was_doc" "$tmp/now_not" > "$tmp/downgraded"
   if [ -s "$tmp/downgraded" ]; then
@@ -231,7 +232,14 @@ fi
 
 # ── Pin agreement. Any schema whose required set moved fails here, documented or not. ──
 cut -f1,2,3 "$tmp/sig.sorted" > "$tmp/sig.cmp"
-cut -f1,2,3 "$PINS" | sort -u > "$tmp/pins.cmp"
+# Read through an LF-normalised copy, never the file on disk. A `.gitattributes` `eol=lf`
+# asks the checkout to behave; this does not have to ask. Windows CI reported every pin line
+# as changed while the text was identical — the same shape as the collation bug one commit
+# earlier, reached through carriage returns, and a gate that certifies a checked-in artifact
+# should not depend on how the artifact was checked out.
+tr -d '\r' < "$PINS" > "$tmp/pins.lf"
+PINS_LF="$tmp/pins.lf"
+cut -f1,2,3 "$PINS_LF" | sort -u > "$tmp/pins.cmp"
 if ! diff -q "$tmp/sig.cmp" "$tmp/pins.cmp" >/dev/null 2>&1; then
   echo "skill-shapes: a schema's required set changed and $PINS does not agree."
   echo
@@ -263,7 +271,7 @@ while IFS="$(printf '\t')" read -r schema props req flag; do
       printf 'undocumented  %-12s %-18s %s is required and SKILL.md does not name it\n' \
         "$cmd" "$schema" "$rk" >> "$tmp/problems"
   done
-done < "$PINS"
+done < "$PINS_LF"
 
 # ── Direction 2: every brace literal in SKILL.md must match SOME schema object. ──
 #
