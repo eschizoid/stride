@@ -138,6 +138,16 @@ jobs:
       # a successful build anyway.
       - name: Check the commands the docs name against the command table
         run: sh tools/command-claims.sh
+      # The sibling check, and the reason it is here rather than only in the justfile: a
+      # recipe a human has to remember to type does not change how the two drifts this
+      # guards were found, which was a person reading the diff. `command-claims` resolves
+      # command NAMES; this resolves payload KEYS.
+      #
+      # The SCRIPT, not `just skill-shapes`, for consistency with the step above — though
+      # this one has no `build` dependency at all: it reads source, schemas and Markdown,
+      # never the binary and never a database.
+      - name: Check SKILL.md payload shapes against the schemas
+        run: sh tools/skill-shapes.sh
       # Cheap, and it guards a class that has rotted twice: a comment asserting an issue
       # is still open when the tracker says closed (#165 found `#105 remains open` sitting
       # 560 lines above the same file saying it was fixed). GITHUB_TOKEN is enough — it
