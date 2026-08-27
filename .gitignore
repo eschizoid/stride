@@ -24,3 +24,9 @@
 # local Strava account exports contain private activity data
 /export_*.zip
 .claude/CLAUDE.md
+
+# patch(1) leaves these behind, and a `git add -A` once committed a 591 KB stale copy of
+# the whole e2e suite — a SECOND, disagreeing test file with its own check tally, which a
+# grep for any check name returns alongside the real one.
+*.orig
+*.rej

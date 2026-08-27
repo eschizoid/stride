@@ -265,6 +265,24 @@ Output :: [].{
     # is the same defect this comment's own paragraph above records for 'garbage-da', one
     # value further along.
     #
+    # A BLOB `start_local` is the FOURTH instance and it is not fixed here: the parenthetical
+    # renders the decoded bytes, and no TEXT literal can ever match a BLOB, so
+    # `WHERE start_local = '<those bytes>'` matches zero rows by construction rather than by
+    # accident. And the bytes need not LOOK wrong: a BLOB holding valid UTF-8 quotes a
+    # perfectly plausible handle — review measured one rendering as ('2026-13-99'), with no
+    # replacement characters anywhere in the message. That is worse than visible garbage,
+    # because the user copies a normal-looking date into a DELETE, gets zero rows, and has
+    # no signal at all. It also rules out suppressing the quote by detecting replacement
+    # characters: that heuristic is blind to exactly this case, and a sound one would have
+    # to carry blob-ness through all nine call sites, which is the cost this file's own
+    # paragraph above already refuses for `start_local IS NULL`.
+    #
+    # Recorded rather than repaired, because the id-based remedy leads for exactly
+    # this reason and the handle is decorative in that case — but by this file's own standard,
+    # calling the parenthetical "the reproduction handle" is wrong for a BLOB, and saying so
+    # is what stops a fifth instance being written on the assumption it is right. These rows
+    # only reach this message at all because #296 stopped them crashing first.
+    #
     # It says NULL-or-empty rather than picking one, and that is deliberate rather than lazy:
     # the COALESCE has already collapsed the two by the time anything gets here, and the
     # distinction is not actionable — both repair the same way, by id. Carrying

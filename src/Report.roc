@@ -340,7 +340,7 @@ Report :: [].{
         act_days = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT COALESCE(substr(start_local, 1, 10), '') AS d, MIN(id) AS example_id
+                \\SELECT COALESCE(substr(CAST(start_local AS TEXT), 1, 10), '') AS d, MIN(id) AS example_id
                 \\FROM activities GROUP BY d ORDER BY d, example_id
             ,
             bindings: [],
@@ -398,7 +398,7 @@ Report :: [].{
         last_hard = Sqlite.query!({
             path: Path.utf8(path),
             query:
-                \\SELECT COALESCE(MAX(substr(a.start_local, 1, 10)), '') AS d
+                \\SELECT COALESCE(MAX(substr(CAST(a.start_local AS TEXT), 1, 10)), '') AS d
                 \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
                 \\WHERE ${hard_expr}
             ,
@@ -427,7 +427,7 @@ Report :: [].{
         hard_days = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT COALESCE(substr(a.start_local, 1, 10), '') AS d,
+                \\SELECT COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS d,
                 \\       -- carried so a refused date can name a row, as everywhere else in
                 \\       -- #243. MIN because DISTINCT on the date collapses several
                 \\       -- activities onto one day and the id has to be reproducible;
@@ -523,7 +523,7 @@ Report :: [].{
             query:
                 \\SELECT a.sport_type AS sport, COUNT(*) AS sessions, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
                 \\       COALESCE(SUM(a.moving_time),0) AS moving_time, CAST(COALESCE(SUM(a.distance),0) AS REAL) AS distance_m,
-                \\       COALESCE(MAX(substr(a.start_local, 1, 10)), '') AS last_date
+                \\       COALESCE(MAX(substr(CAST(a.start_local AS TEXT), 1, 10)), '') AS last_date
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\WHERE a.start_local >= :cutoff
                 \\GROUP BY a.sport_type ORDER BY tss DESC, a.sport_type

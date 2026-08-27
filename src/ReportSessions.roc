@@ -35,7 +35,7 @@ ReportSessions :: [].{
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, a.sport_type AS sport,
+                \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, a.sport_type AS sport,
                 \\       COALESCE(a.sport_family, a.sport_type) AS family, a.name AS name,
                 \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
@@ -434,7 +434,25 @@ ReportSessions :: [].{
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, ${Report.rankable_sql} AS rankable, a.sport_type AS sport, a.name AS name,
+            # `${Report.date_known_sql}` and `${Report.rankable_sql}` stay on the RAW column
+            # while the projection beside them is wrapped, and that divergence is load-bearing
+            # rather than an oversight anyone should tidy. `date(substr(blob,1,10))` returns
+            # TEXT and `substr(blob,1,10)` is a BLOB, so the `IS NOT` is true on the type
+            # mismatch and the flag correctly goes false. Wrapping them "for consistency"
+            # publishes `date_known: true` for a row that no bounded-range window — `week`,
+            # `compare`, a `season` month — can see, since those still compare the raw column:
+            # uncounted by `doctor`, unhoisted by the listing, a silent wrong answer at exit 0.
+            # That is strictly worse than the crash this change removed. Measured on a BLOB
+            # whose bytes CAST to a valid date, which is the value class that reaches it.
+            #
+            # `a.sport_type` and `a.name` are NOT wrapped, and that is a known gap rather than
+            # an audit: a BLOB in either crashes this same SELECT exactly as `start_local`
+            # did (#307). The repair for those is at the decode boundary, not another CAST
+            # per column, so it is tracked separately — but a reader seeing one wrapped
+            # column two tokens from two bare ones would otherwise reasonably conclude the
+            # whole projection had been checked. That inference is what produced the
+            # "three sites" estimate when there were five.
+                \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, ${Report.rankable_sql} AS rankable, a.sport_type AS sport, a.name AS name,
                 \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                 \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
@@ -627,7 +645,25 @@ ReportSessions :: [].{
                 rows = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
-                        \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, ${Report.rankable_sql} AS rankable, a.sport_type AS sport, a.name AS name,
+            # `${Report.date_known_sql}` and `${Report.rankable_sql}` stay on the RAW column
+            # while the projection beside them is wrapped, and that divergence is load-bearing
+            # rather than an oversight anyone should tidy. `date(substr(blob,1,10))` returns
+            # TEXT and `substr(blob,1,10)` is a BLOB, so the `IS NOT` is true on the type
+            # mismatch and the flag correctly goes false. Wrapping them "for consistency"
+            # publishes `date_known: true` for a row that no bounded-range window — `week`,
+            # `compare`, a `season` month — can see, since those still compare the raw column:
+            # uncounted by `doctor`, unhoisted by the listing, a silent wrong answer at exit 0.
+            # That is strictly worse than the crash this change removed. Measured on a BLOB
+            # whose bytes CAST to a valid date, which is the value class that reaches it.
+            #
+            # `a.sport_type` and `a.name` are NOT wrapped, and that is a known gap rather than
+            # an audit: a BLOB in either crashes this same SELECT exactly as `start_local`
+            # did (#307). The repair for those is at the decode boundary, not another CAST
+            # per column, so it is tracked separately — but a reader seeing one wrapped
+            # column two tokens from two bare ones would otherwise reasonably conclude the
+            # whole projection had been checked. That inference is what produced the
+            # "three sites" estimate when there were five.
+                        \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, ${Report.rankable_sql} AS rankable, a.sport_type AS sport, a.name AS name,
                         \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                         \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                         \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
@@ -777,7 +813,7 @@ ReportSessions :: [].{
         anchor = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, a.name AS name,
+                \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, a.name AS name,
                 \\       COALESCE(a.sport_family, a.sport_type) AS fam,
                 \\       COUNT(*) AS reps, CAST(AVG(s.dur_s) AS INTEGER) AS mean_dur,
                 \\       MIN(s.dur_s) AS min_dur, MAX(s.dur_s) AS max_dur,
@@ -1086,7 +1122,7 @@ ReportSessions :: [].{
         prows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.name AS name, a.id AS id, COALESCE(substr(a.start_local, 1, 10), '') AS date, COALESCE(a.sport_type, '') AS sport,
+                \\SELECT a.name AS name, a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, COALESCE(a.sport_type, '') AS sport,
                 \\       CAST(COALESCE(a.distance,0) AS REAL) AS distance_m, a.moving_time AS moving_time,
                 \\       CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w, CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
                 \\       CAST(COALESCE(rt.rpe,0) AS REAL) AS rpe,

@@ -272,7 +272,7 @@ Analyze :: [].{
                 \\-- scored from. rebuild_daily_load! then meets it through the metrics join
                 \\-- it just wrote, drops it from the walk, and refuses naming it — which is
                 \\-- also what stops an unscored NULL-dated row slipping past both guards.
-                \\SELECT a.id AS id, COALESCE(a.start_local, '') AS start, a.moving_time AS mt,
+                \\SELECT a.id AS id, COALESCE(CAST(a.start_local AS TEXT), '') AS start, a.moving_time AS mt,
                 \\       COALESCE(a.sport_type, '') AS sport,
                 \\       CAST(a.relative_effort AS REAL) AS re, CAST(a.avg_watts AS REAL) AS aw, CAST(a.avg_hr AS REAL) AS ahr,
                 \\       CAST(a.weighted_avg_watts AS REAL) AS waw, CAST(r.rpe AS REAL) AS rpe, s.raw_json AS raw,
@@ -938,7 +938,7 @@ Analyze :: [].{
         day_rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT COALESCE(substr(a.start_local, 1, 10), '') AS day, SUM(m.tss) AS t,
+                \\SELECT COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS day, SUM(m.tss) AS t,
                 \\       -- carried ONLY so an unreadable day can name a row the user can
                 \\       -- act on (#243): a date is not something you can delete or re-fetch,
                 \\       -- an id is. example_id cannot tie-break here — GROUP BY day already

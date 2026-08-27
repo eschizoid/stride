@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(955)?
+    checks_ran_exactly!(960)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3337,6 +3337,51 @@ b_seed_analyze! = |ctx| {
     # statement contradicting the engine, where before it was only a sort order.
     check!("...and `date_known` is false for the impossible day, holding SQL to the Roc rule", strjq!(ctx, ["activities"], "[.data[] | select(.id == 947) | .date_known] | join(\",\")") == "false")?
     check!("...while a readable row says true, so the flag is not simply always false", strjq!(ctx, ["activities"], "[.data[] | select(.date_known == true)] | length > 0") == "true")?
+    # ...and a BLOB `start_local`, which took the whole command down. `substr()` on a BLOB
+    # returns a BLOB, so the decode raised `UnexpectedType(Bytes)` and `activities` answered
+    # `internal_error` — the "please open an issue" path — for a row the athlete can see and
+    # delete. The listing whose entire job since #249 is surfacing rows that need repair was
+    # the one command that could not open the file.
+    #
+    # `config get` already reported the same class of cell as DATA (`tests/e2e.roc`'s own
+    # BLOB check pins that), so the codebase had decided the question and then contradicted
+    # itself one command over. `CAST(... AS TEXT)` makes the read total; the existing
+    # `date_known` predicate then rejects the value on its own terms (#296).
+    # id 952, not 951: `tests/e2e.roc:3350` already uses 951 for the "impossible minute"
+    # fixture. Safe today only because this block's DELETE runs first, which is a coupling
+    # nobody reading either block would see.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (952,'blob date','Ride','Ride',CAST(x'DEADBEEF' AS BLOB),3600);")
+    # The row-shape assertion runs FIRST. `check!` returns `Err` and the caller uses `?`, so
+    # whichever check runs first SHADOWS the rest under any mutation that breaks both — the
+    # crash check used to be first, and reverting the CAST failed it and stopped the run, so
+    # this one never executed and a mutation pass could not tell it from a vacuous check.
+    check!("a BLOB start_local surfaces as unreadable rather than vanishing", strjq!(ctx, ["activities"], "[.data[] | select(.id == 952) | (.date_known == false) and (.rankable == false)] | join(\",\")") == "true")?
+    check!("...and does not take the listing down", strjq!(ctx, ["activities"], ".data | length") != "" and !(Str.contains(strjq!(ctx, ["activities"], ".error.code // \"none\""), "internal_error")))?
+    # ...and the SIX other commands that read the same column through a different query.
+    # `activities` was the only one the first cut repaired: `summary`, `plan`, `stats`,
+    # `compare`, `season` and `week` all still answered `internal_error` on this exact row,
+    # because the fix was applied where the issue was REPORTED rather than everywhere the
+    # column is projected. Enumerated by running every command in the table against a
+    # planted BLOB, not by reading the source — 105 references across 12 files is not a list
+    # anyone reads correctly.
+    #
+    # `unreadable_activity_date` is the project's own graceful-degradation code, so this
+    # asserts the contract #296 asked for rather than merely the absence of a crash. The
+    # sharpest of the seven was `Report.roc:343`, `guard_activity_dates!` — the guard whose
+    # entire job is turning an unreadable date into that very code, killed by the thing it
+    # exists to catch.
+    blob_cmds = Str.trim(sh!("for c in summary plan stats compare season week; do HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $c 2>&1 | jq -r '.error.code // \"ok\"'; done | sort -u | tr '\n' ' '"))
+    # The exact SET is pinned, not just the absence of `internal_error`. Two codes appear:
+    # `unreadable_activity_date` from the activity reads, and `unreadable_daily_load_day`
+    # from the commands that go through `daily_load`, whose `day` column is rebuilt from
+    # `start_local` and so inherits the bad value. Both are the engine's own graceful codes.
+    # Asserting the set rather than a negation means a revert cannot pass by swapping one
+    # handled code for another — it has to keep both, and reverting any of the seven CASTs
+    # puts `internal_error` into the string.
+    check!("...and the six other commands reading that column degrade instead of crashing", blob_cmds == "unreadable_activity_date unreadable_daily_load_day")?
+    # deleted immediately: `doctor`'s undateable count is pinned at 4 twelve lines below, and
+    # a probe row that outlives its own checks moves a number asserted for another reason.
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 952;")
     # `doctor`'s COUNT, which is the whole of #265 and had nothing asserting its behaviour.
     # The schema loop validates the key's presence and type on `doctor` and `top`, so a
     # predicate that drifted to always-0 passed everything. All four SQL sites now share
@@ -3818,6 +3863,26 @@ b_seed_analyze! = |ctx| {
     _ = sql!(an_db, "DELETE FROM activity_metrics WHERE activity_id = 804; DELETE FROM activities WHERE id = 804;")
     _ = sh!("rm -rf '${an_home}'")
     _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = 'not-a-date';")
+    # ...and the SEVENTH wrapped site, `ReportSeason.roc:105`, which nothing covered.
+    # It goes HERE and not in `b_seed_analyze!` for one reason, and it is a POSITION
+    # reason rather than a fixture-content one: a BLOB sorts above every TEXT value, so
+    # `GROUP BY date, fam ORDER BY date, fam` reaches its group LAST, and `season` stops
+    # at the FIRST unreadable date it meets. Any other bad date in the table therefore
+    # answers before the BLOB is ever projected, and the check passes with the CAST
+    # reverted. `b_seed_analyze!` carries four malformed dates by design, which is why
+    # four attempts to site the check there each produced a vacuous one.
+    #
+    # At this line every activity date is usable, and that is not an assumption: the
+    # `activity 933` check twenty lines below only passes because 'garbage-da' is the
+    # LOWEST bad date present, which is false if any other exists. So the state this
+    # check needs is already asserted by a check that was here before it.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (953,'blob date','Ride','Ride',CAST(x'DEADBEEF' AS BLOB),3600);")
+    check!("a BLOB activity date is refused by name on `season`, not internal_error", strjq!(ctx, ["season"], ".error.code") == "unreadable_activity_date")?
+    # The anti-vacuity half, and the half that makes the mutation bite: the code alone
+    # would still read `unreadable_activity_date` if some OTHER row answered first, so
+    # only naming the row proves the walk reached the BLOB group and decoded it.
+    check!("...naming the BLOB row, which only a projection that reached it can do", Str.contains(strjq!(ctx, ["season"], ".error.message"), "activity 953"))?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 953;")
     # ...and the SAME rule on the other date-parsing site. Absorbing this one
     # dropped the activity from sessions, polarization AND the threshold range
     # with no trace at exit 0 -- a silent wrong answer rather than a loud refusal.

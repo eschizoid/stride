@@ -102,7 +102,7 @@ ReportSeason :: [].{
             pol_rows = Sqlite.query_many!({
                 path: Path.utf8(path),
                 query:
-                    \\SELECT COALESCE(substr(a.start_local, 1, 10), '') AS date,
+                    \\SELECT COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date,
                     \\       COALESCE(a.sport_family, a.sport_type) AS fam,
                     \\       COUNT(*) AS n,
                     \\       -- the house fallback (see zone_sum!): the pi_* split when the activity
