@@ -648,12 +648,22 @@ Render :: [].{
                 # removes the row from both. Review demonstrated it — an out-of-scope ride
                 # sitting inside a 131-day hole, and the marker still prints.
                 #
-                # It stays because the fold is the thing that would have to change if either
-                # list ever stopped tracking the other, and because folding the
-                # gap over it merges the intervals either side of a dropped ride into one and
-                # announces a break that did not happen — the legend and the comparison share
-                # `gap_days`, so the sentence the reader sees is a claim about TRAINING and
-                # an artifact here is a false statement rather than an ambiguous glyph.
+                # It stays because it is what makes the marker correct the moment the two
+                # lists stop tracking each other — it already handles divergence, so it is
+                # precisely what would NOT have to change. An earlier version of this
+                # sentence said it "would have to change", which inverts its own point.
+                #
+                # And the stakes: folding the gap over the filtered list merges the intervals
+                # either side of a dropped ride into one and announces a break that did not
+                # happen. The legend prints "a break over N days", so what the reader sees is
+                # a claim about TRAINING — an artifact here is a false statement rather than
+                # an ambiguous glyph.
+                #
+                # The N is `gap_days`, shared with the comparison below (#302), which means
+                # the printed threshold cannot drift from the tested one. That is a separate
+                # property from the one above, and an earlier version welded the two with a
+                # "so" — the sharing makes the number honest, not the sentence a claim about
+                # training.
                 with_gap =
                     if acc.prev > -1000000 and Metrics.max_real_gap(all_days, acc.prev, days) > gap_days {
                         List.append(acc.cells, gap_row)

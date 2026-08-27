@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(975)?
+    checks_ran_exactly!(979)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6280,8 +6280,50 @@ b_progress_b! = |ctx| {
     # positive and its counter-example: the row must be present AND must not print `0.0`
     # for a distance it does not have. `kJ` and `load` keep their bare 0 by design, so this
     # asserts the km column specifically rather than the absence of any zero.
-    check!("...and an unscored row with no distance shows the row", Str.contains(lone_h, "2025-06-15"))?
+    check!("...and an unscored row with no distance shows the row", Str.contains(lone_h, "│ 2025-06-15"))?
+    # The needle bakes in the column width — two trailing spaces, the padding for a 4-wide
+    # `km` column whose widest cell is `20.0`. It discriminates today, proved by reverting
+    # the blanking. Widen this fixture's distances past 100 km and the reverted cell renders
+    # `│ 0.0   │`, the needle stops matching, and the check goes quiet with its paired
+    # positive still green. Whoever edits these distances has to re-run the revert.
     check!("...with its km cell blank rather than a fabricated 0.0", !(Str.contains(lone_h, "│ 0.0  │")))?
+    # ...and the other two blanked columns, which the group above cannot reach: it takes the
+    # speed/HR lens, so its table has no `np (W)` column and no `duration` column at all.
+    # Review proved the gap by reverting each blanking alone — `km` failed its check, `np`
+    # and `duration` left the whole suite green at 972. One composite mutation had caught
+    # all three, which is exactly how a fixture that covers one third of a fix looks like a
+    # fixture that covers it.
+    #
+    # `np` is the column the issue's own sentence names, and the one whose fabricated `0`
+    # opened this review. An EF group needs power somewhere to pick that lens, so 261 and
+    # 263 carry it and 262 does not.
+    _ = seed_ride!(ctx.db, "261", "Power Gap Ride", "2025-08-01T08:00:00Z", "3600", "20000", "150", "140")
+    _ = seed_ride!(ctx.db, "263", "Power Gap Ride", "2025-08-15T08:00:00Z", "3600", "20000", "160", "145")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (262,'Power Gap Ride','Ride','2025-08-08T08:00:00Z',3600,20000,142);")
+    _ = seed_power_stream!(ctx.db, 261, 1300, 150)
+    _ = seed_power_stream!(ctx.db, 263, 1300, 160)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    np_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-08-15"])
+    check!("a row with no power renders in an EF table", Str.contains(np_h, "│ 2025-08-08"))?
+    check!("...with its np cell blank rather than a fabricated 0", !(Str.contains(np_h, "│ 0      │")))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (261,262,263); DELETE FROM streams WHERE activity_id IN (261,262,263); DELETE FROM activities WHERE id IN (261,262,263);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # ...and `duration`, on the case the comment beside it already describes: a RATED row —
+    # so `lens_score(Rpe, r)` accepts it and it scores a full bar — carrying moving_time 0.
+    # That is why its blanking cannot borrow the neighbours' "unreachable on a scored row"
+    # argument, and why it needs its own oracle rather than theirs.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (264,'Mobility Block','Workout','2025-09-02T08:00:00Z',1800,0),(265,'Mobility Block','Workout','2025-09-09T08:00:00Z',0,0);")
+    _ = sql!(ctx.db, "INSERT INTO ratings (activity_id,rpe,rated_at) VALUES (264,6.0,'2025-09-02'),(265,5.0,'2025-09-09');")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    dur_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-09-09"])
+    check!("a rated row with no duration still scores, so it renders", Str.contains(dur_h, "│ 2025-09-09"))?
+    # `│ 0m`, not `0m`: the sibling row is 1800 seconds and renders `30m`, which CONTAINS
+    # `0m`. The first needle here was that substring and failed against a correct build —
+    # the same collision class as `"1 hidden"` matching `"11 hidden"`, which this suite has
+    # now hit three times in three different columns.
+    check!("...with its duration cell blank rather than a fabricated 0m", !(Str.contains(dur_h, "│ 0m")))?
+    _ = sql!(ctx.db, "DELETE FROM ratings WHERE activity_id IN (264,265); DELETE FROM activity_metrics WHERE activity_id IN (264,265); DELETE FROM activities WHERE id IN (264,265);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (251,252,253); DELETE FROM activities WHERE id IN (251,252,253);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (217,218); DELETE FROM activities WHERE id IN (217,218);")
