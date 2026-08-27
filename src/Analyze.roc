@@ -631,6 +631,21 @@ Analyze :: [].{
         # empty when the stream is estimated — so the wholesale #73 exclusion contributes
         # 0 dropped of 0 total rather than reading as 100% junk. Only samples a validity
         # filter rejected are counted as dropped.
+        # The in-band mean of the stream, which is the number the SCORING lenses divide by
+        # when it exists (#311). `hr_pairs` is already `valid_hr`-filtered, so this is a mean
+        # over exactly the samples the engine believes — dropout and sensor-dead stretches
+        # are gone rather than averaged in, which is the whole failure this addresses: a
+        # session storing 86.4 whose own stream means 147.7 across 42% dropout.
+        #
+        # NULL, never 0.0, when there is nothing to average: 0.0 is not a possible heart rate
+        # but it IS what `COALESCE(...,0)` produces at every read site, so a stored 0 would be
+        # indistinguishable from "no stream" only by accident. Absence stays absence.
+        avg_hr_stream_binding =
+            if List.is_empty(hr_pairs) {
+                Null
+            } else {
+                Real(List.fold(hr_pairs, 0.0, |acc, p| acc + p.v) / (List.len(hr_pairs)).to_f64())
+            }
         hr_total = List.len(hr_raw)
         hr_dropped = hr_total - List.len(hr_pairs)
         watts_total = List.len(watts_raw)
@@ -812,8 +827,8 @@ Analyze :: [].{
             path: Path.utf8(path),
             query:
                 \\INSERT OR REPLACE INTO activity_metrics
-                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped, mt_used, dist_used, elev_used, aw_used, ahr_used, waw_used, re_used, dw_used, sport_used, start_used, stream_len_used, decoupling_pct, decoupling_signal)
-                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :thru, :hrt, :hrd, :wt, :wd, :umt, :udist, :uelev, :uaw, :uahr, :uwaw, :ure, :udw, :usport, :ustart, :uslen, :decoup, :dsig)
+                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped, mt_used, dist_used, elev_used, aw_used, ahr_used, waw_used, re_used, dw_used, sport_used, start_used, stream_len_used, decoupling_pct, decoupling_signal, avg_hr_stream)
+                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :thru, :hrt, :hrd, :wt, :wd, :umt, :udist, :uelev, :uaw, :uahr, :uwaw, :ure, :udw, :usport, :ustart, :uslen, :decoup, :dsig, :ahrs)
             ,
             bindings: [
                 { name: ":umt", value: Integer(row.s_mt) },
@@ -831,6 +846,7 @@ Analyze :: [].{
                 # here (a perfectly steady session) and the two must stay distinguishable
                 { name: ":decoup", value: match decoupling { Known(d) => Real(d)  Unknown => Null } },
                 { name: ":dsig", value: decoupling_signal_val },
+                { name: ":ahrs", value: avg_hr_stream_binding },
                 { name: ":hrt", value: Integer((hr_total).to_i64_wrap()) },
                 { name: ":hrd", value: Integer((hr_dropped).to_i64_wrap()) },
                 { name: ":wt", value: Integer((watts_total).to_i64_wrap()) },
@@ -1081,5 +1097,5 @@ Analyze :: [].{
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
     # zones_used) can't catch algorithm changes
-    metrics_rev = 31
+    metrics_rev = 32
 }

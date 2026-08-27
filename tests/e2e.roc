@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(993)?
+    checks_ran_exactly!(998)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2458,6 +2458,48 @@ b_seed_analyze! = |ctx| {
     # `avg_hr` 140 instead of 18 reads 2 here.
     check!("...and its EF does not enter a neighbour's comparables, which would move the median", strjq!(ctx, ["activity", "101"], ".data.baselines.ef.sample_count") == "1")?
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (96,97,98,99); DELETE FROM activity_metrics WHERE activity_id IN (96,97,98,99); DELETE FROM activities WHERE id IN (96,97,98,99);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # ── #311: EF is scored from the STREAM's in-band mean, not the stored summary average.
+    #
+    # The 35-220 bound refuses a session whose STORED average is impossible. It is blind to
+    # one whose stored average is a plausible number computed from broken data, and on the
+    # real database those outnumber it 11 to 3 — measured again on a snapshot here: of 672
+    # stream-carrying sessions, 14 store an average more than 15 bpm from their own in-band
+    # stream mean and 11 of those sit inside the bound. One of the 11 is the highest
+    # remaining EF sample in #305's own headline example, which is why this is the other
+    # half of #305 rather than a smaller follow-on.
+    #
+    # 611 stores 86 and streams 150. 86 is PLAUSIBLE — that is the point, and it is what
+    # makes this fixture different from every HR fixture above it: the bound cannot see this
+    # row, so a check that only pins the bound passes whether or not #311 exists.
+    _ = seed_ride!(ctx.db, "611", "Stream HR Ride", "2026-02-10T09:00:00Z", "3600", "30000", "200", "86")
+    _ = seed_power_hr_stream!(ctx.db, 611, 1300, 200, 150)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # 200/150 = 1.3333 from the stream; 200/86 = 2.3256 from the summary. Asserted as a
+    # NUMBER rather than a bound, because "roughly right" would accept either divisor at a
+    # loose enough tolerance and both are the same order of magnitude.
+    check_near!("EF divides by the stream's in-band mean, not the stored average", sfloat(strjq!(ctx, ["activity", "611"], ".data.baselines.ef.current")), 200.0 / 150.0, 0.01)?
+    # ...and the stored value is still what the payload PUBLISHES. #311 changes scoring only;
+    # a reader comparing stride against Strava must still see the number the device reported,
+    # and `activity` is one of the surfaces documented as echoing it raw.
+    check!("...while the payload still publishes the stored average unchanged", strjq!(ctx, ["activity", "611"], ".data.avg_hr") == "86")?
+    # 612 is the same shape with an IMPOSSIBLE stored average. It carries two properties 611
+    # cannot: a row the bound already refused now scores, from its stream — and `hr_known`
+    # has something to be wrong about. Asserted on 611, that field is vacuous: 86 is
+    # plausible, so narrowing `_known` to mean usability would leave it true and the check
+    # would pass on the drift it claims to catch. 18 is the value that discriminates.
+    _ = seed_ride!(ctx.db, "612", "Stream HR Refused", "2026-02-11T09:00:00Z", "3600", "30000", "200", "18")
+    _ = seed_power_hr_stream!(ctx.db, 612, 1300, 200, 150)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check_near!("a session the bound REFUSED scores too, once its stream is read", sfloat(strjq!(ctx, ["activity", "612"], ".data.baselines.ef.current")), 200.0 / 150.0, 0.01)?
+    check!("...and it publishes an EF verdict again, which #305 had to withhold", strjq!(ctx, ["activity", "612"], ".data.baselines.ef.known") == "true")?
+    # ...and `hr_known` still decodes from the stored NULL rather than from usability. The
+    # gate on `cur_ef` dropped its `hr_known` conjunct — a session can stream HR with a NULL
+    # summary — so this pins that the FIELD did not move with it. Narrowing `_known` was
+    # rejected once already (AGENTS.md states the convention for all five companions).
+    check!("...while hr_known still reports what was RECORDED, not what was usable", strjq!(ctx, ["activity", "612"], ".data.hr_known") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 612; DELETE FROM activity_segments WHERE activity_id = 612; DELETE FROM activity_metrics WHERE activity_id = 612; DELETE FROM activities WHERE id = 612;")
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 611; DELETE FROM activity_segments WHERE activity_id = 611; DELETE FROM activity_metrics WHERE activity_id = 611; DELETE FROM activities WHERE id = 611;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # #93: ramp carries BOTH fields, and a short history reports an honest 0 rather than
     # today's whole CTL — which is what treating "no data 7 days back" as a CTL of 0 would
@@ -7054,6 +7096,21 @@ seed_power_stream! = |db, id, n, w| {
     {}
 }
 # interval-shaped power stream: warmup, reps x (work_s @ work_w / rec_s @ rec_w), cooldown
+# power + HR stream: constant watts and constant HR. The point of the pair is that the
+# ride's STORED summary avg_hr is set independently by the fixture, so a check can make the
+# two disagree — which is the whole of #311. In the real data they disagree because of
+# dropout (a session storing 86.4 whose own stream means 147.7 across 42% missing samples);
+# a constant stream reproduces the disagreement without reproducing the dropout.
+seed_power_hr_stream! : Str, I64, U64, U64, U64 => {}
+seed_power_hr_stream! = |db, id, n, w, hr| {
+    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
+    watts = Str.join_with(List.map(int_seq(n), |_| U64.to_str(w)), ",")
+    hrs = Str.join_with(List.map(int_seq(n), |_| U64.to_str(hr)), ",")
+    raw = "{\"time\":{\"data\":[${times}]},\"watts\":{\"data\":[${watts}]},\"heartrate\":{\"data\":[${hrs}]}}"
+    _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
+    {}
+}
+
 seed_interval_stream! : Str, I64 => {}
 seed_interval_stream! = |db, id| {
     wtt = |i| {
