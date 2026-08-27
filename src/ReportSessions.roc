@@ -245,8 +245,14 @@ ReportSessions :: [].{
                 dec_samples = List.map(List.keep_if(comps, |c| c.dec_known), |c| c.dec_pct)
                 # flags first (ADR 0009), magnitude second (division guard)
                 # #294 taught `progress` to disbelieve these numbers and `activity` went on
-                # building a verdict on them, which is the sentence #294's own commit message
-                # used about the codebase before it — it moved rather than went away. The
+                # building a verdict on them, which is the sentence the commit closing #294
+                # used about the codebase before it — it moved rather than went away.
+                #
+                # Review reported that attribution as false, saying no commit message
+                # contains the sentence. Checked rather than taken: `80465b4`, the squash
+                # that closed #294 and #300, carries it verbatim in its body. The claim
+                # stands, and it is recorded here because adopting that correction would
+                # have replaced a true sentence with a false one. The
                 # bound is `Metrics.valid_hr`, shared with the two `progress` lenses and with
                 # decoupling, so there is one definition of an impossible heart rate.
                 cur_ef = if a.power_known and a.hr_known and Metrics.valid_hr(a.avg_hr) a.np_w / a.avg_hr else 0.0

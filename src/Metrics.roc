@@ -1215,7 +1215,7 @@ Metrics :: [].{
     # carrying activities, 14 store an average more than 15 bpm below their in-band stream
     # mean and 11 of those are inside 35-220, so this bound refuses 3 and misses 11. The
     # root-cause version scores from the stream-derived in-band mean when a stream exists,
-    # which the engine already computes for decoupling. Tracked in #305.
+    # which the engine already computes for decoupling. Tracked in #311, which is where the root-cause version lives; #305 fixed only the half this bound can see.
     expect Metrics.valid_hr(140.0)
     expect !(Metrics.valid_hr(18.0)) and !(Metrics.valid_hr(31.3))
     expect !(Metrics.valid_hr(0.0)) and !(Metrics.valid_hr(221.0))

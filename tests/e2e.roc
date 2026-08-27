@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(965)?
+    checks_ran_exactly!(966)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2307,7 +2307,7 @@ b_seed_analyze! = |ctx| {
     # `delta_pct 685%` and `percentile 100` (#305).
     #
     # Probe 96 is comparable to 101 in every way that matters — same family, same duration
-    # band, five days earlier, real watts — and differs only in carrying an 18 bpm average.
+    # band, three days earlier, real watts — and differs only in carrying an 18 bpm average.
     # Two separate sites have to hold, and the two checks below are chosen to separate them:
     # the `known` flag on the row's OWN block, and the row's exclusion from a NEIGHBOUR's
     # comparables. The second is the one that matters more, because an impossible sample in
@@ -2315,7 +2315,14 @@ b_seed_analyze! = |ctx| {
     # session is ranked against.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr,device_watts) SELECT 96,'impossible hr probe','Ride',date(start_local,'-3 days')||'T09:00:00Z',3550,28000,185,185,18,1 FROM activities WHERE id=101;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # THREE sites, not two, and the comment used to say two. The `known` flag and the
+    # `cur_ef` arithmetic are separate expressions, and review proved it by reverting only
+    # `cur_ef`: the suite stayed green at 965 while `activity 13048476454` published
+    # `ef.current 6.595` again — the exact number in the issue title, back in the payload
+    # with `known: false` beside it. A flag that says "do not trust this" does not make the
+    # value beside it harmless; something reads the number.
     check!("an 18 bpm session publishes no EF verdict of its own", strjq!(ctx, ["activity", "96"], ".data.baselines.ef.known") == "false")?
+    check!("...and no EF NUMBER either, which the flag alone does not guarantee", strjq!(ctx, ["activity", "96"], ".data.baselines.ef.current") == "0")?
     # `sample_count`, not the median: the count is what the comparables filter changes, and
     # it discriminates. Probe 96 carries real watts and a real duration, so with a plausible
     # heart rate it WOULD be 101's second EF comparable — measured, the same fixture with
