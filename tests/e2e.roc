@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(953)?
+    checks_ran_exactly!(955)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -5829,7 +5829,9 @@ b_progress_b! = |ctx| {
     # reach for "revert the rule and neutralise the earlier checks": `check!` returns `Err`
     # into a `?`, so the first failure aborts the run and shadows everything after it, and
     # neutralising by DELETING a check orphans its binding and turns the run into a build
-    # failure that prints nothing like a failed suite. Both traps were hit writing this.
+    # failure that prints nothing like a failed suite. Neutralise by changing a CONDITION,
+    # never by deleting the line — the condition form is a legitimate technique and the only
+    # option for a check with no single-branch string to mutate. Both traps were hit here.
     _ = seed_ride!(ctx.db, "275", "Evening Ride", "2025-05-12T18:00:00Z", "3600", "20000", "158", "20")
     _ = seed_power_stream!(ctx.db, 275, 1300, 158)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
@@ -5853,6 +5855,31 @@ b_progress_b! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("...and its plural verb, which is what 27 of the 35 real groups print", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-06-16"]), "1 a different distance for this workout, 2 need distance and HR"))?
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (281,282,283,284,285); DELETE FROM activities WHERE id IN (281,282,283,284,285);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # ...and the THIRD arm. I was about to write that the Rpe combined arm is unreachable by
+    # construction, on the strength of an earlier finding that `LoneNoDistance` plus a lens
+    # drop cannot happen — that kind truncates `rows` to the anchor, so a lens drop empties
+    # `kept` into `Err(Skip)`. Review showed the reasoning conflates a KIND with a LENS. The
+    # combined arm is reached through `SimilarDistance`, a different kind, and `Rpe` is a
+    # lens; nothing about the lens decides which kind `anchor_filter` returns.
+    #
+    # The real constraint is the non-obvious part and is why this fixture looks the way it
+    # does: NO row may be SpeedHr-scorable. Every row here carries distance and moving_time,
+    # so that means no row may carry a valid HR — `progress_lens` picks SpeedHr on
+    # `List.any`, and one strapped session anywhere in the group takes the lens away from
+    # Rpe. A pool swim logged without a strap, which is not contrived: the real database has
+    # 20 rpe-lens groups, one already auto-named and one recorded distance away from
+    # rendering this exact arm.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (291,'Evening Swim','Swim','2025-07-01T18:00:00Z',3600,2000),(292,'Evening Swim','Swim','2025-07-08T18:00:00Z',3600,9000),(293,'Evening Swim','Swim','2025-07-15T18:00:00Z',3600,2000),(294,'Evening Swim','Swim','2025-07-22T18:00:00Z',3600,2000),(295,'Evening Swim','Swim','2025-07-29T18:00:00Z',3600,2000);")
+    _ = sql!(ctx.db, "INSERT INTO ratings (activity_id,rpe,rated_at) VALUES (291,7.0,'2025-07-01'),(295,6.0,'2025-07-29');")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("the rpe arm renders its plural verb too", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-29"]), "1 a different distance for this workout, 2 need a rating"))?
+    _ = sql!(ctx.db, "INSERT INTO ratings (activity_id,rpe,rated_at) VALUES (294,5.0,'2025-07-22');")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("...and its singular verb, so all three lenses are pinned on both sides of the count", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-29"]), "1 a different distance for this workout, 1 needs a rating"))?
+    # `ratings` too: this is the first fixture in the driver to write there, so no existing
+    # cleanup covers it and the rows would survive into every later check.
+    _ = sql!(ctx.db, "DELETE FROM ratings WHERE activity_id IN (291,292,293,294,295); DELETE FROM activity_metrics WHERE activity_id IN (291,292,293,294,295); DELETE FROM activities WHERE id IN (291,292,293,294,295);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (271,272,273,274,275); DELETE FROM streams WHERE activity_id IN (271,272,273,274,275); DELETE FROM activities WHERE id IN (271,272,273,274,275);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])

@@ -263,10 +263,10 @@ means for every date below. `stride config unset <key> --json` REMOVES a stored 
   invalidates its metrics (re-`analyze` rescores). Ratings live in their own table
   and survive re-syncs.
 - Junk HR (outside 35–220 bpm) is filtered at analyze time for stream SAMPLES, so sessions with bad straps
-- The same 35–220 bound is applied again at REPORT time, to a session's stored `avg_hr`, by `progress`'s EF and speed/HR lenses. That one does not touch TSS — it decides whether a session can be scored and trended at all, and a session it refuses is counted in `hidden_lens` rather than shown.
   (common on Peloton strength workouts) get near-0 TSS — that's honest "no data", not
   zero effort. Weigh strength by session count, not TSS. `avg_hr` in `activities` output
   is raw (unfiltered).
+- The same 35–220 bound is applied again at REPORT time, to a session's stored `avg_hr`, by `progress`'s EF and speed/HR lenses. That one does not touch TSS — it decides whether a session can be scored and trended at all, and a session it refuses is counted in `hidden_lens` rather than shown.
 - `created_at` in planned sessions is an ISO datetime string (UTC, e.g. `2026-07-27T18:04:22Z`).
 - Streams are drained by `sync` until the read budget stops it; older activities gain zone data over
   repeated syncs. `sqlite3 ~/.stride/db.sqlite "SELECT COUNT(*) FROM streams"` shows progress.
