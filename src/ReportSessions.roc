@@ -1249,8 +1249,12 @@ ReportSessions :: [].{
             #
             # What that logic protected is not lost: the number agreement moved into
             # `Metrics.lens_needs`, which `Render` calls with the count it is actually
-            # describing. One definition instead of two, which is also what stops the
-            # payload's wording and the human line's from drifting apart.
+            # describing. One definition instead of two — and NOT, as an earlier version of
+            # this sentence said, what stops the payload's wording and the human line's from
+            # drifting apart: the payload has no wording. That claim was retracted where
+            # `lens_needs` is defined and left standing here, so the two files contradicted
+            # each other about the same function. Fixed where it was demonstrated rather
+            # than where it lives, which is the shape this branch keeps repeating.
             #
             # The PAYLOAD is untouched by any of this. `hidden`, `hidden_lens` and
             # `hidden_scope` mean exactly what they meant, because `sessions[]` still holds

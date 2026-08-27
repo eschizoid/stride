@@ -558,8 +558,8 @@ Render :: [].{
         sc = |row| Metrics.lens_score(lens, row).ok_or(0.0)
         # `rows` now arrives BEFORE the lens gate, so the table can show a session the lens
         # cannot score rather than deleting it (#286). Everything that reasons about VALUE —
-        # the scale, the trend, the session count in the verdict, and last-vs-best — reads
-        # `scored_rows` instead,
+        # the scale, the trend, the session count in the verdict, and last-vs-best —
+        # reads `scored_rows` instead,
         # because `ok_or(0.0)` would otherwise fold a 0 into the mean and squash the bars
         # against a floor no session actually reached.
         scored_rows = List.keep_if(rows, |r| Metrics.lens_score(lens, r).is_ok())
@@ -621,6 +621,12 @@ Render :: [].{
                     ("load", |row| fmt0(row.tss)),
                 ]
                 Rpe => [
+                    # "-" at zero here too, but NOT for the reason the two columns above
+                    # give. `lens_score(Rpe, r)` requires only `rpe > 0` and says nothing
+                    # about duration, so a fully SCORED row can carry 0 — review found one
+                    # rendering a full bar beside this cell. `0m` was never a measurement
+                    # either way, so the blank is right; the justification is different, and
+                    # inheriting the neighbours' one would have been a false claim.
                     ("duration", |row| if row.moving_time > 0 mins(row.moving_time) else "-"),
                     ("hr", hr_of),
                     ("rpe", prim_of),
@@ -635,13 +641,19 @@ Render :: [].{
                 days = Metrics.date_str_to_days(row.date).ok_or(acc.prev)
                 # ...against the UNFILTERED series, not against the rows that survived the
                 # lens. `rows` no longer has unscorable sessions removed — #286 made them
-                # render — so `rows` and `all_days` now describe the same set in production
-                # and this fold is an identity there. It stays because the SCOPE gate can
-                # still truncate the group, and because folding the
+                # render — so `rows` and `all_days` describe the same set in production and
+                # this fold is an identity there. The SCOPE gate does not change that, though
+                # an earlier version of this comment claimed it did: `anchor_filter` truncates
+                # BEFORE `all_days` is derived from the same post-scope list, so a scope drop
+                # removes the row from both. Review demonstrated it — an out-of-scope ride
+                # sitting inside a 131-day hole, and the marker still prints.
+                #
+                # It stays because the fold is the thing that would have to change if either
+                # list ever stopped tracking the other, and because folding the
                 # gap over it merges the intervals either side of a dropped ride into one and
-                # announces a break that did not happen — the legend says "a break over 90
-                # days", a claim about training, so an artifact here is a false statement
-                # rather than an ambiguous glyph.
+                # announces a break that did not happen — the legend and the comparison share
+                # `gap_days`, so the sentence the reader sees is a claim about TRAINING and
+                # an artifact here is a false statement rather than an ambiguous glyph.
                 with_gap =
                     if acc.prev > -1000000 and Metrics.max_real_gap(all_days, acc.prev, days) > gap_days {
                         List.append(acc.cells, gap_row)

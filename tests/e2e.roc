@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(973)?
+    checks_ran_exactly!(975)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6130,12 +6130,20 @@ b_progress_b! = |ctx| {
     # The assertion pins the FULL clause, not `"1 hidden"`. Review mutation-proved the
     # weakness: with ten more HR-less rides the render said "(11 hidden: needs power
     # and HR)" and this check still printed ok, because `"11 hidden"` contains `"1 hidden"`.
-    # #286 reworded the clause; the full-clause property is what carried over, not the words. The stronger form is already the house style one file over, in
-    # `Render.roc`'s own expect. A check whose name overstates its assertion is the exact
-    # failure this PR exists to remove.
-    # The clause moved from "hidden" to "shown unscored" in #286, because the row is in the
-    # table now — but the assertion keeps the property #293 gave it: the FULL clause, so it
-    # cannot pass on "11 shown unscored" the way "1 hidden" once passed on "11 hidden".
+    # The stronger form is already the house style one file over, in `Render.roc`'s own
+    # expect. A check whose name overstates its assertion is the exact failure this PR
+    # exists to remove.
+    #
+    # #286 then reworded the clause from "hidden" to "shown unscored", because the row is in
+    # the table now. The property #293 gave this check is what carried over, not the words:
+    # the FULL clause, so it cannot pass on "11 shown unscored" the way "1 hidden" once
+    # passed on "11 hidden".
+    #
+    # That correction was made TWICE — once jammed onto the front of the line continuing
+    # #293's sentence, at 156 columns, which re-parented "the stronger form is already the
+    # house style" onto the #286 point instead of the #293 one, and once as an appended
+    # paragraph with no separator saying the same thing. In the block whose own subject is a
+    # check that overstates its assertion.
     check!("...and the group says one session was withheld", Str.contains(gap_probe, "(1 shown unscored: needs power and HR)"))?
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (221,222,223); DELETE FROM streams WHERE activity_id IN (221,222,223); DELETE FROM activities WHERE id IN (221,222,223);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
@@ -6256,12 +6264,24 @@ b_progress_b! = |ctx| {
     # value to itself yields a real 0%, and "holding steady" reads as a measured finding
     # rather than an absent one. The change broke the guard its own neighbouring comment
     # describes, and nothing caught it — this is that oracle.
-    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (251,'Lone Scored Ride','Ride','2025-06-01T08:00:00Z',3600,20000),(253,'Lone Scored Ride','Ride','2025-06-15T08:00:00Z',3600,20000);")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (251,'Lone Scored Ride','Ride','2025-06-01T08:00:00Z',3600,20000),(253,'Lone Scored Ride','Ride','2025-06-15T08:00:00Z',3600,0);")
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (252,'Lone Scored Ride','Ride','2025-06-08T08:00:00Z',3600,20000,140);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     lone_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-06-08"])
     check!("one scored row among unscored takes the only-session arm, not a trend", Str.contains(lone_h, "the only session shown"))?
     check!("...so no 0% verdict is computed from a single point", !(Str.contains(lone_h, "over 1 sessions")))?
+    # ...and the BLANKING, which had no oracle at all: review reverted all three blanked
+    # columns in one mutation and every gate stayed green — build, 420 Render expects, 970
+    # e2e checks. The behaviour was right and nothing stopped it silently reverting, which
+    # is the one shape this branch cannot afford, since a fabricated zero is the defect it
+    # exists to remove.
+    #
+    # Ride 253 carries distance 0 so its `km` cell is the blanked one. The pair is a
+    # positive and its counter-example: the row must be present AND must not print `0.0`
+    # for a distance it does not have. `kJ` and `load` keep their bare 0 by design, so this
+    # asserts the km column specifically rather than the absence of any zero.
+    check!("...and an unscored row with no distance shows the row", Str.contains(lone_h, "2025-06-15"))?
+    check!("...with its km cell blank rather than a fabricated 0.0", !(Str.contains(lone_h, "│ 0.0  │")))?
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (251,252,253); DELETE FROM activities WHERE id IN (251,252,253);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (217,218); DELETE FROM activities WHERE id IN (217,218);")
