@@ -26,8 +26,9 @@
 #     says. Updating the pin is the moment someone decides whether the new field belongs in
 #     SKILL.md, which is what #298 asked for.
 #   • coverage is enforced for every schema in the table, not only the 16 with a row in the
-#     command table. `sync` and `analyze` carry complete payload literals in PROSE, and the
-#     measured version could not see them at all.
+#     command table. Exactly what that reaches in each direction is stated below, beside the
+#     fold that decides it — an earlier version also claimed it HERE, in words the fold then
+#     made wrong, and the two sentences sat twenty lines apart contradicting each other.
 #
 # ── The two directions ──
 #
@@ -46,14 +47,24 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 # payload literals for `sync` and `analyze` are split across two source lines, so a
 # line-scoped extractor finds ZERO complete `{...}` spans there.
 #
-# What this buys, precisely, because an earlier version of this comment overstated it:
-# direction 2 now reaches those literals and `config unset`'s, which has no table row at
-# all — renaming a field in any of the three is reported. Direction 1 still does NOT reach
-# `sync` or `analyze`: it locates a command's documentation by grepping for `stride <cmd>`,
-# and the line naming their fields does not contain that string, so both stay flagged `-`
-# in the pin file rather than `doc`. Their required sets are still pinned, so a schema
-# change to either fails the gate; what is missing is the check that SKILL.md names each
-# new field. Closing that needs a different way to attribute prose to a command.
+# What this buys, precisely, because two earlier versions got it wrong in opposite ways:
+#
+# Direction 2 reaches all three prose literals — `sync`'s, `analyze`'s, and `config unset`'s,
+# which has no table row at all. Renaming a field in any of them is reported.
+#
+# Direction 1 reaches `sync` but NOT `analyze`, and that asymmetry is an accident of the
+# prose rather than a design. The fold merges the paragraph running from `stride sync`
+# through the `{synced, …}` literal, so `sync` flags `doc`; `stride analyze` appears three
+# times and never in the paragraph holding its own literal, so it stays `-`. Its required
+# set is still pinned, so a schema change to it fails the gate — what is missing for
+# `analyze` alone is the check that SKILL.md names each new field, and closing it needs a
+# way to attribute prose that does not depend on where a paragraph break happens to fall.
+#
+# That accident has a cost worth naming rather than discovering later: a folded paragraph is
+# a large haystack, and a required field with a common name can be satisfied by text about a
+# different command. Measured — deleting `value` from `config get`'s literal leaves the gate
+# green, because the same paragraph elsewhere says "as `sync`'s `stopped` value it means…".
+# Direction 1 is a presence test, not a proximity test, and this is where that shows.
 LOGICAL="$tmp/logical.md"
 awk '
   function isnew(l) {
@@ -230,12 +241,19 @@ sort -u "$tmp/objprops" > "$tmp/objprops.u"
 cp "$LOGICAL" "$tmp/w"
 while grep -q '{[^{}]*}' "$tmp/w"; do
   grep -o '{[^{}]*}' "$tmp/w" >> "$tmp/lits"
-  sed 's/{[^{}]*}/X/g' "$tmp/w" > "$tmp/w2"; mv "$tmp/w2" "$tmp/w"
+  # `@`, not `X`: the sentinel replaces a literal already consumed, and with the key class
+  # widened to accept capitals an `X` sentinel parses as a key itself and reports three
+  # phantom unmatched literals on a clean tree. Both halves of this fix are needed together.
+  sed 's/{[^{}]*}/@/g' "$tmp/w" > "$tmp/w2"; mv "$tmp/w2" "$tmp/w"
 done
 
 literals=0
 sort -u "$tmp/lits" | while IFS= read -r lit; do
-  keys=$(printf '%s\n' "$lit" | grep -o '[a-z_][a-z_0-9]* *[,:}]' | sed 's/ *.$//' | sort -u)
+  # `[A-Za-z_]`, because a lowercase-only class begins matching AFTER a capital and
+  # silently truncates the key to its tail. `{key, Xremoved}` extracted as `removed`, a
+  # real property, so the gate PASSED on a documented field that does not exist. Live for
+  # any doc writing a key with a capital, not merely a hazard when authoring a mutation.
+  keys=$(printf '%s\n' "$lit" | grep -o '[A-Za-z_][A-Za-z_0-9]* *[,:}]' | sed 's/ *.$//' | sort -u)
   [ -n "$keys" ] || continue
   literals=$((literals + 1)); printf '%s\n' "$literals" > "$tmp/lc"
   hit=0
@@ -263,7 +281,7 @@ fi
 # against an actual 16, so four rows could stop matching — a reworded row, a deleted schema
 # — while the gate printed the same clean line a healthy tree prints. A count that may only
 # be raised deliberately is the difference between a guard and a decoration.
-EXPECT_PINNED=26
+EXPECT_PINNED=27
 EXPECT_LITERALS=25
 if [ "$pinned" != "$EXPECT_PINNED" ] || [ "$literals" != "$EXPECT_LITERALS" ]; then
   echo "skill-shapes: enforced $pinned doc-pinned objects and matched $literals brace literals;"

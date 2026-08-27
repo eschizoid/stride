@@ -56,7 +56,7 @@ summary.json	distance_m,easy_pct,hard_pct,hr_streams,intensity_streams,load_cove
 summary.json	distance_m,last_date,moving_time,sessions,sport,tss	distance_m,last_date,moving_time,sessions,sport,tss	-
 summary.json	high_pct,known,low_pct,medium_pct	high_pct,known,low_pct,medium_pct	doc
 summary.json	z1_max,z2_max,z3_max,z4_max	z1_max,z2_max,z3_max,z4_max	-
-sync.json	new_activities,pending_streams,pruned,resumable,stopped,streams_fetched,streams_skipped,synced,updated_activities	new_activities,pending_streams,pruned,resumable,stopped,streams_fetched,streams_skipped,synced,updated_activities	-
+sync.json	new_activities,pending_streams,pruned,resumable,stopped,streams_fetched,streams_skipped,synced,updated_activities	new_activities,pending_streams,pruned,resumable,stopped,streams_fetched,streams_skipped,synced,updated_activities	doc
 top.json	avg_hr,date,date_known,distance_m,hr_known,id,intensity,intensity_known,moving_time,name,np_w,output_kj,power_known,rankable,sport,tss	avg_hr,date,date_known,distance_m,hr_known,id,intensity,intensity_known,moving_time,name,np_w,output_kj,power_known,rankable,sport,tss	-
 tte.json	contradicts_model,cp,demonstrated_known,demonstrated_s,demonstrated_w,fit_points,fit_r2,known,seconds,sport_family,status,w_prime,watts,window_days	contradicts_model,cp,demonstrated_known,demonstrated_s,demonstrated_w,fit_points,fit_r2,known,seconds,sport_family,status,w_prime,watts,window_days	doc
 version.json	version	version	-
