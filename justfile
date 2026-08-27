@@ -63,6 +63,11 @@ issue-claims:
 command-claims: build
     sh tools/command-claims.sh
 
+# SKILL.md's payload literals against schemas/v2. Deliberately NOT dependent on `build`:
+# it reads source and schemas only, never runs the binary, so it cannot touch a database.
+skill-shapes:
+    sh tools/skill-shapes.sh
+
 # validate this machine's real payloads against the published contract
 # (schemas/v2/*.json). e2e runs the same validator against fixtures; this is the
 # "does MY data conform" pass, for after a schema or payload change. Depends on

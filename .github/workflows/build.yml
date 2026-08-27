@@ -65,6 +65,21 @@ jobs:
         shell: bash
         run: roc check src/app.roc
 
+      # Here rather than in the `e2e` job, and rather than only in the justfile.
+      #
+      # Only-in-the-justfile was the first cut, and it does not change anything: a recipe a
+      # human must remember to type is how the two drifts this guards were found in the
+      # first place, which was a person reading a diff. `command-claims` resolves command
+      # NAMES; this resolves payload KEYS.
+      #
+      # And in THIS job because it reads source, schemas and Markdown — never the binary,
+      # never a database. `command-claims` sits in `e2e` because its oracle genuinely is
+      # the built binary; this one's is not, so putting it there means a compiler flake or
+      # an unrelated e2e failure stops a docs check from ever running.
+      - name: Check SKILL.md payload shapes against the schemas
+        shell: bash
+        run: sh tools/skill-shapes.sh
+
       # The pure modules carry the logic and the tests. app.roc
       # has no expects (its effectful ones can't run under the test runner), so it
       # is validated by `check` above.
