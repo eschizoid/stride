@@ -3441,13 +3441,13 @@ b_seed_analyze! = |ctx| {
     # In a scratch HOME with the UNDATEABLE ROWS REMOVED, and that is the whole reason this
     # probe works. The shared fixture permanently holds four malformed dates — pinned by
     # `doctor`'s `undateable_activities == 4` twelve lines below — so `guard_activity_dates!`
+    # refuses first and six of these ten commands answer `unreadable_activity_date` without
+    # ever projecting the blobbed column.
+    #
     # The `daily_load` guard has to be cleared too, and for the same reason: it fires ahead
     # of the activity read, so with bad days present `plan` and `summary` answer
     # `unreadable_daily_load_day` and never reach the column under test. Both guards, or the
-    # probe measures whichever refuses first.
-    #
-    # refuses first and six of these ten commands answer `unreadable_activity_date` without
-    # ever projecting the blobbed column. Review measured it: with BOTH of round 2's live
+    # probe measures whichever refuses first. Review measured it: with BOTH of round 2's live
     # crashes reintroduced, the whole suite stayed green at 964. This check was reading the
     # date guard, not the decodes, which is how those two shipped.
     #

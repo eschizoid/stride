@@ -85,7 +85,12 @@ for f in src/*.roc; do
       # The prefix set was `<col>` and `a.<col>` only, so a column wrapped as `s.`, `m.`,
       # `p.`, `rt.` or `a2.` — all used in this tree — reported "selected bare" while
       # correctly wrapped. That was an undocumented false positive.
-      grep -E "SELECT[^\"]*\b$alias\b" "$f" 2>/dev/null > "$tmp/bareline" || true
+      # The line that SELECTS it bare, not every line mentioning it. Review re-walked the
+      # two-step escape with `sport_type`, whose CAST sits on four SELECT lines in one file:
+      # "does any of them carry the cast" is satisfied by a neighbour, so the bare
+      # projection stayed exempt after the count was bumped. Anchored on the alias appearing
+      # as a bare list item — preceded by SELECT or a comma, followed by a comma or FROM.
+      grep -E "(SELECT|,) *$alias *(,| FROM)" "$f" 2>/dev/null > "$tmp/bareline" || true
       if [ -s "$tmp/bareline" ]; then
         grep -qE "CAST\(([a-z_][a-z_0-9]*\.)?$alias AS TEXT\)" "$tmp/bareline" ||
           printf '%-24s %-22s selected bare on its own line, no CAST(... AS TEXT)\n' \
@@ -155,8 +160,8 @@ for f in src/*.roc; do
         print out line
       }' | awk '{ i = index($0, "SELECT"); print (i ? substr($0, i + 7) : $0) }' |
         sed -e "s/'[^']*'/@/g" |
-        grep -oE '[(,] *[a-z_][a-z_0-9]*(\.[a-z_][a-z_0-9]*)? *[,)]' |
-        sed -e 's/^[(,] *//' -e 's/ *[,)]$//' | head -1)
+        grep -oE '[(,] *[a-z_][a-z_0-9]*(\.[a-z_][a-z_0-9]*)? *[,)]|(ELSE|THEN) +[a-z_][a-z_0-9]*(\.[a-z_][a-z_0-9]*)? *(END|ELSE|WHEN|$)' |
+        sed -e 's/^[(,] *//' -e 's/ *[,)]$//' -e 's/^ELSE *//' -e 's/^THEN *//' -e 's/ *END$//' -e 's/ *ELSE$//' -e 's/ *WHEN$//' | head -1)
       case "$tail_expr" in
         *"AS TEXT"*|*"as text"*)
           # a cast is present — but only clean if nothing UNCAST survives beside it
