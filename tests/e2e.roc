@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(982)?
+    checks_ran_exactly!(993)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2274,6 +2274,103 @@ b_seed_analyze! = |ctx| {
     # on the HR-only row.
     check!("hr row: intensity absent too", strjq!(ctx, ["activity", "102"], "(.data.intensity_known == false) and (.data.power_known == false)") == "true")?
     check!("top rows carry the trio", strjq!(ctx, ["top", "tss", "3"], "[.data[] | has(\"power_known\") and has(\"intensity_known\") and has(\"hr_known\")] | all") == "true")?
+    # ...and `top hr` no longer ranks on presence alone. `WHERE ${col} > 0` is a presence
+    # test, and `stride top hr 700` on the real database returned the same three readings
+    # #294 taught `progress` to refuse and #305 taught `activity` to refuse — ordered so a
+    # 250 bpm one leads, published as the athlete's BEST heart-rate session (#315).
+    #
+    # 481 is out of band and must not appear; 482 is a plausible neighbour and must, which
+    # is what proves the bound removed a row rather than the query returning nothing.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_hr) VALUES (481,'Top Bound Impossible','Ride','2025-11-01T08:00:00Z',3600,250),(482,'Top Bound Plausible','Ride','2025-11-08T08:00:00Z',3600,171);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    top_ids = strjq!(ctx, ["top", "hr", "400"], "[.data[].id] | join(\",\")")
+    check!("top hr excludes an impossible reading", !(Str.contains(top_ids, "481")))?
+    check!("...while its plausible neighbour still ranks, so the bound removed a row", Str.contains(top_ids, "482"))?
+    # ...and the exclusion is STATED. `progress` counts what it hides (#295, for #286), `activities`
+    # marks what it cannot rank (#304); a ranking that silently drops history the athlete has
+    # seen has the same "absence states something false" problem #286 is about.
+    # The COUNT, with a LEADING boundary. `Str.contains(h, "1 of this")` is satisfied by
+    # "11 of this" — review proved that against the previous form by adding 10 to the
+    # derivation and watching all four checks pass while the binary rendered eleven. The
+    # newline pins the digit's left edge, which is the same fix #293 made for "1 hidden"
+    # matching "11 hidden" and the third time this collision has landed in this suite.
+    check!("...and says how many it excluded, rather than dropping them silently", Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "400"]), "\n1 of this ranking's"))?
+    # ...and a metric with NO bound stays silent. Genuinely a guard, not the structural note
+    # an earlier version called it: giving `tss` a bound makes this fail, which review
+    # demonstrated — so it pins that the feature stays off for metrics that have no bound.
+    #
+    # It needs a bound the fixture can actually violate. Review's first attempt used
+    # `tss BETWEEN 35 AND 220`, and the three tss rows here are 110.8, 80.0 and 55.0 — all
+    # inside it — so the suite stayed green and the label looked confirmed.
+    check!("...and a metric without a bound says nothing", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "tss", "5"]), "of this ranking's")))?
+    # ...and the count tracks a SPORT FILTER. Nothing exercised that, and review measured the
+    # cost: dropping `${sport_where}` from the count query alone left the suite green while
+    # `stride top hr 700 rowing` printed its table and then died with
+    # "unknown parameter: :sp0" at exit 1.
+    check!("...and the count survives a sport filter", Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "400", "ride"]), "of this ranking's"))?
+    # ...and the count is LIMIT-SCOPED, which nothing above can see. Every check here uses a
+    # limit larger than the eligible set, so the scoping is never exercised — review deleted
+    # the `LIMIT` token from the count subquery and the whole suite stayed green while
+    # `top hr 1` announced three exclusions above a one-row table, the exact bug this round
+    # opened on.
+    #
+    # It needs a LOW-side out-of-band row. 481 is the fixture's maximum heart rate, so it
+    # sits inside every window and any limit still counts it; 483 at 20 bpm sorts last, so a
+    # limit of 2 excludes it from the table the count is about. The two plausible rowing
+    # neighbours are what make the limit bite rather than the sport filter.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_hr) VALUES (483,'Low Bound Row','Rowing','2025-11-20T08:00:00Z',3600,20),(484,'Low Bound Peer A','Rowing','2025-11-21T08:00:00Z',3600,150),(485,'Low Bound Peer B','Rowing','2025-11-22T08:00:00Z',3600,160);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("a low out-of-band row counts when the window reaches it", Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "400", "rowing"]), "of this ranking's"))?
+    check!("...and does NOT when the limit stops above it, which is what limit-scoping means", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "2", "rowing"]), "of this ranking's")))?
+    # ...and the ranking is ordered NUMERICALLY, which is a separate thing from the bound and
+    # was broken by fixing it: casting only inside the bound re-admits BLOB and non-numeric
+    # TEXT rows, and SQLite's raw ordering puts BLOB above TEXT above every number, so the
+    # rows the CAST had just re-admitted sorted to rank 1. `top hr 3` led with a 100 bpm BLOB
+    # over a 171 bpm reading. Asserted through the JSON, whose `rows` is computed before the
+    # human/json branch, so `.data[0]` IS rank one — none of the coupling to box-drawing
+    # characters, column order and padding that the table needle it replaces carried.
+    # The BLOB row is what makes this check able to fail. Without it every avg_hr in range is
+    # a plain number, and SQLite's raw ordering agrees with the numeric one — the first
+    # version of this check passed against the very mutation it was written to catch. The
+    # bytes are "100", so CAST(... AS REAL) is 100.0: inside the 35-220 bound, below the 171
+    # at rank 1, and raw-sorted above every number in the table.
+    #
+    # No write path stride controls can produce this value — `Strava.roc` binds avg_hr through
+    # `opt_real`, and the CSV import shares that upsert — so the row models a hand-edit or a
+    # partial corruption, which is how every prior BLOB bug here (#296, #304, #307, #310) was
+    # found. It cannot be swapped for a realistic-looking number: `avg_hr` is REAL-affinity, so
+    # `CAST(REAL AS REAL)` is identity and no numeric value can witness the two orderings
+    # disagreeing. Deleting the row for looking artificial is what makes the check vacuous.
+    #
+    # 488 is the COUNT's witness, and it has to be a separate row: 487 CASTs to 100, which is
+    # IN band, so both orderings put it in the same window and the count is 1 either way.
+    # 488's bytes are "20" — out of band and LOW, so only raw ordering hoists it into a
+    # limit-2 window, and the count then reports a drop from a window it was never in.
+    #
+    # Rowing, and the check filters to rowing, because 481 stores 250: unfiltered it is rank 1
+    # by either ordering and out of band, so the count is 1 whatever the ORDER BY does and the
+    # check passes on the mutation. Scoped to rowing the window is 485/484 at 160/150, both in
+    # band, and only a raw ordering can put 488 in it. The first version of this check was
+    # unscoped and failed on correct code, which is how the shadowing rank-1 row surfaced.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_hr) VALUES (487,'Blob Bound Row','Ride','2025-11-24T08:00:00Z',3600,x'313030'),(488,'Blob Low Row','Rowing','2025-11-25T08:00:00Z',3600,x'3230');")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("the ranking sorts numerically, not by SQLite's raw type order", strjq!(ctx, ["top", "hr", "3"], ".data[0].id") == "482")?
+    check!("the exclusion COUNT is ordered numerically too, which the table check cannot see", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "2", "rowing"]), "of this ranking's")))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (487,488); DELETE FROM activities WHERE id IN (487,488);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # ...and the empty-result hint's new third explanation, which had no coverage at all: the
+    # existing hint check uses `top power`, a metric with no bound, so it can never reach it.
+    # It needs a sport whose every reading is out of band, and the fixture's two sports (Ride,
+    # Rowing) both hold plausible rows, so this inserts a sport of its own.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_hr) VALUES (486,'All Bad Hike','Hike','2025-11-23T08:00:00Z',3600,15);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("an all-implausible sport says so, rather than denying the data exists", Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "5", "hike"]), "every reading is implausible"))?
+    check!("...instead of the old line claiming the sport has no heart rate data at all", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "5", "hike"]), "none with heart rate (hr) data")))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 486; DELETE FROM activities WHERE id = 486;")
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (483,484,485); DELETE FROM activities WHERE id IN (483,484,485);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (481,482); DELETE FROM activities WHERE id IN (481,482);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("plan recent rows carry the flag set", strjq!(ctx, ["plan"], "[.data.recent_activities_14d[] | has(\"power_known\") and has(\"zones_known\") and has(\"load_model\")] | all") == "true")?
 
     # ── personal baselines (#160): 101 vs its own prior comparables. Probe 99

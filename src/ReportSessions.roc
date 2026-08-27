@@ -616,16 +616,36 @@ ReportSessions :: [].{
     # metric keyword => its ORDER BY column + human table header. The column is HARDCODED
     # per keyword, so no user input ever reaches the SQL; an unknown metric errors before
     # any query. Single source of truth so column and header can't drift apart.
-    top_metric : Str -> Try({ col : Str, header : Str }, [BadMetric])
+    top_metric : Str -> Try({ col : Str, header : Str, bound : Str }, [BadMetric])
     top_metric = |m|
         match m {
-            "hr" => Ok({ col: "a.avg_hr", header: "heart rate (hr)" })
-            "tss" => Ok({ col: "m.tss", header: "load" })
-            "power" => Ok({ col: "m.normalized_power", header: "power (np)" })
-            "intensity" => Ok({ col: "m.intensity_factor", header: "intensity (if)" })
-            "distance" => Ok({ col: "a.distance", header: "distance (km)" })
-            "time" => Ok({ col: "a.moving_time", header: "time (min)" })
-            "output" => Ok({ col: "(a.avg_watts * a.moving_time)", header: "output (kj)" }) # total work (Peloton kJ)
+            # `bound` is the plausibility predicate for this metric's column, empty when the
+            # column has none. `> 0` is presence, not plausibility, and `top` ranked on
+            # presence alone — so `stride top hr 700` returned the same three readings #294
+            # taught `progress` to refuse and #305 taught `activity` to refuse, ordered so a
+            # 250 bpm one would lead (#315).
+            #
+            # Per metric rather than on the shared `> 0` clause, because it is a per-column
+            # fact: `valid_hr`'s 35-220 says nothing about kilometres or minutes.
+            #
+            # `Metrics.valid_watts` DOES exist (0-2500) and an earlier version of this
+            # comment claimed no equivalent did. It is a per-SAMPLE bound used on streams,
+            # not a per-session one, so applying it to `top power`'s session NP is a separate
+            # judgement rather than a free win — but "no equivalent exists" was false.
+            #
+            # `CAST(... AS REAL)` because that is what every other consumer sees. `Analyze`
+            # reads `CAST(a.avg_hr AS REAL)`, so a BLOB storing the bytes of "100" scores
+            # through the `valid_hr`-gated rung and `activity` publishes it at 100 bpm. Bare
+            # SQL comparison disagrees — SQLite orders BLOB above every number, so
+            # `blob <= 220` is FALSE — and the ranking would have excluded a row the rest of
+            # the engine accepts. Review found it by planting one, not by reading.
+            "hr" => Ok({ col: "a.avg_hr", header: "heart rate (hr)", bound: "CAST(@ AS REAL) >= 35 AND CAST(@ AS REAL) <= 220" })
+            "tss" => Ok({ col: "m.tss", header: "load", bound: "" })
+            "power" => Ok({ col: "m.normalized_power", header: "power (np)", bound: "" })
+            "intensity" => Ok({ col: "m.intensity_factor", header: "intensity (if)", bound: "" })
+            "distance" => Ok({ col: "a.distance", header: "distance (km)", bound: "" })
+            "time" => Ok({ col: "a.moving_time", header: "time (min)", bound: "" })
+            "output" => Ok({ col: "(a.avg_watts * a.moving_time)", header: "output (kj)", bound: "" }) # total work (Peloton kJ)
             _ => Err(BadMetric)
 
         }
@@ -671,7 +691,12 @@ ReportSessions :: [].{
             Err(_) =>
                 Output.err_out!("bad_metric", "unknown metric '${metric}' — use: hr, tss, power, intensity, distance, time, output")
 
-            Ok({ col, header }) => {
+            Ok({ col, header, bound }) => {
+                # `bound` is a template over `@` so ONE predicate serves two queries: the
+                # ranking applies it to the column, the count applies it to an alias inside a
+                # subquery. Written twice they would drift, and the drift would be invisible
+                # — the ranking would exclude rows while the count reported a different set.
+                bound_sql = if Str.is_empty(bound) "" else " AND ${Str.replace_each(bound, "@", col)}"
                 sf = Report.sport_filter_sql(sport_filter)
                 sport_where = sf.frag
                 sport_binding = sf.binds
@@ -706,8 +731,20 @@ ReportSessions :: [].{
                         \\       CASE WHEN m.intensity_factor IS NULL THEN 0 ELSE 1 END AS intensity_known,
                         \\       CASE WHEN a.avg_hr IS NULL THEN 0 ELSE 1 END AS hr_known
                         \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
-                        \\WHERE ${col} > 0${sport_where}
-                        \\ORDER BY ${col} DESC, a.id DESC LIMIT ${(limit).to_str()}
+                        \\WHERE ${col} > 0${bound_sql}${sport_where}
+                        # ORDER BY casts too, and that is not redundant with the bound. Casting only inside the
+                        # bound re-admitted the BLOB and non-numeric-TEXT rows it was there to keep (a BLOB of
+                        # "100" IS a plausible reading), but left them sorted RAW — and SQLite orders BLOB
+                        # above TEXT above every number, so the rows the bound had just rescued landed at
+                        # rank 1. `top hr 3` led with that 100 bpm BLOB over a 171 bpm reading. Fixing the
+                        # bound is what introduced this; the two casts have to move together.
+                        #
+                        # The count subquery below repeats this ORDER BY deliberately. It counts what the
+                        # BOUND excludes, from the window the LIMIT admits — and the ORDER BY is what decides
+                        # which rows are in that window, which is the whole reason the two are coupled.
+                        # Without the LIMIT the ordering would genuinely not matter here; with it, it is
+                        # load-bearing. Change one and the other is wrong silently: the number just drifts.
+                        \\ORDER BY CAST(${col} AS REAL) DESC, a.id DESC LIMIT ${(limit).to_str()}
                     ,
                     bindings: sport_binding,
                     rows: |cols| |stmt| {
@@ -733,7 +770,35 @@ ReportSessions :: [].{
                 if Output.json_mode!({})
                     Output.emit_ok!(rows)
                 else if List.is_empty(rows) and limit > 0 and !(Str.is_empty(sport_filter)) {
-                    Stdout.line!(empty_hint!(path, sport_filter, header)?)
+                    # The hint has to know about the bound, or it states a falsehood. Its own
+                    # comment says an empty filtered result has "TWO honest explanations and
+                    # the hint must pick the right one"; the bound added a THIRD, and review
+                    # measured the result — two Swim rows at 250 and 20 bpm produced "2 'swim'
+                    # activities, but none with heart rate (hr) data" while both rows HAVE
+                    # heart-rate data. This is the function that once denied the existence of
+                    # runs while listing Run in the same sentence.
+                    # Note this count has NO LIMIT, unlike the one under the ranking table. The two
+                    # answer different questions and are allowed to disagree. Under a table, "N were
+                    # implausible" means "N would have been in the rows you are looking at" — scoped to
+                    # the window. Here there is no table, so the question is whether the sport has any
+                    # readings at all, and a limit would make the answer depend on a number the athlete
+                    # picked for a list that came back empty.
+                    n_excluded =
+                        if Str.is_empty(bound) {
+                            0
+                        } else {
+                            Sqlite.query!({
+                                path: Path.utf8(path),
+                                query: "SELECT COUNT(*) AS n FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE ${col} > 0${sport_where} AND NOT (${Str.replace_each(bound, "@", col)})",
+                                bindings: sport_binding,
+                                row: Sqlite.i64("n"),
+                            })?
+                        }
+                    if n_excluded > 0 {
+                        Stdout.line!("${sport_filter} has ${I64.to_str(n_excluded)} session(s) with ${header} data, but every reading is implausible and none is ranked")
+                    } else {
+                        Stdout.line!(empty_hint!(path, sport_filter, header)?)
+                    }
                 } else {
                     val = |r|
                         match metric {
@@ -752,7 +817,50 @@ ReportSessions :: [].{
                         # refusing, and a blank cell is indistinguishable from a wrapped-name
                         # continuation row.
                         List.map(rows, |r| [(if Str.is_empty(r.date) "-" else r.date), r.sport, val(r), r.name]),
-                    ))
+                    ))?
+                    # ...and SAY how many the bound removed. `progress` counts what it hides
+                    # (#295, for #286), `activities` marks what it cannot rank (#290, and the `-` legend before it); the rule this
+                    # repo keeps arriving at is refuse the number, state the refusal. A
+                    # ranking that silently drops history the athlete has already seen has
+                    # the same "absence states something false" problem #286 is about.
+                    #
+                    # Only when the bound actually removed something, and only for a metric
+                    # that HAS a bound — an empty `bound` can exclude nothing, so the count
+                    # is structurally 0 and the line never renders.
+                    # Scoped to THIS TABLE, not to the whole eligible set. The first cut
+                    # counted every row the bound removed from the database, printed under a
+                    # table holding `limit` rows — so `stride top hr 1` announced three
+                    # exclusions above a one-row leaderboard, and the DEFAULT `top hr` said
+                    # three while its ten rows were byte-identical with and without the
+                    # bound. With DESC ordering every low-side exclusion sorts below the
+                    # limit anyway, so the over-count was every ordinary invocation.
+                    #
+                    # What it measures now: of the rows this table WOULD have shown without
+                    # the bound, how many the bound removed. Same query, same limit, same
+                    # sport filter — only the bound differs, so the difference is exactly the
+                    # rows the reader lost.
+                    excluded =
+                        if Str.is_empty(bound) {
+                            0
+                        } else {
+                            Sqlite.query!({
+                                path: Path.utf8(path),
+                                query: "SELECT COUNT(*) AS n FROM (SELECT ${col} AS v FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE ${col} > 0${sport_where} ORDER BY CAST(${col} AS REAL) DESC, a.id DESC LIMIT ${(limit).to_str()}) WHERE NOT (${Str.replace_each(bound, "@", "v")})",
+                                bindings: sport_binding,
+                                row: Sqlite.i64("n"),
+                            })?
+                        }
+                    if excluded > 0 {
+                        # No hardcoded bound and no claim about other commands. The first
+                        # version said "outside 35-220, which `progress` and `activity` also
+                        # refuse" — the numbers were written out six lines below a comment
+                        # boasting the derivation does not repeat them, and the cross-command
+                        # claim was false for a BLOB row that `activity` accepts. It names
+                        # what it did and where the rule lives.
+                        Stdout.line!("\n${I64.to_str(excluded)} of this ranking's ${header} readings were implausible and are not shown")
+                    } else {
+                        Ok({})
+                    }
                 }
             }
         }
