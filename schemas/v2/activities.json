@@ -1,6 +1,6 @@
 {
   "title": "activities",
-  "description": "Payload of `stride activities` — a list.",
+  "description": "Payload of `stride activities` \u2014 a list.",
   "type": "array",
   "items": {
     "type": "object",
@@ -28,19 +28,24 @@
       "z3_s",
       "z4_s",
       "z5_s",
-      "zones_known"
+      "zones_known",
+      "avg_hr_scored"
     ],
     "additionalKeys": false,
     "properties": {
       "avg_hr": {
         "type": "number"
       },
+      "avg_hr_scored": {
+        "type": "number",
+        "description": "What the engine will actually DIVIDE BY when it scores this session: the in-band mean of its HR stream when the surviving samples span at least half the LONGER of that stream's own extent and the session's moving time, the stored `avg_hr` otherwise (#311). Publishing it here is what makes a broken reading detectable from the listing (#319). Equal to `avg_hr` whenever no usable stream mean exists — which INCLUDES the most damaged streams, since one lossy enough to corrupt Strava's summary also fails the coverage gate and falls back, so the three worst on the reference database publish 0.2/0.2, 31.3/31.3 and 18/18. No gap therefore does NOT imply no lossy stream. Before, `avg_hr` was echoed raw beside `hr_known: true` and an agent had to apply the 35-220 bound itself \u2014 which stopped identifying refused rows once the engine began scoring from streams, since a session can store 18 bpm and score perfectly well. The rule runs ONE WAY: `avg_hr_scored` outside 35-220 means the EF and speed/HR lenses refuse the row. The converse does NOT hold and an earlier version of this sentence claimed it did \u2014 those lenses also need a NORMALIZED-power `load_model` — `power_stream` or `weighted_watts`, not merely a non-zero `np_w`, and 32 rows publish a positive `np_w` under `avg_watts` and are refused — or distance and moving time for speed/HR, so 45 sessions on the reference database sit inside the bound and are refused by both anyway. An in-band reading is necessary, not sufficient. The one-way direction is firm for a structural reason: `avg_hr_stream` is a mean of already in-band samples, so it can never itself be out of band \u2014 this field is outside the bound only when no stream mean was available — either the stored average was used and is itself implausible (3 rows), or nothing was recorded at all and it fell to 0 (66 rows, all `hr_known: false`). Note also that a large gap between the two fields, not merely any gap, is what indicates a lossy stream: 669 of 738 rows differ at all, because Strava stores one decimal against a full-precision mean, while only 11 differ by more than 15 bpm. And `hr_known` splits the out-of-band rows into the 3 that recorded a broken reading from the 66 that recorded none, which is the difference between repairing an activity and buying a strap. `hr_known` still answers the separate question of whether a reading was recorded at all."
+      },
       "date": {
         "type": "string"
       },
       "date_known": {
         "type": "boolean",
-        "description": "Whether `date` could be read. False means the row's stored `start_local` is NULL, empty, malformed, or dated before year 1000 — `date` is then an empty string, which is a HOLE and not a value. Needed because an empty date string already means something else in this contract: SKILL.md documents `last_hard_session_date` as `'' = none on record`, so without this flag a consumer cannot tell 'no such thing exists' from 'it exists and its date is unreadable'. #249 chose to REPORT these rows rather than refuse, because a listing cannot turn a wrong date into a wrong answer, and hoists them to the top so no limit hides them; this is the field that says which ones they are."
+        "description": "Whether `date` could be read. False means the row's stored `start_local` is NULL, empty, malformed, or dated before year 1000 \u2014 `date` is then an empty string, which is a HOLE and not a value. Needed because an empty date string already means something else in this contract: SKILL.md documents `last_hard_session_date` as `'' = none on record`, so without this flag a consumer cannot tell 'no such thing exists' from 'it exists and its date is unreadable'. #249 chose to REPORT these rows rather than refuse, because a listing cannot turn a wrong date into a wrong answer, and hoists them to the top so no limit hides them; this is the field that says which ones they are."
       },
       "distance_m": {
         "type": "number"
@@ -89,7 +94,7 @@
       },
       "rankable": {
         "type": "boolean",
-        "description": "Whether the engine will give this row a ranking position. False means `start_local` is unusable as a timestamp — either its DATE half is unreadable (see `date_known`) or its TIME half is, as in `2026-08-23T37:00:00Z`, which has a perfectly readable date. These are the rows `stride activities` HOISTS to the top as needing repair, so this is the field that says why row one is row one. `rankable` means chronologically orderable: a row can be unrankable and still appear on a `top` leaderboard, carrying the same needs-repair meaning `date_known` does. It licenses no magnitude — unlike the `_known` flags, which each vouch for a value published beside them."
+        "description": "Whether the engine will give this row a ranking position. False means `start_local` is unusable as a timestamp \u2014 either its DATE half is unreadable (see `date_known`) or its TIME half is, as in `2026-08-23T37:00:00Z`, which has a perfectly readable date. These are the rows `stride activities` HOISTS to the top as needing repair, so this is the field that says why row one is row one. `rankable` means chronologically orderable: a row can be unrankable and still appear on a `top` leaderboard, carrying the same needs-repair meaning `date_known` does. It licenses no magnitude \u2014 unlike the `_known` flags, which each vouch for a value published beside them."
       },
       "relative_effort": {
         "type": "number"

@@ -286,7 +286,7 @@ Every item here cost a debugging session at least once — they are not style op
   MEAN of that stream's in-band samples, because a stored average computed from a lossy stream
   can be plausible and still wrong — measured, three times more common than the impossible
   kind. A stored value is still what the bound sees when no usable stream exists, and still
-  what every display surface publishes.
+  what the display surfaces publish beside it — `progress`, `activity` and `activities` carry both fields, `plan` and `top hr` only the stored one.
 - `activity_metrics.ftp_used` drives auto-recompute on FTP change — any new metric
   input must join that invalidation story.
 - CTL/ATL/TSB extend through **today** (rest days decay fatigue in the engine).

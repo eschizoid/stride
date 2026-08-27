@@ -615,13 +615,16 @@ Metrics :: [].{
                 # form verdict downstream.
                 #
                 # NOT the last consumer full stop, which is what an earlier version of this
-                # comment claimed in four places. `top hr` ranks on `a.avg_hr > 0` — the
-                # exact predicate `valid_hr` replaces — and on the real database
-                # `stride top hr 700` returns the same three rows #294 and #305 refuse.
-                # Review found it by planting a value and diffing all 26 command payloads,
-                # not by reading, which is the third time on this repo that a "last site"
-                # claim was wrong and the third time behaviour rather than reading found it.
-                # Tracked in #315.
+                # comment claimed in four places. `top hr` ranked on `a.avg_hr > 0` — the exact
+                # predicate `valid_hr` replaces — and returned the same three rows #294 and
+                # #305 refuse. Review found it by planting a value and diffing all 26 command
+                # payloads, not by reading, which was the third time on this repo that a "last
+                # site" claim was wrong and the third time behaviour rather than reading found
+                # it. FIXED in #316 and #315 is closed: `top hr 800` now returns 669 rows with
+                # all three absent. Past tense on purpose — this paragraph was read as current
+                # while writing #319 and produced a miscount of which consumers bound which
+                # column. `top hr` bounds the STORED value by design, so it is still not a
+                # consumer of `avg_hr_scored`.
                 #
                 # Measured before the bound, on a session with the STREAM REMOVED so this
                 # rung is reached — that is a precondition, not a detail: with the stream in
