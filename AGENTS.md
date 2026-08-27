@@ -280,8 +280,13 @@ Every item here cost a debugging session at least once — they are not style op
   corrupts CTL/ATL. Strength-class sports rank the athlete's rating above HR;
   endurance ranks measured power/HR first (`Sports.class`).
 - HR samples outside 35–220 bpm are junk — filtered at analyze. The same bound is applied
-  again at report time to a session's `avg_hr` (`Metrics.valid_hr`), which is what keeps an
-  18 bpm average from being scored as the GROUP's best EF.
+  again at report time (`Metrics.valid_hr`), which is what keeps an 18 bpm average from being
+  scored as the GROUP's best EF. From #311 it is applied to `avg_hr_scored`, not to the stored
+  `avg_hr`: when a session carried a stream that covers most of it, the engine scores from the
+  MEAN of that stream's in-band samples, because a stored average computed from a lossy stream
+  can be plausible and still wrong — measured, three times more common than the impossible
+  kind. A stored value is still what the bound sees when no usable stream exists, and still
+  what every display surface publishes.
 - `activity_metrics.ftp_used` drives auto-recompute on FTP change — any new metric
   input must join that invalidation story.
 - CTL/ATL/TSB extend through **today** (rest days decay fatigue in the engine).

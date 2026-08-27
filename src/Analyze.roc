@@ -627,10 +627,7 @@ Analyze :: [].{
         # DERIVED FTP, the power curve, or the intensity split. Drop it wholesale.
         watts_raw = if row.dw Streams.stream_pairs(streams.time, streams.watts) else []
         watts_pairs = List.keep_if(watts_raw, |p| Metrics.valid_watts(p.v))
-        # #92 sample-validity counters. Counted against `*_raw`, which for watts is ALREADY
-        # empty when the stream is estimated — so the wholesale #73 exclusion contributes
-        # 0 dropped of 0 total rather than reading as 100% junk. Only samples a validity
-        # filter rejected are counted as dropped.
+
         # The in-band mean of the stream, which is the number the SCORING lenses divide by
         # when it exists (#311). `hr_pairs` is already `valid_hr`-filtered, so this is a mean
         # over exactly the samples the engine believes — dropout and sensor-dead stretches
@@ -640,6 +637,24 @@ Analyze :: [].{
         # NULL, never 0.0, when there is nothing to average: 0.0 is not a possible heart rate
         # but it IS what `COALESCE(...,0)` produces at every read site, so a stored 0 would be
         # indistinguishable from "no stream" only by accident. Absence stays absence.
+        #
+        # An UNWEIGHTED mean, unlike `time_in_zones`, which walks the same `hr_pairs` weighting
+        # each sample by the gap to the next with a 30 s cap. Measured across all 672 streams,
+        # the two differ by at most 2.58 bpm and by more than 1 bpm on ten of them, so the
+        # choice is not load-bearing — but the two ARE different estimators over one list, and
+        # a reader comparing this line against the zone walk should not have to discover that.
+        #
+        # The LOAD LADDER never sees this value, and the reason is not the one first written
+        # here. That argument said `hr_avg` fires only when zone seconds are zero, which means
+        # no usable samples, which means no mean to prefer — and it is false: `time_in_zones`
+        # accumulates the gap BETWEEN consecutive samples, so a one-sample stream yields zero
+        # zone seconds while this mean is perfectly well defined. Review planted one and the
+        # ladder took `hr_avg` with `avg_hr_stream` populated beside it. The true reason is
+        # narrower and firmer: `tss_ladder` reads `input.avg_hr`, which is filled from the
+        # STORED summary and is not touched here. Verified behaviourally rather than argued —
+        # analyzing the same 738 activities before and after leaves `activity_metrics`
+        # byte-identical on every column but this one, and `daily_load` byte-identical
+        # outright. No TSS, CTL, ATL or form verdict moves.
         # ...and it is NULL unless the surviving samples SPAN most of the session. A mean over
         # unrepresentative samples is the same bug this column exists to fix, moved one table
         # over — and without this gate it lands harder, because nothing downstream can see it.
@@ -676,6 +691,10 @@ Analyze :: [].{
             } else {
                 Real(List.fold(hr_pairs, 0.0, |acc, p| acc + p.v) / (List.len(hr_pairs)).to_f64())
             }
+        # #92 sample-validity counters. Counted against `*_raw`, which for watts is ALREADY
+        # empty when the stream is estimated — so the wholesale #73 exclusion contributes
+        # 0 dropped of 0 total rather than reading as 100% junk. Only samples a validity
+        # filter rejected are counted as dropped.
         hr_total = List.len(hr_raw)
         hr_dropped = hr_total - List.len(hr_pairs)
         watts_total = List.len(watts_raw)

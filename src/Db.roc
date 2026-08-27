@@ -287,7 +287,9 @@ Db :: [].{
         # v25: the in-band MEAN of this session's HR stream, or NULL when no stream (or no
         # sample inside 35-220) exists. Computed tier, never ingested: `activities.avg_hr` is
         # what Strava reported and stays that way, because a re-sync would overwrite any
-        # correction written there and the fix would silently un-apply (ADR 0006). This is
+        # correction written there and the fix would silently un-apply. That is the mirror-tier
+        # rule in AGENTS.md ("a re-sync would silently wipe it"), not ADR 0006, which is about
+        # which device formats stride parses and says nothing about tiers. This is
         # the value the SCORING lenses divide by; the display surfaces still publish the
         # stored one. #311.
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN avg_hr_stream REAL")?

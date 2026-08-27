@@ -1097,9 +1097,13 @@ Metrics :: [].{
             # stream, in which case this is the mean of the samples `valid_hr` accepted and
             # `avg_hr` is what Strava's summary reported. The bound above catches a session
             # whose STORED average is impossible; it is blind to one whose stored average is
-            # a plausible number computed from broken data, and the census in this module
-            # measured those at 11 against the bound's 3. Scoring from the stream is the
-            # root-cause half (#311); the bound stays because a session with no stream at all
+            # a plausible number computed from broken data, and a census on the real database
+            # measured those at 11 against the bound's 3. That census lives in this PR's
+            # commit message and in `tests/e2e.roc`, NOT in this module — the measured claim
+            # under `valid_hr` names the two rowing sessions it can see, which is the visible
+            # half rather than the count, and an earlier version of this sentence sent readers
+            # there for a number that is not written there. Scoring from the stream is the
+            # root-cause half (#311); the bound stays because a session with no usable stream
             # still has nothing but the summary to offer.
             #
             # SCORING only. `avg_hr` is what the tables and JSON print, and it stays the

@@ -7143,7 +7143,6 @@ seed_power_stream! = |db, id, n, w| {
     _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
     {}
 }
-# interval-shaped power stream: warmup, reps x (work_s @ work_w / rec_s @ rec_w), cooldown
 # power + HR stream: constant watts and constant HR. The point of the pair is that the
 # ride's STORED summary avg_hr is set independently by the fixture, so a check can make the
 # two disagree — which is the whole of #311. In the real data they disagree because of
@@ -7159,6 +7158,7 @@ seed_power_hr_stream! = |db, id, n, w, hr| {
     {}
 }
 
+# interval-shaped power stream: warmup, reps x (work_s @ work_w / rec_s @ rec_w), cooldown
 seed_interval_stream! : Str, I64 => {}
 seed_interval_stream! = |db, id| {
     wtt = |i| {
