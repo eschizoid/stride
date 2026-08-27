@@ -37,6 +37,12 @@
 #   2. doc -> schema: every key inside a `{...}` literal must exist as a schema property.
 #      Catches documentation still promising a field that was renamed or removed.
 set -eu
+# Byte collation, everywhere. Every comparison in this script runs through `sort`, and the
+# pin file is a checked-in artifact compared line by line against a freshly sorted one — so
+# a locale that orders differently makes the SAME content disagree with itself. Windows CI
+# caught exactly that: every line reported as both pinned and actual, identical text, because
+# Git Bash sorted it differently from the macOS run that generated the pin.
+export LC_ALL=C
 cd "$(dirname "$0")/.."
 SK=.claude/skills/stride/SKILL.md
 SCHEMAS=schemas/v2

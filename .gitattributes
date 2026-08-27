@@ -1,0 +1,6 @@
+# `tools/skill-shapes.pins` is a checked-in artifact that a gate regenerates and compares
+# line by line. A CRLF checkout would make the regenerated file disagree with the committed
+# one on every line while the content is identical — the same failure shape Windows CI hit
+# from `sort` collation, reached by a different route. Pin the line endings so the artifact
+# is byte-stable on every platform that runs the gate.
+*.pins text eol=lf
