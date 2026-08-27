@@ -6281,7 +6281,11 @@ b_progress_b! = |ctx| {
     # engine scores from (#311). 236 is the CAST case: a BLOB holding the bytes "100", which
     # every other consumer reads through a CAST and treats as 100 bpm.
     before_hr = strjq!(ctx, ["doctor"], ".data.with_hr")
-    _ = seed_ride!(ctx.db, "235", "Doctor Stream HR", "2025-02-16T09:00:00Z", "3600", "30000", "200", "18")
+    # moving_time 1300 to match the 1300-sample stream. Declared at 3600 the stream spans 0.36
+    # of the session and #311's coverage gate refuses it — correctly, that is a strap that died
+    # a third of the way in — so the row would fall back to its stored 18 and this check would
+    # measure a delta of 1 where it means to measure 2. The gate caught it.
+    _ = seed_ride!(ctx.db, "235", "Doctor Stream HR", "2025-02-16T09:00:00Z", "1300", "12000", "200", "18")
     _ = seed_power_hr_stream!(ctx.db, 235, 1300, 200, 150)
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_watts,weighted_avg_watts,avg_hr) VALUES (236,'Doctor Blob HR','Ride','2025-02-17T09:00:00Z',3600,30000,200,200,x'313030');")
     # POWER only, deliberately. Given an HR stream this row would be rescued by the stream
