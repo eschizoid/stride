@@ -62,9 +62,23 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 #
 # That accident has a cost worth naming rather than discovering later: a folded paragraph is
 # a large haystack, and a required field with a common name can be satisfied by text about a
-# different command. Measured — deleting `value` from `config get`'s literal leaves the gate
-# green, because the same paragraph elsewhere says "as `sync`'s `stopped` value it means…".
-# Direction 1 is a presence test, not a proximity test, and this is where that shows.
+# different command. Review swept all 27 doc-pinned objects, deleting each required field
+# from every literal while leaving prose alone, and found six such coincidences — `value`
+# standing on "as `sync`'s `stopped` value it means…", `points` on "1 by construction at two
+# points", `month` on "belongs to a month and to no block", and three more of the same shape.
+#
+# Recorded rather than closed, and the reason is measured rather than aesthetic: each is a
+# SECOND line of defence failing. The field is still named in a literal today, and the pin
+# fails unconditionally on any schema change whatever the prose says — so the drift #298 is
+# actually about, a field added and never documented, is caught regardless. Closing this
+# needs prose-to-command attribution, the same missing capability that leaves `analyze` at
+# `-`, and inventing a heuristic for it is what produced twelve false reports last time.
+#
+# Two cases do NOT shelter under that, because they are placeholders rather than prose:
+# `config.json` and `config_unset.json` each rest a required `key` on the inline
+# `stride config get <key> --json` written in a sentence. The cell strip is anchored at `^|`
+# so it never sees an inline invocation, and stripping arbitrary ones is a much broader
+# change than a table cell. Named here so the limitation is not mistaken for the prose one.
 LOGICAL="$tmp/logical.md"
 awk '
   function isnew(l) {
@@ -129,7 +143,18 @@ doc_for() {
   # PLACEHOLDERS — `[date]`, `[sport]`, `<id>`, `[n]`, `[days]` — and leaving them in lets
   # a CLI argument silently satisfy a payload field of the same name. Measured: moving `km`
   # into `stats`' invocation cell makes a required `km` pass with the schema untouched.
-  sed 's/^| *`[^`]*` *|//' "$tmp/cand"
+  # `[^|]*` after the closing backtick, not ` *`. Two table rows carry `(alias `pc`)` between
+  # the invocation and the next pipe, so the anchored form matched nothing and the ENTIRE row
+  # survived — placeholders included. That is round-1's placeholder finding alive again
+  # inside the mechanism added to close it, and it only surfaced once the alias union
+  # enrolled those two rows. Measured: deleting `sport` from `power-curve`'s literal passed,
+  # while neutralising the `[sport]` placeholder as a control failed.
+  #
+  # An inline invocation in PROSE — `stride config get <key> --json` — is a different route
+  # to the same place and is NOT fixed here: this strip is anchored at `^|`, so it never sees
+  # one. `config.json` and `config_unset.json` both rest a required `key` on that `<key>`.
+  # Stripping arbitrary inline invocations is a much broader change than this line.
+  sed 's/^| *`[^`]*`[^|]*|//' "$tmp/cand"
 }
 
 # Every command whose schema is $1, unioned. A schema can be reached by several names —
@@ -206,7 +231,15 @@ fi
 while IFS="$(printf '\t')" read -r schema props req flag; do
   [ "$flag" = "doc" ] || continue
   pinned=$((pinned + 1))
-  cmd=$(awk -F'\t' -v s="$schema" '$2 == s {print $1; exit}' "$tmp/join")
+  # The label is the command that actually DOCUMENTS this schema, not the alphabetically
+  # first name mapping to it. Taking `head -1` on a sorted join labels alias-reached schemas
+  # by the alias — reporting `pc` and `pz`, names SKILL.md never writes, so the message names
+  # something the reader cannot find in the file it is being told to fix.
+  cmd=""
+  for c in $(awk -F'\t' -v s="$schema" '$2 == s {print $1}' "$tmp/join"); do
+    if [ -z "$cmd" ]; then cmd="$c"; fi
+    if [ -n "$(doc_for "$c")" ]; then cmd="$c"; break; fi
+  done
   [ -n "$cmd" ] || continue
   doc_for_schema "$schema" > "$tmp/doc"
   printf '%s\n' "$req" | tr ',' '\n' | while IFS= read -r rk; do
