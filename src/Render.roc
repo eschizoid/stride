@@ -520,8 +520,6 @@ Render :: [].{
             LoneNoDistance => "${name} (no distance recorded — can't match similar rides)"
         }
 
-    # one workout's table + trend verdict, rendered through its sport-aware lens
-    # (power->EF, distance->speed/HR, rated->RPE; RPE is lower-is-better)
     # ONE number for the operator and for the sentence describing it. `··· = a break over 90
     # days` is a user-facing claim about what the glyph means, and nothing pinned it: review
     # changed the legend to "over 60 days", left the comparison at `> 90`, and the whole
@@ -533,9 +531,15 @@ Render :: [].{
     # which is the stronger fix: there is no version of the code where the sentence and the
     # comparison disagree. The inclusivity — `>` and not `>=`, so exactly 90 is NOT a break
     # — is pinned separately in `tests/e2e.roc`, because a constant cannot express it.
+    # Nineteen comment lines across `Render.roc`, `Metrics.roc` and `tests/e2e.roc` quote
+    # the literal 90. Most are historical narrative and stay true whatever this becomes, but
+    # they do NOT follow this constant — only the operator and the legend do. Moving this
+    # number means reading those too.
     gap_days : I64
     gap_days = 90
 
+    # one workout's table + trend verdict, rendered through its sport-aware lens
+    # (power->EF, distance->speed/HR, rated->RPE; RPE is lower-is-better)
     progress_section : Str, List(Metrics.ProgressRow), Str, [Ef, SpeedHr, Rpe], [Asc, Desc], List(I64), U64, Str -> Str
     progress_section = |name, rows, asked, lens, sort, all_days, hidden, hidden_reason| {
         higher = Metrics.lens_higher_better(lens)

@@ -5993,8 +5993,8 @@ b_progress_b! = |ctx| {
     # weakness: with ten more HR-less rides the render said "(11 hidden: needs power
     # and HR)" and this check still printed ok, because `"11 hidden"` contains
     # `"1 hidden"`. The stronger form is already the house style one file over, in
-    # `Render.roc`'s own expect. A check whose name
-    # overstates its assertion is the exact failure this PR exists to remove.
+    # `Render.roc`'s own expect. A check whose name overstates its assertion is the exact
+    # failure this PR exists to remove.
     check!("...and the group says one session was withheld", Str.contains(gap_probe, "(1 hidden: needs power and HR)"))?
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (221,222,223); DELETE FROM streams WHERE activity_id IN (221,222,223); DELETE FROM activities WHERE id IN (221,222,223);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
@@ -6029,7 +6029,7 @@ b_progress_b! = |ctx| {
     gap_marks = List.len(Str.split_on(prog_h, "···")) - 1
     check!("far-apart sessions show a gap ROW, not just the legend (marks: ${U64.to_str(gap_marks)})", gap_marks == 8)?
     # ...and the BOUNDARY that decides it, which the count above cannot see. `Render.roc`
-    # draws the row on `max_real_gap(...) > 90`, and review measured that relaxing it to
+    # draws the row on `max_real_gap(...) > gap_days`, and review measured that relaxing it to
     # `>= 90` leaves the whole suite green: this fixture's gaps are 151 and 30 days, so no
     # comparison lands on 90 and the operator is free to move. That is the last of #293's
     # four bullets — the speed/HR and RPE verb strings, which that issue names in one
@@ -6038,7 +6038,8 @@ b_progress_b! = |ctx| {
     # A scratch HOME rather than the shared fixture: the pair has to be EXACTLY 90 days
     # apart, and adding it here would move `gap_marks` and the session counts three checks
     # up. 2025-01-01 to 2025-04-01 is 90 days, so a correct `> 90` draws NO row and the only
-    # marks are the legend's one; `>= 90` draws the row and the count becomes 8.
+    # mark is the legend's one, so the probe reads `1/2`; relaxing the operator draws the row
+    # and it reads `2/2`.
     gap_90 = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; HOME=$h '${ctx.bin}' init >/dev/null 2>&1; HOME=$h '${ctx.bin}' config set hr_z1_max 130 >/dev/null 2>&1; HOME=$h '${ctx.bin}' config set hr_z2_max 150 >/dev/null 2>&1; HOME=$h '${ctx.bin}' config set hr_z3_max 165 >/dev/null 2>&1; HOME=$h '${ctx.bin}' config set hr_z4_max 180 >/dev/null 2>&1; sqlite3 $h/.stride/db.sqlite \"INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (961,'Boundary Class','Ride','2025-01-01T10:00:00Z',3600,20000,180,180,150),(962,'Boundary Class','Ride','2025-04-01T10:00:00Z',3600,20000,210,210,150);\" >/dev/null 2>&1; HOME=$h '${ctx.bin}' analyze >/dev/null 2>&1; out=$(HOME=$h '${ctx.bin}' progress 2025-04-01 2>&1); printf '%s/%s' \"$(printf '%s' \"$out\" | grep -c '···')\" \"$(printf '%s' \"$out\" | grep -c '^│ 2025-')\""))
     # BOTH numbers, and the second is the whole point. `1` alone means "one line holds the
     # glyph", which is equally true of a group holding ONE row, where no 90-day comparison
@@ -6047,11 +6048,12 @@ b_progress_b! = |ctx| {
     # green on the exact defect it exists to catch. The probe has to state that both rides
     # survived every gate before its mark count means anything.
     #
-    # `1/2` = one legend mention, no gap row, two rendered session rows. On `>= 90` it is
-    # `2/2`: `grep -c` counts LINES, so a gap row moves it to 2, not to 8. An earlier version
-    # of this comment said 8, borrowed from the two neighbouring checks that count GLYPHS
-    # with `Str.split_on` — the same mental-model slip this block exists to warn about, made
-    # while writing the warning.
+    # `1/2` = one legend mention, no gap row, two rendered session rows; relaxing the
+    # operator gives `2/2`. `grep -c` counts LINES, and the gap row is ONE line carrying
+    # seven glyphs, so the reachable values here are 0, 1 and 2 — never 8. An earlier
+    # version of this comment said 8, borrowed from the two neighbouring checks that count
+    # GLYPHS with `Str.split_on`: the same mental-model slip this block exists to warn
+    # about, made while writing the warning.
     check!("a gap of exactly 90 days draws NO gap row, with both rides still rendered", gap_90 == "1/2")?
     check!("progress desc lists newest session first", strjq!(ctx, ["progress", "2025-07-01", "desc"], ".data.groups[0].sessions[0].date") == "2025-07-01")?
     # The verdict must be computed on the CHRONOLOGICAL series regardless of display order:
