@@ -6129,11 +6129,14 @@ b_progress_b! = |ctx| {
     #
     # The assertion pins the FULL clause, not `"1 hidden"`. Review mutation-proved the
     # weakness: with ten more HR-less rides the render said "(11 hidden: needs power
-    # and HR)" and this check still printed ok, because `"11 hidden"` contains
-    # `"1 hidden"`. The stronger form is already the house style one file over, in
+    # and HR)" and this check still printed ok, because `"11 hidden"` contains `"1 hidden"`.
+    # #286 reworded the clause; the full-clause property is what carried over, not the words. The stronger form is already the house style one file over, in
     # `Render.roc`'s own expect. A check whose name overstates its assertion is the exact
     # failure this PR exists to remove.
-    check!("...and the group says one session was withheld", Str.contains(gap_probe, "(1 hidden: needs power and HR)"))?
+    # The clause moved from "hidden" to "shown unscored" in #286, because the row is in the
+    # table now — but the assertion keeps the property #293 gave it: the FULL clause, so it
+    # cannot pass on "11 shown unscored" the way "1 hidden" once passed on "11 hidden".
+    check!("...and the group says one session was withheld", Str.contains(gap_probe, "(1 shown unscored: needs power and HR)"))?
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (221,222,223); DELETE FROM streams WHERE activity_id IN (221,222,223); DELETE FROM activities WHERE id IN (221,222,223);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     _ = seed_ride!(ctx.db, "203", "Test Class", "2025-07-01T10:00:00Z", "3600", "20000", "150", "150")

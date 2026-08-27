@@ -757,14 +757,8 @@ Render :: [].{
             } else {
                 "→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${U64.to_str(List.len(scored_rows))} sessions${hidden_note} — ${label}${pct_str}"
             }
-        footer = "${legend}
-bar = scaled worst→best · ◀ marks the asked date · ··· = a break over ${I64.to_str(gap_days)} days"
-        "── ${name} ──
-${table}
-
-${verdict}${last_vs_best(scored_rows, lens)}
-
-${footer}"
+        footer = "${legend}\nbar = scaled worst→best · ◀ marks the asked date · ··· = a break over ${I64.to_str(gap_days)} days"
+        "── ${name} ──\n${table}\n\n${verdict}${last_vs_best(scored_rows, lens)}\n\n${footer}"
     }
 
     # "last vs best" line: the most recent session vs the all-time best FOR THIS LENS
