@@ -233,11 +233,23 @@ ReportSessions :: [].{
                         Ok({ np, np_known: np_known != 0, hr, dec_pct, dec_known: dec_known != 0 })
                     },
                 })?
-                ef_samples = List.map(List.keep_if(comps, |c| c.np_known and c.hr > 0.0), |c| c.np / c.hr)
+                # `valid_hr`, not `> 0.0`, and this is the site that matters most of the
+                # three: it is the COMPARABLES set, so an impossible reading here does not
+                # merely misreport its own session, it sets the baseline every NEIGHBOUR is
+                # scored against. Measured before this change — activity 13304290741's
+                # 22-sample EF baseline contained 6.60 and 3.32, both from the two broken
+                # rowing sessions, so a healthy session was ranked against a median two
+                # impossible numbers helped set (#305).
+                ef_samples = List.map(List.keep_if(comps, |c| c.np_known and Metrics.valid_hr(c.hr)), |c| c.np / c.hr)
                 np_samples = List.map(List.keep_if(comps, |c| c.np_known), |c| c.np)
                 dec_samples = List.map(List.keep_if(comps, |c| c.dec_known), |c| c.dec_pct)
                 # flags first (ADR 0009), magnitude second (division guard)
-                cur_ef = if a.power_known and a.hr_known and a.avg_hr > 0.0 a.np_w / a.avg_hr else 0.0
+                # #294 taught `progress` to disbelieve these numbers and `activity` went on
+                # building a verdict on them, which is the sentence #294's own commit message
+                # used about the codebase before it — it moved rather than went away. The
+                # bound is `Metrics.valid_hr`, shared with the two `progress` lenses and with
+                # decoupling, so there is one definition of an impossible heart rate.
+                cur_ef = if a.power_known and a.hr_known and Metrics.valid_hr(a.avg_hr) a.np_w / a.avg_hr else 0.0
                 # one metric block: current + own-history median + rank + change.
                 # percentile is direction-free (documented at Metrics.percentile_of).
                 # known = current-side presence AND a non-empty sample set; a
@@ -262,7 +274,11 @@ ReportSessions :: [].{
                     window_days: 90.I64,
                     band_lo_s: band.lo,
                     band_hi_s: band.hi,
-                    ef: metric_block(ef_samples, cur_ef, a.power_known and a.hr_known and a.avg_hr > 0.0),
+                    # ...and the KNOWN flag moves with it, so a refused session publishes
+                    # `ef.known: false` rather than a number nothing marks. That is the
+                    # marking half of #305: the reader gets an absent measurement instead of
+                    # a 100th-percentile verdict computed from 18 bpm.
+                    ef: metric_block(ef_samples, cur_ef, a.power_known and a.hr_known and Metrics.valid_hr(a.avg_hr)),
                     np: metric_block(np_samples, a.np_w, a.power_known),
                     decoupling: metric_block(dec_samples, a.decoupling_pct, a.decoupling_known),
                 }

@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(963)?
+    checks_ran_exactly!(965)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2301,7 +2301,27 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr,device_watts) SELECT 97,'ski probe','Ski',date(start_local,'-4 days')||'T09:00:00Z',3600,0,300,300,150,1 FROM activities WHERE id=101;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("comparability excludes other families", strjq!(ctx, ["activity", "101"], ".data.baselines.np.sample_count") == "1")?
-    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (97,98,99); DELETE FROM activity_metrics WHERE activity_id IN (97,98,99); DELETE FROM activities WHERE id IN (97,98,99);")
+    # ...and an IMPOSSIBLE heart rate is refused here too. #294 taught the `progress` lenses
+    # to disbelieve these numbers and `activity` went on building a verdict on them — on the
+    # real database, a rowing session averaging 18 bpm published `ef.current 6.60`,
+    # `delta_pct 685%` and `percentile 100` (#305).
+    #
+    # Probe 96 is comparable to 101 in every way that matters — same family, same duration
+    # band, five days earlier, real watts — and differs only in carrying an 18 bpm average.
+    # Two separate sites have to hold, and the two checks below are chosen to separate them:
+    # the `known` flag on the row's OWN block, and the row's exclusion from a NEIGHBOUR's
+    # comparables. The second is the one that matters more, because an impossible sample in
+    # the comparables set does not misreport one session, it moves the median every other
+    # session is ranked against.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr,device_watts) SELECT 96,'impossible hr probe','Ride',date(start_local,'-3 days')||'T09:00:00Z',3550,28000,185,185,18,1 FROM activities WHERE id=101;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("an 18 bpm session publishes no EF verdict of its own", strjq!(ctx, ["activity", "96"], ".data.baselines.ef.known") == "false")?
+    # `sample_count`, not the median: the count is what the comparables filter changes, and
+    # it discriminates. Probe 96 carries real watts and a real duration, so with a plausible
+    # heart rate it WOULD be 101's second EF comparable — measured, the same fixture with
+    # `avg_hr` 140 instead of 18 reads 2 here.
+    check!("...and its EF does not enter a neighbour's comparables, which would move the median", strjq!(ctx, ["activity", "101"], ".data.baselines.ef.sample_count") == "1")?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (96,97,98,99); DELETE FROM activity_metrics WHERE activity_id IN (96,97,98,99); DELETE FROM activities WHERE id IN (96,97,98,99);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # #93: ramp carries BOTH fields, and a short history reports an honest 0 rather than
     # today's whole CTL — which is what treating "no data 7 days back" as a CTL of 0 would
