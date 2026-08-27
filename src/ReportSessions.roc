@@ -249,10 +249,21 @@ ReportSessions :: [].{
                 # used about the codebase before it — it moved rather than went away.
                 #
                 # Review reported that attribution as false, saying no commit message
-                # contains the sentence. Checked rather than taken: `80465b4`, the squash
-                # that closed #294 and #300, carries it verbatim in its body. The claim
-                # stands, and it is recorded here because adopting that correction would
-                # have replaced a true sentence with a false one. The
+                # contains the sentence, and recommended dropping it. Checked rather than
+                # taken — and the check then needed a second pass of its own.
+                #
+                # The sentence is in `80465b4` on `fix/294-invalid-hr`, the commit that
+                # introduced the fix. It is NOT in the commit on this branch's history:
+                # GitHub's squash `53c6edf` kept the subject and discarded the body, which
+                # is one byte. `80465b4` is not an ancestor of `main`, so a reader running
+                # `git log` never reaches it, and it becomes unreachable entirely once the
+                # merged branch is swept — at which point "no commit message contains it"
+                # would become true for the wrong reason. The durable pointer is PR #303's
+                # body, which carries it verbatim and outlives the branch.
+                #
+                # Recorded because adopting the original correction would have replaced a
+                # true sentence with a false one, and because the second pass found the
+                # rebuttal itself imprecise. The
                 # bound is `Metrics.valid_hr`, shared with the two `progress` lenses and with
                 # decoupling, so there is one definition of an impossible heart rate.
                 cur_ef = if a.power_known and a.hr_known and Metrics.valid_hr(a.avg_hr) a.np_w / a.avg_hr else 0.0
