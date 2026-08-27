@@ -2325,19 +2325,30 @@ b_seed_analyze! = |ctx| {
     check!("...and no EF NUMBER either, which the flag alone does not guarantee", strjq!(ctx, ["activity", "96"], ".data.baselines.ef.current") == "0")?
     # ...and the LOAD LADDER's HR rung, which #313 bounded and which nothing at the binary
     # level guarded. Review measured that: with the guard reverted, `just e2e` alone passes
-    # all 966 checks while an impossible heart rate scores training load again. The pure
+    # all 966 checks — the count before these two — while an impossible heart rate scored
+    # training load again. The pure
     # expects were the entire gate, and `src/Analyze.roc` — the call site — is not in the
     # `roc test` list at all, so nothing covered the wiring either.
     #
     # Two rows, and the second is the non-vacuity half. 471 carries an impossible average
     # and must fall through to `relative_effort`; 472 carries a plausible one and must reach
     # `hr_avg`, which is what proves the fixture gets to the HR rung at all rather than 471
-    # passing because some other rung answered. No watts and no stream on either, because
+    # passing because some other rung answered. `m: "hr_avg"` is emitted from exactly ONE
+    # site in `src/`, so `load_model == "hr_avg"` cannot pass without the fixture reaching
+    # that branch — which is what establishes 472, because the obvious mutation (make the
+    # rung refuse everything) aborts earlier at the coverage-tier check, whose medium tier
+    # depends on this same rung.
+    #
+    # No watts and no stream on either, because
     # the rung is only reached when there are no zone seconds.
     #
     # NOT probe 96 above: it carries `avg_watts 185` with a derived FTP, so it scores through
     # the power rung and never reaches this one. Review pointed at it first from reading the
     # fixture, then corrected that from running it.
+    # Absolute dates rather than `ctx.d1`/`ctx.d2` like their neighbours: these exist only
+    # to be scored and deleted four lines down, so nothing downstream sees them. A check
+    # inserted BETWEEN the insert and the delete would inherit an absolute-date neighbour in
+    # an otherwise relative fixture — move these to the relative form first if you add one.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_hr,relative_effort) VALUES (471,'HR Rung Impossible','Workout','2025-10-01T08:00:00Z',2769,250,33),(472,'HR Rung Plausible','Workout','2025-10-08T08:00:00Z',2769,139.2,33);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("an impossible avg_hr falls through the load ladder's HR rung", strjq!(ctx, ["activity", "471"], ".data.load_model") == "relative_effort")?
