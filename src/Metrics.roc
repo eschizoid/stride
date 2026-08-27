@@ -1041,18 +1041,29 @@ Metrics :: [].{
     lens_score : Lens, ProgressRow -> Try(F64, [Unscorable])
     lens_score = |lens, r|
         match lens {
+            # `valid_hr`, not `avg_hr > 0.0`. The 35-220 bpm bound lives in this same module
+            # and the DECOUPLING path already applies it — so the codebase disbelieved a
+            # number in one place and built a training verdict on it in another. Measured on
+            # the real database: two ROWING sessions recording 18.0 and 31.3 bpm produced
+            # "improving (221%)" and "88% below your best" on a workout whose every other
+            # session sits near 0.85. The tell was already on screen — the `drift` column
+            # printed `-` for exactly those two rows, because decoupling had refused them
+            # (#294).
+            #
+            # Both lenses that read HR, not just EF: a speed/HR score divides by the same
+            # number and is wrong in the same way.
             # EF is NP-per-heartbeat, so it is only comparable when np_w really IS normalized
             # power. The ladder stores whichever power rung won, so a row scored from plain
             # avg_watts would put avg-watts-per-beat on the same trend line as NP-per-beat and
             # invent a fake improvement for anyone whose newer rides have streams.
             Ef =>
-                if r.np_w > 0.0 and r.avg_hr > 0.0 and np_like(r.load_model) {
+                if r.np_w > 0.0 and valid_hr(r.avg_hr) and np_like(r.load_model) {
                     Ok(r.np_w / r.avg_hr)
                 } else {
                     Err(Unscorable)
                 }
             SpeedHr =>
-                if r.distance_m > 0.0 and r.avg_hr > 0.0 and r.moving_time > 0 {
+                if r.distance_m > 0.0 and valid_hr(r.avg_hr) and r.moving_time > 0 {
                     Ok((r.distance_m / r.moving_time.to_f64() * 60.0) / r.avg_hr)
                 } else {
                     Err(Unscorable)
@@ -1190,6 +1201,27 @@ Metrics :: [].{
     valid_hr : F64 -> Bool
     valid_hr = |hr|
         hr >= 35.0 and hr <= 220.0
+
+    # the bound the EF and speed/HR lenses now share with decoupling. An 18 bpm average is
+    # not a light session, it is a broken reading — and trusting it produced "improving
+    # (221%)" on a workout whose other sessions sit near 0.85 — seven of them did; the
+    # eighth scored 1.38 off an 86.4 bpm average, and it is that session, not the 18 bpm
+    # one, which becomes the group's best once the bound is applied (#294).
+    #
+    # "Best" and not "legitimate best": review measured that session's own stream and found
+    # 42% dropout, an in-band mean of 147.7 bpm against the stored 86.4, and an honest EF of
+    # 0.81 — which would not be the best either. It is the same artifact as the 18 bpm row,
+    # landing INSIDE the bound instead of outside it, and it is a class: of 670 stream-
+    # carrying activities, 14 store an average more than 15 bpm below their in-band stream
+    # mean and 11 of those are inside 35-220, so this bound refuses 3 and misses 11. The
+    # root-cause version scores from the stream-derived in-band mean when a stream exists,
+    # which the engine already computes for decoupling. Tracked in #305.
+    expect Metrics.valid_hr(140.0)
+    expect !(Metrics.valid_hr(18.0)) and !(Metrics.valid_hr(31.3))
+    expect !(Metrics.valid_hr(0.0)) and !(Metrics.valid_hr(221.0))
+    # the boundary is INCLUSIVE at both ends, which is what separates this from `> 0`
+    expect Metrics.valid_hr(35.0) and Metrics.valid_hr(220.0)
+    expect !(Metrics.valid_hr(34.9)) and !(Metrics.valid_hr(220.1))
 
     # ── aerobic decoupling / Pw:HR drift (#94) ──────────────────────────
     #
@@ -2633,6 +2665,19 @@ expect {
     Metrics.lens_score(Ef, row("power_stream")).is_ok()
     and Metrics.lens_score(Ef, row("avg_watts")).is_err()
     and Metrics.lens_score(Ef, row("weighted_watts")).is_ok()
+}
+
+# ...and the same two lenses refuse an IMPOSSIBLE heart rate, which is the regression this
+# whole change is about and which no expect could see. `valid_hr`'s own expects pin the
+# predicate, not its use: with both lens arms reverted to `avg_hr > 0.0`, every expect file
+# passed with identical counts and only the e2e caught it. These two assert the lenses
+# THEMSELVES, so the unit suite is no longer blind to the exact defect.
+expect {
+    hr_row = |hr| { name: "X", date: "2025-01-01", sport: "Ride", distance_m: 12000.0, moving_time: 3600, np_w: 200.0, avg_hr: hr, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
+    Metrics.lens_score(Ef, hr_row(150.0)).is_ok()
+    and Metrics.lens_score(Ef, hr_row(18.0)).is_err()
+    and Metrics.lens_score(SpeedHr, hr_row(150.0)).is_ok()
+    and Metrics.lens_score(SpeedHr, hr_row(18.0)).is_err()
 }
 
 # swim TSS cubes the speed ratio (drag), running squares it. At IF 1.2 for one hour that is

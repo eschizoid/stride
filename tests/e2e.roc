@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(942)?
+    checks_ran_exactly!(955)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -5753,6 +5753,144 @@ b_progress_b! = |ctx| {
     _ = seed_power_stream!(ctx.db, 213, 1300, 170)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("auto-name distance-gated to 2 sessions", strjq!(ctx, ["progress", "2025-03-01"], ".data.groups[0].sessions | length") == "2")?
+    # ── #294: an impossible heart rate is not a light session ─────────────────────
+    #
+    # `lens_score` tested `avg_hr > 0.0` while `valid_hr` (35-220 bpm) sat in the same
+    # module and the DECOUPLING path already applied it — so the codebase disbelieved a
+    # number in one place and built a training verdict on it in another. On the real
+    # database two ROWING sessions recording 18.0 and 31.3 bpm produced "improving (221%)"
+    # and "88% below your best" on a workout whose other sessions sit near 0.85, while the
+    # `drift` column printed `-` for exactly those two rows because decoupling refused them.
+    #
+    # 18 bpm here, not 34: a value just outside the bound would pass on an off-by-one and
+    # tells the reader nothing about WHY the bound exists. This is the shape that occurs.
+    _ = seed_ride!(ctx.db, "231", "HR Sanity Class", "2025-02-01T08:00:00Z", "3600", "20000", "150", "140")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (232,'HR Sanity Class','Ride','2025-02-08T08:00:00Z',3600,20000,155,155,18);")
+    _ = seed_ride!(ctx.db, "233", "HR Sanity Class", "2025-02-15T08:00:00Z", "3600", "20000", "160", "145")
+    _ = seed_power_stream!(ctx.db, 231, 1300, 150)
+    _ = seed_power_stream!(ctx.db, 232, 1300, 155)
+    _ = seed_power_stream!(ctx.db, 233, 1300, 160)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # the 18 bpm row would score 155/18 = 8.6 against ~1.1 for the real ones, so under the
+    # old predicate it becomes the "best" session and every trend reads off it
+    check!("an 18 bpm ride is refused by the EF lens, not scored as the best session", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .sessions | length] | join(\",\")") == "2")?
+    check!("...and it is DECLARED withheld rather than silently dropped", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .hidden_lens] | join(\",\")") == "1")?
+    check!("...and no session scores off it", sfloat(strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .sessions[].score] | max")) < 3.0)?
+    # ...and the SPEED/HR lens too, which the EF fixture cannot reach. Both arms divide by
+    # the same number and are wrong in the same way, but only one of them had an oracle:
+    # reverting the speed/HR arm alone left the whole suite green. A distance-carrying,
+    # power-free group takes that lens.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (241,'HR Sanity Row','Rowing','2025-02-01T09:00:00Z',3600,12000,140),(242,'HR Sanity Row','Rowing','2025-02-08T09:00:00Z',3600,12000,18),(243,'HR Sanity Row','Rowing','2025-02-15T09:00:00Z',3600,12000,145);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # the LENS is pinned alongside the count. Without it the check establishes only that a
+    # row went missing, and the coupling to the speed/HR arm is carried by mutation rather
+    # than by the assertion — true today, invisible to anyone reading the check tomorrow.
+    check!("an 18 bpm row is refused by the speed/HR lens as well", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity Row\")) | \"\\(.lens)/\\(.sessions | length)\"] | join(\",\")") == "speed_hr/2")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (241,242,243); DELETE FROM activities WHERE id IN (241,242,243);")
+    # ── #300's half: the COMBINED reason, which nothing asserted. Review mutation-proved
+    # that: inverting the agreement rule to `if lens_dropped == 1 needs_plural else needs`
+    # — literally the "1 need distance and HR" defect the comment above argues against —
+    # left `just test` at rc 0 and 931 == 931, and so did deleting both counts and
+    # rendering the bare `"${g.scope_why}, ${lens_verb}"`. The whole feature could be
+    # removed without a single check noticing.
+    #
+    # Reaching the both-causes arm needs an AUTO-NAMED group, because only those truncate
+    # by distance: `is_auto_name` keys on the first word, so "Evening Ride" qualifies and
+    # "HR Sanity Class" above does not. A distinct prefix from the existing `Morning Ride`
+    # fixtures on purpose — groups are keyed by NAME, so reusing it would silently change
+    # the totals the scope-only check upstream pins.
+    _ = seed_ride!(ctx.db, "271", "Evening Ride", "2025-05-02T18:00:00Z", "3600", "20000", "150", "140")
+    _ = seed_ride!(ctx.db, "272", "Evening Ride", "2025-05-09T18:00:00Z", "3600", "20000", "155", "18")
+    _ = seed_ride!(ctx.db, "273", "Evening Ride", "2025-05-16T18:00:00Z", "3600", "20000", "160", "145")
+    _ = seed_ride!(ctx.db, "274", "Evening Ride", "2025-05-05T18:00:00Z", "3600", "40000", "150", "140")
+    _ = seed_power_stream!(ctx.db, 271, 1300, 150)
+    _ = seed_power_stream!(ctx.db, 272, 1300, 155)
+    _ = seed_power_stream!(ctx.db, 273, 1300, 160)
+    _ = seed_power_stream!(ctx.db, 274, 1300, 150)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # anchored on the 20 km ride: the 40 km one is outside the 10% band (SCOPE), the 18 bpm
+    # one is inside it and refused by the lens (LENS). One of each, which is the arm that
+    # renders both counts.
+    ev_split = strjq!(ctx, ["progress", "2025-05-16"], "[.data.groups[] | select(.name | startswith(\"Evening Ride\")) | \"\\(.hidden_scope)/\\(.hidden_lens)/\\(.hidden)\"] | join(\",\")")
+    check!("a group hidden by BOTH gates counts each cause, and they sum to the total", ev_split == "1/1/2")?
+    ev_human = stride_human!(ctx.bin, ctx.home, ["progress", "2025-05-16"])
+    # The counts are asserted IN the sentence, not just in the payload. "or" was compatible
+    # with 1/1 and with 22/1 alike, which is the whole of #300: the machine surface knew the
+    # split and the person was told a disjunction.
+    check!("...and the human line carries both numbers, not a disjunction", Str.contains(ev_human, "2 hidden: 1 a different distance for this workout, 1 needs power and HR"))?
+    check!("...and does not offer the reader a guess between the two causes", !(Str.contains(ev_human, "a different distance for this workout, or")))?
+    # ...and the AGREEMENT rule, on the boundary that decides it. A second lens-dropped ride
+    # moves the count to 2 and the verb must move with it. Pinning only the singular case
+    # would accept the inverted rule, since that renders correctly for exactly one count.
+    #
+    # To re-prove either of these, mutate ONLY the verb string it names — `needs_plural`'s
+    # `Ef` arm for the plural check, `needs`' for the singular. Each then fails alone, with
+    # every other check green, because the two branches are independent strings. Do NOT
+    # reach for "revert the rule and neutralise the earlier checks": `check!` returns `Err`
+    # into a `?`, so the first failure aborts the run and shadows everything after it, and
+    # neutralising by DELETING a check orphans its binding and turns the run into a build
+    # failure that prints nothing like a failed suite. Neutralise by changing a CONDITION,
+    # never by deleting the line — the condition form is a legitimate technique and the only
+    # option for a check with no single-branch string to mutate. Both traps were hit here.
+    _ = seed_ride!(ctx.db, "275", "Evening Ride", "2025-05-12T18:00:00Z", "3600", "20000", "158", "20")
+    _ = seed_power_stream!(ctx.db, 275, 1300, 158)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    ev_human2 = stride_human!(ctx.bin, ctx.home, ["progress", "2025-05-16"])
+    check!("...and two lens-dropped rows take the plural verb, which the count-1 case cannot show", Str.contains(ev_human2, "1 a different distance for this workout, 2 need power and HR"))?
+    check!("...and not the singular one the inverted rule would print here", !(Str.contains(ev_human2, "2 needs power and HR")))?
+    # ...and the SpeedHr arm, which is the one the real database actually renders. Review
+    # measured that: all 35 both-cause groups on it take `speed_hr`, 8 singular and 27
+    # plural, and both strings render today. The Evening Ride block above proves the
+    # mechanism on `Ef` — and replacing either SpeedHr string with garbage left the whole
+    # suite green, because `needs`/`needs_plural` are three-armed matches and a fixture on
+    # one arm tests a SIBLING of the case the rule fires on, not the case itself.
+    #
+    # Rowing with distance and HR and no power takes this lens, the same way the "HR Sanity
+    # Row" group above does.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (281,'Evening Row','Rowing','2025-06-02T18:00:00Z',3600,12000,140),(282,'Evening Row','Rowing','2025-06-09T18:00:00Z',3600,12000,18),(283,'Evening Row','Rowing','2025-06-16T18:00:00Z',3600,12000,145),(284,'Evening Row','Rowing','2025-06-05T18:00:00Z',3600,24000,140);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    row_human = stride_human!(ctx.bin, ctx.home, ["progress", "2025-06-16"])
+    check!("the speed/HR arm renders its own singular verb, not the EF arm's", Str.contains(row_human, "1 a different distance for this workout, 1 needs distance and HR"))?
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (285,'Evening Row','Rowing','2025-06-12T18:00:00Z',3600,12000,20);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("...and its plural verb, which is what 27 of the 35 real groups print", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-06-16"]), "1 a different distance for this workout, 2 need distance and HR"))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (281,282,283,284,285); DELETE FROM activities WHERE id IN (281,282,283,284,285);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # ...and the THIRD arm. I was about to write that the Rpe combined arm is unreachable by
+    # construction, on the strength of an earlier finding that `LoneNoDistance` plus a lens
+    # drop cannot happen — that kind truncates `rows` to the anchor, so a lens drop empties
+    # `kept` into `Err(Skip)`. Review showed the reasoning conflates a KIND with a LENS. The
+    # combined arm is reached through `SimilarDistance`, a different kind, and `Rpe` is a
+    # lens; nothing about the lens decides which kind `anchor_filter` returns.
+    #
+    # The real constraint is the non-obvious part and is why this fixture looks the way it
+    # does: NO row may be SpeedHr-scorable. Every row here carries distance and moving_time,
+    # so that means no row may carry a valid HR — `progress_lens` picks SpeedHr on
+    # `List.any`, and one strapped session anywhere in the group takes the lens away from
+    # Rpe. A pool swim logged without a strap, which is not contrived: the real database has
+    # 20 rpe-lens groups, one already auto-named and one recorded distance away from
+    # rendering this exact arm.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (291,'Evening Swim','Swim','2025-07-01T18:00:00Z',3600,2000),(292,'Evening Swim','Swim','2025-07-08T18:00:00Z',3600,9000),(293,'Evening Swim','Swim','2025-07-15T18:00:00Z',3600,2000),(294,'Evening Swim','Swim','2025-07-22T18:00:00Z',3600,2000),(295,'Evening Swim','Swim','2025-07-29T18:00:00Z',3600,2000);")
+    _ = sql!(ctx.db, "INSERT INTO ratings (activity_id,rpe,rated_at) VALUES (291,7.0,'2025-07-01'),(295,6.0,'2025-07-29');")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("the rpe arm renders its plural verb too", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-29"]), "1 a different distance for this workout, 2 need a rating"))?
+    _ = sql!(ctx.db, "INSERT INTO ratings (activity_id,rpe,rated_at) VALUES (294,5.0,'2025-07-22');")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("...and its singular verb, so all three lenses are pinned on both sides of the count", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-29"]), "1 a different distance for this workout, 1 needs a rating"))?
+    # `ratings` too — first fixture to write `ctx.db`'s `ratings`, which is the load-bearing
+    # part and not the same as "first to write ratings at all": the `an_db` sandbox has its
+    # own at ~3642, and the `rate` fixture below writes one on purpose and deliberately
+    # asserts it SURVIVES. So no existing cleanup covers these rows, and without this line
+    # three of them live on into every later check under a fully green suite — measured,
+    # dropping just this clause leaves 940 == 940 while the residue dump grows by three
+    # INSERTs.
+    _ = sql!(ctx.db, "DELETE FROM ratings WHERE activity_id IN (291,292,293,294,295); DELETE FROM activity_metrics WHERE activity_id IN (291,292,293,294,295); DELETE FROM activities WHERE id IN (291,292,293,294,295);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (271,272,273,274,275); DELETE FROM streams WHERE activity_id IN (271,272,273,274,275); DELETE FROM activities WHERE id IN (271,272,273,274,275);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (231,232,233); DELETE FROM streams WHERE activity_id IN (231,232,233); DELETE FROM activities WHERE id IN (231,232,233);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("40km ride excluded", sfloat(strjq!(ctx, ["progress", "2025-03-01"], ".data.groups[0].sessions | map(.distance_m) | max")) < 30000.0)?
     check!("progress human empty-date guard", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "1999-01-01"]), "no workout found"))?
     check!("unscorable workout explains lens", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", ctx.d1]), "can't be compared"))?
