@@ -5877,8 +5877,13 @@ b_progress_b! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO ratings (activity_id,rpe,rated_at) VALUES (294,5.0,'2025-07-22');")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("...and its singular verb, so all three lenses are pinned on both sides of the count", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-29"]), "1 a different distance for this workout, 1 needs a rating"))?
-    # `ratings` too: this is the first fixture in the driver to write there, so no existing
-    # cleanup covers it and the rows would survive into every later check.
+    # `ratings` too — first fixture to write `ctx.db`'s `ratings`, which is the load-bearing
+    # part and not the same as "first to write ratings at all": the `an_db` sandbox has its
+    # own at ~3642, and the `rate` fixture below writes one on purpose and deliberately
+    # asserts it SURVIVES. So no existing cleanup covers these rows, and without this line
+    # three of them live on into every later check under a fully green suite — measured,
+    # dropping just this clause leaves 940 == 940 while the residue dump grows by three
+    # INSERTs.
     _ = sql!(ctx.db, "DELETE FROM ratings WHERE activity_id IN (291,292,293,294,295); DELETE FROM activity_metrics WHERE activity_id IN (291,292,293,294,295); DELETE FROM activities WHERE id IN (291,292,293,294,295);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (271,272,273,274,275); DELETE FROM streams WHERE activity_id IN (271,272,273,274,275); DELETE FROM activities WHERE id IN (271,272,273,274,275);")
