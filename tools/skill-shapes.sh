@@ -150,10 +150,19 @@ doc_for() {
   # enrolled those two rows. Measured: deleting `sport` from `power-curve`'s literal passed,
   # while neutralising the `[sport]` placeholder as a control failed.
   #
+  # Two limits, both recorded because this strip's whole job is to have known ones.
+  #
   # An inline invocation in PROSE — `stride config get <key> --json` — is a different route
-  # to the same place and is NOT fixed here: this strip is anchored at `^|`, so it never sees
-  # one. `config.json` and `config_unset.json` both rest a required `key` on that `<key>`.
-  # Stripping arbitrary inline invocations is a much broader change than this line.
+  # to the same place and is NOT fixed here: this is anchored at `^|`, so it never sees one.
+  # `config.json` and `config_unset.json` both rest a required `key` on that `<key>`.
+  #
+  # And the anchor means the strip can stop applying to a row ENTIRELY. Reword the cell to
+  # `| run \`stride power-curve …` and it matches nothing, the row survives whole, and the
+  # placeholder hole reopens for that row — measured. Nothing guards row SHAPE any more:
+  # that was `checked_cmds`, correctly retired when direction 2 stopped attributing. It
+  # takes a reformat AND a field deleted from a literal while its placeholder remains, and
+  # the pin still fails unconditionally on any schema change either way — so this is a
+  # second line of defence that can go quiet, not a hole in the first.
   sed 's/^| *`[^`]*`[^|]*|//' "$tmp/cand"
 }
 
