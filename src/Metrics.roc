@@ -608,9 +608,25 @@ Metrics :: [].{
             if zone_total > 0 {
                 Ok({ t: hr_tss(input.zones), m: "hr_zones" })
             } else {
+                # `valid_hr`, and it is the LAST consumer of a summary average that took one
+                # unguarded. The two `progress` lenses got it in #294, `activity`'s EF in
+                # #305, decoupling had it already — this rung kept scoring TRAINING LOAD off
+                # a number the rest of the engine disbelieves, and load is the one that
+                # propagates: it feeds CTL, ATL and every form verdict downstream.
+                #
+                # Measured before the bound, same session with only `avg_hr` changed:
+                # 139.2 bpm gave tss 42.3, 250 gave 76.92, 18 gave 23.07. An impossible
+                # reading produced nearly double the athlete's real load and nothing marked
+                # it (#313).
+                #
+                # Refused means `NoHr`, not zero and not unknown: an impossible average is
+                # no usable heart rate, which is the case this arm already has a name for.
+                # The ladder falls to its next rung exactly as it does for a session that
+                # never carried HR at all, so the outcome is a rung the reader can see in
+                # `load_model` rather than a silent number.
                 match input.avg_hr {
-                    Ok(hr) => Ok({ t: hr_tss(all_seconds_in_zone(input.moving_time, zone_of(hr, input.zb))), m: "hr_avg" })
-                    Err(_) => Err(NoHr)
+                    Ok(hr) if valid_hr(hr) => Ok({ t: hr_tss(all_seconds_in_zone(input.moving_time, zone_of(hr, input.zb))), m: "hr_avg" })
+                    _ => Err(NoHr)
                 }
             }
         rpe_scored =
@@ -3000,6 +3016,31 @@ expect {
 expect {
     r = Metrics.tss_ladder({ ..Metrics.ladder_base, weighted_watts: Ok(190.0), avg_hr: Ok(150.0), ftp: 0.0 })
     (r.tss - 55.0).abs() < 0.001 and r.model == "hr_avg"
+}
+
+# ...and an IMPOSSIBLE average does not reach that rung. It is the last consumer of a
+# summary avg_hr that took one unguarded: the two `progress` lenses got `valid_hr` in #294,
+# `activity`'s EF in #305, decoupling had it already. This rung was still scoring TRAINING
+# LOAD off a number the rest of the engine disbelieves — and load is the one that
+# propagates, into CTL, ATL and every form verdict.
+#
+# Measured on a real session with only `avg_hr` changed: 139.2 bpm gave tss 42.3, 250 gave
+# 76.92, 18 gave 23.07. An impossible reading produced nearly double the real load (#313).
+#
+# Refused means the ladder falls to its NEXT rung, so `load_model` stops saying `hr_avg` —
+# the reader can see which rung answered, rather than getting a silent number.
+expect {
+    hi = Metrics.tss_ladder({ ..Metrics.ladder_base, avg_hr: Ok(250.0), rpe: Ok(7.0) })
+    lo = Metrics.tss_ladder({ ..Metrics.ladder_base, avg_hr: Ok(18.0), rpe: Ok(7.0) })
+    hi.model != "hr_avg" and lo.model != "hr_avg"
+}
+
+# the bound is INCLUSIVE at both ends here, the same as everywhere else it is applied —
+# 35 and 220 still score through the HR rung
+expect {
+    lo_edge = Metrics.tss_ladder({ ..Metrics.ladder_base, avg_hr: Ok(35.0) })
+    hi_edge = Metrics.tss_ladder({ ..Metrics.ladder_base, avg_hr: Ok(220.0) })
+    lo_edge.model == "hr_avg" and hi_edge.model == "hr_avg"
 }
 
 # power present, no FTP, no HR: honest zero (not a fabricated power-0), model "none"
