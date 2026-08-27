@@ -91,7 +91,68 @@ ReportHealth :: [].{
             path: Path.utf8(path),
             query:
                 \\SELECT COUNT(*) AS total,
-                \\       COALESCE(SUM(CASE WHEN a.avg_hr > 0 THEN 1 ELSE 0 END), 0) AS with_hr,
+                # `BETWEEN 35 AND 220`, not `> 0`. This is a COVERAGE count — how many
+                # sessions the engine can actually USE a heart rate from, which `> 0` — a
+                # presence test — was not measuring.
+                #
+                # ON THIS DATABASE THE NUMBER DOES NOT MOVE. Measured on a snapshot: `> 0`
+                # gives 672 and so does the predicate below. That is worth stating plainly
+                # because two earlier versions of this change reported otherwise. The first
+                # narrowed to a plausible STORED average and gave 669, and its comment called
+                # the missing 3 an over-count `> 0` was hiding. They are not: all three carry
+                # HR zone seconds built from their own streams, and one is scored `hr_zones`
+                # — its entire training load computed FROM heart rate. Excluding them made
+                # this payload contradict itself, since the same run prints them inside
+                # `medium (HR / RPE)`. The second version consulted `avg_hr_stream` and its
+                # comment claimed that restored 672. It does not; it gives 669 as well, and
+                # that figure was taken against #311 before its coverage gate landed.
+                #
+                # The gate is why, and the reason generalises: a stored average is impossible
+                # BECAUSE the strap misbehaved, and a misbehaving strap is exactly what fails
+                # a span gate. The scalar fallback is anti-correlated with the population it
+                # was reached for — on this database it rescues zero of the three.
+                #
+                # So the predicate is the UNION (`Metrics.usable_hr_sql`): a usable scalar OR
+                # zone seconds. It is what the field's own description has always claimed, and
+                # the rows it adds are exactly the rows that made the payload disagree with
+                # itself. What this change buys is not a smaller number — it is a `has_hr`
+                # that cannot contradict `with_hr`, a CAST that stops a BLOB from reading as
+                # strapless, and a predicate that means what the schema says.
+                #
+                # `hr_known` beside it does NOT move. AGENTS.md states the `_known`
+                # convention codebase-wide — companions decode from the STORED NULL — so it
+                # is behaving as documented, and narrowing it would break that rule for one
+                # field of five. The two fields answer different questions on purpose: one
+                # is "was a heart rate recorded", this is "can one be used". Marking an
+                # implausible value in the `activity` payload is the other half of #312 and
+                # is not this change; #319 carries it.
+                #
+                # `a.avg_hr`, not `COALESCE(m.avg_hr_stream, a.avg_hr)`. The stream term was here
+                # and was DEAD: `avg_hr_stream` is non-NULL only when the filtered samples span
+                # half the session, which needs two samples with a positive gap between them,
+                # and `time_in_zones` attributes every positive gap to some zone — so a non-NULL
+                # stream mean implies the zone arm is already true. It is also a mean of
+                # `valid_hr`-filtered samples, so it satisfies the scalar arm by construction.
+                # Whenever the COALESCE preferred the stream, both arms were true regardless;
+                # whenever it did not, it WAS `a.avg_hr`. Measured: rows where the two
+                # predicates differ, 0; rows with a stream mean and no zone seconds, 0. Review
+                # dropped the term from each site in turn and the suite stayed green both times,
+                # and no fixture could have closed that — the branch is unreachable.
+                #
+                # Removing it also makes the count reconcilable, which the version with it was
+                # not: every field the predicate reads is published by `activities --json`, so
+                #   jq '[.data[] | select(((.avg_hr>=35) and (.avg_hr<=220))
+                #        or ((.z1_s+.z2_s+.z3_s+.z4_s+.z5_s)>0))] | length'
+                # reproduces this number exactly. With the stream term it took 738 `activity`
+                # calls, because `avg_hr_scored` is not on the listing payload.
+                #
+                # The bound comes from `Metrics.valid_hr_sql` rather than being written out.
+                # The CAST it brings is load-bearing: SQLite sorts a BLOB above every number,
+                # so a bare `avg_hr BETWEEN 35 AND 220` is FALSE for a BLOB holding the bytes
+                # "100" — a session every other consumer reads through a CAST and scores at
+                # 100 bpm. `> 0` was TRUE for it. Fixing an over-count by introducing an
+                # under-count on the same value class is not a fix.
+                \\       COALESCE(SUM(CASE WHEN ${Metrics.usable_hr_sql("a.avg_hr", "COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0)")} THEN 1 ELSE 0 END), 0) AS with_hr,
                 \\       COALESCE(SUM(CASE WHEN COALESCE(a.avg_watts, a.weighted_avg_watts, 0) > 0 THEN 1 ELSE 0 END), 0) AS with_power,
                 \\       COALESCE(SUM(CASE WHEN s.activity_id IS NOT NULL AND s.raw_json <> '{}' THEN 1 ELSE 0 END), 0) AS with_streams,
                 \\       COALESCE(SUM(CASE WHEN m.activity_id IS NULL THEN 1 ELSE 0 END), 0) AS unanalyzed,
@@ -219,9 +280,27 @@ ReportHealth :: [].{
         recent_hr = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT COALESCE(CAST(sport_type AS TEXT), '') AS sport,
-                \\       CASE WHEN COALESCE(avg_hr, 0) > 0 THEN 1 ELSE 0 END AS has_hr
-                \\FROM activities ORDER BY ${Metrics.rank_ts_sql("start_local", Desc)}, id DESC LIMIT 200
+                \\SELECT COALESCE(CAST(a.sport_type AS TEXT), '') AS sport,
+                # Same predicate as `with_hr`, and it has to be: a session counted as having
+                # usable HR up there and as strapless down here would put two contradictory
+                # sentences in one `doctor` run.
+                #
+                # The claim this comment used to make — that a 0.2 bpm row was breaking a
+                # genuinely unbroken streak — was false, and inherited unchecked from #312's
+                # issue body. The only 0.2 bpm row in the live database is a `Workout`, and
+                # `Metrics.hr_missing_streak` filters StrengthLike out before it walks, so
+                # that row never touched the streak. Measured: truncate a snapshot so it is
+                # newest with two strapless endurance rows behind it and the streak reads 2
+                # both before and after. Only rewriting its sport to `Ride` makes the change
+                # bite at all. The reason to bound this site is the one above — agreement
+                # with `with_hr` — not a symptom that was never there.
+                #
+                # The join is what the stream half needs. This query read `FROM activities`
+                # alone, so it could only ever see the stored average, which is the number
+                # #311 established the engine does not score from.
+                \\       CASE WHEN ${Metrics.usable_hr_sql("a.avg_hr", "COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0)")} THEN 1 ELSE 0 END AS has_hr
+                \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
+                \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC LIMIT 200
             ,
             bindings: [],
             rows: |cols| |stmt| {

@@ -1290,12 +1290,64 @@ Metrics :: [].{
     # mean and 11 of those are inside 35-220, so this bound refuses 3 and misses 11. The
     # root-cause version scores from the stream-derived in-band mean when a stream exists,
     # which the engine already computes for decoupling. Tracked in #311, which is where the root-cause version lives; #305 fixed only the half this bound can see.
+    # The same bound as SQL, for the consumers that decide in the query rather than in Roc.
+    # Placed here rather than in `Report` on purpose: this is where 35 and 220 are written,
+    # and a generator that lives in a different file from the numbers it encodes is two
+    # expressions of one rule wearing a helper's name. Same shape as `date_known_sql_for`
+    # and `rankable_sql`, which `Report` binds rather than defines.
+    #
+    # The CAST is the whole reason this is a function and not a string constant. Every other
+    # consumer of `avg_hr` reads it through one — `CAST(a.avg_hr AS REAL)` in the analyze
+    # projection, in the `activity` query, in `Db.roc` — because SQLite sorts a BLOB above
+    # every number, so a bare `avg_hr BETWEEN 35 AND 220` is FALSE for a BLOB holding the
+    # bytes "100" while the rest of the engine scores that session at 100 bpm. `> 0`, the
+    # predicate this replaces, was TRUE for it. Fixing an over-count by introducing an
+    # under-count on the same value class is not a fix. Confirmed on a snapshot WITH BLOB AND
+    # TEXT ROWS PLANTED — 669 bare, 671 cast, 674 under `> 0`. The planting is the point and an
+    # earlier version of this sentence omitted it: on the real database every `avg_hr` is REAL
+    # or NULL, so bare and cast cannot differ there and the difference is invisible until
+    # someone hand-edits a row or an import goes wrong, which is how every BLOB bug in this
+    # repo (#296, #304, #307, #310) was found.
+    #
+    # Takes the column expression rather than a name so a caller can pass a subquery alias
+    # or `@` for #315's template.
+    valid_hr_sql : Str -> Str
+    valid_hr_sql = |col|
+        "CAST(${col} AS REAL) BETWEEN 35 AND 220"
+
+    # ...and the predicate for "the engine can USE a heart rate here", which is a strictly
+    # wider question than "is this scalar plausible". The engine reads heart rate two ways and
+    # a session qualifying either way has usable HR:
+    #
+    #   - as a SCALAR the EF and speed/HR lenses divide by — that is `valid_hr_sql` over the
+    #     scored value;
+    #   - as ZONE SECONDS, which `time_in_zones` builds from the stream and which the ladder's
+    #     `hr_zones` rung turns into training load.
+    #
+    # The zone arm is not a refinement, it is the half that keeps `doctor` from contradicting
+    # itself. Review measured three sessions carrying zone seconds whose stored average is
+    # impossible AND whose stream fails #311's coverage gate — including one scored
+    # `hr_zones`, its entire load computed FROM heart rate, sitting inside the same payload's
+    # `medium (HR / RPE)` count while being excluded from `with_hr`. The scalar arm cannot
+    # rescue them and never will: a stored average is impossible BECAUSE the strap misbehaved,
+    # and a misbehaving strap is exactly what fails a span gate. The fallback is
+    # anti-correlated with the population it was reached for.
+    usable_hr_sql : Str, Str -> Str
+    usable_hr_sql = |scored_col, zone_total_expr|
+        "(${valid_hr_sql(scored_col)} OR ${zone_total_expr} > 0)"
+
     expect Metrics.valid_hr(140.0)
     expect !(Metrics.valid_hr(18.0)) and !(Metrics.valid_hr(31.3))
     expect !(Metrics.valid_hr(0.0)) and !(Metrics.valid_hr(221.0))
     # the boundary is INCLUSIVE at both ends, which is what separates this from `> 0`
     expect Metrics.valid_hr(35.0) and Metrics.valid_hr(220.0)
     expect !(Metrics.valid_hr(34.9)) and !(Metrics.valid_hr(220.1))
+    # the SQL twin carries the same bounds, inclusively, and wraps whatever it is given
+    expect Metrics.valid_hr_sql("a.avg_hr") == "CAST(a.avg_hr AS REAL) BETWEEN 35 AND 220"
+    expect Metrics.valid_hr_sql("v") == "CAST(v AS REAL) BETWEEN 35 AND 220"
+    # the union carries BOTH arms; a version that dropped the zone half would still read as a
+    # sensible predicate, which is why it is pinned textually rather than by shape
+    expect Metrics.usable_hr_sql("s", "z") == "(CAST(s AS REAL) BETWEEN 35 AND 220 OR z > 0)"
 
     # ── aerobic decoupling / Pw:HR drift (#94) ──────────────────────────
     #
