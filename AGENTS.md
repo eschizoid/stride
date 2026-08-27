@@ -282,7 +282,7 @@ Every item here cost a debugging session at least once — they are not style op
 - HR samples outside 35–220 bpm are junk — filtered at analyze. The same bound is applied
   again at report time (`Metrics.valid_hr`), which is what keeps an 18 bpm average from being
   scored as the GROUP's best EF. From #311 it is applied to `avg_hr_scored`, not to the stored
-  `avg_hr`: when a session carried a stream spanning at least half of it, the engine scores from the
+  `avg_hr`: when the surviving in-band samples span at least half the LONGER of the stream's own extent and the session's moving time, the engine scores from the
   MEAN of that stream's in-band samples, because a stored average computed from a lossy stream
   can be plausible and still wrong — measured, three times more common than the impossible
   kind. A stored value is still what the bound sees when no usable stream exists, and still

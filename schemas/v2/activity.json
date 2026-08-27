@@ -415,7 +415,7 @@
     },
     "avg_hr_scored": {
       "type": "number",
-      "description": "The heart rate `baselines.ef.current` was DIVIDED BY: the stream's in-band mean when the session carried a usable stream, the stored summary average otherwise (#311). Equal to `avg_hr` unless Strava's summary was computed from a stream with dropout. Published so the divisor behind an EF verdict is reachable rather than inferred \u2014 `avg_hr` is still the raw reading and `hr_known` still answers whether one was recorded at all."
+      "description": "The heart rate `baselines.ef.current` was DIVIDED BY: the stream's in-band mean when the session carried a usable stream, the stored summary average otherwise (#311). Equal to `avg_hr` whenever no usable stream mean exists — which INCLUDES the most damaged streams, because a stream lossy enough to corrupt Strava's summary is also lossy enough to fail the coverage gate and fall back. The three worst on the reference database dropped 99.7%, 79% and 76% of their samples and publish both fields identical. They differ when a stream DID pass the gate and its mean differs from the summary: 669 of 738 rows differ at all, almost always by the one decimal Strava stores against a full-precision mean, and only 11 differ by more than 15 bpm. A large gap is the signal; any gap is not. Published so the divisor behind an EF verdict is reachable rather than inferred \u2014 `avg_hr` is still the raw reading and `hr_known` still answers whether one was recorded at all."
     }
   }
 }
