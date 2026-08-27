@@ -1233,6 +1233,27 @@ Metrics :: [].{
             Err(_) => False
         }
 
+    # What a lens REQUIRES, as a sentence. ONE call site today — `Render`'s unscored note —
+    # and the earlier version of this comment claimed two, saying it also fed `progress`'s
+    # payload reason. It does not: `hidden_reason` was retired in the same change that
+    # created this, and the payload carries no reason string at all. Extracted anyway,
+    # because the three arms and the singular/plural pair are the rule the e2e checks mutate
+    # one at a time, and a rule with a name is easier to keep honest than three string
+    # literals inline — but the stated reason was wrong and is corrected rather than kept.
+    #
+    # It names what the LENS needs, never which field the row lacks: `lens_score` rejects an
+    # EF row for three separate reasons, and reporting all three as "no HR" was measurably
+    # false — 7 of 10 rows in one real group carried heart rates between 95 and 132 bpm.
+    lens_needs : [Ef, SpeedHr, Rpe], Bool -> Str
+    lens_needs = |lens, plural| {
+        verb = if plural "need" else "needs"
+        match lens {
+            Ef => "${verb} power and HR"
+            SpeedHr => "${verb} distance and HR"
+            Rpe => "${verb} a rating"
+        }
+    }
+
     # ── HR sample validity ──────────────────────────────────────────────
     # Below 35 or above 220 bpm is not physiology, it's a dropped strap / noise.
     valid_hr : F64 -> Bool
