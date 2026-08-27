@@ -6014,7 +6014,7 @@ b_progress_b! = |ctx| {
     # The counts are asserted IN the sentence, not just in the payload. "or" was compatible
     # with 1/1 and with 22/1 alike, which is the whole of #300: the machine surface knew the
     # split and the person was told a disjunction.
-    check!("...and the human line carries both numbers, not a disjunction", Str.contains(ev_human, "2 hidden: 1 a different distance for this workout, 1 needs power and HR"))?
+    check!("...and the human line carries both numbers, not a disjunction", Str.contains(ev_human, "(1 hidden: a different distance for this workout; 1 shown unscored: needs power and HR)"))?
     check!("...and does not offer the reader a guess between the two causes", !(Str.contains(ev_human, "a different distance for this workout, or")))?
     # ...and the AGREEMENT rule, on the boundary that decides it. A second lens-dropped ride
     # moves the count to 2 and the verb must move with it. Pinning only the singular case
@@ -6033,7 +6033,7 @@ b_progress_b! = |ctx| {
     _ = seed_power_stream!(ctx.db, 275, 1300, 158)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     ev_human2 = stride_human!(ctx.bin, ctx.home, ["progress", "2025-05-16"])
-    check!("...and two lens-dropped rows take the plural verb, which the count-1 case cannot show", Str.contains(ev_human2, "1 a different distance for this workout, 2 need power and HR"))?
+    check!("...and two lens-dropped rows take the plural verb, which the count-1 case cannot show", Str.contains(ev_human2, "(1 hidden: a different distance for this workout; 2 shown unscored: need power and HR)"))?
     check!("...and not the singular one the inverted rule would print here", !(Str.contains(ev_human2, "2 needs power and HR")))?
     # ...and the SpeedHr arm, which is the one the real database actually renders. Review
     # measured that: all 35 both-cause groups on it take `speed_hr`, 8 singular and 27
@@ -6047,10 +6047,10 @@ b_progress_b! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (281,'Evening Row','Rowing','2025-06-02T18:00:00Z',3600,12000,140),(282,'Evening Row','Rowing','2025-06-09T18:00:00Z',3600,12000,18),(283,'Evening Row','Rowing','2025-06-16T18:00:00Z',3600,12000,145),(284,'Evening Row','Rowing','2025-06-05T18:00:00Z',3600,24000,140);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     row_human = stride_human!(ctx.bin, ctx.home, ["progress", "2025-06-16"])
-    check!("the speed/HR arm renders its own singular verb, not the EF arm's", Str.contains(row_human, "1 a different distance for this workout, 1 needs distance and HR"))?
+    check!("the speed/HR arm renders its own singular verb, not the EF arm's", Str.contains(row_human, "(1 hidden: a different distance for this workout; 1 shown unscored: needs distance and HR)"))?
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (285,'Evening Row','Rowing','2025-06-12T18:00:00Z',3600,12000,20);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    check!("...and its plural verb, which is what 27 of the 35 real groups print", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-06-16"]), "1 a different distance for this workout, 2 need distance and HR"))?
+    check!("...and its plural verb, which is what 27 of the 35 real groups print", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-06-16"]), "(1 hidden: a different distance for this workout; 2 shown unscored: need distance and HR)"))?
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (281,282,283,284,285); DELETE FROM activities WHERE id IN (281,282,283,284,285);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # ...and the THIRD arm. I was about to write that the Rpe combined arm is unreachable by
@@ -6070,10 +6070,10 @@ b_progress_b! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (291,'Evening Swim','Swim','2025-07-01T18:00:00Z',3600,2000),(292,'Evening Swim','Swim','2025-07-08T18:00:00Z',3600,9000),(293,'Evening Swim','Swim','2025-07-15T18:00:00Z',3600,2000),(294,'Evening Swim','Swim','2025-07-22T18:00:00Z',3600,2000),(295,'Evening Swim','Swim','2025-07-29T18:00:00Z',3600,2000);")
     _ = sql!(ctx.db, "INSERT INTO ratings (activity_id,rpe,rated_at) VALUES (291,7.0,'2025-07-01'),(295,6.0,'2025-07-29');")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    check!("the rpe arm renders its plural verb too", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-29"]), "1 a different distance for this workout, 2 need a rating"))?
+    check!("the rpe arm renders its plural verb too", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-29"]), "(1 hidden: a different distance for this workout; 2 shown unscored: need a rating)"))?
     _ = sql!(ctx.db, "INSERT INTO ratings (activity_id,rpe,rated_at) VALUES (294,5.0,'2025-07-22');")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    check!("...and its singular verb, so all three lenses are pinned on both sides of the count", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-29"]), "1 a different distance for this workout, 1 needs a rating"))?
+    check!("...and its singular verb, so all three lenses are pinned on both sides of the count", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-07-29"]), "(1 hidden: a different distance for this workout; 1 shown unscored: needs a rating)"))?
     # `ratings` too — first fixture to write `ctx.db`'s `ratings`, which is the load-bearing
     # part and not the same as "first to write ratings at all": the `an_db` sandbox has its
     # own at ~3642, and the `rate` fixture below writes one on purpose and deliberately
@@ -6207,11 +6207,23 @@ b_progress_b! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (216,'Anchor Probe Ride','Ride','2025-04-20T08:00:00Z',3600,20000,140);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     anchor_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-04-01"])
-    check!("an unscorable anchor says so", Str.contains(anchor_h, "isn't shown in its own table"))?
+    # The banner used to read "is shown below WITHOUT a score". #286 made that false: the row
+    # is rendered now, with its lens cells blank, and the sentence sat directly above a table
+    # containing the row it denied. It says where to look instead.
+    check!("an unscorable anchor says it is shown WITHOUT a score, not that it is missing", Str.contains(anchor_h, "is shown below WITHOUT a score"))?
+    check!("...and does not still claim the row is absent", !(Str.contains(anchor_h, "isn't shown in its own table")))?
     check!("and the table still shows the scorable sibling", Str.contains(anchor_h, "2025-04-20"))?
+    # ...and the anchor ITSELF is in the table, which is the whole of #286's second half and
+    # what the banner now promises. Asserting the date alone would pass on the ⚠ line, which
+    # names it — so this asserts the TABLE ROW, by its leading border glyph.
+    check!("...and the unscorable anchor is rendered too, rather than dropped", Str.contains(anchor_h, "│ 2025-04-01 ◀"))?
+    # ...with the lens cells blank rather than a fabricated score. `speed_hr` is the lens
+    # here, so the row must carry "-" where the pace/HR figure would be; a `0.00` with an
+    # empty bar would read as a measured worst-ever session rather than an absent one.
+    check!("...with its lens cells blank, not a fabricated zero", !(Str.contains(anchor_h, "0.00")))?
     check!("anchor_scored false when the anchor drops out", strjq!(ctx, ["progress", "2025-04-01"], ".data.anchor_scored") == "false")?
     check!("anchor_scored true when the anchor survives", strjq!(ctx, ["progress", "2025-04-20"], ".data.anchor_scored") == "true")?
-    check!("a scorable anchor stays silent", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-04-20"]), "isn't shown in its own table")))?
+    check!("a scorable anchor stays silent", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-04-20"]), "is shown below WITHOUT a score")))?
 
     # ...and one surviving group must not mask another that lost its anchor. Same date, a
     # SECOND workout that scores fine: asking whether ANY group still holds the date said
@@ -6220,7 +6232,7 @@ b_progress_b! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (218,'Second Probe Ride','Ride','2025-04-25T18:00:00Z',3600,20000,150);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     both_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-04-01"])
-    check!("a scorable group does not mask an unscorable anchor", Str.contains(both_h, "isn't shown in its own table"))?
+    check!("a scorable group does not mask an unscorable anchor", Str.contains(both_h, "is shown below WITHOUT a score"))?
     check!("the scorable group still renders", Str.contains(both_h, "Second Probe Ride"))?
     check!("anchor_scored false while any group lost its anchor", strjq!(ctx, ["progress", "2025-04-01"], ".data.anchor_scored") == "false")?
     # ...and a twin on the SAME date must not cover for the anchor. anchor_filter takes the
@@ -6231,7 +6243,7 @@ b_progress_b! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (221,'Twin Probe Ride','Ride','2025-05-20T08:00:00Z',3600,20000,150);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     twin_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-05-01"])
-    check!("a same-day twin does not cover for a dropped anchor", Str.contains(twin_h, "isn't shown in its own table"))?
+    check!("a same-day twin does not cover for a dropped anchor", Str.contains(twin_h, "is shown below WITHOUT a score"))?
     check!("anchor_scored false when the anchor row itself cannot score", strjq!(ctx, ["progress", "2025-05-01"], ".data.anchor_scored") == "false")?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (219,220,221);")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (219,220,221);")

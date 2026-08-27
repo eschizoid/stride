@@ -1233,6 +1233,25 @@ Metrics :: [].{
             Err(_) => False
         }
 
+    # What a lens REQUIRES, as a sentence. One definition because two consumers need the
+    # identical words: `progress`'s payload reason (`ReportSessions`) and the human note
+    # beside a row the table now shows unscored (`Render`). Written twice they would drift,
+    # and the drift would be invisible — the two surfaces are read by different readers, so
+    # nobody sees them side by side.
+    #
+    # It names what the LENS needs, never which field the row lacks: `lens_score` rejects an
+    # EF row for three separate reasons, and reporting all three as "no HR" was measurably
+    # false — 7 of 10 rows in one real group carried heart rates between 95 and 132 bpm.
+    lens_needs : [Ef, SpeedHr, Rpe], Bool -> Str
+    lens_needs = |lens, plural| {
+        verb = if plural "need" else "needs"
+        match lens {
+            Ef => "${verb} power and HR"
+            SpeedHr => "${verb} distance and HR"
+            Rpe => "${verb} a rating"
+        }
+    }
+
     # ── HR sample validity ──────────────────────────────────────────────
     # Below 35 or above 220 bpm is not physiology, it's a dropped strap / noise.
     valid_hr : F64 -> Bool

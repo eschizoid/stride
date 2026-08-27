@@ -1239,50 +1239,34 @@ ReportSessions :: [].{
             # separate reasons (no power, no HR, or a load model that is not NP-derived), and
             # reporting all three as "no HR" was measurably false — 7 of 10 rows in one real
             # group carried heart rates between 95 and 132 bpm.
-            needs = match lens {
-                Ef => "needs power and HR"
-                SpeedHr => "needs distance and HR"
-                Rpe => "needs a rating"
-            }
-            # the same requirement with a plural subject. The counted arm picks between them
-            # on the COUNT, not on the arm — "1 need distance and HR" was the first cut, and
-            # a rule that is right for 27 and wrong for 1 is not number agreement.
-            needs_plural = match lens {
-                Ef => "need power and HR"
-                SpeedHr => "need distance and HR"
-                Rpe => "need a rating"
-            }
-            # ...and the scope half names the RIGHT gate. Both auto-name kinds truncate, for
-            # opposite reasons: `SimilarDistance` drops rides whose distance is more than 10%
-            # from the anchor's, while `LoneNoDistance` drops EVERYTHING because the anchor
-            # recorded no distance at all and nothing can be matched to it. Reporting the
-            # second as "a different distance" was false on `2026-08-14` — measured before
-            # this clause existed.
-            hidden_reason =
-                if scope_dropped > 0 and lens_dropped > 0 {
-                    # COUNTED, not "or". The payload carries `hidden_scope` and `hidden_lens`
-                    # because the two causes license opposite actions — a lens drop is
-                    # fixable at the source, a scope drop is not — and that argument applies
-                    # to the ATHLETE at least as strongly as to the coaching agent: they are
-                    # the one who would go wear the strap. "or" is compatible with 22/1 and
-                    # with 1/22 while the engine knows it is 17/6, so the machine surface was
-                    # precise and the person was under-told (#300).
-                    #
-                    # It also fixes the grammar the disjunction forced: counting the subsets
-                    # makes both halves predicate on ROWS, so the number agrees (`need`, not
-                    # `needs`). Only the both-causes arm changes — 35 rendered lines, on a
-                    # verdict line already outside `render_table`'s 80-column budget, so the
-                    # "two numbers read worse" objection that keeps the render at one total
-                    # does not reach here.
-                    lens_verb = if lens_dropped == 1 needs else needs_plural
-                    "${U64.to_str(scope_dropped)} ${g.scope_why}, ${U64.to_str(lens_dropped)} ${lens_verb}"
-                } else if scope_dropped > 0 {
-                    g.scope_why
-                } else {
-                    needs
-                }
+            # `hidden_reason` used to be built here: one string combining both causes, with
+            # a plural rule picking `need` or `needs` on the lens count. #286 retired it.
+            # Once an unscorable row is RENDERED, the two causes stop being two reasons for
+            # one outcome and become two different outcomes — a scope drop is hidden, a lens
+            # drop is shown without a score — so a single sentence counting them together is
+            # wrong about the half the reader can now see.
+            #
+            # What that logic protected is not lost: the number agreement moved into
+            # `Metrics.lens_needs`, which `Render` calls with the count it is actually
+            # describing. One definition instead of two, which is also what stops the
+            # payload's wording and the human line's from drifting apart.
+            #
+            # The PAYLOAD is untouched by any of this. `hidden`, `hidden_lens` and
+            # `hidden_scope` mean exactly what they meant, because `sessions[]` still holds
+            # only scored rows and an agent reading it genuinely cannot see the others.
             hidden = scope_dropped + lens_dropped
-            if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, lens, rows: kept, anchor_ok, all_days, hidden, hidden_reason, scope_dropped, lens_dropped })
+            # `display_rows` is the group AFTER the scope gate but BEFORE the lens gate, and
+            # it exists so the human table can show a ride the lens cannot score instead of
+            # deleting it. Three of `Ef`'s six columns — np, kJ, load — were computed for
+            # those rows and thrown away, which is the half of #286 the counting note did
+            # not address: the reader was told a number was withheld, not given back the
+            # values that never needed a heart rate.
+            #
+            # The PAYLOAD keeps `rows: kept`. `sessions[]` is what the coaching agent trends
+            # over, an unscored row has no score to trend, and `hidden_lens` already tells it
+            # how many and why. So the two surfaces stay in step on the COUNT and differ only
+            # in what they do with it, which is the split the human note below is worded for.
+            if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, lens, rows: kept, display_rows: g.rows, scope_why: g.scope_why, anchor_ok, all_days, hidden, scope_dropped, lens_dropped })
         }
         scored = List.keep_oks(labeled, |g|
             match Metrics.progress_lens(g.rows) {
@@ -1305,6 +1289,13 @@ ReportSessions :: [].{
         # Both failure modes: a whole group dropped (count mismatch), or a group that
         # survived while the row we anchored on did not.
         anchor_kept = List.len(scored) == List.len(labeled) and List.all(scored, |g| g.anchor_ok)
+        # The two ways the anchor can fail to be SCORED are now two different outcomes for
+        # the reader, so the banner can no longer treat them as one. A lens refusal leaves
+        # the row in `display_rows`, visible with its lens cells blank; a skipped group
+        # leaves nothing at all. `anchor_scored` in the payload keeps meaning exactly what
+        # it meant — whether a score exists — which is why this split lives here and not in
+        # the flag (#286).
+        anchor_group_dropped = List.len(scored) != List.len(labeled)
         if List.is_empty(scored) {
             if Str.is_empty(date) {
                 Output.err_out!("no_scorable_workouts", "nothing to compare yet — analyze activities first (and `stride rate` your strength sessions)")
@@ -1383,10 +1374,16 @@ ReportSessions :: [].{
             note =
                 if anchor_kept {
                     ""
+                } else if anchor_group_dropped {
+                    "⚠ a session on ${date} isn't shown in any table below — every session in its group was withheld, so there is nothing to compare it against\n\n"
                 } else {
-                    "⚠ a session on ${date} isn't shown in its own table — the lens chosen for its group can't score it (needs power+HR, distance+HR, or a rating), so the trend(s) below exclude it\n\n"
+                    # It IS in the table now, so the banner says where to look rather than
+                    # that it is missing. The old wording — "isn't shown in its own table" —
+                    # became false the moment unscorable rows started rendering, and it sat
+                    # directly above a table containing the row it denied.
+                    "⚠ the session on ${date} is shown below WITHOUT a score — the lens chosen for its group can't score it (needs power+HR, distance+HR, or a rating), so the trend(s) exclude it even though the row is there\n\n"
                 }
-            Stdout.line!("${note}${Str.join_with(List.map(scored, |g| Render.progress_section(g.name, g.rows, date, g.lens, sort, g.all_days, g.hidden, g.hidden_reason)), "\n\n")}")
+            Stdout.line!("${note}${Str.join_with(List.map(scored, |g| Render.progress_section(g.name, g.display_rows, date, g.lens, sort, g.all_days, g.scope_dropped, g.scope_why)), "\n\n")}")
         }
     }
 }

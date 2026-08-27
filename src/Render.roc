@@ -551,7 +551,14 @@ Render :: [].{
     progress_section = |name, rows, asked, lens, sort, all_days, hidden, hidden_reason| {
         higher = Metrics.lens_higher_better(lens)
         sc = |row| Metrics.lens_score(lens, row).ok_or(0.0)
-        scores = List.map(rows, sc)
+        # `rows` now arrives BEFORE the lens gate, so the table can show a session the lens
+        # cannot score rather than deleting it (#286). Everything that reasons about VALUE —
+        # the scale, the trend, the session count in the verdict — reads `scored` instead,
+        # because `ok_or(0.0)` would otherwise fold a 0 into the mean and squash the bars
+        # against a floor no session actually reached.
+        scored_rows = List.keep_if(rows, |r| Metrics.lens_score(lens, r).is_ok())
+        unscored_n = List.len(rows) - List.len(scored_rows)
+        scores = List.map(scored_rows, sc)
         max_s = List.fold(scores, 0.0, |acc, s| acc.max(s))
         min_s = List.fold(scores, max_s, |acc, s| acc.min(s))
         best = if higher max_s else min_s
@@ -561,10 +568,17 @@ Render :: [].{
             _ => fmt2(v)
         }
         hr_of = |row| if row.avg_hr > 0.0 fmt0(row.avg_hr) else "-"
-        prim_of = |row| {
-            n = Metrics.scale_to_blocks(sc(row), worst, best, 12)
-            "${pfmt(sc(row))} ${Str.repeat("█", n)}"
-        }
+        prim_of = |row|
+            # "-", never `0.00` with an empty bar. A fabricated zero in the lens column is
+            # the same class of lie as the fabricated gap this issue opened with: it reads
+            # as a measured worst-ever session rather than as an absent measurement, and it
+            # would sit in the same column the bars are scaled against.
+            if Metrics.lens_score(lens, row).is_err() {
+                "-"
+            } else {
+                n = Metrics.scale_to_blocks(sc(row), worst, best, 12)
+                "${pfmt(sc(row))} ${Str.repeat("█", n)}"
+            }
         # The ◀ marker rides on the DATE cell, and headers stay terse (meaning lives in
         # the legend, per the numbers-in-tables philosophy) — both keep every column
         # under render_table's 80-col budget so the BAR column is never the widest one
@@ -651,11 +665,39 @@ Render :: [].{
         # three of `lens_score`'s rejections as "no HR", which is false for a row carrying a
         # heart rate and dropped for a non-NP load model instead. Measured: 7 of 10 rows in
         # one real group had heart rates between 95 and 132 bpm under a "no HR" note.
-        hidden_note =
+        # TWO clauses, because after #286 the two causes have different outcomes rather than
+        # different reasons. A scope drop is still HIDDEN — those sessions are a different
+        # distance and are not in this table at all. A lens drop is now SHOWN, with its lens
+        # cells blank, so calling it hidden while the reader is looking at the row would be
+        # the same contradiction this issue opened with, one line further down.
+        #
+        # The counts still match the payload's `hidden_scope` and `hidden_lens` exactly. Only
+        # the verb differs, which is the honest way for two surfaces to disagree: the agent
+        # reading `sessions[]` genuinely cannot see those rows, and the athlete can.
+        scope_clause =
             if hidden == 0 {
                 ""
             } else {
-                " (${U64.to_str(hidden)} hidden: ${hidden_reason})"
+                "${U64.to_str(hidden)} hidden: ${hidden_reason}"
+            }
+        unscored_clause =
+            if unscored_n == 0 {
+                ""
+            } else {
+                "${U64.to_str(unscored_n)} shown unscored: ${Metrics.lens_needs(lens, unscored_n != 1)}"
+            }
+        # ONE parenthetical holding both clauses, not two side by side. Two adjacent parens
+        # read as two afterthoughts about unrelated things, and these are the two halves of
+        # one fact: what happened to the sessions that are not in the trend.
+        hidden_note =
+            if Str.is_empty(scope_clause) and Str.is_empty(unscored_clause) {
+                ""
+            } else if Str.is_empty(unscored_clause) {
+                " (${scope_clause})"
+            } else if Str.is_empty(scope_clause) {
+                " (${unscored_clause})"
+            } else {
+                " (${scope_clause}; ${unscored_clause})"
             }
         avg = Metrics.mean(scores)
         short = match lens {
@@ -678,7 +720,7 @@ Render :: [].{
         # late and pct_change dutifully reports a real 0% — "holding steady" reads as a
         # measured finding when it is the absence of one. State the score and stop.
         verdict =
-            if List.len(rows) == 1 and hidden == 0 {
+            if List.len(scored_rows) == 1 and hidden == 0 and unscored_n == 0 {
                 # "one comparable session" read as though it were pointing at some OTHER
                 # session to compare with. The single row IS this session — there is simply
                 # no history behind it yet (#96).
@@ -693,7 +735,7 @@ Render :: [].{
                 # ten of them unrated, and eight group-variants reached this arm (#291).
                 "→ ${short} ${pfmt(avg)} — the only session shown${hidden_note}; the rest are in your log"
             } else {
-                "→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${U64.to_str(List.len(rows))} sessions${hidden_note} — ${label}${pct_str}"
+                "→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${U64.to_str(List.len(scored_rows))} sessions${hidden_note} — ${label}${pct_str}"
             }
         footer = "${legend}\nbar = scaled worst→best · ◀ marks the asked date · ··· = a break over ${I64.to_str(gap_days)} days"
         "── ${name} ──\n${table}\n\n${verdict}${last_vs_best(rows, lens)}\n\n${footer}"
