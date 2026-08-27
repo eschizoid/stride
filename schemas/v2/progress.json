@@ -75,6 +75,10 @@
                 "avg_hr": {
                   "type": "number"
                 },
+                "avg_hr_scored": {
+                  "type": "number",
+                  "description": "The heart rate this row's score was DIVIDED BY, which is the stream's in-band mean when the session carried a usable stream and the stored summary average otherwise (#311). Equal to `avg_hr` for most sessions; they diverge when Strava's summary was computed from a stream with dropout, which on the real database is 11 sessions where the gap exceeds 15 bpm. This is the field the `ef` and `spd_hr` scores are per-heartbeat OF, and the human table's `hr` column shows it for that reason. `avg_hr` beside it remains what the device reported."
+                },
                 "date": {
                   "type": "string"
                 },

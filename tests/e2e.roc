@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(998)?
+    checks_ran_exactly!(1006)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2472,7 +2472,10 @@ b_seed_analyze! = |ctx| {
     # 611 stores 86 and streams 150. 86 is PLAUSIBLE — that is the point, and it is what
     # makes this fixture different from every HR fixture above it: the bound cannot see this
     # row, so a check that only pins the bound passes whether or not #311 exists.
-    _ = seed_ride!(ctx.db, "611", "Stream HR Ride", "2026-02-10T09:00:00Z", "3600", "30000", "200", "86")
+    # moving_time 1300 to match the 1300-sample stream. The stream must SPAN the session or
+    # the coverage gate refuses it — which these fixtures discovered the hard way at 3600 s
+    # against a 1300 s stream, a span of 0.36 against the 0.5 the gate wants.
+    _ = seed_ride!(ctx.db, "611", "Stream HR Ride", "2026-02-10T09:00:00Z", "1300", "12000", "200", "86")
     _ = seed_power_hr_stream!(ctx.db, 611, 1300, 200, 150)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # 200/150 = 1.3333 from the stream; 200/86 = 2.3256 from the summary. Asserted as a
@@ -2488,7 +2491,7 @@ b_seed_analyze! = |ctx| {
     # has something to be wrong about. Asserted on 611, that field is vacuous: 86 is
     # plausible, so narrowing `_known` to mean usability would leave it true and the check
     # would pass on the drift it claims to catch. 18 is the value that discriminates.
-    _ = seed_ride!(ctx.db, "612", "Stream HR Refused", "2026-02-11T09:00:00Z", "3600", "30000", "200", "18")
+    _ = seed_ride!(ctx.db, "612", "Stream HR Refused", "2026-02-11T09:00:00Z", "1300", "12000", "200", "18")
     _ = seed_power_hr_stream!(ctx.db, 612, 1300, 200, 150)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check_near!("a session the bound REFUSED scores too, once its stream is read", sfloat(strjq!(ctx, ["activity", "612"], ".data.baselines.ef.current")), 200.0 / 150.0, 0.01)?
@@ -2497,7 +2500,52 @@ b_seed_analyze! = |ctx| {
     # gate on `cur_ef` dropped its `hr_known` conjunct — a session can stream HR with a NULL
     # summary — so this pins that the FIELD did not move with it. Narrowing `_known` was
     # rejected once already (AGENTS.md states the convention for all five companions).
+    # ...and the PROGRESS site, which is where the whole user-visible change lives and which
+    # had no check at all: deleting `m.avg_hr_stream, ` from that one query left the entire
+    # suite green. The unit expect pins `lens_score`'s field CHOICE against hand-built rows;
+    # nothing pinned that `progress` ever fills the field from the stream.
+    #
+    # 612 stores 18, so under the stored average the EF lens refuses it and the group reports
+    # it in `hidden_lens`. Scored from its 150 stream it appears in `sessions[]` instead, and
+    # the score is 200/150. Both halves asserted: a check on `hidden_lens` alone would pass if
+    # the row vanished entirely.
+    # ...and the COMPARABLES site, the third of the three scoring queries and the other one
+    # that was revertable in a single token while the suite stayed green. The two e2e checks
+    # above read `ef.current`, which comes from `cur_ef` — the anchor's own divisor — and
+    # never from the comparables set, so neither could see it.
+    #
+    # 612's only comparable is 611 (same family, same duration band, one day earlier), so its
+    # baseline median IS 611's EF sample and the assertion is exact rather than statistical.
+    # `sample_count` is pinned alongside because a median over the wrong NUMBER of rows can
+    # land on the right value by coincidence, and because it is what would change first if a
+    # later fixture drifted into this band.
+    check!("...and 612 has exactly one comparable, which is what makes the median exact", strjq!(ctx, ["activity", "612"], ".data.baselines.ef.sample_count") == "1")?
+    check_near!("the comparables site scores from the stream too, not the stored average", sfloat(strjq!(ctx, ["activity", "612"], ".data.baselines.ef.baseline_median")), 200.0 / 150.0, 0.001)?
+    check_near!("progress scores the row from the stream too, not only activity", sfloat(strjq!(ctx, ["progress", "2026-02-11"], "[.data.groups[] | select(.name == \"Stream HR Refused\") | .sessions[0].score] | first")), 200.0 / 150.0, 0.01)?
+    check!("...and it is in sessions[] rather than counted as hidden", strjq!(ctx, ["progress", "2026-02-11"], "[.data.groups[] | select(.name == \"Stream HR Refused\") | .hidden_lens] | first") == "0")?
+    # ...and the hr COLUMN shows the divisor. Showing the stored 18 beside a score of 1.33
+    # makes the legend under the table ("per heartbeat") false on that row, and puts the
+    # divisor nowhere the reader can reach.
+    check!("...and the payload publishes the divisor beside the stored reading", strjq!(ctx, ["progress", "2026-02-11"], "[.data.groups[] | select(.name == \"Stream HR Refused\") | .sessions[0] | \"\\(.avg_hr)/\\(.avg_hr_scored)\"] | first") == "18/150")?
+    check!("...and the human hr column shows the scored one, which the legend describes", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2026-02-11"]), "150"))?
     check!("...while hr_known still reports what was RECORDED, not what was usable", strjq!(ctx, ["activity", "612"], ".data.hr_known") == "true")?
+    # ...and the COVERAGE GATE, which is what keeps this change from re-admitting the rows
+    # #305 removed. 613 is the shape the gate exists for: a 3600 s session carrying a stream
+    # that stops after 1300 s, which is what a strap dying mid-ride looks like. Its surviving
+    # samples average a perfectly plausible 150, so no bound would ever question the number —
+    # it is only unrepresentative, which is exactly the failure this column was introduced to
+    # fix and would otherwise have reproduced one table over.
+    #
+    # Measured on the real database before this gate existed: admitting such a row replaced a
+    # 1.385 EF outlier with a 1.400 one in #305's own headline example and handed the mean of
+    # a dead strap's first nine minutes to 33 other sessions' comparables.
+    _ = seed_ride!(ctx.db, "613", "Stream HR Truncated", "2026-02-12T09:00:00Z", "3600", "30000", "200", "18")
+    _ = seed_power_hr_stream!(ctx.db, 613, 1300, 200, 150)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("a stream that stops early is refused, not averaged over its surviving prefix", strjq!(ctx, ["activity", "613"], ".data.baselines.ef.known") == "false")?
+    check!("...and the row falls back to its stored reading, which the bound then refuses", strjq!(ctx, ["activity", "613"], ".data.baselines.ef.current") == "0")?
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 613; DELETE FROM activity_segments WHERE activity_id = 613; DELETE FROM activity_metrics WHERE activity_id = 613; DELETE FROM activities WHERE id = 613;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 612; DELETE FROM activity_segments WHERE activity_id = 612; DELETE FROM activity_metrics WHERE activity_id = 612; DELETE FROM activities WHERE id = 612;")
     _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 611; DELETE FROM activity_segments WHERE activity_id = 611; DELETE FROM activity_metrics WHERE activity_id = 611; DELETE FROM activities WHERE id = 611;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])

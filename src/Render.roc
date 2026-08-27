@@ -573,7 +573,13 @@ Render :: [].{
             Rpe => fmt0(v)
             _ => fmt2(v)
         }
-        hr_of = |row| if row.avg_hr > 0.0 fmt0(row.avg_hr) else "-"
+        # the SCORED heart rate, not the stored one. This column sits beside `ef`/`spd_hr`
+        # and the legend under the table explains those as "per heartbeat" — so a column
+        # showing 86 next to a score computed from 147.7 makes the legend false on that row,
+        # and the divisor appears nowhere the reader can reach. The stored value is still
+        # published raw by `activities --json` and by `activity`'s own `avg_hr`; this is the
+        # column whose job is to explain the number next to it. (#311)
+        hr_of = |row| if row.avg_hr_scored > 0.0 fmt0(row.avg_hr_scored) else "-"
         prim_of = |row|
             # "-", never `0.00` with an empty bar. A fabricated zero in the lens column is
             # the same class of lie as the fabricated gap this issue opened with: it reads

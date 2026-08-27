@@ -345,6 +345,7 @@ ReportSessions :: [].{
                         power_bests: { w60: detail.best_60, w180: detail.best_180, w300: detail.best_300, w1200: detail.best_1200 },
                         max_hr: detail.max_hr,
                         avg_hr: a.avg_hr,
+                        avg_hr_scored: a.avg_hr_scored,
                         hr_known: a.hr_known,
                         # summary avg_hr can exist while NO zone breakdown does (no HR
                         # stream): an all-zero z-vector is absence unless zones_known
@@ -1480,6 +1481,7 @@ ReportSessions :: [].{
                         score: Metrics.lens_score(g.lens, r).ok_or(0.0),
                         np_w: r.np_w,
                         avg_hr: r.avg_hr,
+                        avg_hr_scored: r.avg_hr_scored,
                         distance_m: r.distance_m,
                         moving_time: r.moving_time,
                         rpe: r.rpe,

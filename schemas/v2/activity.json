@@ -412,6 +412,10 @@
         }
       },
       "description": " `fit_family` names whose model this is (the session's own sport family, fitted on the 90 days STRICTLY BEFORE it, so a session is never inside its own fit). A NEGATIVE `min_j` is the model failing, not depth achieved \u2014 it means more above-CP work was done than the fitted tank holds, so the fit is stale or degenerate; `model_exceeded` flags exactly that. Normalize with `min_j / w_prime_used` before comparing sessions, since `w_prime_used` moves between dates. When `model_exceeded` is true, ONLY `min_j` is meaningful: the recovery term drives on the deficit against the CURRENT balance, so a balance far below zero reconstitutes faster than the model's own ceiling allows and `end_j` is arithmetic on a broken premise. `fit_r2` is how well the CP line fit its own points (1 by construction at `fit_points` 2). CP jumps at window edges as rides enter and leave the 90 days, so treat these as WITHIN-session measures rather than a comparable series."
+    },
+    "avg_hr_scored": {
+      "type": "number",
+      "description": "The heart rate `baselines.ef.current` was DIVIDED BY: the stream's in-band mean when the session carried a usable stream, the stored summary average otherwise (#311). Equal to `avg_hr` unless Strava's summary was computed from a stream with dropout. Published so the divisor behind an EF verdict is reachable rather than inferred \u2014 `avg_hr` is still the raw reading and `hr_known` still answers whether one was recorded at all."
     }
   }
 }

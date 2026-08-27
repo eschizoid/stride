@@ -640,8 +640,38 @@ Analyze :: [].{
         # NULL, never 0.0, when there is nothing to average: 0.0 is not a possible heart rate
         # but it IS what `COALESCE(...,0)` produces at every read site, so a stored 0 would be
         # indistinguishable from "no stream" only by accident. Absence stays absence.
+        # ...and it is NULL unless the surviving samples SPAN most of the session. A mean over
+        # unrepresentative samples is the same bug this column exists to fix, moved one table
+        # over — and without this gate it lands harder, because nothing downstream can see it.
+        # Measured on the real database: of the three sessions whose stored average is
+        # impossible, one kept 563 of 2688 samples spanning t=14..576 of a 2700 s row. Its
+        # "in-band mean" is the mean of the first nine minutes before the strap died, and at
+        # 84.8 bpm it is plausible enough that no bound would ever question it. Admitting it
+        # replaced a 1.385 EF outlier with a 1.400 one in #305's own headline example.
+        #
+        # SPAN and not sample COUNT, which was the first version and conflates two different
+        # things. A stream sampled every five seconds keeps a fifth of a session's worth of
+        # samples with a perfectly healthy strap; on the real data 15 of the 17 rows a count
+        # ratio would have refused are exactly that, and their stream mean agrees with the
+        # stored average to within a couple of bpm. Span separates them: a sparse stream still
+        # covers the session, a dead strap covers a prefix.
+        #
+        # The threshold sits in a gap, not on a guess. The surviving spans on the real data
+        # are 0.003, 0.20 and 0.24 for the three broken straps, and 0.58 upward for the eleven
+        # sessions this column exists to rescue. Nothing lands between 0.25 and 0.58.
+        hr_span_ok =
+            match (List.first(hr_pairs), List.last(hr_pairs)) {
+                (Ok(f), Ok(l)) if row.mt > 0 =>
+                    # `hr_pairs` comes from `stream_pairs`, which preserves the stream's own
+                    # order, and Strava's time series is ascending — so first and last are the
+                    # extremes. Guarded anyway: a non-ascending stream yields a negative span,
+                    # which fails the comparison rather than passing it by accident.
+                    (l.t - f.t).to_f64() >= 0.5 * (row.mt).to_f64()
+
+                _ => False
+            }
         avg_hr_stream_binding =
-            if List.is_empty(hr_pairs) {
+            if List.is_empty(hr_pairs) or !(hr_span_ok) {
                 Null
             } else {
                 Real(List.fold(hr_pairs, 0.0, |acc, p| acc + p.v) / (List.len(hr_pairs)).to_f64())
