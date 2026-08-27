@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(992)?
+    checks_ran_exactly!(993)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2318,7 +2318,7 @@ b_seed_analyze! = |ctx| {
     # sits inside every window and any limit still counts it; 483 at 20 bpm sorts last, so a
     # limit of 2 excludes it from the table the count is about. The two plausible rowing
     # neighbours are what make the limit bite rather than the sport filter.
-    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,avg_hr) VALUES (483,'Low Bound Row','Rowing','Rowing','2025-11-20T08:00:00Z',3600,20),(484,'Low Bound Peer A','Rowing','Rowing','2025-11-21T08:00:00Z',3600,150),(485,'Low Bound Peer B','Rowing','Rowing','2025-11-22T08:00:00Z',3600,160);")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_hr) VALUES (483,'Low Bound Row','Rowing','2025-11-20T08:00:00Z',3600,20),(484,'Low Bound Peer A','Rowing','2025-11-21T08:00:00Z',3600,150),(485,'Low Bound Peer B','Rowing','2025-11-22T08:00:00Z',3600,160);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("a low out-of-band row counts when the window reaches it", Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "400", "rowing"]), "of this ranking's"))?
     check!("...and does NOT when the limit stops above it, which is what limit-scoping means", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "2", "rowing"]), "of this ranking's")))?
@@ -2326,25 +2326,43 @@ b_seed_analyze! = |ctx| {
     # was broken by fixing it: casting only inside the bound re-admits BLOB and non-numeric
     # TEXT rows, and SQLite's raw ordering puts BLOB above TEXT above every number, so the
     # rows the CAST had just re-admitted sorted to rank 1. `top hr 3` led with a 100 bpm BLOB
-    # over a 171 bpm reading. The needle is anchored to the header separator so it asserts
-    # rank ONE specifically; the row alone would match at any rank.
+    # over a 171 bpm reading. Asserted through the JSON, whose `rows` is computed before the
+    # human/json branch, so `.data[0]` IS rank one — none of the coupling to box-drawing
+    # characters, column order and padding that the table needle it replaces carried.
     # The BLOB row is what makes this check able to fail. Without it every avg_hr in range is
     # a plain number, and SQLite's raw ordering agrees with the numeric one — the first
     # version of this check passed against the very mutation it was written to catch. The
     # bytes are "100", so CAST(... AS REAL) is 100.0: inside the 35-220 bound, below the 171
     # at rank 1, and raw-sorted above every number in the table.
-    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,avg_hr) VALUES (487,'Blob Bound Row','Ride','Ride','2025-11-24T08:00:00Z',3600,x'313030');")
+    #
+    # No write path stride controls can produce this value — `Strava.roc` binds avg_hr through
+    # `opt_real`, and the CSV import shares that upsert — so the row models a hand-edit or a
+    # partial corruption, which is how every prior BLOB bug here (#296, #304, #307, #310) was
+    # found. It cannot be swapped for a realistic-looking number: `avg_hr` is REAL-affinity, so
+    # `CAST(REAL AS REAL)` is identity and no numeric value can witness the two orderings
+    # disagreeing. Deleting the row for looking artificial is what makes the check vacuous.
+    #
+    # 488 is the COUNT's witness, and it has to be a separate row: 487 CASTs to 100, which is
+    # IN band, so both orderings put it in the same window and the count is 1 either way.
+    # 488's bytes are "20" — out of band and LOW, so only raw ordering hoists it into a
+    # limit-2 window, and the count then reports a drop from a window it was never in.
+    #
+    # Rowing, and the check filters to rowing, because 481 stores 250: unfiltered it is rank 1
+    # by either ordering and out of band, so the count is 1 whatever the ORDER BY does and the
+    # check passes on the mutation. Scoped to rowing the window is 485/484 at 160/150, both in
+    # band, and only a raw ordering can put 488 in it. The first version of this check was
+    # unscoped and failed on correct code, which is how the shadowing rank-1 row surfaced.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_hr) VALUES (487,'Blob Bound Row','Ride','2025-11-24T08:00:00Z',3600,x'313030'),(488,'Blob Low Row','Rowing','2025-11-25T08:00:00Z',3600,x'3230');")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    check!("the ranking sorts numerically, not by SQLite's raw type order", Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "3"]), "\u(2524)\n\u(2502) 2025-11-08 \u(2502) Ride"))?
-    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 487; DELETE FROM activities WHERE id = 487;")
+    check!("the ranking sorts numerically, not by SQLite's raw type order", strjq!(ctx, ["top", "hr", "3"], ".data[0].id") == "482")?
+    check!("the exclusion COUNT is ordered numerically too, which the table check cannot see", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "2", "rowing"]), "of this ranking's")))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (487,488); DELETE FROM activities WHERE id IN (487,488);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    # ...and the empty-result hint's new third explanation, which had no coverage at all: the
-    # existing hint check uses `top power`, a metric with no bound, so it can never reach it.
     # ...and the empty-result hint's new third explanation, which had no coverage at all: the
     # existing hint check uses `top power`, a metric with no bound, so it can never reach it.
     # It needs a sport whose every reading is out of band, and the fixture's two sports (Ride,
     # Rowing) both hold plausible rows, so this inserts a sport of its own.
-    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,avg_hr) VALUES (486,'All Bad Hike','Hike','Hike','2025-11-23T08:00:00Z',3600,15);")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_hr) VALUES (486,'All Bad Hike','Hike','2025-11-23T08:00:00Z',3600,15);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("an all-implausible sport says so, rather than denying the data exists", Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "5", "hike"]), "every reading is implausible"))?
     check!("...instead of the old line claiming the sport has no heart rate data at all", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "hr", "5", "hike"]), "none with heart rate (hr) data")))?

@@ -739,9 +739,11 @@ ReportSessions :: [].{
                         # rank 1. `top hr 3` led with that 100 bpm BLOB over a 171 bpm reading. Fixing the
                         # bound is what introduced this; the two casts have to move together.
                         #
-                        # The count subquery below repeats this ORDER BY deliberately: it counts what the
-                        # LIMIT excludes, so it has to walk the rows in the same order this one does. Change
-                        # one and the other is wrong, silently — the number just drifts.
+                        # The count subquery below repeats this ORDER BY deliberately. It counts what the
+                        # BOUND excludes, from the window the LIMIT admits — and the ORDER BY is what decides
+                        # which rows are in that window, which is the whole reason the two are coupled.
+                        # Without the LIMIT the ordering would genuinely not matter here; with it, it is
+                        # load-bearing. Change one and the other is wrong silently: the number just drifts.
                         \\ORDER BY CAST(${col} AS REAL) DESC, a.id DESC LIMIT ${(limit).to_str()}
                     ,
                     bindings: sport_binding,
