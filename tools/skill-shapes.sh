@@ -43,6 +43,11 @@ set -eu
 # caught exactly that: every line reported as both pinned and actual, identical text, because
 # Git Bash sorted it differently from the macOS run that generated the pin.
 export LC_ALL=C
+# ...and every generated stream is stripped of carriage returns at the point it is written.
+# `jq` on Windows opens stdout in text mode and emits CRLF, so the side this script GENERATES
+# carried CR while the side it read from disk did not — every line differing with identical
+# text, for the third time on this branch and by the third distinct mechanism. Normalising at
+# the source rather than at each comparison is what stops a fourth.
 cd "$(dirname "$0")/.."
 SK=.claude/skills/stride/SKILL.md
 SCHEMAS=schemas/v2
@@ -118,7 +123,7 @@ for f in "$SCHEMAS"/*.json; do
   jq -r --arg b "$b" '
     [.. | objects | select(has("required")) | select(has("properties"))]
     | .[] | $b + "\t" + ((.properties | keys | sort | join(",")))
-          + "\t" + ((.required | sort | join(",")))' "$f" 2>/dev/null >> "$tmp/sig" || true
+          + "\t" + ((.required | sort | join(",")))' "$f" 2>/dev/null | tr -d '\r' >> "$tmp/sig" || true
 done
 sort -u "$tmp/sig" > "$tmp/sig.sorted"
 
@@ -289,7 +294,7 @@ done < "$PINS_LF"
 : > "$tmp/objprops"
 for f in "$SCHEMAS"/*.json; do
   jq -r '[.. | objects | select(has("properties")) | .properties | keys | sort | join(",")] | .[]' \
-    "$f" 2>/dev/null >> "$tmp/objprops" || true
+    "$f" 2>/dev/null | tr -d '\r' >> "$tmp/objprops" || true
 done
 sort -u "$tmp/objprops" > "$tmp/objprops.u"
 
