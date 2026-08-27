@@ -91,7 +91,19 @@ ReportHealth :: [].{
             path: Path.utf8(path),
             query:
                 \\SELECT COUNT(*) AS total,
-                \\       COALESCE(SUM(CASE WHEN a.avg_hr > 0 THEN 1 ELSE 0 END), 0) AS with_hr,
+                # `BETWEEN 35 AND 220`, not `> 0`. This is a COVERAGE count — how many
+                # sessions the engine can actually use a heart rate from — and `> 0` is a
+                # presence test, so it counted the three readings `progress` (#294),
+                # `activity` (#305) and the load ladder (#313) all refuse. Measured: 672
+                # against 669 in band, wrong in the direction that HIDES the problem, since
+                # the athlete reads it as coverage they have.
+                #
+                # Deliberately NOT the `hr_known` flag beside it. AGENTS.md states the
+                # `_known` convention codebase-wide — companions decode from the STORED NULL
+                # — so `hr_known` is behaving as documented and narrowing it here would break
+                # that rule for one field of five. Marking an implausible value in the
+                # payload is a separate contract decision, tracked in #312.
+                \\       COALESCE(SUM(CASE WHEN a.avg_hr BETWEEN 35 AND 220 THEN 1 ELSE 0 END), 0) AS with_hr,
                 \\       COALESCE(SUM(CASE WHEN COALESCE(a.avg_watts, a.weighted_avg_watts, 0) > 0 THEN 1 ELSE 0 END), 0) AS with_power,
                 \\       COALESCE(SUM(CASE WHEN s.activity_id IS NOT NULL AND s.raw_json <> '{}' THEN 1 ELSE 0 END), 0) AS with_streams,
                 \\       COALESCE(SUM(CASE WHEN m.activity_id IS NULL THEN 1 ELSE 0 END), 0) AS unanalyzed,
@@ -220,7 +232,10 @@ ReportHealth :: [].{
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(CAST(sport_type AS TEXT), '') AS sport,
-                \\       CASE WHEN COALESCE(avg_hr, 0) > 0 THEN 1 ELSE 0 END AS has_hr
+                # same bound, same reason: a 0.2 bpm row was BREAKING a strapless streak
+                # that is genuinely unbroken, so the streak under-reported how long the
+                # athlete had gone without usable heart-rate data
+                \\       CASE WHEN avg_hr BETWEEN 35 AND 220 THEN 1 ELSE 0 END AS has_hr
                 \\FROM activities ORDER BY ${Metrics.rank_ts_sql("start_local", Desc)}, id DESC LIMIT 200
             ,
             bindings: [],

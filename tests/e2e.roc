@@ -367,7 +367,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1016)?
+    checks_ran_exactly!(1018)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6240,6 +6240,26 @@ b_progress_b! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # the 18 bpm row would score 155/18 = 8.6 against ~1.1 for the real ones, so under the
     # old predicate it becomes the "best" session and every trend reads off it
+    # `doctor` reads the same column, and counted this 18 bpm row as heart-rate COVERAGE.
+    # `> 0` is a presence test; this is a coverage measure — how many sessions the engine can
+    # actually use a heart rate from — so it counted the readings `progress` (#294),
+    # `activity` (#305) and the load ladder (#313) all refuse. Measured on the real database:
+    # 672 against 669 in band, wrong in the direction that HIDES the gap, since the athlete
+    # reads it as coverage they have (#312).
+    #
+    # Placed HERE, inside the HR-sanity fixture, because this is where an out-of-band row
+    # exists. Three attempts to build one in the doctor block instead each polluted a
+    # planned-session check two hundred lines downstream, failing at "in plan_history_28d, as
+    # open" — a name that mentions neither heart rate nor doctor.
+    #
+    # A RELATION against SQL rather than a pinned number, so it needs no mutation and cannot
+    # pollute, and it fails the moment the predicate drifts from the one written here.
+    check!("doctor counts usable heart rates, not merely present ones", strjq!(ctx, ["doctor"], ".data.with_hr") == Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE avg_hr BETWEEN 35 AND 220;")))?
+    # ...and the relation is not vacuous: with the 18 bpm row present the two predicates give
+    # different answers, which is what makes the check above mean anything. Without this the
+    # first check passes on any fixture where nothing is out of band — measured, that is the
+    # state of the fixture at the doctor block, where the first version of this sat.
+    check!("...and the fixture can tell the two predicates apart", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE COALESCE(avg_hr,0) > 0;")) != Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE avg_hr BETWEEN 35 AND 220;")))?
     check!("an 18 bpm ride is refused by the EF lens, not scored as the best session", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .sessions | length] | join(\",\")") == "2")?
     check!("...and it is DECLARED withheld rather than silently dropped", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .hidden_lens] | join(\",\")") == "1")?
     check!("...and no session scores off it", sfloat(strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .sessions[].score] | max")) < 3.0)?
@@ -6772,6 +6792,7 @@ b_doctor! = |ctx| {
     # ...and a strapped ride on top resets it to 0
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9404,'strapped ride','Ride','2099-03-04T10:00:00Z',3600,30000,0,140);")
     check!("a strapped ride resets the streak", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "0")?
+
     # ...and an UNRANKABLE timestamp cannot head that walk (#255). This is the site where a
     # wrong order is a wrong ANSWER rather than a wrong listing: the streak is a
     # leading-prefix fold over `ORDER BY … LIMIT 200`, so the published number is a function
