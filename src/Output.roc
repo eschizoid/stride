@@ -374,7 +374,7 @@ Output :: [].{
         Err(Exit(error_status))
     }
 
-    # unconfigured zones/FTP: JSON error for tools, the setup help for humans
+    # unconfigured HR zones: JSON error for tools, the setup help for humans
     missing_config! : {} => Try({}, _)
     missing_config! = |{}| {
         (if json_mode!({})

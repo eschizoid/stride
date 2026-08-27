@@ -31,8 +31,8 @@ plan.json	avg_hr,date,distance_m,hard_s,hr_known,id,intensity,intensity_known,lo
 plan.json	completed_activity_id,completed_on,detail,id,session_type,skipped_reason,status,substitute_activity_id,superseded_activity_id,target_date	completed_activity_id,completed_on,detail,id,session_type,skipped_reason,status,substitute_activity_id,superseded_activity_id,target_date	-
 plan.json	completed,completion_pct,planned,skipped,still_open,substituted,unplanned_activities	completed,completion_pct,planned,skipped,still_open,substituted,unplanned_activities	doc
 plan.json	detail,id,rationale,session_type,target_date	detail,id,rationale,session_type,target_date	-
-power_curve.json	cp,fit_points,fit_r2,points,sport,w_prime,window_days	cp,fit_points,fit_r2,points,sport,w_prime,window_days	-
-power_curve.json	dur_s,watts	dur_s,watts	-
+power_curve.json	cp,fit_points,fit_r2,points,sport,w_prime,window_days	cp,fit_points,fit_r2,points,sport,w_prime,window_days	doc
+power_curve.json	dur_s,watts	dur_s,watts	doc
 progress.json	anchor_date,anchor_scored,groups	anchor_date,anchor_scored,groups	doc
 progress.json	avg_hr,date,decoupling_known,decoupling_pct,distance_m,moving_time,np_w,output_kj,rpe,score,sport,tss	avg_hr,date,decoupling_known,decoupling_pct,distance_m,moving_time,np_w,output_kj,rpe,score,sport,tss	-
 progress.json	hidden,hidden_lens,hidden_scope,lens,name,sessions	hidden,hidden_lens,hidden_scope,lens,name,sessions	doc
@@ -62,5 +62,5 @@ tte.json	contradicts_model,cp,demonstrated_known,demonstrated_s,demonstrated_w,f
 version.json	version	version	-
 week_add.json	id,session_type,target_date	id,session_type,target_date	-
 week.json	activity_id,completed_activity_id,created_at,day,detail,done_date,id,rationale,session_type,skipped_reason,status,status_shown,substitute_activity_id,superseded_activity_id,target_date	activity_id,completed_activity_id,created_at,day,detail,done_date,id,rationale,session_type,skipped_reason,status,status_shown,substitute_activity_id,superseded_activity_id,target_date	-
-zones.json	ftp,zones	ftp,zones	-
-zones.json	hi_w,lo_w,name,z	hi_w,lo_w,name,z	-
+zones.json	ftp,zones	ftp,zones	doc
+zones.json	hi_w,lo_w,name,z	hi_w,lo_w,name,z	doc

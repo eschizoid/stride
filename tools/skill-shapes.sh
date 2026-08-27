@@ -42,6 +42,34 @@ SCHEMAS=schemas/v2
 PINS=tools/skill-shapes.pins
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 
+# SKILL.md with hard-wrapped paragraph lines folded together. Markdown wraps prose, and the
+# payload literals for `sync` and `analyze` are split across two source lines, so a
+# line-scoped extractor finds ZERO complete `{...}` spans there.
+#
+# What this buys, precisely, because an earlier version of this comment overstated it:
+# direction 2 now reaches those literals and `config unset`'s, which has no table row at
+# all — renaming a field in any of the three is reported. Direction 1 still does NOT reach
+# `sync` or `analyze`: it locates a command's documentation by grepping for `stride <cmd>`,
+# and the line naming their fields does not contain that string, so both stay flagged `-`
+# in the pin file rather than `doc`. Their required sets are still pinned, so a schema
+# change to either fails the gate; what is missing is the check that SKILL.md names each
+# new field. Closing that needs a different way to attribute prose to a command.
+LOGICAL="$tmp/logical.md"
+awk '
+  function isnew(l) {
+    # A line STARTS a new logical line when it is blank, a heading, a table row, a fence,
+    # or a list bullet. Everything else continues the paragraph above it — which is what
+    # Markdown means by a hard wrap, and the condition an earlier version got wrong by
+    # requiring leading whitespace. `sync`s literal wraps onto a column-0 line, so that
+    # version never joined it and both directions stayed blind while looking covered.
+    return (l ~ /^[ \t]*$/) || (l ~ /^#/) || (l ~ /^\|/) || (l ~ /^```/) || (l ~ /^[ \t]*([-*+]|[0-9]+\.)[ \t]/)
+  }
+  NR == 1 { printf "%s", $0; next }
+  isnew($0) { printf "\n%s", $0; next }
+  { sub(/^[ \t]+/, ""); printf " %s", $0 }
+  END { printf "\n" }
+' "$SK" > "$LOGICAL"
+
 # The command->schema join, derived from `src/Command.roc`'s table rather than restated.
 grep '\(reads\|writes\)("' src/Command.roc | while IFS= read -r line; do
   n=$(printf '%s\n' "$line" | grep -o '\(reads\|writes\)("[^"]*"' | head -1 | sed 's/.*("//;s/"$//')
@@ -72,38 +100,41 @@ sort -u "$tmp/sig" > "$tmp/sig.sorted"
 # row and could be satisfied by its neighbour's text.
 doc_for() {
   cmd=$1
-  grep -F "stride $cmd" "$SK" 2>/dev/null > "$tmp/cand" || true
-  # A row naming a LONGER command belongs to that command, not this one.
+  grep -F "stride $cmd" "$LOGICAL" 2>/dev/null > "$tmp/cand" || true
+  # A line naming a LONGER command documents THAT command, not this one. `week add`'s row
+  # is not `week`'s. Derived from the join rather than guessed at with a character class:
+  # the first cut used an awk boundary of `([^a-z0-9-]|$)`, which contains a space, so
+  # `week` claimed its neighbour's row and could be satisfied by its neighbour's text.
   cut -f1 "$tmp/join" | grep "^$cmd " > "$tmp/longer" || true
   while IFS= read -r l; do
-    [ -n "$l" ] && grep -vF "stride $l" "$tmp/cand" > "$tmp/cand2" && mv "$tmp/cand2" "$tmp/cand" || true
+    [ -n "$l" ] || continue
+    # NOT `grep -vF ... && mv ...`: when the filter matches every line grep exits 1, the
+    # `mv` never runs, and `cand` silently keeps the UNFILTERED text. That is live for
+    # `config`, whose four lines all name a longer form. Redirect first, move always.
+    grep -vF "stride $l" "$tmp/cand" > "$tmp/cand2" || true
+    mv "$tmp/cand2" "$tmp/cand"
   done < "$tmp/longer"
   # The invocation cell is stripped before the text is searched. It holds argument
   # PLACEHOLDERS — `[date]`, `[sport]`, `<id>`, `[n]`, `[days]` — and leaving them in lets
-  # a CLI argument silently satisfy a payload field of the same name. Measured: a required
-  # `date` added to `progress.groups[]` passed on the strength of the `[date]` placeholder.
+  # a CLI argument silently satisfy a payload field of the same name. Measured: moving `km`
+  # into `stats`' invocation cell makes a required `km` pass with the schema untouched.
   sed 's/^| *`[^`]*` *|//' "$tmp/cand"
 }
 
-# The TABLE ROW that documents a command, if it has one. Narrower than `doc_for` on
-# purpose, and the difference matters for direction 2 only.
-#
-# Direction 1 asks "is this field named anywhere in this command's documentation?", so the
-# wide context is right — `sync` and `analyze` describe their payloads in prose, and a
-# field named there is named. Direction 2 asks "which schema does this literal belong to?",
-# which needs the command to be the SUBJECT of the line rather than merely mentioned. Many
-# bullets say "run `stride analyze`" while documenting something else entirely, and reading
-# their literals as `analyze`'s reported twelve of another command's fields as unknown.
-row_for() {
-  cmd=$1
-  awk -F'|' -v n="$cmd" '/^\| *`stride/ {
-      cell = $2; gsub(/[`\\]/, "", cell)
-      if (cell ~ ("^ *stride " n " *($|[^a-z0-9-])")) { sub(/^\|[^|]*\|/, "", $0); print }
-    }' "$SK"
+# Every command whose schema is $1, unioned. A schema can be reached by several names —
+# `zones.json` by both `zones` and `pz` — and picking one alphabetically picks the ALIAS,
+# which SKILL.md never writes. That silently blanked `zones`, `power-curve`, `commands` and
+# `version`: `doc_for` returned nothing, so the refresh wrote them un-enforced while the doc
+# in fact documents them in full.
+doc_for_schema() {
+  awk -F'\t' -v s="$1" '$2 == s {print $1}' "$tmp/join" | while IFS= read -r c; do
+    [ -n "$c" ] && doc_for "$c"
+  done
 }
 
+
 : > "$tmp/problems"
-pinned=0; checked_cmds=0
+pinned=0
 
 # `--refresh` rewrites the pin file from the current schemas and doc. It is the deliberate
 # act the failure message asks for, and it is separate from the check so that refreshing is
@@ -114,7 +145,7 @@ if [ "${1:-}" = "--refresh" ]; then
     cmd=$(awk -F'\t' -v s="$schema" '$2 == s {print $1; exit}' "$tmp/join")
     flag="-"
     if [ -n "$cmd" ]; then
-      doc_for "$cmd" > "$tmp/doc"
+      doc_for_schema "$schema" > "$tmp/doc"
       if [ -s "$tmp/doc" ]; then
         miss=0
         for rk in $(printf '%s' "$req" | tr ',' ' '); do
@@ -125,9 +156,25 @@ if [ "${1:-}" = "--refresh" ]; then
     fi
     printf '%s\t%s\t%s\t%s\n' "$schema" "$props" "$req" "$flag" >> "$tmp/new"
   done < "$tmp/sig.sorted"
+  # A doc -> - transition means an object STOPPED being enforced, and refresh is the one
+  # place that can happen. Left silent it is the whole escape hatch: hit the pin failure,
+  # refresh as the message tells you, and the object quietly leaves the enforced set with
+  # nothing in the diff but a flag character. Named loudly, and the count below moves too.
+  #
+  # Temp files rather than `<(...)`: this is /bin/sh, and process substitution is a bashism
+  # that parses as a syntax error here rather than failing at run time.
+  awk -F'\t' '$4=="doc" {print $1"  "$2}' "$PINS" | sort > "$tmp/was_doc"
+  awk -F'\t' '$4!="doc" {print $1"  "$2}' "$tmp/new" | sort > "$tmp/now_not"
+  comm -12 "$tmp/was_doc" "$tmp/now_not" > "$tmp/downgraded"
+  if [ -s "$tmp/downgraded" ]; then
+    echo "skill-shapes: WARNING — these objects are being DOWNGRADED from enforced to unenforced:"
+    sed 's/^/  DOWNGRADED: /' "$tmp/downgraded"
+    echo "skill-shapes: that is SKILL.md no longer naming every required field of those objects."
+    echo "skill-shapes: document them instead, unless dropping the coverage is what you meant."
+  fi
   mv "$tmp/new" "$PINS"
   echo "skill-shapes: refreshed $PINS ($(wc -l < "$PINS" | tr -d ' ') objects, $(awk -F'\t' '$4=="doc"' "$PINS" | wc -l | tr -d ' ') marked doc)"
-  echo "skill-shapes: re-run without --refresh, and update EXPECT_PINNED/EXPECT_CMDS if they moved."
+  echo "skill-shapes: re-run without --refresh, and update EXPECT_PINNED/EXPECT_LITERALS if they moved."
   exit 0
 fi
 
@@ -150,7 +197,7 @@ while IFS="$(printf '\t')" read -r schema props req flag; do
   pinned=$((pinned + 1))
   cmd=$(awk -F'\t' -v s="$schema" '$2 == s {print $1; exit}' "$tmp/join")
   [ -n "$cmd" ] || continue
-  doc_for "$cmd" > "$tmp/doc"
+  doc_for_schema "$schema" > "$tmp/doc"
   printf '%s\n' "$req" | tr ',' '\n' | while IFS= read -r rk; do
     [ -n "$rk" ] || continue
     grep -q "[^A-Za-z0-9_]$rk\([^A-Za-z0-9_]\|\$\)" "$tmp/doc" ||
@@ -159,44 +206,51 @@ while IFS="$(printf '\t')" read -r schema props req flag; do
   done
 done < "$PINS"
 
-# ── Direction 2: a key the documentation promises that no schema property backs. ──
-while IFS="$(printf '\t')" read -r cmd schema; do
-  [ -f "$SCHEMAS/$schema" ] || continue
-  row_for "$cmd" > "$tmp/doc"
-  [ -s "$tmp/doc" ] || continue
-  checked_cmds=$((checked_cmds + 1))
-  : > "$tmp/keys"
-  cp "$tmp/doc" "$tmp/w"
-  while grep -q '{[^{}]*}' "$tmp/w"; do
-    grep -o '{[^{}]*}' "$tmp/w" | while IFS= read -r lit; do
-      printf '%s\n' "$lit" | grep -o '[a-z_][a-z_0-9]* *[,:}]' | sed 's/ *.$//' >> "$tmp/keys"
-    done
-    sed 's/{[^{}]*}/X/g' "$tmp/w" > "$tmp/w2"; mv "$tmp/w2" "$tmp/w"
-  done
-  jq -r '[.. | objects | select(has("properties")) | .properties | keys[]] | unique[]' \
-    "$SCHEMAS/$schema" > "$tmp/props" 2>/dev/null || : > "$tmp/props"
-  sort -u "$tmp/keys" | while IFS= read -r k; do
-    [ -n "$k" ] || continue
-    grep -qx "$k" "$tmp/props" ||
-      printf 'unknown-field %-12s %-18s SKILL.md names %s, which the schema has no property for\n' \
-        "$cmd" "$schema" "$k" >> "$tmp/problems"
-  done
-  printf '%s\n' "$checked_cmds" > "$tmp/cc"
-done < "$tmp/join"
-checked_cmds=$(cat "$tmp/cc" 2>/dev/null || echo 0)
+# ── Direction 2: every brace literal in SKILL.md must match SOME schema object. ──
+#
+# No command is identified at any point, and that is the fix rather than a shortcut. The
+# first version asked "whose payload is this literal?", answered it by which command the
+# line mentions, and reported twelve of another command's fields as unknown because a
+# bullet saying "run `stride analyze`" is not a statement about `analyze`'s payload. The
+# repair was to read table rows only — which bought accuracy by going blind to every
+# literal in prose, including `config unset`'s `{key, removed}`, a command with no table
+# row at all.
+#
+# Asking instead whether the key set is a SUBSET of some single object's properties needs
+# no attribution and cannot be fooled by a mention. A literal that matches nothing is
+# either a renamed field or a typo, and both are the drift this direction exists to catch.
+: > "$tmp/objprops"
+for f in "$SCHEMAS"/*.json; do
+  jq -r '[.. | objects | select(has("properties")) | .properties | keys | sort | join(",")] | .[]' \
+    "$f" 2>/dev/null >> "$tmp/objprops" || true
+done
+sort -u "$tmp/objprops" > "$tmp/objprops.u"
 
-# Both counts are asserted EXACTLY, not as floors. The first version used a floor of 12
-# against an actual 16, so four rows could stop matching — a reworded row, a deleted schema
-# — while the gate printed the same clean line a healthy tree prints. A count that may only
-# be raised deliberately is the difference between a guard and a decoration.
-EXPECT_PINNED=22
-EXPECT_CMDS=16
-if [ "$pinned" != "$EXPECT_PINNED" ] || [ "$checked_cmds" != "$EXPECT_CMDS" ]; then
-  echo "skill-shapes: enforced $pinned doc-pinned objects across $checked_cmds documented commands;"
-  echo "skill-shapes: expected $EXPECT_PINNED and $EXPECT_CMDS. If that change is intended, update these"
-  echo "skill-shapes: numbers in the same commit; if it is not, the join or the doc lookup broke."
-  exit 1
-fi
+: > "$tmp/lits"
+cp "$LOGICAL" "$tmp/w"
+while grep -q '{[^{}]*}' "$tmp/w"; do
+  grep -o '{[^{}]*}' "$tmp/w" >> "$tmp/lits"
+  sed 's/{[^{}]*}/X/g' "$tmp/w" > "$tmp/w2"; mv "$tmp/w2" "$tmp/w"
+done
+
+literals=0
+sort -u "$tmp/lits" | while IFS= read -r lit; do
+  keys=$(printf '%s\n' "$lit" | grep -o '[a-z_][a-z_0-9]* *[,:}]' | sed 's/ *.$//' | sort -u)
+  [ -n "$keys" ] || continue
+  literals=$((literals + 1)); printf '%s\n' "$literals" > "$tmp/lc"
+  hit=0
+  while IFS= read -r props; do
+    all=1
+    for k in $keys; do
+      case ",$props," in *",$k,"*) ;; *) all=0 ;; esac
+    done
+    if [ "$all" = 1 ]; then hit=1; break; fi
+  done < "$tmp/objprops.u"
+  [ "$hit" = 1 ] ||
+    printf 'unmatched     %-31s %s\n' "$(printf '%s' "$keys" | tr '\n' ' ')" \
+      "names no single schema object holding all of these" >> "$tmp/problems"
+done
+literals=$(cat "$tmp/lc" 2>/dev/null || echo 0)
 
 n=$(wc -l < "$tmp/problems" | tr -d ' ')
 if [ "$n" -gt 0 ]; then
@@ -205,4 +259,17 @@ if [ "$n" -gt 0 ]; then
   sort "$tmp/problems"
   exit 1
 fi
-echo "skill-shapes: $pinned doc-pinned objects checked for required fields, $checked_cmds table rows checked for unknown fields — all clean"
+# Both counts are asserted EXACTLY, not as floors. The first version used a floor of 12
+# against an actual 16, so four rows could stop matching — a reworded row, a deleted schema
+# — while the gate printed the same clean line a healthy tree prints. A count that may only
+# be raised deliberately is the difference between a guard and a decoration.
+EXPECT_PINNED=26
+EXPECT_LITERALS=25
+if [ "$pinned" != "$EXPECT_PINNED" ] || [ "$literals" != "$EXPECT_LITERALS" ]; then
+  echo "skill-shapes: enforced $pinned doc-pinned objects and matched $literals brace literals;"
+  echo "skill-shapes: expected $EXPECT_PINNED and $EXPECT_LITERALS. If intended, update these"
+  echo "skill-shapes: numbers in the same commit; if it is not, the join or the doc lookup broke."
+  exit 1
+fi
+
+echo "skill-shapes: $pinned doc-pinned objects checked for required fields, $literals brace literals matched to schema objects — all clean"
