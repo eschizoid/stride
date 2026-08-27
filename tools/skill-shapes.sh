@@ -342,7 +342,7 @@ fi
 # against an actual 16, so four rows could stop matching — a reworded row, a deleted schema
 # — while the gate printed the same clean line a healthy tree prints. A count that may only
 # be raised deliberately is the difference between a guard and a decoration.
-EXPECT_PINNED=27
+EXPECT_PINNED=28
 EXPECT_LITERALS=25
 if [ "$pinned" != "$EXPECT_PINNED" ] || [ "$literals" != "$EXPECT_LITERALS" ]; then
   echo "skill-shapes: enforced $pinned doc-pinned objects and matched $literals brace literals;"
