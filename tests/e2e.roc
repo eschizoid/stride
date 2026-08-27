@@ -5992,8 +5992,8 @@ b_progress_b! = |ctx| {
     # The assertion pins the FULL clause, not `"1 hidden"`. Review mutation-proved the
     # weakness: with ten more HR-less rides the render said "(11 hidden: needs power
     # and HR)" and this check still printed ok, because `"11 hidden"` contains
-    # `"1 hidden"`. The stronger form is already
-    # the house style one file over in `Render.roc`'s own expect. A check whose name
+    # `"1 hidden"`. The stronger form is already the house style one file over, in
+    # `Render.roc`'s own expect. A check whose name
     # overstates its assertion is the exact failure this PR exists to remove.
     check!("...and the group says one session was withheld", Str.contains(gap_probe, "(1 hidden: needs power and HR)"))?
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (221,222,223); DELETE FROM streams WHERE activity_id IN (221,222,223); DELETE FROM activities WHERE id IN (221,222,223);")
