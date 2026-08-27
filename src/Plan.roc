@@ -90,7 +90,7 @@ Plan :: [].{
                         bad_time = Sqlite.query_many!({
                             path: Path.utf8(path),
                             query:
-                                \\SELECT id AS id, COALESCE(CAST(substr(start_local, 11, 9) AS TEXT), '') AS t
+                                \\SELECT id AS id, COALESCE(substr(CAST(start_local AS TEXT), 11, 9), '') AS t
                                 \\FROM activities
                                 \\WHERE NOT (
                                 \\      length(start_local) >= 19
@@ -100,9 +100,9 @@ Plan :: [].{
                                 \\  AND substr(start_local, 12, 2) GLOB '[0-9][0-9]'
                                 \\  AND substr(start_local, 15, 2) GLOB '[0-9][0-9]'
                                 \\  AND substr(start_local, 18, 2) GLOB '[0-9][0-9]'
-                                \\  AND CAST(substr(start_local, 12, 2) AS INTEGER) <= 23
-                                \\  AND CAST(substr(start_local, 15, 2) AS INTEGER) <= 59
-                                \\  AND CAST(substr(start_local, 18, 2) AS INTEGER) <= 59
+                                \\  AND CAST(substr(CAST(start_local AS TEXT), 12, 2) AS INTEGER) <= 23
+                                \\  AND CAST(substr(CAST(start_local AS TEXT), 15, 2) AS INTEGER) <= 59
+                                \\  AND CAST(substr(CAST(start_local AS TEXT), 18, 2) AS INTEGER) <= 59
                                 \\)
                                 \\ORDER BY id LIMIT 1
                             ,
@@ -292,7 +292,7 @@ Plan :: [].{
         unplanned = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
-                \\SELECT a.id AS aid, COALESCE(CAST(substr(a.start_local,1,10) AS TEXT), '') AS adate, COALESCE(CAST(a.sport_type AS TEXT),'') AS sport,
+                \\SELECT a.id AS aid, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS adate, COALESCE(CAST(a.sport_type AS TEXT),'') AS sport,
                 \\       COALESCE(CAST(a.name AS TEXT),'') AS aname, COALESCE(a.moving_time,0) AS mt,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
@@ -1111,7 +1111,7 @@ Plan :: [].{
                 recent = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
-                        \\SELECT a.id AS id, COALESCE(CAST(substr(a.start_local, 1, 10) AS TEXT), '') AS date, COALESCE(CAST(a.sport_type AS TEXT), '') AS sport, COALESCE(CAST(a.name AS TEXT), '') AS name,
+                        \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, COALESCE(CAST(a.sport_type AS TEXT), '') AS sport, COALESCE(CAST(a.name AS TEXT), '') AS name,
                         \\       a.moving_time AS moving_time, CAST(COALESCE(m.tss,0) AS REAL) AS tss,
                         \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
                         \\       COALESCE(m.z1_s,0) AS z1_s, COALESCE(m.z2_s,0) AS z2_s, COALESCE(m.z3_s,0) AS z3_s,
@@ -1197,7 +1197,7 @@ Plan :: [].{
                         \\       COALESCE(p.completed_activity_id, 0) AS completed_activity_id,
                         \\       COALESCE(p.superseded_activity_id, 0) AS superseded_activity_id,
                         \\       COALESCE(p.substitute_activity_id, 0) AS substitute_activity_id,
-                        \\       COALESCE(CAST(substr(a.start_local, 1, 10) AS TEXT), '') AS completed_on
+                        \\       COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS completed_on
                         \\FROM planned_sessions p
                         \\LEFT JOIN activities a ON a.id = COALESCE(p.completed_activity_id, p.substitute_activity_id)
                         \\WHERE p.target_date >= :cutoff AND p.target_date <= :today
@@ -1315,7 +1315,7 @@ Plan :: [].{
                 # the secondary one. "" when there are no activities.
                 newest_activity = Sqlite.query!({
                     path: Path.utf8(path),
-                    query: "SELECT COALESCE(MAX(substr(start_local, 1, 10)), '') AS d FROM activities",
+                    query: "SELECT COALESCE(MAX(substr(CAST(start_local AS TEXT), 1, 10)), '') AS d FROM activities",
                     bindings: [],
                     row: Sqlite.str("d"),
                 })?

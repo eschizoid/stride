@@ -847,6 +847,9 @@ ReportSessions :: [].{
             path: Path.utf8(path),
             query:
                 \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, COALESCE(CAST(a.name AS TEXT), '') AS name,
+                # The trailing `''` is a behaviour change beyond blob handling: a row with BOTH
+                # columns NULL used to decode as an error and now reads empty. An improvement, and
+                # deliberate, but not something the CAST alone would have done.
                 \\       COALESCE(CAST(a.sport_family AS TEXT), CAST(a.sport_type AS TEXT), '') AS fam,
                 \\       COUNT(*) AS reps, CAST(AVG(s.dur_s) AS INTEGER) AS mean_dur,
                 \\       MIN(s.dur_s) AS min_dur, MAX(s.dur_s) AS max_dur,
@@ -920,7 +923,7 @@ ReportSessions :: [].{
                 sessions = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
-                        \\SELECT a2.id AS id, COALESCE(CAST(substr(a2.start_local, 1, 10) AS TEXT), '') AS date, COALESCE(CAST(a2.name AS TEXT), '') AS name,
+                        \\SELECT a2.id AS id, COALESCE(substr(CAST(a2.start_local AS TEXT), 1, 10), '') AS date, COALESCE(CAST(a2.name AS TEXT), '') AS name,
                         \\       COUNT(*) AS reps,
                         \\       CAST(AVG(s.avg_signal) AS REAL) AS mean_w,
                         \\       CAST(AVG(s.dur_s) AS INTEGER) AS mean_dur,
@@ -1123,7 +1126,7 @@ ReportSessions :: [].{
                 latest = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
-                        \\SELECT COALESCE(CAST(substr(a.start_local, 1, 10) AS TEXT), '') AS d, COALESCE(CAST(a.name AS TEXT), '') AS name, a.id AS id
+                        \\SELECT COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS d, COALESCE(CAST(a.name AS TEXT), '') AS name, a.id AS id
                         \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
                         \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC LIMIT 1
                     ,

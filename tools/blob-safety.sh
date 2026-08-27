@@ -11,18 +11,39 @@
 # It did not converge, and could not have. #296 shipped believing there were three sites when
 # there were five, then five when there were twelve — found by planting a blob and running
 # every command, not by reading, because there are over a hundred references to that column
-# across a dozen files. #307 then measured the same failure in three more columns:
-# `activities.sport_type` (7 commands), `daily_load.day` (5), `activities.name` (3).
+# across a dozen files. It also left two live crashes behind: `progress` and `week` still
+# died on `activities.start_local`.
+#
+# #307 measured the same failure in three more columns. Counted over 20 read-only
+# invocations: `activities.sport_type` crashed 10, `activities.name` 6, `daily_load.day` 5,
+# `planned_sessions.target_date` 1. An earlier version of this comment said 7/5/3, taken
+# from a sweep over a smaller command list than the binary actually declares.
 #
 # A rule applied by remembering does not converge across a hundred sites. This is the lint
 # the issue asks for: it pairs each `Sqlite.str("alias")` decode with the projection that
 # produces that alias, and fails when the projection is a bare column reference. Forgetting
 # becomes visible instead of becoming an `internal_error` months later.
 #
-# What it deliberately does NOT flag: an alias produced by an expression that cannot yield a
-# blob — a literal, a `COUNT(*)`, a `group_concat`, a `CASE` over integers. Those are listed
-# as derived and skipped, because demanding a CAST there would be noise, and a gate that
-# cries wolf gets its exemption list widened until it means nothing.
+# Known limits, none of which fire on the tree today and all of which review constructed:
+# a projection split across two source lines is reported with an empty expression, and this
+# codebase writes multi-line `\\` SQL everywhere; a comment quoting an old bare form above a
+# correctly wrapped projection is reported; `${Interpolated} AS alias` and `AS ${alias}` are
+# not understood; two projections for the same alias on one line keep only the last, because
+# `grep -o` is greedy. They are stated rather than fixed because each needs a real SQL parse,
+# and because a gate whose limits are written down is one a reader can trust the rest of.
+#
+# It flags an alias whose projection is not cast to TEXT, with exactly two exemptions:
+# `COUNT(`, which yields an integer, and a `PRAGMA` result, which SQLite generates rather
+# than storing. That is the whole list.
+#
+# It was longer. `MAX(`, `MIN(`, `group_concat` and `CASE` were exempt too, on the theory
+# that they cannot yield a blob — false for every one of them over a TEXT column. Review
+# instrumented the scan and found the list firing exactly ONCE in the tree: on
+# `COALESCE(MAX(substr(start_local,1,10)),'') AS d`, which was a live `stride plan` crash.
+# `MAX` over a mixed column PREFERS the blob, because SQLite orders BLOB above TEXT, so one
+# bad row anywhere poisoned it. An exemption whose only use in the codebase is hiding a bug
+# is not an exemption, and "a literal" was never exempt at all — the header said so while
+# the code sixty lines below recorded that the quote exemption had been removed.
 set -eu
 export LC_ALL=C
 cd "$(dirname "$0")/.."
@@ -32,14 +53,18 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 decodes=0
 for f in src/*.roc; do
   # every `Sqlite.str("alias")` in this file
-  grep -o 'Sqlite\.str("[a-z_0-9]*")' "$f" 2>/dev/null | sed 's/.*("//;s/")//' | sort -u > "$tmp/aliases" || true
+  # BOTH string decoders, and ANY alias. Scanning only `Sqlite.str` with a lowercase alias
+  # class missed `Sqlite.nullable_str` entirely — one site in the tree, and it was a live
+  # crash — and would miss `Sqlite.str("sportType")` without moving the asserted count,
+  # which is the failure the count is supposed to make impossible.
+  grep -oE 'Sqlite\.(nullable_)?str\("[^"]*"\)' "$f" 2>/dev/null | sed 's/.*("//;s/")//' | sort -u > "$tmp/aliases" || true
   [ -s "$tmp/aliases" ] || continue
   while IFS= read -r alias; do
     [ -n "$alias" ] || continue
     decodes=$((decodes + 1))
     # The projection that names it. Everything on the line BEFORE ` AS <alias>`, not the
     # last whitespace-delimited token: a first cut took the token and read
-    # `substr(CAST(a.start_local AS TEXT), 1, 7) AS month` as the expression `7)`, then
+    # `substr(CAST(day AS TEXT), 1, 7) AS month` as the expression `7)`, then
     # reported an already-wrapped site as unwrapped. A gate whose false positives are that
     # easy to produce gets its findings dismissed, which is worse than not having it.
     grep -o ".* AS $alias\\b" "$f" 2>/dev/null | sed "s/ AS $alias\$//" | sort -u > "$tmp/exprs" || true
@@ -77,9 +102,16 @@ for f in src/*.roc; do
         print (n ? out : $0)
       }')
       case "$tail_expr" in
-        *CAST*) ;;                                   # already wrapped
-        *"COUNT("*|*"SUM("*|*"MAX("*|*"MIN("*) ;;    # aggregates over non-text
-        *"group_concat"*|*"CASE"*) ;;                # derived expressions
+        # A cast to TEXT specifically. `*CAST*` accepted `CAST(a.name AS INTEGER)`, and it
+        # accepted the literal string 'CAST' in a COALESCE fallback.
+        *"AS TEXT"*|*"as text"*) ;;
+        # `COUNT(` only. `MAX(`, `MIN(`, `group_concat` and `CASE` were exempt on the theory
+        # that they cannot yield a blob — false for every one of them over a TEXT column, and
+        # review proved it: the exemption list fired exactly ONCE in the whole tree, on
+        # `COALESCE(MAX(substr(start_local,1,10)),'') AS d`, which was a live `plan` crash.
+        # `MAX` over a mixed column PREFERS the blob, since SQLite orders BLOB above TEXT.
+        # An exemption whose only use is hiding a bug is not an exemption.
+        *"COUNT("*) ;;
         # NOTE there is no exemption for a quote. The first version had one — "literals" —
         # and it swallowed `COALESCE(day, '') AS day`, which is the COMMON shape here and
         # unsafe: COALESCE picks the blob, not the fallback, because a blob is not NULL. It
@@ -95,7 +127,7 @@ done
 
 # Asserted exactly, not as a floor. A gate whose enumeration silently matches nothing prints
 # the same clean line a healthy tree prints — which is how the defect it guards got here.
-EXPECT_DECODES=49
+EXPECT_DECODES=50
 if [ "$decodes" != "$EXPECT_DECODES" ]; then
   echo "blob-safety: inspected $decodes Sqlite.str decodes, expected $EXPECT_DECODES."
   echo "blob-safety: if that change is intended, update the number in the same commit;"
@@ -103,6 +135,7 @@ if [ "$decodes" != "$EXPECT_DECODES" ]; then
   exit 1
 fi
 
+sort -u "$tmp/problems" > "$tmp/problems.u"; mv "$tmp/problems.u" "$tmp/problems"
 n=$(wc -l < "$tmp/problems" | tr -d ' ')
 if [ "$n" -gt 0 ]; then
   echo "blob-safety: $n TEXT decode(s) read a column that is not CAST to TEXT"

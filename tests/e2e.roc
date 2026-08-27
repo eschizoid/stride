@@ -3421,10 +3421,20 @@ b_seed_analyze! = |ctx| {
     # ONE `sport_type` CAST — the one in the `progress` group query — leaves it green,
     # because this fixture never anchors a group on the planted row. Reverting the file's
     # text CASTs together fails it. So this guards the CLASS behaviourally, and
-    # `tools/blob-safety.sh` is what guards each site: it pairs every `Sqlite.str` decode
-    # with the projection producing its alias and fails on a bare column. The two are
-    # complementary and neither is sufficient — which is how a fix for one column shipped
-    # while eleven more sites read the same way.
+    # `tools/blob-safety.sh` is what guards each site: it pairs every string decode with the
+    # projection producing its alias and fails on a bare column.
+    #
+    # How much this check misses, measured rather than estimated. Review reverted the CASTs
+    # one FILE at a time: reverting `ReportHealth.roc` or `ReportSessions.roc` fails it, and
+    # reverting `Analyze`, `Plan`, `Report`, `ReportSeason` or `app` leaves it green — 34 of
+    # 57 changed lines are revertible with the whole suite passing. The lint catches every
+    # one. So the two are genuinely complementary, and an earlier version of this comment
+    # said "the file's text CASTs reverted together fail it" as though that were a general
+    # property; it holds for two files of seven.
+    #
+    # Neither is sufficient alone, which is how a fix for one column shipped while eleven
+    # more sites read the same way — and how that fix left `progress` and `week` still
+    # crashing on the column it was about.
     _ = sql!(ctx.db, "UPDATE activities SET sport_type = CAST(x'DEADBEEF' AS BLOB), name = CAST(x'C0FFEE' AS BLOB) WHERE id = 952;")
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (954,'blob class','Ride','Ride','2026-04-01T08:00:00Z',3600);")
     _ = sql!(ctx.db, "UPDATE activities SET sport_type = CAST(x'DEADBEEF' AS BLOB) WHERE id = 954;")
