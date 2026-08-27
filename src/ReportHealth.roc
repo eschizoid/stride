@@ -93,20 +93,31 @@ ReportHealth :: [].{
                 \\SELECT COUNT(*) AS total,
                 # `BETWEEN 35 AND 220`, not `> 0`. This is a COVERAGE count — how many
                 # sessions the engine can actually USE a heart rate from, which `> 0` — a
-                # presence test — was not measuring. Measured on a snapshot: 672 present,
-                # 669 with a plausible stored average, 672 once the stream is consulted.
+                # presence test — was not measuring.
                 #
-                # It consults the stream, and that is the correction rather than a detail.
-                # The bare stored bound was tried first and made this payload contradict
-                # itself: three sessions have nonzero HR ZONE seconds and would have been
-                # excluded from `with_hr`, and one of them carries `load_model = 'hr_zones'`
-                # — its entire training load computed FROM heart rate — while sitting in the
-                # same payload's `medium (HR / RPE)` count. "The engine cannot use a heart
-                # rate here" and "the engine computed this session's load from heart rate"
-                # cannot both be true. Under `> 0` that number was 0, so the narrowing
-                # INTRODUCED the disagreement. `avg_hr_stream` (#311) is what the engine
-                # actually scores from, so counting what it scores from is what makes the
-                # count answer its own description.
+                # ON THIS DATABASE THE NUMBER DOES NOT MOVE. Measured on a snapshot: `> 0`
+                # gives 672 and so does the predicate below. That is worth stating plainly
+                # because two earlier versions of this change reported otherwise. The first
+                # narrowed to a plausible STORED average and gave 669, and its comment called
+                # the missing 3 an over-count `> 0` was hiding. They are not: all three carry
+                # HR zone seconds built from their own streams, and one is scored `hr_zones`
+                # — its entire training load computed FROM heart rate. Excluding them made
+                # this payload contradict itself, since the same run prints them inside
+                # `medium (HR / RPE)`. The second version consulted `avg_hr_stream` and its
+                # comment claimed that restored 672. It does not; it gives 669 as well, and
+                # that figure was taken against #311 before its coverage gate landed.
+                #
+                # The gate is why, and the reason generalises: a stored average is impossible
+                # BECAUSE the strap misbehaved, and a misbehaving strap is exactly what fails
+                # a span gate. The scalar fallback is anti-correlated with the population it
+                # was reached for — on this database it rescues zero of the three.
+                #
+                # So the predicate is the UNION (`Metrics.usable_hr_sql`): a usable scalar OR
+                # zone seconds. It is what the field's own description has always claimed, and
+                # the rows it adds are exactly the rows that made the payload disagree with
+                # itself. What this change buys is not a smaller number — it is a `has_hr`
+                # that cannot contradict `with_hr`, a CAST that stops a BLOB from reading as
+                # strapless, and a predicate that means what the schema says.
                 #
                 # `hr_known` beside it does NOT move. AGENTS.md states the `_known`
                 # convention codebase-wide — companions decode from the STORED NULL — so it
@@ -122,7 +133,7 @@ ReportHealth :: [].{
                 # "100" — a session every other consumer reads through a CAST and scores at
                 # 100 bpm. `> 0` was TRUE for it. Fixing an over-count by introducing an
                 # under-count on the same value class is not a fix.
-                \\       COALESCE(SUM(CASE WHEN ${Metrics.valid_hr_sql("COALESCE(m.avg_hr_stream, a.avg_hr)")} THEN 1 ELSE 0 END), 0) AS with_hr,
+                \\       COALESCE(SUM(CASE WHEN ${Metrics.usable_hr_sql("COALESCE(m.avg_hr_stream, a.avg_hr)", "COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0)")} THEN 1 ELSE 0 END), 0) AS with_hr,
                 \\       COALESCE(SUM(CASE WHEN COALESCE(a.avg_watts, a.weighted_avg_watts, 0) > 0 THEN 1 ELSE 0 END), 0) AS with_power,
                 \\       COALESCE(SUM(CASE WHEN s.activity_id IS NOT NULL AND s.raw_json <> '{}' THEN 1 ELSE 0 END), 0) AS with_streams,
                 \\       COALESCE(SUM(CASE WHEN m.activity_id IS NULL THEN 1 ELSE 0 END), 0) AS unanalyzed,
@@ -268,7 +279,7 @@ ReportHealth :: [].{
                 # The join is what the stream half needs. This query read `FROM activities`
                 # alone, so it could only ever see the stored average, which is the number
                 # #311 established the engine does not score from.
-                \\       CASE WHEN ${Metrics.valid_hr_sql("COALESCE(m.avg_hr_stream, a.avg_hr)")} THEN 1 ELSE 0 END AS has_hr
+                \\       CASE WHEN ${Metrics.usable_hr_sql("COALESCE(m.avg_hr_stream, a.avg_hr)", "COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0)")} THEN 1 ELSE 0 END AS has_hr
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC LIMIT 200
             ,

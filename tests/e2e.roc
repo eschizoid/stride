@@ -367,7 +367,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1021)?
+    checks_ran_exactly!(1023)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6268,7 +6268,7 @@ b_progress_b! = |ctx| {
     # different answers, which is what makes the check above mean anything. Without this the
     # first check passes on any fixture where nothing is out of band — measured, that is the
     # state of the fixture at the doctor block, where the first version of this sat.
-    check!("...and the fixture can tell the two predicates apart", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE COALESCE(avg_hr,0) > 0;")) != Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE avg_hr BETWEEN 35 AND 220;")))?
+    check!("...and the fixture can tell the shipped predicate from the presence test it replaced", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE COALESCE(avg_hr,0) > 0;")) != Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE (CAST(COALESCE(m.avg_hr_stream, a.avg_hr) AS REAL) BETWEEN 35 AND 220 OR COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0) > 0);")))?
     # ...and both halves of the predicate, proven by DELTA rather than by restating the
     # implementation's own SQL in the test. The relation above can only ever detect drift
     # BETWEEN the two expressions, never a defect they share — and the defect they shared was
@@ -6292,8 +6292,24 @@ b_progress_b! = |ctx| {
     # fallback and the CAST would never see the BLOB — which is exactly what the first
     # version did, and it passed against the missing-CAST mutation it exists to catch.
     _ = seed_power_stream!(ctx.db, 236, 1300, 200)
+    # 239 is the ZONE arm, and it is the row the whole restack turned on. Stored average 18,
+    # and a stream that stops at 1300 s of a 3600 s ride — span 0.36, so #311's coverage gate
+    # refuses it and `avg_hr_stream` is NULL. Neither scalar can classify it. But the analyzer
+    # built zone seconds from those same samples, and the ladder scores load from them, so the
+    # engine demonstrably CAN use a heart rate here.
+    #
+    # This is the shape of the live row that made `doctor` contradict itself: `load_model =
+    # 'hr_zones'`, counted in `medium (HR / RPE)` and excluded from `with_hr` in the same run.
+    # Review dropped the zone arm and the suite stayed green, because every other fixture
+    # reaching `with_hr` is classified by a scalar.
+    _ = seed_ride!(ctx.db, "239", "Doctor Zone Only", "2025-02-19T09:00:00Z", "3600", "30000", "200", "18")
+    _ = seed_power_hr_stream!(ctx.db, 239, 1300, 200, 150)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    check_near!("both a stream-rescued and a BLOB-stored reading count as usable", sfloat(strjq!(ctx, ["doctor"], ".data.with_hr")) - sfloat(before_hr), 2.0, 0.001)?
+    check_near!("a stream-rescued, a BLOB-stored and a zone-only reading all count as usable", sfloat(strjq!(ctx, ["doctor"], ".data.with_hr")) - sfloat(before_hr), 3.0, 0.001)?
+    # ...and 239 really is classified by the ZONE arm alone rather than by a scalar that
+    # slipped through. Without this, the check above would still pass if the gate stopped
+    # refusing that stream, and the zone arm would go back to being untested.
+    check!("...and the zone-only row has no usable scalar, so only the zone arm can count it", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE a.id = 239 AND m.avg_hr_stream IS NULL AND NOT (CAST(a.avg_hr AS REAL) BETWEEN 35 AND 220) AND COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0) > 0;")) == "1")?
     # ...and `has_hr` agrees, which is the site that had no coverage at all. It is a separate
     # query on a separate predicate, and reverting it alone left the whole suite green. A row
     # doctor calls strapless in one field while counting it as usable in another would put two
@@ -6311,8 +6327,19 @@ b_progress_b! = |ctx| {
     _ = seed_ride!(ctx.db, "237", "Doctor Broken Strap", "2026-08-27T09:00:00Z", "3600", "30000", "200", "18")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("an unusable reading OPENS a strapless streak rather than resetting it", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "1")?
+    # ...and 238 covers the half 237 cannot: 237 has NO stream, so it exercises only the
+    # scalar bound, and reverting the streak site's stream/zone arm alone left the whole suite
+    # green. 238 has an impossible stored average AND a full-coverage stream, so the fallback
+    # is the only thing that can classify it — and the row would otherwise be counted as
+    # usable by `with_hr` while being called strapless by the streak, which is precisely what
+    # `schemas/v2/doctor.json` publishes as a guarantee about these two fields.
+    _ = seed_ride!(ctx.db, "238", "Doctor Rescued Strap", "2026-08-28T09:00:00Z", "1300", "12000", "200", "18")
+    _ = seed_power_hr_stream!(ctx.db, 238, 1300, 200, 150)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("a stream-rescued session RESETS the streak, as the coverage count says it should", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "0")?
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 238; DELETE FROM activity_segments WHERE activity_id = 238; DELETE FROM activity_metrics WHERE activity_id = 238; DELETE FROM activities WHERE id = 238;")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 237; DELETE FROM activities WHERE id = 237;")
-    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id IN (235,236); DELETE FROM activity_segments WHERE activity_id IN (235,236); DELETE FROM activity_metrics WHERE activity_id IN (235,236); DELETE FROM activities WHERE id IN (235,236);")
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id IN (235,236,239); DELETE FROM activity_segments WHERE activity_id IN (235,236,239); DELETE FROM activity_metrics WHERE activity_id IN (235,236,239); DELETE FROM activities WHERE id IN (235,236,239);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("an 18 bpm ride is refused by the EF lens, not scored as the best session", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .sessions | length] | join(\",\")") == "2")?
     check!("...and it is DECLARED withheld rather than silently dropped", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity\")) | .hidden_lens] | join(\",\")") == "1")?
