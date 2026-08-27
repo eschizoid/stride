@@ -3456,22 +3456,28 @@ b_seed_analyze! = |ctx| {
     # the decode either. That is a bad import binding text as a blob, and it is the probe
     # shape that found both of round 2's crashes.
     #
-    # What this still CANNOT reach, and why, because bending it three times is what
-    # established it rather than reasoning: a blobbed `start_local` is refused by
-    # `date_known_sql` before any command projects it. That predicate reads the RAW column
-    # deliberately — #304 made that divergence load-bearing, because wrapping it would
-    # publish `date_known: true` for a row no bounded window can see — so it correctly calls
-    # a blob undateable and the guard turns every reader away. Clearing the fixture's four
-    # malformed dates does not help: the blob is itself the fifth.
+    # The `DELETE` filters on calendar VALIDITY, not just date shape, and that clause is
+    # what makes this probe reach `Plan.roc`'s `MAX(` site. `1000-02-30T00:00:00Z` matches
+    # the shape GLOB — it is well-formed and impossible — so a shape-only filter left it in,
+    # `canonical_activity_day` rejected it, and the guard refused before the blobbed row was
+    # ever projected. `date('1000-02-30')` returns it unchanged, which is why the round-trip
+    # goes through `julianday`: that normalises it to 1000-03-02 and the mismatch flags it.
     #
-    # So this check covers `sport_type`, `name` and `daily_load.day`, and the two
-    # `start_local` sites round 2 fixed — `Plan.roc`'s `MAX(` and `Analyze.roc`'s
-    # `nullable_str` — are covered by `tools/blob-safety.sh` plus direct measurement on a
-    # real database, not by this suite. Both were reproduced there before the fix and
-    # answer `ok` after. That is the honest coverage claim, and it is why the lint is the
-    # deliverable rather than the CASTs.
-    class_codes = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; /bin/cp -f '${ctx.db}' $h/.stride/db.sqlite; sqlite3 $h/.stride/db.sqlite \"DELETE FROM activities WHERE start_local IS NULL OR start_local NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]*'; DELETE FROM daily_load WHERE day IS NULL OR day NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'; UPDATE activities SET sport_type = CAST(sport_type AS BLOB), name = CAST(name AS BLOB), start_local = CAST(start_local AS BLOB) WHERE id = (SELECT id FROM activities ORDER BY start_local DESC LIMIT 1); UPDATE daily_load SET day = CAST(day AS BLOB) WHERE day = (SELECT MAX(day) FROM daily_load);\" >/dev/null 2>&1; for c in summary plan stats doctor activities progress season load compare week; do HOME=$h STRIDE_FORMAT=json '${ctx.bin}' $c 2>&1 | jq -r '.error.code // \"ok\"'; done | grep -c internal_error"))
-    check!("a blob in any TEXT column crashes nothing, in a window where the date guard passes", class_codes == "0")?
+    # I had this boundary attributed to the wrong mechanism — that `date_known_sql` reads the
+    # raw column and so refuses a blobbed date. It does read the raw column, deliberately
+    # (#304), but `guard_activity_dates!` projects the CAST value, so a blob whose bytes are
+    # a valid timestamp passes the guard. Both hold at once. The blocker was always the
+    # shape-only filter, and it was one clause from being closed while I was explaining why
+    # it could not be.
+    #
+    # What this still does NOT cover is `Analyze.roc`'s `nullable_str` site: `analyze` prints
+    # progress lines before its JSON, so `jq` cannot parse the stream and the result is
+    # dropped from the count silently. Adding it needs both the command AND a `grep '^{' |
+    # tail -1` filter, and my attempt at that broke an unrelated check upstream for a reason
+    # I did not isolate — so it is stated rather than half-done. That site is covered by
+    # `tools/blob-safety.sh` and by direct measurement on a real database.
+    class_codes = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; /bin/cp -f '${ctx.db}' $h/.stride/db.sqlite; sqlite3 $h/.stride/db.sqlite \"DELETE FROM activities WHERE start_local IS NULL OR start_local NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]*' OR COALESCE(strftime('%Y-%m-%d', julianday(substr(CAST(start_local AS TEXT),1,10))),'x') <> substr(CAST(start_local AS TEXT),1,10); DELETE FROM daily_load WHERE day IS NULL OR day NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'; UPDATE activities SET sport_type = CAST(sport_type AS BLOB), name = CAST(name AS BLOB), start_local = CAST(start_local AS BLOB) WHERE id = (SELECT id FROM activities ORDER BY start_local DESC LIMIT 1); UPDATE daily_load SET day = CAST(day AS BLOB) WHERE day = (SELECT MAX(day) FROM daily_load);\" >/dev/null 2>&1; for c in summary plan stats doctor activities progress season load compare week; do HOME=$h STRIDE_FORMAT=json '${ctx.bin}' $c 2>&1 | jq -r '.error.code // \"ok\"'; done | grep -c internal_error"))
+    check!("a blob in any TEXT column crashes nothing, in a window where the date guard passes (got: ${class_codes})", class_codes == "0")?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 954;")
     # deleted immediately: `doctor`'s undateable count is pinned at 4 twelve lines below, and
     # a probe row that outlives its own checks moves a number asserted for another reason.
