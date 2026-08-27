@@ -3438,8 +3438,40 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "UPDATE activities SET sport_type = CAST(x'DEADBEEF' AS BLOB), name = CAST(x'C0FFEE' AS BLOB) WHERE id = 952;")
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (954,'blob class','Ride','Ride','2026-04-01T08:00:00Z',3600);")
     _ = sql!(ctx.db, "UPDATE activities SET sport_type = CAST(x'DEADBEEF' AS BLOB) WHERE id = 954;")
-    class_codes = Str.trim(sh!("for c in summary plan stats doctor activities progress season load compare week; do HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $c 2>&1 | jq -r '.error.code // \"ok\"'; done | grep -c internal_error"))
-    check!("a blob in sport_type or name crashes nothing, which #296 fixed for one column only", class_codes == "0")?
+    # In a scratch HOME with the UNDATEABLE ROWS REMOVED, and that is the whole reason this
+    # probe works. The shared fixture permanently holds four malformed dates — pinned by
+    # `doctor`'s `undateable_activities == 4` twelve lines below — so `guard_activity_dates!`
+    # The `daily_load` guard has to be cleared too, and for the same reason: it fires ahead
+    # of the activity read, so with bad days present `plan` and `summary` answer
+    # `unreadable_daily_load_day` and never reach the column under test. Both guards, or the
+    # probe measures whichever refuses first.
+    #
+    # refuses first and six of these ten commands answer `unreadable_activity_date` without
+    # ever projecting the blobbed column. Review measured it: with BOTH of round 2's live
+    # crashes reintroduced, the whole suite stayed green at 964. This check was reading the
+    # date guard, not the decodes, which is how those two shipped.
+    #
+    # The blob is `CAST(<col> AS BLOB)` — bytes that ARE the valid value. A junk blob like
+    # `x'DEADBEEF'` trips the content guards and degrades gracefully, so it can never reach
+    # the decode either. That is a bad import binding text as a blob, and it is the probe
+    # shape that found both of round 2's crashes.
+    #
+    # What this still CANNOT reach, and why, because bending it three times is what
+    # established it rather than reasoning: a blobbed `start_local` is refused by
+    # `date_known_sql` before any command projects it. That predicate reads the RAW column
+    # deliberately — #304 made that divergence load-bearing, because wrapping it would
+    # publish `date_known: true` for a row no bounded window can see — so it correctly calls
+    # a blob undateable and the guard turns every reader away. Clearing the fixture's four
+    # malformed dates does not help: the blob is itself the fifth.
+    #
+    # So this check covers `sport_type`, `name` and `daily_load.day`, and the two
+    # `start_local` sites round 2 fixed — `Plan.roc`'s `MAX(` and `Analyze.roc`'s
+    # `nullable_str` — are covered by `tools/blob-safety.sh` plus direct measurement on a
+    # real database, not by this suite. Both were reproduced there before the fix and
+    # answer `ok` after. That is the honest coverage claim, and it is why the lint is the
+    # deliverable rather than the CASTs.
+    class_codes = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; /bin/cp -f '${ctx.db}' $h/.stride/db.sqlite; sqlite3 $h/.stride/db.sqlite \"DELETE FROM activities WHERE start_local IS NULL OR start_local NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]*'; DELETE FROM daily_load WHERE day IS NULL OR day NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'; UPDATE activities SET sport_type = CAST(sport_type AS BLOB), name = CAST(name AS BLOB), start_local = CAST(start_local AS BLOB) WHERE id = (SELECT id FROM activities ORDER BY start_local DESC LIMIT 1); UPDATE daily_load SET day = CAST(day AS BLOB) WHERE day = (SELECT MAX(day) FROM daily_load);\" >/dev/null 2>&1; for c in summary plan stats doctor activities progress season load compare week; do HOME=$h STRIDE_FORMAT=json '${ctx.bin}' $c 2>&1 | jq -r '.error.code // \"ok\"'; done | grep -c internal_error"))
+    check!("a blob in any TEXT column crashes nothing, in a window where the date guard passes", class_codes == "0")?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 954;")
     # deleted immediately: `doctor`'s undateable count is pinned at 4 twelve lines below, and
     # a probe row that outlives its own checks moves a number asserted for another reason.

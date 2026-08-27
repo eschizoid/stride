@@ -1,5 +1,6 @@
 #!/bin/sh
-# Every TEXT column decoded by `Sqlite.str` must be projected through `CAST(... AS TEXT)`.
+# Every TEXT column decoded by `Sqlite.str` OR `Sqlite.nullable_str` must be projected
+# through `CAST(... AS TEXT)`.
 #
 # SQLite's TEXT affinity converts INTEGER and REAL but NOT blobs, so a blob written by a
 # hand-edit, a partial corruption or a bad import survives in a TEXT column — and a bare
@@ -52,7 +53,6 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 : > "$tmp/problems"
 decodes=0
 for f in src/*.roc; do
-  # every `Sqlite.str("alias")` in this file
   # BOTH string decoders, and ANY alias. Scanning only `Sqlite.str` with a lowercase alias
   # class missed `Sqlite.nullable_str` entirely — one site in the tree, and it was a live
   # crash — and would miss `Sqlite.str("sportType")` without moving the asserted count,
@@ -73,9 +73,26 @@ for f in src/*.roc; do
       # it and a CAST would be describing a risk that does not exist. The only exemption
       # here, and it names the mechanism rather than the file.
       if grep -q "PRAGMA $alias" "$f" 2>/dev/null; then continue; fi
-      # otherwise the column is selected bare and the alias IS the column name
-      grep -q "CAST($alias AS TEXT)\|CAST(a\.$alias AS TEXT)" "$f" 2>/dev/null ||
-        printf '%-24s %-22s selected bare, no CAST(... AS TEXT)\n' "$(basename "$f")" "$alias" >> "$tmp/problems"
+      # otherwise the column is selected bare and the alias IS the column name.
+      #
+      # Scoped to the LINE that selects it, and to any table prefix. Grepping the whole file
+      # was a hole with two mouths. Review walked it: add a bare unaliased projection, get
+      # the count-guard message, do exactly what it says and bump `EXPECT_DECODES` — and the
+      # bare projection is then exempt, because this PR added `CAST(<col> AS TEXT)` for
+      # nearly every TEXT column in nearly every file, so the file-wide grep almost always
+      # finds one. The gate's own instruction routed a developer past it.
+      #
+      # The prefix set was `<col>` and `a.<col>` only, so a column wrapped as `s.`, `m.`,
+      # `p.`, `rt.` or `a2.` — all used in this tree — reported "selected bare" while
+      # correctly wrapped. That was an undocumented false positive.
+      grep -E "SELECT[^\"]*\b$alias\b" "$f" 2>/dev/null > "$tmp/bareline" || true
+      if [ -s "$tmp/bareline" ]; then
+        grep -qE "CAST\(([a-z_][a-z_0-9]*\.)?$alias AS TEXT\)" "$tmp/bareline" ||
+          printf '%-24s %-22s selected bare on its own line, no CAST(... AS TEXT)\n' \
+            "$(basename "$f")" "$alias" >> "$tmp/problems"
+      else
+        printf '%-24s %-22s no projection found for this decode\n' "$(basename "$f")" "$alias" >> "$tmp/problems"
+      fi
       continue
     fi
     while IFS= read -r expr; do
@@ -101,10 +118,53 @@ for f in src/*.roc; do
         for (i = n + 1; i <= NF; i++) out = out " " $i
         print (n ? out : $0)
       }')
+      # Blank every `CAST(… AS TEXT)` span — with balanced parens, so a subquery inside one
+      # is blanked with it — then look for a column reference left in ARGUMENT position:
+      # preceded by `(` or `,` and followed by `,` or `)`. That is where the hole was.
+      #
+      # "does the tail contain AS TEXT anywhere" was the previous test, and it let ANY ONE
+      # cast arm vouch for every other arm. Review proved a live crash from
+      # `COALESCE(CAST(a.sport_family AS TEXT), a.sport_type, '')` — a shape this tree writes
+      # three times, with `sport_family` NULL being the pre-migration case the COALESCE
+      # exists for. `NULLIF` and `CASE … ELSE <bare>` are the same hole.
+      #
+      # Argument position rather than any identifier, because the tail also carries Roc
+      # syntax (`query:`) and SQL keywords, and flagging those made the gate cry wolf on six
+      # correct projections the first time this was written.
+      # ...then keep only the projection list. The tail can carry Roc syntax ahead of the SQL
+      # — `path: Path.utf8(path), query: "SELECT …` — and `(path)` reads as an
+      # argument-position column reference.
+      #
+      # Cut AFTER the blanking, and at the FIRST SELECT. Cutting first, at the last, took a
+      # correctly-wrapped `CAST((SELECT … a.start_local …) AS TEXT)` and removed its own
+      # `CAST(` prefix, so the subquery column looked bare. Blanking first means any SELECT
+      # still standing is a top-level one.
+      bare=$(printf '%s' "$tail_expr" | awk '{
+        line = $0; out = ""
+        while ((i = index(line, "CAST(")) > 0) {
+          out = out substr(line, 1, i - 1)
+          rest = substr(line, i + 5); depth = 1; j = 0
+          while (j < length(rest) && depth > 0) {
+            j++; c = substr(rest, j, 1)
+            if (c == "(") depth++; else if (c == ")") depth--
+          }
+          span = substr(rest, 1, j)
+          out = out (span ~ /AS TEXT/ ? "@" : "CAST(" span)
+          line = substr(rest, j + 1)
+        }
+        print out line
+      }' | awk '{ i = index($0, "SELECT"); print (i ? substr($0, i + 7) : $0) }' |
+        sed -e "s/'[^']*'/@/g" |
+        grep -oE '[(,] *[a-z_][a-z_0-9]*(\.[a-z_][a-z_0-9]*)? *[,)]' |
+        sed -e 's/^[(,] *//' -e 's/ *[,)]$//' | head -1)
       case "$tail_expr" in
-        # A cast to TEXT specifically. `*CAST*` accepted `CAST(a.name AS INTEGER)`, and it
-        # accepted the literal string 'CAST' in a COALESCE fallback.
-        *"AS TEXT"*|*"as text"*) ;;
+        *"AS TEXT"*|*"as text"*)
+          # a cast is present — but only clean if nothing UNCAST survives beside it
+          if [ -n "$bare" ]; then
+            printf '%-24s %-22s %s  (uncast: %s)\n' "$(basename "$f")" "$alias" \
+              "$(printf '%s' "$tail_expr" | tail -c 46)" "$bare" >> "$tmp/problems"
+          fi
+          ;;
         # `COUNT(` only. `MAX(`, `MIN(`, `group_concat` and `CASE` were exempt on the theory
         # that they cannot yield a blob — false for every one of them over a TEXT column, and
         # review proved it: the exemption list fired exactly ONCE in the whole tree, on
@@ -129,7 +189,7 @@ done
 # the same clean line a healthy tree prints — which is how the defect it guards got here.
 EXPECT_DECODES=50
 if [ "$decodes" != "$EXPECT_DECODES" ]; then
-  echo "blob-safety: inspected $decodes Sqlite.str decodes, expected $EXPECT_DECODES."
+  echo "blob-safety: inspected $decodes (file, alias) decode pairs, expected $EXPECT_DECODES."
   echo "blob-safety: if that change is intended, update the number in the same commit;"
   echo "blob-safety: if it is not, the decode scan stopped matching and this gate is blind."
   exit 1
@@ -146,4 +206,4 @@ if [ "$n" -gt 0 ]; then
   echo "Wrap the projection: COALESCE(CAST(<col> AS TEXT), '') AS <alias>"
   exit 1
 fi
-echo "blob-safety: $decodes TEXT decodes, every projection CAST to TEXT"
+echo "blob-safety: $decodes (file, alias) decode pairs across 91 call sites, every projection CAST to TEXT"

@@ -68,7 +68,8 @@ command-claims: build
 skill-shapes:
     sh tools/skill-shapes.sh
 
-# Every TEXT column decoded by `Sqlite.str` must be projected through CAST(... AS TEXT).
+# Every TEXT column decoded by `Sqlite.str` or `Sqlite.nullable_str` must be projected
+# through CAST(... AS TEXT).
 # Reads source only — no binary, no database.
 blob-safety:
     sh tools/blob-safety.sh
