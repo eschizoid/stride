@@ -1233,18 +1233,19 @@ ReportSessions :: [].{
             # "zero means this is the whole history" a true sentence rather than a hopeful one.
             scope_dropped = g.total - List.len(g.rows)
             lens_dropped = List.len(g.rows) - List.len(kept)
-            # ...and the REASON is derived here, where both causes are still distinguishable,
-            # rather than guessed from the lens downstream. The lens half names what the lens
-            # REQUIRES, not which field was missing: `lens_score` rejects an EF row for three
-            # separate reasons (no power, no HR, or a load model that is not NP-derived), and
-            # reporting all three as "no HR" was measurably false — 7 of 10 rows in one real
-            # group carried heart rates between 95 and 132 bpm.
-            # `hidden_reason` used to be built here: one string combining both causes, with
-            # a plural rule picking `need` or `needs` on the lens count. #286 retired it.
+            # No reason string is derived here any more. `hidden_reason` used to be: one
+            # string combining both causes, with a plural rule picking `need` or `needs` on
+            # the lens count. #286 retired it.
             # Once an unscorable row is RENDERED, the two causes stop being two reasons for
             # one outcome and become two different outcomes — a scope drop is hidden, a lens
             # drop is shown without a score — so a single sentence counting them together is
             # wrong about the half the reader can now see.
+            #
+            # The paragraph that stood here — "the REASON is derived here, where both causes
+            # are still distinguishable" — described that retired code, and the correction was
+            # first inserted BENEATH it rather than replacing it, leaving both. Its surviving
+            # half, that the lens wording names what the lens REQUIRES rather than which field
+            # is missing, now lives with the words themselves in `Metrics.lens_needs`.
             #
             # What that logic protected is not lost: the number agreement moved into
             # `Metrics.lens_needs`, which `Render` calls with the count it is actually

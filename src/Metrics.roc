@@ -1233,11 +1233,13 @@ Metrics :: [].{
             Err(_) => False
         }
 
-    # What a lens REQUIRES, as a sentence. One definition because two consumers need the
-    # identical words: `progress`'s payload reason (`ReportSessions`) and the human note
-    # beside a row the table now shows unscored (`Render`). Written twice they would drift,
-    # and the drift would be invisible — the two surfaces are read by different readers, so
-    # nobody sees them side by side.
+    # What a lens REQUIRES, as a sentence. ONE call site today — `Render`'s unscored note —
+    # and the earlier version of this comment claimed two, saying it also fed `progress`'s
+    # payload reason. It does not: `hidden_reason` was retired in the same change that
+    # created this, and the payload carries no reason string at all. Extracted anyway,
+    # because the three arms and the singular/plural pair are the rule the e2e checks mutate
+    # one at a time, and a rule with a name is easier to keep honest than three string
+    # literals inline — but the stated reason was wrong and is corrected rather than kept.
     #
     # It names what the LENS needs, never which field the row lacks: `lens_score` rejects an
     # EF row for three separate reasons, and reporting all three as "no HR" was measurably

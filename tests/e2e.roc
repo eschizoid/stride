@@ -361,7 +361,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(969)?
+    checks_ran_exactly!(973)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6034,7 +6034,13 @@ b_progress_b! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     ev_human2 = stride_human!(ctx.bin, ctx.home, ["progress", "2025-05-16"])
     check!("...and two lens-dropped rows take the plural verb, which the count-1 case cannot show", Str.contains(ev_human2, "(1 hidden: a different distance for this workout; 2 shown unscored: need power and HR)"))?
-    check!("...and not the singular one the inverted rule would print here", !(Str.contains(ev_human2, "2 needs power and HR")))?
+    # The needle carries the NEW wording. It used to read "2 needs power and HR", which the
+    # render can no longer emit for any input — `" shown unscored: "` always sits between the
+    # count and the verb — so the check could not fail and was green on the very inversion it
+    # names. Review proved that by inverting `lens_needs`' Ef plural arm and watching this
+    # line print ok. Its sibling positive was rewritten and this negative was not; a blanket
+    # reword hits the assertion and leaves the counter-example behind.
+    check!("...and not the singular one the inverted rule would print here", !(Str.contains(ev_human2, "2 shown unscored: needs power and HR")))?
     # ...and the SpeedHr arm, which is the one the real database actually renders. Review
     # measured that: all 35 both-cause groups on it take `speed_hr`, 8 singular and 27
     # plural, and both strings render today. The Evening Ride block above proves the
@@ -6207,7 +6213,7 @@ b_progress_b! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (216,'Anchor Probe Ride','Ride','2025-04-20T08:00:00Z',3600,20000,140);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     anchor_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-04-01"])
-    # The banner used to read "is shown below WITHOUT a score". #286 made that false: the row
+    # The banner used to read "isn't shown in its own table". #286 made that false: the row
     # is rendered now, with its lens cells blank, and the sentence sat directly above a table
     # containing the row it denied. It says where to look instead.
     check!("an unscorable anchor says it is shown WITHOUT a score, not that it is missing", Str.contains(anchor_h, "is shown below WITHOUT a score"))?
@@ -6221,6 +6227,42 @@ b_progress_b! = |ctx| {
     # here, so the row must carry "-" where the pace/HR figure would be; a `0.00` with an
     # empty bar would read as a measured worst-ever session rather than an absent one.
     check!("...with its lens cells blank, not a fabricated zero", !(Str.contains(anchor_h, "0.00")))?
+    # ...and the same row as the NEWEST session, which is a different code path and the one
+    # that regressed. `last_vs_best` was still reading the unfiltered rows, so an unscorable
+    # newest session produced "last: 0.00 (<date>) — 100% below your best" — a fabricated
+    # zero in a SENTENCE rather than a cell, two lines under a table printing "-" for it.
+    # The fixture above cannot see it: its unscorable row is the OLDER one, so `last` lands
+    # on a scored session either way. Review found this by swapping the dates.
+    #
+    # Two rows, both load-bearing. 218 is a SECOND scored session, because with one the group
+    # takes the "only session shown" arm and the line is absent entirely — a check that
+    # cannot fail rather than one that passes. Its HR is 120 so it scores BETTER than 216:
+    # last-vs-best is suppressed when the last session is also the best, which it was on the
+    # first attempt here, and the check sat green against a line that never rendered.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (218,'Anchor Probe Ride','Ride','2025-04-10T08:00:00Z',3600,20000,120);")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (217,'Anchor Probe Ride','Ride','2025-05-01T08:00:00Z',3600,20000);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    newest_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-05-01"])
+    check!("an unscorable NEWEST session leaves last-vs-best on the last SCORED one", Str.contains(newest_h, "last: 2.38 (2025-04-20)"))?
+    check!("...rather than reporting it as 100% below your best", !(Str.contains(newest_h, "last: 0.00")))?
+    # ...and the arm that fires when the lens scores exactly ONE row. It reads
+    # `List.len(scored_rows) == 1`, and it was left reading the unfiltered list when those
+    # started including unscorable rows — so a group with one scored session and several
+    # unscored fell through to the TREND arm and printed "over 1 sessions … holding steady
+    # (0%)". The comment directly above that arm says why that must not happen: comparing a
+    # value to itself yields a real 0%, and "holding steady" reads as a measured finding
+    # rather than an absent one. The change broke the guard its own neighbouring comment
+    # describes, and nothing caught it — this is that oracle.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (251,'Lone Scored Ride','Ride','2025-06-01T08:00:00Z',3600,20000),(253,'Lone Scored Ride','Ride','2025-06-15T08:00:00Z',3600,20000);")
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (252,'Lone Scored Ride','Ride','2025-06-08T08:00:00Z',3600,20000,140);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    lone_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-06-08"])
+    check!("one scored row among unscored takes the only-session arm, not a trend", Str.contains(lone_h, "the only session shown"))?
+    check!("...so no 0% verdict is computed from a single point", !(Str.contains(lone_h, "over 1 sessions")))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (251,252,253); DELETE FROM activities WHERE id IN (251,252,253);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (217,218); DELETE FROM activities WHERE id IN (217,218);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("anchor_scored false when the anchor drops out", strjq!(ctx, ["progress", "2025-04-01"], ".data.anchor_scored") == "false")?
     check!("anchor_scored true when the anchor survives", strjq!(ctx, ["progress", "2025-04-20"], ".data.anchor_scored") == "true")?
     check!("a scorable anchor stays silent", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2025-04-20"]), "is shown below WITHOUT a score")))?
