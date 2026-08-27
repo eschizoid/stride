@@ -6240,12 +6240,22 @@ b_progress_b! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # the 18 bpm row would score 155/18 = 8.6 against ~1.1 for the real ones, so under the
     # old predicate it becomes the "best" session and every trend reads off it
-    # `doctor` reads the same column, and counted this 18 bpm row as heart-rate COVERAGE.
-    # `> 0` is a presence test; this is a coverage measure — how many sessions the engine can
-    # actually use a heart rate from — so it counted the readings `progress` (#294),
-    # `activity` (#305) and the load ladder (#313) all refuse. Measured on the real database:
-    # 672 against 669 in band, wrong in the direction that HIDES the gap, since the athlete
-    # reads it as coverage they have (#312).
+    # `doctor` reads the same column, and `> 0` is a presence test where this is a coverage
+    # measure — how many sessions the engine can actually USE a heart rate from (#312).
+    #
+    # Two earlier versions of this comment stood here and both were wrong, in ways the code
+    # they describe has already had corrected. The first said `> 0` counted readings that
+    # `progress`, `activity` and the LOAD LADDER all refuse: the ladder refuses none of them,
+    # and scored one of them FROM heart rate. The second said the fix moved the count 672 to
+    # 669, "wrong in the direction that HIDES the gap" — it does not move it at all. Those
+    # three sessions carry HR zone seconds built from their own streams, so the engine
+    # demonstrably can use a heart rate there, and excluding them is what made `doctor`
+    # contradict itself. The retractions are in `ReportHealth.roc` and in the schema; leaving
+    # them uncorrected HERE is the same defect one file over, which is exactly how this
+    # comment came to say two false things in the first place.
+    #
+    # What the change buys is not a smaller number: it is a `has_hr` that cannot disagree with
+    # `with_hr`, and a CAST that stops a BLOB reading as strapless.
     #
     # Placed HERE, inside the HR-sanity fixture, because this is where an out-of-band row
     # exists. Three attempts to build one in the doctor block instead each polluted a
@@ -6260,10 +6270,12 @@ b_progress_b! = |ctx| {
     # never a defect they SHARE. The delta checks below are what cover that; this one covers
     # the case those cannot, where the count is right for the wrong population.
     #
-    # The SQL side carries the CAST and the stream fallback because the implementation does.
-    # Written bare it would still pass here — nothing out of band is BLOB-stored at this
-    # point — and then fail confusingly the first time someone planted one.
-    check!("doctor counts usable heart rates, not merely present ones", strjq!(ctx, ["doctor"], ".data.with_hr") == Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE CAST(a.avg_hr AS REAL) BETWEEN 35 AND 220;")))?
+    # The SQL side carries the CAST and the ZONE ARM because the implementation does. It said
+    # "the stream fallback" until that term was removed as dead. Written without the zone arm
+    # it still passes here — the only out-of-band row at this point is seeded with power and
+    # no heartrate, so it has no zone seconds — and would break at the first upstream fixture
+    # that carries zone seconds without a valid scalar, under a check name mentioning neither.
+    check!("doctor counts usable heart rates, not merely present ones", strjq!(ctx, ["doctor"], ".data.with_hr") == Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE (CAST(a.avg_hr AS REAL) BETWEEN 35 AND 220 OR COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0) > 0);")))?
     # ...and the relation is not vacuous: with the 18 bpm row present the two predicates give
     # different answers, which is what makes the check above mean anything. Without this the
     # first check passes on any fixture where nothing is out of band — measured, that is the
