@@ -367,7 +367,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1014)?
+    checks_ran_exactly!(1016)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2608,6 +2608,15 @@ b_seed_analyze! = |ctx| {
     _ = seed_power_hr_stream!(ctx.db, 617, 1300, 200, 150)
     _ = sql!(ctx.db, "UPDATE activities SET avg_hr = NULL WHERE id = 617;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # Each of these two checks depends on a fixture LITERAL that nothing asserted, so a silent
+    # edit to either disarmed it while the suite stayed green — the same shape as 615's
+    # `ef.known` oracle, which was true for a reason other than the one it named. Review
+    # demonstrated both: retarget 617's UPDATE to a nonexistent id and its check starts passing
+    # by the rounding path instead of the hr_known path, after which the guard mutation is
+    # green too; change 616's stored 150.4 to 150 and the unrounded-comparison mutation is
+    # green. The preconditions are asserted from the same payload the checks already read.
+    check!("616 really does differ as a float while agreeing as a string, which is its whole point", strjq!(ctx, ["activity", "616"], ".data.avg_hr") == "150.4" and strjq!(ctx, ["activity", "616"], ".data.avg_hr_scored") == "150")?
+    check!("...and 617 really recorded nothing, so its check runs the hr_known path", strjq!(ctx, ["activity", "617"], ".data.hr_known") == "false")?
     check!("the note stays silent when both values render the same", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "616"]), "(recorded")))?
     check!("...and a session that recorded nothing is not given a recorded ZERO", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "617"]), "(recorded")))?
     # ...and neither check is passing because the line vanished: 616 still prints its average.
@@ -7231,6 +7240,11 @@ seed_windowed_hr_stream! = |db, id, n, lo, hi, w, hr| {
     {}
 }
 
+# power + HR at a SPARSE cadence: one sample every `step` seconds. Two things need this and
+# neither can be built from a 1 Hz stream. It separates SPAN from COUNT — every other HR
+# fixture here is 1 Hz, where the two are the same number, so the coverage gate's central
+# design decision was untestable — and it reaches the gate's upper edge, which a dense stream
+# can only approach by being short, which is the low edge again.
 seed_sparse_power_hr_stream! : Str, I64, U64, U64, U64, U64 => {}
 seed_sparse_power_hr_stream! = |db, id, n, step, w, hr| {
     times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i * step)), ",")
@@ -7246,11 +7260,6 @@ seed_sparse_power_hr_stream! = |db, id, n, step, w, hr| {
 # two disagree — which is the whole of #311. In the real data they disagree because of
 # dropout (a session storing 86.4 whose own stream means 147.7 across 42% missing samples);
 # a constant stream reproduces the disagreement without reproducing the dropout.
-# power + HR at a SPARSE cadence: one sample every `step` seconds. Two things need this and
-# neither can be built from a 1 Hz stream. It separates SPAN from COUNT — every other HR
-# fixture here is 1 Hz, where the two are the same number, so the coverage gate's central
-# design decision was untestable — and it reaches the gate's upper edge, which a dense stream
-# can only approach by being short, which is the low edge again.
 seed_power_hr_stream! : Str, I64, U64, U64, U64 => {}
 seed_power_hr_stream! = |db, id, n, w, hr| {
     times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
