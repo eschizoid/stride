@@ -434,6 +434,17 @@ ReportSessions :: [].{
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
+            # `${Report.date_known_sql}` and `${Report.rankable_sql}` stay on the RAW column
+            # while the projection beside them is wrapped, and that divergence is load-bearing
+            # rather than an oversight anyone should tidy. `date(substr(blob,1,10))` returns
+            # TEXT and `substr(blob,1,10)` is a BLOB, so the `IS NOT` is true on the type
+            # mismatch and the flag correctly goes false. Wrapping them "for consistency"
+            # publishes `date_known: true` for a row that no bounded-range window — `week`,
+            # `compare`, a `season` month — can see, since those still compare the raw column:
+            # uncounted by `doctor`, unhoisted by the listing, a silent wrong answer at exit 0.
+            # That is strictly worse than the crash this change removed. Measured on a BLOB
+            # whose bytes CAST to a valid date, which is the value class that reaches it.
+            #
             # `a.sport_type` and `a.name` are NOT wrapped, and that is a known gap rather than
             # an audit: a BLOB in either crashes this same SELECT exactly as `start_local`
             # did (#307). The repair for those is at the decode boundary, not another CAST
@@ -634,6 +645,17 @@ ReportSessions :: [].{
                 rows = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
+            # `${Report.date_known_sql}` and `${Report.rankable_sql}` stay on the RAW column
+            # while the projection beside them is wrapped, and that divergence is load-bearing
+            # rather than an oversight anyone should tidy. `date(substr(blob,1,10))` returns
+            # TEXT and `substr(blob,1,10)` is a BLOB, so the `IS NOT` is true on the type
+            # mismatch and the flag correctly goes false. Wrapping them "for consistency"
+            # publishes `date_known: true` for a row that no bounded-range window — `week`,
+            # `compare`, a `season` month — can see, since those still compare the raw column:
+            # uncounted by `doctor`, unhoisted by the listing, a silent wrong answer at exit 0.
+            # That is strictly worse than the crash this change removed. Measured on a BLOB
+            # whose bytes CAST to a valid date, which is the value class that reaches it.
+            #
             # `a.sport_type` and `a.name` are NOT wrapped, and that is a known gap rather than
             # an audit: a BLOB in either crashes this same SELECT exactly as `start_local`
             # did (#307). The repair for those is at the decode boundary, not another CAST
