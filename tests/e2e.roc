@@ -367,7 +367,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1024)?
+    checks_ran_exactly!(1026)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2579,9 +2579,19 @@ b_seed_analyze! = |ctx| {
     # the bound itself to `avg_hr` — a test that stopped identifying refused rows the moment
     # the engine began scoring from streams, since 614 stores 18 and scores perfectly well.
     check!("the listing publishes the divisor, so a refusal is predictable from one call", strjq!(ctx, ["activities", "400"], "[.data[] | select(.id == 614) | \"\\(.avg_hr)/\\(.avg_hr_scored)\"] | first") == "18/150")?
-    # ...and the two really can disagree there, which is what makes the field worth publishing:
-    # a listing where they always matched would carry it and say nothing.
-    check!("...and the listing's two HR fields disagree on exactly the rows the engine rescued", strjq!(ctx, ["activities", "400"], "[.data[] | select(.avg_hr != .avg_hr_scored) | .id] | length") != "0")?
+    # ...and the FALLBACK arm, which had no test on this surface at all: dropping `a.avg_hr`
+    # from the listing's COALESCE shipped green, because every fixture reaching it carries a
+    # stream. Blast radius on the reference database is nil today — there are 0 rows with no
+    # usable stream and an in-band stored reading — but a CSV import, or a sync stopped by the
+    # rate limit before its streams drained (the state `doctor` reports), produces exactly
+    # that, and every such row would publish `avg_hr_scored: 0` and read as refused.
+    #
+    # 618 is that row: a plausible stored reading and no stream whatsoever.
+    _ = seed_ride!(ctx.db, "618", "Listing No Stream", "2026-02-17T09:00:00Z", "1300", "12000", "200", "142")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("a streamless session falls back to its stored reading on the listing, not to 0", strjq!(ctx, ["activities", "400"], "[.data[] | select(.id == 618) | \"\\(.avg_hr)/\\(.avg_hr_scored)\"] | first") == "142/142")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 618; DELETE FROM activities WHERE id = 618;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # ...and the gate's DENOMINATOR, which is `max(stream extent, moving_time)` rather than
     # moving time alone. Reverting it to `row.mt` left the suite green: no fixture had a stream
     # running longer than its session, so nothing could tell the two apart.
