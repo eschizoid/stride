@@ -531,6 +531,7 @@ ReportSessions :: [].{
                 \\       COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) AS hard_s,
                 \\       CAST(COALESCE(a.relative_effort,0) AS REAL) AS relative_effort,
                 \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
+                \\       CAST(COALESCE(m.avg_hr_stream, a.avg_hr, 0) AS REAL) AS avg_hr_scored,
                 \\       CASE WHEN m.normalized_power IS NULL THEN 0 ELSE 1 END AS power_known,
                 \\       CASE WHEN m.intensity_factor IS NULL THEN 0 ELSE 1 END AS intensity_known,
                 \\       CASE WHEN a.avg_hr IS NULL THEN 0 ELSE 1 END AS hr_known,
@@ -604,12 +605,13 @@ ReportSessions :: [].{
                 hard_s = Sqlite.i64("hard_s")(cols)(stmt)?
                 relative_effort = Sqlite.f64("relative_effort")(cols)(stmt)?
                 avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
+                avg_hr_scored = Sqlite.f64("avg_hr_scored")(cols)(stmt)?
                 power_known = Sqlite.i64("power_known")(cols)(stmt)?
                 intensity_known = Sqlite.i64("intensity_known")(cols)(stmt)?
                 hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
                 zones_known = Sqlite.i64("zones_known")(cols)(stmt)?
                 load_model = Sqlite.str("load_model")(cols)(stmt)?
-                Ok({ id, date, date_known: date_known != 0, rankable: rankable != 0, sport, name, moving_time, distance_m, tss, load_model, np_w, power_known: power_known != 0, intensity, intensity_known: intensity_known != 0, z1_s, z2_s, z3_s, z4_s, z5_s, zones_known: zones_known != 0, hard_s, relative_effort, avg_hr, hr_known: hr_known != 0 })
+                Ok({ id, date, date_known: date_known != 0, rankable: rankable != 0, sport, name, moving_time, distance_m, tss, load_model, np_w, power_known: power_known != 0, intensity, intensity_known: intensity_known != 0, z1_s, z2_s, z3_s, z4_s, z5_s, zones_known: zones_known != 0, hard_s, relative_effort, avg_hr, avg_hr_scored, hr_known: hr_known != 0 })
             },
         })?
         if Output.json_mode!({})

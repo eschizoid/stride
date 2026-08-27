@@ -35,6 +35,10 @@
       "avg_hr": {
         "type": "number"
       },
+      "avg_hr_scored": {
+        "type": "number",
+        "description": "What the engine will actually DIVIDE BY when it scores this session: the in-band mean of its HR stream when one spans at least half the session, the stored `avg_hr` otherwise (#311). Publishing it here is what makes a broken reading detectable from the listing (#319). Before, `avg_hr` was echoed raw beside `hr_known: true` and an agent had to apply the 35-220 bound itself — which stopped identifying refused rows once the engine began scoring from streams, since a session can store 18 bpm and score perfectly well. The rule now: a row is refused by the EF and speed/HR lenses exactly when `avg_hr_scored` is outside 35-220, and the two fields disagreeing means the stored summary was computed from a lossy stream. `hr_known` still answers the separate question of whether a reading was recorded at all."
+      },
       "date": {
         "type": "string"
       },

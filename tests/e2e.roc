@@ -2573,6 +2573,15 @@ b_seed_analyze! = |ctx| {
     # two numbers disagreeing with nothing to distinguish them is the gap this change opened.
     # `progress` and `activity` printed 148 and 86 for one session with no label on either.
     check!("...and the human line shows the scored average with the recorded one named", Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "614"]), "avg 150 (recorded 18)"))?
+    # ...and the LISTING carries it too (#319), which is the only surface that answers the
+    # question in one call. `activity` needs one invocation per id, and `progress` reports a
+    # count with no ids at all, so before this an agent auditing a broken strap had to apply
+    # the bound itself to `avg_hr` — a test that stopped identifying refused rows the moment
+    # the engine began scoring from streams, since 614 stores 18 and scores perfectly well.
+    check!("the listing publishes the divisor, so a refusal is predictable from one call", strjq!(ctx, ["activities", "400"], "[.data[] | select(.id == 614) | \"\\(.avg_hr)/\\(.avg_hr_scored)\"] | first") == "18/150")?
+    # ...and the two really can disagree there, which is what makes the field worth publishing:
+    # a listing where they always matched would carry it and say nothing.
+    check!("...and the listing's two HR fields disagree on exactly the rows the engine rescued", strjq!(ctx, ["activities", "400"], "[.data[] | select(.avg_hr != .avg_hr_scored) | .id] | length") != "0")?
     # ...and the gate's DENOMINATOR, which is `max(stream extent, moving_time)` rather than
     # moving time alone. Reverting it to `row.mt` left the suite green: no fixture had a stream
     # running longer than its session, so nothing could tell the two apart.
