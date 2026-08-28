@@ -1284,10 +1284,11 @@ b_init_config! = |ctx| {
     # THE acceptance check: adding a command without describing it fails here.
     # Read from the PARSER, so the two are compared against each other instead of
     # the table against itself. Every arm yielding a real command contributes its
-    # verb. The extraction is yield-blind, so Err(Usage) arms (arity hints, retired
-    # names) come along too and are excluded by the value pin below — retiring a
-    # command is a stated act. Verb level; the FORM level is the separate comparison
-    # below, needed in both directions.
+    # verb. The extraction is yield-blind, so Err(Usage) arms come along too:
+    # arity-hint verbs coincide with their command's advertised verb and land in the
+    # overlap, and the one retired name is excluded by the value pin below — retiring
+    # a command is a stated act. Verb level; the FORM level is the separate
+    # comparison below, needed in both directions.
     #
     # NO PROCESS SUBSTITUTION: `sh!` spawns /bin/sh = bash 3.2 POSIX, where `<(...)`
     # is a syntax error — the first version's `comm` never ran and both comparisons
