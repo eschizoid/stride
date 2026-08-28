@@ -1,19 +1,27 @@
 # Agent instructions for stride
 
 > **One file, every agent.** `AGENTS.md` is the canonical instruction file — the
-> cross-tool convention read by Codex and friends. Claude Code users: point your local
-> config at it once with `ln -s ../AGENTS.md .claude/CLAUDE.md` (untracked on purpose;
-> this line is the documentation for it). Edit this file, never a symlink.
+> cross-tool convention Codex and friends read from the repo root with no setup. Claude
+> Code users: point your local config at it once with `ln -s ../AGENTS.md
+> .claude/CLAUDE.md` (untracked on purpose; this line is the documentation for it). Edit
+> this file, never a symlink.
+>
+> The COACHING skill is the same story one directory down: canonical at
+> `skills/stride/SKILL.md`, with `.claude/skills/stride` a tracked symlink to it. Tools
+> that discover skills user-globally rather than from the repo need one link —
+> `ln -s "$PWD/skills/stride" ~/.codex/skills/stride` for Codex. Three gates read the
+> canonical path, so the skill cannot be moved without updating them.
 
 Local-first, deterministic training analytics engine in **Roc** (Strava is one
 ingestion layer). The engine computes metrics deterministically; an LLM coach (you,
-via the skill in `.claude/skills/stride/`) consumes the JSON and writes the plan
+via the skill in `skills/stride/`) consumes the JSON and writes the plan
 back. **Never do training math yourself — read stride's numbers, add judgment.**
 
 Settled architecture + rationale live in `docs/adr/0000-architecture.md` (committed) —
 read it before proposing architectural changes; don't relitigate what it settles.
-Open work lives in GitHub issues, workflow lessons in auto-memory, shipped work in git
-history. No scratch plan file DESCRIBES work: `.claude/PLAN.md` was one, every section of
+Open work lives in GitHub issues, shipped work in git history. Workflow lessons go in
+whatever memory your agent has — but anything a DIFFERENT agent would need belongs here or
+in the issue, not in a store only one tool can read. No scratch plan file DESCRIBES work: `.claude/PLAN.md` was one, every section of
 it rotted, and a watch-item it was tracking (ADR 0001's split trigger, #196) fired
 unnoticed because nothing read it. A root `PLAN.md` holding only SEQUENCING and the
 constraints behind it is allowed — that is the one thing issues cannot carry — but it must
@@ -24,10 +32,26 @@ one started rotting.
 ## Build & test
 
 ```bash
-just test      # THE entry point: pure expects → fresh build → e2e (same as CI)
+just test      # THE entry point: pure expects → fresh build → offline e2e. NOT all of CI.
 just build     # the binary, --opt=dev (see below); STRIDE_LINKER= is an escape hatch
 just install   # build + symlink to ~/.local/bin/stride
 ```
+
+CI runs more than `just test`, and a green `just test` is not a green build. These are the
+rest of it, all runnable locally — run them before pushing. Every one is network-free
+except `issue-claims`, which reads the tracker:
+
+```bash
+roc check src/app.roc      # CI runs this on three OSes before anything else
+just e2e-sync              # mock-backed sync/skips/stops drivers; no network
+sh tools/skill-shapes.sh   # the coach skill's payload keys vs schemas/v2
+sh tools/blob-safety.sh    # every TEXT decode is projected through CAST(... AS TEXT)
+sh tools/command-claims.sh # commands the docs name vs the binary's own table (needs ./stride)
+just issue-claims          # issue-state claims in comments (needs `gh` auth)
+```
+
+Prerequisites for everything above: `just`, `jq`, `sqlite3`, `gh`, and the Roc nightly
+pinned in `.github/workflows/build.yml`.
 
 - **Always `just test` in one command, read the result, commit in a separate command.**
   Never chain `test && commit` — a mid-chain failure has shipped red commits before.
@@ -78,7 +102,10 @@ just install   # build + symlink to ~/.local/bin/stride
   the compiler as a substitute where the validator is absent: the closed record on
   the screen function pins payload↔SCREEN, so widening both ships a green build
   with the schema stale. Different invariant (`just schema-check` runs the same
-  validator against your own database; `tools/schema-lint.jq` keeps schemas
+  validator against your own database — note that means the REAL `~/.stride` with your
+  real `HOME`, so a bumped DATABASE `schema_version` (`Db.roc`'s constant behind
+  `PRAGMA user_version`, not the payload envelope's `schema_version` this paragraph is
+  otherwise about) migrates it; snapshot first if that matters; `tools/schema-lint.jq` keeps schemas
   inside the subset `tools/validate.jq` actually reads — `title` included, since the
   validator uses it as the violation path's prefix — plus `description` for humans).
   Platform failures are converted to envelopes at ONE boundary (`run_command!`
@@ -93,9 +120,11 @@ just install   # build + symlink to ~/.local/bin/stride
   (default, no mode set), a mock Strava server (`mock`), and three drivers that run
   against it — `sync` (real sync + token refresh), `skips` (the undecodable-body skip
   path), and `stops` (the `budget_reached` / `rate_limited` / `daily_cap_reached` / `list_rate_limited` outcomes). `just e2e-sync`
-  starts four mock instances on four ports (`mock_port`, `bad_stream_port`, `auth401_port`,
-  `rate_limit_port`) and runs all three drivers; the mock's behaviour is varied by
-  `E2E_BAD_STREAM` / `E2E_RATE_LIMIT` / `E2E_STREAM_401`. `STRIDE_API_BASE` points stride at the mock, and
+  starts several mock instances, each on its own port — one serves the happy path and the
+  budget/daily-cap arms, the rest each stand for a failure shape — and runs every driver
+  arm; behaviour is varied by `E2E_*` flags, some shapes taking more than one. Read the
+  recipe for the current set rather than trusting a count here — an enumeration in this
+  paragraph has already rotted by three mocks and three flags. `STRIDE_API_BASE` points stride at the mock, and
   `STRIDE_READS_PER_WINDOW / STRIDE_READS_PER_DAY` shrinks the rate-limit pacing so a terminal arm that would
   otherwise cost a full 95-read window is reachable in milliseconds. Same species of seam as
   `STRIDE_API_BASE`; humans never set any of them. They can only LOWER a limit — an
@@ -116,13 +145,18 @@ just install   # build + symlink to ~/.local/bin/stride
   (`Db.roc`, `Report.roc`, …) — the compiler can't check `SELECT ... AS x` aliases against
   `Sqlite.i64("x")` decoders; adjacency is the guard. Only decoder-free SQL (DDL) lives
   in Schema.roc.
+- **Every TEXT column read by `Sqlite.str` / `Sqlite.nullable_str` is projected through
+  `CAST(... AS TEXT)`** — SQLite's dynamic typing lets a BLOB or a number sit in a TEXT
+  column, and the decoder meets whatever is actually stored. `sh tools/blob-safety.sh`
+  gates this on three OSes in CI and names the (file, alias) pair it cannot prove.
 - Table padding is display-width (code points), not bytes — keep emitted glyphs
   monospace-single-width; no varying-height unicode blocks (they render as mush).
 - In bash test code: `grep -q` + `pipefail` = SIGPIPE trap; capture output first,
   then grep the variable.
 - **Never test against the live `~/.stride/db.sqlite`** — snapshot it first
-  (`sqlite3 ~/.stride/db.sqlite ".backup /tmp/x/.stride/db.sqlite"`) and run with an
-  explicit `HOME`. A stray `stride init` against the real HOME has happened.
+  (`mkdir -p /tmp/x/.stride && sqlite3 ~/.stride/db.sqlite ".backup /tmp/x/.stride/db.sqlite"`
+  — `.backup` does not create the directory, and an agent that improvises past that error is
+  one step from the accident this rule prevents) and run with an explicit `HOME`. A stray `stride init` against the real HOME has happened.
 - **e2e id assertions are positional.** Inserting a `planned_sessions` row mid-scenario
   shifts the auto-increment and breaks later fixed-id checks — find them with
   `grep -nE '\["(complete|skip)", "[0-9]' tests/e2e.roc` rather than trusting a count. Add new
@@ -172,7 +206,8 @@ Every item here cost a debugging session at least once — they are not style op
 - **Interpolating a compile-time-constant `""` can crash the backend** in `str_concat`
   (heap-corruption SIGABRT, same class as #32). Bind values rather than splicing optional
   fragments into SQL; a bound `:flag = 0/1` in the WHERE beats a conditional string.
-- **`--opt=speed` used to miscompile this codebase** (#32, fixed on the 2026-08-17 pin);
+- **`--opt=speed` used to miscompile this codebase** (#32, fixed on the 2026-08-17 nightly;
+  the pin has since moved — `.github/workflows/build.yml` is the source of truth);
   `--opt=dev` remains the default for build speed. Flags take `=`,
   not a space: `--output=x`, not `--output x`.
 

@@ -33,7 +33,22 @@ export LC_ALL=C
 # text, for the third time on this branch and by the third distinct mechanism. Normalising at
 # the source rather than at each comparison is what stops a fourth.
 cd "$(dirname "$0")/.."
-SK=.claude/skills/stride/SKILL.md
+SK=skills/stride/SKILL.md
+
+# The Claude-side path must RESOLVE, and this is the only gate that checks it on Windows.
+# `.claude/skills/stride` is a symlink to the canonical directory, and a checkout without
+# symlink support (Git for Windows ships "Enable symbolic links" OFF) materializes it as a
+# text file holding the target path instead. Every symptom of that is silent: the skill is
+# unreachable, `git status` reports the tree clean, and the e2e checks that pin the link
+# shape run in a macOS-only job. This script runs on all three runners, so it is where the
+# question gets answered.
+if [ ! -f .claude/skills/stride/SKILL.md ]; then
+  echo "skill-shapes: .claude/skills/stride does not resolve to the skill."
+  echo "  A checkout without symlink support mangles it into a text file naming its target."
+  echo "  Fix: git config core.symlinks true (needs Developer Mode or admin on Windows), then re-checkout."
+  echo "  The canonical skill is always readable at $SK; the link is Claude's repo-local entry point."
+  exit 2
+fi
 SCHEMAS=schemas/v2
 PINS=tools/skill-shapes.pins
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT

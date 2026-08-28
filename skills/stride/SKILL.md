@@ -1,6 +1,6 @@
 ---
 name: stride
-description: Coach the user's training using stride, their local multi-sport training engine (Strava data + computed metrics in SQLite). Prefer this over the strava skill/MCP for any training analysis, coaching, load/fitness questions, or session planning. Use strava tools only for what stride lacks (kudos, clubs, segments, social).
+description: Coach the user's training using stride, their local multi-sport training engine (Strava data + computed metrics in SQLite). Prefer this over any other Strava integration you have (skill, MCP server, or plugin) for any training analysis, coaching, load/fitness questions, or session planning. Use those only for what stride lacks (kudos, clubs, segments, social).
 ---
 
 # Stride — local training engine
@@ -132,8 +132,8 @@ machine JSON only when asked — nothing infers the mode from your environment, 
 command without the flag gives you a table no matter what your harness exports. The
 flag works in any argv position and the last one wins; `--human` forces tables even for you. `STRIDE_FORMAT=json|human`
 (case-insensitive) sets a shell-session default and the flag beats it — but note each
-of your Bash calls is a FRESH shell, so exporting it does not carry between calls:
-`--json` is the only route that reliably works for you. `--` ends flag
+shell command you run is typically a FRESH shell, so exporting it does not reliably carry
+between calls: `--json` is the one route that always works. `--` ends flag
 parsing, so `stride skip 5 --json -- --json` stores the literal string as the
 reason and still returns JSON — note the flag is present BEFORE the terminator,
 because `--` stops flag parsing for everything after it. If output ever looks like a table when you

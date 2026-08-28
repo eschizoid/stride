@@ -77,7 +77,7 @@ awk '
   /^[[:space:]]*$/ { if (n) { print f"\t"s"\t"t; n=0 } next }
   { if (!n) { f=FILENAME; s=FNR; t="" } n++; t=t" "$0 }
   END { if (n) print f"\t"s"\t"t }
-' README.md AGENTS.md $(ls PLAN.md 2>/dev/null) docs/*.md docs/adr/*.md .claude/skills/stride/SKILL.md >> "$BLOCKS" \
+' README.md AGENTS.md $(ls PLAN.md 2>/dev/null) docs/*.md docs/adr/*.md skills/stride/SKILL.md >> "$BLOCKS" \
   || { echo "issue-claims: markdown extraction failed — a listed file is missing" >&2; exit 5; }
 
 while IFS=$'\t' read -r f s txt; do
