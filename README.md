@@ -314,8 +314,11 @@ because an aerobic model does not fit it.
 
 The repo ships an agent skill at
 [`skills/stride/`](skills/stride/SKILL.md), written for any agent rather than one
-vendor. There is exactly one copy of it, and every agent installs it the same way: into
-whatever directory that agent reads skills from.
+vendor. Claude Code picks it up automatically inside a checkout, through a tracked shim
+at `.claude/skills/stride/` that only redirects there (e2e pins the shim's routing
+description byte-equal to the canonical one, so the two cannot drift apart). For any
+agent outside a checkout, install the one canonical copy into whatever directory that
+agent reads skills from.
 
 Codex reads `$CODEX_HOME/skills` (default `~/.codex/skills`), and its built-in
 skill-installer can fetch straight from GitHub, so the easiest route is to ask Codex
