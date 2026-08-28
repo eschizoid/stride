@@ -60,8 +60,8 @@ awk '
     # A line STARTS a new logical line when it is blank, a heading, a table row, a fence,
     # or a list bullet. Everything else continues the paragraph above it — which is what
     # Markdown means by a hard wrap. Do not require leading whitespace on continuations:
-    # `sync`'s literal wraps onto a column-0 line, and a whitespace condition never joins
-    # it, leaving both directions blind while looking covered.
+    # the `sync` literal wraps onto a column-0 line, and a whitespace condition never
+    # joins it, leaving both directions blind while looking covered.
     return (l ~ /^[ \t]*$/) || (l ~ /^#/) || (l ~ /^\|/) || (l ~ /^```/) || (l ~ /^[ \t]*([-*+]|[0-9]+\.)[ \t]/)
   }
   NR == 1 { printf "%s", $0; next }
