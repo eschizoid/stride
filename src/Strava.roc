@@ -389,6 +389,7 @@ Strava :: [].{
     # `resumable: true`. Steady state is a handful of reads; `stride import` and a
     # deleted streams table both walk into a full drain, one run per 15-minute
     # window until the queue empties.
+    #
     # fetch time/HR/watts/altitude/distance streams for activities that lack them,
     # newest first; pacing bounds the run (see read_limits!). altitude + distance are
     # requested EXPLICITLY — they feed grade-adjusted pace / NGP (ADR 0003). To force
@@ -524,8 +525,9 @@ Strava :: [].{
     # 100 reads per 15 minutes, 1000 per day; a run fills one window and stops, and
     # 429 is a backstop for when the counts disagree, not the mechanism.
     # ── test seams, same species as STRIDE_API_BASE ─────────────────────
-    # Without these, reaching the budget stop reasons honestly costs a full window of
-    # 95 real HTTP reads, so a transposed counter in a terminal arm shipped green.
+    # Without these, reaching the budget stops honestly costs a full window (95) —
+    # and the daily cap a full day (1000) — of real HTTP reads, so a transposed
+    # counter in a terminal arm shipped green.
     # An override may only LOWER a limit, never raise it: a raised cap lets a typo
     # hammer the API and get the athlete's own API app suspended. Lowering is all a
     # test needs, so the useful direction is the safe one.
