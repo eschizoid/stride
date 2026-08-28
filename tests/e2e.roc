@@ -706,7 +706,7 @@ run_skips! = || {
 # Until the read limits became env-overridable, reaching `budget_reached` honestly
 # cost 940 reads and `rate_limited` cost two 15-minute sleeps — so of the three
 # StopReason values only `complete` was ever observed, and a transposition in BOTH
-# the StopRun and GiveUp arms (`stored: counted.skipped`) passed the entire suite.
+# the WindowFull and DayFull arms (`stored: counted.skipped`) passed the entire suite.
 # These two runs are what catches THAT (the check-count floor
 # below catches a whole branch going dead, which is a different failure).
 run_stops! : () => Try({}, _)
@@ -2047,9 +2047,9 @@ b_seed_analyze! = |ctx| {
     # note: giving `tss` a bound makes this fail, so it pins that the feature stays
     # off for metrics without one.
     #
-    # It needs a bound the fixture can actually violate: a bound the data sits
-    # `tss BETWEEN 35 AND 220`, and the three tss rows here are 110.8, 80.0 and 55.0 — all
-    # inside it — so the suite stayed green and the label looked confirmed.
+    # It needs a bound the fixture can actually violate: with `tss BETWEEN 35 AND 220`
+    # and the three tss rows here at 110.8, 80.0 and 55.0 — all inside it — the suite
+    # stays green and the label looks confirmed.
     check!("...and a metric without a bound says nothing", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["top", "tss", "5"]), "of this ranking's")))?
     # ...and the count tracks a SPORT FILTER. Nothing exercised that:
     # dropping `${sport_where}` from the count query alone left the suite green while
@@ -3520,8 +3520,9 @@ b_seed_analyze! = |ctx| {
     # `stats` use the date as a FILTER over an aggregate. `WHERE start_local >= :from` is
     # NULL-false, so the row does not produce a wrong value — it silently leaves the
     # set, and the failure is an ABSENCE: `compare` moved its verdict from
-    # "load steady (4%)" to "load backed off (-16%)" and `stats` printing 474 sessions under
-    # a heading that says ALL TIME while the database held 475. Both at exit 0, no marker.
+    # "load steady (4%)" to "load backed off (-16%)" and `stats` printed 474 sessions
+    # under a heading that says ALL TIME while the database held 475. Both at exit 0, no
+    # marker.
     check!("`stats` refuses rather than printing an ALL TIME total that is quietly short", strjq!(ctx, ["stats"], ".error.code") == "unreadable_activity_date")?
     # `week` too — replacing a probe reachable only on some CALENDARS: corrupting
     # the Monday's last digit sorts inside the week only when Monday and Monday+7
@@ -4954,8 +4955,8 @@ b_plan! = |ctx| {
     comp_sub = stride!(ctx.bin, ctx.home, ["complete", resess, "304"])
     check!("completion clears the substitute link", Str.trim(sql!(ctx.db, "SELECT COALESCE(substitute_activity_id,0) FROM planned_sessions WHERE id = ${resess};")) == "0")?
     # ...and SAYS which link it destroyed. This clearing was pinned green while nothing
-    # reported it, and reading only `completed_activity_id` makes that worse rather than
-    # better: this call — which erases the only record that the athlete
+    # reported it, and reading only `completed_activity_id` (the #258 gap) makes that
+    # worse rather than better: this call — which erases the only record that the athlete
     # did 303 in place of this session — answers `replaced_activity: 0`, an affirmative
     # "nothing was replaced". `skip` treats the same column as worth reporting in both
     # directions (`kept_substitute`, `released_substitute`) and calls it judgment-tier data
