@@ -2555,8 +2555,11 @@ b_seed_analyze! = |ctx| {
     # jq, not sed: a sed pattern returns "" on a minified file, a prerelease suffix, or
     # the +codex cachebuster the plugin update loop writes — all reported as the WRONG
     # version when the truth is "could not parse". jq reads the value however formatted.
-    rp_version = Str.trim(sh!("jq -r '.\".\"' .release-please-manifest.json"))
-    plugin_version = Str.trim(sh!("jq -r .version .codex-plugin/plugin.json"))
+    # `// empty`, not bare: jq prints the STRING "null" for an absent key at rc 0, so a
+    # simultaneous two-file key loss would compare "null" == "null" and pass; with
+    # `// empty` absence becomes "" and the readability check below catches it by design.
+    rp_version = Str.trim(sh!("jq -r '.\".\" // empty' .release-please-manifest.json"))
+    plugin_version = Str.trim(sh!("jq -r '.version // empty' .codex-plugin/plugin.json"))
     check!("the release version is readable at all", !(Str.is_empty(rp_version)))?
     check!("...and the Codex plugin manifest names that same version", plugin_version == rp_version)?
     # #181: the skill must TELL the coach to pass --json, and must not teach the

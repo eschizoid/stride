@@ -328,7 +328,9 @@ mkdir -p ~/.claude/skills && ln -sfn "$PWD/skills/stride" ~/.claude/skills/strid
 mkdir -p ~/.codex/skills  && ln -sfn "$PWD/skills/stride" ~/.codex/skills/stride
 ```
 
-Restart the agent afterwards to pick it up.
+Restart the agent afterwards to pick it up. Whether every agent follows a symlinked
+skill directory is untested — if a linked skill does not appear after a restart, copy
+the directory instead.
 
 The repo also carries a Codex plugin manifest — `.codex-plugin/plugin.json` declares the
 skill under the name `stride`, and a marketplace entry pointing at a checkout makes it
