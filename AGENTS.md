@@ -9,7 +9,7 @@
 >
 > The COACHING skill has ONE copy, at `skills/stride/SKILL.md`, and every agent installs
 > it into its own skills directory rather than the repo carrying a per-vendor path.
-> Codex's helper takes `--repo eschizoid/stride --path skills/stride` and needs no clone;
+> Codex's built-in skill-installer can fetch it from GitHub without a clone;
 > `.codex-plugin/plugin.json` declares the repo as a Codex plugin over that same
 > `./skills/` directory. Three gates read the canonical path, so the skill cannot be
 > moved without updating them, and e2e pins the plugin manifest's version to the

@@ -315,26 +315,26 @@ The repo ships an agent skill at
 vendor. There is exactly one copy of it, and every agent installs it the same way: into
 whatever directory that agent reads skills from.
 
-Codex reads `$CODEX_HOME/skills` (default `~/.codex/skills`) and ships an installer that
-takes a repo and a path directly, so no clone is needed — ask Codex to install the skill,
-or run its helper yourself:
-
-```sh
-install-skill-from-github.py --repo eschizoid/stride --path skills/stride
-```
-
-Claude Code reads `~/.claude/skills`, so the equivalent is a copy or a link:
+Codex reads `$CODEX_HOME/skills` (default `~/.codex/skills`), and its built-in
+skill-installer can fetch straight from GitHub, so the easiest route is to ask Codex
+itself: "install the skill from this repo" with the repo name and the `skills/stride`
+path. Claude Code reads `~/.claude/skills`. Either way the manual route is the same
+plain shell — copy or link the directory into the agent's skills directory. If the
+destination already exists as a real directory (an earlier copy), remove it first:
+`ln -sfn` against a real directory exits 0 and silently nests the link inside it.
 
 ```sh
 mkdir -p ~/.claude/skills && ln -sfn "$PWD/skills/stride" ~/.claude/skills/stride
+mkdir -p ~/.codex/skills  && ln -sfn "$PWD/skills/stride" ~/.codex/skills/stride
 ```
 
 Restart the agent afterwards to pick it up.
 
-The repo is also a Codex **plugin** — `.codex-plugin/plugin.json` declares the skill, so
-the Codex UI shows a named tool rather than an anonymous skill folder. The manifest's
-`skills` path is `./skills/`, the same canonical directory, so the plugin and the direct
-install can never disagree.
+The repo also carries a Codex plugin manifest — `.codex-plugin/plugin.json` declares the
+skill under the name `stride`, and a marketplace entry pointing at a checkout makes it
+installable via `codex plugin add`. The manifest's `skills` path is `./skills/`, the same
+canonical directory both install routes copy from, so there is no second copy in the repo
+for them to disagree via — an installed snapshot still only updates when reinstalled.
 The LLM computes
 **none** of the metrics — it reads the engine's JSON, reasons about it in natural
 language, and writes its planned sessions back through the coaching-log

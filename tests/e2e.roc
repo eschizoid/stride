@@ -2552,8 +2552,11 @@ b_seed_analyze! = |ctx| {
     # than against `src/app.roc`'s string: the manifest is what release-please actually
     # writes, so this fails on the release PR itself if the bump did not reach the plugin,
     # rather than one release later when someone reads the plugin card and sees 0.9.0.
-    rp_version = Str.trim(sh!("sed -n 's/.*\"\\.\": \"\\([0-9.]*\\)\".*/\\1/p' .release-please-manifest.json"))
-    plugin_version = Str.trim(sh!("sed -n 's/.*\"version\": \"\\([0-9.]*\\)\".*/\\1/p' .codex-plugin/plugin.json"))
+    # jq, not sed: a sed pattern returns "" on a minified file, a prerelease suffix, or
+    # the +codex cachebuster the plugin update loop writes — all reported as the WRONG
+    # version when the truth is "could not parse". jq reads the value however formatted.
+    rp_version = Str.trim(sh!("jq -r '.\".\"' .release-please-manifest.json"))
+    plugin_version = Str.trim(sh!("jq -r .version .codex-plugin/plugin.json"))
     check!("the release version is readable at all", !(Str.is_empty(rp_version)))?
     check!("...and the Codex plugin manifest names that same version", plugin_version == rp_version)?
     # #181: the skill must TELL the coach to pass --json, and must not teach the
