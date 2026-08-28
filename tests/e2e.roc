@@ -5615,10 +5615,12 @@ b_progress_b! = |ctx| {
     # demonstrated. 237 is the row the two predicates answer differently: an impossible
     # stored average with NO stream, so nothing can rescue it. `> 0` calls it strapped and
     # resets the streak; the bound calls it strapless and opens one.
-    # Dated past the fixture's newest row (102, 2026-08-26): the streak walks newest-first,
-    # so a row planted behind a strapped one is never reached and the check reads 0 whatever
-    # the predicate does. Measured that way first.
-    _ = seed_ride!(ctx.db, "237", "Doctor Broken Strap", "2026-08-27T09:00:00Z", "3600", "30000", "200", "18")
+    # Dated TODAY, strictly past the fixture's newest surviving row (102, d2 10:00): the
+    # streak walks newest-first, so a row planted behind a strapped one is never reached
+    # and the check reads 0 whatever the predicate does. RELATIVE, not absolute: an
+    # absolute date rots — the day d2 catches up to it, 102 outranks this row and the
+    # check fails on unchanged code (it did, one day after being written).
+    _ = seed_ride!(ctx.db, "237", "Doctor Broken Strap", "${ctx.today}T09:00:00Z", "3600", "30000", "200", "18")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("an unusable reading OPENS a strapless streak rather than resetting it", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "1")?
     # ...and 238 covers the half 237 cannot: 237 has NO stream, so it exercises only the
@@ -5628,7 +5630,8 @@ b_progress_b! = |ctx| {
     # 238 the row would be
     # counted as usable by `with_hr` while being called strapless by the streak, which is
     # exactly what `schemas/v2/doctor.json` publishes as a guarantee about these two fields.
-    _ = seed_ride!(ctx.db, "238", "Doctor Rescued Strap", "2026-08-28T09:00:00Z", "1300", "12000", "200", "18")
+    # Later the same day as 237, so 238 is the newest row and the walk starts on it.
+    _ = seed_ride!(ctx.db, "238", "Doctor Rescued Strap", "${ctx.today}T10:00:00Z", "1300", "12000", "200", "18")
     _ = seed_power_hr_stream!(ctx.db, 238, 1300, 200, 150)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("a session with usable zone seconds RESETS the streak, as the coverage count says", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "0")?
