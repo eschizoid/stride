@@ -674,8 +674,8 @@ Strava :: [].{
         # (#246); it used to be "respected by arithmetic", which assumed ten runs a day
         # and enforced nothing.
         #
-        # The 5-read margin does NOT reliably absorb the list read, and an earlier version
-        # of this comment said it did. `window` only advances in the drain's Store arm —
+        # The 5-read margin does NOT reliably absorb the list read.
+        # `window` only advances in the drain's Store arm —
         # fetch_pages! never touches it, and neither do the 401/429 charges — so a first
         # run on a 2,000-activity history issues 20 list pages plus 95 stream reads inside
         # one window, against Strava's 100. That is C-1's shape one limit over: a counter

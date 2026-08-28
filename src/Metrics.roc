@@ -858,7 +858,7 @@ Metrics :: [].{
                     # converts "the CP fit is wrong" into the entirely plausible
                     # "you emptied the tank and got some back", and because
                     # clamping resets the deficit, everything AFTER the first
-                    # clamp is wrong too, not just the minimum. Review measured
+                    # clamp is wrong too, not just the minimum. Measured:
                     # -8074 J on a real ride (126% of the fitted tank) reported
                     # as 0. GoldenCheetah and the Skiba/Froncioni literature
                     # both let it go negative for exactly this reason.

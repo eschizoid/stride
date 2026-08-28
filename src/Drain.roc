@@ -40,10 +40,10 @@ Drain :: [].{
     # its only discriminator was `pending_streams > 0`, true on precisely the
     # first-run sync this case exists for.
     #
-    # ListDailyCapReached is the LIST refused with the day already spent. It exists
-    # because an earlier version folded it into FromDrain(DailyCapReached), and under
-    # the rendering of that time — `FromDrain(_)` spoke only when pending > 0 — the
-    # human line went EMPTY on the empty queue, the state a capped day reaches.
+    # ListDailyCapReached is the LIST refused with the day already spent. Folding it
+    # into FromDrain(DailyCapReached) loses the one fact it carries: under a rendering
+    # where `FromDrain(_)` spoke only when pending > 0, the human line went EMPTY on
+    # the empty queue — the state a capped day reaches.
     # (drain_note now decides per arm, and its DailyCapReached arm speaks on an empty
     # queue on purpose.) Two facts must survive: the listing is incomplete (#235) AND
     # the remedy is tomorrow (#246). One tag cannot carry both unless Render guesses,

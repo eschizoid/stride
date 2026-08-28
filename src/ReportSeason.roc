@@ -286,8 +286,8 @@ ReportSeason :: [].{
     # must not fit a second, differently-shaped one).
     #
     # Strictly BEFORE the date, not on-or-before: a ride inside its own fit
-    # window raises the very W' it is then measured against. Review measured
-    # the swing on this athlete's breakthrough 3x12 — W' 2490 J excluding the
+    # window raises the very W' it is then measured against. Measured on a
+    # breakthrough 3x12 — W' 2490 J excluding the
     # ride, 6416 J including it, a 2.58x change in the denominator that scales
     # every W' number for that ride, and it fires precisely on the rides where
     # the athlete did something new.

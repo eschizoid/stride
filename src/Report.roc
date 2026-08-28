@@ -414,9 +414,9 @@ Report :: [].{
 
         zsum = zone_sum!(path, cutoff28)?
 
-        # the RIDE family's population, same as pz — this was a global cross-sport
-        # MAX, which happened to equal the ride max only while no other family
-        # out-rowed it (#151 round 2: the exact bug one level up)
+        # the RIDE family's population, same as pz — a global cross-sport MAX
+        # equals the ride max only while no other family out-rows it (#151, the
+        # exact bug one level up)
         best20_row = Sqlite.query!({
             path: Path.utf8(path),
             query:

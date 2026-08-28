@@ -126,15 +126,15 @@ for f in src/*.roc; do
               "$(printf '%s' "$tail_expr" | tail -c 46)" "$bare" >> "$tmp/problems"
           fi
           ;;
-        # `COUNT(` only. `MAX(`, `MIN(`, `group_concat` and `CASE` were exempt on the theory
-        # that they cannot yield a blob — false for every one of them over a TEXT column, and
-        # review proved it: the exemption list fired exactly ONCE in the whole tree, on
+        # `COUNT(` only. Exempting `MAX(`, `MIN(`, `group_concat` and `CASE` on the theory
+        # that they cannot yield a blob is false for every one over a TEXT column — the
+        # wider exemption list fired exactly ONCE in the whole tree, on
         # `COALESCE(MAX(substr(start_local,1,10)),'') AS d`, which was a live `plan` crash.
         # `MAX` over a mixed column PREFERS the blob, since SQLite orders BLOB above TEXT.
         # An exemption whose only use is hiding a bug is not an exemption.
         *"COUNT("*) ;;
-        # NOTE there is no exemption for a quote. The first version had one — "literals" —
-        # and it swallowed `COALESCE(day, '') AS day`, which is the COMMON shape here and
+        # NOTE there is no exemption for a quote: a "literals" exemption swallows
+        # `COALESCE(day, '') AS day`, which is the COMMON shape here and
         # unsafe: COALESCE picks the blob, not the fallback, because a blob is not NULL. It
         # hid five crashing commands the behavioural sweep then found anyway. That is the
         # failure this file's own header warns about, written into the file on the first
