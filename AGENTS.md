@@ -2,18 +2,24 @@
 
 > **One file, every agent.** `AGENTS.md` is the canonical instruction file — the
 > cross-tool convention Codex and friends read from the repo root with no setup. Claude
-> Code users: point your local config at it once with `mkdir -p .claude && ln -s
-> ../AGENTS.md .claude/CLAUDE.md` (untracked on purpose; this line is the documentation
-> for it — and the repo no longer ships a `.claude/` directory, so the `mkdir` is load
-> bearing on a fresh clone). Edit this file, never a symlink.
+> Code reads `CLAUDE.md`, not `AGENTS.md`, so the repo tracks a one-line root `CLAUDE.md`
+> whose entire content is the import `` `@AGENTS.md` `` (backticked HERE so this sentence
+> is not itself an import — Claude Code expands that syntax recursively). A fresh clone
+> therefore works for every agent with zero setup. Edit this file; the shim never carries
+> content, and a personal `.claude/CLAUDE.md` is now redundant — the docs warn against
+> shipping both locations at once.
 >
-> The COACHING skill has ONE copy, at `skills/stride/SKILL.md`, and every agent installs
-> it into its own skills directory rather than the repo carrying a per-vendor path.
-> Codex's built-in skill-installer can fetch it from GitHub without a clone;
-> `.codex-plugin/plugin.json` declares the repo as a Codex plugin over that same
-> `./skills/` directory. Three gates read the canonical path, so the skill cannot be
-> moved without updating them, and e2e pins the plugin manifest's version to the
-> released one.
+> The COACHING skill's one canonical copy is `skills/stride/SKILL.md`.
+> `.claude/skills/stride/SKILL.md` is a tracked SHIM — a real file, not a symlink (a
+> tracked symlink silently became a text file on default Windows checkouts) — that gives
+> Claude Code in-checkout discovery and redirects to the canonical copy; e2e pins its
+> routing `description` byte-equal to the canonical one, so the shim cannot drift and
+> must never grow coaching content. Outside a checkout, install the canonical directory
+> into your agent's skills directory; Codex's built-in skill-installer can fetch it from
+> GitHub without a clone, and `.codex-plugin/plugin.json` declares the repo as a Codex
+> plugin over that same `./skills/` directory. Three gates read the canonical path, so
+> the skill cannot be moved without updating them, and e2e pins the plugin manifest's
+> version to the released one.
 
 Local-first, deterministic training analytics engine in **Roc** (Strava is one
 ingestion layer). The engine computes metrics deterministically; an LLM coach (you,
