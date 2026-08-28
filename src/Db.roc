@@ -284,14 +284,10 @@ Db :: [].{
         # v4: metrics record the algorithm revision they were computed with, so a
         # change to the math itself (metrics_rev bump) invalidates + recomputes
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN metrics_rev INTEGER")?
-        # v25: the in-band MEAN of this session's HR stream, or NULL when no stream (or no
-        # sample inside 35-220) exists. Computed tier, never ingested: `activities.avg_hr` is
-        # what Strava reported and stays that way, because a re-sync would overwrite any
-        # correction written there and the fix would silently un-apply. That is the mirror-tier
-        # rule in AGENTS.md ("a re-sync would silently wipe it"), not ADR 0006, which is about
-        # which device formats stride parses and says nothing about tiers. This is
-        # the value the SCORING lenses divide by; the display surfaces still publish the
-        # stored one. #311.
+        # v25 (#311): the in-band MEAN of this session's HR stream; NULL when no usable
+        # stream exists. Computed tier — never a correction to `activities.avg_hr`, which a
+        # re-sync would silently wipe (the mirror-tier rule in AGENTS.md). The scoring lenses
+        # divide by this; display surfaces still publish the stored value.
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN avg_hr_stream REAL")?
         # v6: metrics record WHICH ladder rung scored them (load provenance)
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN load_model TEXT")?
@@ -327,24 +323,18 @@ Db :: [].{
         # pace twin of ftp_used, compared in the recompute WHERE so a threshold change reanalyzes.
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_20min_speed REAL")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN threshold_pace_used REAL")?
-        # v16: sample-validity counters (#92). How many HR / power samples the validity
-        # filters DROPPED versus how many the stream offered, recorded where the filters
-        # actually run. Nothing else could tell a dying sensor from a clean one — the
-        # filtered values are gone by the time anything downstream sees the metrics.
-        # These count ONLY samples rejected by valid_hr / valid_watts. The wholesale
-        # exclusion of an ESTIMATED watts stream (#73) is a policy decision, not junk, and
-        # counting it would report every strapless-power athlete as 100% junk.
+        # v16 (#92): HR / power samples dropped by the validity filters vs offered, recorded
+        # here because the filtered values are gone before anything downstream sees the
+        # metrics. Counts ONLY valid_hr / valid_watts rejections — the wholesale exclusion of
+        # an estimated watts stream (#73) is policy, not junk.
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN hr_samples_total INTEGER")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN hr_samples_dropped INTEGER")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN watts_samples_total INTEGER")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN watts_samples_dropped INTEGER")?
-        # v17: the activity-input signature a metrics row was computed from. Compared on
-        # every analyze like ftp_used / zones_used / metrics_rev, so a changed activity
-        # rescores itself. This is what lets `sync` stop deleting metrics: it re-lists a
-        # rolling 30-day window every run and cannot cheaply tell an edit from a no-op, so
-        # invalidating there wiped a month of metrics on every sync.
-        # the activity inputs each metrics row was computed from, stored so analyze can
-        # compare them value by value — same contract as ftp_used
+        # v17: the activity-input signature a metrics row was computed from, compared on
+        # every analyze (same contract as ftp_used) so a changed activity rescores itself.
+        # This is what lets `sync` stop deleting metrics — invalidating there wiped a month
+        # of metrics per run, since sync cannot tell an edit from a no-op.
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN mt_used INTEGER")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN dist_used INTEGER")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN elev_used INTEGER")?
@@ -371,18 +361,11 @@ Db :: [].{
         # v15: NULL = Strava never said (pre-flag rows, CSV imports); 1 = real meter; 0 =
         # estimated. Estimated watts must not outrank honest fallbacks (#73).
         alter_add_column!(path, "ALTER TABLE activities ADD COLUMN device_watts INTEGER")?
-        # v18: re-run the v17 backfill. A db that reached 17 before the backfill existed
-        # has the columns but NULL values, and ensure_schema! only re-runs migrations when
-        # the db is BEHIND — so that state would rescore its whole history on every analyze,
-        # forever. Bumping the version re-runs everything here; the ALTERs already ignore
-        # duplicates and the backfill only touches NULL rows, so it is safe to repeat.
-        # Backfill so upgrading does not rescore the entire history just to populate these.
-        # Sound because the code being replaced deleted the metrics row on EVERY upsert: a
-        # metrics row that still exists therefore belongs to an activity that has not been
-        # written since it was computed, so the activity's current values ARE the values it
-        # was scored from. Rows whose activity was edited but not yet re-analyzed have no
-        # metrics row to backfill — the old code had already deleted it.
-        # Only NULL rows are touched, so re-running the migration is a no-op.
+        # v18: backfill the v17 signature so upgrading does not rescore the entire history.
+        # Sound because the code this replaced deleted the metrics row on every upsert: a
+        # surviving metrics row belongs to an activity unwritten since it was computed, so
+        # its current values ARE the values it was scored from. Touches only NULL rows, so
+        # the re-run (a db stuck at 17 pre-backfill) is a safe no-op.
         Sqlite.execute!({
             path: Path.utf8(path),
             query:
@@ -408,14 +391,11 @@ Db :: [].{
             ,
             bindings: [],
         })?
-        # v23 (#151): the FTP derivation population is the sport FAMILY, stored as a
-        # column so the period-FTP subqueries stay sargable — wrapping sport_type in
-        # the family CASE inside query predicates was measured 8.5x slower per
-        # analyze (it forgoes every sport index). The backfill rewrites ALL rows
-        # (not only NULLs) so a Sports.families edit ships as: edit the table, bump
-        # schema_version, done — the re-run re-canonicalizes history and the
-        # triggers keep every future INSERT/UPDATE current (e2e fixtures and CSV
-        # imports write activities directly, so sync-side code cannot be the keeper).
+        # v23 (#151): the FTP population is the sport FAMILY, stored as a column so the
+        # period-FTP subqueries stay sargable (the CASE inline measured 8.5x slower). The
+        # backfill rewrites ALL rows so a Sports.families edit ships as edit + version bump;
+        # triggers keep future writes current — fixtures and CSV imports write activities
+        # directly, so sync-side code cannot be the keeper.
         alter_add_column!(path, "ALTER TABLE activities ADD COLUMN sport_family TEXT")?
         Sqlite.execute!({ path: Path.utf8(path), query: "UPDATE activities SET sport_family = ${Sports.sql_canonical_case("sport_type")}", bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_family_start ON activities(sport_family, start_local)", bindings: [] })?
@@ -469,30 +449,18 @@ Db :: [].{
             Err(other) => Err(other)
 
         }
-    # run migrations exactly when the db is behind, then stamp the version. Called
-    # on every command entry (via open_db!) so upgrading the binary against an
-    # existing db self-migrates instead of failing with an opaque missing-column error.
-    # Concurrency posture, applied on EVERY open (both pragmas are idempotent and cheap).
-    #
-    # analyze rebuilds daily_load inside one transaction on purpose — a partial day-walk
-    # would leave a truncated series that summary reads as valid. Under the rollback
-    # journal that transaction locks the whole database, and SQLite's default busy_timeout
-    # of 0 means any other connection fails IMMEDIATELY rather than waiting. A single
-    # `stride week` in a second terminal was enough to abort a running analyze with
-    # SqliteErr(Busy) and throw away all of its work.
-    #
-    # WAL lets readers proceed against a writer instead of blocking, which is exactly this
-    # workload: one long writer, several short read-only query commands. It is a PERSISTENT
-    # property of the database file, so it survives across the per-call connections. The
-    # busy_timeout additionally makes writer-vs-writer contention wait rather than fail.
-    # Both are read via query_many! because a PRAGMA assignment returns a row.
     # Reads back the journal mode actually in force. `PRAGMA journal_mode = WAL` does NOT
-    # error when it cannot switch — on a filesystem that lacks the shared-memory primitives
-    # WAL needs (some network mounts), it silently returns the mode it kept. Discarding that
-    # answer would leave the engine believing it had concurrency it does not have, which is
-    # the same silent-fallback trap `time_ok` exists to prevent for timezones. Reported by
-    # `doctor` rather than made fatal: without WAL stride still works, and the busy_timeout
-    # below still turns most contention into a wait instead of a failure.
+    # error when it cannot switch — on a filesystem without WAL's shared-memory primitives
+    # it silently returns the mode it kept, and discarding that answer would leave the
+    # engine believing it has concurrency it does not (the silent-fallback trap `time_ok`
+    # closes for timezones). Reported by doctor, not fatal: stride works without WAL, and
+    # busy_timeout still turns most contention into a wait.
+    #
+    # Why WAL: analyze rebuilds daily_load in one transaction (a partial day-walk would
+    # read as a valid truncated series), which under the rollback journal locks the whole
+    # db — and busy_timeout defaults to 0, so a concurrent `stride week` aborted a running
+    # analyze outright. WAL is a persistent property of the file; readers proceed against
+    # the one long writer.
     journal_mode! : Str => Try(Str, _)
     journal_mode! = |path| {
         # Best-effort for real: a `?` here would abort doctor on a Busy or unopenable db,
@@ -527,13 +495,10 @@ Db :: [].{
             bindings: [],
             rows: Sqlite.i64("timeout"),
         })?
-        # Read before assigning. Setting journal_mode wants a write lock, and EVERY command
-        # opens through here — so issuing the assignment unconditionally would have each
-        # short read command reach for a write lock before it reads anything, which is the
-        # opposite of what this function is for. WAL is a persistent property of the file,
-        # so after the first open the answer is already "wal" and there is nothing to set.
-        # (Measured: 1257 reads during a full rescore, zero busy failures, even before this
-        # guard — so this removes a real risk rather than a reproduced failure.)
+        # Read before assigning: setting journal_mode wants a write lock, and every command
+        # opens through here, so an unconditional assignment would have each short read
+        # command reach for a write lock first. After the first open the answer is already
+        # "wal" and there is nothing to set.
         if journal_mode!(path)? == "wal" {
             Ok({})
         } else {
@@ -546,6 +511,9 @@ Db :: [].{
             Ok({})
         }
     }
+    # run migrations exactly when the db is behind, then stamp the version. Called on
+    # every command entry (via open_db!) so upgrading the binary against an existing db
+    # self-migrates instead of failing with an opaque missing-column error.
     ensure_schema! : Str => Try({}, _)
     ensure_schema! = |path| {
         configure_concurrency!(path)?

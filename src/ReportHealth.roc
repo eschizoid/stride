@@ -30,15 +30,10 @@ ReportHealth :: [].{
         year = (Metrics.civil_from_days(today_days)).y
         # The cutoff below is the literal "0000-01-01", whose only job is to mean
         # EVERYTHING — and `WHERE start_local >= :cutoff` is NULL-false, so an unreadable
-        # date silently removes the activity from a total printed under the heading
-        # ALL TIME. Measured: 475 sessions became 474, 11950 km became 11924, exit 0, on a
-        # command whose declared error_codes were empty.
-        #
-        # Refuses rather than reports, and that is the same call `summary` makes about the
-        # same shape one file over: a number that claims completeness and is quietly short
-        # is worse than no number. `stats` LISTS totals, which reads like the report side of
-        # #249's split, but the split is by what the date DOES — and here it decides
-        # membership in an aggregate, so a wrong date is a wrong total.
+        # date silently removes an activity from a total printed under ALL TIME (measured:
+        # 475 sessions became 474 at exit 0). Refuses rather than reports: `stats` LISTS
+        # totals, but the date decides MEMBERSHIP in an aggregate here, so a wrong date is
+        # a wrong total — the compute side of #249's split.
         _ = Report.guard_activity_dates!(path)?
         all_time = stats_rows!(path, "0000-01-01")?
         ytd = stats_rows!(path, "${(year).to_str()}-01-01")?
@@ -91,67 +86,27 @@ ReportHealth :: [].{
             path: Path.utf8(path),
             query:
                 \\SELECT COUNT(*) AS total,
-                # `BETWEEN 35 AND 220`, not `> 0`. This is a COVERAGE count — how many
-                # sessions the engine can actually USE a heart rate from, which `> 0` — a
-                # presence test — was not measuring.
+                # A COVERAGE count — how many sessions the engine can actually USE a heart rate
+                # from, which `> 0` (a presence test) was not measuring. The predicate is the
+                # UNION (`Metrics.usable_hr_sql`): a plausible scalar OR nonzero HR zone seconds.
+                # The zone arm is load-bearing — a session scored `hr_zones` has its entire load
+                # computed FROM heart rate and must count, and its scalar can never be rescued: a
+                # stored average is impossible BECAUSE the strap misbehaved, and a misbehaving
+                # strap is exactly what fails #311's coverage gate.
                 #
-                # ON THIS DATABASE THE NUMBER DOES NOT MOVE. Measured on a snapshot: `> 0`
-                # gives 672 and so does the predicate below. That is worth stating plainly
-                # because two earlier versions of this change reported otherwise. The first
-                # narrowed to a plausible STORED average and gave 669, and its comment called
-                # the missing 3 an over-count `> 0` was hiding. They are not: all three carry
-                # HR zone seconds built from their own streams, and one is scored `hr_zones`
-                # — its entire training load computed FROM heart rate. Excluding them made
-                # this payload contradict itself, since the same run prints them inside
-                # `medium (HR / RPE)`. The second version consulted `avg_hr_stream` and its
-                # comment claimed that restored 672. It does not; it gives 669 as well, and
-                # that figure was taken against #311 before its coverage gate landed.
-                #
-                # The gate is why, and the reason generalises: a stored average is impossible
-                # BECAUSE the strap misbehaved, and a misbehaving strap is exactly what fails
-                # a span gate. The scalar fallback is anti-correlated with the population it
-                # was reached for — on this database it rescues zero of the three.
-                #
-                # So the predicate is the UNION (`Metrics.usable_hr_sql`): a usable scalar OR
-                # zone seconds. It is what the field's own description has always claimed, and
-                # the rows it adds are exactly the rows that made the payload disagree with
-                # itself. What this change buys is not a smaller number — it is a `has_hr`
-                # that cannot contradict `with_hr`, a CAST that stops a BLOB from reading as
-                # strapless, and a predicate that means what the schema says.
-                #
-                # `hr_known` beside it does NOT move. AGENTS.md states the `_known`
-                # convention codebase-wide — companions decode from the STORED NULL — so it
-                # is behaving as documented, and narrowing it would break that rule for one
-                # field of five. The two fields answer different questions on purpose: one
-                # is "was a heart rate recorded", this is "can one be used". Marking an
-                # implausible value in the `activity` payload is the other half of #312 and
-                # is not this change; #319 carries it.
-                #
-                # `a.avg_hr`, not `COALESCE(m.avg_hr_stream, a.avg_hr)`. The stream term was here
-                # and was DEAD: `avg_hr_stream` is non-NULL only when the filtered samples span
-                # half the session, which needs two samples with a positive gap between them,
-                # and `time_in_zones` attributes every positive gap to some zone — so a non-NULL
-                # stream mean implies the zone arm is already true. It is also a mean of
-                # `valid_hr`-filtered samples, so it satisfies the scalar arm by construction.
-                # Whenever the COALESCE preferred the stream, both arms were true regardless;
-                # whenever it did not, it WAS `a.avg_hr`. Measured: rows where the two
-                # predicates differ, 0; rows with a stream mean and no zone seconds, 0. Review
-                # dropped the term from each site in turn and the suite stayed green both times,
-                # and no fixture could have closed that — the branch is unreachable.
-                #
-                # Removing it also makes the count reconcilable, which the version with it was
-                # not: every field the predicate reads is published by `activities --json`, so
+                # On the reference database the number does not move (672 either way, the same
+                # 672 rows); what the union buys is a `has_hr` that cannot contradict `with_hr`,
+                # a CAST that stops a BLOB reading as strapless (`Metrics.valid_hr_sql`), and a
+                # count reconcilable from one call:
                 #   jq '[.data[] | select(((.avg_hr>=35) and (.avg_hr<=220))
                 #        or ((.z1_s+.z2_s+.z3_s+.z4_s+.z5_s)>0))] | length'
-                # reproduces this number exactly. With the stream term it took 738 `activity`
-                # calls, because `avg_hr_scored` is not on the listing payload.
+                # over `activities --json` reproduces it exactly. A `COALESCE(m.avg_hr_stream, …)`
+                # term was here and was DEAD — a non-NULL stream mean implies both arms already —
+                # so it reads the bare column.
                 #
-                # The bound comes from `Metrics.valid_hr_sql` rather than being written out.
-                # The CAST it brings is load-bearing: SQLite sorts a BLOB above every number,
-                # so a bare `avg_hr BETWEEN 35 AND 220` is FALSE for a BLOB holding the bytes
-                # "100" — a session every other consumer reads through a CAST and scores at
-                # 100 bpm. `> 0` was TRUE for it. Fixing an over-count by introducing an
-                # under-count on the same value class is not a fix.
+                # `hr_known` beside it does NOT move: `_known` companions decode from the STORED
+                # NULL (AGENTS.md). The two answer different questions — "was a heart rate
+                # recorded" vs "can one be used". Per-activity marking is #319.
                 \\       COALESCE(SUM(CASE WHEN ${Metrics.usable_hr_sql("a.avg_hr", "COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0)")} THEN 1 ELSE 0 END), 0) AS with_hr,
                 \\       COALESCE(SUM(CASE WHEN COALESCE(a.avg_watts, a.weighted_avg_watts, 0) > 0 THEN 1 ELSE 0 END), 0) AS with_power,
                 \\       COALESCE(SUM(CASE WHEN s.activity_id IS NOT NULL AND s.raw_json <> '{}' THEN 1 ELSE 0 END), 0) AS with_streams,
@@ -282,22 +237,9 @@ ReportHealth :: [].{
             query:
                 \\SELECT COALESCE(CAST(a.sport_type AS TEXT), '') AS sport,
                 # Same predicate as `with_hr`, and it has to be: a session counted as having
-                # usable HR up there and as strapless down here would put two contradictory
-                # sentences in one `doctor` run.
-                #
-                # The claim this comment used to make — that a 0.2 bpm row was breaking a
-                # genuinely unbroken streak — was false, and inherited unchecked from #312's
-                # issue body. The only 0.2 bpm row in the live database is a `Workout`, and
-                # `Metrics.hr_missing_streak` filters StrengthLike out before it walks, so
-                # that row never touched the streak. Measured: truncate a snapshot so it is
-                # newest with two strapless endurance rows behind it and the streak reads 2
-                # both before and after. Only rewriting its sport to `Ride` makes the change
-                # bite at all. The reason to bound this site is the one above — agreement
-                # with `with_hr` — not a symptom that was never there.
-                #
-                # The join is what the stream half needs. This query read `FROM activities`
-                # alone, so it could only ever see the stored average, which is the number
-                # #311 established the engine does not score from.
+                # usable HR up there and strapless down here would put two contradictory sentences
+                # in one `doctor` run. The join is what the zone arm needs — reading `FROM
+                # activities` alone could only ever see the stored average.
                 \\       CASE WHEN ${Metrics.usable_hr_sql("a.avg_hr", "COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0)")} THEN 1 ELSE 0 END AS has_hr
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                 \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC LIMIT 200
@@ -369,24 +311,16 @@ ReportHealth :: [].{
                 BadOffset(_) => 1 == 0
                 _ => 1 == 1
             }
-        # Not `?`. doctor's job is to diagnose a broken installation, so it is the one
-        # command that must not die on the thing it is meant to report. Three conditions
-        # block the count — the global zones absent, a global key unparseable, or a
-        # per-sport override unparseable — and `plan` only survives the last of them,
-        # because it propagates everything from load_zone_config! and degrades only inside
-        # pending_metrics_count!. That is why doctor needs three arms where plan needs one.
+        # Not `?`: doctor diagnoses a broken installation, so it must not die on the thing
+        # it reports. Three conditions block the count (global zones absent, a global key
+        # unparseable, a per-sport override unparseable) and `plan` survives only the
+        # last, which is why doctor needs three arms where plan needs one.
         #
-        # Annotated so the Bool guarantee is LOCAL. Worth being precise about what the
-        # annotation does and does not do: removing it alone changes nothing, because
-        # `if p.awaiting_metrics_known` in the human screen already forces Bool. It is that
-        # `if` which is load-bearing today. Rewrite it as a `match` with the annotation
-        # gone and `known` infers a bare [False, True] tag union, the encoder emits the
-        # string "False", and only the schema catches it. The annotation is here so that
-        # refactor cannot reach across two functions to break the payload.
-        #
-        # The Err arms carry the inspected error rather than discarding it: a transient
-        # SQLITE_BUSY under a concurrent analyze would otherwise be reported as "could not
-        # be computed", which is the worst diagnosis the diagnostic command could give.
+        # Annotated so the Bool guarantee is LOCAL: without it, rewriting the human
+        # screen's `if` as a `match` would let `known` infer a bare tag union and the
+        # encoder would emit the STRING "False". The Err arms carry the inspected error —
+        # a transient SQLITE_BUSY reported as "could not be computed" is the worst
+        # diagnosis a diagnostic can give.
         awaiting : { count : U64, known : Bool, problem : Str }
         awaiting =
             match Analyze.load_zone_config!(path) {
@@ -419,29 +353,20 @@ ReportHealth :: [].{
             conf_low: conf.lo,
             conf_none: conf.non,
             pending_streams: pending,
-            # What `analyze` would recompute right now, beside what it has never scored
-            # at all (#238). `unanalyzed` above is `m.activity_id IS NULL` and nothing
-            # else, which is the right answer for a COVERAGE field — its neighbours all
-            # report presence — but it meant doctor read 0 on a database where every row
-            # was due. Measured on a real database with metrics_rev bumped, the shape a
-            # metrics-definition release produces: unanalyzed 0, this field 735.
-            #
-            # Shares Analyze.pending_metrics_count! with `plan`'s
-            # activities_awaiting_metrics, so the two commands cannot disagree about the
-            # same question, and it is the same predicate `analyze` selects rows with.
+            # What `analyze` would recompute right now, beside what it has never scored at all
+            # (#238): `unanalyzed` is `m.activity_id IS NULL`, right for a COVERAGE field, but
+            # it read 0 on a database where every row was due after a metrics_rev bump (735
+            # pending). Shares Analyze.pending_metrics_count! with `plan`, so the two commands
+            # cannot disagree and it is the same predicate `analyze` selects rows with.
             awaiting_metrics: awaiting.count,
             awaiting_metrics_known: awaiting.known,
-            # Measured at ~89ms on a 735-activity, 35MB-of-streams database, roughly
-            # doubling doctor. It is `LENGTH(s.raw_json)` in the shared predicate forcing
-            # a decode of every stored blob, so it scales with stream BYTES rather than
-            # activity count. Paid deliberately: the only way to make it cheaper is a
-            # narrower predicate than `analyze` uses, which would forfeit the property
-            # that this and `plan` cannot disagree — and doctor is run by hand.
-            #
-            # WHY the count is unknown, which is the whole point of surfacing it in the
-            # DIAGNOSTIC command: `plan` degrades silently and correctly, but a bare
-            # `known: false` with no reason would just move the question here. "" when
-            # the count was computed.
+            # Measured ~89ms on a 735-activity db, roughly doubling doctor: LENGTH(s.raw_json)
+            # in the shared predicate scales with stream BYTES. Paid deliberately — a narrower
+            # predicate than `analyze` uses would forfeit the cannot-disagree property, and
+            # doctor is run by hand.
+            # WHY the count is unknown, which is the point of the DIAGNOSTIC command: `plan`
+            # degrades silently and correctly; a bare `known: false` would move the question
+            # here. "" when the count was computed.
             config_error: awaiting.problem,
             ftp_derived_sports: cfg.derived_ftp_sports,
             zones_set: cfg.zones_set >= 4,
@@ -466,34 +391,22 @@ ReportHealth :: [].{
                     ["", "  → ${(p.strength_unrated).to_str()} strength-class sessions have no rating — `stride rate <id> <1-10>` scores them honestly"]
                 else
                     []
-            # A LIST that is empty or one element, exactly like `hint` above, rather than a
-            # string that is empty or a sentence. The conditional undateable line disappears
-            # when it has nothing to say, and `""` keeps meaning what it means everywhere
-            # else in this screen: a deliberate section spacer.
-            #
-            # The first version returned `else ""` and filtered the whole joined list for
-            # empties — which removed all SIX spacers, five here and one in `hint`, turning
-            # the screen into an undifferentiated wall and detaching the footer arrow. The
-            # two e2e checks that read this screen are `Str.contains` on single lines, so
-            # 785 checks stayed green through a regression that changed every section
-            # boundary on it.
+            # A LIST that is empty or one element, like `hint` above, rather than a string
+            # that is empty or a sentence — so `""` keeps meaning "deliberate section spacer"
+            # everywhere in this screen. The `else ""` + filter-empties version removed all
+            # SIX spacers and detached the footer, while every e2e check on this screen is a
+            # single-line Str.contains and stayed green.
             undateable =
                 if p.undateable_activities > 0
                     ["  activities with an unreadable date: ${(p.undateable_activities).to_str()} — `stride activities` lists them first; delete each by id and re-sync"]
                 else
                     []
-            # ...and the WIDER count on its own line, because the JSON half alone left #282
-            # live on the SCREEN: `activities` led with rows whose date parsed fine and whose
-            # clock did not, while this section reported only the date population and read as
-            # "nothing else is wrong". Printed as the REMAINDER, not the total — the two
-            # populations are nested, and showing 4 under 3 invites the reader to subtract.
-            # SELF-CONTAINED when it prints alone. "N more" and "same repair" both point back
-            # at the undateable line above, which is suppressed at zero — so on a database
-            # whose only fault is an unusable clock, this line said "1 more" than nothing and
-            # "same repair" as nothing, and carried neither the `stride activities` pointer
-            # nor the repair instruction, both of which it was borrowing. That is exactly the
-            # single-bad-row case this change exists to surface, and on the real 737-row
-            # database it is the ONLY path such a row can take (0 undateable).
+            # ...and the WIDER count on its own line: `activities` led with rows whose date
+            # parsed fine and whose clock did not, while this section read as "nothing else is
+            # wrong" (#282). Printed as the REMAINDER — the populations are nested, and 4
+            # under 3 invites subtraction. SELF-CONTAINED when it prints alone: the undateable
+            # line it used to borrow the repair pointer from is suppressed at zero, and on the
+            # real database a lone bad-clock row is the ONLY path such a row can take.
             unrankable =
                 if p.unrankable_activities > p.undateable_activities
                     if p.undateable_activities > 0
@@ -714,12 +627,10 @@ ReportHealth :: [].{
         )
         cpfit =
             match Metrics.critical_power(fit_points) {
-                # a fit is only meaningful when BOTH are positive; inconsistent bests (no true
-                # 5-10 min efforts) can yield a non-positive CP or W' — treat that as no fit
-                # fit_points counts the bests AVAILABLE to the fit, the same
-                # meaning tte and activity publish. Zeroing it on a refused fit
-                # made the same key mean two different things across commands;
-                # `cp` of 0 is the refusal signal.
+                # a fit is only meaningful when BOTH are positive; inconsistent bests can yield a
+                # non-positive CP or W' — treat that as no fit. fit_points counts the bests
+                # AVAILABLE to the fit (same meaning tte and activity publish); `cp` of 0 is the
+                # refusal signal, so the key means one thing across commands.
                 Ok(c) => (if c.cp > 0.0 and c.w_prime > 0.0 { cp: c.cp, w_prime: c.w_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cp: 0.0, w_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() })
                 Err(_) => { cp: 0.0, w_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() }
             }

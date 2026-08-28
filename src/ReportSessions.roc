@@ -245,36 +245,15 @@ ReportSessions :: [].{
                 ef_samples = List.map(List.keep_if(comps, |c| c.np_known and Metrics.valid_hr(c.hr)), |c| c.np / c.hr)
                 np_samples = List.map(List.keep_if(comps, |c| c.np_known), |c| c.np)
                 dec_samples = List.map(List.keep_if(comps, |c| c.dec_known), |c| c.dec_pct)
-                # flags first (ADR 0009), magnitude second (division guard)
-                # #294 taught `progress` to disbelieve these numbers and `activity` went on
-                # building a verdict on them, which is the sentence the commit closing #294
-                # used about the codebase before it — it moved rather than went away.
-                #
-                # Review reported that attribution as false, saying no commit message
-                # contains the sentence, and recommended dropping it. Checked rather than
-                # taken — and the check then needed a second pass of its own.
-                #
-                # The sentence is in `80465b4` on `fix/294-invalid-hr`, the commit that
-                # introduced the fix. It is NOT in the commit on this branch's history:
-                # GitHub's squash `53c6edf` kept the subject and discarded the body, which
-                # is one byte. `80465b4` is not an ancestor of `main`, so a reader running
-                # `git log` never reaches it, and it becomes unreachable entirely once the
-                # merged branch is swept — at which point "no commit message contains it"
-                # would become true for the wrong reason. The durable pointer is PR #303's
-                # body, which carries it verbatim and outlives the branch.
-                #
-                # Recorded because adopting the original correction would have replaced a
-                # true sentence with a false one, and because the second pass found the
-                # rebuttal itself imprecise. The
-                # bound is `Metrics.valid_hr`, shared with the two `progress` lenses and with
-                # decoupling, so there is one definition of an impossible heart rate.
-                # `a.hr_known` is gone from this gate rather than joined by a second flag. It reads
-                # the STORED NULL, which is the documented `_known` contract and stays that way —
-                # but the divisor is now `avg_hr_scored`, and a session can carry an HR stream
-                # while its summary average is NULL, so the two no longer agree. The conjunct was
-                # redundant anyway: `COALESCE(...,0)` makes an absent reading 0.0 and `valid_hr`
-                # already refuses it. Dropping it cannot widen the old path; it is what lets a
-                # stream-only session score. (#311)
+                # flags first (ADR 0009), magnitude second (division guard). The bound is
+                # `Metrics.valid_hr`, shared with the `progress` lenses and decoupling — one
+                # definition of an impossible heart rate (#294 -> #305).
+                # `a.hr_known` is gone from this gate rather than joined by a second flag: it
+                # reads the STORED NULL (the documented `_known` contract), but the divisor is
+                # now `avg_hr_scored` and a session can carry an HR stream while its summary is
+                # NULL. The conjunct was redundant anyway — `COALESCE(...,0)` makes an absent
+                # reading 0.0 and `valid_hr` refuses it — so dropping it cannot widen the old
+                # path; it is what lets a stream-only session score (#311).
                 cur_ef = if a.power_known and Metrics.valid_hr(a.avg_hr_scored) a.np_w / a.avg_hr_scored else 0.0
                 # one metric block: current + own-history median + rank + change.
                 # percentile is direction-free (documented at Metrics.percentile_of).
@@ -412,23 +391,15 @@ ReportSessions :: [].{
                         Stdout.line!("power  1min ${Render.fmt0(detail.best_60)}W · 3min ${Render.fmt0(detail.best_180)}W · 5min ${Render.fmt0(detail.best_300)}W · 20min ${Render.fmt0(detail.best_1200)}W")?
                     else
                         Ok({})?
-                    # the SCORED average, for the same reason `progress`'s hr column shows it:
-                    # this line sits on the screen that also prints an EF verdict, and the
-                    # two disagreeing with nothing to say which is which is the gap #311
-                    # opened. When they differ the recorded value is named beside it rather
-                    # than dropped — that number is what the device reported and the athlete
-                    # may be comparing against Strava.
-                    # Compared as RENDERED, not as floats. Deciding on unrounded values what to
-                    # print rounded made this note repeat itself — 161.461 against 161.2 is a
-                    # difference of 0.26 and prints "avg 161 (recorded 161)". Measured: the note
-                    # fired on 490 activities and said nothing on 336 of them.
-                    #
-                    # ...and only when a reading was actually RECORDED. A stream-only session
-                    # stores no average, `COALESCE` makes it 0.0, and "(recorded 0)" states a
-                    # measurement of zero where `avg 0` merely read as absent — the numeric-0
-                    # invariant in Output.roc and ADR 0009 is that a stored 0 here means NOT
-                    # AVAILABLE. `hr_known` is the field that answers whether one exists, which
-                    # is exactly what it is for.
+                    # the SCORED average, for the reason `progress`'s hr column shows it: this line
+                    # shares a screen with an EF verdict, and the two disagreeing with nothing to say
+                    # which is which is the gap #311 opened. When they differ, the recorded value is
+                    # named beside it — that number is what the athlete compares against Strava.
+                    # Compared as RENDERED, not as floats: 161.461 vs 161.2 differs by 0.26 and would
+                    # print "avg 161 (recorded 161)" (measured on 336 of 490 firing rows). And only
+                    # when a reading was RECORDED: a stream-only session stores no average, COALESCE
+                    # makes it 0.0, and "(recorded 0)" states a measurement where `avg 0` merely read
+                    # as absent (numeric-0 invariant, ADR 0009).
                     recorded_note =
                         if !(a.hr_known) or Render.fmt0(a.avg_hr_scored) == Render.fmt0(a.avg_hr) {
                             ""
@@ -501,23 +472,17 @@ ReportSessions :: [].{
             path: Path.utf8(path),
             query:
             # `${Report.date_known_sql}` and `${Report.rankable_sql}` stay on the RAW column
-            # while the projection beside them is wrapped, and that divergence is load-bearing
-            # rather than an oversight anyone should tidy. `date(substr(blob,1,10))` returns
-            # TEXT and `substr(blob,1,10)` is a BLOB, so the `IS NOT` is true on the type
-            # mismatch and the flag correctly goes false. Wrapping them "for consistency"
-            # publishes `date_known: true` for a row that no bounded-range window — `week`,
-            # `compare`, a `season` month — can see, since those still compare the raw column:
-            # uncounted by `doctor`, unhoisted by the listing, a silent wrong answer at exit 0.
-            # That is strictly worse than the crash this change removed. Measured on a BLOB
-            # whose bytes CAST to a valid date, which is the value class that reaches it.
+            # while the projection beside them is wrapped — load-bearing, not an oversight to
+            # tidy: `date(substr(blob,1,10))` returns TEXT and `substr(blob,1,10)` is a BLOB,
+            # so the `IS NOT` is true on the type mismatch and the flag correctly goes false.
+            # Wrapping them "for consistency" publishes `date_known: true` for a row no
+            # bounded-range window (`week`, `compare`, a `season` month) can see — uncounted,
+            # unhoisted, a silent wrong answer at exit 0, strictly worse than the crash this
+            # removed.
             #
-            # `a.sport_type` and `a.name` are NOT wrapped, and that is a known gap rather than
-            # an audit: a BLOB in either crashes this same SELECT exactly as `start_local`
-            # did (#307). The repair for those is at the decode boundary, not another CAST
-            # per column, so it is tracked separately — but a reader seeing one wrapped
-            # column two tokens from two bare ones would otherwise reasonably conclude the
-            # whole projection had been checked. That inference is what produced the
-            # "three sites" estimate when there were five.
+            # `a.sport_type` and `a.name` are NOT wrapped — a known gap, not an audit: a BLOB
+            # in either crashes this SELECT as `start_local` did (#307), and the repair is at
+            # the decode boundary, not another CAST per column.
                 \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, ${Report.rankable_sql} AS rankable, COALESCE(CAST(a.sport_type AS TEXT), '') AS sport, COALESCE(CAST(a.name AS TEXT), '') AS name,
                 \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
@@ -622,17 +587,11 @@ ReportSessions :: [].{
             Stdout.line!(Render.render_table(
                 ["date", "sport", "name", "time", "load", "intensity (if)", "hard"],
                 List.map(rows, |a| [
-                    # `-` for an unreadable date, which is this table's own house rule for
-                    # every other column — the legend below teaches it for `load` and
-                    # `intensity`, and README states it as "a session with no usable data
-                    # shows `-`, not an invented number". The date column was the one place
-                    # with genuinely no usable data and the only one not using it.
-                    #
-                    # A blank cell here is not merely unhelpful, it is AMBIGUOUS: a long
-                    # activity name wraps onto a continuation row whose date cell is also
-                    # blank, so the row this listing was hoisted to the top to expose
-                    # renders identically to a line-wrap artifact. Review measured the two
-                    # side by side in the same four-row table.
+                    # `-` for an unreadable date — this table's own house rule for every other
+                    # column, and the date column was the one place with genuinely no usable data
+                    # not using it. A blank cell is AMBIGUOUS here: a long name wraps onto a
+                    # continuation row whose date cell is also blank, so the hoisted repair row
+                    # renders identically to a line-wrap artifact.
                     (if Str.is_empty(a.date) "-" else a.date),
                     a.sport,
                     a.name,
@@ -655,25 +614,16 @@ ReportSessions :: [].{
     top_metric = |m|
         match m {
             # `bound` is the plausibility predicate for this metric's column, empty when the
-            # column has none. `> 0` is presence, not plausibility, and `top` ranked on
-            # presence alone — so `stride top hr 700` returned the same three readings #294
-            # taught `progress` to refuse and #305 taught `activity` to refuse, ordered so a
-            # 250 bpm one would lead (#315).
+            # column has none. `> 0` is presence, not plausibility — `top hr 700` returned
+            # the same three readings `progress` and `activity` refuse, ordered so a 250 bpm
+            # one led (#315). Per metric, because it is a per-column fact: `valid_hr`'s
+            # 35-220 says nothing about kilometres. (`Metrics.valid_watts` exists but is a
+            # per-SAMPLE stream bound; applying it to session NP is a separate judgement.)
             #
-            # Per metric rather than on the shared `> 0` clause, because it is a per-column
-            # fact: `valid_hr`'s 35-220 says nothing about kilometres or minutes.
-            #
-            # `Metrics.valid_watts` DOES exist (0-2500) and an earlier version of this
-            # comment claimed no equivalent did. It is a per-SAMPLE bound used on streams,
-            # not a per-session one, so applying it to `top power`'s session NP is a separate
-            # judgement rather than a free win — but "no equivalent exists" was false.
-            #
-            # `CAST(... AS REAL)` because that is what every other consumer sees. `Analyze`
-            # reads `CAST(a.avg_hr AS REAL)`, so a BLOB storing the bytes of "100" scores
-            # through the `valid_hr`-gated rung and `activity` publishes it at 100 bpm. Bare
-            # SQL comparison disagrees — SQLite orders BLOB above every number, so
-            # `blob <= 220` is FALSE — and the ranking would have excluded a row the rest of
-            # the engine accepts. Review found it by planting one, not by reading.
+            # `CAST(... AS REAL)` because that is what every other consumer sees: a BLOB
+            # storing the bytes of "100" scores through the `valid_hr`-gated rung and
+            # publishes at 100 bpm, while bare SQL comparison orders BLOB above every number
+            # and would exclude a row the rest of the engine accepts.
             "hr" => Ok({ col: "a.avg_hr", header: "heart rate (hr)", bound: "CAST(@ AS REAL) >= 35 AND CAST(@ AS REAL) <= 220" })
             "tss" => Ok({ col: "m.tss", header: "load", bound: "" })
             "power" => Ok({ col: "m.normalized_power", header: "power (np)", bound: "" })
@@ -738,24 +688,9 @@ ReportSessions :: [].{
                 rows = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query:
-            # `${Report.date_known_sql}` and `${Report.rankable_sql}` stay on the RAW column
-            # while the projection beside them is wrapped, and that divergence is load-bearing
-            # rather than an oversight anyone should tidy. `date(substr(blob,1,10))` returns
-            # TEXT and `substr(blob,1,10)` is a BLOB, so the `IS NOT` is true on the type
-            # mismatch and the flag correctly goes false. Wrapping them "for consistency"
-            # publishes `date_known: true` for a row that no bounded-range window — `week`,
-            # `compare`, a `season` month — can see, since those still compare the raw column:
-            # uncounted by `doctor`, unhoisted by the listing, a silent wrong answer at exit 0.
-            # That is strictly worse than the crash this change removed. Measured on a BLOB
-            # whose bytes CAST to a valid date, which is the value class that reaches it.
-            #
-            # `a.sport_type` and `a.name` are NOT wrapped, and that is a known gap rather than
-            # an audit: a BLOB in either crashes this same SELECT exactly as `start_local`
-            # did (#307). The repair for those is at the decode boundary, not another CAST
-            # per column, so it is tracked separately — but a reader seeing one wrapped
-            # column two tokens from two bare ones would otherwise reasonably conclude the
-            # whole projection had been checked. That inference is what produced the
-            # "three sites" estimate when there were five.
+            # `${Report.date_known_sql}` / `${Report.rankable_sql}` stay on the RAW column
+            # while the projection is wrapped — load-bearing, not an oversight; see the
+            # identical projection in the activities listing above for the full argument.
                         \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, ${Report.date_known_sql} AS date_known, ${Report.rankable_sql} AS rankable, COALESCE(CAST(a.sport_type AS TEXT), '') AS sport, COALESCE(CAST(a.name AS TEXT), '') AS name,
                         \\       a.moving_time AS moving_time, CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                         \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
@@ -767,18 +702,13 @@ ReportSessions :: [].{
                         \\       CASE WHEN a.avg_hr IS NULL THEN 0 ELSE 1 END AS hr_known
                         \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                         \\WHERE ${col} > 0${bound_sql}${sport_where}
-                        # ORDER BY casts too, and that is not redundant with the bound. Casting only inside the
-                        # bound re-admitted the BLOB and non-numeric-TEXT rows it was there to keep (a BLOB of
-                        # "100" IS a plausible reading), but left them sorted RAW — and SQLite orders BLOB
-                        # above TEXT above every number, so the rows the bound had just rescued landed at
-                        # rank 1. `top hr 3` led with that 100 bpm BLOB over a 171 bpm reading. Fixing the
-                        # bound is what introduced this; the two casts have to move together.
-                        #
-                        # The count subquery below repeats this ORDER BY deliberately. It counts what the
-                        # BOUND excludes, from the window the LIMIT admits — and the ORDER BY is what decides
-                        # which rows are in that window, which is the whole reason the two are coupled.
-                        # Without the LIMIT the ordering would genuinely not matter here; with it, it is
-                        # load-bearing. Change one and the other is wrong silently: the number just drifts.
+                        # ORDER BY casts too, and that is not redundant with the bound: casting only
+                        # inside the bound re-admits BLOB/non-numeric-TEXT rows (a BLOB of "100" IS a
+                        # plausible reading) but leaves them sorted RAW, and SQLite orders BLOB above
+                        # TEXT above every number — so the rows the bound rescued landed at rank 1.
+                        # The count subquery repeats this ORDER BY deliberately: it counts what the BOUND
+                        # excludes from the window the LIMIT admits, and the ORDER BY decides which rows
+                        # are in that window. Change one and the other is wrong silently.
                         \\ORDER BY CAST(${col} AS REAL) DESC, a.id DESC LIMIT ${(limit).to_str()}
                     ,
                     bindings: sport_binding,
@@ -805,19 +735,13 @@ ReportSessions :: [].{
                 if Output.json_mode!({})
                     Output.emit_ok!(rows)
                 else if List.is_empty(rows) and limit > 0 and !(Str.is_empty(sport_filter)) {
-                    # The hint has to know about the bound, or it states a falsehood. Its own
-                    # comment says an empty filtered result has "TWO honest explanations and
-                    # the hint must pick the right one"; the bound added a THIRD, and review
-                    # measured the result — two Swim rows at 250 and 20 bpm produced "2 'swim'
-                    # activities, but none with heart rate (hr) data" while both rows HAVE
-                    # heart-rate data. This is the function that once denied the existence of
-                    # runs while listing Run in the same sentence.
-                    # Note this count has NO LIMIT, unlike the one under the ranking table. The two
-                    # answer different questions and are allowed to disagree. Under a table, "N were
-                    # implausible" means "N would have been in the rows you are looking at" — scoped to
-                    # the window. Here there is no table, so the question is whether the sport has any
-                    # readings at all, and a limit would make the answer depend on a number the athlete
-                    # picked for a list that came back empty.
+                    # The hint has to know about the bound, or it states a falsehood: two Swim rows at
+                    # 250 and 20 bpm produced "2 'swim' activities, but none with heart rate (hr)
+                    # data" while both rows HAVE heart-rate data.
+                    # This count has NO LIMIT, unlike the one under the ranking table — different
+                    # questions. Under a table, "N were implausible" is scoped to the rows you are
+                    # looking at; here there is no table, so the question is whether the sport has
+                    # any readings at all.
                     n_excluded =
                         if Str.is_empty(bound) {
                             0
@@ -853,27 +777,15 @@ ReportSessions :: [].{
                         # continuation row.
                         List.map(rows, |r| [(if Str.is_empty(r.date) "-" else r.date), r.sport, val(r), r.name]),
                     ))?
-                    # ...and SAY how many the bound removed. `progress` counts what it hides
-                    # (#295, for #286), `activities` marks what it cannot rank (#290, and the `-` legend before it); the rule this
-                    # repo keeps arriving at is refuse the number, state the refusal. A
-                    # ranking that silently drops history the athlete has already seen has
-                    # the same "absence states something false" problem #286 is about.
+                    # ...and SAY how many the bound removed — refuse the number, state the refusal
+                    # (`progress` counts what it hides, `activities` marks what it cannot rank).
+                    # Only when the bound removed something, and only for a metric that HAS one.
                     #
-                    # Only when the bound actually removed something, and only for a metric
-                    # that HAS a bound — an empty `bound` can exclude nothing, so the count
-                    # is structurally 0 and the line never renders.
-                    # Scoped to THIS TABLE, not to the whole eligible set. The first cut
-                    # counted every row the bound removed from the database, printed under a
-                    # table holding `limit` rows — so `stride top hr 1` announced three
-                    # exclusions above a one-row leaderboard, and the DEFAULT `top hr` said
-                    # three while its ten rows were byte-identical with and without the
-                    # bound. With DESC ordering every low-side exclusion sorts below the
-                    # limit anyway, so the over-count was every ordinary invocation.
-                    #
-                    # What it measures now: of the rows this table WOULD have shown without
-                    # the bound, how many the bound removed. Same query, same limit, same
-                    # sport filter — only the bound differs, so the difference is exactly the
-                    # rows the reader lost.
+                    # Scoped to THIS TABLE, not the whole eligible set: counting every excluded row
+                    # in the database printed "3 implausible" above a one-row leaderboard, and with
+                    # DESC ordering every low-side exclusion sorts below the limit anyway. What it
+                    # measures: of the rows this table WOULD have shown without the bound, how many
+                    # the bound removed — same query, same limit, same filter, only the bound differs.
                     excluded =
                         if Str.is_empty(bound) {
                             0
@@ -886,12 +798,9 @@ ReportSessions :: [].{
                             })?
                         }
                     if excluded > 0 {
-                        # No hardcoded bound and no claim about other commands. The first
-                        # version said "outside 35-220, which `progress` and `activity` also
-                        # refuse" — the numbers were written out six lines below a comment
-                        # boasting the derivation does not repeat them, and the cross-command
-                        # claim was false for a BLOB row that `activity` accepts. It names
-                        # what it did and where the rule lives.
+                        # No hardcoded bound and no claim about other commands: the numbers live in the
+                        # derivation, and a cross-command claim was false for a BLOB row `activity`
+                        # accepts. It names what it did and where the rule lives.
                         Stdout.line!("\n${I64.to_str(excluded)} of this ranking's ${header} readings were implausible and are not shown")
                     } else {
                         Ok({})
@@ -961,25 +870,16 @@ ReportSessions :: [].{
 
         }
     # "am I improving on THIS workout?" — anchored on a date, rendered through the
-    # sport-aware lens each repeated workout supports (power->EF, distance->speed/HR,
-    # rated strength->RPE). Bare `progress` uses your latest analyzed workout.
+    # sport-aware lens (power->EF, distance->speed/HR, rated->RPE). Bare `progress`
+    # uses the latest analyzed workout.
     # ── rep-level comparison (#149) ──────────────────────────────────────
-    #
-    # `progress` compares whole SESSIONS; this compares the reps inside them.
-    # The anchor is a session with detected work blocks (#95/#171); comparables
-    # are earlier sessions of the same sport family whose block structure has
-    # the SAME SHAPE — same rep count, same duration band — because "3x12min"
-    # and "5x3min" are different workouts even on the same bike, and averaging
-    # them together would answer no question anyone asked.
-    #
-    # Comparability follows #160's rule — fixed bands, so it stays symmetric —
-    # at REP scale: Metrics.rep_duration_band, because the session bands are
-    # 20-to-120 minutes wide and would call a 3x2min VO2 set and a 3x17min tempo
-    # block the same workout.
-    #
-    # Everything emitted is a measurement (#154): per-rep watts and HR, the
-    # first-to-last fade within a session, and the rep count. Whether a fade is
-    # "too much" is the coach's call.
+    # `progress` compares whole SESSIONS; this compares the reps inside them. The
+    # anchor is a session with detected work blocks (#95/#171); comparables are
+    # earlier same-family sessions whose block structure has the SAME SHAPE — same
+    # rep count, same duration band (`Metrics.rep_duration_band`, since session bands
+    # are 20-120 min wide) — because "3x12min" and "5x3min" are different workouts.
+    # Everything emitted is a measurement (#154): per-rep watts/HR, first-to-last
+    # fade, rep count. Whether a fade is "too much" is the coach's call.
     reps! : Str => Try({}, _)
     reps! = |date_arg| {
         path = Db.open_db!({})?
@@ -1023,21 +923,12 @@ ReportSessions :: [].{
                 else
                     Output.err_out!("no_intervals_on_date", "no detected interval structure on ${date_arg} — the ride may have been continuous, or its streams are missing")
             Ok(a) => {
-                # REFUSES, for the reason the comparables comment below states as an
-                # invariant: the ANCHOR always keeps its row. It does not, if its date is
-                # unreadable. The comparables query filters on
-                # `a2.start_local <= self.start_local`, which is NULL — and therefore false —
-                # for every candidate including the anchor itself, so the screen answers
-                # "0 of 0 matched sessions are themselves this repeated shape" over a
-                # database that holds one. A confident zero that is really "the SQL
-                # comparison was NULL for everything" is worse than a refusal, and it breaks
-                # a property this file spends a paragraph promising.
-                #
-                # Narrow but reachable, and NARROWER since #255: the ordering is now an
-                # explicit rankability flag rather than NULL semantics, so it also covers
-                # non-NULL unreadable rows the old clause let win. The unreadable row
-                # therefore wins only when it is the sole work-segmented session — one
-                # analyzed ride on a fresh database, which is a state people are actually in.
+                # REFUSES, because the comparables invariant is "the ANCHOR always keeps its
+                # row" — and it does not, if its date is unreadable: `a2.start_local <=
+                # self.start_local` is NULL-false for every candidate including the anchor, so
+                # the screen answers a confident "0 of 0 matched" over a database that holds one.
+                # Narrow but reachable: the unreadable row wins only when it is the sole
+                # work-segmented session — one analyzed ride on a fresh database.
                 _ = (Metrics.usable_date_days(a.date)).map_err(|_| BadActivityDate(a.date, a.id))?
                 # The anchor must itself BE a repeated shape before anything can
                 # share it. The old rule printed "3x11:58" over sessions whose
@@ -1045,17 +936,12 @@ ReportSessions :: [].{
                 # spread, and with rep count already fixed, a mean band is
                 # arithmetically just a total-work-time band.
                 band = Metrics.rep_duration_band(a.mean_dur)
-                # The ANCHOR must be a repeated shape or there is nothing to
-                # compare against: a session whose blocks run 2187/67/250s has
-                # the same mean as a real 3x12 and is not a repeated set at all.
-                # Candidates are NOT filtered on this — each reports its own
-                # spread and the coach judges (#154). 1.6x is the one judgment
-                # the engine makes, and only about the question it was asked. It
-                # was 1.4x, which refused a session (9:43-13:42) that this very
-                # ranking placed second-most-comparable in the whole history —
-                # the engine calling one ride "comparable enough to show you"
-                # and "not repeated enough to be a workout" in the same breath.
-                # 1.6x still excludes everything from 2.1x up.
+                # The ANCHOR must be a repeated shape or there is nothing to compare against: a
+                # session whose blocks run 2187/67/250s has the same mean as a real 3x12 and is
+                # not a repeated set. Candidates are NOT filtered on this — each reports its own
+                # spread and the coach judges (#154). 1.6x, up from 1.4x, which refused a session
+                # this very ranking placed second-most-comparable — "comparable enough to show
+                # you" and "not repeated enough to be a workout" in the same breath.
                 anchor_uniform = Metrics.is_uniform_reps(a.min_dur, a.max_dur)
                 if !(anchor_uniform) {
                     Output.err_out!("irregular_anchor", "the blocks detected in this session vary too much to be one repeated shape (${(a.min_dur).to_str()}s to ${(a.max_dur).to_str()}s, and an anchor's blocks must sit within ${Render.fmt1(Metrics.anchor_uniformity_max)}x of each other) — nothing to compare it against as a repeated workout")
@@ -1177,21 +1063,12 @@ ReportSessions :: [].{
                         Ok({ ordinal, dur_s, avg_signal, signal, avg_hr, hr_known: hr_known != 0, rec_drop, rec_drop_known: rec_drop_known != 0 })
                     },
                 })
-                # selection ranked by uniformity, DISPLAY by date — the coach
-                # reads a trend down the page, not a ranking
-                # Str has no ordering in this Roc — sort on parsed day numbers.
-                #
-                # GUARDED, and the guard produces the key rather than sitting beside it
-                # (#270). This was `.ok_or(0)`, which collapses an unreadable comparable to
-                # the epoch and heads the by-date table with it — so `reps` refused an
-                # unreadable ANCHOR date and absorbed an unreadable COMPARABLE one, in the
-                # same screen, after a change whose whole subject is that distinction. The
-                # WHERE clause excludes NULLs by accident (`a2.start_local <= self.start_local`
-                # is NULL-false) but not a poisoned date that sorts at or below the anchor.
-                #
-                # One expression, so the guard's domain IS the sort key's domain. Two
-                # expressions that must agree about which dates are usable is the seam #243
-                # spent its last three rounds closing.
+                # selection ranked by uniformity, DISPLAY by date — the coach reads a trend down
+                # the page. Str has no ordering in this Roc, so sort on parsed day numbers.
+                # GUARDED, and the guard produces the key rather than sitting beside it (#270):
+                # `.ok_or(0)` collapsed an unreadable comparable to the epoch and headed the
+                # by-date table with it. One expression, so the guard's domain IS the sort key's
+                # domain.
                 keyed = List.map_try(sessions, |sn|
                     (Metrics.usable_date_days(sn.date))
                         .map_err(|_| BadActivityDate(sn.date, sn.id))
@@ -1221,13 +1098,11 @@ ReportSessions :: [].{
                         rep_count: sn.reps,
                         mean_signal: sn.mean_w,
                         mean_dur_s: sn.mean_dur,
-                        # the spread of THIS session's reps. The filter finds
-                        # candidates by count and scale; whether a session whose
-                        # reps run 588s to 1232s is "the same workout" as an even
-                        # 3x12 is judgment, so stride reports the dispersion and
-                        # the coach decides (#154). The anchor is gated on it —
-                        # a session with no consistent shape has nothing to be
-                        # compared AS — but a candidate is only described.
+                        # the spread of THIS session's reps. The filter finds candidates by count and
+                        # scale; whether a 588-1232s spread is "the same workout" as an even 3x12 is
+                        # judgment, so stride reports the dispersion and the coach decides (#154). The
+                        # anchor is gated on it — no consistent shape means nothing to be compared AS —
+                        # but a candidate is only described.
                         min_dur_s: sn.min_dur,
                         max_dur_s: sn.max_dur,
                         uniformity: if sn.min_dur > 0 (sn.max_dur).to_f64() / (sn.min_dur).to_f64() else 0.0,
@@ -1281,16 +1156,11 @@ ReportSessions :: [].{
                         Ok({ d, name, id })
                     },
                 })?
-                # The sixth site in this file, and it was missed twice — once by the issue,
-                # which counted five, and once by me. `ORDER BY ... DESC` puts NULLs LAST, so
-                # this only surfaces when the unreadable row is the only scored activity,
-                # which is why it hides.
-                #
-                # COALESCE here is what stops the decode crashing; the guard is what stops
-                # the empty string becoming an anchor. Both are needed and they are not the
-                # same fix: `:date` bound to `''` matches no row, so `progress` would answer
-                # `no_scorable_workouts` on a database that holds scored workouts — a silent
-                # zero standing in for "the date could not be read".
+                # The sixth site in this file (the issue counted five). `ORDER BY ... DESC` puts
+                # NULLs LAST, so this only surfaces when the unreadable row is the only scored
+                # activity — which is why it hides. COALESCE stops the decode crashing; the guard
+                # stops the empty string becoming an anchor (`:date` bound to `''` matches no
+                # row, so `progress` would answer `no_scorable_workouts` over scored workouts).
                 _ = List.map_try(latest, |r| (Metrics.usable_date_days(r.d)).map_err(|_| BadActivityDate(r.d, r.id)))?
                 match List.first(latest) {
                     Ok(r) => r.d
@@ -1337,21 +1207,13 @@ ReportSessions :: [].{
                 Ok({ name, date: row_date, sport, distance_m, moving_time, np_w, avg_hr, avg_hr_scored, rpe, output_kj, tss, load_model, decoupling_pct: dpct, decoupling_known: dknown == 1, id: row_id })
             },
         })?
-        # REFUSES, because `progress` does not list dates — it computes a TREND across them,
-        # and an unreadable date does not go missing, it becomes a POSITION.
-        # `ORDER BY a.name, a.start_local` sorts the empty string FIRST, so the best and most
-        # recent session is relocated to be the earliest. Measured on one database, same rows,
-        # only the date NULLed: the verdict moved from "improving (28%)" to "improving (19%)"
-        # and a new line appeared reading `best: 1.49 ()`. Every number in that output is
-        # real; the conclusion is wrong; nothing marks it; exit 0. On origin/main this
-        # command answered `internal_error`, so reporting the row would have converted a loud
-        # failure into a quiet fabrication — the exact trade #249 exists to stop.
-        #
-        # `""` looked defensible while the date was a CELL. It is not, once the cell is an
-        # ordering key: a position has no empty rendering. It is also already taken —
-        # SKILL.md documents `'' = none on record` for `last_hard_session_date`, so the one
-        # documented consumer reads an empty date as "no such thing exists" and would now
-        # also have to read it as "exists, date unreadable", with nothing to separate them.
+        # REFUSES, because `progress` computes a TREND across dates — an unreadable date
+        # does not go missing, it becomes a POSITION. `ORDER BY a.name, a.start_local`
+        # sorts the empty string FIRST, relocating the newest session to the earliest
+        # slot: measured, the verdict moved from "improving (28%)" to "improving (19%)"
+        # with `best: 1.49 ()` — every number real, conclusion wrong, exit 0. `""` is
+        # also taken: SKILL.md documents `'' = none on record` for
+        # `last_hard_session_date`, so an empty date already means "no such thing".
         _ = List.map_try(prows, |r| (Metrics.usable_date_days(r.date)).map_err(|_| BadActivityDate(r.date, r.id)))?
         labeled =
             List.keep_oks(Metrics.group_progress(prows), |g| Metrics.anchor_filter(g, date))
@@ -1370,52 +1232,27 @@ ReportSessions :: [].{
             # `all_days` is every session in the group BEFORE the lens filter, so the gap
             # marker can be folded over the real chronology rather than over what survived.
             all_days = List.keep_oks(g.rows, |r| Metrics.date_str_to_days(r.date))
-            # `hidden` counts everything the reader cannot see, from BOTH gates. It used to be
-            # `List.len(g.rows) - List.len(kept)`, which measured only the lens filter — and
-            # `g.rows` has already been truncated by `anchor_filter`, so a group scoped down
-            # from 29 rows to 1 reported `hidden: 0` and printed "first session of this
-            # workout, nothing to compare against yet". Counting from `g.total` is what makes
-            # "zero means this is the whole history" a true sentence rather than a hopeful one.
+            # `hidden` counts everything the reader cannot see, from BOTH gates. Counting
+            # `g.rows - kept` measured only the lens filter, and `g.rows` is already
+            # scope-truncated — so a group scoped from 29 rows to 1 reported `hidden: 0` and
+            # printed "first session of this workout". `g.total` is what makes "zero means
+            # the whole history" true rather than hopeful.
             scope_dropped = g.total - List.len(g.rows)
             lens_dropped = List.len(g.rows) - List.len(kept)
-            # No reason string is derived here any more. `hidden_reason` used to be: one
-            # string combining both causes, with a plural rule picking `need` or `needs` on
-            # the lens count. #286 retired it.
-            # Once an unscorable row is RENDERED, the two causes stop being two reasons for
-            # one outcome and become two different outcomes — a scope drop is hidden, a lens
-            # drop is shown without a score — so a single sentence counting them together is
-            # wrong about the half the reader can now see.
-            #
-            # The paragraph that stood here — "the REASON is derived here, where both causes
-            # are still distinguishable" — described that retired code, and the correction was
-            # first inserted BENEATH it rather than replacing it, leaving both. Its surviving
-            # half, that the lens wording names what the lens REQUIRES rather than which field
-            # is missing, now lives with the words themselves in `Metrics.lens_needs`.
-            #
-            # What that logic protected is not lost: the number agreement moved into
-            # `Metrics.lens_needs`, which `Render` calls with the count it is actually
-            # describing. One definition instead of two — and NOT, as an earlier version of
-            # this sentence said, what stops the payload's wording and the human line's from
-            # drifting apart: the payload has no wording. That claim was retracted where
-            # `lens_needs` is defined and left standing here, so the two files contradicted
-            # each other about the same function. Fixed where it was demonstrated rather
-            # than where it lives, which is the shape this branch keeps repeating.
-            #
-            # The PAYLOAD is untouched by any of this. `hidden`, `hidden_lens` and
-            # `hidden_scope` mean exactly what they meant, because `sessions[]` still holds
-            # only scored rows and an agent reading it genuinely cannot see the others.
+            # No reason string is derived here any more — `hidden_reason` (one string, both
+            # causes) retired with #286. Once an unscorable row RENDERS, the two causes are
+            # two different outcomes: a scope drop is hidden, a lens drop is shown without a
+            # score, so one sentence counting them together is wrong about the half the
+            # reader can see. The lens wording lives in `Metrics.lens_needs`, called with the
+            # count it describes. The PAYLOAD is untouched: `sessions[]` still holds only
+            # scored rows, so `hidden`/`hidden_lens`/`hidden_scope` mean what they meant.
             hidden = scope_dropped + lens_dropped
-            # `display_rows` is the group AFTER the scope gate but BEFORE the lens gate, and
-            # it exists so the human table can show a ride the lens cannot score instead of
-            # deleting it. Three of `Ef`'s six columns — np, kJ, load — were computed for
-            # those rows and thrown away, which is the half of #286 the counting note did
-            # not address: the reader was told a number was withheld, not given back the
-            # values that never needed a heart rate.
-            #
-            # The PAYLOAD keeps `rows: kept`. `sessions[]` is what the coaching agent trends
-            # over, an unscored row has no score to trend, and `hidden_lens` already tells it
-            # how many and why. So the two surfaces stay in step on the COUNT and differ only
-            # in what they do with it, which is the split the human note below is worded for.
+            # `display_rows` is the group AFTER the scope gate but BEFORE the lens gate — the
+            # human table shows a ride the lens cannot score instead of deleting it. Three of
+            # `Ef`'s six columns (np, kJ, load) were computed for those rows and thrown away.
+            # The PAYLOAD keeps `rows: kept`: `sessions[]` is what the agent trends over, an
+            # unscored row has no score to trend, and `hidden_lens` already says how many and
+            # why — the two surfaces agree on the COUNT and differ in what they do with it.
             if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, lens, rows: kept, display_rows: g.rows, scope_why: g.scope_why, anchor_ok, all_days, hidden, scope_dropped, lens_dropped })
         }
         scored = List.keep_oks(labeled, |g|
@@ -1426,25 +1263,18 @@ ReportSessions :: [].{
                 Unscorable => Err(Skip)
             })
         # Did the session we anchored on survive its own lens? keep_scored drops rows the
-        # lens can't score, and the anchor is not exempt — a ride with no HR vanishes from a
-        # speed/HR group while its older siblings remain. The group is then non-empty, so the
-        # unscorable branch below never fires and the table renders as if nothing were wrong,
-        # with a trend computed entirely from sessions the athlete did not ask about.
-        #
-        # Counted PER GROUP, not "any group still has the date": anchor_filter drops every
-        # group that lacks the anchor, so each labeled group starts with one. A date holding
-        # two workouts therefore makes two groups, and asking only whether SOME group kept
-        # the date lets a surviving group mask a sibling that lost its anchor — or was
+        # lens can't score, and the anchor is not exempt — the group is then non-empty, so
+        # the unscorable branch never fires and the table renders a trend computed
+        # entirely from sessions the athlete did not ask about.
+        # Counted PER GROUP: a date holding two workouts makes two groups, and "some group
+        # kept the date" lets a surviving group mask a sibling that lost its anchor or was
         # dropped whole. Equality against the labeled count catches both.
-        # Both failure modes: a whole group dropped (count mismatch), or a group that
-        # survived while the row we anchored on did not.
         anchor_kept = List.len(scored) == List.len(labeled) and List.all(scored, |g| g.anchor_ok)
-        # The two ways the anchor can fail to be SCORED are now two different outcomes for
-        # the reader, so the banner can no longer treat them as one. A lens refusal leaves
-        # the row in `display_rows`, visible with its lens cells blank; a skipped group
-        # leaves nothing at all. `anchor_scored` in the payload keeps meaning exactly what
-        # it meant — whether a score exists — which is why this split lives here and not in
-        # the flag (#286).
+        # The two ways the anchor can fail to be SCORED are two different outcomes now: a
+        # lens refusal leaves the row visible in `display_rows` with blank lens cells; a
+        # skipped group leaves nothing at all. `anchor_scored` in the payload keeps
+        # meaning "does a score exist", which is why this split lives here, not in the
+        # flag (#286).
         anchor_group_dropped = List.len(scored) != List.len(labeled)
         if List.is_empty(scored) {
             if Str.is_empty(date) {
@@ -1482,24 +1312,18 @@ ReportSessions :: [].{
                     # agent reads. A group holding one session with `hidden: 10` is not a
                     # workout done once (#292).
                     hidden: g.hidden,
-                    # ...and its two causes, because they license OPPOSITE actions and the
-                    # single integer cannot separate them. Review decomposed all 693 real
-                    # groups: 265 notes are pure lens, 16 pure scope, 35 BOTH — and on those
-                    # 35 the loss is severe (`Morning Ride (~44.5 km rides)` hides 28, of
-                    # which 27 are scope and 1 is lens, indistinguishable from a group hiding
-                    # 10 that are all lens). A lens drop is fixable at the source — wear the
-                    # strap, rate the session; a scope drop is not fixable and is not even
-                    # about the same slice of training. Split in the PAYLOAD only: the human
-                    # line keeps one number because two would read worse, and the payload is
-                    # where anyone branches.
+                    # ...and its two causes, because they license OPPOSITE actions: a lens drop is
+                    # fixable at the source (wear the strap, rate the session); a scope drop is not,
+                    # and is not even about the same slice of training. On real data 35 groups hide
+                    # both kinds at once, indistinguishable through one integer. Split in the PAYLOAD
+                    # only — the human line keeps one number because two read worse, and the payload
+                    # is where anyone branches.
                     hidden_lens: g.lens_dropped,
                     hidden_scope: g.scope_dropped,
-                    # scores/trends upstream are computed on chronological rows; the sort
-                    # only changes the ORDER sessions are listed in
-                    # progress sessions carry NO power_known/hr_known: rows exist only
-                    # because the group's LENS scored them, so the lens signal is present
-                    # by construction; np_w/avg_hr here are auxiliary display fields where
-                    # 0 = absent per the global rule (see Output.roc contract).
+                    # scores/trends upstream are computed on chronological rows; the sort only changes
+                    # the ORDER sessions are listed in. progress sessions carry NO power_known/hr_known:
+                    # rows exist only because the group's LENS scored them, so the signal is present by
+                    # construction; np_w/avg_hr are auxiliary display fields, 0 = absent.
                     sessions: List.map((match sort { Asc => g.rows Desc => Render.reverse_list(g.rows) }), |r| {
                         date: r.date,
                         sport: r.sport,

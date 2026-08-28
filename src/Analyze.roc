@@ -424,27 +424,16 @@ Analyze :: [].{
         \\${e_aw} AS s_aw, ${e_ahr} AS s_ahr, ${e_waw} AS s_waw,
         \\${e_re} AS s_re, ${e_dw} AS s_dw, ${e_slen} AS s_slen
 
-    # The activity inputs a metrics row was computed from, compared VALUE BY VALUE — the
-    # same contract as `ftp_used`, which stores the FTP it used rather than a summary of it.
-    # A changed input makes the stored value stale, so the row rescores.
+    # The activity inputs a metrics row was computed from, compared VALUE BY VALUE —
+    # the same contract as `ftp_used`. A changed input rescores the row; this is why
+    # `sync` does NOT delete metrics (invalidating there wiped a month per run, since
+    # sync cannot tell an edit from a no-op).
     #
-    # This is why `sync` does NOT delete metrics: it re-lists a rolling 30-day window every
-    # run and cannot cheaply tell an edit from a no-op, so invalidating there wiped a month
-    # of metrics per sync. Comparing stored inputs here costs nothing extra — analyze
-    # already runs this predicate — and it is the same mechanism the other inputs use.
-    #
-    # A hash was tried and rejected: with additive coefficients a +7s duration and a -1m
-    # distance cancel exactly, so a real Strava edit produced an identical signature and
-    # never rescored. That failure is silent, which is the worst kind. Comparing the values
-    # themselves cannot collide, and a human debugging a stale row can read them.
-    #
-    # A composed string key was also tried, and an abort was blamed on it at the time. That
-    # blame was wrong: SQL string concatenation later ran 3,000 statements clean (#114), so
-    # the abort was bug C (#105) surfacing nearby rather than anything this query did. The
-    # hash collision above is the real reason to compare values, and it is sufficient.
-    #
-    # `synced_at` is deliberately absent: it changes every sync by design, so including it
-    # would mark every row stale, which is the bug this exists to fix.
+    # A hash was tried and rejected: with additive coefficients a +7s duration and a
+    # -1m distance cancel exactly, so a real edit produced an identical signature and
+    # never rescored — silently. Values cannot collide, and a human debugging a stale
+    # row can read them. `synced_at` is deliberately absent: it changes every sync by
+    # design, so including it would mark every row stale.
     inputs_changed_sql =
         \\   COALESCE(m.mt_used,-1) <> ${e_mt}
         \\OR COALESCE(m.dist_used,-1) <> ${e_dist}
@@ -497,31 +486,18 @@ Analyze :: [].{
         Ok(if n < 0 0 else (n).to_u64_wrap())
     }
     # ── per-sport HR zones ───────────────────────────────────────────────
-    # HR zones default to one global set (hr_z*_max) but can be overridden per sport
-    # (hr_z*_max_<sport>) — a rowing Z2 ceiling need not equal a running one. The whole
-    # config table is read ONCE (query_many cleanly handles 0+ rows) and resolution is
-    # then PURE. This deliberately avoids a per-key Sqlite.query! on the many OPTIONAL,
-    # usually-ABSENT per-sport keys: Sqlite.query! on a row that does not exist returns
-    # Err(NoRowsReturned), which would fail the whole command on the first missing
-    # override. Measured on 0.21 and still true on the current 0.22 pin, so the design
-    # does not hinge on a version. (An earlier note called it a SIGABRT in
-    # hosted_sqlite_prepare; that was alpha4/0.20 and no longer reproduces — #114.) The four REQUIRED
-    # global hr_z*_max keys are still read via Db.config_opt! in load_zone_config!, but
-    # they're normally present, so that zero-row path isn't exercised there.
-    #
+    # HR zones default to one global set (hr_z*_max) with per-sport overrides
+    # (hr_z*_max_<sport>). The whole config table is read ONCE and resolution is then
+    # PURE — a per-key Sqlite.query! on the many usually-absent per-sport keys returns
+    # Err(NoRowsReturned) and would fail the command on the first missing override.
     # Each sport's zone SIGNATURE is frozen for the invalidation CASE; per-row scoring
-    # re-resolves bounds from the same in-memory config. No circular dependency like
-    # FTP has.
-    # Validated at the LOAD boundary rather than at each read. `cfg_f64` below is pure
-    # and total by design -- an ABSENT per-sport key must fall back to the global
-    # ceiling, which is the whole reason it takes a fallback. But an UNREADABLE one must
-    # not take that path: silently using the global value means the athlete's per-sport
-    # zones are ignored with nothing to see, the same trap as #206's coalesced offset.
+    # re-resolves bounds from the same in-memory config.
     #
-    # Checking here keeps the fallback total and still refuses the bad value: one pass
-    # over the rows we already fetched, at the only place that can return an error
-    # anyway. Threading Try through resolve_zones_pure was the alternative and it makes
-    # four pure call sites effectful to report a condition this catches once.
+    # Validated at the LOAD boundary rather than at each read: `cfg_f64` is pure and
+    # total (an ABSENT per-sport key must fall back to the global ceiling), but an
+    # UNREADABLE one must not take that path — silently using the global value ignores
+    # the athlete's per-sport zones with nothing to see, the #206 trap. Checking here
+    # keeps the fallback total and still refuses the bad value.
     load_config! : Str => Try(List((Str, Str)), _)
     load_config! = |path| {
         pairs = load_config_raw!(path)?
@@ -628,59 +604,30 @@ Analyze :: [].{
         watts_raw = if row.dw Streams.stream_pairs(streams.time, streams.watts) else []
         watts_pairs = List.keep_if(watts_raw, |p| Metrics.valid_watts(p.v))
 
-        # The in-band mean of the stream, which is the number the SCORING lenses divide by
-        # when it exists (#311). `hr_pairs` is already `valid_hr`-filtered, so this is a mean
-        # over exactly the samples the engine believes — dropout and sensor-dead stretches
-        # are gone rather than averaged in, which is the whole failure this addresses: a
-        # session storing 86.4 whose own stream means 147.7 across 42% dropout.
+        # The in-band mean of this session's HR stream — the number the SCORING lenses
+        # divide by when it exists (#311). `hr_pairs` is already `valid_hr`-filtered, so
+        # dropout and dead-sensor stretches are gone rather than averaged in (the failure
+        # this addresses: a session storing 86.4 whose own stream means 147.7).
         #
-        # NULL, never 0.0, when there is nothing to average: 0.0 is not a possible heart rate
-        # but it IS what `COALESCE(...,0)` produces at every read site, so a stored 0 would be
-        # indistinguishable from "no stream" only by accident. Absence stays absence.
+        # NULL, never 0.0, when there is nothing to average: 0.0 is what `COALESCE(...,0)`
+        # produces at every read site, so a stored 0 would collide with "no stream".
+        # An UNWEIGHTED mean — `time_in_zones` gap-weights the same list; measured across
+        # all 672 streams the two differ by at most 2.58 bpm. The LOAD LADDER never sees
+        # this value: `tss_ladder` reads `input.avg_hr`, filled from the STORED summary
+        # (verified behaviourally — daily_load byte-identical across a full re-analyze).
         #
-        # An UNWEIGHTED mean, unlike `time_in_zones`, which walks the same `hr_pairs` weighting
-        # each sample by the gap to the next with a 30 s cap. Measured across all 672 streams,
-        # the two differ by at most 2.58 bpm and by more than 1 bpm on ten of them, so the
-        # choice is not load-bearing — but the two ARE different estimators over one list, and
-        # a reader comparing this line against the zone walk should not have to discover that.
-        #
-        # The LOAD LADDER never sees this value, and the reason is not the one first written
-        # here. That argument said `hr_avg` fires only when zone seconds are zero, which means
-        # no usable samples, which means no mean to prefer — and it is false: `time_in_zones`
-        # accumulates the gap BETWEEN consecutive samples, so a one-sample stream yields zero
-        # zone seconds while this mean is perfectly well defined. Review planted one and the
-        # ladder took `hr_avg` with `avg_hr_stream` populated beside it. The true reason is
-        # narrower and firmer: `tss_ladder` reads `input.avg_hr`, which is filled from the
-        # STORED summary and is not touched here. Verified behaviourally rather than argued —
-        # analyzing the same 738 activities before and after leaves `activity_metrics`
-        # byte-identical on every column but this one, and `daily_load` byte-identical
-        # outright. No TSS, CTL, ATL or form verdict moves.
-        # ...and it is NULL unless the surviving samples span AT LEAST HALF the session. A mean over
-        # unrepresentative samples is the same bug this column exists to fix, moved one table
-        # over — and without this gate it lands harder, because nothing downstream can see it.
-        # Measured on the real database: of the three sessions whose stored average is
-        # impossible, one kept 563 of 2688 samples spanning t=14..576 of a 2700 s row. Its
-        # "in-band mean" is the mean of the first nine minutes before the strap died, and at
-        # 84.8 bpm it is plausible enough that no bound would ever question it. Admitting it
-        # replaced a 1.385 EF outlier with a 1.400 one in #305's own headline example.
-        #
-        # SPAN and not sample COUNT, which was the first version and conflates two different
-        # things. A stream sampled every five seconds keeps a fifth of a session's worth of
-        # samples with a perfectly healthy strap; on the real data 15 of the 17 rows a count
-        # ratio would have refused are exactly that, and their stream mean agrees with the
-        # stored average to within a couple of bpm. Span separates them: a sparse stream still
-        # covers the session, a dead strap covers a prefix.
-        #
-        # The threshold sits in a gap, not on a guess. The surviving spans on the real data
-        # are 0.003, 0.20 and 0.24 for the three broken straps, and 0.58 upward for the eleven
-        # sessions this column exists to rescue. Nothing lands between 0.25 and 0.58.
-        # The denominator is the LONGER of the session's moving time and the stream's own
-        # extent, not moving time alone. `moving_time` excludes stops while stream timestamps
-        # are elapsed, so a stop-heavy session divides a long span by a short session and the
-        # ratio inflates. Measured: 35 of 672 streams run longer than their moving time, by up
-        # to 1.198x, which drops the effective floor to about 0.42 — small here, and larger for
-        # an outdoor rider who stops for coffee. Taking the max costs nothing on the truncation
-        # case this gate is for, where the surviving span is the SHORT side either way.
+        # ...and NULL unless the surviving samples SPAN at least half the session — a mean
+        # over unrepresentative samples is the same bug this column fixes, moved one table
+        # over. The worst dropout keeps a contiguous PREFIX (the warm-up before the strap
+        # died): one session kept samples spanning t=14..576 of 2700 s whose mean, 84.8,
+        # is plausible enough that no bound would question it. SPAN, not sample COUNT —
+        # a 5-second cadence keeps a fifth of the samples with a healthy strap, and 15 of
+        # the 17 rows a count ratio refuses are exactly that. The threshold sits in a
+        # measured gap: broken straps span 0.003-0.24, rescued sessions 0.58 up.
+        # The denominator is the LONGER of moving time and the stream's own extent:
+        # moving_time excludes stops while stream timestamps are elapsed, so a stop-heavy
+        # session would inflate the ratio (35 of 672 streams run longer than moving time,
+        # up to 1.198x).
         hr_extent =
             match (List.first(hr_raw), List.last(hr_raw)) {
                 (Ok(f), Ok(l)) => l.t - f.t
@@ -1035,66 +982,41 @@ Analyze :: [].{
                 Ok({ day, t, example_id })
             },
         })?
-        # keep only rows whose date is CANONICAL and parses. Deriving the walk bounds from
-        # these VALID days (not blindly from the first/last row) avoids the trap where a
-        # single malformed start_local defaulted to epoch-day 0 and walked from 1970.
+        # keep only rows whose date is CANONICAL and parses; walk bounds derive from the
+        # VALID days, so one malformed start_local cannot walk the series from 1970.
         #
-        # is_canonical_date as well as the parse, and this is the site where that matters
-        # most in the whole tree, because this one WRITES. `date_str_to_days` alone accepts
-        # "2026-3-05T", "2026-08-9T" and "2026-8-05T" — and the day this fold produces is
-        # then written back through days_to_date_str, so it lands in daily_load looking
-        # perfectly canonical. Review measured it: analyze reported converged: true, wrote
-        # 2026-03-05 from '2026-3-05T10:00:00Z', and summary and compare then reported over
-        # it at exit 0 while season refused the same activity. In one case the walk also ran
-        # from March, producing 173 rows off one malformed date.
-        #
-        # No downstream guard can catch that. Report.canonical_day checks daily_load.day,
-        # and by the time the value reaches daily_load it has already been laundered into a
-        # real-looking date. The guard has to be here, upstream of the write.
+        # is_canonical_date as well as the parse, because this site WRITES:
+        # `date_str_to_days` alone accepts '2026-3-05T…', and the day is written back
+        # through days_to_date_str, landing in daily_load laundered into a perfectly
+        # canonical-looking date no downstream guard can catch. The guard has to be here,
+        # upstream of the write.
         by_day = List.fold(
             day_rows,
             Dict.empty(),
-            # calls usable_day rather than restating it. One predicate written twice in one
-            # function is the hazard Report.roc's guard comment warns about, at the smallest
-            # possible scale: a day excluded here but not counted `unusable` is dropped
-            # silently — the #243 bug itself — and one accepted here but counted `unusable`
-            # makes the run refuse over data it did use. They agreed only because both were
-            # typed correctly, and nothing held them together.
+            # calls usable_day rather than restating it: a day excluded here but not counted
+            # `unusable` is dropped silently (the #243 bug itself), and one accepted here but
+            # counted `unusable` makes the run refuse over data it did use.
             |dict, r|
                 match Metrics.usable_date_days(r.day) {
                     Ok(d) => Dict.insert(dict, d, r.t)
                     Err(_) => dict,
                 }
         )
-        # Every row this fold could NOT use, kept rather than discarded. Dropping one
-        # silently is the same defect as everything else in #243, and it is the LIKELY
-        # shape: one bad date among many, not all of them. Review measured it — ten good
-        # activities plus one unreadable gave `converged: true` and `computed: 11` beside
-        # ten days of load, two numbers in one payload disagreeing with nothing to say so.
-        # The walk still runs and still writes what it could read, because a correct
-        # partial series beats no series; then the run refuses, naming the row, so the
-        # incompleteness is stated rather than left for `season` to discover.
+        # Every row the fold could NOT use, kept rather than discarded — one bad date
+        # among many is the LIKELY shape. The walk still writes what it could read (a
+        # correct partial series beats no series), then the run refuses NAMING the row, so
+        # the incompleteness is stated rather than left for `season` to discover.
         unusable = List.keep_if(day_rows, |r| !(Metrics.is_usable_date(r.day)))
         valid_days = Dict.keys(by_day)
         walked = match List.first(valid_days) {
-            # Nothing to walk. TWO different facts arrive here and they need different
-            # answers, which is what the single `Ok({})` that used to sit here got wrong.
-            #
-            # `day_rows` EMPTY means there is nothing scored yet — a fresh database, or one
-            # whose metrics have not been computed. Clear and succeed: daily_load is a pure
-            # function of what was scored, and leaving a stale series behind is what let a
-            # poisoned row survive `analyze` while every reader refused on it, each naming
-            # `stride analyze` as the remedy. That was a loop at exit 0, reporting
-            # `converged: true` forever.
-            #
-            # `day_rows` NON-EMPTY with no parseable day is a different fact: rows exist and
-            # not one of their dates could be read. Clearing there is still correct for the
-            # table, but answering `converged: true` is not — the engine holds activities,
-            # has scored them, and would then tell the athlete "no scored training days
-            # yet ... run `stride sync` then `stride analyze`" while `stats` reports their
-            # sessions and kilometres in the same breath. Review measured exactly that, and
-            # it is the same defect one layer down: a remedy that cannot work. So it names
-            # the row instead, through the error this PR added for it.
+            # Nothing to walk — but TWO different facts arrive here. `day_rows` EMPTY means
+            # nothing scored yet: clear and succeed (daily_load is a pure function of what was
+            # scored, and a stale series left behind is what let a poisoned row survive
+            # `analyze` while every reader refused on it, a loop at exit 0). `day_rows`
+            # NON-EMPTY with no parseable day is different: the engine holds scored
+            # activities, and answering `converged: true` would tell the athlete "no scored
+            # training days yet" while `stats` reports their sessions in the same breath — so
+            # it names the row instead.
             Err(_) => Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM daily_load", bindings: [] })
             Ok(seed) => {
                 bounds = List.fold(valid_days, { lo: seed, hi: seed }, |b, d| { lo: (b.lo).min(d), hi: (b.hi).max(d) })

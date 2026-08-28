@@ -37,18 +37,14 @@ Metrics :: [].{
             |acc, s| resample_step(acc, s, mode),
         ).out
 
-    # Ascending order is the ONLY thing the resample fold needs, and Strava streams already
-    # arrive that way — so check before sorting. This is not a micro-optimization: on
-    # already-ascending input List.sort_with hits its O(n^2) worst case, and that is the
-    # only input shape real streams ever have. Measured on 2700 samples (one 45-min ride):
-    # 40.7s to sort sorted input, 0.97s to sort the same data shuffled, 0.41s for this
-    # linear check with the sort skipped. Three streams per activity (watts, distance,
-    # altitude) made a full re-analyze of a few hundred activities take hours.
-    # One pass, carrying the previous timestamp — deliberately NOT indexing back into the
-    # list per element. Indexing would read the same as the append-in-a-fold that turned CSV
-    # parsing quadratic (see Csv.roc), and a check that exists to avoid a quadratic sort must
-    # not itself invite that doubt. Equal timestamps count as ascending: the resample fold
-    # treats them as duplicates, and sorting would only shuffle equal keys.
+    # Ascending order is the ONLY thing the resample fold needs, and Strava streams
+    # already arrive that way — so check before sorting. Not a micro-optimization: on
+    # already-ascending input List.sort_with hits its O(n^2) worst case, the only shape
+    # real streams have. Measured on 2700 samples: 40.7s to sort sorted input, 0.41s
+    # for this linear check with the sort skipped; three streams per activity made a
+    # full re-analyze take hours. One pass carrying the previous timestamp — indexing
+    # back per element is the same quadratic shape. Equal timestamps count as
+    # ascending: the fold treats them as duplicates.
     ascending_by_t : List({ t : I64, v : F64 }) -> Bool
     ascending_by_t = |samples|
         List.fold(samples, { ok: True, prev: 0.I64, started: False }, |acc, s|
@@ -354,18 +350,12 @@ Metrics :: [].{
             )
         }
 
-    # pace analog of time_in_power_intensity, on the grade-adjusted speed stream. Sums real
-    # dt between timestamped samples via time_in_bands — the old "each sample is 1 s"
-    # assumption is exactly the bug this PR removes. Bands mirror the power split, faster = harder:
-    # easy < 0.76×threshold, moderate 0.76–0.91, hard ≥ 0.91×threshold. Feeds the SAME pi_*
-    # columns for pace-scored sports (runs/swims), so weekly polarization and the "hard" column
-    # read a real intensity split there too. Zeros when the sport has no threshold speed.
-    # Pace twin of time_in_power_intensity, on the grade-adjusted speed stream. Takes the
-    # (second, speed) PAIRS — not bare speeds — so it sums the same real elapsed time the
-    # power path does. There is no Skip band here: grade_adjusted_speeds emits a sample only
-    # for an interval where the athlete moved forward, so there is no coasting equivalent.
-    # Gaps are still bounded rather than excluded — an interval spanning one contributes up
-    # to max_sample_gap_s, exactly as on the power path.
+    # Pace twin of time_in_power_intensity, on the grade-adjusted speed stream. Takes
+    # the (second, speed) PAIRS — not bare speeds — so it sums the same real elapsed
+    # time the power path does (each-sample-is-1s was the bug). Bands mirror the power
+    # split: easy < 0.76 x threshold, moderate to 0.91, hard above. No Skip band —
+    # grade_adjusted_speeds emits samples only where the athlete moved, so there is no
+    # coasting equivalent; gaps still contribute at most max_sample_gap_s.
     time_in_pace_intensity : List({ t : I64, v : F64 }), F64 -> PowerIntensity
     time_in_pace_intensity = |speed_pairs, threshold|
         if threshold <= 0.0 {
@@ -452,13 +442,11 @@ Metrics :: [].{
     # exactly the short histories that can least afford one.
     ctl_as_of : List({ day : I64, ctl : F64 }), I64 -> [Found(F64), Missing]
     ctl_as_of = |series, target| {
-        # ONE pass, carrying the best candidate rather than re-scanning the list to ask
-        # whether a later qualifying day exists — that inner scan made this quadratic,
-        # which is the fold trap this codebase has already been bitten by twice.
-        # The caller may pass any order, so the walk cannot assume sortedness.
-        # DISTINCT tags for the accumulator: it carries a whole {day, ctl} row while the
-        # return carries a bare ctl, and reusing Found for both reads like a type error
-        # even though the compiler accepts it.
+        # ONE pass, carrying the best candidate rather than re-scanning the list per
+        # element — the inner scan made this quadratic. The caller may pass any order, so
+        # the walk cannot assume sortedness. DISTINCT tags for the accumulator: it carries
+        # a whole {day, ctl} row while the return carries a bare ctl, and reusing Found for
+        # both reads like a type error even though the compiler accepts it.
         best = List.fold(series, NoCandidate, |acc, e|
             if e.day > target {
                 acc
@@ -608,45 +596,18 @@ Metrics :: [].{
             if zone_total > 0 {
                 Ok({ t: hr_tss(input.zones), m: "hr_zones" })
             } else {
-                # The bound is `valid_hr`, and this rung is the last one in the ladder that
-                # scored training LOAD from a summary avg_hr without it. The two `progress` lenses got the
-                # bound in #294, `activity`'s EF in #305, decoupling had it already — and
-                # load is the consumer that propagates furthest, into CTL, ATL and every
-                # form verdict downstream.
+                # `valid_hr`, because load is the consumer that propagates furthest — into CTL,
+                # ATL and every form verdict downstream (#313). Measured with the stream removed so
+                # this rung is reached (with it in place hr_zones answers and the summary average
+                # is never read): 139.2 bpm gave tss 42.3, 250 gave 76.9, 18 gave 23.1.
                 #
-                # NOT the last consumer full stop, which is what an earlier version of this
-                # comment claimed in four places. `top hr` ranked on `a.avg_hr > 0` — the exact
-                # predicate `valid_hr` replaces — and returned the same three rows #294 and
-                # #305 refuse. Review found it by planting a value and diffing all 26 command
-                # payloads, not by reading, which was the third time on this repo that a "last
-                # site" claim was wrong and the third time behaviour rather than reading found
-                # it. FIXED in #316 and #315 is closed: `top hr 800` now returns 669 rows with
-                # all three absent. Past tense on purpose — this paragraph was read as current
-                # while writing #319 and produced a miscount of which consumers bound which
-                # column. `top hr` bounds the STORED value by design, so it is still not a
-                # consumer of `avg_hr_scored`.
+                # Reachable in normal operation, not only via import: a freshly listed activity
+                # whose stream has not drained yet (rate limit / daily cap — doctor's undrained
+                # line) has no zone seconds, so analyze takes this rung; it self-heals on the next
+                # drain. Note `top hr` deliberately still bounds the STORED column (#315/#316).
                 #
-                # Measured before the bound, on a session with the STREAM REMOVED so this
-                # rung is reached — that is a precondition, not a detail: with the stream in
-                # place all three values give 43.0444 through `hr_zones` and the summary
-                # average is never read. With it removed and only `avg_hr` changed,
-                # 139.2 bpm gave tss 42.3042, 250 gave 76.9167, 18 gave 23.0750. An impossible
-                # reading produced nearly double the athlete's real load and nothing marked
-                # it (#313).
-                #
-                # Reachable in normal operation, not only through `import`. A freshly listed
-                # activity whose stream has not been drained yet — a sync stopped by the rate
-                # limit or the daily cap, which `doctor` reports in its undrained-streams line —
-                # has no zone seconds, so `analyze` takes this rung. Measured: that state on
-                # the before-binary scored 42.3042 through `hr_avg`. It self-heals, and that
-                # is measured too — restoring the stream and re-analyzing gives 43.0444
-                # through `hr_zones` — so the window is transient rather than permanent. An
-                # earlier version of this comment called it import-only.
-                #
-                # Refused means `NoHr`, not zero and not unknown: an impossible average is
-                # no usable heart rate, which is the case this arm already has a name for.
-                # The ladder falls to its next rung exactly as it does for a session that
-                # never carried HR at all, so the outcome is a rung the reader can see in
+                # Refused means `NoHr`, not zero and not unknown: the ladder falls to its next rung
+                # exactly as for a session that never carried HR, so the outcome is visible in
                 # `load_model` rather than a silent number.
                 match input.avg_hr {
                     Ok(hr) if valid_hr(hr) => Ok({ t: hr_tss(all_seconds_in_zone(input.moving_time, zone_of(hr, input.zb))), m: "hr_avg" })
@@ -724,29 +685,17 @@ Metrics :: [].{
 
     # ── daily load recurrence (CTL/ATL EWMA) ────────────────────────────
     # One day's step of the fitness/fatigue/form model:
-    #   CTL (fitness)  = 42-day exponential moving average of daily TSS
-    #   ATL (fatigue)  =  7-day exponential moving average of daily TSS
-    #   TSB (form)     = TODAY's fitness minus TODAY's fatigue, so the number always
-    #                    reconciles (tsb == ctl - atl) and reflects state AFTER today's
-    #                    training. This is a deliberate departure from TrainingPeaks,
-    #                    which reports yesterday's CTL - ATL so a hard day only shows up
-    #                    in the next morning's form. Ours means the verdict printed right
-    #                    after `analyze` already carries the session you just uploaded.
-
-    # Smoothing factors for the 42- and 7-day exponential moving averages.
+    #   CTL (fitness) = 42-day EWMA of daily TSS; ATL (fatigue) = 7-day EWMA.
+    #   TSB (form)    = TODAY's fitness minus TODAY's fatigue, so tsb == ctl - atl and
+    #                   the verdict printed right after `analyze` already carries the
+    #                   session you just uploaded (TrainingPeaks reports yesterday's).
     #
-    # The discrete factor for a continuous time constant τ is α = 1 − e^(−1/τ), NOT 1/τ.
-    # Using 1/τ — as this did — gives effective constants of 41.5 and 6.9 days, so the code
-    # did not deliver the 42 and 7 it claimed, and transients ran 1–7% fast against
-    # TrainingPeaks. Steady state is identical either way, which is why it went unnoticed.
-    #
-    # Written as literals because there is no `.exp()` on this compiler — the
-    # method does not exist on F64 at all. They stay literals; an expect pins
-    # each against `exp_neg`, so the LITERAL cannot drift from the formula.
-    # (It does not pin the decimals transcribed below — those are a reader's
-    # aid and can still go stale; the expect is the thing that cannot.)
-    #   ctl_alpha = 1 − e^(−1/42) = 0.0235283133
-    #   atl_alpha = 1 − e^(−1/7)  = 0.1331221000
+    # The discrete factor for time constant tau is a = 1 - e^(-1/tau), NOT 1/tau —
+    # 1/tau delivers effective constants of 41.5 and 6.9 days and runs transients 1-7%
+    # fast; steady state is identical, which is how it hides. Literals because this
+    # compiler has no `.exp()` on F64; an expect pins each against `exp_neg`, so the
+    # literal cannot drift from the formula.
+    #   ctl_alpha = 1 - e^(-1/42) = 0.0235283133
     ctl_alpha : F64
     ctl_alpha = 0.0235283133
     atl_alpha : F64
@@ -762,14 +711,10 @@ Metrics :: [].{
     }
 
     # ── derived FTP ─────────────────────────────────────────────────────
-    # Invariant: FTP is derived from power history, never configured. This section once held
-    # `ftp_calibration`, which compared an estimate against a configured FTP and raised
-    # stale/detraining flags; under the invariant those are the same number by construction,
-    # so neither flag could ever fire and the function was deleted. Only the derivation
-    # remains.
-
-    # the derived FTP from a 20-min best: the standard 95% factor. One constant, one place —
-    # used by the per-sport derive (Db.derive_sport_ftp!) and the summary display.
+    # Invariant: FTP is derived from power history, never configured (a calibration
+    # check against a configured FTP compared the same number to itself, so it died).
+    # The standard 95% of the 20-min best. One constant, one place — used by the
+    # per-sport derive (Db.derive_sport_ftp!) and the summary display.
     ftp_from_best_20min : F64 -> F64
     ftp_from_best_20min = |best_20min| best_20min * 0.95
 
@@ -986,10 +931,8 @@ Metrics :: [].{
 
     # ── repeated-workout progress (the `progress` command's business rules) ─
     # `id` is carried for ONE reason: so `progress` can name the row when it refuses an
-    # unreadable date (#249). Nothing here scores or groups on it. It lives on the row rather
-    # than in a second guard query over the same WHERE clause because two expressions that
-    # must select the same rows are exactly the seam #243 spent its last three rounds
-    # closing — the guard's domain has to BE the consumer's domain, not merely match it.
+    # unreadable date (#249). It lives on the row rather than in a second guard query
+    # because the guard's domain has to BE the consumer's domain, not merely match it.
     ProgressRow : { name : Str, date : Str, sport : Str, distance_m : F64, moving_time : I64, np_w : F64, avg_hr : F64, avg_hr_scored : F64, rpe : F64, output_kj : F64, tss : F64, load_model : Str, decoupling_pct : F64, decoupling_known : Bool, id : I64 }
 
     # split rows (already sorted by name) into per-workout runs
@@ -1008,18 +951,10 @@ Metrics :: [].{
     # are different routes under one name, so only sessions within ±10% of the anchor's
     # distance compare — and with no distance recorded, only the anchor itself shows.
     # Groups whose anchor isn't on the asked date drop entirely.
-    # `total` is the group's size BEFORE this truncation, and it is carried because the
-    # count of what a reader cannot see is computed downstream from `rows` — so every row
-    # this function drops was invisible to it. `LoneNoDistance` truncates to the anchor
-    # ALONE, which forced "one session, nothing hidden" and printed "first session of this
-    # workout, nothing to compare against yet" over a name with 29 rows in the log (#291's
-    # own sentence, reached through the distance gate instead of the lens filter).
-    # `scope_why` travels WITH the truncation instead of being reconstructed from `kind`
-    # downstream. The reconstruction needed an arm for `Exact`, which never truncates — a
-    # dead branch holding a placeholder string, and the wrong kind of placeholder: if anyone
-    # ever gave `Exact` a truncation, the note would read "(5 hidden: not shown)", which is
-    # gibberish that renders and exits 0. Empty here means "this kind cannot withhold rows",
-    # and the caller only ever reads it when it measured a drop.
+    # `total` is the group's size BEFORE truncation: every row this function drops is
+    # invisible downstream, so the hidden count must be carried, not recomputed (#291).
+    # `scope_why` travels WITH the truncation; empty means "this kind cannot withhold
+    # rows", and the caller only reads it when it measured a drop.
     anchor_filter : { name : Str, rows : List(ProgressRow) }, Str -> Try({ name : Str, kind : [Exact, SimilarDistance(F64), LoneNoDistance], rows : List(ProgressRow), total : U64, scope_why : Str }, [NoAnchor])
     anchor_filter = |g, date|
         match List.find_first(g.rows, |r| r.date == date) {
@@ -1081,37 +1016,18 @@ Metrics :: [].{
     lens_score : Lens, ProgressRow -> Try(F64, [Unscorable])
     lens_score = |lens, r|
         match lens {
-            # `valid_hr`, not `avg_hr > 0.0`. The 35-220 bpm bound lives in this same module
-            # and the DECOUPLING path already applies it — so the codebase disbelieved a
-            # number in one place and built a training verdict on it in another. Measured on
-            # the real database: two ROWING sessions recording 18.0 and 31.3 bpm produced
-            # "improving (221%)" and "88% below your best" on a workout whose every other
-            # session sits near 0.85. The tell was already on screen — the `drift` column
-            # printed `-` for exactly those two rows, because decoupling had refused them
-            # (#294).
+            # `valid_hr`, not `avg_hr > 0.0`: two rowing sessions storing 18.0 and 31.3 bpm
+            # produced "improving (221%)" and "88% below your best" on a workout whose other
+            # sessions sit near 0.85 (#294). Both HR lenses, not just EF — speed/HR divides by
+            # the same number.
             #
-            # Both lenses that read HR, not just EF: a speed/HR score divides by the same
-            # number and is wrong in the same way.
             # EF is NP-per-heartbeat, so it is only comparable when np_w really IS normalized
-            # power. The ladder stores whichever power rung won, so a row scored from plain
-            # avg_watts would put avg-watts-per-beat on the same trend line as NP-per-beat and
-            # invent a fake improvement for anyone whose newer rides have streams.
-            # `avg_hr_scored`, not `avg_hr`. They differ only when the session carried an HR
-            # stream, in which case this is the mean of the samples `valid_hr` accepted and
-            # `avg_hr` is what Strava's summary reported. The bound above catches a session
-            # whose STORED average is impossible; it is blind to one whose stored average is
-            # a plausible number computed from broken data, and a census on the real database
-            # measured those at 11 against the bound's 3. That census lives in this PR's
-            # commit message and in `tests/e2e.roc`, NOT in this module — the measured claim
-            # under `valid_hr` names the two rowing sessions it can see, which is the visible
-            # half rather than the count, and an earlier version of this sentence sent readers
-            # there for a number that is not written there. Scoring from the stream is the
-            # root-cause half (#311); the bound stays because a session with no usable stream
-            # still has nothing but the summary to offer.
+            # power (`np_like`): a row scored from plain avg_watts would put avg-watts-per-beat
+            # on the same trend line and invent an improvement.
             #
-            # SCORING only. `avg_hr` is what the tables and JSON print, and it stays the
-            # stored number — the athlete's device reported it, and `activities --json` is
-            # documented as the surface that publishes readings raw.
+            # `avg_hr_scored`, not `avg_hr` (#311): the stream's in-band mean when a usable
+            # stream exists, since a stored average can be plausible and still wrong (computed
+            # through dropout). SCORING only — `avg_hr` stays what the tables and JSON print.
             Ef =>
                 if r.np_w > 0.0 and valid_hr(r.avg_hr_scored) and np_like(r.load_model) {
                     Ok(r.np_w / r.avg_hr_scored)
@@ -1252,17 +1168,12 @@ Metrics :: [].{
             Err(_) => False
         }
 
-    # What a lens REQUIRES, as a sentence. ONE call site today — `Render`'s unscored note —
-    # and the earlier version of this comment claimed two, saying it also fed `progress`'s
-    # payload reason. It does not: `hidden_reason` was retired in the same change that
-    # created this, and the payload carries no reason string at all. Extracted anyway,
-    # because the three arms and the singular/plural pair are the rule the e2e checks mutate
-    # one at a time, and a rule with a name is easier to keep honest than three string
-    # literals inline — but the stated reason was wrong and is corrected rather than kept.
-    #
-    # It names what the LENS needs, never which field the row lacks: `lens_score` rejects an
-    # EF row for three separate reasons, and reporting all three as "no HR" was measurably
-    # false — 7 of 10 rows in one real group carried heart rates between 95 and 132 bpm.
+    # What a lens REQUIRES, as a sentence. One call site (`Render`'s unscored note),
+    # extracted because the three arms and the singular/plural pair are the rule the
+    # e2e checks mutate one at a time. It names what the LENS needs, never which field
+    # the row lacks: `lens_score` rejects an EF row for three separate reasons, and
+    # reporting all three as "no HR" was measurably false — 7 of 10 rows in one real
+    # group carried heart rates between 95 and 132 bpm.
     lens_needs : [Ef, SpeedHr, Rpe], Bool -> Str
     lens_needs = |lens, plural| {
         verb = if plural "need" else "needs"
@@ -1279,62 +1190,36 @@ Metrics :: [].{
     valid_hr = |hr|
         hr >= 35.0 and hr <= 220.0
 
-    # the bound the EF and speed/HR lenses now share with decoupling. An 18 bpm average is
-    # not a light session, it is a broken reading — and trusting it produced "improving
-    # (221%)" on a workout whose other sessions sit near 0.85 — seven of them did; the
-    # eighth scored 1.38 off an 86.4 bpm average, and it is that session, not the 18 bpm
-    # one, which becomes the group's best once the bound is applied (#294).
-    #
-    # "Best" and not "legitimate best": review measured that session's own stream and found
-    # 42% dropout, an in-band mean of 147.7 bpm against the stored 86.4, and an honest EF of
-    # 0.81 — which would not be the best either. It is the same artifact as the 18 bpm row,
-    # landing INSIDE the bound instead of outside it, and it is a class: of 670 stream-
-    # carrying activities, 14 store an average more than 15 bpm below their in-band stream
-    # mean and 11 of those are inside 35-220, so this bound refuses 3 and misses 11. The
-    # root-cause version scores from the stream-derived in-band mean when a stream exists,
-    # which the engine already computes for decoupling. Tracked in #311, which is where the root-cause version lives; #305 fixed only the half this bound can see.
-    # The same bound as SQL, for the consumers that decide in the query rather than in Roc.
-    # Placed here rather than in `Report` on purpose: this is where 35 and 220 are written,
-    # and a generator that lives in a different file from the numbers it encodes is two
+    # The same bound as SQL, for consumers that decide in the query. Placed HERE, next
+    # to the 35/220 literals — a generator in a different file from its numbers is two
     # expressions of one rule wearing a helper's name. Same shape as `date_known_sql_for`
     # and `rankable_sql`, which `Report` binds rather than defines.
     #
-    # The CAST is the whole reason this is a function and not a string constant. Every other
-    # consumer of `avg_hr` reads it through one — `CAST(a.avg_hr AS REAL)` in the analyze
-    # projection, in the `activity` query, in `Db.roc` — because SQLite sorts a BLOB above
-    # every number, so a bare `avg_hr BETWEEN 35 AND 220` is FALSE for a BLOB holding the
-    # bytes "100" while the rest of the engine scores that session at 100 bpm. `> 0`, the
-    # predicate this replaces, was TRUE for it. Fixing an over-count by introducing an
-    # under-count on the same value class is not a fix. Confirmed on a snapshot WITH BLOB AND
-    # TEXT ROWS PLANTED — 669 bare, 671 cast, 674 under `> 0`. The planting is the point and an
-    # earlier version of this sentence omitted it: on the real database every `avg_hr` is REAL
-    # or NULL, so bare and cast cannot differ there and the difference is invisible until
-    # someone hand-edits a row or an import goes wrong, which is how every BLOB bug in this
-    # repo (#296, #304, #307, #310) was found.
+    # The CAST is the whole reason this is a function: SQLite sorts a BLOB above every
+    # number, so a bare `avg_hr BETWEEN 35 AND 220` is FALSE for a BLOB holding the
+    # bytes "100" while every other consumer casts and scores that session at 100 bpm
+    # (`> 0` was TRUE for it — fixing an over-count by introducing an under-count on
+    # the same value class is not a fix). On a healthy db every avg_hr is REAL or NULL,
+    # so the difference only appears when a hand-edit or bad import plants one — which
+    # is how every BLOB bug here (#296, #304, #307, #310) arrived.
     #
-    # Takes the column expression rather than a name so a caller can pass a subquery alias
-    # or `@` for #315's template.
+    # Takes the column EXPRESSION, not a name, so callers can pass a subquery alias or
+    # `@` for the `top hr` template.
     valid_hr_sql : Str -> Str
     valid_hr_sql = |col|
         "CAST(${col} AS REAL) BETWEEN 35 AND 220"
 
-    # ...and the predicate for "the engine can USE a heart rate here", which is a strictly
-    # wider question than "is this scalar plausible". The engine reads heart rate two ways and
-    # a session qualifying either way has usable HR:
+    # ...and the predicate for "the engine can USE a heart rate here" — strictly wider
+    # than "is this scalar plausible". Two ways qualify: the SCALAR the EF and speed/HR
+    # lenses divide by (`valid_hr_sql` over the scored value), or ZONE SECONDS, which
+    # the ladder's `hr_zones` rung turns into load.
     #
-    #   - as a SCALAR the EF and speed/HR lenses divide by — that is `valid_hr_sql` over the
-    #     scored value;
-    #   - as ZONE SECONDS, which `time_in_zones` builds from the stream and which the ladder's
-    #     `hr_zones` rung turns into training load.
-    #
-    # The zone arm is not a refinement, it is the half that keeps `doctor` from contradicting
-    # itself. Review measured three sessions carrying zone seconds whose stored average is
-    # impossible AND whose stream fails #311's coverage gate — including one scored
-    # `hr_zones`, its entire load computed FROM heart rate, sitting inside the same payload's
-    # `medium (HR / RPE)` count while being excluded from `with_hr`. The scalar arm cannot
-    # rescue them and never will: a stored average is impossible BECAUSE the strap misbehaved,
-    # and a misbehaving strap is exactly what fails a span gate. The fallback is
-    # anti-correlated with the population it was reached for.
+    # The zone arm is what keeps `doctor` from contradicting itself: a session scored
+    # `hr_zones` — its load computed FROM heart rate — must count as usable HR. The
+    # scalar arm can never rescue that population: a stored average is impossible
+    # BECAUSE the strap misbehaved, and a misbehaving strap is exactly what fails the
+    # #311 coverage gate, so the fallback is anti-correlated with the rows it was
+    # reached for.
     usable_hr_sql : Str, Str -> Str
     usable_hr_sql = |scored_col, zone_total_expr|
         "(${valid_hr_sql(scored_col)} OR ${zone_total_expr} > 0)"
@@ -1354,30 +1239,20 @@ Metrics :: [].{
 
     # ── aerobic decoupling / Pw:HR drift (#94) ──────────────────────────
     #
-    # Split the session in half BY TIME, compute efficiency (signal per heartbeat) in each
-    # half, and report how much it fell. Positive = the second half cost more heartbeats
-    # for the same output, the classic sign the effort exceeded what the aerobic system
-    # could sustain.
-    #
-    # By time, not by sample COUNT: a stream with dropouts has uneven sample density, so
-    # halving the list would put more elapsed time in one half than the other and compare
-    # unlike windows.
-    #
-    # The two signals are averaged over the same window rather than joined sample-by-sample.
-    # A join would drop every second where one sensor blinked, silently shrinking the window
-    # and biasing whichever half dropped more.
+    # Split the session in half BY TIME, compute efficiency (signal per heartbeat) in
+    # each half, report how much it fell. Positive = the second half cost more
+    # heartbeats for the same output. By time, not sample COUNT: dropout makes density
+    # uneven, so halving the list would compare unlike windows. The two signals are
+    # averaged over the same window rather than joined sample-by-sample — a join drops
+    # every second where one sensor blinked, biasing whichever half dropped more.
     #
     # KNOWN ASYMMETRY for the pace signal (#134): grade_step emits nothing for stopped
-    # time, but the HR samples from those same seconds stay in the half mean — so a half
-    # with many stops mixes standing HR against moving-only speeds and biases the number.
-    # Owned rather than hidden: the honest fix (excluding HR over non-emitting stretches)
-    # needs the emitter to publish its gaps, tracked for a future pass. Power is immune —
-    # coasting emits a real 0 W sample, which is exactly why the zeros-stay rule below
-    # only fully holds for power.
+    # time but HR from those seconds stays in the half mean, so a stop-heavy half mixes
+    # standing HR against moving-only speeds. Owned rather than hidden; power is immune
+    # because coasting emits a real 0 W sample.
     #
-    # Known/Unknown, never a bare 0.0 — the same trap as form_delta_7d, and worse here:
-    # 0.0 is a legitimate PERFECT result (no drift at all), so a 0-sentinel would render an
-    # ideal ride and a session with no power meter identically.
+    # Known/Unknown, never a bare 0.0: 0.0 is a legitimate PERFECT result, so a
+    # 0-sentinel would render an ideal ride and a meterless session identically.
     decoupling_pct : List({ t : I64, v : F64 }), List({ t : I64, v : F64 }), I64 -> [Known(F64), Unknown]
     decoupling_pct = |signal, hr, session_s| {
         clean_hr = List.keep_if(hr, |p| valid_hr(p.v))
@@ -1450,38 +1325,17 @@ Metrics :: [].{
         w >= 0.0 and w <= 2500.0
 
     # ── form interpretation (standard TSB bands) ────────────────────────
-
-    # NAMES the modeled state. It does not prescribe (#123).
+    # NAMES the modeled state; never prescribes (#123). The engine sees modeled load
+    # only — not sleep, illness, soreness or life stress — and four of these five once
+    # ended in advice that both repeated (TSB drifted inside one band for two weeks, so
+    # the identical line printed daily) and was WRONG (that stretch was overwhelmingly
+    # easy, so "favor easy work" advised the opposite of the honest reading). State
+    # here; prescriptions come from the coach (ADR 0000).
     #
-    # These verdicts describe MODELED load only — the engine cannot see sleep, illness,
-    # soreness or life stress. That was once the reason they were phrased as suggestions;
-    # it is now the reason they say nothing about what to do at all.
-    #
-    # FOUR of the five used to end in advice ("favor easy work", "good day for a big
-    # effort"); `very fresh` always carried an observation rather than an instruction,
-    # which is why it alone keeps a trailing clause. Two problems with the advice, both
-    # seen in real use:
-    #
-    #   - It repeated. One athlete read the identical line every day for over two weeks,
-    #     because TSB drifted inside the -15..-5 band without ever leaving it.
-    #   - It was WRONG. That same stretch was overwhelmingly easy with no hard session in
-    #     over a week, so the honest reading was "go hard" — and a model that sees only
-    #     TSB, with no view of intensity distribution, advised the opposite.
-    #
-    # Prescribing training from a single scalar is more than one number can support.
-    # State here; prescriptions come from the coach, who can see distribution, travel,
-    # equipment and intent — the engine/LLM split ADR 0000 settles ("the engine does the
-    # math, the LLM does the judgment").
-    # The band as an IDENTITY, separate from how it is worded. `days_in_band` asks "is this
-    # the same band as that one", which is a question about the band, not about the prose —
-    # comparing rendered strings meant a future wording change that made two labels read the
-    # same would silently merge them into one streak, with no error and a count that just
-    # grows. #123 is a PR that rewrote four of these strings, so that coupling was being
-    # exercised while unnamed.
-    #
-    # Still an if/else chain rather than a match: these are FLOAT RANGE tests, and no
-    # pattern-matching form expresses `-15.0 < tsb <= -5.0` more directly than the
-    # comparison itself. The tag is what buys safety here, not the branching syntax.
+    # The band is an IDENTITY, separate from wording: `days_in_band` asks "same band?",
+    # and comparing rendered strings would let a wording change silently merge two
+    # bands into one streak. Still an if/else chain — these are FLOAT RANGE tests, and
+    # no match form expresses `-15.0 < tsb <= -5.0` more directly.
     FormBand : [HighFatigue, FatigueBuilding, Balanced, Fresh, VeryFresh]
 
     form_band : F64 -> FormBand
@@ -1498,23 +1352,17 @@ Metrics :: [].{
             VeryFresh
         }
 
-    # Rendering, and ONLY rendering. Two labels reading alike would now be a cosmetic bug
-    # rather than a correctness one.
     # Stable machine identifier for the form band — the JSON face of form_label.
-    # snake_case, enum-stable: clients switch on these, so renaming one is a
-    # contract change. The human label may evolve; these must not drift casually.
-    # ONE vocabulary, shared by every boundary guard (Metrics + Render expects) —
-    # a tripwire for coaching language reappearing in any label producer. The
-    # closed-set equality expects on form_label/form_state are the hard invariant
-    # for those two; this predicate is what lets every OTHER verdict producer be
-    # guarded without triplicating the list.
+    # snake_case, enum-stable: clients switch on these, so renaming one is a contract
+    # change; the human label may evolve, these must not.
+    # ONE vocabulary shared by every boundary guard — a tripwire for coaching language
+    # reappearing in any label producer, without triplicating the list.
     has_coaching_language : Str -> Bool
     has_coaching_language = |s| {
         low = Str.with_ascii_lowercased(s)
-        # a denylist can only be defense-in-depth (round-3 mutations proved
-        # "take it easier"/"push harder" slipped the round-2 list) — the HARD
-        # guard for every finite producer is closed-set equality on its full
-        # output; this predicate backstops the branches equality can't reach
+        # a denylist can only be defense-in-depth — the HARD guard for every finite
+        # producer is closed-set equality on its full output; this predicate backstops
+        # the branches equality can't reach
         words = ["should", "consider", "favor", "avoid", "good day", "good time", "ready for", "take it eas", "recommend", "go hard", "back off", "rest day", "easy day", "ease off", "dial back", "hold back", "need to", "must ", "prioritize", "taper", "take a rest", "train hard", "train easy", "easier", "harder", "push", "time to", "focus on", "aim for", "try to"]
         List.any(words, |w| Str.contains(low, w))
     }
@@ -1940,40 +1788,18 @@ Metrics :: [].{
 
     # Integer parsing for USER ARGUMENTS, deliberately narrower than the stdlib's.
     #
-    # The 2026-08-17 pin widened `I64.from_str`/`U64.from_str` to accept exponent
-    # notation: `"1e3"` was a parse error and is 1000 now. Nothing asked for it, and it
-    # reached the JUDGMENT tier -- `skip 1e1` addressed planned session 10 and performed
-    # a write that cannot be re-derived (ADR 0000 section 3). It is not even
-    # self-consistent: `1e1` addresses 10 while `3.3e1` cannot address 33, because
-    # integral exponents parse and fractional mantissas do not. That inconsistency is
-    # the tell that it is a stdlib side effect, not an input format anyone designed.
-    #
-    # An id or a count typed by a human is digits, optionally signed. Rejecting the rest
-    # BEFORE the stdlib sees it pins the accepted SHAPE here rather than to the compiler.
-    # The shape, not the whole set: overflow stays the stdlib's call
-    # ("99999999999999999999" passes is_plain_int, from_str refuses it), which is fine --
-    # a bump that moves the overflow boundary moves a number, not a syntax.
-    #
-    # Deliberately dropped: a leading `+`. `I64.from_str("+60")` is 60 on this pin, so
-    # `activities +5` worked before this narrowing and now returns bad_count.
+    # The 2026-08-17 pin widened `from_str` to accept exponent notation: `skip 1e1`
+    # addressed planned session 10 and performed a judgment-tier write that cannot be
+    # re-derived (ADR 0000 s3). Not even self-consistent — `1e1` parses, `3.3e1` does
+    # not — which is the tell it is a stdlib side effect, not a designed input format.
+    # An id or count typed by a human is digits, optionally signed; rejecting the rest
+    # BEFORE the stdlib pins the accepted SHAPE here rather than to the compiler pin.
+    # Overflow stays the stdlib's call ("99999999999999999999" passes the shape, fails
+    # from_str). A leading `+` is deliberately dropped.
     #
     # DO NOT "simplify" this away by calling from_str directly (#201,
-    # docs/roc-new-compiler-notes.md) -- deleting it silently restores an unrecoverable
-    # write on a fat-fingered argument.
-    #
-    # No count is quoted here, deliberately. Four successive versions of this line gave
-    # one, and every one was contradicted by the sweep it told the reader to run --
-    # `grep -rn 'Metrics.arg_' src/` finds call sites in THIS file too, which the counts
-    # kept dropping. Derive the sites that way, minus this file's own expects, and derive
-    # which are PINNED by reverting one site at a time to a bare from_str and running the
-    # suite (it stops at the first failure, so sweep one at a time, not in a batch).
-    #
-    # The ones the sweep finds unpinned -- Analyze.config_f64!/cfg_f64,
-    # Db.resolve_time_mode! and date_str_to_days at least -- are untested, NOT
-    # untestable. Each is reachable by writing a bad value with direct SQL, the same
-    # `sql!` the harness already uses, and by legacy rows predating the write-side
-    # validation. The refusal at `config set` makes them hard to reach through the CLI,
-    # not impossible to reach.
+    # docs/roc-new-compiler-notes.md) — that silently restores an unrecoverable write
+    # on a fat-fingered argument.
 
     is_plain_int : Str -> Bool
     is_plain_int = |s| {
@@ -2004,92 +1830,52 @@ Metrics :: [].{
     arg_u64 : Str -> Try(U64, [NotAnInt])
     arg_u64 = |s| if Metrics.is_plain_int(s) U64.from_str(s).map_err(|_| NotAnInt) else Err(NotAnInt)
 
-    # "does it parse" is NOT enough for a date the engine stores: target_date is TEXT
-    # and every week filter compares it as a STRING (a lexicographic BETWEEN), so the
-    # spelling has to be canonical YYYY-MM-DD, not merely numeric. Round-tripping
-    # through the day number tests both facts at once — days_from_civil silently
-    # NORMALIZES an out-of-range field (2026-02-30 becomes March 2, and the caller
-    # never learns their date moved), while an unpadded 2026-8-5 sorts after every
-    # 2026-1x-xx date and lands in the wrong week. The year bound holds the string at
-    # ten characters, since a 3-digit year would sort after every 2xxx one.
-    # Parseable AND canonical — the one predicate every stored-date guard in the codebase
-    # needs, in the module where both halves already live. It exists because there were
-    # five independent spellings of it (two in Report, two in ReportSeason, one in
-    # Analyze), and every time this class of bug reopened it was because two sites
-    # implemented one rule and only one got updated. What legitimately VARIES between the
-    # sites is the error TAG — an activity date is repaired by deleting or re-fetching a
-    # row, a daily_load day by rebuilding the table — so the rule is factored here and the
-    # tag stays a local decision at each call site.
+    # Parseable AND canonical — the one predicate every stored-date guard needs, in the
+    # module where both halves live. There were five independent spellings across three
+    # files, and every reopening of this bug class was two sites implementing one rule
+    # with only one updated. What legitimately varies per site is the error TAG (an
+    # activity date is repaired by re-fetching a row, a daily_load day by rebuilding
+    # the table), so the rule is factored here and the tag stays local.
     #
-    # Both halves matter, and the parse alone is the weaker one: `date_str_to_days`
-    # accepts "2026-3-05", and the non-canonical day is the DANGEROUS case rather than the
-    # harmless one, because date columns are compared and sorted as strings in SQL.
-    # Returns the DAY, not a Bool, so a caller never parses twice. The Bool form below is
-    # defined in terms of it for the two sites that genuinely only need a predicate; every
-    # site that goes on to use the value takes this one, and none of them ends up with a
-    # second parse whose failure arm is unreachable — which is a silent-drop arm sitting in
-    # code, waiting for the predicate to be weakened.
-    # ── the SQL twins of usable_date_days, for the sites that need the answer INSIDE a
-    # query. They live beside the Roc rule they have to agree with, and in a module every
-    # caller can import: `Analyze` and `Strava` also rank on this column and cannot import
-    # `Report`, which imports them.
-
-    # "is this activity's stored date readable", over a caller-named column.
+    # Both halves matter and the parse alone is the weaker one: `date_str_to_days`
+    # accepts "2026-3-05", and a non-canonical day is the DANGEROUS case because date
+    # columns are compared and sorted as STRINGS in SQL — days_from_civil also silently
+    # NORMALIZES out-of-range fields (2026-02-30 becomes March 2). The year bound holds
+    # the string at ten characters, since a 3-digit year sorts after every 2xxx one.
+    # Returns the DAY, not a Bool, so a caller never parses twice; the Bool form below
+    # is defined in terms of it.
     #
-    # The ROUND TRIP through SQLite's own date(), plus the year bound. It agrees with
-    # usable_date_days on every shape measured, impossible-but-well-formed days included
-    # ('2026-02-30', '1000-02-30'), and that agreement is version-dependent: the system CLI
-    # is 3.43.2 and returns '2026-02-30' verbatim, while the binary links 3.49.1 and does
-    # not. `date_known` is a PUBLISHED boolean SKILL.md tells the coach to trust, so the
-    # e2e fixture for '1000-02-30' — the one shape only the newer date() rejects — is what
+    # The SQL twins live here (not `Report`) because `Analyze` and `Strava` also rank
+    # on this column and cannot import `Report`. The SQL round-trips through SQLite's
+    # own date(), which is version-dependent: 3.43.2 returns '2026-02-30' verbatim
+    # while the linked 3.49.1 rejects it — the e2e fixture for '1000-02-30' is what
     # holds SQL to the Roc rule across a platform upgrade.
     date_known_sql_for : Str -> Str
     date_known_sql_for = |col| "(CASE WHEN ${col} IS NULL OR date(substr(${col}, 1, 10)) IS NOT substr(${col}, 1, 10) OR substr(${col}, 1, 4) < '1000' THEN 0 ELSE 1 END)"
 
-    # "is this timestamp RANKABLE", and the ordering that uses it — emitted together, as one
-    # clause, because #247 showed that is the only form that stays correct (#255).
+    # "is this timestamp RANKABLE", and the ordering that uses it — emitted together, as
+    # one clause, because that is the only form that stays correct (#247, #255):
+    # THE GUARD'S DOMAIN MUST EQUAL ITS CONSUMER'S. `rate latest` compared
+    # `MAX(start_local)` as a string, so a malformed timestamp outranked every real one
+    # and the rating landed on the wrong activity; eight other queries ordered on the
+    # whole column with no guard at all.
     #
-    # `rate latest` compared `MAX(start_local)` as a string, so a malformed timestamp
-    # outranked every real one and the rating landed on the wrong activity. The rule that
-    # fixed it is structural: THE GUARD'S DOMAIN MUST EQUAL ITS CONSUMER'S. #247 re-derived
-    # that invariant four times and came up short each time — day vs day, day vs timestamp,
-    # ten characters vs the whole string, nineteen vs the whole string — and only stopped
-    # once the guard and the ranker became the same expression. Eight other queries ordered
-    # on the whole column with no such guarantee.
+    # TWO terms, always both — the clause form exists so no caller pairs the predicate
+    # with a key by hand. The flag sorts DESC unconditionally so unrankable rows go last
+    # in EITHER direction: NULL is SQLite's smallest value, so a bare `key ASC` would
+    # put them FIRST. No current ASC caller can observe the flag (both discard or
+    # don't depend on SQL order); it is pinned by the expects below as insurance for
+    # the first ASC caller whose order does matter.
     #
-    # TWO terms, always both, which is why this returns the clause rather than a predicate a
-    # caller has to remember to pair with a key. The flag sorts DESC unconditionally so
-    # unrankable rows go last in EITHER direction: NULL is SQLite's smallest value, so a
-    # bare `key DESC` would put them last but a bare `key ASC` would put them FIRST.
-    #
-    # NO CURRENT CALLER CAN OBSERVE THE FLAG IN THE ASC DIRECTION, and saying "two of these
-    # sites order ascending" as the justification was true and irrelevant. `Plan.roc:301`'s
-    # SQL order is discarded by a `List.sort_with` on a strict total order downstream, and
-    # `Analyze.roc:288` only affects batch composition — `converge_metrics!` runs to a fixed
-    # point and `period_ftp_sql` is date-anchored, so the converged state is
-    # order-independent. The flag is pinned by the expects below and exists so a future ASC
-    # caller whose order DOES matter inherits the right behaviour. That is insurance, and
-    # naming it as such is more useful than a justification that does not hold.
-    # A helper that is correct only half the time is the
-    # shape this consolidation exists to remove.
-    #
-    # The date half is `date_known_sql_for`, not a second spelling of it. The TIME half is
-    # `datetime(...) IS NOT NULL`, which rejects `37:00:00` and `09:99:00` — the shapes
-    # `export_date_to_iso` is documented to have produced from `"25:00:00 PM"` — while
-    # accepting a bare date, which is rankable and sorts as midnight.
-    #
-    # It cannot subsume the date half, and this holds on BOTH sqlite versions in play rather
-    # than being version-contingent as an earlier draft of this said. `2026-02-30T09:00:00`
-    # is non-NULL to `datetime()` on 3.43.2 (verbatim) and on 3.49.1 (NORMALISED to
-    # `2026-03-02 09:00:00`), so the row is rankable either way. Normalised, not rejected,
-    # is the mechanism worth stating: `date_known_sql_for` catches an impossible day because
-    # it is a round-TRIP EQUALITY test, not a NULL test — which is exactly why a reader who
-    # assumes `datetime()` rejects impossible dates reaches the wrong conclusion.
-    #
-    # One edge the "rejects impossible times" framing does not cover: `T24:00:00` is
-    # non-NULL on 3.49.1 and therefore rankable. It happens to sort correctly, and
-    # `export_date_to_iso` now refuses hour > 23 so no new writes produce it; legacy rows
-    # could. Not a defect, just not the universal the sentence above implies.
+    # The date half is `date_known_sql_for`. The TIME half is `datetime(...) IS NOT
+    # NULL`, which rejects `37:00:00` and `09:99:00` while accepting a bare date
+    # (rankable, sorts as midnight). It cannot subsume the date half on either sqlite
+    # version in play: `2026-02-30T09:00:00` is non-NULL to `datetime()` on 3.43.2
+    # (verbatim) and 3.49.1 (NORMALISED to March 2) — `date_known_sql_for` catches an
+    # impossible day because it is a round-trip EQUALITY test, not a NULL test. One
+    # edge: `T24:00:00` is non-NULL on 3.49.1 and therefore rankable; it happens to
+    # sort correctly, and `export_date_to_iso` refuses hour > 23 so only legacy rows
+    # could hold it.
     rank_ts_sql : Str, [Asc, Desc] -> Str
     rank_ts_sql = |col, dir| {
         d =
@@ -2105,44 +1891,31 @@ Metrics :: [].{
     rankable_sql : Str -> Str
     rankable_sql = |col| "${date_known_sql_for(col)} = 1 AND datetime(substr(${col}, 1, 19)) IS NOT NULL"
 
-    # The MIRROR of rank_ts_sql, for a listing whose job is surfacing rows that need repair
-    # rather than picking the newest. Unrankable rows go FIRST.
+    # The MIRROR of rank_ts_sql, for a listing whose job is surfacing rows that need
+    # repair: unrankable rows go FIRST. The two intents pull opposite ways — ranking
+    # wants an unrankable row last so it is never mistaken for the newest; #249's
+    # `activities` hoist wants it first so it cannot fall past the limit and hide
+    # (measured: an impossible-time row sank to position 737 of 737, outside the
+    # default limit, uncounted and published as `date_known: true`).
     #
-    # Two intents, and they pull opposite ways: ranking wants an unrankable row last so it
-    # is never mistaken for the newest, while #249's `activities` hoist wants it first so it
-    # cannot fall past the limit and hide. Sinking it in a listing is measurably worse than
-    # doing nothing — on a 737-row database an impossible-time row went to position 737,
-    # outside the default limit of 30, uncounted by `doctor`'s undateable total, and
-    # published as `date_known: true`. Three ways invisible, and the last one is a contract
-    # statement contradicting the nine sites that now refuse to rank it.
-    #
-    # It hoists on RANKABILITY, not on `date_known`, and that is a simplification rather
-    # than a second rule: `date_known = 0` implies not-rankable, so the flag subsumes the
-    # term `activities` used to carry. Within the hoisted group the key is the raw
-    # `substr(...)` rather than the NULL-yielding form — those rows are unrankable by
-    # definition, and a NULL key there would collapse the whole group onto `a.id`, which is
-    # how the first cut of this silently reordered two fixture rows.
+    # It hoists on RANKABILITY, not `date_known` — the flag subsumes that term. Within
+    # the hoisted group the key is the raw `substr(...)`, not the NULL-yielding form: a
+    # NULL key would collapse the whole group onto `a.id`.
     hoist_unrankable_sql : Str -> Str
     hoist_unrankable_sql = |col| "(CASE WHEN ${rankable_sql(col)} THEN 1 ELSE 0 END) ASC, substr(${col}, 1, 19) DESC"
 
     usable_date_days : Str -> Try(I64, _)
     usable_date_days = |s|
         match date_str_to_days(s) {
-            # ONE parse. The obvious spelling — `if is_canonical_date(s) date_str_to_days(s)`
-            # — parses twice, because is_canonical_date is itself implemented over
-            # date_str_to_days, and it leaves the second call's Err arm unreachable.
+            # ONE parse. The obvious spelling — `if is_canonical_date(s) date_str_to_days(s)` —
+            # parses twice and leaves the second call's Err arm unreachable.
             #
-            # The round trip is what "canonical" MEANS here: only one spelling of a day
-            # survives days -> string. The YEAR BOUND is the other half and it is not
-            # optional — `date_str_to_days` parses the year with arg_i64, which accepts any
-            # integer, and `days_to_date_str` emits it unpadded, so "999-01-01" round-trips
-            # cleanly. It also sorts ABOVE every real date under `ORDER BY day DESC`
-            # ('9' > '2'), which is the precise hazard every caller of this function exists
-            # to prevent. Dropping it here — which an earlier version of this rewrite did,
-            # while its commit message claimed five spellings had become one — let `summary`
-            # anchor on year 999 and report it as `as_of` at exit 0, and left two live
-            # definitions of "canonical" in this module answering differently on the same
-            # string.
+            # The round trip is what "canonical" MEANS: only one spelling of a day survives
+            # days -> string. The YEAR BOUND is the other half and is not optional:
+            # `date_str_to_days` accepts any integer year and `days_to_date_str` emits it
+            # unpadded, so "999-01-01" round-trips cleanly and sorts ABOVE every real date
+            # under `ORDER BY day DESC` ('9' > '2') — the precise hazard every caller exists
+            # to prevent.
             Ok(d) => {
                 c = civil_from_days(d)
                 if days_to_date_str(d) == s and c.y >= 1000 and c.y <= 9999 Ok(d) else Err(BadDate)
@@ -2164,24 +1937,15 @@ Metrics :: [].{
     # guard accepted it, in the same binary.
     is_canonical_date = |s| is_usable_date(s)
 
-    # exactly two digits, and within range. Two digits because a one-digit hour would sort
-    # WRONG against a two-digit one under byte comparison, which is the property callers
-    # are protecting when they rank timestamps as strings.
+    # exactly two digits, and within range — a one-digit hour sorts WRONG against a
+    # two-digit one under byte comparison, the property callers protect when ranking
+    # timestamps as strings.
     #
-    # NOT CALLED BY ANYTHING, and the sentence that used to sit here claimed otherwise —
-    # "used to validate the time half of a `start_local`". It never was: `grep` finds this
-    # name twice in the whole tree, here and in its own expects, on this branch and on main.
-    #
-    # It was written for the job `rankable_sql` now does, and #255 did that job in SQL
-    # instead, because the sites that need the answer need it INSIDE a query. So the time
-    # halves are two bodies where the date halves are one (`date_known_sql_for` is the same
-    # expression `Report.date_known_sql` always was), and they already disagree: SQLite's
-    # `datetime()` accepts `T24:00:00` while this rejects hour > 23.
-    #
-    # Kept rather than deleted because the divergence is the useful record — if a future
-    # caller needs the rule in Roc, this is the body, and the disagreement above is what it
-    # has to reconcile. What is not kept is a comment describing a use that does not exist,
-    # which is the thing this repo checks for everywhere else.
+    # NOT CALLED BY ANYTHING. Written for the job `rankable_sql` now does in SQL (the
+    # sites that need the answer need it inside a query), so the time halves are two
+    # bodies and already disagree: SQLite `datetime()` accepts T24:00:00, this rejects
+    # hour > 23. Kept because the divergence is the useful record — a future Roc-side
+    # caller starts here and must reconcile that disagreement.
     two_digit_in : Str, I64 -> Bool
     two_digit_in = |s, hi|
         if Str.count_utf8_bytes(s) != 2 {
@@ -2304,23 +2068,16 @@ Metrics :: [].{
     pace_to_speed = |pace_s_per_km|
         if pace_s_per_km > 0.0 1000.0 / pace_s_per_km else 0.0
 
-    # per-sample flat-equivalent (grade-adjusted) speed, from time/dist/alt streams that
-    # MUST be equal-length and index-aligned (the nested map2 silently truncates to the
-    # shortest — the analyze-wiring PR must filter the three as ONE unit): speed = Δd/Δt,
-    # grade = Δalt/Δd, ga_speed = speed × minetti_ratio(grade). A non-advancing sample
-    # (stop or jitter) re-anchors prev so its time drops out of the next speed (see the
-    # branch below) — unlike grade_adjusted_distance. Swim: pass a MATCHING-LENGTH flat
-    # altitude list (not []) and it degrades to raw speed (minetti(0)=1).
-    # What one (prev -> sample) interval represents. Flat classification, so the step below
-    # is a four-case table rather than a nested if/else-if staircase.
+    # What one (prev -> sample) interval represents — flat classification so the step
+    # below reads as a four-case table. Streams MUST be equal-length and index-aligned
+    # (the nested map2 silently truncates to the shortest). A non-advancing sample
+    # (stop / jitter) re-anchors prev so its time drops out of the next speed. Swim:
+    # pass a matching-length flat altitude list and it degrades to raw speed.
     #
-    # `Gap` (dt > max_fill_gap) is deliberately NOT a speed sample. The resampler already
-    # refuses to fill a gap that long — it is a pause or a dropout, and we do not know what
-    # happened inside it. Emitting the interval average would contradict that policy twice
-    # over: it invents data for unrecorded time, and it lands as ONE sample carrying a
-    # minute of movement, which the 30-SAMPLE NP window then weights as a single second.
-    # (This is the pace path — runs and swims — so nothing here is riding.)
-    # Skipping it means the stream says "no data here", which is true.
+    # `Gap` (dt > max_fill_gap) is deliberately NOT a speed sample: the resampler
+    # already refuses to fill a gap that long, and emitting the interval average would
+    # invent data for unrecorded time AND land it as ONE sample carrying a minute of
+    # movement, which the 30-SAMPLE NP window then weights as a single second.
     pace_step_case : F64, F64 -> [Moving, Stopped, NoTime, Gap]
     pace_step_case = |dt, dd|
         if dt <= 0.0 NoTime else if dt > (max_fill_gap).to_f64() Gap else if dd > 0.0 Moving else Stopped
@@ -2391,18 +2148,12 @@ Metrics :: [].{
         grade_adjusted_speed_pairs(time_1s, List.map(dist_1s, |p| p.v), List.map(alt_1s, |p| p.v))
     }
 
-    # rTSS / sTSS: the power formula with speed swapped for watts — IF = ngp_speed /
-    # threshold_speed (faster = harder), IF^exp × hours × 100. 1 h at threshold = 100 for
-    # any exponent. The exponent is per-sport (see Sports.pace_tss_exponent):
-    # running is near enough linear in speed so it keeps 2, matching TrainingPeaks rTSS;
-    # swimming fights drag, which rises with v³, so it uses 3 like TrainingPeaks sSS. The
-    # earlier version squared BOTH and under-scored hard swim sets by ~20%.
-    # How metabolic cost scales with the speed ratio, per sport.
-    #
-    # Running resistance is near enough linear in speed, so rTSS keeps the familiar IF^2
-    # (identical to tss_from_power). Swimming fights hydrodynamic DRAG, which rises with the
-    # CUBE of speed — TrainingPeaks' sSS cubes the speed ratio for exactly this reason.
-    # Squaring it under-scores hard swim sets badly: at IF 1.2, 144 vs 173 per hour.
+    # rTSS / sTSS: the power formula with speed for watts — IF = ngp_speed /
+    # threshold_speed, IF^exp x hours x 100; 1 h at threshold = 100 for any exponent.
+    # The exponent is per-sport (Sports.pace_tss_exponent): running resistance is near
+    # linear in speed so it keeps 2 (TrainingPeaks rTSS); swimming fights drag, which
+    # rises with v^3, so it uses 3 (TP sSS). Squaring both under-scored hard swim sets
+    # ~20% (at IF 1.2: 144 vs 173 per hour).
     pace_tss : { ngp_speed : F64, threshold_speed : F64, dur_s : F64, exponent : F64 } -> F64
     pace_tss = |{ ngp_speed, threshold_speed, dur_s, exponent }|
         if threshold_speed <= 0.0 {
@@ -2796,11 +2547,9 @@ expect {
     and Metrics.lens_score(Ef, row("weighted_watts")).is_ok()
 }
 
-# ...and the same two lenses refuse an IMPOSSIBLE heart rate, which is the regression this
-# whole change is about and which no expect could see. `valid_hr`'s own expects pin the
-# predicate, not its use: with both lens arms reverted to `avg_hr > 0.0`, every expect file
-# passed with identical counts and only the e2e caught it. These two assert the lenses
-# THEMSELVES, so the unit suite is no longer blind to the exact defect.
+# ...and the same two lenses refuse an IMPOSSIBLE heart rate. `valid_hr`'s own
+# expects pin the predicate, not its use — with both lens arms reverted to
+# `avg_hr > 0.0` every expect file still passed. These assert the lenses themselves.
 expect {
     hr_row = |hr| { name: "X", date: "2025-01-01", sport: "Ride", distance_m: 12000.0, moving_time: 3600, np_w: 200.0, avg_hr: hr, avg_hr_scored: hr, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     Metrics.lens_score(Ef, hr_row(150.0)).is_ok()
@@ -2809,17 +2558,11 @@ expect {
     and Metrics.lens_score(SpeedHr, hr_row(18.0)).is_err()
 }
 
-# ...and that the lenses read `avg_hr_scored` rather than `avg_hr`. Every other fixture in
-# this file sets the two equal, which is exactly the shape that cannot tell them apart — the
-# whole of #311 is a one-token change at two call sites, and a suite where both fields always
-# agree stays green if the token is reverted. These rows disagree deliberately, in BOTH
-# directions, so neither substitution passes:
-#
-#   - stored impossible, stream fine: the case #311 exists for. Must SCORE, and score from
-#     the stream (200/147.7), not refuse on the 86.4 the summary reported.
-#   - stored fine, stream impossible: must REFUSE. A session can have a plausible summary and
-#     a stream of dropout; scoring it from the summary would be the same bug facing the other
-#     way, and swapping the field back would make this one pass while the first still fails.
+# ...and that the lenses read `avg_hr_scored` rather than `avg_hr`. Every other
+# fixture sets the two equal — the one shape that cannot tell them apart. These rows
+# disagree in BOTH directions, so neither substitution passes: stored impossible with
+# a fine stream must SCORE from the stream (200/147.7); stored fine with an
+# impossible stream must REFUSE, not fall back to the summary.
 expect {
     split = |stored, stream| { name: "X", date: "2025-01-01", sport: "Ride", distance_m: 12000.0, moving_time: 3600, np_w: 200.0, avg_hr: stored, avg_hr_scored: stream, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     scored = match Metrics.lens_score(Ef, split(86.4, 147.7)) {
@@ -2987,17 +2730,13 @@ expect
     }
 
 # NP requires at least 30 samples
-# rank_ts_sql emits TWO terms, and the FLAG is the half no fixture can reach from a DESC
-# site: NULL is SQLite's smallest value, so `key DESC` already puts unrankable rows last
-# and dropping the flag is invisible there. It is `key ASC` that inverts — unrankable
-# FIRST — and two of the sites using this order ascending. Measured: dropping the flag
-# survived the whole suite, because the only behavioural fixture is a DESC site.
-#
-# So the shape is pinned directly. The flag is always DESC regardless of the caller's
-# direction, which is exactly what makes one helper correct in both.
-# two_digit_in has no callers, and had no expects — an untested body justified by a comment
-# is a claim, not a record. These pin the Roc half of the divergence its comment describes:
-# SQLite `datetime()` accepts T24:00:00 and this does not.
+# rank_ts_sql emits TWO terms, and the FLAG is the half no fixture reaches from a
+# DESC site: NULL is SQLite's smallest value, so `key DESC` already sinks unrankable
+# rows and dropping the flag is invisible there; `key ASC` inverts. The flag is
+# always DESC regardless of direction — that is what makes one helper correct both
+# ways — so the shape is pinned directly.
+# two_digit_in has no callers; these pin the Roc half of the divergence its comment
+# describes: SQLite `datetime()` accepts T24:00:00 and this does not.
 expect Metrics.two_digit_in("24", 23) == False
 expect Metrics.two_digit_in("23", 23) == True
 
@@ -3154,26 +2893,17 @@ expect {
     (r.tss - 55.0).abs() < 0.001 and r.model == "hr_avg"
 }
 
-# ...and an IMPOSSIBLE average does not reach that rung. This is the last ladder rung that
-# scored training LOAD from a summary average unguarded — not the last consumer of one,
-# which `top hr` still is (#315).
-#
-# Measured on a real session with the STREAM REMOVED so the rung is reached, then only
-# `avg_hr` changed: 139.2 bpm gave tss 42.3042, 250 gave 76.9167, 18 gave 23.0750. The
-# stream removal is a precondition, not a detail: with it in place all three give 43.0444
-# through `hr_zones` and the summary average is never read, so a reader following an
-# earlier version of this line reproduced nothing and would have concluded the fix inert.
-#
-# Refused means the ladder falls to its NEXT rung, so `load_model` stops saying `hr_avg` —
-# the reader can see which rung answered, rather than getting a silent number.
+# ...and an IMPOSSIBLE average does not reach that rung — the last ladder rung that
+# scored LOAD from a summary average unguarded (#313). Measured with the stream
+# removed so the rung is reached (with it in place, hr_zones answers and the summary
+# is never read): 139.2 bpm gave tss 42.3, 250 gave 76.9, 18 gave 23.1. Refused
+# means the ladder falls to its NEXT rung, visible in `load_model`.
 expect {
     hi = Metrics.tss_ladder({ ..Metrics.ladder_base, avg_hr: Ok(250.0), rpe: Ok(7.0) })
     lo = Metrics.tss_ladder({ ..Metrics.ladder_base, avg_hr: Ok(18.0), rpe: Ok(7.0) })
-    # Names the rung that DOES answer, and its number. `!= "hr_avg"` was the first form and
-    # it is absence-only: the rejected design — refused HR scoring 0 with model "none",
-    # which WINS and blocks the rpe rung — satisfies it, and review proved that passes at
-    # 279/279 with no count fall. The whole point of this change is which rung answers, so
-    # the expect has to say which.
+    # Names the rung that DOES answer, and its number. `!= "hr_avg"` is absence-only:
+    # the rejected design — refused HR scoring 0 with model "none", which WINS and blocks
+    # the rpe rung — satisfies it. The point is which rung answers, so say which.
     hi.model == "session_rpe" and lo.model == "session_rpe"
     and (hi.tss - 70.0).abs() < 0.001
     and (lo.tss - 70.0).abs() < 0.001

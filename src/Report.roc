@@ -21,53 +21,31 @@ Report :: [].{
     # low = relative_effort (Strava's opaque estimate).
     high_models_sql = "'power_stream','weighted_watts','avg_watts','rtss'"
 
-    # "is this activity's stored date readable", in SQL, for the sites that cannot call
-    # Metrics.usable_date_days because they need the answer inside a query — the `activities`
-    # ORDER BY hoist, `date_known` on `activities` and `top`, and `doctor`'s undateable count.
-    #
-    # ONE constant because it was four byte-identical copies, and the count is not the
-    # argument. Review pinned the value of exactly ONE of them: the `1000-02-30` fixture
-    # holds the `activities` copy, `top` and `doctor` were validated only for the KEY's
-    # presence and type by the schema loop, and a predicate that drifted to always-0 — or a
-    # copy edited in one place — passed everything. Collapsing them makes that one fixture
-    # hold all four sites by construction, which is strictly better than three more value
-    # checks over four things that must agree.
-    #
-    # The ROUND TRIP through SQLite's own date(), plus the year bound. It agrees with
-    # usable_date_days on every shape measured, impossible-but-well-formed days included
-    # ('2026-02-30', '1000-02-30'), and that agreement is version-dependent: the system CLI
-    # here is 3.43.2 and returns '2026-02-30' verbatim, while the binary links 3.49.1 and
-    # does not. `date_known` is a PUBLISHED boolean SKILL.md tells the coach to trust, so the
-    # e2e fixture for '1000-02-30' — the one shape only the newer date() rejects — is what
-    # holds SQL to the Roc rule across a platform upgrade.
-    # The SQL twin of Metrics.usable_date_days lives THERE now, beside the Roc rule it has
-    # to agree with — `Analyze` and `Strava` also rank on this column and cannot import
-    # Report, which imports them. This stays as the name four sites already use.
+    # "is this activity's stored date readable", in SQL, for the sites that need the
+    # answer inside a query — the `activities` hoist, `date_known` on `activities`
+    # and `top`, and `doctor`'s undateable count. ONE constant because it was four
+    # byte-identical copies, and only one was value-pinned: collapsing them makes the
+    # '1000-02-30' fixture hold all four sites by construction.
+    # The rule itself lives in Metrics.usable_date_days / date_known_sql_for, beside
+    # its Roc twin (`Analyze` and `Strava` cannot import Report); this stays as the
+    # name four sites already use. The SQL round-trips through SQLite's own date(),
+    # which is version-dependent — 3.43.2 returns '2026-02-30' verbatim, the linked
+    # 3.49.1 rejects it — so the e2e fixture is what holds SQL to the Roc rule
+    # across a platform upgrade.
     date_known_sql = Metrics.date_known_sql_for("a.start_local")
-    # ...and the row's RANKABILITY, published beside it, for the same four-copies argument.
-    # After #255 the engine's notion of "usable timestamp" grew a time half and the published
-    # flag did not follow: `2026-08-23T37:00:00Z` is hoisted to the top of `activities` as
-    # needing repair, refused a ranking position at eight sites, and published as
-    # `date_known: true`. The listing put it first and the flag beside it said nothing was
-    # wrong (#281).
+    # ...and the row's RANKABILITY, published beside it. After #255 the engine's
+    # notion of "usable timestamp" grew a time half and the published flag did not:
+    # `2026-08-23T37:00:00Z` was hoisted to the top of `activities` as needing repair
+    # while publishing `date_known: true` (#281).
     #
-    # `rankable`, NOT a `time_known` sibling, and the reason is the contract's own convention:
-    # every `_known` flag in this codebase names a value published NEXT TO IT whose magnitude
-    # it licenses — `power_known`/`np_w`, `hr_known`/`avg_hr`, `date_known`/`date` — and
-    # SKILL.md states that normatively ("trust the flag, never the magnitude"). `top` takes
-    # `time` as a METRIC SELECTOR and publishes `moving_time` on the same row, so a
-    # `time_known` there reads as licensing `moving_time` and a coach applying the documented
-    # rule would discard a perfectly good duration on the leaderboard it just ranked by.
-    # Measured: a planted row published `moving_time=999999` with `time_known=False`.
-    #
-    # A `time_known` conjunct also could not be described honestly. It was false for a row
-    # whose date is unreadable and whose clock text is fine (`2026-13-45T10:30:00Z`), and TRUE
-    # for two of the shapes `date_known` rejects (`0001-05-05`, `2026-02-30`) — so its `false`
-    # conflated causes a consumer cannot separate.
-    #
-    # This is the whole predicate, so the consumer composes nothing, and it is the word the
-    # engine already uses (`rankable_sql`, `hoist_unrankable_sql`, `unrankable_activities`)
-    # rather than a fourth name for one idea.
+    # `rankable`, NOT a `time_known` sibling: every `_known` flag names a value
+    # published NEXT TO IT whose magnitude it licenses, and `top` publishes
+    # `moving_time` on the same row — a `time_known` there reads as licensing it, so
+    # a coach applying the documented rule would discard a good duration (measured:
+    # moving_time=999999 under time_known=False). A `time_known` conjunct also
+    # conflates causes (false for a bad date with a fine clock, true for two shapes
+    # date_known rejects). This is the whole predicate, in the word the engine
+    # already uses.
     rankable_sql = Metrics.rankable_sql("a.start_local")
     medium_models_sql = "'hr_zones','hr_avg','session_rpe'"
     low_models_sql = "'relative_effort'"
@@ -194,33 +172,18 @@ Report :: [].{
                 Err(NoRowsReturned) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
                 Err(e) => Err(e)
                 Ok(latest_day) => {
-                    # PROPAGATE, through the same helper summary_payload! uses on the same
-                    # anchor 130 lines below. (Same anchor semantics, NOT the same
-                    # statement — that one selects day, ctl, atl and tsb.) Collapsing to
-                    # epoch day 0 here does not fail loudly — it answers. Measured on one
-                    # poisoned row: a real 28-day block (138
-                    # TSS, 2 sessions, 58% easy) came back as `has_data: false`, every
-                    # figure 0, exit 0, and the human line said "no load recorded either 28d
-                    # · fitness holding". `summary` refused on the same database in the same
-                    # run. An athlete told their fitness is holding, by a command that could
-                    # not read the day it anchored on, is the worst shape this class has.
+                    # PROPAGATE, through the same helper summary_payload! uses on the same anchor
+                    # (same semantics, not the same statement). Collapsing to epoch day 0 does not
+                    # fail loudly — it answers: a real 28-day block came back `has_data: false`,
+                    # every figure 0, "fitness holding", while `summary` refused on the same
+                    # database in the same run.
                     anchor = canonical_day(latest_day)?
-                    # AFTER the daily_load anchor, before the windows. Both halves matter.
-                    #
-                    # After, because `summary` reads its anchor first too, and putting this
-                    # sweep at the top of the command made `compare` answer
-                    # `unreadable_activity_date` on a database where `summary` answered
-                    # `unreadable_daily_load_day` — two commands disagreeing about which of
-                    # two faults they met first, over the same rows. e2e pins that agreement
-                    # and caught it.
-                    #
-                    # Before the windows, because an unreadable date does not make this
-                    # command answer wrongly about one row — it removes the row from BOTH
-                    # windows and the DELTA between them is what `compare` publishes.
-                    # Measured with one date NULLed on an otherwise unchanged database:
-                    # 331 vs 319 became 270 vs 319, and the verdict crossed a category, from
-                    # "load steady (4%)" to "load backed off (-16%)", at exit 0 with
-                    # has_data true.
+                    # AFTER the daily_load anchor, before the windows. After, because `summary` reads
+                    # its anchor first too, and the two commands must meet the same fault first on
+                    # the same database (e2e pins the agreement). Before the windows, because an
+                    # unreadable date removes the row from BOTH windows and the DELTA is what
+                    # `compare` publishes — measured, one NULLed date moved the verdict from "load
+                    # steady (4%)" to "load backed off (-16%)" at exit 0.
                     _ = guard_activity_dates!(path)?
                     cur_from = Metrics.days_to_date_str(anchor - (days - 1))
                     cur_to = Metrics.days_to_date_str(anchor + 1)
@@ -259,22 +222,13 @@ Report :: [].{
         Ok(n > 0)
     }
     # The daily_load.day guard. BOTH halves — canonical and parseable — because the
-    # non-canonical day is the dangerous one, not the harmless one: `ORDER BY day DESC` is
-    # a string sort, so "2026-3-05" beats every "2026-08-xx" and becomes `latest`.
-    #
-    # Used by every read of that column here that must not ABSORB: the two anchors and the
-    # ramp series. The ramp series needs it separately, because a bad day only has to BE
-    # the anchor when it sorts highest — put a canonical day above it and the poisoned row
-    # slips into the 30-day window with the anchor guard none the wiser, publishing a
-    # ramp_7d of -49 and a form_delta of -79 under `form_delta_known: true`, at exit 0.
-    # `load_series!` below now goes through it too, which closes the last reader of this
-    # column that absorbed. This sentence used to say the opposite and call it a known open
-    # defect — a claim about tracker state, asserted in the branch that closes it, so
-    # `tools/issue-claims.sh` would have gone red the moment #249 did.
-    #
-    # Scoped to the property rather than the count on purpose. The PREDICATE is factored
-    # into Metrics.usable_date_days and every site in the tree calls it, so what can differ
-    # between them is which tag each raises — which is the part that should differ.
+    # non-canonical day is the dangerous one: `ORDER BY day DESC` is a string sort,
+    # so "2026-3-05" beats every "2026-08-xx" and becomes `latest`.
+    # Used by every read of the column that must not ABSORB: the two anchors, the
+    # ramp series (a bad day need not BE the anchor — below a canonical day it still
+    # slips into the 30-day window and publishes a fabricated ramp under
+    # `form_delta_known: true`), and `load_series!`. The predicate is factored into
+    # Metrics.usable_date_days; what differs per site is which tag it raises.
     canonical_day : Str -> Try(I64, _)
     canonical_day = |d| (Metrics.usable_date_days(d)).map_err(|_| BadDailyLoadDay(d))
 
@@ -287,54 +241,25 @@ Report :: [].{
     canonical_activity_day = |d, id| (Metrics.usable_date_days(d)).map_err(|_| BadActivityDate(d, id))
 
     # Every stored activity date, refused if any is unreadable, naming a row.
+    # ONE BODY, because five spellings of "canonical and parseable" had to agree and
+    # did not (#243). FIVE call sites reaching `rate`, `week`, `compare`, `summary`,
+    # `plan` and `stats`. `season` is deliberately NOT one: it guards inline over a
+    # query grouped by (date, family), so sharing this body would name a different
+    # row than its comment promises.
     #
-    # ONE BODY, because it was copies of the same query and the next copy is how a rule
-    # drifts. #243's last rounds were spent collapsing exactly this shape — five spellings of
-    # "canonical and parseable" that had to agree and did not.
+    # CONTRACT FOR CALLERS: a command that reads `daily_load` must guard THAT column
+    # first. With both faults present, `analyze` — the daily_load remedy — clears the
+    # poisoned day AND surfaces the activity fault in one run; reverse the order and
+    # the user meets a second failure nobody warned them about. The fragile holder is
+    # `summary`, which holds the order ACROSS TWO FUNCTIONS; only call order and one
+    # e2e check pin it.
     #
-    # FIVE call sites, reaching `rate`, `week`, `compare`, `summary`, `plan` and `stats`.
-    # `season` is NOT one of them and that is deliberate, not an omission: it guards inline
-    # over its own query, which groups by (date, family) rather than by date, so the id it
-    # names is the lowest within the group the walk reaches first. Sharing this body there
-    # would name a different row than its own comment promises.
-    #
-    # The count is written down because it was wrong three ways at once — "four commands"
-    # here, "six" in the commit message, and a list naming `season` two files over. A number
-    # in a comment is a claim like any other.
-    #
-    # CONTRACT FOR CALLERS: a command that reads `daily_load` must guard THAT column before
-    # calling this. The reason is the user's path, not consistency for its own sake. With
-    # both faults present, `analyze` — the daily_load remedy — clears the poisoned day AND
-    # surfaces the activity fault in the same run, exiting non-zero: one user action between
-    # the two messages. Measured. Reverse the order and it costs strictly more — the user
-    # deletes the activity row, re-syncs, runs `compare`, and meets a second failure nobody
-    # warned them about, which `analyze` would have told them for free.
-    #
-    # `stats` and `week` name the activity row first, and that is not an inconsistency to
-    # tidy away: they never read `daily_load`, so it is the only fault they can see. Every
-    # message is true and the terminal state is reached from either entry point.
-    #
-    # The fragile holder is `summary`, not `compare`. `compare` holds the order locally and
-    # visibly — anchor at :158, sweep at :175. `summary` holds it ACROSS TWO FUNCTIONS: the
-    # daily_load guard, and this sweep inside `hard_day_block!`, which runs later. Nothing
-    # but call order and one e2e check holds that, so it is the site that breaks first if
-    # either function is reorganised.
-    #
-    # It exists as a WHOLE-TABLE sweep rather than a per-query guard because of the failure
-    # mode it covers, which is the one #249's split had no row for. `summary`, `season` and
-    # `plan` compute an ordering or an anchor, and a guard on the read is enough. `compare`
-    # and `stats` do something else with the date: they use it as a FILTER over an aggregate
-    # — `WHERE start_local >= :from AND < :to`, or `>= '0000-01-01'` meaning "everything".
-    # An unreadable date makes that comparison NULL, so the row does not produce a wrong
-    # value, it silently LEAVES THE SET, and the failure is an absence rather than a
-    # fabrication. Review measured both: `compare` moved its verdict from
-    # "load steady (4%)" to "load backed off (-16%)" with one date NULLed, and `stats`
-    # reported 474 sessions under a heading that says ALL TIME while holding 475. Exit 0,
-    # has_data true, no marker, on a screen an athlete reads for a decision.
-    #
-    # A guard on the filtering query itself could not catch that — the row is already gone
-    # by the time the rows come back, which is why it survived a review that was looking for
-    # wrong numbers rather than missing ones.
+    # A WHOLE-TABLE sweep rather than a per-query guard because of the failure mode:
+    # `compare` and `stats` use the date as a FILTER over an aggregate, and an
+    # unreadable date makes the comparison NULL — the row silently LEAVES THE SET.
+    # An absence, not a fabrication (compare's verdict crossed a category with one
+    # date NULLed; stats said 474 under ALL TIME while holding 475), and a guard on
+    # the filtering query cannot catch a row that is already gone.
     guard_activity_dates! : Str => Try({}, _)
     guard_activity_dates! = |path| {
         act_days = Sqlite.query_many!({
@@ -382,18 +307,13 @@ Report :: [].{
     # text used twice here and nowhere else, and returning it would put a query
     # fragment in a payload record.
     hard_day_stats! = |path, anchor, cutoff28| {
-        # most recent day with a real hard stimulus (5+ min in Z4/Z5); '' = never
-        # ONE hard-session predicate (#159): power-aware like every other hard
-        # surface (week's hard column, polarization) — pi_hard when the activity
-        # has a pi_* intensity split (power- or pace-derived), HR Z4+Z5 otherwise,
-        # 5+ min either way.
-        # last_hard previously used HR zones alone, which missed power-only rides
-        # with junk HR straps; consolidated rather than grown a second definition.
-        # MAX(substr(...)) is a STRING max and reached the payload with no Roc-side parse
-        # at all, so a malformed start_local shipped verbatim into a field the schema calls
-        # a date — measured: last_hard_session_date: "2026-3-05T". Covered by the all-time
-        # sweep below, NOT by anything in this query: a cutoff-scoped guard cannot see a
-        # row this one can return, because this one has no cutoff.
+        # most recent day with a real hard stimulus (5+ min in Z4/Z5); '' = never.
+        # ONE hard-session predicate (#159), power-aware like every other hard surface:
+        # pi_hard when the activity has an intensity split, HR Z4+Z5 otherwise. HR-only
+        # missed power rides with junk straps; consolidated, not a second definition.
+        # MAX(substr(...)) is a STRING max reaching the payload with no Roc-side parse,
+        # so a malformed start_local shipped verbatim into a date field — covered by the
+        # all-time sweep below, NOT by anything in this query (this one has no cutoff).
         hard_expr = "COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) >= 300"
         last_hard = Sqlite.query!({
             path: Path.utf8(path),
@@ -405,24 +325,14 @@ Report :: [].{
             bindings: [],
             row: Sqlite.str("d"),
         })?
-        # stimulus features (#159): counts, spacing, and windowed loads the coach
-        # would otherwise re-derive from raw lists — measurements only, never
-        # judgments (hard_days.d14 is a count; whether 4 is "too many" is
-        # the coach's call, per the #154 boundary)
-        # ONE sweep over every activity date, before any of the reads below. This is what
-        # makes those reads safe, and it replaces a per-query guard that was wrong in a way
-        # worth recording: MIN(a.id) inside a GROUP BY names the lowest id IN THE GROUP,
-        # not the id of the row whose date is the MAX — so guarding sports_28d.last_date
-        # that way named a healthy activity and pointed the user at the wrong row.
-        #
-        # It also covers the two string MAXes that have no parse at all to hang a guard on:
-        # `last_hard` (all-time, so a cutoff-scoped guard cannot see it — one malformed hard
-        # session older than 28 days with none inside the window shipped "0000-0z-02" into
-        # last_hard_session_date at exit 0) and `sports_28d.last_date` (no hard_expr, so any
-        # poisoned activity sorting above the cutoff became its sport's "last seen").
-        #
-        # All-time, matching `season`, which already refuses any activity with an unreadable
-        # date. `summary` was the surface where the same row answered at exit 0.
+        # stimulus features (#159): counts, spacing and windowed loads the coach would
+        # otherwise re-derive — measurements only, never judgments (#154).
+        # ONE sweep over every activity date, before any read below. It replaces a
+        # per-query guard that named the wrong row (MIN(a.id) inside a GROUP BY names the
+        # lowest id IN THE GROUP, not the row whose date is the MAX), and it covers the
+        # two string MAXes with no parse to hang a guard on: `last_hard` is all-time, so
+        # a cutoff-scoped guard cannot see a malformed hard session older than the
+        # window, and `sports_28d.last_date` has no hard_expr at all.
         _ = guard_activity_dates!(path)?
         hard_days = Sqlite.query_many!({
             path: Path.utf8(path),
@@ -706,15 +616,11 @@ Report :: [].{
         form_delta = Metrics.form_delta_7d(List.map(dated_load, |e| { day: e.day, tsb: e.tsb }), anchor)
         # how long the band has held (#123) — the thing the label itself cannot say
         band_days = Metrics.days_in_band(List.map(dated_load, |e| { day: e.day, tsb: e.tsb }), anchor)
-        # ANNOTATED Bool, not a bare `True`/`False` tag. The builtin JSON serializes an
-        # unconstrained tag as the STRING "True". This payload happens to escape that
-        # already — but for a reason worth stating correctly, because the wrong reason
-        # teaches the wrong rule: it is RENDERED as well as encoded, and
-        # `Render.summary_screen` consumes the field as an `if` condition, which flows the
-        # Bool constraint back through the un-annotated renderer. analyze's payload is
-        # encode-only, so nothing constrained it and it shipped "True". Neighbouring Bool
-        # fields have nothing to do with it — record fields do not constrain one another.
-        # The rule: an encode-only payload has no constraint on its tags, so annotate.
+        # ANNOTATED Bool, not a bare tag: the builtin JSON serializes an unconstrained
+        # tag as the STRING "True". This payload happens to escape already — it is
+        # RENDERED too, and the renderer's `if` flows Bool back through — but an
+        # encode-only payload has no such constraint, so annotate. Neighbouring Bool
+        # fields are irrelevant: record fields do not constrain one another.
         band_capped : Bool
         band_capped = match band_days { AtLeast(_) => True  _ => False }
         delta_known : Bool
@@ -856,36 +762,16 @@ Report :: [].{
                 Ok({ day, tss, ctl, atl, tsb })
             },
         })?
-        # GUARDED here rather than in Render. Not because Render could not act — it has a
-        # third option and uses it four lines from the damage, at the `keep_oks` that builds
-        # `tsb_series` — but because a pure renderer can DROP the row and cannot NAME it, and
-        # naming the row is the whole of #243. (An earlier version of this comment claimed
-        # Render's only options were to absorb or invent. That is false, it is visible on
-        # screen next to the code, and stating it would have invited the decision to be
-        # re-litigated on a premise anyone could disprove in ten seconds.)
-        #
-        # What Render absorbed is real: `.ok_or(0)` collapsed an unreadable day to epoch 0,
-        # rendering a `1969-12-29` week row carrying real load numbers under a verdict line
-        # saying "form 0 — balanced", at exit 0. And the fabricated row was not confined to
-        # the table — `List.last(ordered)` makes it `today`, so the VERDICT was computed from
-        # it too: a poisoned day measured `form -6 — modeled fatigue building` off a trend
-        # anchored at epoch. Fixing only the table row would have left the verdict lying.
-        #
-        # Extending `keep_oks` here would have removed both without refusing anything, and it
-        # is the smaller change. It is still the wrong one: dropping the row silently
-        # under-counts the weekly rollup's sessions and load with no marker, which trades a
-        # large absorption for a small one. `daily_load` is DERIVED, so the remedy is one
-        # command and the message says it; contrast `activities`, where the row is source
-        # data and the user must delete and re-sync.
-        #
-        # Refusing the whole command costs nothing that was ever available, either: a
-        # lexically-high garbage day sorts to the top of `ORDER BY day DESC`, so it is inside
-        # every window — `load 7`, `load 14` and `load 90` all meet it.
-        #
-        # Same rule and same helper as every other daily_load.day read in this module
-        # (#243), so `load` stops being the one command that answers where the rest refuse.
-        # The asymmetry was already visible on one database: `summary` and `compare`
-        # refused while `load` printed the invented week.
+        # GUARDED here rather than in Render: a pure renderer can DROP the row but cannot
+        # NAME it, and naming the row is the whole of #243. What Render absorbed was real —
+        # `.ok_or(0)` collapsed an unreadable day to epoch 0, rendering a 1969 week row
+        # AND anchoring the verdict on it (`List.last(ordered)` makes it `today`).
+        # Dropping via keep_oks would silently under-count the rollup instead; daily_load
+        # is DERIVED, so refusing with a one-command remedy costs nothing that was ever
+        # available — a lexically-high garbage day sorts to the top of `ORDER BY day
+        # DESC`, so it is inside every window. Same rule and helper as every other
+        # daily_load.day read here (#243), so `load` stops being the one command that
+        # answers where the rest refuse.
         _ = List.map_try(rows, |r| canonical_day(r.day))?
         ordered = List.fold(rows, [], |acc, x| List.concat([x], acc))
         Output.out!(ordered, Render.load_screen)

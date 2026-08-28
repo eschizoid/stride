@@ -192,18 +192,11 @@ Output :: [].{
         Err(Exit(error_status))
     }
 
-    # The setup remedy for a client credential that is neither in the environment nor
-    # stored. ONE definition, because it has two call sites: `auth!`, which met this first,
-    # and the boundary arm in `app.roc` that catches the same tag surfacing from
-    # `get_valid_token!`'s refresh branch. Two spellings of one remedy is how they drift.
-    #
-    # NOT split into a `_msg` half. ONE pair in this file earns that split:
-    # `unreadable_config_msg`, which `ReportHealth` also calls to embed the prose in a
-    # PAYLOAD rather than an error. The other three — `unreadable_activity_date_msg`,
-    # `unreadable_activity_time_msg`, `unreadable_daily_load_day_msg` — have a single caller
-    # each, so they are the shape-matching this note is about, not the precedent for it. An
-    # earlier version of this comment said the pairs "elsewhere" earn it, generalising from
-    # the one example that does; review measured the other three.
+    # The setup remedy for a client credential neither in the environment nor stored.
+    # ONE definition, two call sites (`auth!` and the app.roc boundary arm) — two
+    # spellings of one remedy is how they drift. NOT split into a `_msg` half: only
+    # `unreadable_config_msg` earns that split, because `ReportHealth` embeds it in a
+    # PAYLOAD; the other message pairs have a single caller each.
     missing_client_creds! : Str => Try({}, _)
     missing_client_creds! = |name|
         Output.err_out!("missing_client_creds", "${name} not set and no stored credentials yet — create a (free) Strava API app at strava.com/settings/api, then run:\n  STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth")
@@ -219,74 +212,31 @@ Output :: [].{
     unreadable_config_msg = |key, raw|
         "${key} is set to '${raw}', which is not a number — fix it with `stride config set ${key} <value>`"
 
-    # A stored DATE the engine cannot read, from the two tables these two errors are
-    # raised for: `activities.start_local`, which stride mirrors from Strava, and
-    # `daily_load.day`, which stride derives itself. There is a third date column,
-    # `planned_sessions.target_date`, and it needs no code here for a good reason rather
-    # than an accident: `plan_add!` rejects a non-canonical date with `bad_date` before
-    # the database is opened, and it is the only writer of that column.
+    # A stored DATE the engine cannot read, from the two tables these errors are
+    # raised for: `activities.start_local` (mirrored) and `daily_load.day` (derived).
+    # `planned_sessions.target_date` needs no code — `plan_add!` rejects
+    # non-canonical dates on the write path and is the only writer.
     #
+    # Separate codes because the remedies differ: re-fetch the mirror row vs rebuild
+    # the derived table. NOT internal_error — nothing here is unanticipated, the
+    # code refuses the date on purpose.
     #
-    # Separate codes rather than one, because the remedies are genuinely different: the
-    # mirror row is repaired by re-fetching it, the derived row by rebuilding the table.
-    # A caller told only "a date is bad" cannot pick between them. (The boundary's 401 arm
-    # is the precedent for CHECKING that, not for splitting — it kept one code and widened
-    # the message instead, which is the right call when the remedy really is identical.)
+    # PARENTHESISED, not "is": `raw` is the COMPONENT that failed, never the whole
+    # column — quoting the whole start_local sent users to a DELETE matching zero
+    # rows. The full column is not available from this query (three aggregates, so
+    # SQLite's bare-column rule pins nothing) and the id is the handle anyway. The
+    # remedy leads with the id because `sync --all` silently no-ops on an imported
+    # row (synced_at NULL — Strava does not list it), so the sync remedy is stated
+    # as conditional.
     #
-    # These are NOT internal_error. That arm's message asks the user to open an issue,
-    # which is the wrong instruction for both: nothing here is unanticipated — the code
-    # constructs BadActivityDate and BadDailyLoadDay on purpose, at a date it deliberately
-    # refuses to guess at. It just never reached the boundary as itself (#243).
-    # PARENTHESISED, not "is" and not "beginning". `raw` is the COMPONENT that failed —
-    # the ten-character day for a date fault, the time slice for a time fault — never the
-    # whole column and not always its start. Saying "has start_local 'garbage-da'" sent the user to
-    # `DELETE FROM activities WHERE start_local='garbage-da'`, which matches zero rows,
-    # and made every bug report quoting it unreproducible. Measured against this PR's own
-    # fixtures: '2026-3-01T06:00:00Z' printed as '2026-3-01T'. Carrying the whole column
-    # out of the query was the other option and it is not available — SQLite's bare-column
-    # rule only pins a value to the min/max row when there is ONE min/max aggregate, and
-    # this query has three. Not available FROM THIS QUERY, to be exact — a second read by
-    # `example_id` would return the true column. That is a round trip and a second failure
-    # mode for a string the user does not need: the id is the handle they act on.
-    #
-    # The ID is therefore the only handle that works, so the remedy leads with it. The
-    # order of the two remedies is not cosmetic either: `sync --all` was measured to
-    # SILENTLY no-op on a row Strava does not list — an imported one, where `synced_at` is
-    # NULL — returning `updated_activities: 0` at exit 0 and leaving the same error. So
-    # `sync --all` will not repair an imported row, which is why the id-based remedy leads
-    # and the sync one is stated as conditional.
-    # EMPTY `raw` gets its own wording, because the parenthetical is the reproduction handle
-    # and quoting `('')` makes it a false one. Every reader in #249 reaches this through
-    # `COALESCE(substr(start_local, 1, 10), '')`, so a NULL column and a stored empty string
-    # arrive identically — and "has an unreadable start_local ('')" reads as though the empty
-    # string is what is stored, sending the user to
-    # `DELETE FROM activities WHERE start_local=''`, which matches zero rows for a NULL. That
-    # is the same defect this comment's own paragraph above records for 'garbage-da', one
-    # value further along.
-    #
-    # A BLOB `start_local` is the FOURTH instance and it is not fixed here: the parenthetical
-    # renders the decoded bytes, and no TEXT literal can ever match a BLOB, so
-    # `WHERE start_local = '<those bytes>'` matches zero rows by construction rather than by
-    # accident. And the bytes need not LOOK wrong: a BLOB holding valid UTF-8 quotes a
-    # perfectly plausible handle — review measured one rendering as ('2026-13-99'), with no
-    # replacement characters anywhere in the message. That is worse than visible garbage,
-    # because the user copies a normal-looking date into a DELETE, gets zero rows, and has
-    # no signal at all. It also rules out suppressing the quote by detecting replacement
-    # characters: that heuristic is blind to exactly this case, and a sound one would have
-    # to carry blob-ness through all nine call sites, which is the cost this file's own
-    # paragraph above already refuses for `start_local IS NULL`.
-    #
-    # Recorded rather than repaired, because the id-based remedy leads for exactly
-    # this reason and the handle is decorative in that case — but by this file's own standard,
-    # calling the parenthetical "the reproduction handle" is wrong for a BLOB, and saying so
-    # is what stops a fifth instance being written on the assumption it is right. These rows
-    # only reach this message at all because #296 stopped them crashing first.
-    #
-    # It says NULL-or-empty rather than picking one, and that is deliberate rather than lazy:
-    # the COALESCE has already collapsed the two by the time anything gets here, and the
-    # distinction is not actionable — both repair the same way, by id. Carrying
-    # `start_local IS NULL` as its own column through nine call sites would buy a word the
-    # user cannot act on differently.
+    # EMPTY `raw` gets its own wording: NULL and '' arrive identically through the
+    # COALESCE, and quoting ('') reads as though the empty string is stored. A BLOB
+    # start_local is the remaining gap, recorded rather than repaired: the
+    # parenthetical renders the decoded bytes, no TEXT literal can match a BLOB, and
+    # the bytes can look like a perfectly plausible date — worse than visible
+    # garbage, because the user copies a normal-looking handle into a DELETE and
+    # gets zero rows with no signal. The id-based remedy is what works there, and
+    # these rows only reach this message because #296 stopped them crashing first.
     unreadable_activity_date_msg : Str, I64 -> Str
     unreadable_activity_date_msg = |raw, id| {
         what =
@@ -298,14 +248,11 @@ Output :: [].{
         "activity ${(id).to_str()} has ${what} — delete that row by id and re-sync, or run `stride sync --all` if Strava still lists the activity"
     }
 
-    # The TIME half of the same column, and it needs its own wording for the reason the
-    # paragraph above gives about `('')`. `raw` here is the nine characters after the date —
-    # a COMPONENT, never the stored value — so quoting it the way the date message does puts
-    # a string in the reproduction handle that `WHERE start_local='T37:00:00'` matches zero
-    # rows of. Same defect, third instance: 'garbage-da' first, `('')` second, this third.
-    #
-    # So the component is named OUTSIDE the handle. The id stays where it was, leading the
-    # remedy, because it is the only thing here anyone can act on.
+    # The TIME half of the same column, with its own wording: `raw` here is the nine
+    # characters after the date — a COMPONENT, never the stored value — so quoting it
+    # as the date message does puts a string in the reproduction handle that
+    # `WHERE start_local='T37:00:00'` matches zero rows of. The component is named
+    # OUTSIDE the handle; the id leads the remedy, being the only actionable thing.
     unreadable_activity_time_msg : Str, I64 -> Str
     unreadable_activity_time_msg = |raw, id| {
         what =
@@ -337,19 +284,12 @@ Output :: [].{
         Err(Exit(error_status))
     }
 
-    # `stride analyze`, NOT `stride analyze --all` — that form does not exist and exits
-    # with `usage`, which is the same defect this whole change is about: an error whose
-    # remedy does not work. Measured: `analyze --all` answers
-    # `usage: stride analyze — wrong arguments for this command`, exit 1.
-    #
-    # The remedy itself did not work either, in a state this error is reachable from.
-    # rebuild_daily_load! only reached its DELETE when at least one activity date parsed;
-    # with none, it returned Ok({}) and left the table exactly as it was — so `analyze`
-    # answered `converged: true` at exit 0 and `season` answered this error again,
-    # verbatim, forever. Fixed in Analyze.roc by clearing on that branch too. Recorded
-    # here because the comment that stood in this spot said "verified end to end against
-    # a poisoned snapshot", and it had been — against a snapshot that happened to hold
-    # parseable activities. The evidence was real and the sentence generalized past it.
+    # `stride analyze`, NOT `--all` — that form does not exist and exits `usage`,
+    # the same defect this change is about: a remedy that does not work. The remedy
+    # itself also failed once, in a state this error is reachable from:
+    # rebuild_daily_load! only reached its DELETE when at least one activity date
+    # parsed, so `analyze` said `converged: true` while `season` answered this error
+    # forever. Fixed in Analyze.roc by clearing on that branch too.
     unreadable_daily_load_day_msg : Str -> Str
     unreadable_daily_load_day_msg = |raw|
         "daily_load holds the day '${raw}', which is not a readable date — rebuild the table with `stride analyze`"

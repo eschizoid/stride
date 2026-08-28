@@ -3,28 +3,19 @@ import Drain
 
 Render :: [].{
     # ── pure text-rendering helpers for human CLI output ────────────────
-
-    # aligned table: headers + rows -> multiline string.
-    # Keeps a table within max_total display-columns so a row never wraps in the
-    # terminal — but WITHOUT losing text. Columns take their natural width; if the table
-    # would overflow, the single widest column (in practice a free-text `detail` or a
-    # long activity name) is squeezed and its text is WORD-WRAPPED across continuation
-    # lines within the same row, or character-broken when it has no space to break at.
-    # The full text is always shown; it just spans several physical lines.
+    # aligned table: headers + rows -> multiline string. Keeps a table within max_total
+    # display-columns WITHOUT losing text: columns take natural width; on overflow the
+    # single widest column (in practice free text) is squeezed and word-wrapped across
+    # continuation lines, character-broken when it has no space to break at.
     #
-    # NOT a guarantee, and the word "whole" used to sit here claiming it was. fit_caps
-    # squeezes ONE column and floors it at min_col, so a table whose excess is larger
-    # than that column can surrender still overruns. Measured on the real database with
-    # daily_load inflated 100000x: 115 columns before #194's fix, 105 after. The
-    # ordinary cases land inside it (103 -> 100 at 5x), and nothing silently truncates
-    # either way; a table that needs more than one column squeezed needs a narrower
-    # design, not a wider budget.
+    # NOT a guarantee: fit_caps squeezes ONE column floored at min_col, so a table
+    # whose excess exceeds what that column can surrender still overruns — nothing
+    # silently truncates either way. A table needing two columns squeezed needs a
+    # narrower design, not a wider budget.
     #
-    # 100, not 80: the squeezed column is ALWAYS the free-text one, so every column
-    # the budget spends elsewhere comes straight out of the workout description —
-    # the part actually worth reading. A fixed number rather than $COLUMNS on
-    # purpose: env-dependent output would make the e2e layout assertions
-    # (bar-never-wraps, marker placement) unreproducible.
+    # 100, not 80: the squeezed column is always the free-text one, so budget spent
+    # elsewhere comes out of the workout description. Fixed rather than $COLUMNS:
+    # env-dependent output would make the e2e layout assertions unreproducible.
     max_total = 100
     min_col = 12
 
@@ -43,11 +34,9 @@ Render :: [].{
     indices_go = |n, acc| if n == 0 acc else indices_go(n - 1, List.prepend(acc, n - 1))
 
     # greedy word-wrap: pack space-separated words into lines of at most `cap`
-    # display-columns. A lone word wider than cap is CHARACTER-BROKEN to fit, by
-    # hard_break below. It used to get its own line at full width instead, on the
-    # reasoning that "details are prose — no giant tokens": `detail` is free text from
-    # `week add`, and a season block span is `2021-12-13..2022-02-10`, so the assumption
-    # was wrong in both the user-supplied and the generated direction (#194).
+    # display-columns. A lone word wider than cap is CHARACTER-BROKEN by hard_break —
+    # free text and generated spans (`2021-12-13..2022-02-10`) both produce giant
+    # tokens (#194).
     wrap_cell : Str, U64 -> List(Str)
     wrap_cell = |s, cap|
         if display_width(s) <= cap
@@ -67,13 +56,11 @@ Render :: [].{
                 },
             )
             final = if Str.is_empty(packed.cur) packed.out else List.append(packed.out, packed.cur)
-            # The packer above can only break BETWEEN words, so a token with no spaces
-            # comes out whole and ignores the cap it was just handed. That made fit_caps'
-            # squeeze a no-op for precisely the columns that needed squeezing, and the
-            # table then overran the budget with nothing reporting it (#194: a season
-            # block reads `2021-12-13..2022-02-10`, one space-free token). Breaking every
-            # produced line here rather than only the no-space case covers the arm that
-            # carries an over-long word forward as `cur` too.
+            # The packer above can only break BETWEEN words, so a space-free token comes out
+            # whole and ignores the cap — which made fit_caps' squeeze a no-op for precisely
+            # the columns that needed it (#194: a season block is `2021-12-13..2022-02-10`,
+            # one token). Breaking every produced line covers the arm that carries an
+            # over-long word forward as `cur` too.
             capped = List.join(List.map(final, |line| hard_break(line, cap)))
             if List.is_empty(capped) [""] else capped
         }
@@ -130,18 +117,13 @@ Render :: [].{
         }
     }
 
-    # A row that renders as a horizontal RULE spanning the whole table — the spreadsheet
-    # divider — instead of as cells. It IS a row, so it sits in the rows list alongside
-    # the others: `render_table(headers, [row_a, Render.rule, row_b])`.
-    #
-    # Drawn with the table's own border glyphs so it lines up with the header rule and the
-    # top/bottom edges. The previous attempt filled every cell with `···`, which read as
-    # data (and collided with `progress`, where `···` means a GAP in time, so a boundary
-    # between two CONSECUTIVE days looked like missing days).
-    # An EMPTY row, not a string sentinel. A sentinel is ambiguous: in a one-column table
-    # a legitimate cell holding that exact text would render as a divider instead of data.
-    # A row with no cells cannot collide with anything, because every data row has one
-    # cell per column.
+    # A row that renders as a horizontal RULE spanning the whole table — the
+    # spreadsheet divider — instead of as cells. It IS a row, so it sits in the rows
+    # list: `render_table(headers, [row_a, Render.rule, row_b])`. Drawn with the
+    # table's own border glyphs (cell text like `···` reads as data, and collides with
+    # `progress`, where `···` means a gap in time). An EMPTY row, not a string
+    # sentinel: a sentinel cell in a one-column table would render data as a divider,
+    # while a row with no cells cannot collide with anything.
     rule : List(Str)
     rule = []
 
@@ -164,11 +146,8 @@ Render :: [].{
         # each row/header becomes a list of columns, each column a list of wrapped lines
         wrap_row = |row| List.map_with_index(row, |cell, i| wrap_cell(cell, List.get(caps, i).ok_or(display_width(cell))))
         wh = wrap_row(headers)
-        # Wrap ONCE, keeping rule positions inline. The earlier shapes each had a cost:
-        # re-wrapping in the body did the expensive work twice, and indexing a parallel
-        # wrapped list needed a running counter plus a silent `.ok_or([])` fallback whose
-        # complexity depends on how List.get is implemented. Tagging each entry sidesteps
-        # both — one pass, no index, linear whatever the list representation.
+        # Wrap ONCE, keeping rule positions inline: one pass, no index bookkeeping, linear
+        # whatever the list representation.
         tagged = List.map(rows, |row| if is_rule(row) Rule else Data(wrap_row(row)))
         wrs = List.keep_oks(tagged, |t| match t {
             Data(w) => Ok(w)
@@ -237,22 +216,20 @@ Render :: [].{
         if x >= 0.0 "+${mag}" else "-${mag}"
     }
 
-    # How long the band has held, appended to the state (#123).
-    #
-    # Takes the TAG, not a flattened number: the caller must not decide what Unknown means
-    # on the renderer's behalf, and AtLeast must not arrive here already collapsed into an
-    # exact-looking integer.
+    # How long the band has held, appended to the state (#123). Takes the TAG, not a
+    # flattened number: the caller must not decide what Unknown means on the renderer's
+    # behalf, and AtLeast must not arrive collapsed into an exact-looking integer.
     #
     #   Known(n)   n >= 2  -> ", 12 days in this band"
     #   AtLeast(n) n >= 2  -> ", 31+ days in this band"   the window ran out mid-streak
     #   either,    n <= 1  -> ""                          a one-day streak is noise
     #   Unknown            -> ""                          nothing known about today
     #
-    # The `+` is the whole point of AtLeast reaching this far: `summary` reads a 31-day
-    # window, so a 45-day streak truncates, and printing a bare "31" would present the
-    # window size as a measurement.
-    # The progress trend verdict. A closed set of three, pinned by equality below
-    # (ADR 0012). Named rather than inline for exactly that reason -- see the pin.
+    # The `+` is the point of AtLeast reaching this far: `summary` reads a 31-day
+    # window, so a 45-day streak truncates, and a bare "31" would present the window
+    # size as a measurement.
+    # The progress trend verdict: a closed set of three, pinned by equality below
+    # (ADR 0012). Named rather than inline for exactly that reason — see the pin.
     trend_label : Bool, Bool -> Str
     trend_label = |improved, declined|
         if improved "improving" else if declined "declining" else "holding steady"
@@ -520,48 +497,30 @@ Render :: [].{
             LoneNoDistance => "${name} (no distance recorded — can't match similar rides)"
         }
 
-    # ONE number for the operator and for the sentence describing it. `··· = a break over 90
-    # days` is a user-facing claim about what the glyph means, and nothing pinned it: review
-    # changed the legend to "over 60 days", left the comparison at `> 90`, and the whole
-    # suite stayed green — Render's expects at their full count, e2e at 963. A grep found
-    # the string in exactly one place, the code, so the two could drift silently and the
-    # legend would go on describing a threshold the engine had stopped using.
-    #
-    # Deriving both from this makes that drift impossible rather than merely detectable,
-    # which is the stronger fix: there is no version of the code where the sentence and the
-    # comparison disagree. The inclusivity — `>` and not `>=`, so exactly 90 is NOT a break
-    # — is pinned separately in `tests/e2e.roc`, because a constant cannot express it.
-    #
-    # Comment lines across `Render.roc`, `Metrics.roc` and `tests/e2e.roc` quote the literal
-    # 90. Most are historical narrative and stay true whatever this becomes, but they do NOT
-    # follow this constant — only the operator and the legend do, so moving the number means
-    # reading those too.
-    #
-    # Deliberately uncounted. An earlier version said "nineteen", which was wrong twice over:
-    # the figure was an undercount of the file it was measured on, and the commit that wrote
-    # it changed the set it was counting, in the same edit. A count of comments quoting a
-    # number drifts whenever anyone edits one of them — including the edit that states the
-    # count. That is the argument that produced this constant, applied to its own comment.
+    # ONE number for the operator and for the sentence describing it. `··· = a break
+    # over 90 days` is a user-facing claim, and nothing pinned it: the legend could
+    # say "over 60 days" with the comparison still at `> 90` and the whole suite
+    # stayed green. Deriving both from this constant makes the drift impossible rather
+    # than merely detectable. The inclusivity — `>`, so exactly 90 is NOT a break — is
+    # pinned in `tests/e2e.roc`, because a constant cannot express it. Comments across
+    # the repo quote the literal 90 as history; only the operator and the legend
+    # follow this constant, so moving the number means reading those too.
     gap_days : I64
     gap_days = 90
 
     # one workout's table + trend verdict, rendered through its sport-aware lens
-    # (power->EF, distance->speed/HR, rated->RPE; RPE is lower-is-better)
-    # The last two parameters are `scope_dropped` and `scope_why`, and they were called
-    # `hidden` and `hidden_reason` until #286 split the note in two. The names mattered: the
-    # caller passes only the SCOPE half now, and the expects below were still handing this
-    # slot a lens-shaped reason ("needs power and HR") — a combination production can no
-    # longer produce, so they passed while standing over nothing. They pin a scope reason.
+    # (power->EF, distance->speed/HR, rated->RPE; RPE is lower-is-better). The last two
+    # parameters are `scope_dropped`/`scope_why`: the caller passes only the SCOPE half
+    # of the old `hidden` pair (#286).
     progress_section : Str, List(Metrics.ProgressRow), Str, [Ef, SpeedHr, Rpe], [Asc, Desc], List(I64), U64, Str -> Str
     progress_section = |name, rows, asked, lens, sort, all_days, scope_dropped, scope_why| {
         higher = Metrics.lens_higher_better(lens)
         sc = |row| Metrics.lens_score(lens, row).ok_or(0.0)
-        # `rows` now arrives BEFORE the lens gate, so the table can show a session the lens
-        # cannot score rather than deleting it (#286). Everything that reasons about VALUE —
-        # the scale, the trend, the session count in the verdict, and last-vs-best —
-        # reads `scored_rows` instead,
-        # because `ok_or(0.0)` would otherwise fold a 0 into the mean and squash the bars
-        # against a floor no session actually reached.
+        # `rows` arrives BEFORE the lens gate, so the table can show a session the lens
+        # cannot score rather than deleting it (#286). Everything that reasons about VALUE
+        # — scale, trend, verdict count, last-vs-best — reads `scored_rows`, because
+        # `ok_or(0.0)` would fold a 0 into the mean and squash the bars against a floor no
+        # session reached.
         scored_rows = List.keep_if(rows, |r| Metrics.lens_score(lens, r).is_ok())
         unscored_n = List.len(rows) - List.len(scored_rows)
         scores = List.map(scored_rows, sc)
@@ -573,12 +532,10 @@ Render :: [].{
             Rpe => fmt0(v)
             _ => fmt2(v)
         }
-        # the SCORED heart rate, not the stored one. This column sits beside `ef`/`spd_hr`
-        # and the legend under the table explains those as "per heartbeat" — so a column
-        # showing 86 next to a score computed from 147.7 makes the legend false on that row,
-        # and the divisor appears nowhere the reader can reach. The stored value is still
-        # published raw by `activities --json` and by `activity`'s own `avg_hr`; this is the
-        # column whose job is to explain the number next to it. (#311)
+        # the SCORED heart rate, not the stored one (#311). This column sits beside
+        # `ef`/`spd_hr`, whose legend reads "per heartbeat" — showing 86 next to a score
+        # computed from 147.7 makes the legend false with the divisor nowhere on screen.
+        # The stored value is still published raw by `activities --json` and `activity`.
         hr_of = |row| if row.avg_hr_scored > 0.0 fmt0(row.avg_hr_scored) else "-"
         prim_of = |row|
             # "-", never `0.00` with an empty bar. A fabricated zero in the lens column is
@@ -601,12 +558,10 @@ Render :: [].{
         cols =
             match lens {
                 Ef => [
-                    # "-" at zero, not `0`. A zero here is UNREACHABLE on a scored row —
-                    # the EF lens requires `np_w > 0` — so it can only ever mean absent, and
-                    # it only ever appears on the rows #286 made render. Printing `0` in a
-                    # column where zero is impossible is the same fabrication as a `0.00`
-                    # score, one column to the left. `kJ` and `load` keep their bare 0,
-                    # which is the file's existing convention and a real value there.
+                    # "-" at zero, not `0`: a zero here is UNREACHABLE on a scored row (the EF lens
+                    # requires `np_w > 0`), so it can only mean absent, and it only appears on the rows
+                    # #286 made render. `kJ` and `load` keep their bare 0 — the file's convention, and
+                    # a real value there.
                     ("np (W)", |row| if row.np_w > 0.0 fmt0(row.np_w) else "-"),
                     ("hr", hr_of),
                     ("ef", prim_of),
@@ -627,12 +582,10 @@ Render :: [].{
                     ("load", |row| fmt0(row.tss)),
                 ]
                 Rpe => [
-                    # "-" at zero here too, but NOT for the reason the two columns above
-                    # give. `lens_score(Rpe, r)` requires only `rpe > 0` and says nothing
-                    # about duration, so a fully SCORED row can carry 0 — review found one
-                    # rendering a full bar beside this cell. `0m` was never a measurement
-                    # either way, so the blank is right; the justification is different, and
-                    # inheriting the neighbours' one would have been a false claim.
+                    # "-" at zero here too, but NOT for the neighbours' reason: `lens_score(Rpe, r)`
+                    # requires only `rpe > 0`, so a fully SCORED row can carry duration 0 and render a
+                    # full bar beside this cell. `0m` was never a measurement either way; the blank is
+                    # right, the justification is different.
                     ("duration", |row| if row.moving_time > 0 mins(row.moving_time) else "-"),
                     ("hr", hr_of),
                     ("rpe", prim_of),
@@ -645,31 +598,15 @@ Render :: [].{
         body_rows = {
             folded = List.fold(rows, { prev: -1000000.I64, cells: [] }, |acc, row| {
                 days = Metrics.date_str_to_days(row.date).ok_or(acc.prev)
-                # ...against the UNFILTERED series, not against the rows that survived the
-                # lens. `rows` no longer has unscorable sessions removed — #286 made them
-                # render — so `rows` and `all_days` describe the same set in production and
-                # this fold is an identity there. The SCOPE gate does not change that, though
-                # an earlier version of this comment claimed it did: `anchor_filter` truncates
-                # BEFORE `all_days` is derived from the same post-scope list, so a scope drop
-                # removes the row from both. Review demonstrated it — an out-of-scope ride
-                # sitting inside a 131-day hole, and the marker still prints.
-                #
-                # It stays because it is what makes the marker correct the moment the two
-                # lists stop tracking each other — it already handles divergence, so it is
-                # precisely what would NOT have to change. An earlier version of this
-                # sentence said it "would have to change", which inverts its own point.
-                #
-                # And the stakes: folding the gap over the filtered list merges the intervals
-                # either side of a dropped ride into one and announces a break that did not
-                # happen. The legend prints "a break over N days", so what the reader sees is
-                # a claim about TRAINING — an artifact here is a false statement rather than
-                # an ambiguous glyph.
-                #
-                # The N is `gap_days`, shared with the comparison below (#302), which means
-                # the printed threshold cannot drift from the tested one. That is a separate
-                # property from the one above, and an earlier version welded the two with a
-                # "so" — the sharing makes the number honest, not the sentence a claim about
-                # training.
+                # ...against the UNFILTERED series, not the rows that survived the lens. Folding
+                # the gap over the filtered list merges the intervals either side of a dropped ride
+                # and announces a break that did not happen — and the legend prints "a break over N
+                # days", a claim about TRAINING, so the artifact is a false statement rather than
+                # an ambiguous glyph. In production `rows` and `all_days` describe the same set
+                # (#286 made unscorable rows render; a scope drop removes the row from both), so
+                # the fold is an identity there — it stays because it already handles the moment
+                # the two lists diverge. N is `gap_days`, shared with the comparison below (#302),
+                # so the printed threshold cannot drift from the tested one.
                 with_gap =
                     if acc.prev > -1000000 and Metrics.max_real_gap(all_days, acc.prev, days) > gap_days {
                         List.append(acc.cells, gap_row)
@@ -701,27 +638,17 @@ Render :: [].{
         }
         label = trend_label(improved, declined)
         # Sessions absent from the table are absent from every figure on this line too, and
-        # saying so is the difference between a filtered view and a wrong one: silence here
-        # reads as "this is all of them".
+        # saying so is the difference between a filtered view and a wrong one.
         #
-        # TWO clauses, because after #286 the two causes have different outcomes rather than
-        # different reasons. A scope drop is still HIDDEN — those sessions are a different
-        # distance and are not in this table at all. A lens drop is now SHOWN, with its lens
-        # cells blank, so calling it hidden while the reader is looking at the row would be
-        # the same contradiction this issue opened with, one line further down.
-        #
-        # The SCOPE reason still arrives from the caller, because only there can the anchor
-        # filter's two truncation kinds be told apart — `SimilarDistance` drops rides outside
-        # a 10% band, `LoneNoDistance` drops everything because the anchor recorded no
-        # distance, and reporting the second as "a different distance" was measurably false.
-        # The LENS reason is derived here instead, from `lens_needs`, because the count it
-        # has to agree with is counted here. A paragraph describing the old single-reason
-        # arrangement stood above this block until review found it: it said the reason
-        # arrives from the caller, full stop, which stopped being true of half of it.
-        #
-        # The counts still match the payload's `hidden_scope` and `hidden_lens` exactly. Only
-        # the verb differs, which is the honest way for two surfaces to disagree: the agent
-        # reading `sessions[]` genuinely cannot see those rows, and the athlete can.
+        # TWO clauses, because after #286 the two causes have different OUTCOMES: a scope
+        # drop is still HIDDEN (a different distance, not in this table), while a lens drop
+        # is SHOWN with its lens cells blank — calling it hidden while the reader looks at
+        # the row would be the contradiction this issue opened with. The SCOPE reason
+        # arrives from the caller (only the anchor filter can tell its two truncation kinds
+        # apart); the LENS reason derives here, where the count it must agree with is
+        # counted. The counts match the payload's `hidden_scope`/`hidden_lens` exactly;
+        # only the verb differs — the agent reading `sessions[]` genuinely cannot see those
+        # rows, and the athlete can.
         scope_clause =
             if scope_dropped == 0 {
                 ""
@@ -774,13 +701,10 @@ Render :: [].{
                 # no history behind it yet (#96).
                 "→ ${short} ${pfmt(avg)} — first session of this workout, nothing to compare against yet"
             } else if List.len(scored_rows) == 1 {
-                # ...but only when there IS no history. `hidden_note` reached the multi-row
+                # ...but only when there IS no history. `hidden_note` once reached the multi-row
                 # arm alone, so a workout whose lens could score exactly one session claimed
-                # "first session, nothing to compare against yet" while the rest sat in the
-                # log unscored — worse than the silence the note was added to remove, because
-                # it asserts the absence rather than omitting it. Measured on the real
-                # database: `progress 2026-07-30` said that of a workout with ELEVEN sessions,
-                # ten of them unrated, and eight group-variants reached this arm (#291).
+                # "first session, nothing to compare against yet" over ELEVEN sessions, ten
+                # unrated (#291) — asserting the absence is worse than the silence it replaced.
                 "→ ${short} ${pfmt(avg)} — the only session shown${hidden_note}; the rest are in your log"
             } else {
                 "→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${U64.to_str(List.len(scored_rows))} sessions${hidden_note} — ${label}${pct_str}"
@@ -825,41 +749,23 @@ Render :: [].{
         }
     }
 
-    # ── stream-drain note, used by sync's human line ─────────────────────────────────────────────────
-
-    # Takes the TAG, not the payload's string. It used to take the Str and match three
-    # literals against it, with a catch-all for anything else — so the set it handled was
-    # stated in a different file from the set that exists, and stayed correct only by
-    # someone remembering. Review demonstrated the cost twice, from both directions: add
-    # a stop reason, satisfy every compile error, and the user still got the raw wire
-    # token because the string never found its way to the new branch.
-    #
-    # With a StopReason argument there is no catch-all to fall through and no lookup to
-    # forget: a new drain reason is a non-exhaustive match HERE, and the branch you are
-    # forced to write is the branch that runs.
+    # ── stream-drain note, used by sync's human line ─────────────────────
+    # Takes the TAG, not the payload's string. Matching three literals with a catch-all
+    # stated the handled set in a different file from the set that exists: add a stop
+    # reason, satisfy every compile error, and the user still got the raw wire token.
+    # With a StopReason argument a new reason is a non-exhaustive match HERE, and the
+    # branch you are forced to write is the branch that runs.
     drain_note : Drain.StopReason, I64 -> Str
     drain_note = |stopped, pending|
         # `pending` is tested first for MOST reasons, and the exception is the point.
-        #
         # For Complete, BudgetReached and RateLimited an empty queue means nothing is left
-        # to do regardless of why the run ended, and a budget stop that happened to empty
-        # the queue is reachable (the window fills on the read just stored, without
-        # inspecting the rest of the list). Keying those on `stopped` instead printed "0 to
-        # go, run `stride sync` again tomorrow" beside a payload saying resumable: false —
-        # the human and machine surfaces contradicting each other about the same run.
+        # to do regardless of why the run ended (a budget stop that empties the queue is
+        # reachable). DailyCapReached is NOT one of those: its refusal arrives having made
+        # no request, so an empty queue says nothing about whether work remains.
         #
-        # DailyCapReached is NOT one of those. "Nothing is left to do" is false for it in
-        # both directions: the pre-flight refusal arrives here having made no request, so
-        # the queue being empty says nothing about whether work remains; and "all streams
-        # present" would be a positive claim about state the run never looked at. The
-        # sentence that used to sit above this one — "nothing is left to do regardless of
-        # why the run ended" — was true when it was written and stopped being true when
-        # this reason was added.
         # Each arm states its OWN empty-queue behaviour rather than sharing one test above
-        # the match. The shared test read better and was wrong for one of four reasons, and
-        # a `_` catch-all to carve that one out would have given back exactly the
-        # exhaustiveness this whole type exists to buy — a new StopReason has to stop
-        # compiling HERE, in the branch that runs.
+        # the match — the shared test was wrong for one of four reasons, and a `_` to carve
+        # that one out gives back exactly the exhaustiveness this type exists to buy.
         match stopped {
             # The ONLY way to drain the queue and still be pending: a stream body
             # that would not decode is skipped WITHOUT storing, so it retries next
@@ -869,18 +775,13 @@ Render :: [].{
             Complete => if pending == 0 "" else "${I64.to_str(pending)} had unreadable stream data — they retry next sync"
             BudgetReached => if pending == 0 "" else "filled Strava's 15-minute read window — ${I64.to_str(pending)} to go, run `stride sync` again in ~15 minutes"
             RateLimited => if pending == 0 "" else "Strava rate-limited this run — ${I64.to_str(pending)} to go, try again in ~15 minutes"
-            # the ONE stop whose remedy is not fifteen minutes. Strava's daily read
-            # cap resets at UTC midnight, so re-running sooner spends nothing and
-            # gets nothing — and every other arm here says "~15 minutes", which is
-            # what made this the case stride could not express (#246).
+            # the ONE stop whose remedy is not fifteen minutes: Strava's daily read cap resets
+            # at UTC midnight, so re-running sooner spends nothing and gets nothing (#246).
             #
-            # And the ONE stop that says something on an EMPTY queue. "all streams present"
-            # is a positive claim about state the run never looked at — the pre-flight
-            # refusal arrives here having made no request at all — and staying silent let
-            # `stride sync` print "synced 0 new, 0 updated, fetched streams for 0" and exit
-            # 0 on a day where nothing more would happen. Measured, and it is #246's own
-            # defect in a purer form: not the wrong remedy, but a sentence implying a
-            # successful quiet sync.
+            # And the ONE stop that speaks on an EMPTY queue: the pre-flight refusal arrives
+            # having made no request, so "all streams present" would be a claim about state
+            # the run never looked at — and silence let `stride sync` print a quiet
+            # successful-looking line and exit 0 on a day where nothing more would happen.
             DailyCapReached =>
                 if pending == 0 {
                     "used up today's Strava read allowance — nothing was fetched, and nothing will be until it resets; run `stride sync` again tomorrow"
@@ -904,17 +805,11 @@ Render :: [].{
     # used at all.
     freshness_note : { activities_awaiting_metrics : U64, activities_awaiting_metrics_known : Bool, activities_awaiting_streams : I64 } -> Str
     freshness_note = |f| {
-        # An unknowable count is NOT silence. The count is 0 in that case, and staying
-        # quiet would render it as "nothing to do" — the ambiguous zero this payload
-        # reports `*_known` alongside precisely to avoid. `analyze` is named because it is
-        # the command that fails with the underlying reason; `doctor` does not report it.
-        #
-        # "count", not "queue": what could not be read is the zone config, not the pending
-        # work. An earlier wording said "metrics queue unreadable", which sends a reader
-        # looking for database damage — the same class of plausible-but-wrong sentence the
-        # drain_note comment above rejects. The wording that shipped also matches the sibling
-        # arm and the field name, where "queue" appeared in no other rendered string in the
-        # binary.
+        # An unknowable count is NOT silence: the count is 0 in that case, and staying
+        # quiet renders as "nothing to do" — the ambiguous zero `*_known` exists to avoid.
+        # `analyze` is named because it is the command that fails with the underlying
+        # reason. "count", not "queue": what could not be read is the zone config, and
+        # "metrics queue unreadable" sends a reader hunting for database damage.
         metrics_note =
             if !(f.activities_awaiting_metrics_known) {
                 ["awaiting-metrics count unreadable (stride analyze says why)"]
@@ -934,57 +829,30 @@ Render :: [].{
     }
 
     # sync's human line. Extracted from an inline closure in Strava.roc so pure expects
-    # can reach it (#232): the four full-string equality expects that used to pin the
-    # retired backfill_screen died with it, the replacement lived inside an effectful
-    # module where no `expect` can go, and its one e2e check then asserted two
-    # unconditional literals — review deleted every NUMBER from the line and the check
-    # still passed.
-    # Takes the payload AND the tag it was built from. `p.stopped` is the WIRE string —
-    # it exists because sync.json is a flat enum and Output derives JSON from the record —
-    # and NOTHING in this function reads it. Recovering the tag from it was a lookup that
-    # two reviews proved a maintainer can leave stale: add a stop reason, satisfy every
-    # compile error, and the raw token still shipped to the user. Passed alongside instead,
-    # the lookup does not exist — a new reason is a non-exhaustive match here and in
-    # drain_note, and the branch you are made to write is the branch that runs.
+    # can reach it (#232). Takes the payload AND the tag it was built from: `p.stopped`
+    # is the WIRE string (sync.json is a flat enum) and nothing here reads it —
+    # recovering the tag from it was a lookup a maintainer can leave stale, shipping
+    # the raw token. Passed alongside, a new reason is a non-exhaustive match here and
+    # in drain_note, and the branch you are made to write is the branch that runs.
     #
-    # It does not reopen the "Render sees only the payload" rule that prune_claim below
-    # depends on. Both producer sites BIND the tag once and derive `stopped:` from that
-    # binding, so at both of them the human line and the machine line come from one value.
-    #
-    # DO NOT, not CANNOT. The signature takes the payload and the tag as two independent
-    # parameters, so a caller CAN pass a mismatched pair and nothing here stops it: review
-    # made the list site pass FromDrain(RateLimited) beside a correct `stopped:` and every
-    # offline expect stayed green — only the e2e human-screen check caught it. A third
-    # caller has to keep the same discipline. Binding once is the discipline; it is not
-    # enforcement, and an earlier version of this comment claimed it was.
+    # DO NOT, not CANNOT: the signature takes payload and tag independently, so a
+    # caller CAN pass a mismatched pair. Both producer sites bind the tag once and
+    # derive `stopped:` from that binding — that is discipline, not enforcement, and a
+    # third caller has to keep it.
     sync_screen : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }, Drain.SyncStop, Bool -> Str
     sync_screen = |p, stop, all| {
         prune_note = if p.pruned > 0 " (pruned ${U64.to_str(p.pruned)} removed on Strava)" else ""
-        # Said plainly rather than folded into the pending count: unreadable is not the
-        # same as not-yet-fetched, and only the first is worth chasing. Suppressed on a
-        # complete run, because drain_note's Complete arm is ONLY reachable with pending
-        # > 0 — precisely the skip case — so both clauses would state one fact twice, in
-        # two wordings, on every affected run.
+        # Said plainly rather than folded into the pending count: unreadable is not
+        # not-yet-fetched, and only the first is worth chasing. Suppressed on a complete
+        # run because drain_note's Complete arm is only reachable with pending > 0 —
+        # precisely the skip case — so both clauses would state one fact twice.
         #
-        # Reads the TAG, not `p.stopped`. This was the last string comparison in the file,
-        # and it was pinned only by accident: while drain_note also matched these literals,
-        # renaming one broke drain_note's arms and this line came along for the ride.
-        # drain_note takes a tag now, so that coupling is gone. Review measured the gap
-        # immediately — rename `Complete => "done"` in stopped_label, update the two pins
-        # the compiler and the schema witness force, leave this line alone, and the suite
-        # is 382/382 green while every complete run with a skipped stream prints the
-        # duplicated clause these five lines exist to suppress.
-        # `states_skips`, not `stop != FromDrain(Complete)`. The question here is "does this
-        # reason's own note already state the skip count", which is a property of the REASON
-        # — the same argument that moved the empty-queue decision into `drain_note`. An
-        # inequality against a literal tag was the last reason-shaped test in this file
-        # outside an exhaustive match, and the compiler said nothing about it: a new reason
-        # took the print-the-clause branch by default, and review measured a run printing
-        # the clause twice in two wordings, which is verbatim what the comment above says
-        # these five lines exist to prevent.
-        # The match returns the CLAUSE, not a boolean about it, so there is no `!` (which
-        # does not apply to a tag union here) and no bare `1 == 1` (which warns on an
-        # untyped literal). One exhaustive shape, and a new reason must answer.
+        # `states_skips`, not `stop != FromDrain(Complete)`: the question is "does this
+        # reason's own note already state the skip count", a property of the REASON. An
+        # inequality against a literal tag was the last reason-shaped test outside an
+        # exhaustive match — a new reason took the print branch by default and the clause
+        # printed twice in two wordings. The match returns the CLAUSE, not a boolean, so a
+        # new reason must answer.
         skip_clause = " (${I64.to_str(p.streams_skipped)} had unreadable stream data)"
         skip_for_reason : Drain.StopReason -> Str
         skip_for_reason = |r|
@@ -1006,16 +874,11 @@ Render :: [].{
             } else {
                 ""
             }
-        # WHY it stopped, not merely that work remains.
-        # A refused LIST is tested FIRST, and unconditionally. The first version of this
-        # put it after `pending_streams > 0` and reasoned that "the list stops the run, and
-        # there the queue is usually empty" — which is false in exactly the case the
-        # feature exists for. A first-run sync lists a full page of stream-less activities
-        # and is refused on the next, so pending is at its MAXIMUM there; drain_note won,
-        # and told the user "N to go, try again in ~15 minutes" about STREAMS when what was
-        # refused was the activity list, implying a drain that had run and got partway when
-        # it never started. The queue is only empty in the steady state, which is the one
-        # shape the e2e happened to construct.
+        # WHY it stopped, not merely that work remains. A refused LIST is tested FIRST and
+        # unconditionally: a first-run sync lists a full page of stream-less activities and
+        # is refused on the next page, so pending is at its MAXIMUM there — guarding this
+        # behind `pending_streams > 0` let drain_note win and describe a stream drain that
+        # never started. The queue is only empty in the steady state.
         tail =
             match stop {
                 ListRateLimited => {
@@ -1028,69 +891,32 @@ Render :: [].{
                     prune_claim = if p.pruned == 0 "; nothing was pruned" else ""
                     " — Strava rate-limited the activity list, so it is incomplete${prune_claim}. Run `stride sync` again in ~15 minutes"
                 }
-                # A MATCH on the TAG, no catch-all — that is the enforcement. Add an arm to
-                # SyncStop and this stops compiling; add one to StopReason and drain_note
-                # stops compiling. What matters is that the branch the compiler makes you
-                # write is the branch that RUNS.
-                #
-                # "In either direction" used to be part of that sentence and was briefly
-                # false: a `match r { DailyCapReached => … _ => … }` was added below to carve
-                # the daily cap out of the pending guard, and review measured that a fifth
-                # StopReason then produced exactly two errors, neither of them here — so a
-                # new reason printed no remedy at all under a green suite. The `_` is gone
-                # and the sentence is true again, but it is worth knowing it was a claim
-                # before it was a property.
-                #
-                # Two earlier shapes failed that test and both looked enforced. `==`
-                # against a literal was one line between a new reason and the user seeing
-                # its raw wire token. Matching on a Str->tag lookup gave the compile error
-                # but not the reachability: review added an arm, fixed both errors the
-                # compiler named, and still got `— auth_expired — 9 to go`, because the
-                # lookup table it never mentioned had no entry for the new tag. Deleting
-                # the lookup is what closes it.
+                # A MATCH on the TAG, no catch-all — that IS the enforcement: add an arm to
+                # SyncStop and this stops compiling; add one to StopReason and drain_note does.
+                # What matters is that the branch the compiler makes you write is the branch that
+                # RUNS. The earlier shapes failed exactly that: `==` against a literal, and a
+                # Str->tag lookup which compiled after a new arm yet still shipped the raw
+                # `auth_expired` token, because the lookup table had no entry. Deleting the lookup
+                # is what closes it.
                 ListDailyCapReached =>
-                    # UNCONDITIONAL, like its sibling above and for the same reason, plus
-                    # one more: this stop is reachable with an empty queue by construction —
-                    # a capped day is exactly the day nothing is left to drain.
-                    # `prune_claim` READ, not assumed, on the same reasoning its sibling
-                    # above gives: prune is unreachable on this path today because sync!
-                    # returns before it, but that is a fact about Strava.sync! and this
-                    # function can only see what it is handed. The first version of this arm
-                    # hardcoded the sentence without it — harmless, since `pruned` is 0 on
-                    # both paths, but it dropped a fact one of two sibling paths still
-                    # states, which is how they drift. Computed here rather than hoisted,
-                    # because the two arms are the only users and hoisting it would put a
-                    # binding in scope for the FromDrain arm that must never read it.
+                    # UNCONDITIONAL, like its sibling above and for one more reason: this stop is
+                    # reachable with an empty queue by construction — a capped day is exactly the day
+                    # nothing is left to drain. `prune_claim` READ, not assumed (see the sibling);
+                    # computed here rather than hoisted, because the two arms are the only users and
+                    # hoisting would put a binding in scope for the FromDrain arm that must never
+                    # read it.
                     {
                         cap_prune_claim = if p.pruned == 0 "; nothing was pruned" else ""
                         " — Strava rate-limited the activity list, so it is incomplete${cap_prune_claim}; and today's read allowance is used up. Run `stride sync` again tomorrow"
                     }
                 FromDrain(r) =>
-                    # UNCONDITIONAL. This function does not decide whether a reason has
-                    # anything to say on an empty queue — `drain_note` answers that per arm,
-                    # exhaustively, and answering it in two places is what went wrong twice.
-                    #
-                    # First `pending_streams > 0` guarded the whole tail, so DailyCapReached
-                    # printed nothing at all: `stride sync` on a spent day said "synced 0
-                    # new, 0 updated (0 re-checked in the 30-day window), fetched streams for
-                    # 0" and exited 0, having made no request and with none possible. Then
-                    # the fix carved DailyCapReached out with a `match` that needed a `_`,
-                    # and review measured what that cost: adding a fifth StopReason produced
-                    # exactly two non-exhaustive errors (`stopped_label`, `drain_note`) and
-                    # NOT this site, so a new reason whose remedy is not "wait fifteen
-                    # minutes" printed no remedy at all, compiler silent, suite green. The
-                    # same defect, one reason over, reintroduced by its own fix.
-                    #
-                    # The question this site was asking — "does an empty queue mean there is
-                    # nothing to say?" — is a property of the REASON, so it belongs where
-                    # the reasons are enumerated. Asking it here meant asking it without the
-                    # compiler watching.
-                    #
-                    # So drain_note answers it by returning EMPTY, and this site only
-                    # formats. It used to return "all streams present" for the quiet
-                    # reasons, which never shipped — the old guard suppressed the whole tail
-                    # before it could — and e2e asserts that string never appears in human
-                    # output. Dead text standing in for a decision made elsewhere.
+                    # UNCONDITIONAL. Whether a reason has anything to say on an empty queue is a
+                    # property of the REASON, so `drain_note` answers it per arm, exhaustively, and
+                    # this site only formats. Answering it here went wrong twice: a
+                    # `pending_streams > 0` guard made a capped day print a quiet successful-looking
+                    # sync (no request made, none possible), and the fix's `match` needed a `_` — under
+                    # which a fifth StopReason produced compile errors at two OTHER sites and none
+                    # here, so a new reason printed no remedy at all, compiler silent, suite green.
                     {
                         note = drain_note(r, p.pending_streams)
                         if Str.is_empty(note) "" else " — ${note}"
@@ -1325,24 +1151,15 @@ Render :: [].{
             "  FTP (60d): ~${fmt0(ftp.estimated_ftp_w)}W — derived from your best 20-min power ${fmt0(ftp.best_20min_w_60d)}W",
         ]
     # ── season screen (#139, ADR 0011) ──────────────────────────────────
-    # Blocks bounded by absence, described by measurement. No phase names: the
-    # trend is a fitted line reported by its ENDPOINTS, because a slope plus a
-    # low r2 gets read as "no trend" and r2 is scatter, not evidence the slope
-    # is zero.
+    # Blocks bounded by absence, described by measurement. No phase names; the trend is
+    # a fitted line reported by its ENDPOINTS, because a slope plus a low r2 gets read
+    # as "no trend" and r2 is scatter, not evidence the slope is zero.
     #
-    # Held under the repo's 100-column table budget. It shipped at 126 -- the
-    # only violator in the CLI -- because fit_caps can squeeze only the widest
-    # column, and a block span is one space-free token, which wrap_cell then emitted
-    # whole so the width snapped back. That second half is fixed as of #194: wrap_cell
-    # character-breaks a token with no break opportunity, so the squeeze now takes
-    # effect. The table still sits at exactly 100 on real data. Under 126 columns the rows wrapped
-    # mid-number into unreadable fragments. The block TOTAL and the SLOPE both
-    # went, and the session count that was JSON-only took the space. The total
-    # is recoverable from the row (/wk x span, within 0.2%); the SLOPE is NOT --
-    # its divisor is the ordinal distance between the fitted endpoints, which
-    # equals span_weeks - 1 only while the last training week is complete, so
-    # dividing by either visible cell is off by 6-17%. It stays in the payload;
-    # the endpoints are the number a reader should be using anyway.
+    # Held under the 100-column budget (it shipped at 126, the CLI's only violator).
+    # The block TOTAL and SLOPE moved to the payload; the total is recoverable from the
+    # row (/wk x span) but the SLOPE is NOT — its divisor is the ordinal distance
+    # between fitted endpoints, which equals span_weeks - 1 only while the last week is
+    # complete, so dividing visible cells is off by 6-17%.
     season_screen = |p| {
         block_rows = List.map(p.blocks, |b| {
             trend = if b.trend_known "${fmt0(b.fitted_start_load)}→${fmt0(b.fitted_end_load)}" else "-"
@@ -1386,11 +1203,8 @@ Render :: [].{
             ]
         })
         month_tbl = render_table(["month", "load", "sessions", "ftp"], month_rows)
-        # Topic lines, not one 690-character paragraph: at that length the
-        # definitions a reader needs are exactly the ones they skip. The old
-        # line also claimed a starred block's trailing week is "partial and
-        # excluded from the trend" -- false whenever today is a Monday, which
-        # it was on the day that was written.
+        # Topic lines, not one 690-character paragraph: at that length the definitions a
+        # reader needs are exactly the ones they skip.
         legend = Str.join_with(
             [
                 "a block is a run of training weeks closed by ${I64.to_str(p.gap_weeks)}+ weeks with no load — described by measurement, never named as a phase",
@@ -1732,15 +1546,10 @@ expect {
 expect Render.progress_group_label("Morning Ride", SimilarDistance(31400.0)) == "Morning Ride (~31.4 km rides)"
 
 # EF lens: gap row for >90-day breaks, asked marker, last-vs-best all present.
-#
-# The gap half COUNTS markers. It used to read `Str.contains(s, "···")`, which could never
-# fail: the legend line ends with `··· = a break over 90 days`, so that substring is in
-# every rendering. Measured — moving the two rows to 31 days apart, no gap at all, left this
-# expect green while its own comment said it tested a >90-day break. Counting separates the
-# legend's one mention from the gap row's seven cells.
-#
-# `all_days` is populated rather than `[]`, so this exercises the real fold instead of the
-# degenerate `d - p` path an empty series falls back to.
+# The gap half COUNTS markers: the legend ends with `··· = a break over 90 days`,
+# so `Str.contains(s, "···")` is true in every rendering and could never fail.
+# `all_days` is populated so this exercises the real fold, not the degenerate
+# `d - p` path.
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, avg_hr_scored: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     dayof = |x| Metrics.date_str_to_days(x).ok_or(0)
@@ -1757,14 +1566,12 @@ expect {
     Str.contains(s, "first session of this workout, nothing to compare against yet") and !(Str.contains(s, "holding steady")) and !(Str.contains(s, "(0%)"))
 }
 
-# The gap marker is folded over the UNFILTERED series. Both halves asserted, because
-# asserting only the suppression would pass on a build that never draws a marker at all.
-#
-# The measured shape from the real database: a ride with no HR on 2025-12-06 sits between
-# two scorable ones, so the real legs are 62 and 41 days and neither is a break, while the
-# rendered rows are 103 days apart. `all_days` is DERIVED with the same function the fold
-# uses — hardcoding day numbers put them on a different epoch, the filter matched nothing,
-# and both cases drew a marker.
+# The gap marker is folded over the UNFILTERED series. Both halves asserted —
+# asserting only the suppression passes on a build that never draws a marker.
+# The measured shape: a no-HR ride on 2025-12-06 between two scorable ones, so the
+# real legs are 62 and 41 days (no break) while the rendered rows sit 103 apart.
+# `all_days` is DERIVED with the fold's own function — hardcoded day numbers landed
+# on a different epoch and both cases drew a marker.
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, avg_hr_scored: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     rendered = [pr("2025-10-05", 1.5), pr("2026-01-16", 1.6)]
@@ -1792,17 +1599,12 @@ expect {
     Str.contains(hid, "2 sessions (1 hidden: a different distance for this workout)") and Str.contains(none, "2 sessions —")
 }
 
-# A lone row means "first session, nothing to compare against" ONLY when nothing was
-# hidden. Both arms asserted, and the hidden arm asserts the ABSENCE of the first-session
-# wording as well as the presence of its own: the defect was that the false sentence was
-# printed, so a check that only looked for the new text would pass on a build that printed
-# both.
-#
-# Pinned HERE rather than in e2e because an expect can hold the two arms against ONE input,
-# which is the property under test — the e2e fixture reaches each arm from different data,
-# so it cannot show that the same row renders differently only because `hidden` moved. An
-# earlier version of this comment claimed no live row exercises the hidden==0 arm; review
-# measured 81 groups on the real database and one in the e2e fixture that do (#291).
+# A lone row means "first session, nothing to compare against" ONLY when nothing
+# was hidden. Both arms asserted, and the hidden arm also asserts the ABSENCE of
+# the first-session wording — the defect was that the false sentence printed, so a
+# check looking only for the new text passes on a build that prints both. Pinned
+# HERE because an expect can hold both arms against ONE input; the e2e reaches each
+# arm from different data.
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, avg_hr_scored: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     lone = [pr("2025-01-01", 1.5)]
@@ -1833,15 +1635,10 @@ expect {
     Str.contains(before_old, "2025-02-01") and Str.contains(s, "improving")
 }
 
-# ADR 0012's hard guard applied to the progress verdict: the label is a closed set of
-# three, so all three are pinned by full-string EQUALITY. This producer had neither a pin
-# nor the denylist sweep until #165 -- exactly the "add a producer and believe it is
-# guarded" gap the ADR names.
-#
-# It is a named function rather than an inline `if` so the pin can BE equality. The first
-# attempt asserted Str.contains against progress_section's rendered output and passed a
-# mutation to "holding steadyZ" -- because "holding steadyZ" CONTAINS "holding steady".
-# A substring check cannot pin a closed set; it silently accepts every superstring.
+# ADR 0012's hard guard applied to the progress verdict: a closed set of three,
+# pinned by full-string EQUALITY. A named function rather than an inline `if` so
+# the pin can BE equality — Str.contains accepts every superstring ("holding
+# steadyZ" contains "holding steady"), so a substring check cannot pin a closed set.
 expect Render.trend_label(True, False) == "improving"
 expect Render.trend_label(False, True) == "declining"
 expect Render.trend_label(False, False) == "holding steady"
@@ -2251,19 +2048,15 @@ expect {
 expect !(Metrics.has_coaching_language(Render.warming_up_note(True, 12))) and !(Metrics.has_coaching_language(Render.warming_up_note(False, 90)))
 
 # ── the stream-drain note (#218, #232) ───────────────────────────────
-# Every arm pinned by full-string equality, and the SCREEN pinned on both of the
-# inputs it forwards. The first cut of these expects tested only `pruned_note`:
-# replacing the whole `drain_note(...)` call with the literal "all streams
-# present" left all of them green, so a rate-limited run would have told a human
-# every stream was present. Each expect below fails on at least one mutation that
-# the previous set accepted.
+# Every arm pinned by full-string equality, and the SCREEN pinned on both inputs it
+# forwards — substring or empty-case-only expects pass with every number deleted
+# from the format string.
 expect Render.drain_note(Complete, 0) == ""
 
-# `pending` outranks the reason. A budget stop that happened to empty the queue is
-# done — the window fills on the read just stored, without inspecting the rest of the
-# list, so this is reachable — and keying the note on `stopped` printed "0 to go, run
-# `stride sync` again tomorrow" next to a payload saying resumable: false. The
-# human and machine surfaces must not contradict each other about the same run.
+# `pending` outranks the reason: a budget stop that empties the queue is done (the
+# window fills on the read just stored), and keying the note on `stopped` printed
+# "0 to go, run `stride sync` again tomorrow" beside `resumable: false`. The human
+# and machine surfaces must not contradict each other about the same run.
 expect Render.drain_note(BudgetReached, 0) == ""
 expect Render.drain_note(RateLimited, 0) == ""
 expect Render.drain_note(Complete, 5) == "5 had unreadable stream data — they retry next sync"
@@ -2275,49 +2068,24 @@ expect Render.drain_note(RateLimited, 40) == "Strava rate-limited this run — 4
 expect Render.drain_note(DailyCapReached, 40) == "used up today's Strava read allowance — 40 to go, run `stride sync` again tomorrow"
 expect !(Str.contains(Render.drain_note(DailyCapReached, 40), "15 minutes"))
 
-# No catch-all expect any more, and that is the point: drain_note takes a StopReason, so
-# "an outcome that did not come through stopped_label" is not a value that exists. The
-# expect that used to sit here pinned the catch-all's wording, and the catch-all was the
-# hole — it rendered a reason nobody had written a sentence for, at exit 0.
-
-# The wire strings still have to match the producer, and that tie is now the ONLY thing
-# these need to say — drain_note takes a StopReason, so the compiler already guarantees it
-# handles every drain reason that exists. What no type can guarantee is that
-# `stopped_label`'s spellings match schemas/v2/sync.json, because the schema is a
-# document. So these four are hand-typed on purpose.
-#
-# They witness the ROC SPELLING, not the contract — and that distinction is load-bearing.
-# Review renamed the enum value in schemas/v2/sync.json ALONE: these four stayed green,
-# every offline expect stayed green, and the e2e schema-conformance check on the list-429
-# arm is what went red. So the tie has two halves — these pin tag -> literal, that pins
-# emitted literal -> schema enum — and neither alone catches a rename on the far side.
+# The wire strings still have to match the producer — drain_note takes a StopReason,
+# so the compiler already guarantees every reason has a branch; what no type can
+# guarantee is that `stopped_label`'s spellings match schemas/v2/sync.json, a
+# document. Hand-typed on purpose: these pin tag -> Roc literal, and the e2e schema
+# check pins emitted literal -> schema enum. Neither alone catches a rename on the
+# far side.
 expect Drain.stopped_label(Complete) == "complete"
 expect Drain.stopped_label(BudgetReached) == "budget_reached"
 expect Drain.stopped_label(RateLimited) == "rate_limited"
 expect Drain.stopped_label(DailyCapReached) == "daily_cap_reached"
 expect Drain.sync_stopped_label(ListRateLimited) == "list_rate_limited"
 
-# No label may appear RAW in the human line — the failure this whole thread of work is
-# about. Enumerated by hand, and that is a COST rather than a free pass — this comment used
-# to argue it was free, on two premises that are both false.
-#
-# It said a fifth arm "does not compile until sync_screen and drain_note both have a branch
-# for it". Those are branches on two DIFFERENT types: a new SyncStop arm forces sync_screen
-# and sync_stopped_label, a new StopReason arm forces stopped_label and drain_note. Naming
-# one site from each set as though they were one set is what made the argument look sound.
-#
-# And "a branch that exists is a branch that runs" is not "the label is absent from the
-# output" — the compiler makes you write a branch, not a correct one, which is the entire
-# reason this guard exists. `ListDailyCapReached` proved both: it got its forced sync_screen
-# branch and was still missing from this list, which is the thing the sentence said could
-# not happen. Review found it, along with three prose surfaces missing from the sweep below.
-#
-# The two earlier shapes were worse — `==` against a literal, and a Str->tag lookup — and
-# under both, review added an arm, satisfied every compile error, and still shipped
-# `— auth_expired — 9 to go`. This one is better and still hand-maintained: when you add an
-# arm to either type, add it here too.
-#
-# Both `pending` shapes, because the tail dispatches on pending_streams too.
+# No label may appear RAW in the human line. Enumerated by hand, and that is a COST:
+# a new SyncStop arm forces sync_screen and sync_stopped_label, a new StopReason arm
+# forces stopped_label and drain_note — two DIFFERENT types, so neither compiler
+# error reaches this list, and a compiler-forced branch is a branch, not a correct
+# one. When you add an arm to either type, add it here too. Both `pending` shapes,
+# because the tail dispatches on pending_streams too.
 expect {
     stops = [FromDrain(Complete), FromDrain(BudgetReached), FromDrain(RateLimited), FromDrain(DailyCapReached), ListRateLimited, ListDailyCapReached]
     List.all(

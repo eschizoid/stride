@@ -1,39 +1,21 @@
 Drain :: [].{
     # ── the stream drain's pure half ────────────────────────────────────
-    # Three things, all pure. Two belong to the drain loop in Strava.drain_streams!:
-    # the rate-pacing DECISION (`decide`), and the vocabulary its outcome ships in
-    # (`StopReason` + `stopped_label`). The third, `SyncStop`, does NOT belong to the
-    # drain — it belongs to `sync!`, which is the whole point of it being a separate
-    # type, and it lives here so the one wire vocabulary stays in one file. The loop is
-    # a thin effectful skin dispatching on the first two, so every branch is
-    # unit-testable here.
+    # Three things, all pure: the rate-pacing DECISION (`decide`), its wire
+    # vocabulary (`StopReason` + `stopped_label`), and `SyncStop`, which belongs to
+    # `sync!` but lives here so the one wire vocabulary stays in one file. The loop
+    # in Strava.drain_streams! is a thin effectful skin, so every branch is
+    # unit-testable here. Counting our own reads by choice — pacing never depends
+    # on an endpoint sending rate-limit headers.
     #
-    # `decide` takes a response status and the per-run counters and returns the next
-    # control-flow action. (Counting our own reads by choice, so pacing does not depend
-    # on any endpoint sending rate-limit headers.)
-
-    # TWO limits, and they stop the run for different lengths of time. A run drains until
-    # Strava's 15-minute read window is full, then stops and asks to be re-run — it does
-    # NOT sleep to the next window, because that made a routine sync block ~30 minutes in
-    # the foreground. It carries no separate per-RUN budget: `window` is never reset
-    # inside a run, so a per-run cap of 940 against a window of 95 could never fire, and
-    # review proved both arms dead by evaluating `decide` at production limits.
-    #
-    # The DAILY cap used to be "respected by arithmetic": ~95 reads per window × ~10
-    # windows a day sits just under Strava's 1000. There are 96 fifteen-minute windows in
-    # a day, not 10 — that sentence assumed the athlete runs sync about ten times, and
-    # nothing enforced it. Least of all stride's own output, which after every stop said
-    # "run `stride sync` again in ~15 minutes". Follow that and you do four runs an hour
-    # at ~95 reads: 1000 is crossed in about two and a half hours, and every read for the
-    # rest of the day is refused while stride keeps advising fifteen minutes. The one
-    # case where the answer is TOMORROW was the one case it could not say.
-    #
-    # So it is counted now, against a persisted per-UTC-day total. Counting our own reads
-    # rather than reading rate-limit headers is the same choice `decide` already makes for
-    # the window, for the same reason: pacing does not depend on any endpoint sending
-    # them. It is an approximation — anything else using the same token is invisible to
-    # us — but it is the approximation stride was already making, with the count kept
-    # instead of thrown away.
+    # TWO limits, stopping the run for different lengths. A run drains until the
+    # 15-minute window fills, then stops and asks to be re-run (sleeping blocked a
+    # routine sync ~30 min). No separate per-run budget: `window` never resets
+    # inside a run, so a per-run cap could never fire — both arms proved dead.
+    # The DAILY cap used to be "respected by arithmetic" (~10 runs/day assumed,
+    # nothing enforcing it — least of all stride's own "run again in ~15 minutes",
+    # which crosses 1000 reads in ~2.5 hours if followed). Now counted against a
+    # persisted per-UTC-day total: an approximation (other users of the token are
+    # invisible), but the approximation stride was already making, kept.
     Limits : { reads_per_window : I64, reads_per_day : I64 }
 
     # what to do after a successful fetch has been stored. WindowFull, not SleepWindow —
@@ -48,38 +30,22 @@ Drain :: [].{
     # renaming a literal in the producer left every test green.
     StopReason : [Complete, BudgetReached, RateLimited, DailyCapReached]
 
-    # Why a SYNC run ended — the value behind the payload's `stopped` field, which itself
-    # carries the Str this maps to; the tag never crosses that boundary. Wider than
-    # StopReason by one inhabitant, because one thing stops a sync without being a drain
-    # reason: the activity LIST was refused, which happens before the drain runs at all.
+    # Why a SYNC run ended — the value behind the payload's `stopped` field. Wider
+    # than StopReason by one inhabitant: the activity LIST can be refused before the
+    # drain runs. WRAPPING rather than a fourth StopReason arm is the point — a
+    # fourth arm would be in scope where drain_streams! constructs `stopped`, so the
+    # compiler would accept a drain claiming a list refusal. Here drain_streams!
+    # cannot name ListRateLimited at all; only sync!, which issues both requests.
+    # Reusing RateLimited for both left Render unable to write the right sentence:
+    # its only discriminator was `pending_streams > 0`, true on precisely the
+    # first-run sync this case exists for.
     #
-    # WRAPPING rather than adding a fourth arm to StopReason is the whole point. A fourth
-    # arm would also be in scope at the three sites where drain_streams! constructs a
-    # `stopped` value, so the compiler would accept a drain claiming a list refusal —
-    # losing the exact guarantee the tag was introduced for. Here drain_streams! still
-    # returns a StopReason and cannot name ListRateLimited at all; only sync!, which
-    # issues both requests, does.
-    #
-    # The alternative to a distinct arm was reusing RateLimited for both. That left the
-    # payload unable to say WHICH request was refused, and Render physically unable to
-    # write the right sentence, because the only distinction available to it was
-    # `pending_streams > 0` — which is true on precisely the first-run sync this case
-    # exists for. A drain that 429s on its first id and a list that 429s on page one are
-    # otherwise identical in the envelope.
-    # ListDailyCapReached is the LIST refused with the day already spent, and it exists
-    # because folding it into FromDrain(DailyCapReached) cost the one fact this arm carries.
-    # An earlier version did exactly that and argued the cost was acceptable. It is not:
-    # `FromDrain(_)` renders only when `pending_streams > 0`, so on the empty queue — which
-    # is the steady state, and the state a capped day reaches — the human line went EMPTY.
-    # Measured: the same fixture, same 429ing list, only the counter differing, printed the
-    # full "the list is incomplete, run again in ~15 minutes" sentence at 0 reads and
-    # nothing at all at 9. That is a strict regression of #235 caused by #246, and it is the
-    # second time this exact position has been wrong — the comment on sync_screen's tail
-    # already records the first.
-    #
-    # Two facts, so two of them have to survive: the listing is incomplete (#235) and the
-    # remedy is tomorrow rather than fifteen minutes (#246). One tag cannot carry both
-    # unless Render is allowed to guess, and the whole point of this type is that it is not.
+    # ListDailyCapReached exists because folding it into FromDrain(DailyCapReached)
+    # cost the one fact it carries: `FromDrain(_)` renders only when pending > 0, so
+    # on the empty queue — the steady state, and the state a capped day reaches —
+    # the human line went EMPTY. Two facts must survive: the listing is incomplete
+    # (#235) AND the remedy is tomorrow (#246). One tag cannot carry both unless
+    # Render guesses, and the point of this type is that it does not.
     SyncStop : [FromDrain(StopReason), ListRateLimited, ListDailyCapReached]
 
     Action : [
@@ -95,23 +61,13 @@ Drain :: [].{
     decide : { status : U16, window : I64, today : I64 }, Limits -> Action
     decide = |s, lim|
         if s.status == 429 {
-            # WHICH limit did we hit? A 429 with the day's allowance already spent is the
-            # daily cap, and saying "try again in ~15 minutes" there is the instruction
-            # that cannot succeed — the whole of #246, printed in the exact state #246
-            # exists to describe.
-            #
-            # This arm is a BACKSTOP, not the mechanism, and this comment used to claim the
-            # opposite — "what makes the feature reachable at all", on the reasoning that
-            # stride's count is always at or below Strava's so Strava refuses first. That
-            # was true while only stream reads were counted. Once `charge_read!` began
-            # counting the LIST read too, the Store arm's DayFull branch reaches the cap on
-            # the correct path, with no 429 at all, which is the path the feature is for.
-            # The sentence survived the change that falsified it by one commit.
-            #
-            # It still earns its place: stride's count can drift under Strava's — anything
-            # else using the same token is invisible here — and when it does, this is what
-            # tells the 429 apart from a window refusal so the remedy is tomorrow rather
-            # than fifteen minutes.
+            # WHICH limit did we hit? A 429 with the day's allowance spent is the daily cap,
+            # and "~15 minutes" there is the instruction that cannot succeed (#246).
+            # A BACKSTOP, not the mechanism: since `charge_read!` counts the LIST read too,
+            # the Store arm's DayFull branch reaches the cap on the correct path with no 429
+            # at all. This arm still earns its place because stride's count can drift UNDER
+            # Strava's (anything else on the same token is invisible), and when it does,
+            # this tells the 429 apart from a window refusal.
             if s.today >= lim.reads_per_day {
                 DailyCapReached
             } else {
@@ -169,32 +125,20 @@ Drain :: [].{
             ListDailyCapReached => "list_daily_cap_reached"
         }
 
-    # A drain can outlive UTC midnight, and when it does the allowance REALLY HAS reset —
-    # so the honest model is to notice, not to carry the old day to the end of the run.
+    # A drain can outlive UTC midnight, and when it does the allowance REALLY HAS
+    # reset — notice, don't carry the old day. Captured-once was wrong both ways:
+    # "come back tomorrow" sixty seconds after the reset, and the post-midnight
+    # reads stamped to the day before so the new day began already owing them.
     #
-    # Captured-once was the first version and it was wrong in both directions at once.
-    # Start at 23:58 with 990 of 1000 spent, cross midnight at read 5, hit the cap at read
-    # 10: the athlete is told "run `stride sync` again tomorrow" at 00:01, sixty seconds
-    # after the allowance reset, and the next run works immediately. That is #246's own
-    # defect — advice that cannot succeed — reintroduced by #246's own fix. And the ten
-    # reads spent after midnight were stamped to the day before, so the new day began
-    # already owing them and would overshoot its cap by that many.
+    # Pure, so both directions are pinned by expects with no fake clock. The RULE is
+    # pinned, the CALL is not: deleting the call site leaves every driver green,
+    # because reaching the reset arm needs a clock that moves mid-drain.
     #
-    # Pure, and here rather than inline in the drain loop, so both directions are pinned by
-    # expects instead of by a fixture that would need a fake clock to build. Note what that
-    # does and does not cover: the RULE is pinned, the CALL is not — deleting the call site
-    # in Strava.drain_streams! leaves every driver green, because reaching the reset arm
-    # needs a clock that moves mid-drain and the repo has no seam for one.
-    #
-    # BACKWARDS is treated the same as forwards, and that is a default rather than a
-    # decision. Forwards the allowance genuinely reset, so zeroing is free. Backwards it did
-    # not: stride hands out a fresh allowance while Strava still counts the old one, and the
-    # 429s that follow are then read as a WINDOW refusal — "~15 minutes", the wrong remedy,
-    # which is #246. It needs a clock to move back a whole day (a wrong RTC at boot that
-    # then NTP-syncs is the realistic shape), and the conservative alternative is one token:
-    # take the new day, keep the count. Left permissive because the reset path is the one
-    # that matters and a stale stamp already resets on any mismatch — but the expect below
-    # pins the permissive answer, so it should read as chosen rather than as settled.
+    # BACKWARDS is treated the same as forwards, a default rather than a decision:
+    # backwards, stride hands out a fresh allowance while Strava still counts the
+    # old one, and the 429s read as a window refusal. It needs the clock to move
+    # back a whole day (wrong RTC then NTP). The expect pins the permissive answer
+    # so it reads as chosen rather than settled.
     roll_day : { day : I64, today : I64 }, I64 -> { day : I64, today : I64 }
     roll_day = |st, now_day| if now_day == st.day st else { day: now_day, today: 0 }
 
@@ -203,15 +147,11 @@ Drain :: [].{
 }
 
 # ── tests ───────────────────────────────────────────────────────────
-
-# a 429 stops the run outright. It does NOT sleep and retry: that made a routine sync
-# block ~30 minutes in the foreground, measured, on a two-activity queue.
-# the DAILY arms, at their boundaries. Neither existed as a pure expect until review
-# pointed out that this function's own header calls the pacing decision "pure, unit-tested"
-# while the two branches this feature added were reachable only through the e2e — the
-# slowest and most environment-dependent layer, and the one where the 429 pair took three
-# attempts to get right. Boundary pairs, mirroring the window's own 2 -> Continue /
-# 3 -> WindowFull shape.
+# a 429 stops the run outright — sleep-and-retry blocked a routine sync ~30
+# minutes in the foreground, measured, on a two-activity queue.
+# the DAILY arms at their boundaries, as pure expects: the two branches this
+# feature added were reachable only through the e2e, the slowest layer, while
+# the header called the decision "pure, unit-tested".
 expect match Drain.decide({ status: 429, window: 0, today: 99 }, Drain.test_lim) {
     RateLimited => True
     _ => False

@@ -1,42 +1,26 @@
 #!/usr/bin/env bash
-# Every `#NNN` in a source comment is a claim about an issue's state, and those rot
-# silently: `#105 remains open` sat 560 lines above the same file saying it was fixed
-# (#165, #205).
+# Every `#NNN` in a source comment is a claim about an issue's state, and those
+# rot silently: `#105 remains open` sat 560 lines above the same file saying it
+# was fixed. Checks the one class with a free oracle: a BLOCK naming an issue
+# and asserting it is open/unfixed/pending/awaiting (the PATTERN below is the
+# authority — read it, not this sentence, before believing a phrasing covered)
+# when the tracker says CLOSED.
 #
-# Checks the one class with a free oracle: a BLOCK that names an issue and says it
-# remains/is still open, is not yet fixed/released/landed/merged, is blocked by or on
-# something, is awaiting upstream/release/a fix/the fix/merge, is/still/remains awaiting,
-# is/still awaited, is/still/remains pending, is pending
-# upstream/release/a fix/the fix, is unreleased, or waits until X lands/ships — when the tracker
-# says CLOSED. That list is the PATTERN below, verbatim. Read the pattern, not this
-# sentence, before believing a phrasing is covered: this comment claimed "pending" and
-# "awaited" for a while when the regex matched neither.
+# Scope is Roc comments AND the Markdown docs (ADR 0000 asserted a split
+# "remains open" for a day after it shipped). Bare `pending`/`awaiting` are
+# deliberately NOT matched — both are this codebase's own vocabulary; the
+# qualified prefix `(is|still|remains)` is what is required, with no trailing
+# boundary, so `is pending backfill` DOES match.
 #
-# Scope is Roc comments AND the Markdown docs. Docs went unscanned at first, and the gap
-# was not hypothetical — ADR 0000 asserted the #196 split "remains open" for a day after
-# it shipped, while this same class was enforced two directories away.
+# BLOCK-scoped, not line-scoped: a ref and the claim about it are usually lines
+# apart in one paragraph (line-scoped paired ZERO times on this tree — it never
+# called `gh` once and reported success). Over-reports WITHIN a block by design:
+# a false flag costs one read, a miss costs what #105 cost. Does NOT check
+# whether a comment's DESCRIPTION of an issue is accurate — that needs judgment;
+# this is the mechanical half, which is the half that recurs.
 #
-# Bare `pending` and bare `awaiting` are deliberately NOT matched. Both are this
-# codebase's own vocabulary — "pending backfill", "pending sessions", "strength sessions
-# awaiting a rating" — and a block carrying one plus any ref would flag forever, on a
-# phrase that says nothing about an issue. Note what the qualification does and does not
-# buy: `(is|still|remains) pending` has no trailing boundary, so `is pending backfill`
-# DOES match. The prefix is what is required, not a particular following noun.
-#
-# BLOCK-scoped, not line-scoped, and that is the whole design. The first version matched
-# a state phrase and a ref on the SAME line, which on this tree paired zero times -- it
-# called `gh` not once and reported success. A ref and the claim about it are usually
-# lines apart inside one comment paragraph.
-#
-# It over-reports WITHIN a block: if a block asserts a state, every ref in that block is
-# flagged, including ones the claim was not about. That is the deliberate direction to be
-# wrong in -- a false flag costs one read, a miss costs what #105 cost.
-#
-# Deliberately NOT checked: whether a comment's DESCRIPTION of an issue is accurate.
-# That needs judgment. This is the mechanical half, which is the half that recurs.
-#
-# bash 3.2 (macOS): no mapfile, no associative arrays. No python either -- AGENTS.md
-# rules it out project-wide -- so block grouping is awk.
+# bash 3.2 (macOS): no mapfile, no associative arrays, and no python (AGENTS.md
+# rules it out project-wide), so block grouping is awk.
 set -uo pipefail
 REPO="${GH_REPO:-eschizoid/stride}"
 CACHE=$(mktemp); BLOCKS=$(mktemp); trap 'rm -f "$CACHE" "$BLOCKS"' EXIT
@@ -59,14 +43,10 @@ fail=0; checked=0; blocks=0; quoting=0
 EXPECTED_QUOTING=4
 
 # one line per comment block: file<TAB>startline<TAB>joined text
-#
-# GUARDED, like the markdown extractor below and for the same reason: macOS awk ABORTS
-# the rest of its argument list on a missing file rather than skipping it. Review measured
-# what that costs here — a missing file placed AFTER `src/*.roc` silently drops the block
-# count from 2085 to 1631, losing all of `tests/*.roc`, 22% of the corpus, while the script
-# still prints "none stale" and exits 0. Placed BEFORE, it happened to be caught, but only
-# because one of four quoting markers lives in src/Render.roc — an accidental tripwire,
-# not a designed one. The guard was added to the markdown block and not this one.
+# GUARDED like the markdown extractor below: macOS awk ABORTS the rest of its
+# argument list on a missing file rather than skipping it — a missing file after
+# `src/*.roc` silently drops tests/*.roc (22% of the corpus) while the script
+# still prints "none stale" and exits 0.
 awk '
   FNR==1 { if (n) { print f"\t"s"\t"t; n=0 } }
   /^[[:space:]]*#/ { if (!n) { f=FILENAME; s=FNR; t="" } n++; l=$0; sub(/^[[:space:]]*#[[:space:]]?/,"",l); t=t" "l; next }
@@ -75,31 +55,21 @@ awk '
 ' src/*.roc tests/*.roc > "$BLOCKS" \
   || { echo "issue-claims: Roc extraction failed — a listed file or glob is missing" >&2; exit 5; }
 
-# Markdown needs its OWN extractor: it has no comment syntax, so the `^#` rule above
-# would key on HEADINGS and slice every document into nonsense. Here a block is a
-# paragraph — consecutive non-blank lines — which is the same unit the Roc pass uses
-# (a run of comment lines) and produces the same file<TAB>line<TAB>text shape.
+# Markdown needs its OWN extractor: no comment syntax, so the `^#` rule would
+# key on HEADINGS. A block is a paragraph (consecutive non-blank lines), same
+# file<TAB>line<TAB>text shape as the Roc pass.
 #
-# Docs were unscanned until now, and that gap was not theoretical: ADR 0000 asserted the
-# #196 split "remains open" for a day after it shipped, while the identical class was
-# enforced two directories away.
+# FNR==1 flushes at every file boundary: without it a file ending mid-paragraph
+# merges into the next file's opener and the stale claim is reported at the
+# wrong document. The Roc pass needs the same guard for a file ending on a
+# comment line.
 #
-# FNR==1 flushes at every file boundary. Without it a file ending mid-paragraph merges
-# into the next file's opening paragraph, and the merged block is reported at the FIRST
-# file's name and line — so a stale claim gets pinned to a document that does not
-# contain it. Caught by planting a claim at the end of ADR 0001 and watching the report
-# quote ADR 0002's title back. The Roc pass above needs the same guard for the same
-# reason, a file that ends on a comment line.
-#
-# FENCED REGIONS ARE DROPPED HERE, AT LINE LEVEL, AND THAT IS WHY THE PASSES BELOW WORK.
-# A fence is three backticks -- an ODD RUN -- and it is a LINE construct that cannot be
-# recognised once lines are joined into a paragraph. Five successive versions of the
-# quotation logic tried to survive it by counting delimiters, and counting sees the total
-# while the damage is done by the pairing: one compensating stray tick restores an even
-# total and leaves polarity inverted for the rest of the block. Measured on this tree:
-# backtick runs are 3400 of length 1 and 28 of length 3, and all 28 are fence markers.
-# Dropping fences takes the odd runs to zero, which is the only thing that makes an even
-# total actually imply correct pairing.
+# FENCED REGIONS ARE DROPPED HERE, AT LINE LEVEL. A fence is an ODD backtick
+# run and a LINE construct that cannot be recognised after joining; counting
+# delimiters sees the total while the damage is the pairing (one stray tick
+# restores an even total with inverted polarity). On this tree all 28 length-3
+# runs are fences; dropping them takes odd runs to zero, the only state where
+# an even total implies correct pairing.
 awk '
   FNR==1 { if (n) { print f"\t"s"\t"t; n=0 } fence=0 }
   /^[[:space:]]*```/ { fence = 1 - fence; next }
@@ -112,42 +82,23 @@ awk '
 
 while IFS=$'\t' read -r f s txt; do
   blocks=$((blocks + 1))
-  # "open ABOVE", "keeps this open", "this open just created" are not issue states --
-  # require the word to be about an ISSUE, so the phrase must sit near a ref.
-  # `pending` and `awaited` are qualified, not bare. Bare `pending` matches this
-  # codebase's own vocabulary -- "pending backfill", "pending stream", "pending
-  # sessions" -- none of which say anything about an ISSUE, and a block carrying one of
-  # those plus any ref would flag forever. The qualified forms are the ones that assert
-  # a tracker state.
+  # "open ABOVE", "keeps this open" are not issue states — the phrase must sit
+  # near a ref. `pending`/`awaited` are qualified, never bare: bare `pending` is
+  # this codebase's own vocabulary ("pending backfill") and would flag forever.
   #
   # NO PARSING. A block opts out with a literal marker, and that is the whole
-  # mechanism. Six successive versions tried to decide MECHANICALLY whether a state
-  # phrase was asserted or merely quoted -- pairing quotes, bounding the pair, scanning
-  # parity, removing code spans, dropping fences, refusing unpairable runs -- and every
-  # one of them could be defeated by a single compensating character, silently, in the
-  # MISS direction. The last one was beaten by an inches mark.
+  # mechanism: deciding mechanically whether a phrase is asserted or merely QUOTED
+  # is a natural-language problem, and every heuristic tried (quote pairing,
+  # parity, fence counting) was defeated by a single compensating character,
+  # silently, in the MISS direction. The marker cannot be defeated — there is
+  # nothing to mis-pair — and can only be OVER-applied, loudly:
+  # `grep -rn 'issue-claims: quoting'` lists every use. Forgetting it on new
+  # quoted history goes red naming the file and line; the heuristics failed by
+  # reporting a clean tree with a stale claim in it.
   #
-  # Telling `asserts X` from `quotes someone asserting X` is a natural-language problem,
-  # and all that machinery was protecting four blocks of quoted history.
-  #
-  # State the property precisely, because claiming more than the code delivers is what
-  # burned five of the six previous versions. The marker CANNOT be defeated by a
-  # compensating character -- there is nothing to mis-pair -- and it can only be
-  # OVER-applied: the unit is the whole block, so a genuine claim added to a marked
-  # paragraph is exempted with it, and a paragraph that merely documents this token opts
-  # itself out. Both require somebody to have typed the token, and
-  # `grep -rn 'issue-claims: quoting'` lists every one. That is the trade: silent misses
-  # from one stray character, for loud misses that are all visible in one command.
-  #
-  # It fails in the LOUD direction too. Forget the marker on new quoted history and CI
-  # goes red naming the file and line, which is one read and a fix. The heuristic failed
-  # by reporting a clean tree with a stale claim sitting in it.
-  #
-  # EXPECTED is pinned below so an accidental token -- a doc explaining the mechanism,
-  # a copy-paste -- fails loudly instead of quietly widening the exemption.
-  # Counts OCCURRENCES, not blocks, so the pin agrees with the grep recommended above.
-  # A duplicate token inside an already-marked paragraph is exactly the copy-paste the
-  # pin exists to catch, and block-counting cannot see it.
+  # EXPECTED is pinned below so an accidental token fails loudly instead of
+  # widening the exemption. Counts OCCURRENCES, not blocks, so the pin agrees
+  # with the grep above and sees a copy-pasted duplicate inside a marked block.
   case "$txt" in
     *"issue-claims: quoting"*)
       # grep -o | wc -l, NOT grep -c: the block is one joined line, so -c counts that
