@@ -2634,8 +2634,8 @@ expect {
 }
 
 # resample_1s_pairs orders its input first — sorting the streams that need it, skipping the
-# sort for the ones already ascending. One out-of-order sample used to be dropped WITHOUT
-# advancing the anchor, so a single large stray timestamp swallowed every sample after it.
+# sort for the ones already ascending. Dropping an out-of-order sample WITHOUT advancing
+# the anchor lets a single large stray timestamp swallow every sample after it.
 # Same samples, shuffled: the result must be identical to the ordered case, which is exactly
 # the guarantee the skip must not break.
 expect {

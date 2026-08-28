@@ -332,9 +332,9 @@ expect Config.known_key("hr_z8_max") == False
 expect Config.known_key("hr_z5_max_ride") == False
 
 # the refusal message and the predicate cannot drift: every literal `known_key` accepts is
-# named in the summary the message prints. Without this the two are two lists, and the
-# first cut proved what that costs — a message naming four keys for a predicate accepting
-# twelve, contradicting the listing shipped beside it.
+# named in the summary the message prints. Without this the two are two lists, and they
+# drift — a message naming four keys for a predicate accepting twelve, contradicting the
+# listing shipped beside it.
 expect Str.contains(Config.known_key_summary, "timezone")
 expect Str.contains(Config.known_key_summary, "utc_offset_minutes")
 expect Str.contains(Config.known_key_summary, "last_sync_epoch")

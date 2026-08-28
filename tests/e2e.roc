@@ -984,7 +984,7 @@ run_stops! = || {
         started_at = str_to_i64(Str.trim(sh!("date +%s")))
         # HARD kill-after on the invocation itself (`timeout` is not on macOS). Without
         # it an unbounded loop never returns, the elapsed check below is never evaluated,
-        # and the harness HANGS instead of failing — review's exact criticism of a latency
+        # and the harness HANGS instead of failing — the failure mode of a latency
         # assertion that only manifests as CI looking slow. With it the run is killed, the
         # envelope is empty, and the checks go red.
         be401 = "${home}/401.err"
@@ -1833,8 +1833,8 @@ b_config_ftp! = |ctx| {
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('strava_access_token', 'sekrit-e2e');")
     conf_sec = stride!(ctx.bin, ctx.home, ["config"])
     check!("...naming a set secret without printing it", Str.contains(conf_sec, "strava_access_token") and Str.contains(conf_sec, "\"redacted\":true") and !(Str.contains(conf_sec, "sekrit-e2e")))?
-    # ── rows the binary does not read are MARKED, not hidden. A first cut filtered them,
-    # which made a pre-#254 leftover (`config set timezon x` used to succeed) unreadable,
+    # ── rows the binary does not read are MARKED, not hidden. Filtering them instead
+    # makes a pre-#254 leftover (`config set timezon x` once succeeded) unreadable,
     # unwritable AND unlistable — visible only to sqlite3. For an issue about a row nothing
     # reads, turning a visible dead row into an invisible one is the wrong direction.
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('timezon', 'left over from before #254'), ('ftp_ride', '243');")
@@ -3075,9 +3075,9 @@ b_seed_analyze! = |ctx| {
     # `wide_tok == ""` is satisfied by absence, so if `week add` ever stops inserting -- a
     # bad date, a changed arity -- the width check goes green against a binary that fails
     # it. Verified: breaking the add made the whole suite pass on a REVERTED binary.
-    # Asserted against the ROW, not the rendered text: at min_col the token is broken into
-    # twelve-column pieces, so no word of it survives whole on one line to grep for. The
-    # first version of this assertion did grep, and failed against a working binary.
+    # Asserted against the ROW, not the rendered text: at min_col the token is broken
+    # into twelve-column pieces, so no word of it survives whole on one line — a grep
+    # for it fails against a working binary.
     tok_rows = Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE rationale = 'unbreakable-detail-probe';"))
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE rationale = 'unbreakable-detail-probe';")
     check!("the unbreakable-token probe was inserted", tok_rows == "1")?
@@ -3156,7 +3156,7 @@ b_seed_analyze! = |ctx| {
     check!("an activity inside an absence counts for its month, not a block", strjq!(ctx, ["season"], "([.data.months[].sessions] | add) > ([.data.blocks[].sessions] | add)") == "true")?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 922; DELETE FROM daily_load WHERE day = '2010-06-15';")
     # `closed` must be decided on the same axis the blocks were cut on. A
-    # day-aligned test declared a block closed up to 7 days before a session
+    # day-aligned test declares a block closed up to 7 days before a session
     # today would actually have opened a new one. Asserting "all but the last
     # are closed" against this fixture proves nothing -- every block in it is
     # historical, so it passes under any rule, including `closed = True`. The
@@ -3319,9 +3319,9 @@ b_seed_analyze! = |ctx| {
     # block would see.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (952,'blob date','Ride','Ride',CAST(x'DEADBEEF' AS BLOB),3600);")
     # The row-shape assertion runs FIRST. `check!` returns `Err` and the caller uses `?`, so
-    # whichever check runs first SHADOWS the rest under any mutation that breaks both — the
-    # crash check used to be first, and reverting the CAST failed it and stopped the run, so
-    # this one never executed and a mutation pass could not tell it from a vacuous check.
+    # whichever check runs first SHADOWS the rest under any mutation that breaks both —
+    # with the crash check first, reverting the CAST fails it and stops the run, so this
+    # one never executes and a mutation pass cannot tell it from a vacuous check.
     check!("a BLOB start_local surfaces as unreadable rather than vanishing", strjq!(ctx, ["activities"], "[.data[] | select(.id == 952) | (.date_known == false) and (.rankable == false)] | join(\",\")") == "true")?
     check!("...and does not take the listing down", strjq!(ctx, ["activities"], ".data | length") != "" and !(Str.contains(strjq!(ctx, ["activities"], ".error.code // \"none\""), "internal_error")))?
     # ...and the SIX other commands that read the same column through different
@@ -3516,7 +3516,7 @@ b_seed_analyze! = |ctx| {
     check!("`compare` refuses rather than publishing a verdict over a window a row left", strjq!(ctx, ["compare", "month"], ".error.code") == "unreadable_activity_date")?
     _ = sql!(ctx.db, "DELETE FROM daily_load; INSERT INTO daily_load SELECT * FROM dl_bak249a; DROP TABLE dl_bak249a;")
     check!("...and the poisoned daily_load row is back, so the checks below still have it", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM daily_load WHERE day = 'not-a-date';")) == "1")?
-    # The THIRD bucket, and the one the split originally had no row for: `compare` and
+    # The THIRD bucket, and the one a two-bucket split misses: `compare` and
     # `stats` use the date as a FILTER over an aggregate. `WHERE start_local >= :from` is
     # NULL-false, so the row does not produce a wrong value — it silently leaves the
     # set, and the failure is an ABSENCE: `compare` moved its verdict from
@@ -4006,10 +4006,10 @@ b_seed_analyze! = |ctx| {
     check!("...and is wired to a real streak, not a stub", str_to_i64(strjq!(ctx, ["summary"], ".data.form_band_days")) >= 1)?
     check!("...with a boolean capped flag beside it", strjq!(ctx, ["summary"], ".data.form_band_days_capped | type") == "boolean")?
     summary_verdict = stride_human!(ctx.bin, ctx.home, ["summary"])
-    # "→ form " — the ARROW is what makes this the verdict line. Plain "form " also matches
-    # the header row above it ("fitness (CTL): ... form (TSB): ..."), so the earlier version
-    # of this check passed even with the entire verdict deleted, which is exactly what its
-    # comment claimed it prevented.
+    # "→ form " — the ARROW is what makes this the verdict line. Plain "form " also
+    # matches the header row above it ("fitness (CTL): ... form (TSB): ..."), so a plain
+    # match passes even with the entire verdict deleted — exactly what this check exists
+    # to prevent.
     check!("the verdict still names the state", Str.contains(summary_verdict, "→ form "))?
     check!("...and no longer prescribes training", !(Str.contains(summary_verdict, "favor easy work")) and !(Str.contains(summary_verdict, "good day for")))?
     check_near!("...and the delta itself is an honest 0", sfloat(strjq!(ctx, ["summary"], ".data.form_delta_7d")), 0.0, 0.001)?
@@ -4954,9 +4954,9 @@ b_plan! = |ctx| {
     comp_sub = stride!(ctx.bin, ctx.home, ["complete", resess, "304"])
     check!("completion clears the substitute link", Str.trim(sql!(ctx.db, "SELECT COALESCE(substitute_activity_id,0) FROM planned_sessions WHERE id = ${resess};")) == "0")?
     # ...and SAYS which link it destroyed. This clearing was pinned green while nothing
-    # reported it, and #258's first cut made that worse rather than better: it read only
-    # `completed_activity_id`, so this call — which erases the only record that the athlete
-    # did 303 in place of this session — answered `replaced_activity: 0`, an affirmative
+    # reported it, and reading only `completed_activity_id` makes that worse rather than
+    # better: this call — which erases the only record that the athlete
+    # did 303 in place of this session — answers `replaced_activity: 0`, an affirmative
     # "nothing was replaced". `skip` treats the same column as worth reporting in both
     # directions (`kept_substitute`, `released_substitute`) and calls it judgment-tier data
     # that is never silently destroyed by a wording fix; `complete` destroys it outright.
@@ -5597,9 +5597,9 @@ b_progress_b! = |ctx| {
     # slipped through. Without this, the check above would still pass if the gate stopped
     # refusing that stream, and the zone arm would go back to being untested.
     check!("...and the zone-only row has no usable scalar, so only the zone arm can count it", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE a.id = 239 AND m.avg_hr_stream IS NULL AND NOT (CAST(a.avg_hr AS REAL) BETWEEN 35 AND 220) AND COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0) > 0;")) == "1")?
-    # ...and it is scored `hr_zones`, which is what makes it the live row's shape rather than
-    # merely a row with zone seconds. The earlier version seeded it with watts, so the ladder
-    # took the power rung and the comment claiming `hr_zones` was describing a different row.
+    # ...and it is scored `hr_zones`, which is what makes it the live row's shape rather
+    # than merely a row with zone seconds. Seeded with watts instead, the ladder takes the
+    # power rung and the `hr_zones` claim describes a different row.
     # Scored this way it reproduces the contradiction end to end: the same payload counts it
     # in `medium (HR / RPE)` and, before this change, excluded it from `with_hr`.
     check!("...and its load really was computed FROM heart rate, which is the contradiction", strjq!(ctx, ["activity", "239"], ".data.load_model") == "hr_zones")?
@@ -5692,9 +5692,9 @@ b_progress_b! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     ev_human2 = stride_human!(ctx.bin, ctx.home, ["progress", "2025-05-16"])
     check!("...and two lens-dropped rows take the plural verb, which the count-1 case cannot show", Str.contains(ev_human2, "(1 hidden: a different distance for this workout; 2 shown unscored: need power and HR)"))?
-    # The needle carries the NEW wording. It used to read "2 needs power and HR", which the
-    # render can no longer emit for any input — `" shown unscored: "` always sits
-    # between the count and the verb — so the check could not fail and was green on
+    # The needle carries the NEW wording, not "2 needs power and HR": the render can no
+    # longer emit that for any input — `" shown unscored: "` always sits
+    # between the count and the verb — so a check on it could not fail and was green on
     # the very inversion it names (inverting `lens_needs`' Ef plural arm printed ok).
     # A blanket reword hits the assertion and leaves the counter-example behind.
     check!("...and not the singular one the inverted rule would print here", !(Str.contains(ev_human2, "2 shown unscored: needs power and HR")))?

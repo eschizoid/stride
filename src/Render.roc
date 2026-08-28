@@ -1387,9 +1387,9 @@ Render :: [].{
         )
         # Match on the baseline rather than defaulting it: with no prior load there is no
         # percentage to state, and the two no-baseline cases read differently — training
-        # after nothing is "resumed", nothing after nothing is not a change at all. An
-        # earlier version defaulted to 0.0 here and reported the second case as
-        # "load steady (0%)", which claims a measurement that was never taken.
+        # after nothing is "resumed", nothing after nothing is not a change at all.
+        # Defaulting to 0.0 here reports the second case as "load steady (0%)", which
+        # claims a measurement that was never taken.
         "${table}\n\n→ ${compare_verdict(pr.tss, c.tss, c.ctl - pr.ctl, lab)}"
     }
 }

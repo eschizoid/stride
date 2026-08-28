@@ -164,7 +164,7 @@ sf "an optional literal is SKIPPABLE, so a later placeholder is reachable" \
                                                   ride       "all <sport>"               accept
 # ...but a REQUIRED arg stops the walk: nothing past it is reachable, because reaching it
 # would mean skipping something mandatory. This is the whole gain over the list-wide rule,
-# and the case the PR originally cited (`all <n>`) does NOT demonstrate it — `all` is
+# and the motivating case (`all <n>`) does NOT demonstrate it — `all` is
 # optional there, so accepting is correct.
 sf "a required literal blocks a placeholder behind it" \
                                                   frobnicate "!bar <n>"                  refute
