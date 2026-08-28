@@ -145,9 +145,9 @@ while IFS=$'\t' read -r f s txt; do
   done
 done < "$BLOCKS"
 
-# Zero CHECKED pairs is legitimate -- it is what a clean tree looks like. Zero BLOCKS is
-# not: that means the extraction broke. An earlier version conflated the two and called a
-# healthy repo broken; the one before that reported success while checking nothing.
+# Zero CHECKED pairs is legitimate -- it is what a clean tree looks like. Zero BLOCKS
+# is not: that means the extraction broke. Conflating the two calls a healthy repo
+# broken, or reports success while checking nothing.
 if [ "$blocks" = "0" ]; then
   echo "issue-claims: found 0 comment blocks — the EXTRACTION is broken, not the comments" >&2
   exit 2

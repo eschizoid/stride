@@ -71,8 +71,8 @@ Db :: [].{
     # Remove a config row outright. Used by `config set <unrecognised> ""` (#254), which is
     # the way out for a row the engine no longer reads.
     #
-    # DELETE and not `value = ''`, which was the first cut and is worse than doing nothing
-    # for the family it most needed to serve. `Analyze.load_config!` requires every key
+    # DELETE and not `value = ''`, which is worse than doing nothing for the family
+    # that most needs this. `Analyze.load_config!` requires every key
     # starting `hr_z` to parse as F64, so one empty zone row kills `analyze` outright — and
     # the misspelled zone keys are exactly the population #254's tightened `zone_shape`
     # created. The write also could not reach them: `numeric_key` classifies `hr_z*` as

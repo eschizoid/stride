@@ -41,9 +41,9 @@ for f in src/*.roc; do
     [ -n "$alias" ] || continue
     decodes=$((decodes + 1))
     # The projection that names it. Everything on the line BEFORE ` AS <alias>`, not the
-    # last whitespace-delimited token: a first cut took the token and read
-    # `substr(CAST(day AS TEXT), 1, 7) AS month` as the expression `7)`, then
-    # reported an already-wrapped site as unwrapped. A gate whose false positives are that
+    # last whitespace-delimited token: taking the token reads
+    # `substr(CAST(day AS TEXT), 1, 7) AS month` as the expression `7)` and
+    # reports an already-wrapped site as unwrapped. A gate whose false positives are that
     # easy to produce gets its findings dismissed, which is worse than not having it.
     grep -o ".* AS $alias\\b" "$f" 2>/dev/null | sed "s/ AS $alias\$//" | sort -u > "$tmp/exprs" || true
     if [ ! -s "$tmp/exprs" ]; then
@@ -79,8 +79,8 @@ for f in src/*.roc; do
       tail_expr=$(printf '%s' "$expr" | awk '{
         # cut after the LAST `AS <name>` where <name> is a column alias, not a TYPE. Cutting
         # at any `AS` lands inside a `CAST(x AS TEXT)` and takes that CAST as this alias\047s;
-        # a first version compensated with "if the tail holds a cast, use the whole
-        # expression", which handed an EARLIER projection\047s cast to this one and passed
+        # compensating with "if the tail holds a cast, use the whole
+        # expression" hands an EARLIER projection\047s cast to this one and passes
         # `COALESCE(a.sport_type, \047\047) AS sport` on a line whose date column was wrapped.
         n = 0
         for (i = 1; i <= NF; i++)
@@ -126,15 +126,15 @@ for f in src/*.roc; do
               "$(printf '%s' "$tail_expr" | tail -c 46)" "$bare" >> "$tmp/problems"
           fi
           ;;
-        # `COUNT(` only. `MAX(`, `MIN(`, `group_concat` and `CASE` were exempt on the theory
-        # that they cannot yield a blob — false for every one of them over a TEXT column, and
-        # review proved it: the exemption list fired exactly ONCE in the whole tree, on
+        # `COUNT(` only. Exempting `MAX(`, `MIN(`, `group_concat` and `CASE` on the theory
+        # that they cannot yield a blob is false for every one over a TEXT column — the
+        # wider exemption list fired exactly ONCE in the whole tree, on
         # `COALESCE(MAX(substr(start_local,1,10)),'') AS d`, which was a live `plan` crash.
         # `MAX` over a mixed column PREFERS the blob, since SQLite orders BLOB above TEXT.
         # An exemption whose only use is hiding a bug is not an exemption.
         *"COUNT("*) ;;
-        # NOTE there is no exemption for a quote. The first version had one — "literals" —
-        # and it swallowed `COALESCE(day, '') AS day`, which is the COMMON shape here and
+        # NOTE there is no exemption for a quote: a "literals" exemption swallows
+        # `COALESCE(day, '') AS day`, which is the COMMON shape here and
         # unsafe: COALESCE picks the blob, not the fallback, because a blob is not NULL. It
         # hid five crashing commands the behavioural sweep then found anyway. That is the
         # failure this file's own header warns about, written into the file on the first

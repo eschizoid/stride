@@ -426,10 +426,9 @@ Command := [
 		errs(reads("load", [opt_ex("<days>", "30")], "load.json"), ["bad_count", "unreadable_daily_load_day"]),
 		errs(reads("power-curve", [opt_ex("<days>", "30"), opt_ex("<sport>", "Ride")], "power_curve.json"), ["bad_count"]),
 		errs(reads("pc", [opt_ex("<days>", "30"), opt_ex("<sport>", "Ride")], "power_curve.json"), ["bad_count"]),
-		## A DATE, not a workout name. The parse arm BOUND this to a variable called
-		## `name` until this commit renamed it, and that binder is where an earlier draft
-		## of this table got `<name>` from — the
-		## handler queries `substr(a.start_local,1,10) = :date` and answers
+		## A DATE, not a workout name. The parse arm bound this to a variable called
+		## `name`, which is where a `<name>` placeholder once came from — the
+		## handler queries `substr(start_local, 1, 10) = :date` and answers
 		## `no_workout_on_date`. Every other document in the repo says `[date]`; only
 		## this table said otherwise, and this table is the one an agent reads.
 		errs(reads("progress", [opt("<YYYY-MM-DD>"), opt("<asc|desc>")], "progress.json"), ["no_scorable_workouts", "no_workout_on_date", "unreadable_activity_date", "unscorable"]),

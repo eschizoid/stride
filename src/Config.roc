@@ -72,7 +72,7 @@ Config :: [].{
 	user_settable = |k| k == "timezone" or k == "utc_offset_minutes" or is_zone_key(k)
 
 	# What the `unknown_key` refusal tells the reader, in one place beside the predicate it
-	# describes. The first cut named four keys while `config set` accepted twelve — the
+	# describes. Naming a subset (four keys, while `config set` accepted twelve) is the
 	# same "advice pointing where the answer is not" the message was written to replace,
 	# and it contradicted the listing, which shows `last_sync_epoch` and the `strava_*` keys
 	# as set config. Two groups, because the distinction is real: the first are yours, the
@@ -277,8 +277,8 @@ expect Config.known_key("strava_access_token") == True
 expect Config.known_key("strava_refresh_token") == True
 expect Config.known_key("strava_client_secret") == True
 
-# ...but NOT through `is_secret`'s fail-open suffix rule, which is the mutant that shipped
-# in the first cut. `is_secret` returns True for anything ending `_token` / `_secret` on
+# ...but NOT through `is_secret`'s fail-open suffix rule.
+# `is_secret` returns True for anything ending `_token` / `_secret` on
 # purpose, so a future secret is redacted even if unlisted; borrowing it here turned that
 # into fail-open RECOGNITION and let typos of the credential keys keep answering
 # "(not set)" — issue #254's own scenario, in the family where it matters most.
@@ -332,9 +332,9 @@ expect Config.known_key("hr_z8_max") == False
 expect Config.known_key("hr_z5_max_ride") == False
 
 # the refusal message and the predicate cannot drift: every literal `known_key` accepts is
-# named in the summary the message prints. Without this the two are two lists, and the
-# first cut proved what that costs — a message naming four keys for a predicate accepting
-# twelve, contradicting the listing shipped beside it.
+# named in the summary the message prints. Without this the two are two lists, and they
+# drift — a message naming four keys for a predicate accepting twelve, contradicting the
+# listing shipped beside it.
 expect Str.contains(Config.known_key_summary, "timezone")
 expect Str.contains(Config.known_key_summary, "utc_offset_minutes")
 expect Str.contains(Config.known_key_summary, "last_sync_epoch")

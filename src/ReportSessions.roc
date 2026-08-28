@@ -306,7 +306,7 @@ ReportSessions :: [].{
                         # 0-vs-missing (#156): flags decode the STORED NULLs — deriving
                         # them from coalesced magnitudes re-loses exactly the information
                         # the flag exists to carry (np can be present while intensity is
-                        # NULL when no FTP existed; the review proved it on a real state)
+                        # NULL when no FTP existed — observed on a real database state)
                         power_known: a.power_known,
                         intensity: a.intensity,
                         intensity_known: a.intensity_known,

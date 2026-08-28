@@ -59,9 +59,9 @@ awk '
   function isnew(l) {
     # A line STARTS a new logical line when it is blank, a heading, a table row, a fence,
     # or a list bullet. Everything else continues the paragraph above it — which is what
-    # Markdown means by a hard wrap, and the condition an earlier version got wrong by
-    # requiring leading whitespace. `sync`s literal wraps onto a column-0 line, so that
-    # version never joined it and both directions stayed blind while looking covered.
+    # Markdown means by a hard wrap. Do not require leading whitespace on continuations:
+    # the `sync` literal wraps onto a column-0 line, and a whitespace condition never
+    # joins it, leaving both directions blind while looking covered.
     return (l ~ /^[ \t]*$/) || (l ~ /^#/) || (l ~ /^\|/) || (l ~ /^```/) || (l ~ /^[ \t]*([-*+]|[0-9]+\.)[ \t]/)
   }
   NR == 1 { printf "%s", $0; next }
@@ -95,16 +95,15 @@ sort -u "$tmp/sig" > "$tmp/sig.sorted"
 # payload literals for `sync` and `analyze` live in a bullet rather than the table.
 #
 # A row is attributed to the LONGEST command it names, derived from the join rather than
-# guessed: `stride week add ...` documents `week add`, not `week`. The first cut used an
-# awk boundary of `([^a-z0-9-]|$)`, which contains a space, so `week` claimed `week add`'s
-# row and could be satisfied by its neighbour's text.
+# guessed: `stride week add ...` documents `week add`, not `week`. An awk boundary of
+# `([^a-z0-9-]|$)` contains a space, so under it `week` claims `week add`'s row and is
+# satisfied by its neighbour's text.
 doc_for() {
   cmd=$1
   grep -F "stride $cmd" "$LOGICAL" 2>/dev/null > "$tmp/cand" || true
   # A line naming a LONGER command documents THAT command, not this one. `week add`'s row
-  # is not `week`'s. Derived from the join rather than guessed at with a character class:
-  # the first cut used an awk boundary of `([^a-z0-9-]|$)`, which contains a space, so
-  # `week` claimed its neighbour's row and could be satisfied by its neighbour's text.
+  # is not `week`'s. Derived from the join rather than guessed with a character class —
+  # see the boundary note above.
   cut -f1 "$tmp/join" | grep "^$cmd " > "$tmp/longer" || true
   while IFS= read -r l; do
     [ -n "$l" ] || continue
@@ -292,9 +291,9 @@ if [ "$n" -gt 0 ]; then
   sort "$tmp/problems"
   exit 1
 fi
-# Both counts are asserted EXACTLY, not as floors. The first version used a floor of 12
-# against an actual 16, so four rows could stop matching — a reworded row, a deleted schema
-# — while the gate printed the same clean line a healthy tree prints. A count that may only
+# Both counts are asserted EXACTLY, not as floors: under a floor of 12 against an actual
+# 16, four rows can stop matching — a reworded row, a deleted schema — while the gate
+# prints the same clean line a healthy tree prints. A count that may only
 # be raised deliberately is the difference between a guard and a decoration.
 EXPECT_PINNED=28
 EXPECT_LITERALS=25

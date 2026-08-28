@@ -1321,8 +1321,8 @@ Render :: [].{
         # per-row parenthetical.
         census = "${atleast}${I64.to_str(conforming)} of ${I64.to_str(p.matched_total)} ${noun} ${verb} this repeated shape${tail}"
         # "anchor" is load-bearing: the shape describes the anchor session, and
-        # each row states its own spread. Claiming it for the table would be the
-        # header/rows contradiction review found in round 1.
+        # each row states its own spread — claiming it for the whole table would
+        # contradict the rows beneath it.
         header = "── anchor ${I64.to_str(p.shape_reps)}×${mmss(p.shape_dur)} · ${p.anchor_date}${more} ──"
         rows = List.map(p.sessions, |s| {
             # seg_value/seg_unit, not fmt0: on a run avg_signal is metres per
@@ -1387,9 +1387,9 @@ Render :: [].{
         )
         # Match on the baseline rather than defaulting it: with no prior load there is no
         # percentage to state, and the two no-baseline cases read differently — training
-        # after nothing is "resumed", nothing after nothing is not a change at all. An
-        # earlier version defaulted to 0.0 here and reported the second case as
-        # "load steady (0%)", which claims a measurement that was never taken.
+        # after nothing is "resumed", nothing after nothing is not a change at all.
+        # Defaulting to 0.0 here reports the second case as "load steady (0%)", which
+        # claims a measurement that was never taken.
         "${table}\n\n→ ${compare_verdict(pr.tss, c.tss, c.ctl - pr.ctl, lab)}"
     }
 }
@@ -2182,8 +2182,8 @@ expect
     == "synced 2 new, 1 updated (22 re-checked in the 30-day window), fetched streams for 5"
 
 # A refused LIST says so, and says it about the LIST. Full-string, because a `contains`
-# on "rate" passes on drain_note's wording too — which is exactly how the first version of
-# this arm looked correct while never running. `stopped` is built by the PRODUCER rather
+# on "rate" passes on drain_note's wording too — exactly how an arm can look
+# correct while never running. `stopped` is built by the PRODUCER rather
 # than hand-typed: these are the only expects covering the new arm, so typing the literal
 # here would have checked Render against itself and passed straight through a rename.
 expect
@@ -2232,8 +2232,8 @@ expect
     Render.sync_screen({ synced: 9, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 12, streams_skipped: 1, pending_streams: 40, stopped: "budget_reached", resumable: True }, FromDrain(BudgetReached), False)
     == "synced 0 new, 0 updated (9 re-checked in the 30-day window), fetched streams for 12 (1 had unreadable stream data) — filled Strava's 15-minute read window — 40 to go, run `stride sync` again in ~15 minutes"
 
-# a COMPLETE run with skips states the fact ONCE — drain_note owns it there, and
-# stating it twice in two wordings is what shipped before review caught it
+# a COMPLETE run with skips states the fact ONCE — drain_note owns it there;
+# stating it twice in two wordings is the duplication this suppresses
 expect
     Render.sync_screen({ synced: 2, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 1, streams_skipped: 1, pending_streams: 1, stopped: "complete", resumable: True }, FromDrain(Complete), False)
     == "synced 0 new, 0 updated (2 re-checked in the 30-day window), fetched streams for 1 — 1 had unreadable stream data — they retry next sync"

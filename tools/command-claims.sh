@@ -164,7 +164,7 @@ sf "an optional literal is SKIPPABLE, so a later placeholder is reachable" \
                                                   ride       "all <sport>"               accept
 # ...but a REQUIRED arg stops the walk: nothing past it is reachable, because reaching it
 # would mean skipping something mandatory. This is the whole gain over the list-wide rule,
-# and the case the PR originally cited (`all <n>`) does NOT demonstrate it — `all` is
+# and the motivating case (`all <n>`) does NOT demonstrate it — `all` is
 # optional there, so accepting is correct.
 sf "a required literal blocks a placeholder behind it" \
                                                   frobnicate "!bar <n>"                  refute
@@ -293,11 +293,8 @@ awk -v Q="$QUOTED" -v U="$UNPARSED" '
       # `emitted` is what the UNPARSED counter below reads to tell "this line yielded a
       # reference" from "this line mentioned stride and yielded nothing". It counts PRINTS,
       # inside the dedupe, so in principle a line whose every hit was suppressed would count
-      # as unparsed. That case cannot occur: `seen` keys on FILENAME, FNR and the token, so
-      # the first hit of any token on a line is always new and always prints. Stated as
-      # unreachable rather than as a property, because an earlier version of this comment
-      # claimed the opposite behaviour AND claimed it was right — wrong twice, in the one
-      # file whose thesis is that comments must be measurements.
+      # as unparsed. That case cannot occur: `seen` keys on FILENAME, FNR and the token,
+      # so the first hit of any token on a line is always new and always prints.
       if (t != "" && !seen[key]++) { print key; emitted++ }
       rest = substr(rest, r + l)
     }
