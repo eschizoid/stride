@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.9.0](https://github.com/eschizoid/stride/compare/v0.8.0...v0.9.0) (2026-08-28)
+
+
+### Features
+
+* **activities:** publish the divisor, so a refused reading is detectable ([#320](https://github.com/eschizoid/stride/issues/320)) ([0b9f746](https://github.com/eschizoid/stride/commit/0b9f746e9efc50a567b5ee3aeec2efc9e882e192))
+* check the commands the docs name against the command table ([#261](https://github.com/eschizoid/stride/issues/261)) ([eed69e7](https://github.com/eschizoid/stride/commit/eed69e73cbf9a28c8615bf9077a3b928164d8f83))
+* **complete:** record the completion an overwrite erased ([#301](https://github.com/eschizoid/stride/issues/301)) ([9cb1a3f](https://github.com/eschizoid/stride/commit/9cb1a3f73b0f508c2a223e718adb30310996125e))
+* **config:** add `config unset`, and stop an empty value meaning three things ([#299](https://github.com/eschizoid/stride/issues/299)) ([9428bb3](https://github.com/eschizoid/stride/commit/9428bb33bb057e1ec9399f45b597b9045b82e427))
+* **config:** tell an unknown key from an unset one, and list what is set ([#273](https://github.com/eschizoid/stride/issues/273)) ([48a0093](https://github.com/eschizoid/stride/commit/48a0093a71e3ce2c21cd043a65bcd88b842cd329))
+* **contract:** publish rankable beside date_known, and count what the listing hoists ([#290](https://github.com/eschizoid/stride/issues/290)) ([81101d8](https://github.com/eschizoid/stride/commit/81101d89bd74ec9750a55937348796c4c7db2052))
+* count the daily read allowance, so the one stop that means tomorrow says so ([#260](https://github.com/eschizoid/stride/issues/260)) ([1eb012a](https://github.com/eschizoid/stride/commit/1eb012a230d29206b128b67177f14143e3216c8c))
+* **progress:** show the rides the lens cannot score, unscored ([#308](https://github.com/eschizoid/stride/issues/308)) ([b9ec5b0](https://github.com/eschizoid/stride/commit/b9ec5b0622915b4e69bbb1e5e83c3d1a0998afe8))
+* **table:** declare a value that satisfies each argument, and delete the copies ([#283](https://github.com/eschizoid/stride/issues/283)) ([4567eca](https://github.com/eschizoid/stride/commit/4567ecaf7566105a6e53436eaf6cf4990e3ad743))
+* **tools:** check SKILL.md payload shapes against the schemas ([#306](https://github.com/eschizoid/stride/issues/306)) ([c9a0a18](https://github.com/eschizoid/stride/commit/c9a0a180133b955eff2951d5b37eda3e241db05b))
+
+
+### Bug Fixes
+
+* **activities:** a BLOB start_local no longer takes the listing down ([#304](https://github.com/eschizoid/stride/issues/304)) ([a141b80](https://github.com/eschizoid/stride/commit/a141b808ead042294e7eb148baee0cf342f9c52c))
+* **activity:** refuse the impossible heart rates progress already refuses ([#309](https://github.com/eschizoid/stride/issues/309)) ([f32f57d](https://github.com/eschizoid/stride/commit/f32f57d2d7256cba39c37ef1aac9f5654b82cefb))
+* **auth:** keep stdout for the envelope in JSON mode ([#275](https://github.com/eschizoid/stride/issues/275)) ([34b3109](https://github.com/eschizoid/stride/commit/34b3109499d436ebbb551758288f2047168ebb00))
+* **command-claims:** judge a trailing token positionally, and pin the rule ([#278](https://github.com/eschizoid/stride/issues/278)) ([09038fb](https://github.com/eschizoid/stride/commit/09038fbc694637878f23b2d67741cc12d0740589))
+* complete on a done session no longer overwrites silently ([#272](https://github.com/eschizoid/stride/issues/272)) ([a2048c5](https://github.com/eschizoid/stride/commit/a2048c5850acc9730bc118a489bf09c5b88d1938))
+* **db:** CAST every TEXT decode, and add the lint that makes it converge ([#310](https://github.com/eschizoid/stride/issues/310)) ([a6629ac](https://github.com/eschizoid/stride/commit/a6629ac8e11652a2e2c104afa22c3993406cb1e2))
+* **doctor:** count usable heart rates, not merely present ones ([#317](https://github.com/eschizoid/stride/issues/317)) ([393614e](https://github.com/eschizoid/stride/commit/393614edd919aee2076f357dffcdba71ef5f8647))
+* **e2e:** anchor the strapless-streak fixture to relative dates ([#323](https://github.com/eschizoid/stride/issues/323)) ([fd28947](https://github.com/eschizoid/stride/commit/fd2894759f351f137e37544ff44f03e8aae2604c))
+* **e2e:** scope the check tally per process, as its comment already said ([#277](https://github.com/eschizoid/stride/issues/277)) ([bcc9461](https://github.com/eschizoid/stride/commit/bcc9461a213aa590e5b668a823ccd547e22fce70))
+* **metrics:** bound the last summary avg_hr the engine still trusted ([#314](https://github.com/eschizoid/stride/issues/314)) ([033ef6c](https://github.com/eschizoid/stride/commit/033ef6c1fb2e0d0f4770ce86ea5ce0929927b274))
+* **metrics:** score EF from the stream's in-band mean, not the summary ([#318](https://github.com/eschizoid/stride/issues/318)) ([cc6e5e9](https://github.com/eschizoid/stride/commit/cc6e5e9026921f29ea85498b4f90adcca24a8009))
+* **progress:** fold the gap marker over the real series, and declare what was hidden ([#287](https://github.com/eschizoid/stride/issues/287)) ([131e868](https://github.com/eschizoid/stride/commit/131e868789fcc490959859e182373a68dfbf31c1))
+* **progress:** refuse an impossible heart rate instead of scoring it ([#303](https://github.com/eschizoid/stride/issues/303)) ([53c6edf](https://github.com/eschizoid/stride/commit/53c6edf12cdf87c7f86fed3ab79137ac3bb88c8a))
+* **progress:** stop claiming "first session" while hiding ten of them ([#295](https://github.com/eschizoid/stride/issues/295)) ([3e1c655](https://github.com/eschizoid/stride/commit/3e1c655fa07f0f1701adebffc1eb5678cee469d0))
+* refuse dates that were absorbed into a wrong value ([#262](https://github.com/eschizoid/stride/issues/262)) ([fd8d7aa](https://github.com/eschizoid/stride/commit/fd8d7aad73d60cecafd2caf00f3401101d72d087))
+* **sql:** rank on a rankable timestamp, in one place ([#280](https://github.com/eschizoid/stride/issues/280)) ([8604bbc](https://github.com/eschizoid/stride/commit/8604bbc6629a3aaeb02ef2e83374b77cea155015))
+* **sync:** answer a missing client credential with its remedy, not internal_error ([#289](https://github.com/eschizoid/stride/issues/289)) ([d90dd42](https://github.com/eschizoid/stride/commit/d90dd424b06b7a3230a3cffdf319d734748e097c))
+* **top:** rank on plausibility, not presence, and state what it excluded ([#316](https://github.com/eschizoid/stride/issues/316)) ([0f9df6e](https://github.com/eschizoid/stride/commit/0f9df6e3711c69a6ed6210522cfec94fcb9a89d2))
+
 ## [0.8.0](https://github.com/eschizoid/stride/compare/v0.7.0...v0.8.0) (2026-08-24)
 
 
