@@ -38,7 +38,8 @@ just install   # build + symlink to ~/.local/bin/stride
 ```
 
 CI runs more than `just test`, and a green `just test` is not a green build. These are the
-rest of it, all offline, all runnable locally — run them before pushing:
+rest of it, all runnable locally — run them before pushing. Every one is network-free
+except `issue-claims`, which reads the tracker:
 
 ```bash
 roc check src/app.roc      # CI runs this on three OSes before anything else
@@ -102,7 +103,9 @@ pinned in `.github/workflows/build.yml`.
   the screen function pins payload↔SCREEN, so widening both ships a green build
   with the schema stale. Different invariant (`just schema-check` runs the same
   validator against your own database — note that means the REAL `~/.stride` with your
-  real `HOME`, so a bumped `schema_version` migrates it; snapshot first if that matters; `tools/schema-lint.jq` keeps schemas
+  real `HOME`, so a bumped DATABASE `schema_version` (`Db.roc`'s constant behind
+  `PRAGMA user_version`, not the payload envelope's `schema_version` this paragraph is
+  otherwise about) migrates it; snapshot first if that matters; `tools/schema-lint.jq` keeps schemas
   inside the subset `tools/validate.jq` actually reads — `title` included, since the
   validator uses it as the violation path's prefix — plus `description` for humans).
   Platform failures are converted to envelopes at ONE boundary (`run_command!`
@@ -117,10 +120,11 @@ pinned in `.github/workflows/build.yml`.
   (default, no mode set), a mock Strava server (`mock`), and three drivers that run
   against it — `sync` (real sync + token refresh), `skips` (the undecodable-body skip
   path), and `stops` (the `budget_reached` / `rate_limited` / `daily_cap_reached` / `list_rate_limited` outcomes). `just e2e-sync`
-  starts one mock instance per failure shape, each on its own port, and runs every driver
-  arm; the mock's behaviour is varied by an `E2E_*` flag per shape. Read the recipe for the
-  current set rather than trusting a count here — an enumeration in this paragraph has
-  already rotted by three mocks and three flags. `STRIDE_API_BASE` points stride at the mock, and
+  starts several mock instances, each on its own port — one serves the happy path and the
+  budget/daily-cap arms, the rest each stand for a failure shape — and runs every driver
+  arm; behaviour is varied by `E2E_*` flags, some shapes taking more than one. Read the
+  recipe for the current set rather than trusting a count here — an enumeration in this
+  paragraph has already rotted by three mocks and three flags. `STRIDE_API_BASE` points stride at the mock, and
   `STRIDE_READS_PER_WINDOW / STRIDE_READS_PER_DAY` shrinks the rate-limit pacing so a terminal arm that would
   otherwise cost a full 95-read window is reachable in milliseconds. Same species of seam as
   `STRIDE_API_BASE`; humans never set any of them. They can only LOWER a limit — an

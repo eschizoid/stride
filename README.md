@@ -314,14 +314,24 @@ The repo ships an agent skill at
 [`skills/stride/`](skills/stride/SKILL.md), written for any agent rather than one
 vendor. Agents that read skills from the repo (Claude Code, via the
 `.claude/skills/stride` symlink) pick it up automatically when run inside this
-checkout. Agents that read skills from a user-global directory need it linked once —
-for Codex, whose skills live in `$CODEX_HOME/skills` (default `~/.codex/skills`):
+checkout — on Windows that needs `git config core.symlinks true` plus Developer Mode
+or administrator rights, because Git for Windows ships symlink support off and
+otherwise writes the path as a plain text file. `just skill-shapes` fails loudly when
+that has happened; the canonical skill is readable at `skills/stride/SKILL.md`
+regardless.
+
+Agents that read skills from a user-global directory need it linked once — for Codex,
+whose skills live in `$CODEX_HOME/skills` (default `~/.codex/skills`):
 
 ```sh
-ln -s "$PWD/skills/stride" ~/.codex/skills/stride   # then restart Codex
+mkdir -p ~/.codex/skills
+ln -sfn "$PWD/skills/stride" ~/.codex/skills/stride   # then restart Codex
 ```
 
-The same one-liner works for any tool that discovers `SKILL.md` directories by path.
+(`ln` does not create the parent directory, and without `-n` a second run nests the
+link inside the first.) Codex's documented discovery path is that directory; whether it
+follows a symlink there is untested, so copy `skills/stride` instead if it does not
+appear.
 The LLM computes
 **none** of the metrics — it reads the engine's JSON, reasons about it in natural
 language, and writes its planned sessions back through the coaching-log
