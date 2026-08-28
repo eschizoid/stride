@@ -175,41 +175,20 @@ main! = |raw_args| {
                 # so they get the same answer rather than one becoming an error.
                 Err(ShowHelp) =>
                     if Output.json_mode!({}) {
-                        # subcommands and flags separately: the unknown-command
-                        # envelope tells a machine to "run `stride` for the
-                        # list", so that list must lead to everything runnable —
-                        # --version included (review found it unreachable)
-                        # Records, not bare names (#219). A name list lets an agent
-                        # enumerate and nothing more — it cannot learn the argument
-                        # shape, whether a call writes, whether it needs the network,
-                        # or which schema the answer follows, so it needs outside
-                        # documentation to drive an interface that looks
-                        # self-describing. ADR 0000 §10 declines an MCP server on the
-                        # grounds that the CLI plus versioned JSON already IS the agent
-                        # interface; this is that claim made true.
-                        #
-                        # `--` and `-h` are listed because the binary accepts them and an
-                        # agent reading only this payload could not otherwise discover
-                        # them. `--` is the load-bearing one: it ends flag parsing, and it
-                        # is the ONLY way to pass an argument whose value begins with
-                        # `--json` or `--human`. It was documented in help_text and nowhere
-                        # a machine reads.
-                        #
-                        # These are bare strings where `commands` entries are records, and
-                        # that asymmetry is known rather than endorsed: the payload cannot
-                        # say that `--all` is sync-only, that `--json`/`--human` are
-                        # last-one-wins, or that `--` is a terminator rather than a flag.
-                        # All of that lives in the schema's prose, which is the
-                        # "needs outside documentation to drive an interface that looks
-                        # self-describing" problem this whole change exists to fix, one
-                        # array over. Widening it to records is #246; deriving it is not
-                        # available, because flags are handled in three unrelated places.
-                        #
-                        # Filtered as before, for two different reasons: `help`, `--help`
-                        # and `-h` answer WITH this list, so listing them invites a loop;
-                        # `--version` is a flag and belongs in `flags` beside the others.
-                        # Only the first reason is a loop, and an earlier wording gave it
-                        # for all four.
+                        # subcommands and flags separately: the unknown-command envelope says "run
+                        # `stride` for the list", so the list must lead to everything runnable,
+                        # --version included.
+                        # Records, not bare names (#219): a name list lets an agent enumerate and
+                        # nothing more — no argument shape, no mutates, no network, no schema. ADR 0000
+                        # s10 declines an MCP server because the CLI plus versioned JSON already IS the
+                        # agent interface; this is that claim made true.
+                        # `--` and `-h` are listed because the binary accepts them: `--` ends flag
+                        # parsing and is the ONLY way to pass an argument beginning with `--json`.
+                        # The flags are bare strings where `commands` are records — known, not endorsed:
+                        # the payload cannot say `--all` is sync-only or that `--` is a terminator, and
+                        # deriving records is not available while flags are handled in three places.
+                        # `help`/`--help`/`-h` are filtered because they answer WITH this list (a loop);
+                        # `--version` because it belongs in `flags`.
                         Output.emit_ok!({
                             commands: List.keep_if(Command.specs, |s| !(Str.starts_with(s.name, "-")) and s.name != "help"),
                             flags: ["--json", "--human", "--help", "-h", "--version", "--all", "--"],
@@ -242,15 +221,11 @@ main! = |raw_args| {
     }
 }
 
-# re-run the same binary (argv0) with STRIDE_FORMAT pinned for the child; stdio
-# is inherited, so output streams exactly as if the child were the process
 # Re-run THIS executable with STRIDE_FORMAT pinned for the child; stdio is
 # inherited, so output streams exactly as if the child were the process.
-#
-# The program is Env.exe_path!(), never argv[0]: a bare argv[0] would be
-# re-resolved through PATH for the child, so a shadowing entry earlier in PATH
-# could run a DIFFERENT binary than the one already executing (review-verified).
-# Killing the parent orphans the child, which runs to completion — inherent to
+# The program is Env.exe_path!(), never argv[0]: a bare argv[0] re-resolves
+# through PATH for the child, so a shadowing entry could run a DIFFERENT binary
+# than the one executing. Killing the parent orphans the child — inherent to
 # re-exec, and the reason this stays a shim rather than growing features.
 reexec_with_format! : List(Str), Str => Try({}, _)
 reexec_with_format! = |cleaned, fmt| {
@@ -304,43 +279,24 @@ run_command! = |cmd|
         # each call site: several commands load config, and the remedy is identical for
         # all of them -- name the key, echo the stored text (#206).
         Err(UnreadableConfig(key, raw)) => Output.unreadable_config!(key, raw)
-        # ...and the sibling tag. `Strava.client_cred!` raises
-        # `MissingEnv` when a client credential is in neither the environment nor the db.
-        # `auth!` handled it and nothing else did, so the SAME tag SURFACING through
-        # `get_valid_token!`'s refresh branch fell to the catch-all: `sync` answered
-        # `internal_error: unhandled failure: MissingEnv("STRAVA_CLIENT_ID") — please open an
-        # issue with the command you ran`, for a state `stride auth` fixes in one command.
+        # ...and the sibling tag: `MissingEnv` was handled by `auth!` and nothing else,
+        # so the SAME tag surfacing through `get_valid_token!`'s refresh branch fell to
+        # the catch-all — `sync` answered `internal_error … please open an issue` for a
+        # state `stride auth` fixes in one command. (`internal_error` is universal, so
+        # the envelope validated and nothing flagged it, #279.)
         #
-        # This is the defect the `UnreadableConfig` note above records, one tag over -- which
-        # is why this arm sits beside it rather than at the refresh site. Siblings by FAILURE
-        # SHAPE and by sharing this boundary, not by locality — `UnreadableConfig` is raised
-        # at four sites across `Strava.roc` and `Analyze.roc`, so a claim that the two tags come
-        # from one function, or even one file, does not survive a grep. What they share is
-        # that several commands can raise them and the remedy is identical for all of them.
-        #
-        # `internal_error` is a universal code, so the envelope validated and
-        # nothing in the schema apparatus flagged it (#279).
-        #
-        # Safe to key on the TAG rather than the name because `MissingEnv` has exactly one
-        # raiser — `Strava.client_cred!` — and that function is called four times on three
-        # lines, the tuple match in `auth!` carrying two of them, every one passing
-        # `STRAVA_CLIENT_ID` or `STRAVA_CLIENT_SECRET`. So every value
-        # this arm can see is a client credential and the remedy always fits. That is the
-        # property it depends on: raise `MissingEnv` for some other variable and this arm
-        # will hand out Strava API setup instructions for it.
+        # Safe to key on the TAG because `MissingEnv` has exactly one raiser,
+        # `Strava.client_cred!`, and every call passes a client credential — so every
+        # value this arm sees fits the remedy. Raise `MissingEnv` for some other
+        # variable and this arm will hand out Strava setup instructions for it.
         Err(MissingEnv(name)) => Output.missing_client_creds!(name)
-        # A stored date the engine refuses to guess at. Same reasoning as the config arm
-        # above -- converted HERE, at the one boundary, because four commands can RAISE
-        # these tags (`season` both, `summary` and `plan` through the ramp anchor,
-        # `compare` through its own), and the remedy depends on the TABLE rather than on
-        # which command met the row. "Can raise the tag" is the property this arm depends
-        # on and the one worth checking. One other command reads daily_load and still
-        # absorbs: `load` collapses an unreadable day to epoch 0, which surfaces as a
-        # fabricated 1969 week row in the rollup view (>14 days; the daily view prints the
-        # day verbatim). `stats` and `doctor` do NOT read daily_load and never parse a
-        # date -- they compare `activities.start_local` as bytes in SQL, so an unreadable
-        # value joins or leaves a window by string order. Different failure, named
-        # separately rather than folded in here.
+        # A stored date the engine refuses to guess at. Converted HERE, at the one
+        # boundary, because four commands can RAISE these tags and the remedy depends on
+        # the TABLE rather than the command. One other reader still absorbs: `load`
+        # collapses an unreadable day to epoch 0 (a fabricated 1969 week in the rollup
+        # view). `stats` and `doctor` never parse a date — they compare start_local as
+        # bytes in SQL, so an unreadable value joins or leaves a window by string order;
+        # a different failure, named separately.
         Err(BadActivityDate(raw, id)) => Output.unreadable_activity_date!(raw, id)
         # Same CODE, different wording. The time half's `raw` is a COMPONENT of start_local,
         # never the column, so rendering it through the date message put a string that is not
@@ -446,16 +402,11 @@ dispatch! = |cmd|
 
 config_show! : Str => Try({}, _)
 config_show! = |key|
-    # A derived key must not be READ back either. Databases created before FTP became
-    # derived still hold ftp_ride / ftp_rowing rows, so echoing the stored value would keep
-    # the "looks like it worked" trap alive for exactly the people who fell into it — they
-    # would see a number the engine never consults. Refusing to set it while still printing
-    # it is half a fix.
-    #
-    # This stays FIRST, and `known_key` deliberately excludes the derived family so the two
-    # cannot both claim a key. An earlier revision reordered these and argued the order was
-    # load-bearing; review reverted the reorder with nothing else changed and the whole
-    # suite stayed green, which made the claim decoration by this file's own standard.
+    # A derived key must not be READ back either: pre-derivation databases still
+    # hold ftp_ride rows, and echoing the stored value keeps the "looks like it
+    # worked" trap alive — a number the engine never consults. Refusing to set while
+    # still printing is half a fix. `known_key` deliberately excludes the derived
+    # family so the two cannot both claim a key.
     if Config.is_derived(key)
         Output.err_out!(
             "derived_key",
@@ -507,38 +458,21 @@ config_show! = |key|
                 NotFound => Output.err_out!("not_set", "(not set)")
             }
     }
-# Bare `config`: the keys that actually hold a value, in the order they read best. Answers
-# "which config do I have set?", which nothing did — `doctor` reports counts ("hr zones
-# set, 0 per-sport zone key(s) set"), and a count is not a name.
+# Bare `config`: the keys that hold a value, in reading order — "which config do
+# I have set?", which nothing answered (`doctor` reports counts, not names).
 #
-# Values are NOT returned. A listing is a different question from a lookup, and returning
-# values here would make one command that dumps every secret in the database, defeating
-# `config get`'s redaction by going around it. `redacted` marks which entries `config get`
-# would refuse to show, so a caller can tell "set, and I may read it" from "set, and I may
-# not" without a second call per key.
+# Values are NOT returned: a listing that returned them would dump every secret,
+# defeating `config get`'s redaction by going around it. `redacted` marks which
+# entries `config get` would refuse, so "set, and I may read it" is separable
+# without a call per key.
 #
-# Every row that holds a value, MARKED, not filtered. A first cut dropped the rows the
-# engine does not read, and that was the wrong filter twice over. It made the command
-# unable to answer the question it exists for — the help says "list the config that is
-# set", and it answered "list the config that is set AND that I would read", which differ
-# on any database old enough to still hold `ftp_ride` rows. And it turned a visible dead
-# row into an invisible one: after #254 closed `config set timezon x`, a leftover from
-# before could no longer be read, written, or listed, so the only way to find it was
-# sqlite3. For an issue whose subject is "a row nothing reads", hiding those is backwards.
-#
-# `status` instead: `read` (the engine consults it), `derived` (stored, ignored — what
-# `config get` answers `derived_key` for), `unrecognised` (a retired name or a pre-#254
-# typo). That also decouples `just schema-check`, which fills `config get <key>` from this
-# listing: it selects `status == "read"` rather than trusting an upstream filter.
-#
-# Values are NOT returned. A listing is a different question from a lookup, and returning
-# them would make one command that dumps every secret, defeating `config get`'s redaction
-# by going around it. `redacted` marks which entries `config get` will refuse to show, so
-# a caller can tell "set, and I may read it" from "set, and I may not" without a call per
-# key.
-#
-# The emptiness test is the SAME rule `config get` uses, decided in SQL once — see the
-# CAST note in Db.config_get!, which is what stopped the two disagreeing on a blob.
+# Every row that holds a value, MARKED, not filtered: dropping the rows the
+# engine does not read made the command unable to answer its own question and
+# turned a visible dead row invisible — for an issue whose subject is "a row
+# nothing reads", backwards. `status` says which: `read`, `derived` (stored,
+# ignored), `unrecognised` (retired name or pre-#254 typo). `just schema-check`
+# selects `status == "read"` rather than trusting an upstream filter. The
+# emptiness test is the SAME rule `config get` uses, decided in SQL once.
 config_list! : {} => Try({}, _)
 config_list! = |{}| {
     path = Db.open_db!({})?
@@ -598,15 +532,11 @@ config_unset! = |key| {
             Err(_) => False
         }
     Db.config_delete!(path, key)?
-    # ONE branch per OUTCOME, not per key class. The first version keyed on `known_key` and
-    # told every recognised key "stride will fall back to its default for it" — measured
-    # false for half of them: removing `hr_z1_max` makes `summary` and `analyze` exit 1 with
-    # `missing_config`, and there is no default to fall back to. The same sentence is TRUE
-    # for `hr_z2_max_ride`, which does fall back to the global. One predicate, two truth
-    # values, chosen by something that cannot tell them apart (#276).
-    #
-    # A per-sport override is `hr_zN_max_<sport>` and the global it defers to is
-    # `hr_zN_max`; `is_zone_key` accepts both, so the underscore AFTER `max` separates them.
+    # ONE branch per OUTCOME, not per key class: keyed on `known_key`, every
+    # recognised key was told "stride will fall back to its default" — false for
+    # half (removing hr_z1_max exits 1 with missing_config; hr_z2_max_ride really
+    # does fall back). A per-sport override is `hr_zN_max_<sport>`; the underscore
+    # AFTER `max` separates it from the global (#276).
     Output.out!(
         { key, removed: existed },
         |p|
@@ -615,16 +545,12 @@ config_unset! = |key| {
             } else if Config.is_derived(p.key) {
                 "${p.key} removed — stride derives it from your power history anyway; `stride summary` shows the current value"
             } else if Config.is_client_credential(p.key) {
-                # BOTH client credentials, by predicate rather than by name and position.
-                # `strava_client_id` reached the `known_key` catch-all and was told "stride
-                # reads this key and will recompute or re-fetch it as needed" — measured
-                # false: the next `sync` answers `missing_client_creds` and asks the user to
-                # supply it by hand, which is the opposite. Its sibling got the truthful
-                # sentence, and the two fail identically.
-                #
-                # Ordering was also the wrong mechanism: moving the special case below
-                # `is_secret` made it unreachable and restored the false sentence with the
-                # suite fully green, because only one of these branches is asserted anywhere.
+                # BOTH client credentials, by predicate rather than name-and-position:
+                # `strava_client_id` reached the catch-all and was told stride "will re-fetch it
+                # as needed" — false, the next sync asks the user to supply it by hand — while
+                # its sibling got the truthful sentence. Ordering was the wrong mechanism too:
+                # below `is_secret` this arm is unreachable, and only one branch is asserted
+                # anywhere.
                 "${p.key} removed — stride cannot re-authenticate until you supply it again and run `stride auth`"
             } else if Config.is_session_credential(p.key) or Config.is_secret(p.key) {
                 "${p.key} removed — stride is no longer authenticated; run `stride auth` to reconnect"
@@ -679,30 +605,17 @@ numeric_refusal = |key, val|
 
 config_store! : Str, Str => Try({}, _)
 config_store! = |key, val|
-    # An empty value is REFUSED for every key class, and the removal it used to mean lives
-    # in `config unset`. The block that stood here described the old arm in the present
-    # tense -- "an EMPTY value on a key the engine does not read is a REMOVAL", "DELETE, not
-    # `value = ''`", and "the row must already be absent-or-junk for this to fire, so it
-    # cannot clear a key the engine reads" -- the last of which the new arm contradicts
-    # outright, since it fires for every key. The history is worth keeping and lives in
-    # #276 and in `config_unset!`'s own comment; restating deleted behaviour four lines
-    # above its replacement is how a reader gets told the opposite of what runs.
+    # An empty value is REFUSED for every key class; the removal it used to mean
+    # lives in `config unset`. History in #276 and config_unset!'s comment —
+    # restating deleted behaviour above its replacement is how a reader gets told
+    # the opposite of what runs.
     if val == ""
-        # An empty value is not a WRITE, and `config set` now says so instead of guessing
-        # what you meant. It used to mean three things by key class: removal for keys stride
-        # does not read, `bad_value` for numeric ones (so a per-sport zone override could not
-        # be dropped at all), and an empty WRITE for managed free-text ones — which left a
-        # row reading as SET, so `sync` spent a network round trip to be told 401 by Strava
-        # instead of answering locally (#276).
-        #
-        # It also broke the contract: the removal payload is `{key, removed}` while
-        # `config set` declares `config.json`, which requires `value`. Measured — the removal
-        # form failed its own schema on both counts, and `just schema-check` never saw it
-        # because the form is `mutates: true` and that recipe covers read-only forms only.
-        # The site that DID exercise it with a real value is `validate!("config set timezone
-        # ...")` in the e2e suite -- naming schema-check here would send a reader to fix a
-        # recipe that must never invoke `config set` at all. `config unset` carries the
-        # removal shape under its own schema now, so each verb emits one shape.
+        # An empty value is not a WRITE, and `config set` says so instead of guessing: it
+        # used to mean three things by key class — removal, `bad_value`, or an empty
+        # WRITE that left a row reading as SET so `sync` spent a round trip to be told
+        # 401 (#276). The removal payload also failed config.json's `value` requirement,
+        # unseen because the form is `mutates: true` and schema-check covers read-only
+        # forms. `config unset` carries the removal shape under its own schema now.
         Output.err_out!(
             "bad_value",
             "an empty value is not a setting — use `stride config unset ${key}` to remove the row, or give ${key} a value",
@@ -714,18 +627,12 @@ config_store! = |key, val|
             "derived_key",
             "${key} is derived from your power history, not configured — stride uses the sport family's best 20-min power x 0.95 over the 60 days up to each activity. Nothing to set; `stride summary` shows the current value.",
         )
-    # ...and the WRITE half of #254, which the first cut left out and thereby made worse.
-    # Guarding only `config get` produced a CLI that confirmed a write and then denied the
-    # key existed: `config set timezon x` printed `timezon = x`, `config get timezon` then
-    # answered `unknown_key`. Before that it was at least a self-consistent trap. The trap
-    # is the point of the issue, so this is the half that actually closes it — the same
-    # reasoning `is_derived` above applies to its own family, which guards both verbs.
-    #
-    # Internal writers (`Strava.roc`'s token and read-cap bookkeeping) call `Db.config_set!`
-    # directly and never pass through here, so this constrains the human/agent surface only.
-    # ...and a NON-empty write to a key the engine does not read is the trap itself. The
-    # empty case is handled at the top, so this arm is exactly "you are storing a value
-    # nothing will ever consult".
+    # ...and the WRITE half of #254: guarding only `config get` produced a CLI that
+    # confirmed a write and then denied the key existed (`set timezon x` printed
+    # `timezon = x`; `get timezon` answered `unknown_key`). Internal writers call
+    # `Db.config_set!` directly and never pass through here.
+    # A NON-empty write to an unknown key is the trap itself: "you are storing a
+    # value nothing will ever consult".
     else if !(Config.known_key(key))
         Output.err_out!("unknown_key", unknown_key_message(key))
     else if numeric_refusal(key, val) != ""

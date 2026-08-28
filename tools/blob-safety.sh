@@ -1,50 +1,28 @@
 #!/bin/sh
-# Every TEXT column decoded by `Sqlite.str` OR `Sqlite.nullable_str` must be projected
-# through `CAST(... AS TEXT)`.
+# Every TEXT column decoded by `Sqlite.str` OR `Sqlite.nullable_str` must be
+# projected through `CAST(... AS TEXT)`.
 #
-# SQLite's TEXT affinity converts INTEGER and REAL but NOT blobs, so a blob written by a
-# hand-edit, a partial corruption or a bad import survives in a TEXT column — and a bare
-# `Sqlite.str` decode answers `UnexpectedType(Bytes)`, which the top level reports as
-# `internal_error`: "this is a bug, not the data and not the invocation", about a fault that
-# is entirely the data. `src/Db.roc` decided that rule for `config.value` and wrote down the
-# reasoning; #296 applied it to `activities.start_local` across twelve sites.
+# TEXT affinity converts INTEGER and REAL but NOT blobs, so a blob from a
+# hand-edit or bad import survives the column and a bare decode answers
+# `UnexpectedType(Bytes)` -> `internal_error` — a data fault reported as a bug.
+# A rule applied by remembering does not converge across a hundred references:
+# #296 shipped believing three sites when there were twelve, and #307 measured
+# the same crash in three more columns. This lint pairs each `Sqlite.str` decode
+# with the projection producing that alias and fails on a bare column reference.
 #
-# It did not converge, and could not have. #296 shipped believing there were three sites when
-# there were five, then five when there were twelve — found by planting a blob and running
-# every command, not by reading, because there are over a hundred references to that column
-# across a dozen files. It also left two live crashes behind: `progress` and `week` still
-# died on `activities.start_local`.
+# Known limits, none firing on the tree today: a projection split across two
+# source lines reports an empty expression; a comment quoting an old bare form
+# above a wrapped projection is reported; `${Interpolated} AS alias` and
+# `AS ${alias}` are not understood; two projections for one alias on one line
+# keep only the last (grep -o is greedy). Stated rather than fixed — each needs
+# a real SQL parse, and a gate whose limits are written down is one a reader can
+# trust the rest of.
 #
-# #307 measured the same failure in three more columns. Counted over 20 read-only
-# invocations: `activities.sport_type` crashed 10, `activities.name` 6, `daily_load.day` 5,
-# `planned_sessions.target_date` 1. An earlier version of this comment said 7/5/3, taken
-# from a sweep over a smaller command list than the binary actually declares.
-#
-# A rule applied by remembering does not converge across a hundred sites. This is the lint
-# the issue asks for: it pairs each `Sqlite.str("alias")` decode with the projection that
-# produces that alias, and fails when the projection is a bare column reference. Forgetting
-# becomes visible instead of becoming an `internal_error` months later.
-#
-# Known limits, none of which fire on the tree today and all of which review constructed:
-# a projection split across two source lines is reported with an empty expression, and this
-# codebase writes multi-line `\\` SQL everywhere; a comment quoting an old bare form above a
-# correctly wrapped projection is reported; `${Interpolated} AS alias` and `AS ${alias}` are
-# not understood; two projections for the same alias on one line keep only the last, because
-# `grep -o` is greedy. They are stated rather than fixed because each needs a real SQL parse,
-# and because a gate whose limits are written down is one a reader can trust the rest of.
-#
-# It flags an alias whose projection is not cast to TEXT, with exactly two exemptions:
-# `COUNT(`, which yields an integer, and a `PRAGMA` result, which SQLite generates rather
-# than storing. That is the whole list.
-#
-# It was longer. `MAX(`, `MIN(`, `group_concat` and `CASE` were exempt too, on the theory
-# that they cannot yield a blob — false for every one of them over a TEXT column. Review
-# instrumented the scan and found the list firing exactly ONCE in the tree: on
-# `COALESCE(MAX(substr(start_local,1,10)),'') AS d`, which was a live `stride plan` crash.
-# `MAX` over a mixed column PREFERS the blob, because SQLite orders BLOB above TEXT, so one
-# bad row anywhere poisoned it. An exemption whose only use in the codebase is hiding a bug
-# is not an exemption, and "a literal" was never exempt at all — the header said so while
-# the code sixty lines below recorded that the quote exemption had been removed.
+# Exactly two exemptions: `COUNT(` (yields an integer) and `PRAGMA` (SQLite
+# generates it). The list was longer — MAX/MIN/group_concat/CASE — and every
+# extra entry was false over a TEXT column: MAX over a mixed column PREFERS the
+# blob (SQLite orders BLOB above TEXT), and the only use of that exemption in
+# the tree was hiding a live `stride plan` crash.
 set -eu
 export LC_ALL=C
 cd "$(dirname "$0")/.."
@@ -74,22 +52,13 @@ for f in src/*.roc; do
       # here, and it names the mechanism rather than the file.
       if grep -q "PRAGMA $alias" "$f" 2>/dev/null; then continue; fi
       # otherwise the column is selected bare and the alias IS the column name.
-      #
-      # Scoped to the LINE that selects it, and to any table prefix. Grepping the whole file
-      # was a hole with two mouths. Review walked it: add a bare unaliased projection, get
-      # the count-guard message, do exactly what it says and bump `EXPECT_DECODES` — and the
-      # bare projection is then exempt, because this PR added `CAST(<col> AS TEXT)` for
-      # nearly every TEXT column in nearly every file, so the file-wide grep almost always
-      # finds one. The gate's own instruction routed a developer past it.
-      #
-      # The prefix set was `<col>` and `a.<col>` only, so a column wrapped as `s.`, `m.`,
-      # `p.`, `rt.` or `a2.` — all used in this tree — reported "selected bare" while
-      # correctly wrapped. That was an undocumented false positive.
-      # The line that SELECTS it bare, not every line mentioning it. Review re-walked the
-      # two-step escape with `sport_type`, whose CAST sits on four SELECT lines in one file:
-      # "does any of them carry the cast" is satisfied by a neighbour, so the bare
-      # projection stayed exempt after the count was bumped. Anchored on the alias appearing
-      # as a bare list item — preceded by SELECT or a comma, followed by a comma or FROM.
+      # Scoped to the LINE that selects it, and to any table prefix. A file-wide grep
+      # was a hole with two mouths: nearly every file now carries a CAST somewhere, so
+      # a new bare projection was exempted by a neighbour — the gate's own count-bump
+      # instruction routed a developer past it. And the prefix set was `<col>`/`a.`
+      # only, so `s.`/`m.`/`p.`/`rt.`/`a2.` wraps reported "selected bare" while
+      # correct. Anchored on the alias as a bare list item: preceded by SELECT or a
+      # comma, followed by a comma or FROM.
       grep -E "(SELECT|,) *$alias *(,| FROM)" "$f" 2>/dev/null > "$tmp/bareline" || true
       if [ -s "$tmp/bareline" ]; then
         grep -qE "CAST\(([a-z_][a-z_0-9]*\.)?$alias AS TEXT\)" "$tmp/bareline" ||
@@ -102,14 +71,11 @@ for f in src/*.roc; do
     fi
     while IFS= read -r expr; do
       [ -n "$expr" ] || continue
-      # Scope the expression to THIS projection. The line may hold several, and a CAST
-      # belonging to an earlier one must not vouch for this alias — but a fixed-width window
-      # is the wrong rule for that: a 90-character tail cut a long subquery projection in
-      # half, landing inside its own `CAST(`, and reported an already-wrapped site.
-      #
-      # The boundary is the previous projection's `AS <name>`, so drop everything up to the
-      # last ` AS ` that is not a type cast. `sed` is greedy, which is what makes it take
-      # the LAST one.
+      # Scope the expression to THIS projection — the line may hold several, and a
+      # CAST belonging to an earlier one must not vouch for this alias. A fixed-width
+      # window cut a long subquery projection in half, landing inside its own `CAST(`.
+      # The boundary is the previous projection's `AS <name>`: drop everything up to
+      # the last ` AS ` that is not a type cast (sed is greedy, which takes the LAST).
       tail_expr=$(printf '%s' "$expr" | awk '{
         # cut after the LAST `AS <name>` where <name> is a column alias, not a TYPE. Cutting
         # at any `AS` lands inside a `CAST(x AS TEXT)` and takes that CAST as this alias\047s;
@@ -123,27 +89,17 @@ for f in src/*.roc; do
         for (i = n + 1; i <= NF; i++) out = out " " $i
         print (n ? out : $0)
       }')
-      # Blank every `CAST(… AS TEXT)` span — with balanced parens, so a subquery inside one
-      # is blanked with it — then look for a column reference left in ARGUMENT position:
-      # preceded by `(` or `,` and followed by `,` or `)`. That is where the hole was.
-      #
-      # "does the tail contain AS TEXT anywhere" was the previous test, and it let ANY ONE
-      # cast arm vouch for every other arm. Review proved a live crash from
-      # `COALESCE(CAST(a.sport_family AS TEXT), a.sport_type, '')` — a shape this tree writes
-      # three times, with `sport_family` NULL being the pre-migration case the COALESCE
-      # exists for. `NULLIF` and `CASE … ELSE <bare>` are the same hole.
-      #
-      # Argument position rather than any identifier, because the tail also carries Roc
-      # syntax (`query:`) and SQL keywords, and flagging those made the gate cry wolf on six
-      # correct projections the first time this was written.
-      # ...then keep only the projection list. The tail can carry Roc syntax ahead of the SQL
-      # — `path: Path.utf8(path), query: "SELECT …` — and `(path)` reads as an
-      # argument-position column reference.
-      #
-      # Cut AFTER the blanking, and at the FIRST SELECT. Cutting first, at the last, took a
-      # correctly-wrapped `CAST((SELECT … a.start_local …) AS TEXT)` and removed its own
-      # `CAST(` prefix, so the subquery column looked bare. Blanking first means any SELECT
-      # still standing is a top-level one.
+      # Blank every `CAST(… AS TEXT)` span — balanced parens, so a subquery inside one
+      # is blanked with it — then look for a column reference left in ARGUMENT position
+      # (preceded by `(` or `,`, followed by `,` or `)`). "Does the tail contain AS
+      # TEXT anywhere" let any one cast arm vouch for every other:
+      # `COALESCE(CAST(a.sport_family AS TEXT), a.sport_type, '')` is a live crash
+      # this tree writes three times. Argument position rather than any identifier,
+      # because the tail carries Roc syntax and SQL keywords.
+      # ...then keep only the projection list, cut AFTER the blanking at the FIRST
+      # SELECT: cutting first, at the last, decapitated a correctly-wrapped
+      # `CAST((SELECT …) AS TEXT)` so its subquery column looked bare. Blanking first
+      # means any SELECT still standing is top-level.
       bare=$(printf '%s' "$tail_expr" | awk '{
         line = $0; out = ""
         while ((i = index(line, "CAST(")) > 0) {

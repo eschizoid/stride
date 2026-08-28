@@ -17,54 +17,32 @@ Config :: [].{
 		or Str.ends_with(k, "_token")
 		or Str.ends_with(k, "_secret")
 
-	# Keys the engine LOOKS UP A VALUE FOR. Absent from this and `config get` / `config set`
-	# answer `unknown_key` rather than `not_set` / plain success (#254).
+	# Keys the engine LOOKS UP A VALUE FOR. Absent from this and `config get`/`set`
+	# answer `unknown_key` rather than `not_set`/plain success (#254): `not_set`
+	# says the key is fine and merely empty, which invites `config set timezon
+	# <value>` — both halves of the round trip agreeing the key is real while
+	# nothing ever reads it.
 	#
-	# `not_set` and "no such key" were indistinguishable, and the harm is not the typo — it
-	# is what the typo invites. `config get timezon` answered "(not set)", which says the key
-	# is fine and merely empty, so the natural next step is `config set timezon <value>`.
-	# That succeeded, so both halves of the round trip agreed the key was real while nothing
-	# ever read it. Same trap `is_derived` prevents from the other direction, described in
-	# its own comment as a `config set` that "looks like it worked".
+	# The DERIVED family is deliberately NOT here: both verbs test `is_derived`
+	# first, so a clause for it would be unreachable — and a rule no test can
+	# falsify is not a guard. `known_key("ftp_ride") == False` is load-bearing.
+	# `secret_keys` directly, NOT `is_secret`: that suffix rule is fail-OPEN so an
+	# unlisted future secret still redacts, and reusing it here inverts that into
+	# fail-open RECOGNITION — `config get strava_acess_token` (a typo, #254's own
+	# scenario) answered "(not set)" again.
 	#
-	# The DERIVED family is deliberately NOT here. `config get` and `config set` both test
-	# `is_derived` first and refuse by name, so this predicate never sees `ftp_ride` — a
-	# clause for it would be unreachable from every caller, and this file's `numeric_key`
-	# comment already settled what to do with an unreachable clause: delete it, because a
-	# rule no test can falsify is not a guard. `known_key("ftp_ride") == False` is therefore
-	# correct and load-bearing rather than an oversight.
-	#
-	# `secret_keys` directly, NOT `is_secret`. `is_secret`'s suffix rule is deliberately
-	# fail-OPEN so an unlisted future secret is still redacted; reusing it here inverts that
-	# into fail-open recognition, which is the opposite of what this predicate wants. It let
-	# `config get strava_acess_token` — a typo of a real key, and issue #254's own scenario —
-	# answer "(not set)" again. Only the three real secrets need to be admitted, and that is
-	# all the redaction path requires.
-	#
-	# Fails CLOSED in the useful direction, but the cost of being WRONG here went up when
-	# `config set <key> ""` became a DELETE. A key the engine reads that is missing from
-	# this predicate used to answer `unknown_key` — annoying and visible. It is now
-	# removable, and reported as `removed: true` with "stride does not read it", which
-	# would be a false statement about a key it does read. Silent and destructive, not
-	# annoying and visible.
-	#
-	# Nothing is in that state today (every read site is covered, checked at the boundary),
-	# but two documented keys are waiting to enter it: `Metrics.threshold_pace_key` and
-	# `Metrics.model_key` describe `threshold_pace_<sport>` and `model_<sport>` as config
-	# keys for slices not yet wired up. Whoever wires one up MUST add it here in the same
-	# commit, or `config set threshold_pace_run ""` silently deletes live config.
-	#
-	# The reverse — a key listed here that nothing reads — is the older trap, which is why
-	# this is derived from the read sites and not from the docs. `metrics_rev` sat here for
-	# exactly one revision on the strength of an AGENTS.md sentence; it is a Roc constant
-	# and an `activity_metrics` column, and has never been read from `config`.
-	# Hoisted out of `known_key` so it can be ENUMERATED, not just queried. `config unset`
-	# writes one sentence per key, and three consecutive review rounds shipped a false one
-	# — `strava_client_id`, then `utc_offset_minutes`, then `strava_expires_at` — because
-	# checking the routing meant hand-typing this membership from memory and being one
-	# short each time. A predicate can only answer about a key you already thought of.
-	# `tests/e2e.roc` walks this list and asserts every member reaches a routed branch, so
-	# a key added here without a matching branch fails the suite instead of a later round.
+	# The cost of a MISSING entry went up when `config set <key> ""` became a
+	# DELETE: a read key absent from this list is now removable with "stride does
+	# not read it" — silent and destructive, not annoying and visible. Two
+	# documented keys are waiting to enter that state: `threshold_pace_<sport>` and
+	# `model_<sport>`. Whoever wires one up MUST add it here in the same commit.
+	# The reverse trap is why this derives from READ SITES, not docs: `metrics_rev`
+	# sat here for one revision on the strength of an AGENTS.md sentence and has
+	# never been read from config.
+	# Hoisted out of `known_key` so it can be ENUMERATED: `config unset` writes one
+	# sentence per key, and hand-typing this membership from memory shipped a false
+	# one three rounds running. `tests/e2e.roc` walks this list and asserts every
+	# member reaches a routed branch.
 	plain_keys : List(Str)
 	plain_keys = [
 		"timezone",
@@ -265,14 +243,10 @@ Config :: [].{
 
 }
 
-# numeric_key: every clause pinned, and mutation-checked one at a time. A `_max` suffix
-# clause used to sit beside `hr_z` and was deleted rather than pinned: every key that ends
-# `_max` also starts `hr_z` (Metrics.hr_zone_key / hr_zone_key_global), so it was
-# unreachable, and an unreachable clause cannot be killed by any mutant. A rule no test
-# can falsify is not a guard, it is decoration. Three of the five survived mutation when this rule
-# shipped with only e2e coverage -- and the commit message claimed the e2e checks pinned
-# it, which is the over-claim this file's own convention (pure rules, pure expects)
-# exists to prevent.
+# numeric_key: every clause pinned, mutation-checked one at a time. A `_max`
+# suffix clause was deleted rather than pinned — every key ending `_max` also
+# starts `hr_z`, so it was unreachable, and an unreachable clause cannot be
+# killed by any mutant. A rule no test can falsify is decoration, not a guard.
 expect Config.numeric_key("utc_offset_minutes") == Int
 expect Config.numeric_key("last_sync_epoch") == Int
 expect Config.numeric_key("strava_expires_at") == Int
@@ -328,19 +302,13 @@ expect Config.known_key("hr_z2_max_ride") == True
 expect Config.known_key("hr_z3_max_soccer") == True
 expect Config.known_key("hr_z1_max_standuppaddling") == True
 
-# EVERY digit outside 1..4, not just the two that bracket the range. `hr_z9_max` and
-# `hr_z0_max` alone left 5–8 unpinned, and review proved that mattered: widening the bound
-# by ONE (`d <= 52` -> `d <= 53`) made `config set hr_z5_max 200` succeed and write a row
-# nothing reads — #254's defect, reintroduced, suite green. `hr_z5_max` is also the likeliest
-# wrong edit rather than a contrived one: README calls z5 "everything above hr_z4_max", so a
-# maintainer could reasonably think it belongs in the pattern. It does not; `hr_zone_key` is
-# called only with 1..4, and the globals are four literals.
-# user_settable: the split that makes the listing able to say which rows are YOURS. Every
-# clause pinned, because it shipped with none — and the mutant that dropped the zone clause
-# marked `hr_z1_max`..`hr_z4_max` "managed", i.e. "stride's own bookkeeping, not something
-# anyone configures", about the four lines README tells a new user to type. Suite green.
-# The two e2e checks pin one literal each (`timezone`, `last_sync_epoch`), so they cover
-# one of the three clauses and not the one covering the largest family.
+# EVERY digit outside 1..4, not just the two bracketing the range: widening the
+# bound by ONE (`d <= 53`) made `config set hr_z5_max 200` write a row nothing
+# reads, suite green — and hr_z5_max is the likeliest wrong edit, since README
+# calls z5 "everything above hr_z4_max". `hr_zone_key` is called only with 1..4.
+# user_settable: the split that lets the listing say which rows are YOURS. Every
+# clause pinned, because the mutant dropping the zone clause marked the four
+# lines README tells a new user to type as "stride's own bookkeeping".
 expect Config.user_settable("timezone") == True
 expect Config.user_settable("utc_offset_minutes") == True
 expect Config.user_settable("hr_z1_max") == True

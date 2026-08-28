@@ -144,18 +144,12 @@ ReportSeason :: [].{
                     ftp_lo = Sqlite.f64("ftp_lo")(cols)(stmt)?
                     ftp_hi = Sqlite.f64("ftp_hi")(cols)(stmt)?
                     example_id = Sqlite.i64("example_id")(cols)(stmt)?
-                    # Same rule as daily_load.day: absorbing this silently drops
-                    # the activity from sessions, polarization AND the threshold
-                    # range with no trace at exit 0. And a merely-PARSEABLE date
-                    # is not enough: "2026-3-01T" sorts last, so it became
-                    # ftp_end for its month and its block and published the
-                    # threshold running backwards.
-                    #
-                    # "2026-3-01T", with the T: `d` is substr(start_local, 1, 10), so
-                    # every value named in these comments and in the error message is a
-                    # ten-character PREFIX of the column, never the column. Three separate
-                    # comments here quoted the pre-substr value, and that slip is what put
-                    # a string no row contains into a user-facing "delete this" message.
+                    # Same rule as daily_load.day: absorbing silently drops the activity from
+                    # sessions, polarization AND the threshold range at exit 0 — and merely
+                    # PARSEABLE is not enough: "2026-3-01T" sorts last, became ftp_end for its
+                    # month, and published the threshold running backwards.
+                    # (`d` is substr(start_local, 1, 10), so every value named here and in the
+                    # error is a ten-character PREFIX of the column, never the column itself.)
                     days = (Metrics.usable_date_days(d)).map_err(|_| BadActivityDate(d, example_id))?
                     Ok({ days, fam, n, easy_s, mod_s, hard_s, ftp_lo, ftp_hi })
                 },

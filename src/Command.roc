@@ -224,34 +224,20 @@ Command := [
 			if List.contains(acc, v) acc else List.append(acc, v)
 		})
 
-	## One argument. Positional, with one exception: `sync`'s `--all` is a literal flag
-	## accepted in an argument position, so it lives here rather than only in `flags`. `name` is the placeholder as it appears in usage text;
-	## a value without angle brackets must be passed verbatim.
+	## One argument. Positional, with one exception: `sync`'s `--all` is a literal
+	## flag accepted in an argument position. `name` is the placeholder as it appears
+	## in usage text; a value without angle brackets must be passed verbatim.
 	##
-	## `example` is a value that SATISFIES this argument, and it exists so that the value
-	## comes from the same place the argument's existence does (#257). Three checkers kept
-	## their own answer to "what fills this placeholder" — the e2e mutation sweep's jq, the
-	## e2e schema sweep, and `just schema-check`'s `case` block — and they had already
-	## drifted: the sweep proved `config get 1` and `tte 1` do not write while schema-check
-	## executed `tte 300`, and for `config get` a key chosen at RUNTIME from `stride config`'s listing — which is not a fixed value and cannot be cited as one. The safety proof and the executed
-	## invocation were not the same call.
+	## `example` is a value that SATISFIES this argument, and it exists so the value
+	## comes from the same place the argument's existence does (#257): three checkers
+	## kept their own answer to "what fills this placeholder" and had drifted. With
+	## the value coming from the table, a derived argument the command rejects (#253)
+	## and a stale hardcoded filler (#254) are structurally impossible.
 	##
-	## It makes two defects structurally impossible rather than merely loud. #253's HIGH was
-	## a derived argument the command REJECTED, which read as a benign "skipped" at exit 0
-	## until the allowlist was inverted; with the value coming from the table there is
-	## nothing to reject. And #254's schema-check consequence — a hardcoded `<key>` filler
-	## whose staleness could only be caught by a rename — disappears with the filler.
-	##
-	## BOUNDARY, written into the type rather than promised past: this covers arguments with
-	## a STATIC valid value. `<activity_id>` has to come from the data, so `example` is empty
-	## there — a consumer must treat empty as "I cannot invoke this without looking at the
-	## database", not as "".
-	##
-	## `<export.zip|dir>` is empty for the same reason and it took a measurement to learn it.
-	## The derivation gave `export.zip`, which answers `unzip_failed`; a deliberately absent
-	## `/nonexistent/1` answers `no_activities_csv`. There is no path that satisfies this
-	## argument without a real Strava export on disk, so the honest answer is that it is not
-	## statically knowable — the same class as an activity id, reached by a different road.
+	## BOUNDARY, written into the type: this covers arguments with a STATIC valid
+	## value. `<activity_id>` and `<export.zip|dir>` are empty — a consumer must read
+	## empty as "not statically knowable", not as "". (The export path was measured:
+	## no path satisfies it without a real Strava export on disk.)
 	Arg : { name : Str, required : Bool, example : Str }
 
 	## What a caller needs to INVOKE a command, not merely to name it (#219).
@@ -781,20 +767,14 @@ expect {
         _ => False
     }
 }
-# One expect per name in `command_names`, each in its minimal valid form. Asserting
-# each maps to its OWN variant is the real drift guard: an earlier version of this
-# checked only that names in `command_names` avoid UnknownCmd, which is TRUE BY
-# CONSTRUCTION (membership is what routes them elsewhere) and so could not fail —
-# deleting `[_, "stats"] => Ok(Stats)` left it green. Review caught it with four
-# mutations. It then pinned only ten of the thirty-two names while the comment beside
-# `command_names` claimed the whole list, so deleting the `season` arm also left it
-# green; review caught THAT one too. The aliases share a variant with
-# their long form on purpose — deleting either arm still fails here, because the
-# name then falls through to the wrong-arguments usage error rather than its command.
-# example_of: the derivation from a placeholder's own text. Mutation-proved one clause at a
-# time, because the SITES that consume these values cannot tell a good example from a
-# merely-parseable one — `rate activity_id 5` parses fine and answers activity_not_found,
-# so every sweep stays green on a value no database can satisfy.
+# One expect per name in `command_names`, each in its minimal valid form,
+# asserting each maps to its OWN variant — membership avoiding UnknownCmd is
+# true by construction and could not fail, and pinning only ten of thirty-two
+# names let a deleted `season` arm ship green. Aliases share a variant with
+# their long form on purpose: deleting either arm still fails here.
+# example_of: mutation-proved one clause at a time, because the consuming sweeps
+# cannot tell a good example from a merely-parseable one (`rate activity_id 5`
+# parses and answers activity_not_found).
 expect Command.example_of("all") == "all"
 expect Command.example_of("--all") == "--all"
 # an alternation names its own valid values; take the FIRST. Taking the last is a different

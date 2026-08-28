@@ -1,41 +1,25 @@
 #!/bin/sh
 # Check SKILL.md's documented payload shapes against schemas/v2/*.json.
 #
-# SKILL.md is the coaching agent's instruction sheet, and it names each command's payload
-# fields. Nothing connected those names to the schemas, so a field could be added to a
-# schema, marked required, shipped, and never reach the agent. That happened TWICE in three
-# days in consecutive commits of one PR (#292's `groups[].hidden`, then `hidden_lens` and
-# `hidden_scope`), both caught by a human reading the diff. The failure is silent in the
-# direction that matters: an agent given an undocumented field does not error, it simply
-# never uses it.
+# SKILL.md is the coaching agent's instruction sheet. Nothing connected its
+# field names to the schemas, so a field could be added, marked required,
+# shipped, and never reach the agent — which happened twice in three days
+# (#292's `hidden`, then `hidden_lens`/`hidden_scope`), both caught by a human.
+# The failure is silent in the direction that matters: an agent given an
+# undocumented field does not error, it simply never uses it.
 #
-# ── Why the membership question is answered by a PIN FILE and not by measuring the doc ──
+# Membership lives in `tools/skill-shapes.pins`, checked in — NOT measured from
+# the doc: with the doc as denominator, drift lowers coverage and switches OFF
+# the check (dropping ONE field of six is caught at 83%; dropping TWO is silent
+# at 66%, and two-at-once is verbatim how the motivating drift landed). The pin
+# means a schema's required set cannot change without this gate failing, and
+# updating it is the moment someone decides whether the field belongs in
+# SKILL.md (#298).
 #
-# The first version of this gate decided which objects to enforce by measuring how much of
-# each one SKILL.md already listed, and enforcing full coverage above a threshold. Review
-# killed it: the denominator is the document being judged, so drift lowers the coverage and
-# switches OFF the check that would have caught it. Dropping ONE field from a six-field
-# object leaves 83% and is caught; dropping TWO leaves 66% and is silent — and "two at
-# once" is not a hypothetical, it is verbatim how `hidden_lens`/`hidden_scope` landed. The
-# gate would not have caught the second of the two drifts it was built for.
-#
-# So membership lives in `tools/skill-shapes.pins`, which is checked in. Two consequences
-# worth stating because they are the point rather than side effects:
-#
-#   • a schema's required set cannot change without this gate failing, whatever the doc
-#     says. Updating the pin is the moment someone decides whether the new field belongs in
-#     SKILL.md, which is what #298 asked for.
-#   • coverage is enforced for every schema in the table, not only the 16 with a row in the
-#     command table. Exactly what that reaches in each direction is stated below, beside the
-#     fold that decides it — an earlier version also claimed it HERE, in words the fold then
-#     made wrong, and the two sentences sat twenty lines apart contradicting each other.
-#
-# ── The two directions ──
-#
-#   1. schema -> doc: for every object pinned `doc`, each of its required fields must be
-#      named somewhere in that command's documentation.
-#   2. doc -> schema: every key inside a `{...}` literal must exist as a schema property.
-#      Catches documentation still promising a field that was renamed or removed.
+# Two directions: (1) schema -> doc — every required field of a `doc`-pinned
+# object must be named in that command's documentation; (2) doc -> schema —
+# every key inside a `{...}` literal must exist as a schema property, catching
+# documentation that still promises a renamed or removed field.
 set -eu
 # Byte collation, everywhere. Every comparison in this script runs through `sort`, and the
 # pin file is a checked-in artifact compared line by line against a freshly sorted one — so
@@ -54,42 +38,22 @@ SCHEMAS=schemas/v2
 PINS=tools/skill-shapes.pins
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 
-# SKILL.md with hard-wrapped paragraph lines folded together. Markdown wraps prose, and the
-# payload literals for `sync` and `analyze` are split across two source lines, so a
-# line-scoped extractor finds ZERO complete `{...}` spans there.
+# SKILL.md with hard-wrapped paragraph lines folded together: the payload
+# literals for `sync` and `analyze` split across source lines, so a line-scoped
+# extractor finds ZERO complete `{...}` spans there.
 #
-# What this buys, precisely, because two earlier versions got it wrong in opposite ways:
+# Direction 2 reaches all three prose literals, including `config unset`'s,
+# which has no table row. Direction 1 reaches `sync` but NOT `analyze` — an
+# accident of where the paragraph breaks fall, not a design; `analyze`'s
+# required set is still pinned, so a schema change fails the gate, and what is
+# missing is only the check that SKILL.md names each new field. Closing that
+# needs prose-to-command attribution, and the last heuristic for it produced
+# twelve false reports.
 #
-# Direction 2 reaches all three prose literals — `sync`'s, `analyze`'s, and `config unset`'s,
-# which has no table row at all. Renaming a field in any of them is reported.
-#
-# Direction 1 reaches `sync` but NOT `analyze`, and that asymmetry is an accident of the
-# prose rather than a design. The fold merges the paragraph running from `stride sync`
-# through the `{synced, …}` literal, so `sync` flags `doc`; `stride analyze` appears three
-# times and never in the paragraph holding its own literal, so it stays `-`. Its required
-# set is still pinned, so a schema change to it fails the gate — what is missing for
-# `analyze` alone is the check that SKILL.md names each new field, and closing it needs a
-# way to attribute prose that does not depend on where a paragraph break happens to fall.
-#
-# That accident has a cost worth naming rather than discovering later: a folded paragraph is
-# a large haystack, and a required field with a common name can be satisfied by text about a
-# different command. Review swept all 27 doc-pinned objects, deleting each required field
-# from every literal while leaving prose alone, and found six such coincidences — `value`
-# standing on "as `sync`'s `stopped` value it means…", `points` on "1 by construction at two
-# points", `month` on "belongs to a month and to no block", and three more of the same shape.
-#
-# Recorded rather than closed, and the reason is measured rather than aesthetic: each is a
-# SECOND line of defence failing. The field is still named in a literal today, and the pin
-# fails unconditionally on any schema change whatever the prose says — so the drift #298 is
-# actually about, a field added and never documented, is caught regardless. Closing this
-# needs prose-to-command attribution, the same missing capability that leaves `analyze` at
-# `-`, and inventing a heuristic for it is what produced twelve false reports last time.
-#
-# Two cases do NOT shelter under that, because they are placeholders rather than prose:
-# `config.json` and `config_unset.json` each rest a required `key` on the inline
-# `stride config get <key> --json` written in a sentence. The cell strip is anchored at `^|`
-# so it never sees an inline invocation, and stripping arbitrary ones is a much broader
-# change than a table cell. Named here so the limitation is not mistaken for the prose one.
+# A folded paragraph is a large haystack: a required field with a common name
+# can be satisfied by text about a different command (a sweep found six such
+# coincidences — `value`, `points`, `month`…). Each is a SECOND line of defence
+# failing; the pin fails unconditionally on any schema change regardless.
 LOGICAL="$tmp/logical.md"
 awk '
   function isnew(l) {
@@ -150,30 +114,20 @@ doc_for() {
     grep -vF "stride $l" "$tmp/cand" > "$tmp/cand2" || true
     mv "$tmp/cand2" "$tmp/cand"
   done < "$tmp/longer"
-  # The invocation cell is stripped before the text is searched. It holds argument
-  # PLACEHOLDERS — `[date]`, `[sport]`, `<id>`, `[n]`, `[days]` — and leaving them in lets
-  # a CLI argument silently satisfy a payload field of the same name. Measured: moving `km`
-  # into `stats`' invocation cell makes a required `km` pass with the schema untouched.
-  # `[^|]*` after the closing backtick, not ` *`. Two table rows carry `(alias `pc`)` between
-  # the invocation and the next pipe, so the anchored form matched nothing and the ENTIRE row
-  # survived — placeholders included. That is round-1's placeholder finding alive again
-  # inside the mechanism added to close it, and it only surfaced once the alias union
-  # enrolled those two rows. Measured: deleting `sport` from `power-curve`'s literal passed,
-  # while neutralising the `[sport]` placeholder as a control failed.
+  # The invocation cell is stripped before the text is searched: it holds argument
+  # PLACEHOLDERS (`[date]`, `<id>`, `[n]`), and leaving them in lets a CLI
+  # argument satisfy a payload field of the same name (measured with `km`).
+  # `[^|]*` after the closing backtick, not ` *`: two rows carry `(alias `pc`)`
+  # before the next pipe, so the anchored form matched nothing and the whole row
+  # survived, placeholders included.
   #
-  # Two limits, both recorded because this strip's whole job is to have known ones.
-  #
-  # An inline invocation in PROSE — `stride config get <key> --json` — is a different route
-  # to the same place and is NOT fixed here: this is anchored at `^|`, so it never sees one.
-  # `config.json` and `config_unset.json` both rest a required `key` on that `<key>`.
-  #
-  # And the anchor means the strip can stop applying to a row ENTIRELY. Reword the cell to
-  # `| run \`stride power-curve …` and it matches nothing, the row survives whole, and the
-  # placeholder hole reopens for that row — measured. Nothing guards row SHAPE any more:
-  # that was `checked_cmds`, correctly retired when direction 2 stopped attributing. It
-  # takes a reformat AND a field deleted from a literal while its placeholder remains, and
-  # the pin still fails unconditionally on any schema change either way — so this is a
-  # second line of defence that can go quiet, not a hole in the first.
+  # Two limits, recorded because this strip's job is to have known ones. An inline
+  # invocation in PROSE (`stride config get <key> --json`) is a different route to
+  # the same place — the anchor is `^|`, so it never sees one, and `config.json` /
+  # `config_unset.json` both rest a required `key` on it. And a reworded cell can
+  # stop matching entirely, reopening the placeholder hole for that row; the pin
+  # still fails unconditionally on any schema change, so this is a second line of
+  # defence that can go quiet, not a hole in the first.
   sed 's/^| *`[^`]*`[^|]*|//' "$tmp/cand"
 }
 
