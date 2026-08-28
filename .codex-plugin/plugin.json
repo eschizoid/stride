@@ -1,0 +1,29 @@
+{
+  "name": "stride",
+  "version": "0.9.0",
+  "description": "Local-first, deterministic multi-sport training analytics. The engine computes the numbers; the agent adds judgment.",
+  "author": {
+    "name": "Mariano Gonzalez",
+    "url": "https://github.com/eschizoid"
+  },
+  "homepage": "https://github.com/eschizoid/stride#readme",
+  "repository": "https://github.com/eschizoid/stride",
+  "license": "MIT",
+  "keywords": ["training", "cycling", "running", "strava", "analytics", "coaching"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Stride",
+    "shortDescription": "Coach training from local Strava data",
+    "longDescription": "Stride syncs Strava data into a local SQLite database and computes training-science metrics deterministically — CTL/ATL/TSB, zone distribution, decoupling, W' balance, critical power. The agent reads the JSON and coaches; it never does the math itself.",
+    "developerName": "eschizoid",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://github.com/eschizoid/stride",
+    "defaultPrompt": [
+      "How is my training load trending?",
+      "Plan my week from my recent sessions.",
+      "Which sessions were unusually hard for me?"
+    ],
+    "brandColor": "#E85D25"
+  }
+}

@@ -8,6 +8,8 @@
 [![Release](https://img.shields.io/github/v/release/eschizoid/stride)](https://github.com/eschizoid/stride/releases)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-informational)](https://github.com/eschizoid/stride/actions/workflows/build.yml)
 [![Built with Roc](https://img.shields.io/badge/built%20with-Roc-7c4dff)](https://www.roc-lang.org)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-skill-D97757?logo=claude&logoColor=white)](#the-coaching-layer-optional)
+[![Codex](https://img.shields.io/badge/Codex-skill%20%2B%20plugin-000000?logo=openai&logoColor=white)](#the-coaching-layer-optional)
 [![License](https://img.shields.io/github/license/eschizoid/stride)](LICENSE)
 
 stride answers the training questions Strava doesn't. Is my training actually polarized?
@@ -312,26 +314,31 @@ because an aerobic model does not fit it.
 
 The repo ships an agent skill at
 [`skills/stride/`](skills/stride/SKILL.md), written for any agent rather than one
-vendor. Agents that read skills from the repo (Claude Code, via the
-`.claude/skills/stride` symlink) pick it up automatically when run inside this
-checkout — on Windows that needs `git config core.symlinks true` plus Developer Mode
-or administrator rights, because Git for Windows ships symlink support off and
-otherwise writes the path as a plain text file. `just skill-shapes` fails loudly when
-that has happened; the canonical skill is readable at `skills/stride/SKILL.md`
-regardless.
+vendor. There is exactly one copy of it, and every agent installs it the same way: into
+whatever directory that agent reads skills from.
 
-Agents that read skills from a user-global directory need it linked once — for Codex,
-whose skills live in `$CODEX_HOME/skills` (default `~/.codex/skills`):
+Codex reads `$CODEX_HOME/skills` (default `~/.codex/skills`), and its built-in
+skill-installer can fetch straight from GitHub, so the easiest route is to ask Codex
+itself: "install the skill from this repo" with the repo name and the `skills/stride`
+path. Claude Code reads `~/.claude/skills`. Either way the manual route is the same
+plain shell — copy or link the directory into the agent's skills directory. If the
+destination already exists as a real directory (an earlier copy), remove it first:
+`ln -sfn` against a real directory exits 0 and silently nests the link inside it.
 
 ```sh
-mkdir -p ~/.codex/skills
-ln -sfn "$PWD/skills/stride" ~/.codex/skills/stride   # then restart Codex
+mkdir -p ~/.claude/skills && ln -sfn "$PWD/skills/stride" ~/.claude/skills/stride
+mkdir -p ~/.codex/skills  && ln -sfn "$PWD/skills/stride" ~/.codex/skills/stride
 ```
 
-(`ln` does not create the parent directory, and without `-n` a second run nests the
-link inside the first.) Codex's documented discovery path is that directory; whether it
-follows a symlink there is untested, so copy `skills/stride` instead if it does not
-appear.
+Restart the agent afterwards to pick it up. Whether every agent follows a symlinked
+skill directory is untested — if a linked skill does not appear after a restart, copy
+the directory instead.
+
+The repo also carries a Codex plugin manifest — `.codex-plugin/plugin.json` declares the
+skill under the name `stride`, and a marketplace entry pointing at a checkout makes it
+installable via `codex plugin add`. The manifest's `skills` path is `./skills/`, the same
+canonical directory both install routes copy from, so there is no second copy in the repo
+for them to disagree via — an installed snapshot still only updates when reinstalled.
 The LLM computes
 **none** of the metrics — it reads the engine's JSON, reasons about it in natural
 language, and writes its planned sessions back through the coaching-log
