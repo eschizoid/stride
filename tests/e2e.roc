@@ -2534,12 +2534,6 @@ b_seed_analyze! = |ctx| {
     # sh! swallows errors into "" — assert readability FIRST so a moved/renamed
     # skill file fails loudly here instead of green-lighting the negative checks
     check!("skill file is readable", !(Str.is_empty(skill_text)))?
-    # ...and the tool-specific path stays a SYMLINK to it rather than a second copy.
-    # Two copies pass a content comparison on the day they are made and diverge on any
-    # day after, which is how this file's own instructions went stale before. `test -L`
-    # answers the question a diff cannot: whether there is one file or two.
-    check!("the Claude skill path is a symlink, not a duplicate", Str.trim(sh!("test -L .claude/skills/stride && echo SYMLINK || echo COPY")) == "SYMLINK")?
-    check!("...and it resolves to the canonical skill", Str.trim(sh!("readlink .claude/skills/stride")) == "../../skills/stride")?
     check!("skill never sets FTP via config", !(Str.contains(skill_text, "config set ftp")))?
     # banning exact spellings misses re-worded drift ("config vs
     # estimated" carried the same dead flags without any banned string) — ban the
@@ -2553,6 +2547,15 @@ b_seed_analyze! = |ctx| {
     check!("skill names the current platform", Str.contains(skill_text, "basic-cli 0.22"))?
     # ...and the commands it teaches exist: spot-check the ones this guard grew from
     check!("skill documents the derived-key refusal", Str.contains(skill_text, "derived_key"))?
+    # The Codex plugin manifest carries its OWN version, which is a second place the
+    # released number can rot. Compared against `.release-please-manifest.json` rather
+    # than against `src/app.roc`'s string: the manifest is what release-please actually
+    # writes, so this fails on the release PR itself if the bump did not reach the plugin,
+    # rather than one release later when someone reads the plugin card and sees 0.9.0.
+    rp_version = Str.trim(sh!("sed -n 's/.*\"\\.\": \"\\([0-9.]*\\)\".*/\\1/p' .release-please-manifest.json"))
+    plugin_version = Str.trim(sh!("sed -n 's/.*\"version\": \"\\([0-9.]*\\)\".*/\\1/p' .codex-plugin/plugin.json"))
+    check!("the release version is readable at all", !(Str.is_empty(rp_version)))?
+    check!("...and the Codex plugin manifest names that same version", plugin_version == rp_version)?
     # #181: the skill must TELL the coach to pass --json, and must not teach the
     # retired environment detection as a way to get machine output
     check!("skill instructs passing --json", Str.contains(skill_text, "PASS `--json` ON EVERY QUERY"))?

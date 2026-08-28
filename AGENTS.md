@@ -2,15 +2,18 @@
 
 > **One file, every agent.** `AGENTS.md` is the canonical instruction file — the
 > cross-tool convention Codex and friends read from the repo root with no setup. Claude
-> Code users: point your local config at it once with `ln -s ../AGENTS.md
-> .claude/CLAUDE.md` (untracked on purpose; this line is the documentation for it). Edit
-> this file, never a symlink.
+> Code users: point your local config at it once with `mkdir -p .claude && ln -s
+> ../AGENTS.md .claude/CLAUDE.md` (untracked on purpose; this line is the documentation
+> for it — and the repo no longer ships a `.claude/` directory, so the `mkdir` is load
+> bearing on a fresh clone). Edit this file, never a symlink.
 >
-> The COACHING skill is the same story one directory down: canonical at
-> `skills/stride/SKILL.md`, with `.claude/skills/stride` a tracked symlink to it. Tools
-> that discover skills user-globally rather than from the repo need one link —
-> `ln -s "$PWD/skills/stride" ~/.codex/skills/stride` for Codex. Three gates read the
-> canonical path, so the skill cannot be moved without updating them.
+> The COACHING skill has ONE copy, at `skills/stride/SKILL.md`, and every agent installs
+> it into its own skills directory rather than the repo carrying a per-vendor path.
+> Codex's helper takes `--repo eschizoid/stride --path skills/stride` and needs no clone;
+> `.codex-plugin/plugin.json` declares the repo as a Codex plugin over that same
+> `./skills/` directory. Three gates read the canonical path, so the skill cannot be
+> moved without updating them, and e2e pins the plugin manifest's version to the
+> released one.
 
 Local-first, deterministic training analytics engine in **Roc** (Strava is one
 ingestion layer). The engine computes metrics deterministically; an LLM coach (you,

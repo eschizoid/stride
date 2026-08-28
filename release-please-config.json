@@ -3,7 +3,10 @@
   "packages": {
     ".": {
       "release-type": "simple",
-      "extra-files": ["src/app.roc"],
+      "extra-files": [
+        "src/app.roc",
+        { "type": "json", "path": ".codex-plugin/plugin.json", "jsonpath": "$.version" }
+      ],
       "bump-minor-pre-major": true
     }
   }
