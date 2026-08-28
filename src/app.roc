@@ -58,7 +58,7 @@ import Plan
 import Import
 
 version : Str
-version = "stride 0.8.0" # x-release-please-version
+version = "stride 0.9.0" # x-release-please-version
 
 help_text =
         \\stride — a local-first, deterministic training analytics engine (built in Roc)
