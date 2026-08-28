@@ -33,7 +33,7 @@ export LC_ALL=C
 # text, for the third time on this branch and by the third distinct mechanism. Normalising at
 # the source rather than at each comparison is what stops a fourth.
 cd "$(dirname "$0")/.."
-SK=.claude/skills/stride/SKILL.md
+SK=skills/stride/SKILL.md
 SCHEMAS=schemas/v2
 PINS=tools/skill-shapes.pins
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT

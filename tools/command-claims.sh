@@ -40,7 +40,7 @@ STRIDE="${STRIDE:-./stride}"
 # Scope: everything in this repo that describes the CLI in prose. Globs are expanded by the
 # shell below, so an EMPTY directory leaves the literal pattern in place and trips the
 # per-file guard by name instead of silently contributing nothing.
-FILES="README.md AGENTS.md docs/*.md docs/adr/*.md .claude/skills/stride/SKILL.md"
+FILES="README.md AGENTS.md docs/*.md docs/adr/*.md skills/stride/SKILL.md"
 
 # The corpus is PINNED, not merely reported: the only quantitative assertion
 # used to be "> 0", so any shrink short of total silence passed. Rule B

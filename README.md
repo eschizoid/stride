@@ -311,8 +311,18 @@ because an aerobic model does not fit it.
 ## The coaching layer (optional)
 
 The repo ships an agent skill at
-[`.claude/skills/stride/`](.claude/skills/stride/SKILL.md) that compatible LLM
-coding agents pick up automatically when run inside this repo. The LLM computes
+[`skills/stride/`](skills/stride/SKILL.md), written for any agent rather than one
+vendor. Agents that read skills from the repo (Claude Code, via the
+`.claude/skills/stride` symlink) pick it up automatically when run inside this
+checkout. Agents that read skills from a user-global directory need it linked once —
+for Codex, whose skills live in `$CODEX_HOME/skills` (default `~/.codex/skills`):
+
+```sh
+ln -s "$PWD/skills/stride" ~/.codex/skills/stride   # then restart Codex
+```
+
+The same one-liner works for any tool that discovers `SKILL.md` directories by path.
+The LLM computes
 **none** of the metrics — it reads the engine's JSON, reasons about it in natural
 language, and writes its planned sessions back through the coaching-log
 commands:

@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1026)?
+    checks_ran_exactly!(1028)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2530,10 +2530,16 @@ b_seed_analyze! = |ctx| {
     # ── skill contract drift guard (#155): the coach skill is a CLIENT of the
     # CLI contract, and it once instructed `config set ftp_ride` — a command the
     # CLI refuses. Retired interfaces must never reappear in the shipped skill.
-    skill_text = sh!("cat .claude/skills/stride/SKILL.md")
+    skill_text = sh!("cat skills/stride/SKILL.md")
     # sh! swallows errors into "" — assert readability FIRST so a moved/renamed
     # skill file fails loudly here instead of green-lighting the negative checks
     check!("skill file is readable", !(Str.is_empty(skill_text)))?
+    # ...and the tool-specific path stays a SYMLINK to it rather than a second copy.
+    # Two copies pass a content comparison on the day they are made and diverge on any
+    # day after, which is how this file's own instructions went stale before. `test -L`
+    # answers the question a diff cannot: whether there is one file or two.
+    check!("the Claude skill path is a symlink, not a duplicate", Str.trim(sh!("test -L .claude/skills/stride && echo SYMLINK || echo COPY")) == "SYMLINK")?
+    check!("...and it resolves to the canonical skill", Str.trim(sh!("readlink .claude/skills/stride")) == "../../skills/stride")?
     check!("skill never sets FTP via config", !(Str.contains(skill_text, "config set ftp")))?
     # banning exact spellings misses re-worded drift ("config vs
     # estimated" carried the same dead flags without any banned string) — ban the
