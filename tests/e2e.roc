@@ -1284,8 +1284,9 @@ b_init_config! = |ctx| {
     # THE acceptance check: adding a command without describing it fails here.
     # Read from the PARSER, so the two are compared against each other instead of
     # the table against itself. Every arm yielding a real command contributes its
-    # verb; Err(Usage) arms are excluded (arity hints and retired names, which must
-    # NOT be advertised). Verb level — the FORM level is the separate comparison
+    # verb. The extraction is yield-blind, so Err(Usage) arms (arity hints, retired
+    # names) come along too and are excluded by the value pin below — retiring a
+    # command is a stated act. Verb level; the FORM level is the separate comparison
     # below, needed in both directions.
     #
     # NO PROCESS SUBSTITUTION: `sh!` spawns /bin/sh = bash 3.2 POSIX, where `<(...)`
@@ -1304,8 +1305,9 @@ b_init_config! = |ctx| {
     # elsewhere quotes `[_, "stats"] => Ok(Stats)` while describing a past
     # regression, so it fed `stats` into the parser side and deleting the real arm
     # stayed green — the comment documenting the bug class became a vector for it.
-    # Whitespace inside the pattern is tolerated (`[_,"hrv"]` is real and callable;
-    # `roc fmt` is blocked upstream, #27). LC_ALL=C for stable collation.
+    # Whitespace inside the pattern is tolerated — a review-built `[_,"hrv"]` probe
+    # with no space was callable and invisible to the tight pattern, and `roc fmt` is
+    # blocked upstream (#27), so nothing normalises spacing. LC_ALL=C for collation.
     verbs_dir = "${ctx.home}/.verbs"
     parser_verbs = "sed 's/#.*//' src/Command.roc | grep -oE '\\[[[:space:]]*_[[:space:]]*,[[:space:]]*\"[A-Za-z0-9_-]+\"' | sed 's/.*\"\\([A-Za-z0-9_-]*\\)\"/\\1/' | grep -v '^-' | grep -vx help | LC_ALL=C sort -u"
     spec_verbs = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].name | split(\" \")[0]' | LC_ALL=C sort -u"
@@ -2148,6 +2150,7 @@ b_seed_analyze! = |ctx| {
     # `known` flag on the row's OWN block, and exclusion from a NEIGHBOUR's
     # comparables — the second matters more, because an impossible sample in the
     # comparables set moves the median every other session is ranked against.
+    # (The block below adds the third site, `cur_ef`, which these two cannot see.)
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr,device_watts) SELECT 96,'impossible hr probe','Ride',date(start_local,'-3 days')||'T09:00:00Z',3550,28000,185,185,18,1 FROM activities WHERE id=101;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # THREE sites, not two, and the comment used to say two. The `known` flag and the
@@ -2664,7 +2667,7 @@ b_seed_analyze! = |ctx| {
     check!("hr rise is unknown unless BOTH end reps carry it", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 334) | .hr_rise_known] | .[0] == false") == "true")?
     # ── the ranking itself, pinned ───────────────────────────────────────
     # A dedicated anchor (uniformity 1.36 — inside the 1.6x gate but NOT the most
-    # uniform), twelve candidates whose uniformity IMPROVES with age, six uneven
+    # uniform), ten candidates whose uniformity IMPROVES with age, six uneven
     # ones: rank order is the reverse of date order and the anchor sits mid-pack,
     # so ranking-by-uniformity, the anchor pin and the display re-sort can each
     # fail independently (all-1.0 probes with the anchor newest made every
@@ -4175,7 +4178,7 @@ b_command_schemas! = |ctx| {
     # driven bounds cannot see: flipping an optional to required leaves both
     # unmoved — and declaring `complete <activity_id>` required erases
     # `CompleteRest`, a named constructor with its own parse arm and declared
-    # code. NO exception list: all ten forms with a required argument answer
+    # code. NO exception list: every form with a required argument answers
     # `usage` one short — being one shy is unambiguously an arity fact in a way
     # that being one over is not.
     required_short = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required)] | length > 0) | [.name] + [.args[] | select(.required) ${junk}][1:] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] || echo \"$line\"; done; true; } | tr '\\n' '|'"))
@@ -4190,12 +4193,12 @@ b_command_schemas! = |ctx| {
     # statement that the R-arity form is REACHABLE (`CompleteRest`, `Skip`) —
     # .args records counts, not which arity belongs to which constructor.
     #
-    # No exception list: at exactly R all 28 forms answer a VALUE verdict, not an
+    # No exception list: at exactly R every non-network form answers a VALUE verdict, not an
     # arity one. The safety against mutating commands is NOT the junk token alone:
     # R=0 forms run bare, and `analyze` DOES write — those are covered by the
     # SANDBOX. A future mutating command with no required args gets run for real.
     # And endpoint-bracketing suffices only because every accepted-arity set is
-    # CONTIGUOUS (measured 0..N+1, all 28, no holes); nothing here asserts
+    # CONTIGUOUS (measured 0..N+1 across every form at the time, no holes); nothing here asserts
     # contiguity.
     required_exact = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | [.name] + [.args[] | select(.required) ${junk}] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true; } | tr '\\n' '|'"))
     check!("...and exactly its required arguments is never a usage error (bad: ${required_exact})", required_exact == "")?
@@ -4767,8 +4770,8 @@ b_plan! : Ctx => Try({}, _)
 b_plan! = |ctx| {
     # #100: a bad date is refused at the door — planned_sessions is judgment tier,
     # so a typo there cannot be re-derived and would belong to no training week.
-    # Each reject below PARSES; the last two would be silently normalized to a
-    # different day than the one typed.
+    # The rejects below include shapes that PARSE — the last two would be silently
+    # normalized to a different day than the one typed.
     # Apostrophes must round-trip byte-for-byte: written when #105's workaround
     # spliced text into SQL, kept as the regression test for ever reaching for a
     # splice again — a broken round trip either corrupts the text or fails the
@@ -6706,7 +6709,7 @@ is_nonempty = |s| !(Str.is_empty(Str.trim(s))) and Str.trim(s) != "null"
 # build error).
 # PER PROCESS, not a fixed path (#266): `sh` is a child of this binary, so
 # `$PPID` in the script is this driver's pid — each invocation gets its own
-# tally. Roles repeat (`E2E_MODE=stops` runs six times per `just e2e`), so
+# tally. Roles repeat (`E2E_MODE=stops` runs six times per `just e2e-sync`), so
 # the mode was never a per-run identity: two drivers on one file inflate each
 # other's counts, and a mid-run reset produces `498 == 774` with all 774
 # printing ok — indistinguishable from the silent-removal regression the
@@ -6847,7 +6850,7 @@ checks_ran_at_least! = |floor| {
 # bump per added check — but a forgotten bump FAILS THE RUN, where decay is
 # silent.
 # Both variants REMOVE the tally when done: per-process paths mean one file
-# per invocation, and `just e2e` starts fifteen with pids that never repeat.
+# per invocation, and `just e2e-sync` starts fifteen with pids that never repeat.
 # Deleted AFTER the guard's own `check!` (which appends a line); the result is
 # bound and returned rather than ?-chained, so a failing guard still cleans up.
 checks_ran_exactly! : I64 => Try({}, _)

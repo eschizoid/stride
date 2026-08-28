@@ -368,10 +368,6 @@ Strava :: [].{
             }
         }
     }
-    # fetch time/HR/watts/altitude/distance streams for activities that lack them,
-    # newest first; pacing bounds the run (see read_limits!). altitude + distance are
-    # requested EXPLICITLY — they feed grade-adjusted pace / NGP (ADR 0003). To force
-    # a re-pull, DELETE FROM streams (mirror tier) and let the next sync refetch.
     # close the bar before anything else prints, or the line lands on the bar's row.
     # Swallows its own failure, same policy as the boundary reporter: a failed stderr
     # write must not convert a successful arm into an error envelope.
@@ -393,6 +389,10 @@ Strava :: [].{
     # `resumable: true`. Steady state is a handful of reads; `stride import` and a
     # deleted streams table both walk into a full drain, one run per 15-minute
     # window until the queue empties.
+    # fetch time/HR/watts/altitude/distance streams for activities that lack them,
+    # newest first; pacing bounds the run (see read_limits!). altitude + distance are
+    # requested EXPLICITLY — they feed grade-adjusted pace / NGP (ADR 0003). To force
+    # a re-pull, DELETE FROM streams (mirror tier) and let the next sync refetch.
     drain_missing_streams! : Str, Str => Try(DrainOutcome, _)
     drain_missing_streams! = |path, token| {
         ids = Sqlite.query_many!({
@@ -524,8 +524,8 @@ Strava :: [].{
     # 100 reads per 15 minutes, 1000 per day; a run fills one window and stops, and
     # 429 is a backstop for when the counts disagree, not the mechanism.
     # ── test seams, same species as STRIDE_API_BASE ─────────────────────
-    # Without these, two of the three StopReason values cost a full 95-read window of
-    # sleeps to reach, so a transposed counter in a terminal arm shipped green.
+    # Without these, reaching the budget stop reasons honestly costs a full window of
+    # 95 real HTTP reads, so a transposed counter in a terminal arm shipped green.
     # An override may only LOWER a limit, never raise it: a raised cap lets a typo
     # hammer the API and get the athlete's own API app suspended. Lowering is all a
     # test needs, so the useful direction is the safe one.
@@ -764,8 +764,9 @@ Strava :: [].{
                         # Long runs outlive the ~6h access token; refresh and retry the same id.
                         # BOUNDED, like the 429 retry beside it: this arm recurses on the same id, so a
                         # persistently 401ing activity (revoked scope, private without activity:read_all)
-                        # would spin forever — measured at ~113 requests/second unbounded, an API-app
-                        # suspension in under a minute. `decide` does not charge a 401 against `done`,
+                        # would spin forever — measured at ~113 requests/second unbounded, 4,500
+                        # reads against a 1000/day cap in under a minute, which is the shape that
+                        # gets an API app suspended. `decide` does not charge a 401 against `done`,
                         # so the read budget never ends it. Same token back is a real auth problem.
                         if st.refreshes >= max_refreshes {
                             # no bar_done! here: this propagates, and the boundary reporter

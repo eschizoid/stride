@@ -847,7 +847,7 @@ Render :: [].{
         # run because drain_note's Complete arm is only reachable with pending > 0 —
         # precisely the skip case — so both clauses would state one fact twice.
         #
-        # `states_skips`, not `stop != FromDrain(Complete)`: the question is "does this
+        # `skip_for_reason`, not `stop != FromDrain(Complete)`: the question is "does this
         # reason's own note already state the skip count", a property of the REASON. An
         # inequality against a literal tag was the last reason-shaped test outside an
         # exhaustive match — a new reason took the print branch by default and the clause

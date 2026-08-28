@@ -353,7 +353,7 @@ Metrics :: [].{
     # Pace twin of time_in_power_intensity, on the grade-adjusted speed stream. Takes
     # the (second, speed) PAIRS — not bare speeds — so it sums the same real elapsed
     # time the power path does (each-sample-is-1s was the bug). Bands mirror the power
-    # split: easy < 0.76 x threshold, moderate to 0.91, hard above. No Skip band —
+    # split: easy < 0.76 x threshold, moderate below 0.91, hard at or above. No Skip band —
     # grade_adjusted_speeds emits samples only where the athlete moved, so there is no
     # coasting equivalent; gaps still contribute at most max_sample_gap_s.
     time_in_pace_intensity : List({ t : I64, v : F64 }), F64 -> PowerIntensity
@@ -1203,8 +1203,9 @@ Metrics :: [].{
     # so the difference only appears when a hand-edit or bad import plants one — which
     # is how every BLOB bug here (#296, #304, #307, #310) arrived.
     #
-    # Takes the column EXPRESSION, not a name, so callers can pass a subquery alias or
-    # `@` for the `top hr` template.
+    # Takes the column EXPRESSION, not a name, so callers can pass a subquery alias.
+    # (`top hr` still inlines its own copy of the bound in `top_metric` — a second
+    # spelling of this rule, the shape the paragraph above warns about.)
     valid_hr_sql : Str -> Str
     valid_hr_sql = |col|
         "CAST(${col} AS REAL) BETWEEN 35 AND 220"
