@@ -20,6 +20,7 @@
       "items": {
         "type": "object",
         "required": [
+          "grouped_by",
           "hidden",
           "hidden_lens",
           "hidden_scope",
@@ -114,6 +115,14 @@
                 }
               }
             }
+          },
+          "grouped_by": {
+            "type": "string",
+            "enum": [
+              "structure",
+              "name"
+            ],
+            "description": "Which key built this group: 'structure' when the anchor-day session has detected work segments (mates found by the reps shape predicate, names ignored), 'name' for the unchanged fallback grouping. A structure trend already excludes different workouts that share a class name."
           }
         }
       }

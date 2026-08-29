@@ -489,6 +489,14 @@ Render :: [].{
     }
 
     # display label for a progress group, from anchor_filter's structured kind
+    ## the group label when progress keys on detected structure rather than name: the
+    ## shape first, then one anchor-day class name so the reader recognizes the session.
+    ## "~" because mates match by duration BAND, not exact duration — the label must not
+    ## promise a precision the predicate does not have.
+    structure_group_label : I64, I64, Str, Str -> Str
+    structure_group_label = |reps, mean_dur, sig, example|
+        "${(reps).to_str()}×[~${mmss(mean_dur)}] ${sig} intervals (${example})"
+
     progress_group_label : Str, [Exact, SimilarDistance(F64), LoneNoDistance] -> Str
     progress_group_label = |name, kind|
         match kind {

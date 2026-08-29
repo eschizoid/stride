@@ -1215,9 +1215,120 @@ ReportSessions :: [].{
         # also taken: SKILL.md documents `'' = none on record` for
         # `last_hard_session_date`, so an empty date already means "no such thing".
         _ = List.map_try(prows, |r| (Metrics.usable_date_days(r.date)).map_err(|_| BadActivityDate(r.date, r.id)))?
-        labeled =
+        # ── structure-first grouping (#96). A session on the anchor date that HAS detected
+        # work segments is grouped by SHAPE, through the same predicate `reps` uses: sport
+        # family exact, rep count exact, mean work-rep duration inside the fixed band,
+        # signal exact. A class name is evidence of neither sameness nor difference —
+        # measured, the same 3×12 threshold shipped under three names in three weeks
+        # (three groups of one), while one recurring name held 17 sessions of unlike
+        # shapes. Sessions without detected structure keep name grouping unchanged.
+        structure_mates! = |fam, sig, reps, blo, bhi|
+            Sqlite.query_many!({
+                path: Path.utf8(path),
+                query:
+                    \\SELECT COALESCE(CAST(a.name AS TEXT), '') AS name, a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, COALESCE(CAST(a.sport_type AS TEXT), '') AS sport,
+                    \\       CAST(COALESCE(a.distance,0) AS REAL) AS distance_m, a.moving_time AS moving_time,
+                    \\       CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w, CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
+                    \\       CAST(COALESCE(m.avg_hr_stream, a.avg_hr, 0) AS REAL) AS avg_hr_scored,
+                    \\       CAST(COALESCE(rt.rpe,0) AS REAL) AS rpe,
+                    \\       CAST(COALESCE(a.avg_watts * a.moving_time / 1000.0, 0) AS REAL) AS output_kj,
+                    \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss,
+                    \\       COALESCE(CAST(m.load_model AS TEXT), '') AS load_model,
+                    \\       CAST(COALESCE(m.decoupling_pct, 0) AS REAL) AS decoupling_pct,
+                    \\       CASE WHEN m.decoupling_pct IS NULL THEN 0 ELSE 1 END AS decoupling_known
+                    \\FROM activities a
+                    \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
+                    \\LEFT JOIN ratings rt ON rt.activity_id = a.id
+                    \\WHERE a.id IN (
+                    \\    SELECT s.activity_id FROM activity_segments s
+                    \\    JOIN activities a2 ON a2.id = s.activity_id
+                    \\    WHERE s.kind = 'work'
+                    \\      AND COALESCE(a2.sport_family, a2.sport_type) = :fam
+                    \\      AND COALESCE(s.signal, '') = :sig
+                    \\    GROUP BY s.activity_id
+                    \\    HAVING COUNT(*) = :reps
+                    \\       AND CAST(AVG(s.dur_s) AS INTEGER) >= :blo
+                    \\       AND CAST(AVG(s.dur_s) AS INTEGER) < :bhi
+                    \\)
+                    \\ORDER BY a.start_local, a.id
+                ,
+                bindings: [
+                    { name: ":fam", value: String(fam) },
+                    { name: ":sig", value: String(sig) },
+                    { name: ":reps", value: Integer(reps) },
+                    { name: ":blo", value: Integer(blo) },
+                    { name: ":bhi", value: Integer(bhi) },
+                ],
+                rows: |cols| |stmt| {
+                    name = Sqlite.str("name")(cols)(stmt)?
+                    row_id = Sqlite.i64("id")(cols)(stmt)?
+                    row_date = Sqlite.str("date")(cols)(stmt)?
+                    sport = Sqlite.str("sport")(cols)(stmt)?
+                    distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
+                    moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
+                    np_w = Sqlite.f64("np_w")(cols)(stmt)?
+                    avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
+                    avg_hr_scored = Sqlite.f64("avg_hr_scored")(cols)(stmt)?
+                    rpe = Sqlite.f64("rpe")(cols)(stmt)?
+                    output_kj = Sqlite.f64("output_kj")(cols)(stmt)?
+                    tss = Sqlite.f64("tss")(cols)(stmt)?
+                    load_model = Sqlite.str("load_model")(cols)(stmt)?
+                    dpct = Sqlite.f64("decoupling_pct")(cols)(stmt)?
+                    dknown = Sqlite.i64("decoupling_known")(cols)(stmt)?
+                    Ok({ name, date: row_date, sport, distance_m, moving_time, np_w, avg_hr, avg_hr_scored, rpe, output_kj, tss, load_model, decoupling_pct: dpct, decoupling_known: dknown == 1, id: row_id })
+                },
+            })
+        shapes = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT s.activity_id AS id, COUNT(*) AS reps,
+                \\       CAST(AVG(s.dur_s) AS INTEGER) AS mean_dur,
+                \\       COALESCE(CAST(MIN(s.signal) AS TEXT), '') AS sig,
+                \\       COALESCE(CAST(a.sport_family AS TEXT), CAST(a.sport_type AS TEXT), '') AS fam,
+                \\       COALESCE(CAST(a.name AS TEXT), '') AS aname
+                \\FROM activity_segments s JOIN activities a ON a.id = s.activity_id
+                \\WHERE s.kind = 'work' AND substr(CAST(a.start_local AS TEXT), 1, 10) = :date
+                \\GROUP BY s.activity_id
+                \\ORDER BY s.activity_id
+            ,
+            bindings: [{ name: ":date", value: String(date) }],
+            rows: |cols| |stmt| {
+                sid = Sqlite.i64("id")(cols)(stmt)?
+                reps = Sqlite.i64("reps")(cols)(stmt)?
+                mean_dur = Sqlite.i64("mean_dur")(cols)(stmt)?
+                sig = Sqlite.str("sig")(cols)(stmt)?
+                fam = Sqlite.str("fam")(cols)(stmt)?
+                aname = Sqlite.str("aname")(cols)(stmt)?
+                Ok({ sid, reps, mean_dur, sig, fam, aname })
+            },
+        })?
+        # two same-shaped anchor-day sessions are ONE trend, not two identical groups —
+        # dedup on the predicate's own key (family, rep count, band, signal)
+        shape_keys = List.fold(shapes, [], |acc, sh| {
+            band = Metrics.rep_duration_band(sh.mean_dur)
+            key = "${sh.fam}|${(sh.reps).to_str()}|${(band.lo).to_str()}|${sh.sig}"
+            if List.any(acc, |k| k.key == key) acc else List.append(acc, { key, sh, band })
+        })
+        shaped_ids = List.map(shapes, |sh| sh.sid)
+        structure_groups = List.map_try!(shape_keys, |k| {
+            mates = structure_mates!(k.sh.fam, k.sh.sig, k.sh.reps, k.band.lo, k.band.hi)?
+            # mates are trend POSITIONS like every other progress row — an unreadable
+            # date refuses, same as the name path above
+            _ = List.map_try(mates, |r| (Metrics.usable_date_days(r.date)).map_err(|_| BadActivityDate(r.date, r.id)))?
+            Ok({ name: Render.structure_group_label(k.sh.reps, k.sh.mean_dur, k.sh.sig, k.sh.aname), rows: mates, total: List.len(mates), scope_why: "", grouped_by: "structure" })
+        })?
+        name_labeled =
             List.keep_oks(Metrics.group_progress(prows), |g| Metrics.anchor_filter(g, date))
-           .map(|g| { name: Render.progress_group_label(g.name, g.kind), rows: g.rows, total: g.total, scope_why: g.scope_why })
+           .keep_if(|g| {
+                # a name group whose EVERY anchor-date row is structure-claimed is the same
+                # trend a structure group already tells, keyed worse — drop it. Any unshaped
+                # anchor-date row keeps the name trend alive (the shaped sibling still gets
+                # its own structure group).
+                on_date = List.keep_if(g.rows, |r| r.date == date)
+                !(List.all(on_date, |r| List.contains(shaped_ids, r.id)))
+            })
+           .map(|g| { name: Render.progress_group_label(g.name, g.kind), rows: g.rows, total: g.total, scope_why: g.scope_why, grouped_by: "name" })
+        labeled = List.concat(structure_groups, name_labeled)
         # choose each group's lens, keep only rows it can score; drop unscorable groups
         keep_scored = |lens, g| {
             kept = List.keep_if(g.rows, |r| Metrics.lens_score(lens, r).is_ok())
@@ -1253,7 +1364,7 @@ ReportSessions :: [].{
             # The PAYLOAD keeps `rows: kept`: `sessions[]` is what the agent trends over, an
             # unscored row has no score to trend, and `hidden_lens` already says how many and
             # why — the two surfaces agree on the COUNT and differ in what they do with it.
-            if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, lens, rows: kept, display_rows: g.rows, scope_why: g.scope_why, anchor_ok, all_days, hidden, scope_dropped, lens_dropped })
+            if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, lens, rows: kept, display_rows: g.rows, scope_why: g.scope_why, anchor_ok, all_days, hidden, scope_dropped, lens_dropped, grouped_by: g.grouped_by })
         }
         scored = List.keep_oks(labeled, |g|
             match Metrics.progress_lens(g.rows) {
@@ -1305,6 +1416,11 @@ ReportSessions :: [].{
                 anchor_scored: anchor_kept,
                 groups: List.map(scored, |g| {
                     name: g.name,
+                    # which key built this group: "structure" when the anchor-day session
+                    # has detected work segments (mates found by shape, names ignored),
+                    # "name" for the unchanged fallback. The agent branches here: a
+                    # structure trend already excludes different workouts sharing a name.
+                    grouped_by: g.grouped_by,
                     lens: lens_name(g.lens),
                     # ...and how many sessions of this workout the lens could NOT score, so
                     # `sessions` is never read as the whole history. The human render says it
