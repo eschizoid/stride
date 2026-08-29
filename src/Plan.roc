@@ -446,8 +446,8 @@ Plan :: [].{
                 }
             })
     }
-    plan_add! : Str, Str, Str, Str => Try({}, _)
-    plan_add! = |target_date, session_type, detail, rationale| {
+    plan_add! : Str, Str, Str, Str, [NoTarget, Target(Str)] => Try({}, _)
+    plan_add! = |target_date, session_type, detail, rationale, tgt| {
         # Reject a bad date at the door, BEFORE the db is even opened. planned_sessions is
         # judgment tier — nothing here can be re-derived from Strava — so a typo that lands
         # in the table stays until someone edits SQL by hand. It would also belong to no
@@ -456,11 +456,21 @@ Plan :: [].{
         if !(Metrics.is_canonical_date(target_date)) {
             Output.err_out!("bad_date", "week add needs a calendar date written YYYY-MM-DD — got '${target_date}'")
         } else {
-            plan_add_checked!(target_date, session_type, detail, rationale)
+            # the target literal is refused at the door too (ADR 0014 §1): a target that
+            # half-parses is one the athlete and the arithmetic disagree about
+            match tgt {
+                NoTarget => plan_add_checked!(target_date, session_type, detail, rationale, NoT)
+                Target(lit) =>
+                    match Metrics.parse_target(lit) {
+                        Ok(t) => plan_add_checked!(target_date, session_type, detail, rationale, T(t))
+                        Err(BadTarget) =>
+                            Output.err_out!("bad_target", "a target is written <reps>x<mm:ss>@<watts>W, e.g. 3x12:00@230W — got '${lit}' (reps 1-99, rep at least 0:30, watts 1-2500)")
+                    }
+            }
         }
     }
-    plan_add_checked! : Str, Str, Str, Str => Try({}, _)
-    plan_add_checked! = |target_date, session_type, detail, rationale| {
+    plan_add_checked! : Str, Str, Str, Str, [NoT, T({ reps : I64, dur_s : I64, watts : F64 })] => Try({}, _)
+    plan_add_checked! = |target_date, session_type, detail, rationale, pt| {
         path = Db.open_db!({})?
         # guard: one open planned session per date — skip or complete the old one first
         existing = Sqlite.query!({
@@ -474,32 +484,46 @@ Plan :: [].{
             # is not a "skip" (skip = a session that was going to happen and didn't), so
             # revising keeps one row per date instead of stacking a skipped tombstone every
             # time the week is re-planned — the root cause of the plan graveyard.
-            revise_planned_session!(path, existing, target_date, session_type, detail, rationale)
+            revise_planned_session!(path, existing, target_date, session_type, detail, rationale, pt)
         else
-            insert_planned_session!(path, target_date, session_type, detail, rationale)
+            insert_planned_session!(path, target_date, session_type, detail, rationale, pt)
     }
-    revise_planned_session! : Str, I64, Str, Str, Str, Str => Try({}, _)
-    revise_planned_session! = |path, id, target_date, session_type, detail, rationale| {
+    # a revise REPLACES the prescription wholesale — type, detail, rationale and target
+    # together, so omitting the target on a re-plan CLEARS it rather than silently
+    # keeping numbers the new prose no longer describes (ADR 0014 §5)
+    revise_planned_session! : Str, I64, Str, Str, Str, Str, [NoT, T({ reps : I64, dur_s : I64, watts : F64 })] => Try({}, _)
+    revise_planned_session! = |path, id, target_date, session_type, detail, rationale, pt| {
         Sqlite.execute!({
             path: Path.utf8(path),
-            query: "UPDATE planned_sessions SET session_type = :type, detail = :detail, rationale = :rationale, created_at = :at WHERE id = :id",
+            query: "UPDATE planned_sessions SET session_type = :type, detail = :detail, rationale = :rationale, created_at = :at, target_reps = :treps, target_dur_s = :tdur, target_watts = :twatts WHERE id = :id",
             bindings: [
                 { name: ":type", value: String(session_type) },
                 { name: ":detail", value: String(detail) },
                 { name: ":rationale", value: String(rationale) },
                 { name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
+                { name: ":treps", value: match pt { T(t) => Integer(t.reps) NoT => Null } },
+                { name: ":tdur", value: match pt { T(t) => Integer(t.dur_s) NoT => Null } },
+                { name: ":twatts", value: match pt { T(t) => Real(t.watts) NoT => Null } },
                 { name: ":id", value: Integer(id) },
             ],
         })?
-        Output.out!({ id, target_date, session_type }, |p| "revised #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}")
+        Output.out!(plan_echo(id, target_date, session_type, pt), |p| "revised #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}${Render.target_note(pt)}")
     }
-    insert_planned_session! : Str, Str, Str, Str, Str => Try({}, _)
-    insert_planned_session! = |path, target_date, session_type, detail, rationale| {
+    # the ADR 0009 impossible-zero shape for the echo: reps 0 cannot be a real target,
+    # so the magnitudes ride at 0 behind target_known
+    plan_echo : I64, Str, Str, [NoT, T({ reps : I64, dur_s : I64, watts : F64 })] -> { id : I64, target_date : Str, session_type : Str, target_known : Bool, target_reps : I64, target_dur_s : I64, target_watts : F64 }
+    plan_echo = |id, target_date, session_type, pt|
+        match pt {
+            T(t) => { id, target_date, session_type, target_known: True, target_reps: t.reps, target_dur_s: t.dur_s, target_watts: t.watts }
+            NoT => { id, target_date, session_type, target_known: False, target_reps: 0, target_dur_s: 0, target_watts: 0.0 }
+        }
+    insert_planned_session! : Str, Str, Str, Str, Str, [NoT, T({ reps : I64, dur_s : I64, watts : F64 })] => Try({}, _)
+    insert_planned_session! = |path, target_date, session_type, detail, rationale, pt| {
         Sqlite.execute!({
             path: Path.utf8(path),
             query:
-                \\INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status)
-                \\VALUES (:at, :date, :type, :detail, :rationale, 'open')
+                \\INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status, target_reps, target_dur_s, target_watts)
+                \\VALUES (:at, :date, :type, :detail, :rationale, 'open', :treps, :tdur, :twatts)
             ,
             bindings: [
                 { name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
@@ -507,6 +531,9 @@ Plan :: [].{
                 { name: ":type", value: String(session_type) },
                 { name: ":detail", value: String(detail) },
                 { name: ":rationale", value: String(rationale) },
+                { name: ":treps", value: match pt { T(t) => Integer(t.reps) NoT => Null } },
+                { name: ":tdur", value: match pt { T(t) => Integer(t.dur_s) NoT => Null } },
+                { name: ":twatts", value: match pt { T(t) => Real(t.watts) NoT => Null } },
             ],
         })?
         new_id = Sqlite.query!({
@@ -515,13 +542,60 @@ Plan :: [].{
             bindings: [],
             row: Sqlite.i64("id"),
         })?
-        Output.out!({ id: new_id, target_date, session_type }, |p| "planned #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}")
+        Output.out!(plan_echo(new_id, target_date, session_type, pt), |p| "planned #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}${Render.target_note(pt)}")
     }
     # ONE not-found message for complete/complete-rest/skip — can't drift apart
     session_not_found! : I64 => Try({}, _)
     session_not_found! = |session_id|
         Output.err_out!("session_not_found", "no planned session #${(session_id).to_str()} — `stride plan` lists open ones, `stride week all` the whole log")
 
+    # ADR 0014 §3: the recorded target beside the detected shape of the linked
+    # activity — arithmetic on two structured records, each side gated by its own
+    # _known flag (ADR 0009) so an absent side is stated, never invented. Field names
+    # are measurements (reps_delta, watts_pct); no verdict words (ADR 0012).
+    target_match! : Str, I64, I64 => Try({ target_known : Bool, target_reps : I64, target_dur_s : I64, target_watts : F64, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, reps_delta : I64, watts_pct : F64 }, _)
+    target_match! = |path, session_id, activity_id| {
+        tgt = Sqlite.query!({
+            path: Path.utf8(path),
+            # `tgd`, not `td`: relabel! reads a TEXT `td` in this same file, and
+            # blob-safety joins (file, alias) — a shared name would put this INTEGER
+            # projection in the TEXT rule's population
+            query: "SELECT COALESCE(target_reps, 0) AS tgr, COALESCE(target_dur_s, 0) AS tgd, CAST(COALESCE(target_watts, 0) AS REAL) AS tgw FROM planned_sessions WHERE id = :id",
+            bindings: [{ name: ":id", value: Integer(session_id) }],
+            row: |cols| |stmt| {
+                tr = Sqlite.i64("tgr")(cols)(stmt)?
+                td = Sqlite.i64("tgd")(cols)(stmt)?
+                tw = Sqlite.f64("tgw")(cols)(stmt)?
+                Ok({ tr, td, tw })
+            },
+        })?
+        det = Sqlite.query!({
+            path: Path.utf8(path),
+            query: "SELECT COUNT(*) AS dr, CAST(COALESCE(AVG(dur_s), 0) AS INTEGER) AS dd, CAST(COALESCE(AVG(avg_signal), 0) AS REAL) AS dw FROM activity_segments WHERE activity_id = :aid AND kind = 'work' AND signal = 'power'",
+            bindings: [{ name: ":aid", value: Integer(activity_id) }],
+            row: |cols| |stmt| {
+                dr = Sqlite.i64("dr")(cols)(stmt)?
+                dd = Sqlite.i64("dd")(cols)(stmt)?
+                dw = Sqlite.f64("dw")(cols)(stmt)?
+                Ok({ dr, dd, dw })
+            },
+        })?
+        target_known = tgt.tr > 0
+        detected_known = det.dr > 0
+        both = target_known and detected_known
+        Ok({
+            target_known,
+            target_reps: tgt.tr,
+            target_dur_s: tgt.td,
+            target_watts: tgt.tw,
+            detected_known,
+            detected_reps: det.dr,
+            detected_mean_dur_s: det.dd,
+            detected_mean_watts: det.dw,
+            reps_delta: if both det.dr - tgt.tr else 0,
+            watts_pct: if both and tgt.tw > 0.0 det.dw / tgt.tw * 100.0 else 0.0,
+        })
+    }
     complete! : Str, Str => Try({}, _)
     complete! = |session_id_str, activity_id_str| {
         path = Db.open_db!({})?
@@ -622,11 +696,13 @@ Plan :: [].{
                             # substitute on a DIFFERENT session, and the remedy does not bring that back.
                             replaced_note = if replaced != 0 " (replacing activity ${I64.to_str(replaced)}, whose completion of this session is now gone — `stride complete ${I64.to_str(session_id)} ${I64.to_str(replaced)}` puts this session's completion back)" else ""
                             released_note = if released != 0 " (dropping substitute activity ${I64.to_str(released)}, which no longer stands in for this session)" else ""
+                            tm = target_match!(path, session_id, activity_id)?
+                            tm_note = Render.target_match_note(tm)
                             match steal_dead_links!(path, activity_id, session_id)? {
                                 ReleasedFrom(holder) =>
-                                    Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released, released_substitute_of: holder }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note} (released its old substitute link on session #${I64.to_str(o.released_substitute_of)})")
+                                    Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released, released_substitute_of: holder, target_known: tm.target_known, target_reps: tm.target_reps, target_dur_s: tm.target_dur_s, target_watts: tm.target_watts, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, reps_delta: tm.reps_delta, watts_pct: tm.watts_pct }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note}${tm_note} (released its old substitute link on session #${I64.to_str(o.released_substitute_of)})")
                                 NothingReleased =>
-                                    Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note}")
+                                    Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released, target_known: tm.target_known, target_reps: tm.target_reps, target_dur_s: tm.target_dur_s, target_watts: tm.target_watts, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, reps_delta: tm.reps_delta, watts_pct: tm.watts_pct }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note}${tm_note}")
                             }
                         }
                     }
@@ -1068,7 +1144,10 @@ Plan :: [].{
                     path: Path.utf8(path),
                     query:
                         \\SELECT id AS id, COALESCE(CAST(target_date AS TEXT),'') AS target_date, COALESCE(CAST(session_type AS TEXT),'') AS session_type,
-                        \\       COALESCE(CAST(detail AS TEXT),'') AS detail, COALESCE(CAST(rationale AS TEXT),'') AS rationale
+                        \\       COALESCE(CAST(detail AS TEXT),'') AS detail, COALESCE(CAST(rationale AS TEXT),'') AS rationale,
+                        \\       COALESCE(target_reps, 0) AS target_reps, COALESCE(target_dur_s, 0) AS target_dur_s,
+                        \\       CAST(COALESCE(target_watts, 0) AS REAL) AS target_watts,
+                        \\       CASE WHEN COALESCE(target_reps, 0) > 0 THEN 1 ELSE 0 END AS tk
                         \\FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'
                         \\ORDER BY target_date, id
                     ,
@@ -1079,7 +1158,13 @@ Plan :: [].{
                         session_type = Sqlite.str("session_type")(cols)(stmt)?
                         detail = Sqlite.str("detail")(cols)(stmt)?
                         rationale = Sqlite.str("rationale")(cols)(stmt)?
-                        Ok({ id, target_date, session_type, detail, rationale })
+                        target_reps = Sqlite.i64("target_reps")(cols)(stmt)?
+                        target_dur_s = Sqlite.i64("target_dur_s")(cols)(stmt)?
+                        target_watts = Sqlite.f64("target_watts")(cols)(stmt)?
+                        tk = Sqlite.i64("tk")(cols)(stmt)?
+                        target_known : Bool
+                        target_known = tk == 1
+                        Ok({ id, target_date, session_type, detail, rationale, target_reps, target_dur_s, target_watts, target_known })
                     },
                 })?
                 # ── plan history (#158): planned-vs-actual as deterministic memory.

@@ -38,6 +38,7 @@ Command := [
 	WeekView,
 	WeekViewAll,
 	WeekAdd(Str, Str, Str, Str),
+	WeekAddT(Str, Str, Str, Str, Str),
 	Complete(Str, Str),
 	CompleteRest(Str),
 	Skip(Str, Str),
@@ -155,6 +156,9 @@ Command := [
 			[_, "pc", n, sport] => count(n, |c| PowerCurve(c, sport))
 			[_, "week"] => Ok(WeekView)
 			[_, "week", "all"] => Ok(WeekViewAll)
+			# optional fifth argument: a structured target `<reps>x<mm:ss>@<watts>W`
+			# (#198, ADR 0014) — validated in Plan (bad_target), stored beside the prose
+			[_, "week", "add", date, session_type, detail, rationale, target] => Ok(WeekAddT(date, session_type, detail, rationale, target))
 			[_, "week", "add", date, session_type, detail, rationale] => Ok(WeekAdd(date, session_type, detail, rationale))
 			[_, "complete", session_id, activity_id] => Ok(Complete(session_id, activity_id))
 			[_, "complete", session_id] => Ok(CompleteRest(session_id))
@@ -393,7 +397,7 @@ Command := [
 		errs(writes("analyze", [], "analyze.json"), ["missing_config", "unreadable_activity_date", "unreadable_config"]),
 		errs(writes("import", [req_ex("<export.zip|dir>", "")], "import.json"), ["empty_csv", "no_activities_csv", "unzip_failed"]),
 		errs(writes("rate", [req("<activity_id|latest>"), req("<1-10>")], "rate.json"), ["activity_not_found", "bad_id", "bad_rpe", "no_activities", "unreadable_activity_date"]),
-		errs(writes("week add", [req_ex("<YYYY-MM-DD>", "2099-01-01"), req_ex("<type>", "endurance"), req_ex("<detail>", "example"), req_ex("<rationale>", "example")], "week_add.json"), ["bad_date"]),
+		errs(writes("week add", [req_ex("<YYYY-MM-DD>", "2099-01-01"), req_ex("<type>", "endurance"), req_ex("<detail>", "example"), req_ex("<rationale>", "example"), opt_ex("<RxMM:SS@WWWW>", "3x12:00@230W")], "week_add.json"), ["bad_date", "bad_target"]),
 		errs(writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"), ["activity_already_linked", "activity_not_found", "activity_required", "bad_id", "session_not_found"]),
 		errs(writes("skip", [req("<session_id>"), req("<reason>"), opt("<activity_id|none>")], "skip.json"), ["activity_already_linked", "activity_not_found", "bad_id", "session_done", "session_not_found"]),
 		errs(writes("relabel", [req("<session_id>"), req_ex("<type>", "endurance"), req_ex("<detail>", "example"), opt_ex("<rationale>", "example")], "relabel.json"), ["bad_id", "session_not_found"]),
@@ -827,6 +831,7 @@ expect match Command.parse(["stride", "skip", "3", "sick"]) { Ok(Skip("3", "sick
 expect match Command.parse(["stride", "relabel", "45", "threshold", "3x12 @ 230W"]) { Ok(Relabel("45", "threshold", "3x12 @ 230W")) => True  _ => False }
 expect match Command.parse(["stride", "relabel", "45", "threshold", "3x12 @ 230W", "day-swapped with Sunday"]) { Ok(RelabelWith("45", "threshold", "3x12 @ 230W", "day-swapped with Sunday")) => True  _ => False }
 expect match Command.parse(["stride", "relabel", "45"]) { Err(Usage(_)) => True  _ => False }
+expect match Command.parse(["stride", "week", "add", "2026-01-01", "threshold", "3x12", "build", "3x12:00@230W"]) { Ok(WeekAddT("2026-01-01", "threshold", "3x12", "build", "3x12:00@230W")) => True  _ => False }
 expect match Command.parse(["stride", "config", "get", "ftp"]) { Ok(ConfigGet("ftp")) => True  _ => False }
 expect match Command.parse(["stride", "tte", "250"]) { Ok(Tte("250")) => True  _ => False }
 expect match Command.parse(["stride", "reps"]) { Ok(Reps("")) => True  _ => False }

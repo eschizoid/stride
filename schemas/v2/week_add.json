@@ -1,12 +1,16 @@
 {
   "title": "week_add",
-  "description": "Result of `stride week add` \u2014 the id the coach links against later. Revising an existing open date returns the SAME id.",
+  "description": "Result of `stride week add` — the id the coach links against later. Revising an existing open date returns the SAME id, and REPLACES the prescription wholesale: omitting the target on a re-plan clears it. Target fields per ADR 0014: magnitudes are impossible-zero behind target_known.",
   "type": "object",
   "additionalKeys": false,
   "required": [
     "id",
     "session_type",
-    "target_date"
+    "target_date",
+    "target_dur_s",
+    "target_known",
+    "target_reps",
+    "target_watts"
   ],
   "properties": {
     "id": {
@@ -17,6 +21,19 @@
     },
     "target_date": {
       "type": "string"
+    },
+    "target_known": {
+      "type": "boolean",
+      "description": "True when this session carries a structured target (ADR 0014). The three magnitudes are impossible-zero fields behind this flag (ADR 0009): reps 0 cannot be a real target."
+    },
+    "target_reps": {
+      "type": "integer"
+    },
+    "target_dur_s": {
+      "type": "integer"
+    },
+    "target_watts": {
+      "type": "number"
     }
   }
 }

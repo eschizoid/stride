@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1055)?
+    checks_ran_exactly!(1068)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -365,6 +365,7 @@ run_scenarios! = |ctx| {
     # open sessions, which holds only because b_agent_loop! cleans up after itself.
     b_week_plan!(ctx)?
     b_relabel!(ctx)?
+    b_targets!(ctx)?
     b_concurrency!(ctx)?
     b_migration!(ctx)?
     Ok({})
@@ -5322,6 +5323,46 @@ b_relabel! = |ctx| {
     check!("...and a non-numeric id is bad_id, not a crash or a silent no-op", strjq!(ctx, ["relabel", "abc", "endurance", "x"], ".error.code") == "bad_id")?
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 9330; DELETE FROM activities WHERE id = 9330; DELETE FROM planned_sessions WHERE id = ${rid};")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    Ok({})
+}
+
+# ── structured prescription targets (#198, ADR 0014) ────────────────────────────────
+# Self-contained and LAST among the planned-session scenarios: every session id is
+# CAPTURED from week add, every inserted row deleted at the end. Activity 977 gets its
+# work segments inserted directly (the reps fixtures' pattern) and analyze is
+# deliberately NOT run while they must survive — analyze deletes and re-detects
+# segments for rows it scores, and 977 has no stream to re-detect from.
+b_targets! : Ctx => Try({}, _)
+b_targets! = |ctx| {
+    tid = Str.trim(strjq!(ctx, ["week", "add", "2099-09-04", "threshold", "3x12 for match", "build", "3x12:00@230W"], ".data.id"))
+    check!("a targeted week add echoes target_known", strjq!(ctx, ["week", "add", "2099-09-04", "threshold", "3x12 for match", "build", "3x12:00@230W"], ".data.target_known") == "true")?
+    check!("...with the parsed magnitudes, not the literal", strjq!(ctx, ["week", "add", "2099-09-04", "threshold", "3x12 for match", "build", "3x12:00@230W"], "[.data.target_reps, .data.target_dur_s, .data.target_watts] | join(\",\")") == "3,720,230")?
+    # a revise REPLACES the prescription wholesale — omitting the target clears it.
+    # Asserted from the ROW, not the echo: plan_echo reports the INPUT (target_known
+    # false because none was passed), which is true of a correct binary and still true
+    # of one whose UPDATE quietly keeps the old numbers — the exact input-echo blindness
+    # relabel's review caught. The row is the evidence.
+    check!("re-planning the date without a target CLEARS it (echo)", strjq!(ctx, ["week", "add", "2099-09-04", "threshold", "revised prose only", "r"], ".data.target_known") == "false")?
+    check!("...and the ROW really lost the numbers, not just the echo", Str.trim(sql!(ctx.db, "SELECT COALESCE(target_reps, 0) FROM planned_sessions WHERE id = ${tid};")) == "0")?
+    _ = stride!(ctx.bin, ctx.home, ["week", "add", "2099-09-04", "threshold", "3x12 for match", "build", "3x12:00@230W"])
+    check!("a malformed literal is refused at the door", strjq!(ctx, ["week", "add", "2099-09-05", "vo2max", "bad", "r", "5x3:00@nonsense"], ".error.code") == "bad_target")?
+    check!("plan's open sessions carry the standing target", strjq!(ctx, ["plan"], "[.data.open_sessions[] | select(.id == ${tid})][0] | [.target_known, (.target_reps|tostring)] | join(\",\")") == "true,3")?
+    # the actual side: three power work reps at 236/233/230 W, ~12:00 each
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (977,'match probe','Ride','2099-09-04T10:00:00Z',3600,30000),(978,'segmentless','Ride','2099-09-05T10:00:00Z',3600,30000);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (977,0,'warmup',0,300,120,'power'),(977,1,'work',300,720,236,'power'),(977,2,'recovery',1020,240,100,'power'),(977,3,'work',1260,715,233,'power'),(977,4,'recovery',1975,240,100,'power'),(977,5,'work',2215,725,230,'power');")
+    check!("completing a targeted session reports both sides known", strjq!(ctx, ["complete", tid, "977"], "[.data.target_known, .data.detected_known] | join(\",\")") == "true,true")?
+    check!("...reps_delta is arithmetic on the two rep counts", strjq!(ctx, ["complete", tid, "977"], ".data.reps_delta") == "0")?
+    check!("...watts_pct is the detected mean against the target", strjq!(ctx, ["complete", tid, "977"], ".data.watts_pct | floor") == "101")?
+    check!("...and the detected mean duration is the work-rep average", strjq!(ctx, ["complete", tid, "977"], ".data.detected_mean_dur_s") == "720")?
+    check!("...and the human line states both sides as numbers", Str.contains(stride_human!(ctx.bin, ctx.home, ["complete", tid, "977"]), "(target 3×12:00 @ 230W; detected 3×~12:00 @ 233W)"))?
+    # a target with nothing to compare against says so instead of inventing zeros
+    tid2 = Str.trim(strjq!(ctx, ["week", "add", "2099-09-06", "threshold", "another", "r", "4x8:00@250W"], ".data.id"))
+    check!("a targeted session against a segment-less activity flags the absent side", strjq!(ctx, ["complete", tid2, "978"], "[.data.target_known, .data.detected_known, (.data.watts_pct|tostring)] | join(\",\")") == "true,false,0")?
+    # ...and an untargeted completion carries no phantom numbers in either direction
+    tid3 = Str.trim(strjq!(ctx, ["week", "add", "2099-09-07", "endurance", "plain", "r"], ".data.id"))
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (979,'plain ride','Ride','2099-09-07T10:00:00Z',3600,30000);")
+    check!("an untargeted completion reports both flags false", strjq!(ctx, ["complete", tid3, "979"], "[.data.target_known, .data.detected_known] | join(\",\")") == "false,false")?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 977; DELETE FROM activities WHERE id IN (977, 978, 979); DELETE FROM planned_sessions WHERE id IN (${tid}, ${tid2}, ${tid3});")
     Ok({})
 }
 
