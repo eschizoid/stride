@@ -119,6 +119,9 @@ help_text =
         \\    skip <session_id> <reason> [activity_id|none]
         \\                                mark skipped — name the activity done instead,
         \\                                or `none` to release an existing link
+        \\    relabel <session_id> <type> <detail> [rationale]
+        \\                                fix a session's label, any status — links,
+        \\                                status and metrics stay untouched
         \\    rate <activity_id|latest> <1-10>
         \\                                session-RPE — scores strength honestly
         \\
@@ -389,6 +392,8 @@ dispatch! = |cmd|
         Command.WeekView => Plan.plan_view!(ThisWeek)
         Command.WeekViewAll => Plan.plan_view!(AllTime)
         Command.WeekAdd(date, session_type, detail, rationale) => Plan.plan_add!(date, session_type, detail, rationale)
+        Command.Relabel(session_id, session_type, detail) => Plan.relabel!(session_id, session_type, detail, KeepRationale)
+        Command.RelabelWith(session_id, session_type, detail, rationale) => Plan.relabel!(session_id, session_type, detail, SetRationale(rationale))
         Command.Complete(session_id, activity_id) => Plan.complete!(session_id, activity_id)
         Command.CompleteRest(session_id) => Plan.complete_rest!(session_id)
         Command.Skip(session_id, reason) => Plan.skip!(session_id, reason, NoSub)

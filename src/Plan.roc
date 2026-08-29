@@ -934,6 +934,53 @@ Plan :: [].{
 
         }
     }
+    # label-only edit of an existing session, ANY status (#330). `week add` revises an
+    # OPEN date in place, but a done session's label was frozen: the real day-swap case
+    # left a threshold ride labeled "endurance / long easy ride", and the only fixes were
+    # a duplicate row plus a skip tombstone, or hand-run SQL against the judgment tier.
+    # Cosmetic by construction: the UPDATE names session_type/detail/rationale and
+    # nothing else — status, both activity links, created_at and every metric are
+    # untouched, so a relabel can never trigger invalidation (`analyze` after one
+    # reports computed: 0, pinned by e2e).
+    relabel! : Str, Str, Str, [KeepRationale, SetRationale(Str)] => Try({}, _)
+    relabel! = |session_id_str, session_type, detail, rat| {
+        path = Db.open_db!({})?
+        match Metrics.arg_i64(session_id_str) {
+            Err(_) =>
+                Output.err_out!("bad_id", "relabel needs a numeric id: relabel <session_id> <type> \"<detail>\" [\"<rationale>\"]")
+            Ok(session_id) =>
+                if !(Report.row_exists!(path, "planned_sessions", session_id)?) {
+                    session_not_found!(session_id)
+                } else {
+                    # a Null binding keeps the stored rationale via COALESCE — one UPDATE
+                    # either way, and the keep path provably writes nothing new to it
+                    rat_val = match rat { SetRationale(r) => String(r) KeepRationale => Null }
+                    Sqlite.execute!({
+                        path: Path.utf8(path),
+                        query: "UPDATE planned_sessions SET session_type = :type, detail = :detail, rationale = COALESCE(:rationale, rationale) WHERE id = :id",
+                        bindings: [
+                            { name: ":type", value: String(session_type) },
+                            { name: ":detail", value: String(detail) },
+                            { name: ":rationale", value: rat_val },
+                            { name: ":id", value: Integer(session_id) },
+                        ],
+                    })?
+                    target_date = Sqlite.query!({
+                        path: Path.utf8(path),
+                        query: "SELECT CAST(target_date AS TEXT) AS td FROM planned_sessions WHERE id = :id",
+                        bindings: [{ name: ":id", value: Integer(session_id) }],
+                        row: Sqlite.str("td"),
+                    })?
+                    status = Sqlite.query!({
+                        path: Path.utf8(path),
+                        query: "SELECT CAST(COALESCE(status, 'open') AS TEXT) AS st FROM planned_sessions WHERE id = :id",
+                        bindings: [{ name: ":id", value: Integer(session_id) }],
+                        row: Sqlite.str("st"),
+                    })?
+                    Output.out!({ id: session_id, session_type, target_date, status }, |p| "relabeled #${(p.id).to_str()}: ${p.session_type} on ${p.target_date} (${p.status})")
+                }
+        }
+    }
     # weekly-planning bundle: everything the coach needs to plan a week, in one call
     plan_bundle! : {} => Try({}, _)
     plan_bundle! = |{}| {

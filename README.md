@@ -257,6 +257,7 @@ stride plan                                       # everything needed to plan a 
 | `week add <date> <type> <detail> <rationale>` | Records a planned session. `type` is the intensity intent (vo2max, threshold, endurance, recovery, strength, rest); the sport goes in `detail`. Re-planning a date revises its open session in place rather than stacking a second row. Refuses a date that isn't a real calendar day written `YYYY-MM-DD`. |
 | `complete <id> [activity_id]` | Marks a planned session done, linked to the activity that fulfilled it (rest days need no activity). Refuses ids that don't exist. |
 | `skip <id> <reason> [activity_id]` | Marks a planned session skipped, with the reason — optionally linking the activity done instead (rendered `→ id` in `week`). Adherence history stays honest either way; a bare re-skip keeps an existing link; pass a new id to change it or `none` to release it. A done session refuses skip — re-complete to fix a mis-link. |
+| `relabel <id> <type> <detail> [rationale]` | Fixes a session's label — any status, done ones included. Edits only the descriptive fields: status, activity links and metrics never move, and `analyze` after a relabel recomputes nothing. The day-swap fix: a completed session whose label still describes the plan it displaced no longer needs a duplicate row or hand-run SQL. Omitting the rationale keeps the stored one. |
 
 Every query command prints **human tables** in a terminal and **JSON** when
 `--json` is passed on any command (or `STRIDE_FORMAT=json` for a whole session; the
@@ -355,6 +356,8 @@ commands:
    going to happen and didn't)
 5. sessions that didn't happen get `stride skip <id> "<reason>" [activity_id]` — adherence
    history stays honest
+6. a wrong label on any session — done ones included — gets
+   `stride relabel <id> <type> "<detail>"`; links, status and metrics stay put
 
 The planned-sessions table is what lets the next session adapt: the coach can see what
 it asked for and what actually happened. Without an LLM everything still works, since

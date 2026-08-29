@@ -1,0 +1,26 @@
+{
+  "title": "relabel",
+  "description": "Result of `stride relabel <id> <type> \"<detail>\" [\"<rationale>\"]` — a label-only edit of an existing session, any status. Echoes the same id; status is returned untouched as proof the edit was cosmetic. Links, status and metrics are never changed by this command.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "id",
+    "session_type",
+    "target_date",
+    "status"
+  ],
+  "properties": {
+    "id": {
+      "type": "integer"
+    },
+    "session_type": {
+      "type": "string"
+    },
+    "target_date": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    }
+  }
+}

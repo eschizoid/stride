@@ -86,6 +86,14 @@ Never do training math yourself: read stride's numbers, add judgment.
    - a REST day that happened: `stride complete <id> --json` with no activity id (rest has
      nothing to link; any other type still refuses without its activity —
      error code `activity_required`).
+   - a WRONG LABEL on any session, done ones included: `stride relabel <id> <type>
+     "<detail>" ["<rationale>"] --json` edits only the descriptive fields and returns
+     `{id, session_type, target_date, status}` — the same id echoed, status untouched as
+     proof the edit was cosmetic (links and metrics never move; omitting the rationale
+     keeps the stored one). The day-swap case: an activity completed against Saturday's
+     session whose label still says Sunday's plan — do NOT `week add` the same date to
+     fix a label, that inserts a duplicate row you then have to skip. Refuses unknown
+     ids (`session_not_found`) and non-numeric ids (`bad_id`), like complete/skip.
 
 ## Reading decoupling and detected structure
 
