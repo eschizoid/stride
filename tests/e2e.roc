@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1042)?
+    checks_ran_exactly!(1055)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -343,6 +343,7 @@ run_scenarios! = |ctx| {
     b_period_pace!(ctx)?
     b_progress_a!(ctx)?
     b_progress_b!(ctx)?
+    b_progress_structure!(ctx)?
     b_import!(ctx)?
     b_rpe!(ctx)?
     b_compare!(ctx)?
@@ -6027,6 +6028,69 @@ b_progress_b! = |ctx| {
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (217,218);")
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (215,216);")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (215,216);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    Ok({})
+}
+
+# ── structure-first progress grouping (#96) ─────────────────────────────────────────
+# The two failure directions from the issue, reproduced in one fixture. NARROW: the same
+# 3×3min power workout ridden under three DIFFERENT class names — name grouping shows a
+# group of one, structure grouping must find all three. BROAD: a session SHARING the
+# anchor's name but with no detected structure must not ride along in the structure
+# trend, and the claimed name group must be dropped rather than duplicating it. A
+# steady pair with its own name on the same anchor date proves the name fallback
+# survives beside a structure group.
+b_progress_structure! : Ctx => Try({}, _)
+b_progress_structure! = |ctx| {
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (971,'Interval Alpha','Ride','2025-07-15T10:00:00Z',1500,15000,150),(972,'Interval Beta','Ride','2025-07-08T10:00:00Z',1500,15000,152),(973,'Interval Gamma','Ride','2025-07-01T10:00:00Z',1500,15000,155);")
+    seed_interval_stream!(ctx.db, 971)
+    seed_interval_stream!(ctx.db, 972)
+    seed_interval_stream!(ctx.db, 973)
+    # same NAME as the anchor, steady stream — the broad-name trap: it must not join the
+    # structure trend, and its name group is claimed by the shaped anchor
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (974,'Interval Alpha','Ride','2025-07-10T10:00:00Z',3600,20000,150);")
+    seed_power_stream!(ctx.db, 974, 3600, 200)
+    # an unshaped pair on the anchor date under its own name — the fallback must
+    # produce a plain name group NEXT TO the structure group
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (975,'Steady Solo','Ride','2025-07-15T17:00:00Z',3600,20000,148),(976,'Steady Solo','Ride','2025-07-05T10:00:00Z',3600,20000,151);")
+    seed_power_stream!(ctx.db, 975, 3600, 190)
+    seed_power_stream!(ctx.db, 976, 3600, 185)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("the anchor day yields exactly one structure group", strjq!(ctx, ["progress", "2025-07-15"], "[.data.groups[] | select(.grouped_by == \"structure\")] | length") == "1")?
+    check!("...holding all three same-shape sessions across three names", strjq!(ctx, ["progress", "2025-07-15"], "[.data.groups[] | select(.grouped_by == \"structure\")][0].sessions | length") == "3")?
+    check!("...its label states the shape, not a class name", strjq!(ctx, ["progress", "2025-07-15"], "[.data.groups[] | select(.grouped_by == \"structure\")][0].name | startswith(\"3×[\")") == "true")?
+    check!("...and the differently-named mates are really in it", strjq!(ctx, ["progress", "2025-07-15"], "[.data.groups[] | select(.grouped_by == \"structure\")][0].sessions | map(.date) | join(\",\")") == "2025-07-01,2025-07-08,2025-07-15")?
+    # the same-name steady ride (974) matched by NAME but not by shape: absent from the
+    # structure trend, and the "Interval Alpha" name group is claimed, not duplicated
+    check!("a same-name session without the shape stays out of the structure trend", !(Str.contains(strjq!(ctx, ["progress", "2025-07-15"], "[.data.groups[] | select(.grouped_by == \"structure\")][0].sessions | map(.date) | join(\",\")"), "2025-07-10")))?
+    check!("...and the claimed name group is dropped rather than shown twice", strjq!(ctx, ["progress", "2025-07-15"], "[.data.groups[] | select(.name == \"Interval Alpha\")] | length") == "0")?
+    check!("an unshaped session on the same day still name-groups beside it", strjq!(ctx, ["progress", "2025-07-15"], "[.data.groups[] | select(.grouped_by == \"name\" and .name == \"Steady Solo\")][0].sessions | length") == "2")?
+    check!("...and the payload discriminates the two keys", strjq!(ctx, ["progress", "2025-07-15"], "[.data.groups[].grouped_by] | sort | unique | join(\",\")") == "name,structure")?
+    # ...and a payload CARRYING a structure group conforms to the schema — the other
+    # progress conformance check runs after its fixture's segments are deleted, so it
+    # only ever validates a name-grouped payload and the "structure" enum value passes
+    # through no validator without this
+    check!("a structure-grouped payload conforms to the progress schema", validate_schema!(ctx, "progress 2025-07-15", "progress") == "")?
+    # ── the two ways a shaped anchor must NOT claim (review round 1, both measured) ──
+    # A structure group that will DIE in scoring must not take its name group with it:
+    # 981/982 are the same 4-rep shape under two names — a rep count NOTHING else in
+    # this block carries, so the group's only members are these two — with no HR and no
+    # rating (every lens refuses); 983 shares the anchor's name with HR. Pre-fix this date answered
+    # unscorable over a db holding a scoreable name trend.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (981,'Claim Probe','Ride','2025-07-25T10:00:00Z',1500,15000),(982,'Claim Other','Ride','2025-07-18T10:00:00Z',1500,15000),(983,'Claim Probe','Ride','2025-07-20T10:00:00Z',3600,20000);")
+    _ = sql!(ctx.db, "UPDATE activities SET avg_hr = 150 WHERE id = 983;")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (981,0,'work',0,180,250,'power'),(981,1,'recovery',180,120,100,'power'),(981,2,'work',300,180,250,'power'),(981,3,'recovery',480,120,100,'power'),(981,4,'work',600,180,250,'power'),(981,5,'recovery',780,120,100,'power'),(981,6,'work',900,180,250,'power'),(982,0,'work',0,180,250,'power'),(982,1,'recovery',180,120,100,'power'),(982,2,'work',300,180,250,'power'),(982,3,'recovery',480,120,100,'power'),(982,4,'work',600,180,250,'power'),(982,5,'recovery',780,120,100,'power'),(982,6,'work',900,180,250,'power');")
+    check!("a structure group that dies in scoring leaves the name trend standing", strjq!(ctx, ["progress", "2025-07-25"], "[.data.groups[] | select(.name == \"Claim Probe\")] | length") == "1")?
+    check!("...and the dead group is still counted against anchor_scored", strjq!(ctx, ["progress", "2025-07-25"], ".data.anchor_scored") == "false")?
+    # An IRREGULAR anchor (work reps spread past reps' 1.6× uniformity bound) gets no
+    # structure group at all — with rep count fixed, a mean band is just a total-work-
+    # time band, and reps refuses the same anchor as irregular_anchor. Name fallback.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (985,'Ragged','Ride','2025-07-28T10:00:00Z',3600,20000,150),(986,'Ragged','Ride','2025-07-21T10:00:00Z',3600,20000,148);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (985,0,'work',0,60,250,'power'),(985,1,'recovery',60,120,100,'power'),(985,2,'work',180,600,240,'power'),(985,3,'recovery',780,120,100,'power'),(985,4,'work',900,1200,230,'power');")
+    check!("an anchor reps would refuse as irregular gets no structure group", strjq!(ctx, ["progress", "2025-07-28"], "[.data.groups[] | select(.grouped_by == \"structure\")] | length") == "0")?
+    check!("...and falls back to the name trend instead of refusing", strjq!(ctx, ["progress", "2025-07-28"], "[.data.groups[] | select(.grouped_by == \"name\" and .name == \"Ragged\")][0].sessions | length") == "2")?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (981,982,985); DELETE FROM activity_metrics WHERE activity_id IN (981,982,983,985,986); DELETE FROM activities WHERE id IN (981,982,983,985,986);")
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id IN (971,972,973,974,975,976); DELETE FROM activity_segments WHERE activity_id IN (971,972,973,974,975,976); DELETE FROM activity_metrics WHERE activity_id IN (971,972,973,974,975,976); DELETE FROM activities WHERE id IN (971,972,973,974,975,976);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     Ok({})
 }

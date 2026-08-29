@@ -148,7 +148,7 @@ done
 
 # Asserted exactly, not as a floor. A gate whose enumeration silently matches nothing prints
 # the same clean line a healthy tree prints — which is how the defect it guards got here.
-EXPECT_DECODES=53
+EXPECT_DECODES=55
 if [ "$decodes" != "$EXPECT_DECODES" ]; then
   echo "blob-safety: inspected $decodes (file, alias) decode pairs, expected $EXPECT_DECODES."
   echo "blob-safety: if that change is intended, update the number in the same commit;"
