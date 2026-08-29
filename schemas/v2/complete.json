@@ -1,6 +1,6 @@
 {
   "title": "complete",
-  "description": "Result of `stride complete <id> [activity]`. `rest` marks the bare form, allowed only for rest days. Both forms report what the call DESTROYED: `replaced_activity` and `released_substitute` are always present, 0 meaning nothing was.",
+  "description": "Result of `stride complete <id> [activity]`. `rest` marks the bare form, allowed only for rest days. Both forms report what the call DESTROYED: `replaced_activity` and `released_substitute` are always present, 0 meaning nothing was. The ten target/detected fields appear on the with-activity path only (ADR 0014 §3): the recorded target beside the detected shape, both sides gated by their _known flags.",
   "type": "object",
   "additionalKeys": false,
   "required": [
@@ -24,11 +24,45 @@
     },
     "dropped_substitute": {
       "type": "integer",
-      "description": "The activity that was standing in for this session as a substitute and no longer is, or 0 if none was. `complete` NULLs `substitute_activity_id` on every form, so completing a session that had been `skipped` with a substitute destroys the only record that the athlete did that activity in its place. Reports 0 rather than being omitted, unlike `skip`'s `released_substitute` \u2014 which is why it does NOT reuse that name: the two would share a key and disagree about what absence means, so a consumer using `has()` (correct on `skip`) would read a release on every completion. Silent when the substitute IS the completing activity: that is a promotion, not a loss, and the caller still holds the link."
+      "description": "The activity that was standing in for this session as a substitute and no longer is, or 0 if none was. `complete` NULLs `substitute_activity_id` on every form, so completing a session that had been `skipped` with a substitute destroys the only record that the athlete did that activity in its place. Reports 0 rather than being omitted, unlike `skip`'s `released_substitute` — which is why it does NOT reuse that name: the two would share a key and disagree about what absence means, so a consumer using `has()` (correct on `skip`) would read a release on every completion. Silent when the substitute IS the completing activity: that is a promotion, not a loss, and the caller still holds the link."
     },
     "released_substitute_of": {
       "type": "integer",
       "description": "A DIFFERENT session whose display-dead substitute link this activity was stolen from. Optional, unlike the two above: it reports an incidental side effect on another row, meaningful only when it happened, and answers no question a consumer must ask on every completion."
+    },
+    "target_known": {
+      "type": "boolean",
+      "description": "True when this session carries a structured target (ADR 0014). The three magnitudes are impossible-zero fields behind this flag (ADR 0009): reps 0 cannot be a real target."
+    },
+    "target_reps": {
+      "type": "integer"
+    },
+    "target_dur_s": {
+      "type": "integer"
+    },
+    "target_watts": {
+      "type": "number"
+    },
+    "detected_known": {
+      "type": "boolean",
+      "description": "True when the linked activity has detected power work segments to compare against. reps_delta and watts_pct are meaningful only when BOTH detected_known and target_known are true; otherwise they ride at 0 behind the flags (ADR 0009)."
+    },
+    "detected_reps": {
+      "type": "integer"
+    },
+    "detected_mean_dur_s": {
+      "type": "integer"
+    },
+    "detected_mean_watts": {
+      "type": "number"
+    },
+    "reps_delta": {
+      "type": "integer",
+      "description": "detected_reps minus target_reps. A measurement, not a verdict (ADR 0012)."
+    },
+    "watts_pct": {
+      "type": "number",
+      "description": "detected_mean_watts as a percentage of target_watts."
     }
   }
 }

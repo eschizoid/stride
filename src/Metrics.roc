@@ -1697,6 +1697,38 @@ Metrics :: [].{
         { first_week: first, last_week: last, weeks: (n).to_i64_wrap(), total_load: total, sessions: sess, slope, r2, trend_known, fitted_start, fitted_end }
     }
 
+    ## the prescription-target literal (#198, ADR 0014): `<reps>x<mm:ss>@<watts>W`,
+    ## e.g. `3x12:00@230W`. STRICT on purpose — a target that half-parses is a target
+    ## the athlete and the arithmetic disagree about. Power only (ADR 0014 §2).
+    parse_target : Str -> Try({ reps : I64, dur_s : I64, watts : F64 }, [BadTarget])
+    parse_target = |lit|
+        match Str.split_first(lit, "x") {
+            Err(_) => Err(BadTarget)
+            Ok({ before: reps_s, after: rest }) =>
+                match Str.split_first(rest, "@") {
+                    Err(_) => Err(BadTarget)
+                    Ok({ before: dur_s_str, after: watts_part }) =>
+                        match Str.split_first(dur_s_str, ":") {
+                            Err(_) => Err(BadTarget)
+                            Ok({ before: mm_s, after: ss_s }) =>
+                                if !(Str.ends_with(watts_part, "W")) {
+                                    Err(BadTarget)
+                                } else {
+                                    watts_s = Str.replace_last(watts_part, "W", "")
+                                    match (I64.from_str(reps_s), I64.from_str(mm_s), I64.from_str(ss_s), I64.from_str(watts_s)) {
+                                        (Ok(reps), Ok(mm), Ok(ss), Ok(w)) =>
+                                            if reps >= 1 and reps <= 99 and mm >= 0 and ss >= 0 and ss < 60 and (mm * 60 + ss) >= 30 and w >= 1 and w <= 2500 {
+                                                Ok({ reps, dur_s: mm * 60 + ss, watts: (w).to_f64() })
+                                            } else {
+                                                Err(BadTarget)
+                                            }
+                                        _ => Err(BadTarget)
+                                    }
+                                }
+                        }
+                }
+        }
+
     # "YYYY-MM" for a day number — the same key shape SQL's substr(day,1,7)
     # produces, so a Roc-side grouping and a SQL-side one agree.
     month_key : I64 -> Str
@@ -4411,3 +4443,17 @@ expect Metrics.arg_u64("10") == Ok(10)
 expect Metrics.arg_u64("1e1") == Err(NotAnInt)
 # the inconsistency that proved it was an accident, now refused on both sides
 expect Metrics.arg_i64("1e1") == Err(NotAnInt) and Metrics.arg_i64("3.3e1") == Err(NotAnInt)
+
+expect Metrics.parse_target("3x12:00@230W") == Ok({ reps: 3, dur_s: 720, watts: 230.0 })
+expect Metrics.parse_target("1x0:30@1W") == Ok({ reps: 1, dur_s: 30, watts: 1.0 })
+expect Metrics.parse_target("10x3:45@305W") == Ok({ reps: 10, dur_s: 225, watts: 305.0 })
+expect Metrics.parse_target("3x12:00@230") == Err(BadTarget)
+expect Metrics.parse_target("3x12@230W") == Err(BadTarget)
+expect Metrics.parse_target("0x12:00@230W") == Err(BadTarget)
+expect Metrics.parse_target("3x12:60@230W") == Err(BadTarget)
+expect Metrics.parse_target("3x0:10@230W") == Err(BadTarget)
+expect Metrics.parse_target("3x12:00@0W") == Err(BadTarget)
+expect Metrics.parse_target("3x12:00@2501W") == Err(BadTarget)
+expect Metrics.parse_target("-3x12:00@230W") == Err(BadTarget)
+expect Metrics.parse_target("threshold") == Err(BadTarget)
+expect Metrics.parse_target("") == Err(BadTarget)

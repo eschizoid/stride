@@ -64,11 +64,25 @@ Never do training math yourself: read stride's numbers, add judgment.
 4. Reason: polarization, zone gaps, form (TSB), FTP staleness, sport balance —
    AND reconcile the open plan against recent activities (match by date/type,
    then `stride complete <session_id> <activity_id> --json` for each match).
-5. Plan the coming week: `stride week add <YYYY-MM-DD> <type> "<detail>" "<rationale>" --json`
+5. Plan the coming week: `stride week add <YYYY-MM-DD> <type> "<detail>" "<rationale>" ["<target>"] --json`
    - `type` is the INTENSITY INTENT, not the sport: vo2max | threshold | endurance |
      recovery | strength | rest (free-form ok). The sport/modality goes in `detail`
      ("easy row...", "outdoor ride..."): type answers *why/how hard*, detail answers
      *what exactly*.
+   - the optional target is a strict literal `<reps>x<mm:ss>@<watts>W` (`3x12:00@230W`,
+     ADR 0014) stored BESIDE the prose, power only. Add it when the session genuinely
+     has numbers; prose stays canonical and a prose-only session is unchanged. The echo
+     carries `target_known` with impossible-zero magnitudes (`target_reps`,
+     `target_dur_s`, `target_watts`); `plan`'s open sessions carry the same four. A
+     revise REPLACES the whole prescription — re-planning a date WITHOUT the target
+     clears it. Malformed literals refuse with `bad_target`.
+   - completing a TARGETED session against an activity reports the arithmetic:
+     `complete` returns `{target_known, target_reps, target_dur_s, target_watts,
+     detected_known, detected_reps, detected_mean_dur_s, detected_mean_watts,
+     reps_delta, watts_pct}` — the recorded target beside the detected shape.
+     `reps_delta`/`watts_pct` mean something only when BOTH flags are true; a session
+     without power segments compares to nothing and says so. Whether the numbers
+     constitute hitting the workout is YOUR judgment — stride states them.
    - re-planning a date REVISES its open session in place (the response echoes the same
      id) — a plan edit is not a skip, so you can just `week add` again to change a day and
      it never leaves skipped tombstones. Reserve `skip` for a session that was going to

@@ -103,7 +103,7 @@ EXPECTED_QUOTING=1
 # README fence that nothing was checking; the fix went in the DOC (backticked,
 # matching its neighbour), because inside a fence an explanatory comment and a
 # commented invocation are both `#` plus text.
-EXPECTED_UNPARSED=45
+EXPECTED_UNPARSED=47
 
 # ------------------------------------------- the trailing-token rule, and its self-test
 #
@@ -487,7 +487,7 @@ reps=1
 skip=1,2,3
 top=1,2,3
 tte=1
-week add=1,2,3,4'
+week add=1,2,3,4,5'
 phsig=$(awk -F'\t' '{ n = split($2, a, " "); s = ""; for (i = 1; i <= n; i++) { t = a[i]; sub(/^!/, "", t); if (t ~ /</) s = (s == "" ? i : s "," i) } if (s != "") printf "%s=%s\n", $1, s }' "$ARGS" | LC_ALL=C sort)
 if [ "$phsig" != "$EXPECTED_PLACEHOLDER_SIG" ]; then
   echo "command-claims: placeholder signature changed." >&2

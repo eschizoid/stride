@@ -13,7 +13,7 @@ commands.json	commands,flags,universal_error_codes	commands,flags,universal_erro
 commands.json	example,name,required	example,name,required	-
 compare.json	ctl,easy_pct,hard_min,has_data,sessions,tss	ctl,easy_pct,hard_min,has_data,sessions,tss	doc
 compare.json	current,period,prior,window_label	current,period,prior,window_label	doc
-complete.json	activity,completed_session,dropped_substitute,released_substitute_of,replaced_activity,rest	completed_session,dropped_substitute,replaced_activity	-
+complete.json	activity,completed_session,detected_known,detected_mean_dur_s,detected_mean_watts,detected_reps,dropped_substitute,released_substitute_of,replaced_activity,reps_delta,rest,target_dur_s,target_known,target_reps,target_watts,watts_pct	completed_session,dropped_substitute,replaced_activity	-
 config.json	key,redacted,value	key,value	doc
 config_list.json	key,redacted,status	key,redacted,status	-
 config_list.json	keys	keys	-
@@ -30,7 +30,7 @@ plan.json	adherence_28d,data_freshness,open_sessions,plan_history_28d,recent_act
 plan.json	avg_hr,date,distance_m,hard_s,hr_known,id,intensity,intensity_known,load_model,moving_time,name,np_w,power_known,relative_effort,sport,tss,z1_s,z2_s,z3_s,z4_s,z5_s,zones_known	avg_hr,date,distance_m,hard_s,hr_known,id,intensity,intensity_known,load_model,moving_time,name,np_w,power_known,relative_effort,sport,tss,z1_s,z2_s,z3_s,z4_s,z5_s,zones_known	-
 plan.json	completed,completion_pct,planned,skipped,still_open,substituted,unplanned_activities	completed,completion_pct,planned,skipped,still_open,substituted,unplanned_activities	doc
 plan.json	completed_activity_id,completed_on,detail,id,session_type,skipped_reason,status,substitute_activity_id,superseded_activity_id,target_date	completed_activity_id,completed_on,detail,id,session_type,skipped_reason,status,substitute_activity_id,superseded_activity_id,target_date	-
-plan.json	detail,id,rationale,session_type,target_date	detail,id,rationale,session_type,target_date	-
+plan.json	detail,id,rationale,session_type,target_date,target_dur_s,target_known,target_reps,target_watts	detail,id,rationale,session_type,target_date,target_dur_s,target_known,target_reps,target_watts	-
 power_curve.json	cp,fit_points,fit_r2,points,sport,w_prime,window_days	cp,fit_points,fit_r2,points,sport,w_prime,window_days	doc
 power_curve.json	dur_s,watts	dur_s,watts	doc
 progress.json	anchor_date,anchor_scored,groups	anchor_date,anchor_scored,groups	doc
@@ -62,6 +62,6 @@ top.json	avg_hr,date,date_known,distance_m,hr_known,id,intensity,intensity_known
 tte.json	contradicts_model,cp,demonstrated_known,demonstrated_s,demonstrated_w,fit_points,fit_r2,known,seconds,sport_family,status,w_prime,watts,window_days	contradicts_model,cp,demonstrated_known,demonstrated_s,demonstrated_w,fit_points,fit_r2,known,seconds,sport_family,status,w_prime,watts,window_days	doc
 version.json	version	version	-
 week.json	activity_id,completed_activity_id,created_at,day,detail,done_date,id,rationale,session_type,skipped_reason,status,status_shown,substitute_activity_id,superseded_activity_id,target_date	activity_id,completed_activity_id,created_at,day,detail,done_date,id,rationale,session_type,skipped_reason,status,status_shown,substitute_activity_id,superseded_activity_id,target_date	-
-week_add.json	id,session_type,target_date	id,session_type,target_date	-
+week_add.json	id,session_type,target_date,target_dur_s,target_known,target_reps,target_watts	id,session_type,target_date,target_dur_s,target_known,target_reps,target_watts	-
 zones.json	ftp,zones	ftp,zones	doc
 zones.json	hi_w,lo_w,name,z	hi_w,lo_w,name,z	doc

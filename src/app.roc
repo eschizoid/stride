@@ -112,8 +112,9 @@ help_text =
         \\    plan                        planning bundle: summary + open sessions + 14d
         \\    week                        this week's sessions (Mon-Sun, all statuses)
         \\    week all                    upcoming + this week + last week
-        \\    week add <date> <type> <detail> <rationale>
-        \\                                add a planned session
+        \\    week add <date> <type> <detail> <rationale> [RxMM:SS@WWWW]
+        \\                                add a planned session; the optional literal is a
+        \\                                structured target, e.g. 3x12:00@230W
         \\    complete <session_id> [activity_id]
         \\                                mark done (bare = rest day)
         \\    skip <session_id> <reason> [activity_id|none]
@@ -391,7 +392,8 @@ dispatch! = |cmd|
         Command.Season => ReportSeason.season!({})
         Command.WeekView => Plan.plan_view!(ThisWeek)
         Command.WeekViewAll => Plan.plan_view!(AllTime)
-        Command.WeekAdd(date, session_type, detail, rationale) => Plan.plan_add!(date, session_type, detail, rationale)
+        Command.WeekAdd(date, session_type, detail, rationale) => Plan.plan_add!(date, session_type, detail, rationale, NoTarget)
+        Command.WeekAddT(date, session_type, detail, rationale, target) => Plan.plan_add!(date, session_type, detail, rationale, Target(target))
         Command.Relabel(session_id, session_type, detail) => Plan.relabel!(session_id, session_type, detail, KeepRationale)
         Command.RelabelWith(session_id, session_type, detail, rationale) => Plan.relabel!(session_id, session_type, detail, SetRationale(rationale))
         Command.Complete(session_id, activity_id) => Plan.complete!(session_id, activity_id)
