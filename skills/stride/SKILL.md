@@ -94,9 +94,9 @@ Never do training math yourself: read stride's numbers, add judgment.
      session whose label still says Sunday's plan — do NOT `week add` the same date to
      fix a label, that inserts a duplicate row you then have to skip. Refuses unknown
      ids (`session_not_found`) and non-numeric ids (`bad_id`), like complete/skip. One
-     label IS behavioral on OPEN sessions: `rest` decides whether `complete` needs an
-     activity id, so relabeling an open session to or from `rest` changes what its
-     completion will demand.
+     label IS behavioral, on any status: `rest` decides whether a bare `complete` needs
+     an activity id — that path checks the label, not the status — so relabeling to or
+     from `rest` changes what a completion (or re-completion) will demand.
 
 ## Reading decoupling and detected structure
 
