@@ -2,12 +2,13 @@
 
 > **One file, every agent.** `AGENTS.md` is the canonical instruction file — the
 > cross-tool convention Codex and friends read from the repo root with no setup. Claude
-> Code reads `CLAUDE.md`, not `AGENTS.md`, so the repo tracks a one-line root `CLAUDE.md`
-> whose entire content is the import `` `@AGENTS.md` `` (backticked HERE so this sentence
-> is not itself an import — Claude Code expands that syntax recursively). A fresh clone
-> therefore works for every agent with zero setup. Edit this file; the shim never carries
-> content, and a personal `.claude/CLAUDE.md` is now redundant — the docs warn against
-> shipping both locations at once.
+> Code reads `CLAUDE.md`, not `AGENTS.md`, so the repo tracks a one-line
+> `.claude/CLAUDE.md` whose entire content is the import `` `@../AGENTS.md` ``
+> (backticked HERE so this sentence is not itself an import — Claude Code expands that
+> syntax recursively, and import paths resolve relative to the importing file). A fresh
+> clone therefore works for every agent with zero setup. Edit this file; the shim never
+> carries content. Do not also create a root `CLAUDE.md` — the docs warn against shipping
+> both locations at once.
 >
 > The COACHING skill's one canonical copy is `skills/stride/SKILL.md`.
 > `.claude/skills/stride/SKILL.md` is a tracked SHIM — a real file, not a symlink (a
