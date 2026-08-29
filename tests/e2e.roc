@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1041)?
+    checks_ran_exactly!(1042)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -5306,6 +5306,10 @@ b_relabel! = |ctx| {
     check!("relabel edits a DONE session's label and echoes the same id", strjq!(ctx, ["relabel", rid, "threshold", "3x12min @ 230W"], ".data.id") == rid)?
     check!("...and reports the untouched status, the proof the edit was cosmetic", strjq!(ctx, ["relabel", rid, "threshold", "3x12min @ 230W"], ".data.status") == "done")?
     check!("...and the new detail landed in the row", Str.trim(sql!(ctx.db, "SELECT CAST(detail AS TEXT) FROM planned_sessions WHERE id = ${rid};")) == "3x12min @ 230W")?
+    # from the ROW, not the payload: the echoed type is read back now, but this check
+    # must hold even if that echo ever regresses to echoing the input — a neutered
+    # type-write passed all eleven original checks while the JSON claimed the edit
+    check!("...and the new TYPE landed in the row — the edit this command exists for", Str.trim(sql!(ctx.db, "SELECT CAST(session_type AS TEXT) FROM planned_sessions WHERE id = ${rid};")) == "threshold")?
     check!("...and the completion link survived the edit", Str.trim(sql!(ctx.db, "SELECT COALESCE(completed_activity_id, 0) FROM planned_sessions WHERE id = ${rid};")) == "9330")?
     check!("...and an OMITTED rationale keeps the stored one", Str.trim(sql!(ctx.db, "SELECT CAST(rationale AS TEXT) FROM planned_sessions WHERE id = ${rid};")) == "base")?
     _ = stride!(ctx.bin, ctx.home, ["relabel", rid, "threshold", "3x12min @ 230W", "day-swapped with Sunday"])

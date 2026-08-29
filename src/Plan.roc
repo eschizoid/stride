@@ -939,9 +939,9 @@ Plan :: [].{
     # left a threshold ride labeled "endurance / long easy ride", and the only fixes were
     # a duplicate row plus a skip tombstone, or hand-run SQL against the judgment tier.
     # Cosmetic by construction: the UPDATE names session_type/detail/rationale and
-    # nothing else — status, both activity links, created_at and every metric are
-    # untouched, so a relabel can never trigger invalidation (`analyze` after one
-    # reports computed: 0, pinned by e2e).
+    # nothing else — status, all three activity link columns (completed, substitute,
+    # superseded), created_at and every metric are untouched, so a relabel can never
+    # trigger invalidation (`analyze` after one reports computed: 0, pinned by e2e).
     relabel! : Str, Str, Str, [KeepRationale, SetRationale(Str)] => Try({}, _)
     relabel! = |session_id_str, session_type, detail, rat| {
         path = Db.open_db!({})?
@@ -971,13 +971,23 @@ Plan :: [].{
                         bindings: [{ name: ":id", value: Integer(session_id) }],
                         row: Sqlite.str("td"),
                     })?
+                    # the echoed type is READ BACK, never the input argument: an echo of
+                    # the input printed "threshold" while the row still held "endurance"
+                    # under a binary whose UPDATE had been neutered — the payload claimed
+                    # the write it was supposed to be evidence for
+                    stored_type = Sqlite.query!({
+                        path: Path.utf8(path),
+                        query: "SELECT CAST(session_type AS TEXT) AS ty FROM planned_sessions WHERE id = :id",
+                        bindings: [{ name: ":id", value: Integer(session_id) }],
+                        row: Sqlite.str("ty"),
+                    })?
                     status = Sqlite.query!({
                         path: Path.utf8(path),
                         query: "SELECT CAST(COALESCE(status, 'open') AS TEXT) AS st FROM planned_sessions WHERE id = :id",
                         bindings: [{ name: ":id", value: Integer(session_id) }],
                         row: Sqlite.str("st"),
                     })?
-                    Output.out!({ id: session_id, session_type, target_date, status }, |p| "relabeled #${(p.id).to_str()}: ${p.session_type} on ${p.target_date} (${p.status})")
+                    Output.out!({ id: session_id, session_type: stored_type, target_date, status }, |p| "relabeled #${(p.id).to_str()}: ${p.session_type} on ${p.target_date} (${p.status})")
                 }
         }
     }

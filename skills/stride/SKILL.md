@@ -93,7 +93,10 @@ Never do training math yourself: read stride's numbers, add judgment.
      keeps the stored one). The day-swap case: an activity completed against Saturday's
      session whose label still says Sunday's plan — do NOT `week add` the same date to
      fix a label, that inserts a duplicate row you then have to skip. Refuses unknown
-     ids (`session_not_found`) and non-numeric ids (`bad_id`), like complete/skip.
+     ids (`session_not_found`) and non-numeric ids (`bad_id`), like complete/skip. One
+     label IS behavioral on OPEN sessions: `rest` decides whether `complete` needs an
+     activity id, so relabeling an open session to or from `rest` changes what its
+     completion will demand.
 
 ## Reading decoupling and detected structure
 
