@@ -1283,6 +1283,7 @@ ReportSessions :: [].{
             query:
                 \\SELECT s.activity_id AS id, COUNT(*) AS reps,
                 \\       CAST(AVG(s.dur_s) AS INTEGER) AS mean_dur,
+                \\       MIN(s.dur_s) AS mn, MAX(s.dur_s) AS mx,
                 \\       COALESCE(CAST(MIN(s.signal) AS TEXT), '') AS sig,
                 \\       COALESCE(CAST(a.sport_family AS TEXT), CAST(a.sport_type AS TEXT), '') AS fam,
                 \\       COALESCE(CAST(a.name AS TEXT), '') AS aname
@@ -1296,36 +1297,66 @@ ReportSessions :: [].{
                 sid = Sqlite.i64("id")(cols)(stmt)?
                 reps = Sqlite.i64("reps")(cols)(stmt)?
                 mean_dur = Sqlite.i64("mean_dur")(cols)(stmt)?
+                mn = Sqlite.i64("mn")(cols)(stmt)?
+                mx = Sqlite.i64("mx")(cols)(stmt)?
                 sig = Sqlite.str("sig")(cols)(stmt)?
                 fam = Sqlite.str("fam")(cols)(stmt)?
                 aname = Sqlite.str("aname")(cols)(stmt)?
-                Ok({ sid, reps, mean_dur, sig, fam, aname })
+                Ok({ sid, reps, mean_dur, mn, mx, sig, fam, aname })
             },
         })?
-        # two same-shaped anchor-day sessions are ONE trend, not two identical groups —
-        # dedup on the predicate's own key (family, rep count, band, signal)
+        # ...gated by the SAME anchor-admission rule reps applies: an anchor whose work
+        # reps spread past the 1.6× uniformity bound is not one repeated shape — reps
+        # refuses it as irregular_anchor, and with rep count fixed a mean band is just a
+        # total-work-time band, so a structure "trend" on it lumps unlike workouts.
+        # Progress falls back to name grouping instead of refusing (a trend question
+        # deserves whatever honest answer exists), which also keeps the label truthful:
+        # a shape label must only ever describe a shape the gate certifies.
+        # Two same-shaped anchor-day sessions are ONE trend, not two identical groups —
+        # dedup on the predicate's own key (family, rep count, band, signal), keeping
+        # every claiming session id under its key.
         shape_keys = List.fold(shapes, [], |acc, sh| {
-            band = Metrics.rep_duration_band(sh.mean_dur)
-            key = "${sh.fam}|${(sh.reps).to_str()}|${(band.lo).to_str()}|${sh.sig}"
-            if List.any(acc, |k| k.key == key) acc else List.append(acc, { key, sh, band })
+            if !(Metrics.is_uniform_reps(sh.mn, sh.mx)) {
+                acc
+            } else {
+                band = Metrics.rep_duration_band(sh.mean_dur)
+                key = "${sh.fam}|${(sh.reps).to_str()}|${(band.lo).to_str()}|${sh.sig}"
+                match List.find_first_index(acc, |k| k.key == key) {
+                    Ok(ix) =>
+                        match List.get(acc, ix) {
+                            Ok(prev) => List.set(acc, ix, { key: prev.key, sh: prev.sh, band: prev.band, sids: List.append(prev.sids, sh.sid) }).ok_or(acc)
+                            Err(_) => acc
+                        }
+                    Err(_) => List.append(acc, { key, sh, band, sids: [sh.sid] })
+                }
+            }
         })
-        shaped_ids = List.map(shapes, |sh| sh.sid)
-        structure_groups = List.map_try!(shape_keys, |k| {
+        structure_built = List.map_try!(shape_keys, |k| {
             mates = structure_mates!(k.sh.fam, k.sh.sig, k.sh.reps, k.band.lo, k.band.hi)?
             # mates are trend POSITIONS like every other progress row — an unreadable
             # date refuses, same as the name path above
             _ = List.map_try(mates, |r| (Metrics.usable_date_days(r.date)).map_err(|_| BadActivityDate(r.date, r.id)))?
-            Ok({ name: Render.structure_group_label(k.sh.reps, k.sh.mean_dur, k.sh.sig, k.sh.aname), rows: mates, total: List.len(mates), scope_why: "", grouped_by: "structure" })
+            # a name group is claimed only by a structure group that will SURVIVE
+            # scoring. Claiming on shape alone erased visible data: a lens-unscorable
+            # structure group dies in keep_scored AFTER the name group it claimed is
+            # gone, and a date that used to answer with an honest partial trend answers
+            # unscorable over a database still holding one (measured against the
+            # pre-#96 binary). progress_lens(mates) != Unscorable IS keep_scored's
+            # survival condition — the first lens any row scores keeps that row.
+            survives = match Metrics.progress_lens(mates) { Unscorable => False _ => True }
+            Ok({ group: { name: Render.structure_group_label(k.sh.reps, k.sh.mean_dur, k.sh.sig, k.sh.aname), rows: mates, total: List.len(mates), scope_why: "", grouped_by: "structure" }, claim_sids: if survives k.sids else [] })
         })?
+        structure_groups = List.map(structure_built, |b| b.group)
+        claimed_ids = List.fold(structure_built, [], |acc, b| List.concat(acc, b.claim_sids))
         name_labeled =
             List.keep_oks(Metrics.group_progress(prows), |g| Metrics.anchor_filter(g, date))
            .keep_if(|g| {
-                # a name group whose EVERY anchor-date row is structure-claimed is the same
-                # trend a structure group already tells, keyed worse — drop it. Any unshaped
-                # anchor-date row keeps the name trend alive (the shaped sibling still gets
-                # its own structure group).
+                # a name group whose EVERY anchor-date row is claimed by a surviving
+                # structure group is the same trend that group already tells, keyed
+                # worse — drop it. Any unclaimed anchor-date row (unshaped, irregular,
+                # or belonging to a structure group that died) keeps the name trend.
                 on_date = List.keep_if(g.rows, |r| r.date == date)
-                !(List.all(on_date, |r| List.contains(shaped_ids, r.id)))
+                !(List.all(on_date, |r| List.contains(claimed_ids, r.id)))
             })
            .map(|g| { name: Render.progress_group_label(g.name, g.kind), rows: g.rows, total: g.total, scope_why: g.scope_why, grouped_by: "name" })
         labeled = List.concat(structure_groups, name_labeled)

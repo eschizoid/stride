@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1050)?
+    checks_ran_exactly!(1055)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6066,6 +6066,30 @@ b_progress_structure! = |ctx| {
     check!("...and the claimed name group is dropped rather than shown twice", strjq!(ctx, ["progress", "2025-07-15"], "[.data.groups[] | select(.name == \"Interval Alpha\")] | length") == "0")?
     check!("an unshaped session on the same day still name-groups beside it", strjq!(ctx, ["progress", "2025-07-15"], "[.data.groups[] | select(.grouped_by == \"name\" and .name == \"Steady Solo\")][0].sessions | length") == "2")?
     check!("...and the payload discriminates the two keys", strjq!(ctx, ["progress", "2025-07-15"], "[.data.groups[].grouped_by] | sort | unique | join(\",\")") == "name,structure")?
+    # ...and a payload CARRYING a structure group conforms to the schema — the other
+    # progress conformance check runs after its fixture's segments are deleted, so it
+    # only ever validates a name-grouped payload and the "structure" enum value passes
+    # through no validator without this
+    check!("a structure-grouped payload conforms to the progress schema", validate_schema!(ctx, "progress 2025-07-15", "progress") == "")?
+    # ── the two ways a shaped anchor must NOT claim (review round 1, both measured) ──
+    # A structure group that will DIE in scoring must not take its name group with it:
+    # 981/982 are the same 4-rep shape under two names — a rep count NOTHING else in
+    # this block carries, so the group's only members are these two — with no HR and no
+    # rating (every lens refuses); 983 shares the anchor's name with HR. Pre-fix this date answered
+    # unscorable over a db holding a scoreable name trend.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (981,'Claim Probe','Ride','2025-07-25T10:00:00Z',1500,15000),(982,'Claim Other','Ride','2025-07-18T10:00:00Z',1500,15000),(983,'Claim Probe','Ride','2025-07-20T10:00:00Z',3600,20000);")
+    _ = sql!(ctx.db, "UPDATE activities SET avg_hr = 150 WHERE id = 983;")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (981,0,'work',0,180,250,'power'),(981,1,'recovery',180,120,100,'power'),(981,2,'work',300,180,250,'power'),(981,3,'recovery',480,120,100,'power'),(981,4,'work',600,180,250,'power'),(981,5,'recovery',780,120,100,'power'),(981,6,'work',900,180,250,'power'),(982,0,'work',0,180,250,'power'),(982,1,'recovery',180,120,100,'power'),(982,2,'work',300,180,250,'power'),(982,3,'recovery',480,120,100,'power'),(982,4,'work',600,180,250,'power'),(982,5,'recovery',780,120,100,'power'),(982,6,'work',900,180,250,'power');")
+    check!("a structure group that dies in scoring leaves the name trend standing", strjq!(ctx, ["progress", "2025-07-25"], "[.data.groups[] | select(.name == \"Claim Probe\")] | length") == "1")?
+    check!("...and the dead group is still counted against anchor_scored", strjq!(ctx, ["progress", "2025-07-25"], ".data.anchor_scored") == "false")?
+    # An IRREGULAR anchor (work reps spread past reps' 1.6× uniformity bound) gets no
+    # structure group at all — with rep count fixed, a mean band is just a total-work-
+    # time band, and reps refuses the same anchor as irregular_anchor. Name fallback.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (985,'Ragged','Ride','2025-07-28T10:00:00Z',3600,20000,150),(986,'Ragged','Ride','2025-07-21T10:00:00Z',3600,20000,148);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (985,0,'work',0,60,250,'power'),(985,1,'recovery',60,120,100,'power'),(985,2,'work',180,600,240,'power'),(985,3,'recovery',780,120,100,'power'),(985,4,'work',900,1200,230,'power');")
+    check!("an anchor reps would refuse as irregular gets no structure group", strjq!(ctx, ["progress", "2025-07-28"], "[.data.groups[] | select(.grouped_by == \"structure\")] | length") == "0")?
+    check!("...and falls back to the name trend instead of refusing", strjq!(ctx, ["progress", "2025-07-28"], "[.data.groups[] | select(.grouped_by == \"name\" and .name == \"Ragged\")][0].sessions | length") == "2")?
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (981,982,985); DELETE FROM activity_metrics WHERE activity_id IN (981,982,983,985,986); DELETE FROM activities WHERE id IN (981,982,983,985,986);")
     _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id IN (971,972,973,974,975,976); DELETE FROM activity_segments WHERE activity_id IN (971,972,973,974,975,976); DELETE FROM activity_metrics WHERE activity_id IN (971,972,973,974,975,976); DELETE FROM activities WHERE id IN (971,972,973,974,975,976);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     Ok({})
