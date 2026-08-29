@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1030)?
+    checks_ran_exactly!(1042)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -363,6 +363,7 @@ run_scenarios! = |ctx| {
     # ctx.today, which supply the other 2 of the 5, and the three probe dates being free of
     # open sessions, which holds only because b_agent_loop! cleans up after itself.
     b_week_plan!(ctx)?
+    b_relabel!(ctx)?
     b_concurrency!(ctx)?
     b_migration!(ctx)?
     Ok({})
@@ -1326,7 +1327,7 @@ b_init_config! = |ctx| {
     # here is the deliberate-bump discipline: adding a properly described command still
     # has to change a number a reader sees.
     overlap = Str.trim(sh!("LC_ALL=C comm -12 '${verbs_dir}/parser' '${verbs_dir}/spec' | wc -l | tr -d ' '"))
-    check!("...and the two lists genuinely overlap on all 27 verbs (got ${overlap})", overlap == "27")?
+    check!("...and the two lists genuinely overlap on all 28 verbs (got ${overlap})", overlap == "28")?
     _ = sh!("rm -rf '${verbs_dir}'")
 
     # The sub-form direction. `unknown_command` was the wrong discriminator (only an
@@ -5283,6 +5284,43 @@ b_plan! = |ctx| {
     check!("week all returns every row past the old 100 cap", strjq!(ctx, ["week", "all"], ".data | length") == total)?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date = '2019-03-04';")
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${fut_id}, ${old_id});")
+    Ok({})
+}
+
+# ── relabel: label-only edit of a session in ANY status (#330) ─────────────────────
+# The frozen case: a done session's label was uneditable — `week add` only revises OPEN
+# dates, so a day-swap left "endurance / long easy ride" on a completed threshold and the
+# only fixes were a duplicate row plus a skip tombstone, or hand-run SQL. Everything here
+# is self-contained: the session id is CAPTURED from week add (never assumed), and every
+# inserted row is deleted at the end per the positional-id rule.
+b_relabel! : Ctx => Try({}, _)
+b_relabel! = |ctx| {
+    rid = Str.trim(strjq!(ctx, ["week", "add", "2099-05-05", "endurance", "long easy ride", "base"], ".data.id"))
+    check!("the relabel fixture got a session id at all", !(Str.is_empty(rid)) and rid != "null")?
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,device_watts) VALUES (9330,'relabel evidence','Ride','2099-05-05T09:00:00Z',3600,30000,200,200,1);")
+    _ = stride!(ctx.bin, ctx.home, ["complete", rid, "9330"])
+    check!("...and it really is DONE before the label edit, or this block tests week add", Str.trim(sql!(ctx.db, "SELECT CAST(status AS TEXT) FROM planned_sessions WHERE id = ${rid};")) == "done")?
+    # drain pending scoring FIRST, so the computed: 0 check below measures the relabel
+    # and not the fixture's own arrival
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("relabel edits a DONE session's label and echoes the same id", strjq!(ctx, ["relabel", rid, "threshold", "3x12min @ 230W"], ".data.id") == rid)?
+    check!("...and reports the untouched status, the proof the edit was cosmetic", strjq!(ctx, ["relabel", rid, "threshold", "3x12min @ 230W"], ".data.status") == "done")?
+    check!("...and the new detail landed in the row", Str.trim(sql!(ctx.db, "SELECT CAST(detail AS TEXT) FROM planned_sessions WHERE id = ${rid};")) == "3x12min @ 230W")?
+    # from the ROW, not the payload: the echoed type is read back now, but this check
+    # must hold even if that echo ever regresses to echoing the input — a neutered
+    # type-write passed all eleven original checks while the JSON claimed the edit
+    check!("...and the new TYPE landed in the row — the edit this command exists for", Str.trim(sql!(ctx.db, "SELECT CAST(session_type AS TEXT) FROM planned_sessions WHERE id = ${rid};")) == "threshold")?
+    check!("...and the completion link survived the edit", Str.trim(sql!(ctx.db, "SELECT COALESCE(completed_activity_id, 0) FROM planned_sessions WHERE id = ${rid};")) == "9330")?
+    check!("...and an OMITTED rationale keeps the stored one", Str.trim(sql!(ctx.db, "SELECT CAST(rationale AS TEXT) FROM planned_sessions WHERE id = ${rid};")) == "base")?
+    _ = stride!(ctx.bin, ctx.home, ["relabel", rid, "threshold", "3x12min @ 230W", "day-swapped with Sunday"])
+    check!("...and a GIVEN rationale replaces it", Str.trim(sql!(ctx.db, "SELECT CAST(rationale AS TEXT) FROM planned_sessions WHERE id = ${rid};")) == "day-swapped with Sunday")?
+    # cosmetic by construction: the UPDATE names three descriptive columns and nothing
+    # else, so there is nothing for analyze to rescore
+    check!("relabel triggers no recompute — analyze after it reports computed: 0", strjq!(ctx, ["analyze"], ".data.computed") == "0")?
+    check!("an unknown id is refused, same code as complete/skip", strjq!(ctx, ["relabel", "99999", "endurance", "x"], ".error.code") == "session_not_found")?
+    check!("...and a non-numeric id is bad_id, not a crash or a silent no-op", strjq!(ctx, ["relabel", "abc", "endurance", "x"], ".error.code") == "bad_id")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 9330; DELETE FROM activities WHERE id = 9330; DELETE FROM planned_sessions WHERE id = ${rid};")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     Ok({})
 }
 

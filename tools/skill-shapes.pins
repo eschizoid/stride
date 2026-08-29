@@ -37,6 +37,7 @@ progress.json	anchor_date,anchor_scored,groups	anchor_date,anchor_scored,groups	
 progress.json	avg_hr,avg_hr_scored,date,decoupling_known,decoupling_pct,distance_m,moving_time,np_w,output_kj,rpe,score,sport,tss	avg_hr,date,decoupling_known,decoupling_pct,distance_m,moving_time,np_w,output_kj,rpe,score,sport,tss	-
 progress.json	hidden,hidden_lens,hidden_scope,lens,name,sessions	hidden,hidden_lens,hidden_scope,lens,name,sessions	doc
 rate.json	rated,rpe	rated,rpe	-
+relabel.json	id,session_type,status,target_date	id,session_type,status,target_date	doc
 reps.json	anchor_activity_id,anchor_date,matched_total,sessions,shape,sport_family	anchor_activity_id,anchor_date,matched_total,sessions,shape,sport_family	doc
 reps.json	avg_hr,avg_signal,dur_s,hr_known,ordinal,rec_drop,rec_drop_known,signal	avg_hr,avg_signal,dur_s,hr_known,ordinal,rec_drop,rec_drop_known,signal	-
 reps.json	band_hi_s,band_lo_s,mean_dur_s,rep_count,signal	band_hi_s,band_lo_s,mean_dur_s,rep_count,signal	doc

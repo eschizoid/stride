@@ -42,6 +42,8 @@ Command := [
 	CompleteRest(Str),
 	Skip(Str, Str),
 	SkipWith(Str, Str, Str),
+	Relabel(Str, Str, Str),
+	RelabelWith(Str, Str, Str, Str),
 	ConfigGet(Str),
 	ConfigSet(Str, Str),
 	ConfigUnset(Str),
@@ -158,6 +160,11 @@ Command := [
 			[_, "complete", session_id] => Ok(CompleteRest(session_id))
 			[_, "skip", session_id, reason, activity_id] => Ok(SkipWith(session_id, reason, activity_id))
 			[_, "skip", session_id, reason] => Ok(Skip(session_id, reason))
+			# label-only edit of an existing session, ANY status (#330): `week add` revises
+			# open sessions in place, but a DONE session's label was frozen — the only fix
+			# was a duplicate row plus a skip tombstone, or hand-run SQL.
+			[_, "relabel", session_id, session_type, detail, rationale] => Ok(RelabelWith(session_id, session_type, detail, rationale))
+			[_, "relabel", session_id, session_type, detail] => Ok(Relabel(session_id, session_type, detail))
 			[_, "config", "get", key] => Ok(ConfigGet(key))
 			# bare `config` LISTS the keys that hold a value (secrets redacted). It was a
 			# Usage error, which made "which config do I actually have set?" a question the
@@ -188,6 +195,7 @@ Command := [
 			[_, "plan", ..] => Err(Usage("plan takes no arguments — it bundles summary + open sessions + recent activities"))
 			[_, "complete", ..] => Err(Usage("complete <session_id> [activity_id]"))
 			[_, "skip", ..] => Err(Usage("skip <session_id> \"<reason>\" [activity_id|none]"))
+			[_, "relabel", ..] => Err(Usage("relabel <session_id> <type> \"<detail>\" [\"<rationale>\"]"))
 			[_, "activity", ..] => Err(Usage("activity <activity_id>"))
 			[_, "config", ..] => Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>"))
 			# asking for help — bare, or by any of the conventional spellings —
@@ -388,6 +396,7 @@ Command := [
 		errs(writes("week add", [req_ex("<YYYY-MM-DD>", "2099-01-01"), req_ex("<type>", "endurance"), req_ex("<detail>", "example"), req_ex("<rationale>", "example")], "week_add.json"), ["bad_date"]),
 		errs(writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"), ["activity_already_linked", "activity_not_found", "activity_required", "bad_id", "session_not_found"]),
 		errs(writes("skip", [req("<session_id>"), req("<reason>"), opt("<activity_id|none>")], "skip.json"), ["activity_already_linked", "activity_not_found", "bad_id", "session_done", "session_not_found"]),
+		errs(writes("relabel", [req("<session_id>"), req_ex("<type>", "endurance"), req_ex("<detail>", "example"), opt_ex("<rationale>", "example")], "relabel.json"), ["bad_id", "session_not_found"]),
 		errs(writes("config set", [req_ex("<key>", "timezone"), req_ex("<value>", "UTC")], "config.json"), ["bad_value", "derived_key", "unknown_key"]),
 		# `config unset` declares NO error codes beyond the universal ones. It refuses
 		# nothing: `unknown_key` cannot apply because deleting a key stride does not read is
@@ -815,6 +824,9 @@ expect match Command.parse(["stride", "week"]) { Ok(WeekView) => True  _ => Fals
 expect match Command.parse(["stride", "plan"]) { Ok(Plan) => True  _ => False }
 expect match Command.parse(["stride", "complete", "3", "9"]) { Ok(Complete("3", "9")) => True  _ => False }
 expect match Command.parse(["stride", "skip", "3", "sick"]) { Ok(Skip("3", "sick")) => True  _ => False }
+expect match Command.parse(["stride", "relabel", "45", "threshold", "3x12 @ 230W"]) { Ok(Relabel("45", "threshold", "3x12 @ 230W")) => True  _ => False }
+expect match Command.parse(["stride", "relabel", "45", "threshold", "3x12 @ 230W", "day-swapped with Sunday"]) { Ok(RelabelWith("45", "threshold", "3x12 @ 230W", "day-swapped with Sunday")) => True  _ => False }
+expect match Command.parse(["stride", "relabel", "45"]) { Err(Usage(_)) => True  _ => False }
 expect match Command.parse(["stride", "config", "get", "ftp"]) { Ok(ConfigGet("ftp")) => True  _ => False }
 expect match Command.parse(["stride", "tte", "250"]) { Ok(Tte("250")) => True  _ => False }
 expect match Command.parse(["stride", "reps"]) { Ok(Reps("")) => True  _ => False }
