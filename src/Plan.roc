@@ -507,7 +507,7 @@ Plan :: [].{
                 { name: ":id", value: Integer(id) },
             ],
         })?
-        Output.out!(plan_echo(id, target_date, session_type, pt), |p| "revised #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}${target_note(pt)}")
+        Output.out!(plan_echo(id, target_date, session_type, pt), |p| "revised #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}${Render.target_note(pt)}")
     }
     # the ADR 0009 impossible-zero shape for the echo: reps 0 cannot be a real target,
     # so the magnitudes ride at 0 behind target_known
@@ -516,12 +516,6 @@ Plan :: [].{
         match pt {
             T(t) => { id, target_date, session_type, target_known: True, target_reps: t.reps, target_dur_s: t.dur_s, target_watts: t.watts }
             NoT => { id, target_date, session_type, target_known: False, target_reps: 0, target_dur_s: 0, target_watts: 0.0 }
-        }
-    target_note : [NoT, T({ reps : I64, dur_s : I64, watts : F64 })] -> Str
-    target_note = |pt|
-        match pt {
-            T(t) => " (target ${(t.reps).to_str()}×${Render.mmss(t.dur_s)} @ ${(t.watts.to_i64_wrap()).to_str()}W)"
-            NoT => ""
         }
     insert_planned_session! : Str, Str, Str, Str, Str, [NoT, T({ reps : I64, dur_s : I64, watts : F64 })] => Try({}, _)
     insert_planned_session! = |path, target_date, session_type, detail, rationale, pt| {
@@ -548,7 +542,7 @@ Plan :: [].{
             bindings: [],
             row: Sqlite.i64("id"),
         })?
-        Output.out!(plan_echo(new_id, target_date, session_type, pt), |p| "planned #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}${target_note(pt)}")
+        Output.out!(plan_echo(new_id, target_date, session_type, pt), |p| "planned #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}${Render.target_note(pt)}")
     }
     # ONE not-found message for complete/complete-rest/skip — can't drift apart
     session_not_found! : I64 => Try({}, _)
@@ -602,13 +596,6 @@ Plan :: [].{
             watts_pct: if both and tgt.tw > 0.0 det.dw / tgt.tw * 100.0 else 0.0,
         })
     }
-    # the human clause, numbers only — "did they hit it" is the coach's sentence
-    target_match_note : { target_known : Bool, target_reps : I64, target_dur_s : I64, target_watts : F64, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, reps_delta : I64, watts_pct : F64 } -> Str
-    target_match_note = |tm|
-        if !(tm.target_known) ""
-        else if tm.detected_known " (target ${(tm.target_reps).to_str()}×${Render.mmss(tm.target_dur_s)} @ ${(tm.target_watts.to_i64_wrap()).to_str()}W; detected ${(tm.detected_reps).to_str()}×~${Render.mmss(tm.detected_mean_dur_s)} @ ${(tm.detected_mean_watts.to_i64_wrap()).to_str()}W)"
-        else " (target ${(tm.target_reps).to_str()}×${Render.mmss(tm.target_dur_s)} @ ${(tm.target_watts.to_i64_wrap()).to_str()}W; no detected power intervals to compare)"
-
     complete! : Str, Str => Try({}, _)
     complete! = |session_id_str, activity_id_str| {
         path = Db.open_db!({})?
@@ -710,7 +697,7 @@ Plan :: [].{
                             replaced_note = if replaced != 0 " (replacing activity ${I64.to_str(replaced)}, whose completion of this session is now gone — `stride complete ${I64.to_str(session_id)} ${I64.to_str(replaced)}` puts this session's completion back)" else ""
                             released_note = if released != 0 " (dropping substitute activity ${I64.to_str(released)}, which no longer stands in for this session)" else ""
                             tm = target_match!(path, session_id, activity_id)?
-                            tm_note = target_match_note(tm)
+                            tm_note = Render.target_match_note(tm)
                             match steal_dead_links!(path, activity_id, session_id)? {
                                 ReleasedFrom(holder) =>
                                     Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released, released_substitute_of: holder, target_known: tm.target_known, target_reps: tm.target_reps, target_dur_s: tm.target_dur_s, target_watts: tm.target_watts, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, reps_delta: tm.reps_delta, watts_pct: tm.watts_pct }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note}${tm_note} (released its old substitute link on session #${I64.to_str(o.released_substitute_of)})")
@@ -1160,7 +1147,7 @@ Plan :: [].{
                         \\       COALESCE(CAST(detail AS TEXT),'') AS detail, COALESCE(CAST(rationale AS TEXT),'') AS rationale,
                         \\       COALESCE(target_reps, 0) AS target_reps, COALESCE(target_dur_s, 0) AS target_dur_s,
                         \\       CAST(COALESCE(target_watts, 0) AS REAL) AS target_watts,
-                        \\       CASE WHEN target_reps IS NULL THEN 0 ELSE 1 END AS tk
+                        \\       CASE WHEN COALESCE(target_reps, 0) > 0 THEN 1 ELSE 0 END AS tk
                         \\FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'
                         \\ORDER BY target_date, id
                     ,

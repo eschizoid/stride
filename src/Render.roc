@@ -497,6 +497,24 @@ Render :: [].{
     structure_group_label = |reps, mean_dur, sig, example|
         "${(reps).to_str()}×[~${mmss(mean_dur)}] ${sig} intervals (${example})"
 
+    ## the week-add echo's target clause (#198, ADR 0014) — numbers only. Lives in
+    ## Render, not Plan, so the 0012 sweep expect below this module can actually run
+    ## over it (Plan.roc is not in the pure-test list).
+    target_note : [NoT, T({ reps : I64, dur_s : I64, watts : F64 })] -> Str
+    target_note = |pt|
+        match pt {
+            T(t) => " (target ${(t.reps).to_str()}×${mmss(t.dur_s)} @ ${(t.watts.to_i64_wrap()).to_str()}W)"
+            NoT => ""
+        }
+
+    ## complete's target-vs-detected clause — numbers on both sides, no verdict:
+    ## "did they hit it" is the coach's sentence (ADR 0012, ADR 0014 §4)
+    target_match_note : { target_known : Bool, target_reps : I64, target_dur_s : I64, target_watts : F64, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, reps_delta : I64, watts_pct : F64 } -> Str
+    target_match_note = |tm|
+        if !(tm.target_known) ""
+        else if tm.detected_known " (target ${(tm.target_reps).to_str()}×${mmss(tm.target_dur_s)} @ ${(tm.target_watts.to_i64_wrap()).to_str()}W; detected ${(tm.detected_reps).to_str()}×~${mmss(tm.detected_mean_dur_s)} @ ${(tm.detected_mean_watts.to_i64_wrap()).to_str()}W)"
+        else " (target ${(tm.target_reps).to_str()}×${mmss(tm.target_dur_s)} @ ${(tm.target_watts.to_i64_wrap()).to_str()}W; no detected power intervals to compare)"
+
     progress_group_label : Str, [Exact, SimilarDistance(F64), LoneNoDistance] -> Str
     progress_group_label = |name, kind|
         match kind {
@@ -2137,6 +2155,13 @@ expect {
         Render.freshness_note({ activities_awaiting_metrics: 0, activities_awaiting_metrics_known: True, activities_awaiting_streams: 40 }),
         Render.freshness_note({ activities_awaiting_metrics: 12, activities_awaiting_metrics_known: True, activities_awaiting_streams: 40 }),
         Render.freshness_note({ activities_awaiting_metrics: 0, activities_awaiting_metrics_known: False, activities_awaiting_streams: 4 }),
+        # the target clauses (#198) join on arrival — targeted/untargeted on the echo,
+        # and all three match arms: both known, target-only, and the silent untargeted
+        Render.target_note(T({ reps: 3, dur_s: 720, watts: 230.0 })),
+        Render.target_note(NoT),
+        Render.target_match_note({ target_known: True, target_reps: 3, target_dur_s: 720, target_watts: 230.0, detected_known: True, detected_reps: 3, detected_mean_dur_s: 720, detected_mean_watts: 233.0, reps_delta: 0, watts_pct: 101.3 }),
+        Render.target_match_note({ target_known: True, target_reps: 3, target_dur_s: 720, target_watts: 230.0, detected_known: False, detected_reps: 0, detected_mean_dur_s: 0, detected_mean_watts: 0.0, reps_delta: 0, watts_pct: 0.0 }),
+        Render.target_match_note({ target_known: False, target_reps: 0, target_dur_s: 0, target_watts: 0.0, detected_known: False, detected_reps: 0, detected_mean_dur_s: 0, detected_mean_watts: 0.0, reps_delta: 0, watts_pct: 0.0 }),
     ]
     List.all(notes, |p| !(Metrics.has_coaching_language(p)))
 }

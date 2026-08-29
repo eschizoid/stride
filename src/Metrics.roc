@@ -1717,7 +1717,7 @@ Metrics :: [].{
                                     watts_s = Str.replace_last(watts_part, "W", "")
                                     match (I64.from_str(reps_s), I64.from_str(mm_s), I64.from_str(ss_s), I64.from_str(watts_s)) {
                                         (Ok(reps), Ok(mm), Ok(ss), Ok(w)) =>
-                                            if reps >= 1 and reps <= 99 and mm >= 0 and ss >= 0 and ss < 60 and (mm * 60 + ss) >= 30 and w >= 1 and w <= 2500 {
+                                            if reps >= 1 and reps <= 99 and mm >= 0 and mm <= 99 and ss >= 0 and ss < 60 and (mm * 60 + ss) >= 30 and w >= 1 and w <= 2500 {
                                                 Ok({ reps, dur_s: mm * 60 + ss, watts: (w).to_f64() })
                                             } else {
                                                 Err(BadTarget)
@@ -4454,6 +4454,7 @@ expect Metrics.parse_target("3x12:60@230W") == Err(BadTarget)
 expect Metrics.parse_target("3x0:10@230W") == Err(BadTarget)
 expect Metrics.parse_target("3x12:00@0W") == Err(BadTarget)
 expect Metrics.parse_target("3x12:00@2501W") == Err(BadTarget)
+expect Metrics.parse_target("3x100:00@230W") == Err(BadTarget)
 expect Metrics.parse_target("-3x12:00@230W") == Err(BadTarget)
 expect Metrics.parse_target("threshold") == Err(BadTarget)
 expect Metrics.parse_target("") == Err(BadTarget)
