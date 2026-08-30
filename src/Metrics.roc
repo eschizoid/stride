@@ -701,6 +701,20 @@ Metrics :: [].{
     atl_alpha : F64
     atl_alpha = 0.1331221
 
+    ## deterministic TSS of a structured target's WORK (#138, ADR 0014 targets as the
+    ## input): (watts/ftp)² × hours × 100 — the same arithmetic analyze runs on real
+    ## watts, over the work the target names. It understates the session (warmup and
+    ## recoveries carry load the target does not describe); the projection publishes
+    ## how many sessions contributed so that understatement is data, not surprise.
+    tss_from_target : { reps : I64, dur_s : I64, watts : F64, ftp : F64 } -> F64
+    tss_from_target = |{ reps, dur_s, watts, ftp }|
+        if ftp <= 0.0 0.0
+        else {
+            hours = ((reps * dur_s)).to_f64() / 3600.0
+            intensity = watts / ftp
+            intensity * intensity * hours * 100.0
+        }
+
     load_step : { ctl_prev : F64, atl_prev : F64, tss : F64 } -> { ctl : F64, atl : F64, tsb : F64 }
     load_step = |{ ctl_prev, atl_prev, tss }| {
         ctl = ctl_prev + (tss - ctl_prev) * ctl_alpha
@@ -4458,3 +4472,12 @@ expect Metrics.parse_target("3x100:00@230W") == Err(BadTarget)
 expect Metrics.parse_target("-3x12:00@230W") == Err(BadTarget)
 expect Metrics.parse_target("threshold") == Err(BadTarget)
 expect Metrics.parse_target("") == Err(BadTarget)
+
+# one hour of work AT ftp is 100 by construction, the anchor the TSS scale is built on
+expect (Metrics.tss_from_target({ reps: 1, dur_s: 3600, watts: 200.0, ftp: 200.0 }) - 100.0).abs() < 0.001
+# 3×12min @ 230 against FTP 230: intensity 1.0, 0.6h → 60
+expect (Metrics.tss_from_target({ reps: 3, dur_s: 720, watts: 230.0, ftp: 230.0 }) - 60.0).abs() < 0.001
+# intensity scales QUADRATICALLY: same duration at 110% is 1.21×
+expect (Metrics.tss_from_target({ reps: 1, dur_s: 3600, watts: 220.0, ftp: 200.0 }) - 121.0).abs() < 0.001
+# no FTP = no arithmetic, 0.0 behind the caller's flag — never a guess
+expect (Metrics.tss_from_target({ reps: 3, dur_s: 720, watts: 230.0, ftp: 0.0 })).abs() < 0.001

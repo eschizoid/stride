@@ -125,6 +125,10 @@ help_text =
         \\                                status and metrics stay untouched
         \\    rate <activity_id|latest> <1-10>
         \\                                session-RPE — scores strength honestly
+        \\    event add <date> <name>    record an event target (judgment tier)
+        \\    event remove <event_id>    delete an event target
+        \\    events                      projected CTL/ATL/TSB on each event date,
+        \\                                from the open plan's structured targets
         \\
         \\REFERENCE
         \\    zones                       power-zone watt ranges (7) from your FTP (alias: pz)
@@ -396,6 +400,9 @@ dispatch! = |cmd|
         Command.WeekAddT(date, session_type, detail, rationale, target) => Plan.plan_add!(date, session_type, detail, rationale, Target(target))
         Command.Relabel(session_id, session_type, detail) => Plan.relabel!(session_id, session_type, detail, KeepRationale)
         Command.RelabelWith(session_id, session_type, detail, rationale) => Plan.relabel!(session_id, session_type, detail, SetRationale(rationale))
+        Command.EventAdd(date, name) => Plan.event_add!(date, name)
+        Command.EventRemove(event_id) => Plan.event_remove!(event_id)
+        Command.Events => Plan.events!({})
         Command.Complete(session_id, activity_id) => Plan.complete!(session_id, activity_id)
         Command.CompleteRest(session_id) => Plan.complete_rest!(session_id)
         Command.Skip(session_id, reason) => Plan.skip!(session_id, reason, NoSub)

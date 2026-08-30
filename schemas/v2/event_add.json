@@ -1,0 +1,26 @@
+{
+  "title": "event_add",
+  "description": "Result of `stride event add <YYYY-MM-DD> \"<name>\"` — a stored event target (judgment tier, removable). Refuses non-canonical dates and dates not in the future (bad_date).",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "id",
+    "event_date",
+    "name",
+    "days_away"
+  ],
+  "properties": {
+    "id": {
+      "type": "integer"
+    },
+    "event_date": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "days_away": {
+      "type": "integer"
+    }
+  }
+}

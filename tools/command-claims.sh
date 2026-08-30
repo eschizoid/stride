@@ -103,7 +103,7 @@ EXPECTED_QUOTING=1
 # README fence that nothing was checking; the fix went in the DOC (backticked,
 # matching its neighbour), because inside a fence an explanatory comment and a
 # commented invocation are both `#` plus text.
-EXPECTED_UNPARSED=48
+EXPECTED_UNPARSED=49
 
 # ------------------------------------------- the trailing-token rule, and its self-test
 #
@@ -407,6 +407,8 @@ complete=1
 config get=1
 config set=1,2
 config unset=1
+event add=1,2
+event remove=1
 import=1
 rate=1,2
 relabel=1,2,3
@@ -476,6 +478,8 @@ complete=1,2
 config get=1
 config set=1,2
 config unset=1
+event add=1,2
+event remove=1
 import=1
 load=1
 pc=1,2
