@@ -4,7 +4,15 @@ Working reference for the new (Zig) compiler + basic-cli 0.22, learned empirical
 against the compiler and roc-lang/roc source during the migration (completed
 2026-08-02). The migration's progress log is gone — this is the part worth keeping.
 
-## Toolchain pin: `nightly-2026-08-23-fb208ba` (the hold below is LIFTED)
+## Toolchain pin: `nightly-2026-08-27-8fa1a34` (the hold below is LIFTED)
+
+**Bumped 2026-08-30**, from `nightly-2026-08-23-fb208ba`. No source change. Verified on
+x86_64 macOS before bumping: `just test` → `1068 == 1068` and ALL E2E CHECKS PASS, every
+arm of `just e2e-sync` green. **08-28 and 08-29 are MISCOMPILED — do not bump past 08-27
+without re-measuring**: both crash ~20 pure `Metrics` expects at runtime ("Roc
+application crashed: runtime error" in list-heavy code — resample/sort paths), measured
+on this machine with each nightly's own binary. The regression entered between 08-27 and
+08-28; whoever bumps next should check it healed.
 
 **Bumped 2026-08-24**, from `nightly-2026-08-17-b9ca140`. No migration cost this time —
 no source change of any kind. Verified on x86_64 macOS before bumping: `roc check` clean,

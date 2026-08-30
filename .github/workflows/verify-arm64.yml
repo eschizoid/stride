@@ -16,7 +16,7 @@ jobs:
       - uses: roc-lang/setup-roc@v0.3.0
         with:
           version: nightly-new-compiler
-          nightly-tag: nightly-2026-08-23-fb208ba
+          nightly-tag: nightly-2026-08-27-8fa1a34
       - name: Build with the release workflow's exact target flag
         run: |
           set -euo pipefail
