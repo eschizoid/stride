@@ -406,7 +406,7 @@ run_sync! = || {
     ahome = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
     _ = sync_stride!(bin, ahome, base, ["init"])
     auth_ok = Str.trim(sh!("echo fakecode | env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret HOME='${ahome}' STRIDE_API_BASE='${base}' STRIDE_FORMAT=json '${bin}' auth 2>/dev/null"))
-    check!("auth's success payload conforms to its schema", Str.trim(sh!("printf '%s' '${auth_ok}' | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/auth.json -f tools/validate.jq 2>&1")) == "")?
+    check!("auth's success payload conforms to its schema", Str.trim(sh!("printf '%s' '${auth_ok}' | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v3/auth.json -f tools/validate.jq 2>&1")) == "")?
     check!("...reporting the authorization it actually performed", Str.trim(sh!("printf '%s' '${auth_ok}' | jq -r '.data.authorized'")) == "true")?
     # `tojson`, NOT `== "9999999999"`: the validator's integer test is `floor($v) == $v`,
     # which `9999999999.0` passes, and a `"expires_at":9` substring passes too. The record
@@ -498,7 +498,7 @@ run_sync! = || {
     )?
     check!("...while its progress narrates on stderr", Str.contains(sh!("cat '${be}'"), "fetching activity list"))?
     check!("...and that narration never reaches stdout", !(Str.contains(bf_out, "fetching activity list")))?
-    check!("sync conforms to its schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
+    check!("sync conforms to its schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
 
     # sync already drained both activities' streams, so this run has nothing to
     # fetch. `resumable` is the field a caller acts on -- pin it directly rather
@@ -663,7 +663,7 @@ run_skips! = || {
     check!("...and stores only the one that decoded", syncq!(".data.streams_fetched") == "1")?
     check!("...naming it on stderr, with the activity id", Str.contains(sh!("cat '${sync_err}'"), "502: stream data would not decode"))?
     check!("...while its stdout stays exactly the envelope", Str.starts_with(Str.trim(sh!("cat '${home}/sync.out'")), "{\"schema_version\"") and List.len(Str.split_on(Str.trim(sh!("cat '${home}/sync.out'")), "\n")) == 1)?
-    check!("sync conforms to its schema with the new key", Str.trim(sh!("jq '.data' '${home}/sync.out' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
+    check!("sync conforms to its schema with the new key", Str.trim(sh!("jq '.data' '${home}/sync.out' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
     check!("humans are told too, not just machines", Str.contains(Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' sync 2>/dev/null")), "unreadable stream data"))?
 
     bo = "${home}/bf.out"
@@ -681,7 +681,7 @@ run_skips! = || {
     # `stopped` reports false here, about a row stride itself intends to retry.
     check!("the queue drained, so stopped is complete", bfq!(".data.stopped") == "complete")?
     check!("...yet the run is resumable, because that id retries next run", bfq!(".data.resumable") == "true")?
-    check!("the skip payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
+    check!("the skip payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
 
     # re-running really does re-attempt it — the claim `resumable: true` makes
     _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null")
@@ -828,12 +828,12 @@ run_stops! = || {
         _ = sql!(db, "DELETE FROM config WHERE key IN ('strava_reads_day','strava_reads_today');")
         # The three sibling stop-reason arms each validate their payload and this one did
         # not, which mattered more here than anywhere else: this is the only arm in the
-        # suite that ADDS a value to an enum in schemas/v2. Review deleted
+        # suite that ADDS a value to an enum in schemas/v3. Review deleted
         # "list_rate_limited" from sync.json's `stopped` enum and all 19 checks stayed
         # green — a contract break shipping under a green suite, and no other driver could
         # have caught it, because emitting the value at all needs a list-429 mock and only
         # these two halves have one.
-        check!("the list-refused payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
+        check!("the list-refused payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
         # PARTIAL progress, against a second mock serving a full page then refusing.
         # Everything above runs on a page-one refusal, where nothing was upserted, so
         # `synced` is 0 whether the accumulator is carried out or thrown away.
@@ -863,7 +863,7 @@ run_stops! = || {
         # nothing was updated on a first run, and `updated_activities` survived being
         # replaced by `synced` because no check read it
         check!("...and nothing updated, because every row was new", pq!(".data.updated_activities") == "0")?
-        check!("the partial-list payload conforms to the schema too", Str.trim(sh!("jq '.data' '${part_home}/out.json' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
+        check!("the partial-list payload conforms to the schema too", Str.trim(sh!("jq '.data' '${part_home}/out.json' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
         # Run it AGAIN against the same mock. `synced` is what was re-listed and
         # `new_activities` is what was inserted, and on the first run both are 200 — so
         # either one hardcoded to the other passes. The second run separates them: the same
@@ -930,12 +930,12 @@ run_stops! = || {
         human_cap = sh!("HOME='${home}' STRIDE_API_BASE='${base}' ${envs} '${bin}' sync 2>&1")
         check!("...and a run with nothing it can do spends NOTHING finding that out", str_to_i64(Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='strava_reads_today'),'0');"))) == cap_before)?
         # ...and that payload CONFORMS. Every other stop-reason arm validates its payload
-        # and this one did not — the one arm that added a value to a schemas/v2 enum. The
+        # and this one did not — the one arm that added a value to a schemas/v3 enum. The
         # closed record annotation pins the shape at compile time (ADR 0000 section 9c), so
         # what this adds is that the `stopped` VALUE lands in the enum, which is precisely
         # what this change touched.
         _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' ${envs} '${bin}' sync >'${bo}' 2>/dev/null")
-        check!("...and the daily-cap payload conforms to the sync schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
+        check!("...and the daily-cap payload conforms to the sync schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
         check!("...and the human line names TOMORROW", Str.contains(human_cap, "again tomorrow"))?
         # anchored on the REMEDY clause, not on "15 minutes" alone: the drain banner on
         # stderr says "Strava caps reads per 15-minute window", so the loose form passes on
@@ -1038,7 +1038,7 @@ run_stops! = || {
         check!("...counting what it stored before the 429", bfq!(".data.streams_fetched") == "1")?
         check!("...leaving the 429'd id pending", bfq!(".data.pending_streams") == "1")?
         check!("...and resumable, because waiting will help", bfq!(".data.resumable") == "true")?
-        check!("the rate-limited payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
+        check!("the rate-limited payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
         # fresh queue: the JSON run above already stored one, so without this the human
         # run drains what is left and renders an EMPTY tail instead. (It used to render
         # "all streams present" there — text that never actually shipped, because the
@@ -1081,7 +1081,7 @@ run_stops! = || {
         check!("...still reporting the budget stop, honestly", bfq!(".data.stopped") == "budget_reached")?
         check!("...yet NOT resumable, because nothing is left", bfq!(".data.resumable") == "false")?
         check!("...having stored the id the first run could not reach", bfq!(".data.streams_fetched") == "1")?
-        check!("the budget-stopped payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v2/sync.json -f tools/validate.jq 2>&1")) == "")?
+        check!("the budget-stopped payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
         # fresh queue, same reason as the rate-limited branch above
         _ = sql!(db, "DELETE FROM streams;")
         _ = run_sync_bf!("human")
@@ -1182,7 +1182,7 @@ b_init_config! = |ctx| {
     check!("init reports initialized", Str.contains(stride!(ctx.bin, ctx.home, ["init"]), "initialized"))?
     # bumped to 2 when doctor renamed ftp_configured -> ftp_derived_sports: a renamed field
     # IS a shape change, and the envelope version is how a caller detects one
-    check!("summary envelope is versioned", strjq!(ctx, ["summary"], ".schema_version") == "2")?
+    check!("summary envelope is versioned", strjq!(ctx, ["summary"], ".schema_version") == "3")?
     check!("missing-config error code", Str.contains(stride!(ctx.bin, ctx.home, ["summary"]), "missing_config"))?
     # doctor's MissingConfig arm, reached here because the harness is already in exactly
     # that state — no zones set. This is the first screen a new user sees, and until this
@@ -1267,12 +1267,12 @@ b_init_config! = |ctx| {
 
     # Every schema a form names must EXIST. Read from the directory, so deleting a
     # schema file without updating the table fails here rather than at some caller.
-    missing_schemas = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].schema | select(. != \"\")' | sort -u | while read -r f; do [ -f schemas/v2/\"$f\" ] || echo \"$f\"; done"))
-    check!("every schema a form names exists in schemas/v2", missing_schemas == "")?
+    missing_schemas = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].schema | select(. != \"\")' | sort -u | while read -r f; do [ -f schemas/v3/\"$f\" ] || echo \"$f\"; done"))
+    check!("every schema a form names exists in schemas/v3", missing_schemas == "")?
     # ...and the reverse: a schema nobody claims is a payload no agent can find its
     # way to. envelope.json is the wrapper every response shares, so it is claimed by
     # all of them and named by none.
-    unclaimed = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].schema' | sort -u > /tmp/e2e-claimed.$$; ls schemas/v2 | grep -v '^envelope.json$' | while read -r f; do grep -qx \"$f\" /tmp/e2e-claimed.$$ || echo \"$f\"; done; rm -f /tmp/e2e-claimed.$$"))
+    unclaimed = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].schema' | sort -u > /tmp/e2e-claimed.$$; ls schemas/v3 | grep -v '^envelope.json$' | while read -r f; do grep -qx \"$f\" /tmp/e2e-claimed.$$ || echo \"$f\"; done; rm -f /tmp/e2e-claimed.$$"))
     # Pinned as a VALUE, not waved through by an exclusion list: these two are reached
     # by flag rather than by subcommand — `--version` is listed under `flags`, and
     # commands.json is the schema of this very payload — so no command form names
@@ -2591,7 +2591,7 @@ b_seed_analyze! = |ctx| {
     check!("skill teaches no environment detection", !(Str.contains(skill_text, "CLAUDECODE")) and !(Str.contains(skill_text, "detected automatically")))?
 
     # ── the JSON contract as a tested artifact (#164) ────────────────────
-    # schemas/v2/*.json is the ONE source of truth for the machine interface;
+    # schemas/v3/*.json is the ONE source of truth for the machine interface;
     # tools/validate.jq checks a payload and prints one line per violation.
     # additionalKeys:false is the drift catcher — a payload that GAINS a field
     # without a schema update fails here.
@@ -2838,14 +2838,14 @@ b_seed_analyze! = |ctx| {
     # the error arm of the envelope, with its code vocabulary enumerated: an
     # error code that is not in the schema fails here, which is the same drift
     # bargain additionalKeys makes for payload keys
-    check!("an error envelope conforms, code included", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' activity 99999999 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1")) == "")?
+    check!("an error envelope conforms, code included", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' activity 99999999 2>&1 | jq -r --slurpfile schema schemas/v3/envelope.json -f tools/validate.jq 2>&1")) == "")?
     # The enum is hand-maintained beside 27 emit sites, and this PR proved twice
     # in one file that it drifts: a fabricated code (bad_args, left over from a
     # rewritten branch) and a missing one (activity_required, a routine
     # response). Set equality in BOTH directions, extracted multi-line-aware
     # because err_out! calls wrap. A count check would have passed — the sets
     # were both 27.
-    code_diff = Str.trim(sh!("cat src/*.roc | tr '\\n' ' ' | grep -oE '(err_out!|emit_err!)\\( *\"[a-z_]+\"' | grep -oE '\"[a-z_]+\"' | tr -d '\"' | sort -u > /tmp/stride_src_codes.$$; jq -r '.properties.error.properties.code.enum[]' schemas/v2/envelope.json | sort > /tmp/stride_enum_codes.$$; diff /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$; rm -f /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$"))
+    code_diff = Str.trim(sh!("cat src/*.roc | tr '\\n' ' ' | grep -oE '(err_out!|emit_err!)\\( *\"[a-z_]+\"' | grep -oE '\"[a-z_]+\"' | tr -d '\"' | sort -u > /tmp/stride_src_codes.$$; jq -r '.properties.error.properties.code.enum[]' schemas/v3/envelope.json | sort > /tmp/stride_enum_codes.$$; diff /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$; rm -f /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$"))
     check!("every error code the source emits is in the contract, and vice versa", code_diff == "")?
     # ── the two directions of the error-code declaration (#239) ─────────────────
     # Done in jq, NOT with `comm` and process substitution. `sh!` runs under /bin/sh, which
@@ -2868,24 +2868,24 @@ b_seed_analyze! = |ctx| {
     # key makes the selector yield [], which joins to "", which is the pass
     # condition — it held only through an undocumented coupling to the sibling
     # direction.
-    ncontract = Str.trim(sh!("jq -r '.properties.error.properties.code.enum | length' schemas/v2/envelope.json 2>/dev/null"))
+    ncontract = Str.trim(sh!("jq -r '.properties.error.properties.code.enum | length' schemas/v3/envelope.json 2>/dev/null"))
     check!("the contract error-code set is non-empty (got ${ncontract})", ncontract != "" and ncontract != "0")?
     # DECLARED -> CONTRACT. A typo, or a code deleted from the envelope but left declared.
-    notin = Str.trim(sh!("jq -r --slurpfile d '${decl_f}' '.properties.error.properties.code.enum as $c | $d[0] | map(select(. as $x | ($c | index($x)) == null)) | join(\" \")' schemas/v2/envelope.json 2>&1"))
+    notin = Str.trim(sh!("jq -r --slurpfile d '${decl_f}' '.properties.error.properties.code.enum as $c | $d[0] | map(select(. as $x | ($c | index($x)) == null)) | join(\" \")' schemas/v3/envelope.json 2>&1"))
     check!("every declared error code exists in the envelope contract (stray: ${notin})", notin == "")?
     # CONTRACT -> DECLARED, which is the direction that matters. A code added to the
     # envelope and attributed to nothing is how a hand-maintained list rots; it fails here
     # instead of sitting undiscovered. `unknown_command` is the one exemption and it is a
     # real one — it is what you get when there IS no form, so naming a form would be false.
-    unattr = Str.trim(sh!("jq -r --slurpfile d '${decl_f}' '.properties.error.properties.code.enum | unique | map(select(. as $x | ($d[0] | index($x)) == null)) | map(select(. != \"unknown_command\")) | join(\" \")' schemas/v2/envelope.json 2>&1"))
+    unattr = Str.trim(sh!("jq -r --slurpfile d '${decl_f}' '.properties.error.properties.code.enum | unique | map(select(. as $x | ($d[0] | index($x)) == null)) | map(select(. != \"unknown_command\")) | join(\" \")' schemas/v3/envelope.json 2>&1"))
     check!("every contract error code is attributed to a form or to universal (unattributed: ${unattr})", unattr == "")?
     _ = sh!("rm -f '${decl_f}'")
-    check!("...and an unknown code would be caught", Str.contains(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' activity 99999999 2>&1 | jq '.error.code = \"not_a_real_code\"' 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1"), "not in enum"))?
-    check!("the envelope itself conforms", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1")) == "")?
+    check!("...and an unknown code would be caught", Str.contains(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' activity 99999999 2>&1 | jq '.error.code = \"not_a_real_code\"' 2>&1 | jq -r --slurpfile schema schemas/v3/envelope.json -f tools/validate.jq 2>&1"), "not in enum"))?
+    check!("the envelope itself conforms", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>&1 | jq -r --slurpfile schema schemas/v3/envelope.json -f tools/validate.jq 2>&1")) == "")?
     # the summary EMBEDDED in the plan bundle is the same shape as the standalone
     # one — asserted, not assumed (plan.json types it loosely because the
     # validator has no $ref)
-    check!("plan's embedded summary conforms to the summary schema", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' plan 2>&1 | jq '.data.summary' 2>&1 | jq -r --slurpfile schema schemas/v2/summary.json -f tools/validate.jq 2>&1")) == "")?
+    check!("plan's embedded summary conforms to the summary schema", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' plan 2>&1 | jq '.data.summary' 2>&1 | jq -r --slurpfile schema schemas/v3/summary.json -f tools/validate.jq 2>&1")) == "")?
     # ...and the plan ARRAYS need rows, or their item schemas (5 and 9 required
     # keys, plus the status enum) pass on empty arrays exactly like segments did
     sch_done = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "schema probe done", "r"], ".data.id"))
@@ -4008,7 +4008,7 @@ b_seed_analyze! = |ctx| {
     # ...and the validator is not a rubber stamp: each mutation MUST be caught,
     # or "conforms" above would mean nothing (a validator that passes everything
     # passes everything).
-    mutate! = |filter| Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' summary | jq '.data | ${filter}' | jq -r --slurpfile schema schemas/v2/summary.json -f tools/validate.jq 2>&1"))
+    mutate! = |filter| Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' summary | jq '.data | ${filter}' | jq -r --slurpfile schema schemas/v3/summary.json -f tools/validate.jq 2>&1"))
     check!("validator catches a MISSING required key", Str.contains(mutate!("del(.as_of)"), "missing required key"))?
     check!("validator catches a WRONG type", Str.contains(mutate!(".form_tsb = \"x\""), "expected number"))?
     check!("validator catches an UNDECLARED key (payload drift)", Str.contains(mutate!(".surprise = 1"), "absent from the schema"))?
@@ -4018,7 +4018,7 @@ b_seed_analyze! = |ctx| {
     # denylist of keywords. The case that matters: `additionalProperties: false`
     # is what a JSON-Schema-literate contributor writes instead of the house
     # `additionalKeys: false`; it looks right and would turn drift detection off.
-    check!("schemas stay inside the validator's subset", Str.trim(sh!("for f in schemas/v2/*.json; do jq -r -f tools/schema-lint.jq \"$f\" 2>&1; done")) == "")?
+    check!("schemas stay inside the validator's subset", Str.trim(sh!("for f in schemas/v3/*.json; do jq -r -f tools/schema-lint.jq \"$f\" 2>&1; done")) == "")?
     check!("...and the linter catches the dangerous look-alike", Str.contains(sh!("echo '{\"type\":\"object\",\"additionalProperties\":false}' | jq -r -f tools/schema-lint.jq 2>&1"), "additionalProperties"))?
 
     # keep later fixture-sensitive checks honest: remove the interval ride again
@@ -4136,7 +4136,7 @@ b_command_schemas! = |ctx| {
     # networked forms only because auth and sync both write today — and the first
     # version swept in `init` and `sync`, one writing to the fixture, one reaching
     # for the network from the offline driver.
-    schema_mismatch = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | \"\\([.name] + [.args[] | select(.required) | .example] | join(\" \"))\\t\\(.schema)\"' | while IFS=$'\\t' read -r n sc; do out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null); echo \"$out\" | jq -e '.data' >/dev/null 2>&1 || continue; bad=$(echo \"$out\" | jq '.data' | jq -r --slurpfile schema schemas/v2/$sc -f tools/validate.jq 2>&1 | head -1); [ -z \"$bad\" ] || echo \"$n->$sc\"; done | tr '\\n' ' '"))
+    schema_mismatch = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | \"\\([.name] + [.args[] | select(.required) | .example] | join(\" \"))\\t\\(.schema)\"' | while IFS=$'\\t' read -r n sc; do out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null); echo \"$out\" | jq -e '.data' >/dev/null 2>&1 || continue; bad=$(echo \"$out\" | jq '.data' | jq -r --slurpfile schema schemas/v3/$sc -f tools/validate.jq 2>&1 | head -1); [ -z \"$bad\" ] || echo \"$n->$sc\"; done | tr '\\n' ' '"))
     check!("every form's payload conforms to the schema the TABLE names for it (bad: ${schema_mismatch})", schema_mismatch == "")?
     # ...and that loop validated a real number of forms rather than skipping them
     # all: `validated != "0"` cannot see 15 selected vs 13 validated, and the
@@ -4260,7 +4260,7 @@ b_command_schemas! = |ctx| {
     # ORDERING: required arguments must form a PREFIX. Both probes verify the
     # required COUNT, neither its position, so swapping a required and an optional
     # preserves both counts and passes. Not only a contract lie:
-    # schemas/v2/commands.json states "optional ones last" and THREE probes build
+    # schemas/v3/commands.json states "optional ones last" and THREE probes build
     # command lines with `select(.required)`, which silently drops an optional
     # sitting between required ones — asserting it makes those three sound rather
     # than lucky.
@@ -4509,7 +4509,7 @@ b_agent_loop! = |ctx| {
     # lines above forbids. Fired and forgotten is house style elsewhere in this file; the
     # block that sets the stricter standard should not be the one breaking it.
     sub_out = stride!(ctx.bin, ctx.home, ["skip", sid2, "did something else instead", "9221"])
-    check!("...the substitution is accepted, not refused (got ${Str.trim(sub_out)})", Str.contains(sub_out, "\"substitute_activity\":9221") and Str.contains(sub_out, "\"skipped_session\":${sid2}"))?
+    check!("...the substitution is accepted, not refused (got ${Str.trim(sub_out)})", Str.contains(sub_out, "\"substitute_activity_id\":9221") and Str.contains(sub_out, "\"skipped_session\":${sid2}"))?
     # ...and a SKIPPED session is not in the actionable list: the removal check
     # bounds `open_sessions` from BELOW, this bounds it from above. The gap: one
     # token (`= 'open'` -> `<> 'done'`) puts every skipped session back in the
@@ -4860,7 +4860,7 @@ b_plan! = |ctx| {
     # #201 on skip's SUBSTITUTE id: 3e2 is activity 300, which the next line links for
     # real, so this fails on a revert rather than trading one not-found for another.
     check!("skip refuses an exponent substitute id", Str.contains(stride!(ctx.bin, ctx.home, ["skip", today_sess, "x", "3e2"]), "bad_id"))?
-    check!("skip with substitute links the activity", Str.contains(stride!(ctx.bin, ctx.home, ["skip", today_sess, "rode easy instead", "300"]), "\"substitute_activity\""))?
+    check!("skip with substitute links the activity", Str.contains(stride!(ctx.bin, ctx.home, ["skip", today_sess, "rode easy instead", "300"]), "\"substitute_activity_id\""))?
     check!("week carries the substitute id", strjq!(ctx, ["week"], "[.data[] | select(.substitute_activity_id == 300)] | length") == "1")?
     # once linked, the activity is no longer unplanned — one row, not two
     check!("linked substitute leaves no unplanned row", strjq!(ctx, ["week"], "[.data[] | select(.status == \"unplanned\" and .activity_id == 300)] | length") == "0")?
@@ -4905,7 +4905,7 @@ b_plan! = |ctx| {
     # in the action block all land on non-steal arms, so `released_substitute_of` stayed
     # unpinned: deleting it from complete.json left the suite green while a real steal
     # payload violated it.
-    check!("...and a steal payload conforms to complete.json", Str.trim(sh!("printf '%s' '${steal_json}' | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/complete.json -f tools/validate.jq 2>&1")) == "")?
+    check!("...and a steal payload conforms to complete.json", Str.trim(sh!("printf '%s' '${steal_json}' | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v3/complete.json -f tools/validate.jq 2>&1")) == "")?
     # ...and the human sentence carries BOTH clauses. The arm builds one string from two
     # independent notes, so a clause dropped there is invisible to any JSON assertion.
     # ...re-staged rather than re-read, because the steal CONSUMED the tombstone link: a
@@ -4966,7 +4966,7 @@ b_plan! = |ctx| {
     # `replaced_activity` does would report 0 on this payload, and that mutant was green.
     check!("...while replacing no completion, because a skipped row holds none", Str.trim(sh!("printf '%s' '${b_json}' | jq -r '.data.replaced_activity | tojson'")) == "0")?
     check!("...and the substitute link really is gone from the row", Str.trim(sql!(ctx.db, "SELECT COALESCE(substitute_activity_id,0) FROM planned_sessions WHERE id = ${b1.vic};")) == "0")?
-    check!("...and this payload conforms too", Str.trim(sh!("printf '%s' '${b_json}' | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/complete.json -f tools/validate.jq 2>&1")) == "")?
+    check!("...and this payload conforms too", Str.trim(sh!("printf '%s' '${b_json}' | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v3/complete.json -f tools/validate.jq 2>&1")) == "")?
     b2 = bstage!("2099-10-03", "2099-10-04", "308", "309")?
     b_human = stride_human!(ctx.bin, ctx.home, ["complete", b2.vic, "309"])
     check!("...and the human line names both, on a fresh instance of the same state", Str.contains(b_human, "dropping substitute activity 308") and Str.contains(b_human, "released its old substitute link on session #${b2.hold}"))?
@@ -5792,7 +5792,7 @@ b_progress_b! = |ctx| {
     # classifies it (not the stream fallback, a term since removed as dead). Without
     # 238 the row would be
     # counted as usable by `with_hr` while being called strapless by the streak, which is
-    # exactly what `schemas/v2/doctor.json` publishes as a guarantee about these two fields.
+    # exactly what `schemas/v3/doctor.json` publishes as a guarantee about these two fields.
     # Later the same day as 237, so 238 is the newest row and the walk starts on it.
     _ = seed_ride!(ctx.db, "238", "Doctor Rescued Strap", "${ctx.today}T10:00:00Z", "1300", "12000", "200", "18")
     _ = seed_power_hr_stream!(ctx.db, 238, 1300, 200, 150)
@@ -6196,7 +6196,7 @@ b_progress_structure! = |ctx| {
 
 # ── import: Strava account export ────────────────────────────────────
 validate_schema! : Ctx, Str, Str => Str
-validate_schema! = |ctx, cmd, schema| Str.trim(sh!("out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${cmd} 2>/dev/null); if [ -z \"$out\" ]; then echo \"no output from '${cmd}' — nothing was validated\"; else printf '%s' \"$out\" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/${schema}.json -f tools/validate.jq 2>&1; fi"))
+validate_schema! = |ctx, cmd, schema| Str.trim(sh!("out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${cmd} 2>/dev/null); if [ -z \"$out\" ]; then echo \"no output from '${cmd}' — nothing was validated\"; else printf '%s' \"$out\" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v3/${schema}.json -f tools/validate.jq 2>&1; fi"))
 
 b_import! : Ctx => Try({}, _)
 b_import! = |ctx| {

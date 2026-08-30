@@ -1,6 +1,6 @@
 {
   "title": "plan",
-  "description": "The planning bundle. `summary` is intentionally typed loosely here — it is the summary payload and is validated against schemas/v2/summary.json in the same run; this validator has no $ref, so cross-file composition happens at the call site rather than being faked with a duplicated copy that would drift.",
+  "description": "The planning bundle. `summary` is intentionally typed loosely here — it is the summary payload and is validated against schemas/v3/summary.json in the same run; this validator has no $ref, so cross-file composition happens at the call site rather than being faked with a duplicated copy that would drift.",
   "type": "object",
   "additionalKeys": false,
   "required": [

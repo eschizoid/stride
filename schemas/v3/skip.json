@@ -1,0 +1,31 @@
+{
+  "title": "skip",
+  "description": "Result of `stride skip <id> \"<reason>\" [activity|none]`. The substitute keys appear only when a link was made, released or stolen.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "skipped_session",
+    "reason"
+  ],
+  "properties": {
+    "skipped_session": {
+      "type": "integer"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "released_substitute": {
+      "type": "integer"
+    },
+    "released_substitute_of": {
+      "type": "integer"
+    },
+    "kept_substitute": {
+      "type": "integer"
+    },
+    "substitute_activity_id": {
+      "type": "integer",
+      "description": "The activity done in place of this session — the same key `plan.json` and `week.json` carry for the same concept. Until v3 this was spelled without `_id`, the payload being the outlier; the v2 schema recorded that retiring the second spelling belonged behind an envelope bump, and v3 was that bump."
+    }
+  }
+}

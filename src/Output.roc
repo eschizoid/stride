@@ -86,7 +86,7 @@ Output :: [].{
     # the analyze payload in 9c67470 without a bump. Bump when the wrapper changes, or when
     # a field is REMOVED or retyped — those do break a reader. See ADR 0007 Consequences.
     json_schema_version : I64
-    json_schema_version = 2
+    json_schema_version = 3
 
     out! = |payload, render|
         if json_mode!({}) emit_ok!(payload) else Stdout.line!(render(payload))

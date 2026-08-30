@@ -1,5 +1,5 @@
 #!/bin/sh
-# Check SKILL.md's documented payload shapes against schemas/v2/*.json.
+# Check SKILL.md's documented payload shapes against schemas/v3/*.json.
 #
 # SKILL.md is the coaching agent's instruction sheet. Nothing connected its
 # field names to the schemas, so a field could be added, marked required,
@@ -35,7 +35,7 @@ export LC_ALL=C
 cd "$(dirname "$0")/.."
 SK=skills/stride/SKILL.md
 
-SCHEMAS=schemas/v2
+SCHEMAS=schemas/v3
 PINS=tools/skill-shapes.pins
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 

@@ -103,7 +103,7 @@ Drain :: [].{
     # a rename cannot land on one spelling only. `stopped_label` exists for the narrower
     # domain: Render.drain_note handles drain reasons and nothing else, and its expects
     # say so by composing against this rather than against the wider function.
-    # These four strings are also the enum in schemas/v2/sync.json; changing one without
+    # These four strings are also the enum in schemas/v3/sync.json; changing one without
     # the other is a contract break.
     stopped_label : StopReason -> Str
     stopped_label = |r|
@@ -223,7 +223,7 @@ expect match Drain.decide({ status: 200, window: 9, today: 9 }, Drain.test_lim) 
 }
 
 # the wire strings, pinned by equality. These must equal the enum in
-# schemas/v2/sync.json; Render.drain_note matches on the same three, and a
+# schemas/v3/sync.json; Render.drain_note matches on the same three, and a
 # composed expect there ties producer to consumer so a rename cannot pass either side.
 expect Drain.stopped_label(Complete) == "complete"
 expect Drain.stopped_label(BudgetReached) == "budget_reached"

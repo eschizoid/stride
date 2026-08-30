@@ -274,7 +274,7 @@ is an error. Malformed invocations print a targeted `usage:` line for humans and
 `{"error":{"code":"usage",…}}` envelope for machines; both exit 1.
 `stride --help` is the full one-screen manual.
 
-The contract is a checked-in artifact, not prose: `schemas/v2/*.json` describes every
+The contract is a checked-in artifact, not prose: `schemas/v3/*.json` describes every
 published payload plus the envelope (including its error-code vocabulary) (required keys, types,
 enum values, and — via `additionalKeys: false` — the keys that are NOT part of the
 contract), and `tools/validate.jq` checks a payload against one. `just schema-check`

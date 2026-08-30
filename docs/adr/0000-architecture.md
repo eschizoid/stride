@@ -272,7 +272,7 @@ carry none, which is exactly why they need stating rather than inferring.
 | Envelope (`json_schema_version`) | bumps when the WRAPPER changes, or a payload field is removed or retyped |
 | CLI commands and arguments | additive; a name that parses in 1.x keeps parsing to the same variant |
 | Judgment-tier data | survives every upgrade, unconditionally — it cannot be re-derived |
-| `schemas/v2/*.json` | see below, because this one is not what it looks like |
+| `schemas/v3/*.json` | see below, because this one is not what it looks like |
 
 **Adding a payload key: non-breaking to READERS, breaking to VALIDATORS.** Both halves of
 that were already written down and they appear to contradict: the envelope rule says
