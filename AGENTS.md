@@ -54,7 +54,7 @@ except `issue-claims`, which reads the tracker:
 ```bash
 roc check src/app.roc      # CI runs this on three OSes before anything else
 just e2e-sync              # mock-backed sync/skips/stops drivers; no network
-sh tools/skill-shapes.sh   # the coach skill's payload keys vs schemas/v2
+sh tools/skill-shapes.sh   # the coach skill's payload keys vs schemas/v3
 sh tools/blob-safety.sh    # every TEXT decode is projected through CAST(... AS TEXT)
 sh tools/command-claims.sh # commands the docs name vs the binary's own table (needs ./stride)
 just issue-claims          # issue-state claims in comments (needs `gh` auth)
@@ -105,7 +105,7 @@ pinned in `.github/workflows/build.yml`.
   in the versioned envelope by `emit_ok!`/`emit_err!` (`{schema_version, data}` /
   `{schema_version, error:{code,message}}`), humans get a pure `Render.<cmd>_screen`
   (or inline closure). A payload field you ADD must also be added to
-  `schemas/v2/<command>.json` — `additionalKeys: false` means an undeclared key
+  `schemas/v3/<command>.json` — `additionalKeys: false` means an undeclared key
   fails validation, which is the point. Say CI only where CI validates that
   payload — ADR §9c enumerates which pass covers which command, and it is not all
   of them. Do NOT reach for

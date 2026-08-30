@@ -357,7 +357,7 @@ Strava :: [].{
                 #
                 # ANNOTATED, and closed on purpose: the renderer below is an inline closure,
                 # which infers an OPEN record — without this line a new payload key compiles
-                # clean and ships undeclared in schemas/v2/sync.json (ADR 0000 s9c).
+                # clean and ships undeclared in schemas/v3/sync.json (ADR 0000 s9c).
                 # BOUND once — see the note at the rate-limited payload above.
                 stop = FromDrain(pull.stopped)
                 payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }

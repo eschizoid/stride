@@ -265,8 +265,8 @@ Every query command prints **human tables** in a terminal and **JSON** when
 flag beats the variable, and `--` ends flag parsing for an argument whose literal
 value is `--json`). Nothing is inferred from the environment — a machine caller asks.
 The JSON is
-a versioned envelope: success is `{"schema_version":2,"data":{…}}`, an in-band
-error is `{"schema_version":2,"error":{"code":"…","message":"…"}}` — printed on
+a versioned envelope: success is `{"schema_version":3,"data":{…}}`, an in-band
+error is `{"schema_version":3,"error":{"code":"…","message":"…"}}` — printed on
 stdout AND accompanied by exit status 1, so `set -e`, `&&` chains and CI steps
 see failures while JSON consumers keep reading the same envelope. A bare `stride` prints
 help and exits 0 — machines get `{"data":{"commands":[…]}}` instead. An unknown command
@@ -274,7 +274,7 @@ is an error. Malformed invocations print a targeted `usage:` line for humans and
 `{"error":{"code":"usage",…}}` envelope for machines; both exit 1.
 `stride --help` is the full one-screen manual.
 
-The contract is a checked-in artifact, not prose: `schemas/v2/*.json` describes every
+The contract is a checked-in artifact, not prose: `schemas/v3/*.json` describes every
 published payload plus the envelope (including its error-code vocabulary) (required keys, types,
 enum values, and — via `additionalKeys: false` — the keys that are NOT part of the
 contract), and `tools/validate.jq` checks a payload against one. `just schema-check`

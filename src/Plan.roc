@@ -993,9 +993,9 @@ Plan :: [].{
                                                     })?
                                                     match steal_dead_links!(path, activity_id, session_id)? {
                                                         ReleasedFrom(holder) =>
-                                                            Output.out!({ skipped_session: session_id, reason, substitute_activity: activity_id, released_substitute_of: holder }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason} (did ${I64.to_str(o.substitute_activity)} instead; released its old link on session #${I64.to_str(o.released_substitute_of)})")
+                                                            Output.out!({ skipped_session: session_id, reason, substitute_activity_id: activity_id, released_substitute_of: holder }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason} (did ${I64.to_str(o.substitute_activity_id)} instead; released its old link on session #${I64.to_str(o.released_substitute_of)})")
                                                         NothingReleased =>
-                                                            Output.out!({ skipped_session: session_id, reason, substitute_activity: activity_id }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason} (did ${I64.to_str(o.substitute_activity)} instead)")
+                                                            Output.out!({ skipped_session: session_id, reason, substitute_activity_id: activity_id }, |o| "planned session #${I64.to_str(o.skipped_session)} skipped: ${o.reason} (did ${I64.to_str(o.substitute_activity_id)} instead)")
                                                     }
                                                 }
                                             }

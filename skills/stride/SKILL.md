@@ -16,7 +16,7 @@ Never do training math yourself: read stride's numbers, add judgment.
    rolling 30-day window so recent edits self-heal, then drains every activity still
    missing streams, paced against Strava's limits. A first run on a fresh install is the
    whole history pull.
-   It ends in the usual envelope (`schemas/v2/sync.json`) with progress on stderr.
+   It ends in the usual envelope (`schemas/v3/sync.json`) with progress on stderr.
    Read `resumable` to decide whether to run it again — usually `pending_streams > 0`, but also true when the LISTING was cut short and the queue is empty, and when the run was refused BEFORE its first request because the day was already spent — and
    `stopped` for why it ended (`complete` / `budget_reached` / `rate_limited` / `daily_cap_reached` / `list_rate_limited` / `list_daily_cap_reached`). The two `list_*` tokens are a 429 on the ACTIVITY LIST rather than a stream, which leaves the listing INCOMPLETE and prunes nothing — rows are missing, so `synced` and `pruned` describe a partial run. `list_daily_cap_reached` is that refusal on a day whose allowance is already gone: both facts at once.
    THE REMEDY DIFFERS and that is the point of the distinction: `budget_reached`,
@@ -185,7 +185,7 @@ human help screen (#180). That table DESCRIBES rather than names (#219): one ent
 callable form — `week` and `week add` are separate, because one reads and one writes —
 each carrying `{name, args:[{name,required,example}], mutates, network, interactive, schema}`. So
 you can determine argument shape, whether a call writes, whether it needs Strava, and
-which file under `schemas/v2` the answer validates against, without reading this document.
+which file under `schemas/v3` the answer validates against, without reading this document.
 `interactive: true` marks the one form you must never call unattended (`auth`). Prefer
 that table over anything written here if the two ever disagree — it is cross-checked
 against the parser in CI, this file is not. It is hand-written, not generated: the verb
@@ -203,12 +203,12 @@ answered), `strava_error` / `rate_limited` (it answered with a status),
 clipped tag in its message — so a failure without a code is a bug, not a shrug.
 An expired token still arrives as `not_authenticated`, from the boundary as well
 as from sync. Success →
-`{"schema_version":2,"data":{…}}`, error →
-`{"schema_version":2,"error":{"code":"…","message":"…"}}`. The payloads described in
+`{"schema_version":3,"data":{…}}`, error →
+`{"schema_version":3,"error":{"code":"…","message":"…"}}`. The payloads described in
 the table below all live under `.data`; every payload here — the
 every query, every action you branch on, the command list and the envelope itself (one
-file per published payload in `schemas/v2/`, so the directory listing is the inventory) —
-is described formally in `schemas/v2/*.json` in the repo (required keys, types,
+file per published payload in `schemas/v3/`, so the directory listing is the inventory) —
+is described formally in `schemas/v3/*.json` in the repo (required keys, types,
 enums, and the error-code vocabulary, which is diffed against the source in CI so
 a code stride can emit cannot be missing from the contract).
 `error` is an OBJECT whose `code` carries the

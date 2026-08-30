@@ -63,7 +63,7 @@ issue-claims:
 command-claims: build
     sh tools/command-claims.sh
 
-# SKILL.md's payload literals against schemas/v2. Deliberately NOT dependent on `build`:
+# SKILL.md's payload literals against schemas/v3. Deliberately NOT dependent on `build`:
 # it reads source and schemas only, never runs the binary, so it cannot touch a database.
 skill-shapes:
     sh tools/skill-shapes.sh
@@ -75,7 +75,7 @@ blob-safety:
     sh tools/blob-safety.sh
 
 # validate this machine's real payloads against the published contract
-# (schemas/v2/*.json). e2e runs the same validator against fixtures; this is the
+# (schemas/v3/*.json). e2e runs the same validator against fixtures; this is the
 # "does MY data conform" pass, for after a schema or payload change. Depends on
 # build so it can never report "conforms" because ./stride was missing, and it
 # EXITS NON-ZERO on a violation — a checker that always succeeds is decoration.
@@ -87,10 +87,10 @@ schema-check: build
     rc=0
     # `commands` needs no database, so it is the one payload check that can
     # never be skipped — a real contract test even on a fresh install
-    errs=$(STRIDE_FORMAT=json ./stride --help 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/commands.json -f tools/validate.jq 2>&1 || true)
+    errs=$(STRIDE_FORMAT=json ./stride --help 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v3/commands.json -f tools/validate.jq 2>&1 || true)
     if [ -n "$errs" ]; then echo "commands:"; echo "$errs"; rc=1; else echo "commands: conforms"; fi
     # DERIVED from the command table, not written out. #219 made that table the
-    # authority — every form declares the schemas/v2 file its payload validates against —
+    # authority — every form declares the schemas/v3 file its payload validates against —
     # and the hand-written list this replaces had already drifted away from it: it named
     # 15 forms where the table declares 19 read-only ones, silently never checking `pz`,
     # `pc` or `config get` against a real database. A second copy of a mapping does not
@@ -168,7 +168,7 @@ schema-check: build
     # Globbing OFF for the loop only: `$req` and `$inv` are unquoted on purpose (a form
     # name like `config get` has to split into two argv entries), so a future `<file*>`
     # placeholder would expand against the repo root. Restored after the loop, because the
-    # schema-lint sweep below needs `schemas/v2/*.json` to glob — turning it off globally
+    # schema-lint sweep below needs `schemas/v3/*.json` to glob — turning it off globally
     # broke that, which is how this comment came to exist.
     set -f
     while IFS="$(printf '\t')" read -r c schema req; do
@@ -320,7 +320,7 @@ schema-check: build
                 echo "$inv: FAILED ($code) — schema-check has not classified this code; it does not know whether this is the data or the invocation"
                 rc=1; rejected=$((rejected + 1)); continue ;;
         esac
-        errs=$(printf '%s' "$out" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/$schema -f tools/validate.jq 2>&1 || true)
+        errs=$(printf '%s' "$out" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v3/$schema -f tools/validate.jq 2>&1 || true)
         checked=$((checked + 1))
         if [ -n "$errs" ]; then echo "$inv:"; echo "$errs"; rc=1; else echo "$inv: conforms"; fi
     done < "$forms"
@@ -434,7 +434,7 @@ schema-check: build
                 # segments, no metrics against one with all three — is never sampled. That
                 # was equally true before the walk existed; widening it means deciding what
                 # "enough shapes" is, which is its own conversation.
-                errs=$(printf '%s' "$raw" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v2/activity.json -f tools/validate.jq 2>&1 || true)
+                errs=$(printf '%s' "$raw" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v3/activity.json -f tools/validate.jq 2>&1 || true)
                 if [ -n "$errs" ]; then echo "activity $id:"; echo "$errs"; rc=1; else echo "activity $id: conforms"; fi
                 validated=1; break
             fi
@@ -456,9 +456,9 @@ schema-check: build
         fi
     fi
     # the envelope schema covers BOTH arms, so this one is never skipped
-    errs=$(STRIDE_FORMAT=json ./stride summary 2>&1 | jq -r --slurpfile schema schemas/v2/envelope.json -f tools/validate.jq 2>&1 || true)
+    errs=$(STRIDE_FORMAT=json ./stride summary 2>&1 | jq -r --slurpfile schema schemas/v3/envelope.json -f tools/validate.jq 2>&1 || true)
     if [ -n "$errs" ]; then echo "envelope:"; echo "$errs"; rc=1; else echo "envelope: conforms"; fi
-    for f in schemas/v2/*.json; do
+    for f in schemas/v3/*.json; do
         lint=$(jq -r -f tools/schema-lint.jq "$f" 2>&1 || true)
         if [ -n "$lint" ]; then echo "$lint"; rc=1; fi
     done

@@ -69,14 +69,14 @@
           },
           "schema": {
             "type": "string",
-            "description": "The file under schemas/v2 this form's success payload validates against, or \"\" when it has no machine payload of its own. Every named file is checked to exist, and every schema in that directory is accounted for — claimed by a form, or pinned by name as one of the three that cannot be (the shared envelope, this payload, and the version payload, which is reached by flag)."
+            "description": "The file under schemas/v3 this form's success payload validates against, or \"\" when it has no machine payload of its own. Every named file is checked to exist, and every schema in that directory is accounted for — claimed by a form, or pinned by name as one of the three that cannot be (the shared envelope, this payload, and the version payload, which is reached by flag)."
           },
           "error_codes": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Error codes this FORM can return, on top of the top-level `universal_error_codes`. The effective set for a form is the union of the two. NOT claimed to be exhaustive. What is mechanically guaranteed: every code named here exists in schemas/v2/envelope.json's enum, and every code in that enum is named by some form or recorded as unattributable — so a new code cannot be added without being attributed, which is the direction such a list normally rots in. Attribution is by RAISE SITE, traced from each err_out! call through the commands that reach it; review found 15 of 82 entries wrong when they were first assigned by plausibility instead — a code that is the right one for a neighbouring form passes the attributed-somewhere check while being false here."
+            "description": "Error codes this FORM can return, on top of the top-level `universal_error_codes`. The effective set for a form is the union of the two. NOT claimed to be exhaustive. What is mechanically guaranteed: every code named here exists in schemas/v3/envelope.json's enum, and every code in that enum is named by some form or recorded as unattributable — so a new code cannot be added without being attributed, which is the direction such a list normally rots in. Attribution is by RAISE SITE, traced from each err_out! call through the commands that reach it; review found 15 of 82 entries wrong when they were first assigned by plausibility instead — a code that is the right one for a neighbouring form passes the attributed-somewhere check while being false here."
           }
         }
       }

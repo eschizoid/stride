@@ -168,8 +168,8 @@ a pre-1.0 concession in the first place.
 Every JSON response is wrapped and versioned so tool callers can detect a contract
 change and always discriminate success from failure:
 
-- success → `{"schema_version":2,"data":{…}}` (was 1 until the doctor field rename, 2026-08-06)
-- error → `{"schema_version":2,"error":{"code":"…","message":"…"}}`
+- success → `{"schema_version":3,"data":{…}}` (was 1 until the doctor field rename, 2026-08-06; 2 until the substitute_activity_id spelling break, 2026-08-30)
+- error → `{"schema_version":3,"error":{"code":"…","message":"…"}}`
 
 Errors are in-band on stdout, and since #163 they also exit non-zero (see the amendment below). The envelope is
 deterministic (no timestamps) so golden comparisons stay stable. Human table output
@@ -272,7 +272,7 @@ carry none, which is exactly why they need stating rather than inferring.
 | Envelope (`json_schema_version`) | bumps when the WRAPPER changes, or a payload field is removed or retyped |
 | CLI commands and arguments | additive; a name that parses in 1.x keeps parsing to the same variant |
 | Judgment-tier data | survives every upgrade, unconditionally — it cannot be re-derived |
-| `schemas/v2/*.json` | see below, because this one is not what it looks like |
+| `schemas/v3/*.json` | see below, because this one is not what it looks like |
 
 **Adding a payload key: non-breaking to READERS, breaking to VALIDATORS.** Both halves of
 that were already written down and they appear to contradict: the envelope rule says
@@ -326,8 +326,7 @@ It should not use stride's schema as a closed-world check, and stride does not p
 that it can.
 
 So: adding a key is additive and does not bump `json_schema_version`. Removing or
-retyping one does. A change that would break a reader of known keys is a `v3/` directory,
-not an edit to `v2/`.
+retyping one does. A change that would break a reader of known keys is a new `vN/` directory, not an edit to the current one — v3 (the substitute_activity_id break) is the worked example.
 
 **Error codes are additive in 1.x.** The vocabulary is published, and `tests/e2e.roc`
 diffs the enum against the codes the source emits, so the two cannot silently disagree.

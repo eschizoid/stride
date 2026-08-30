@@ -279,7 +279,7 @@ Command := [
 	##   name (form)  — both directions: every multi-word name must be one the parser
 	##                  reaches, and every two-literal arm the parser has must be
 	##                  accounted for, with the leftovers pinned as a value.
-	##   schema       — must exist, every file in schemas/v2 must be claimed or pinned, AND
+	##   schema       — must exist, every file in schemas/v3 must be claimed or pinned, AND
 	##                  each form is run and its payload validated against the file it
 	##                  names. A wrong-but-existing filename looks exactly like a right one.
 	##   mutates      — run against a fixture copy; the database contents must not move.
@@ -308,7 +308,7 @@ Command := [
 		## blocks on a human. `auth` opens a browser and waits for a paste, so it is the
 		## one form an unattended agent must not call.
 		interactive : Bool,
-		## the file under schemas/v2 its success payload validates against, "" when the
+		## the file under schemas/v3 its success payload validates against, "" when the
 		## command has no machine payload of its own.
 		schema : Str,
 		## error codes THIS FORM can return, on top of `universal_error_codes` below.

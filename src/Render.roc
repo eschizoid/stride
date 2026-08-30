@@ -2122,7 +2122,7 @@ expect !(Str.contains(Render.drain_note(DailyCapReached, 40), "15 minutes"))
 
 # The wire strings still have to match the producer — drain_note takes a StopReason,
 # so the compiler already guarantees every reason has a branch; what no type can
-# guarantee is that `stopped_label`'s spellings match schemas/v2/sync.json, a
+# guarantee is that `stopped_label`'s spellings match schemas/v3/sync.json, a
 # document. Hand-typed on purpose: these pin tag -> Roc literal, and the e2e schema
 # check pins emitted literal -> schema enum. Neither alone catches a rename on the
 # far side.
