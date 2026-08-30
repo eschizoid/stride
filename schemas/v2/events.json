@@ -46,7 +46,8 @@
             "type": "string"
           },
           "days_away": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Days until the event from the local today. Negative = the event has passed: ctl/atl/tsb then echo the CURRENT baseline, not a projection — daily_load holds the event-day reading."
           },
           "ctl": {
             "type": "number"
