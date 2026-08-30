@@ -1087,8 +1087,9 @@ Plan :: [].{
                 if !(Metrics.is_canonical_date(event_date)) {
                     Output.err_out!("bad_date", "event add needs a calendar date written YYYY-MM-DD — got '${event_date}'")
                 } else if ev_days <= today {
-                    # a past target has nothing to project — and would sit in `events`
-                    # forever as a row whose projection means nothing
+                    # a past target has nothing to project. A stored event that AGES
+                    # past its date renders as "Nd ago — baseline shown"; adding one
+                    # already-past would be recording a target that never was one
                     Output.err_out!("bad_date", "'${event_date}' is not in the future — an event target is a date still ahead")
                 } else {
                     Sqlite.execute!({
@@ -1152,20 +1153,11 @@ Plan :: [].{
             Err(_) => { day: Metrics.days_to_date_str(today), ctl: 0.0, atl: 0.0, known: False }
         }
         base_days = (Metrics.date_str_to_days(base.day)).ok_or(today)
-        # the same 60d best-20min derivation summary publishes — targets are power, so
-        # the Ride family FTP is the one the arithmetic needs
-        cutoff60 = Metrics.days_to_date_str(today - 60)
-        best20 = Sqlite.query!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT CAST(COALESCE(MAX(m.best_20min_w),0) AS REAL) AS b FROM activity_metrics m
-                \\JOIN activities a ON a.id = m.activity_id
-                \\WHERE a.sport_family = :fam AND a.start_local >= :cutoff
-            ,
-            bindings: [{ name: ":fam", value: String(Sports.canonical("Ride")) }, { name: ":cutoff", value: String(cutoff60) }],
-            row: Sqlite.f64("b"),
-        })?
-        ftp = Metrics.ftp_from_best_20min(best20)
+        # the same 60d best-20min derivation the rest of the engine uses — the helper
+        # already existed; a re-inlined copy of its query is exactly the drift this
+        # repo gates elsewhere. Targets are power, so Ride's family FTP is the one
+        # the arithmetic needs.
+        ftp = Db.derive_sport_ftp!(path, "Ride")?
         ftp_known : Bool
         ftp_known = ftp > 0.0
         evs = Sqlite.query_many!({

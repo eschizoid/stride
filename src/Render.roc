@@ -1271,7 +1271,12 @@ Render :: [].{
             "no event targets on file — `stride event add <YYYY-MM-DD> \"<name>\"` records one"
         } else {
             rows = List.map(p.events, |e|
-                "  #${I64.to_str(e.id)}  ${e.event_date}  in ${I64.to_str(e.days_away)}d  ctl ${fmt1(e.ctl)}  atl ${fmt1(e.atl)}  tsb ${fmt1(e.tsb)}  (${(e.sessions_projected).to_str()} of ${(e.planned_in_window).to_str()} planned sessions carry a projectable load)  ${e.name}")
+                # a PAST event's row states the current baseline, not the event-day
+                # reading (daily_load holds that) — say so instead of printing "in -3d"
+                if e.days_away < 0
+                    "  #${I64.to_str(e.id)}  ${e.event_date}  ${I64.to_str(-e.days_away)}d ago — baseline shown, `stride load` holds the event-day reading  ${e.name}"
+                else
+                    "  #${I64.to_str(e.id)}  ${e.event_date}  in ${I64.to_str(e.days_away)}d  ctl ${fmt1(e.ctl)}  atl ${fmt1(e.atl)}  tsb ${fmt1(e.tsb)}  (${(e.sessions_projected).to_str()} of ${(e.planned_in_window).to_str()} planned sessions carry a projectable load)  ${e.name}")
             base_note =
                 if !(p.baseline_known) "\nno computed history to project from — every number above is decay over zero; `stride analyze` first"
                 else if !(p.ftp_known) "\nno 60d best-20min power on file, so targeted sessions could not contribute load — the projection is decay plus nothing"
@@ -2191,6 +2196,7 @@ expect {
         Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 38.2, atl: 22.1, tsb: 16.1, planned_in_window: 4, sessions_projected: 2 }] }),
         Render.events_screen({ projected_from: "2026-08-30", baseline_known: False, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 0.0, atl: 0.0, tsb: 0.0, planned_in_window: 0, sessions_projected: 0 }] }),
         Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 12.0, atl: 3.0, tsb: 9.0, planned_in_window: 2, sessions_projected: 0 }] }),
+        Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 2, event_date: "2026-08-01", name: "Past Race", days_away: -29, ctl: 40.0, atl: 50.0, tsb: -10.0, planned_in_window: 0, sessions_projected: 0 }] }),
     ]
     List.all(notes, |p| !(Metrics.has_coaching_language(p)))
 }

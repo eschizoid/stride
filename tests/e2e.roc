@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1079)?
+    checks_ran_exactly!(1080)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -5395,6 +5395,15 @@ b_events! = |ctx| {
     check!("the projection counts the window's plan and its own coverage (ftp_known ${fknown}, got ${counted})", if fknown == "true" counted == "1,1" else counted == "1,0")?
     ctl2 = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' events | jq -r '[.data.events[] | select(.id == ${eid10})][0].ctl * 100 | round / 100'"))
     check!("a projectable target RAISES the projection above decay (or cannot, and does not)", if fknown == "true" sfloat(ctl2) > sfloat(expected_ctl) else ctl2 == expected_ctl)?
+    # ...and a DONE session's target must stop contributing, or the projection
+    # double-counts: completed load is already inside the measured baseline. Review
+    # proved this unpinned with an inert-in-fixture mutant — dropping the status
+    # filter stayed green here because every non-open fixture row carried NULL
+    # targets — so this check does what the fixture accidentally could not.
+    _ = sql!(ctx.db, "UPDATE planned_sessions SET status = 'done' WHERE id = ${tsid};")
+    ctl3 = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' events | jq -r '[.data.events[] | select(.id == ${eid10})][0].ctl * 100 | round / 100'"))
+    counted3 = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' events | jq -r '[.data.events[] | select(.id == ${eid10})][0] | \"\\(.planned_in_window),\\(.sessions_projected)\"'"))
+    check!("a DONE session's target stops contributing — the projection never double-counts", ctl3 == expected_ctl and counted3 == "0,0")?
     check!("the events payload conforms to its schema", validate_schema!(ctx, "events", "events") == "")?
     check!("event remove refuses an unknown id", strjq!(ctx, ["event", "remove", "99999"], ".error.code") == "event_not_found")?
     check!("...and a non-numeric one", strjq!(ctx, ["event", "remove", "abc"], ".error.code") == "bad_id")?

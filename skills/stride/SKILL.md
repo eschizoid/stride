@@ -84,7 +84,11 @@ Never do training math yourself: read stride's numbers, add judgment.
      projected onto each event date by the SAME recurrence daily_load runs, folded over
      the open plan's structured targets (untargeted sessions contribute zero and the
      two counts say how blind the projection is; `baseline_known: false` means no
-     computed history and every number is decay over zero). This is ADR 0010 arithmetic:
+     computed history and every number is decay over zero). The window is
+     `(projected_from, event_date]` — a session dated ON the baseline day (usually
+     today) is excluded, because the measured baseline already contains today; asking
+     what tonight's session does to Saturday means planning it for a day the baseline
+     has not absorbed yet. This is ADR 0010 arithmetic:
      stride projects the recorded plan's consequences and never proposes, ranks, or
      solves for a plan — whether to CHANGE the plan in response is your judgment, and
      "on track" is a sentence only you may write.
