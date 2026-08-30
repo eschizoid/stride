@@ -2854,9 +2854,9 @@ b_seed_analyze! = |ctx| {
     # frozen baselines convert that admission into arithmetic: the live sets must be
     # SUPERSETS of what 1.0 shipped, so a caller branching on a 1.0 code or parsing a
     # 1.0 command name keeps working. Additions pass untouched; only removal fails.
-    cmd_missing = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' --help | jq -r '.data.commands[].name' | sort -u > /tmp/stride_live_cmds.$$; LC_ALL=C comm -23 tools/commands-1.0.pins /tmp/stride_live_cmds.$$; rm -f /tmp/stride_live_cmds.$$"))
+    cmd_missing = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' --help | jq -r '.data.commands[].name' | LC_ALL=C sort -u > /tmp/stride_live_cmds.$$; LC_ALL=C comm -23 tools/commands-1.0.pins /tmp/stride_live_cmds.$$; rm -f /tmp/stride_live_cmds.$$"))
     check!("every 1.0 command name still parses (baseline superset; missing: ${cmd_missing})", cmd_missing == "")?
-    code_missing = Str.trim(sh!("jq -r '.properties.error.properties.code.enum[]' schemas/v3/envelope.json | sort > /tmp/stride_live_codes.$$; LC_ALL=C comm -23 tools/error-codes-1.0.pins /tmp/stride_live_codes.$$; rm -f /tmp/stride_live_codes.$$"))
+    code_missing = Str.trim(sh!("jq -r '.properties.error.properties.code.enum[]' schemas/v3/envelope.json | LC_ALL=C sort > /tmp/stride_live_codes.$$; LC_ALL=C comm -23 tools/error-codes-1.0.pins /tmp/stride_live_codes.$$; rm -f /tmp/stride_live_codes.$$"))
     check!("every 1.0 error code is still in the contract (baseline superset; missing: ${code_missing})", code_missing == "")?
     # ...and the baselines themselves can speak: an empty pins file would make both
     # supersets vacuously true, so their line counts are asserted alive
@@ -2866,7 +2866,13 @@ b_seed_analyze! = |ctx| {
     # now held against this file's own validate arms: each never-validated form must
     # have ZERO validate_schema! mentions here, and adding one (good!) fails this
     # check until the ADR's list and this pin move together.
-    unvalidated = Str.trim(sh!("for f in init rate relabel 'event add' 'event remove'; do n=$(grep -c \"validate_schema!(ctx, \\\"$f\" tests/e2e.roc); [ \"$n\" = \"0\" ] || printf '%s has %s arms; ' \"$f\" \"$n\"; done"))
+    # by SCHEMA NAME, in the argument spelling every arm style shares: both helpers
+    # end `…, "<schema>")`, and inline-jq arms (auth, sync) slurp `<schema>.json`.
+    # Review proved the first cut's `validate_schema!(ctx, "` pattern blind to 8 of
+    # the 9 real arms — a house-style `validate!` arm for rate left the pin silent,
+    # the guard-must-share-the-rule-predicate class. Control: skip matches 4+1,
+    # auth matches by json — the probe demonstrably speaks on validated forms.
+    unvalidated = Str.trim(sh!("for f in init rate relabel event_add event_remove; do n=$(grep -cE \"\\\"$f\\\"\\)|$f\\.json\" tests/e2e.roc); [ \"$n\" = \"0\" ] || printf '%s has %s arms; ' \"$f\" \"$n\"; done"))
     check!("s9c's never-validated list matches this file's own arms (${unvalidated})", unvalidated == "")?
     # ── the two directions of the error-code declaration (#239) ─────────────────
     # Done in jq, NOT with `comm` and process substitution. `sh!` runs under /bin/sh, which
