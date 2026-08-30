@@ -5383,7 +5383,10 @@ b_events! = |ctx| {
     # fixture row is outside a +10d window, and b_week_plan/b_targets cleaned theirs),
     # so the projection must equal the closed form from the SAME baseline row
     eid10 = Str.trim(strjq!(ctx, ["event", "add", ten_days_out!(ctx), "Decay Probe"], ".data.id"))
-    expected_ctl = Str.trim(sql!(ctx.db, "SELECT round(ctl * power(1 - 0.0235283133, 10), 2) FROM daily_load ORDER BY day DESC LIMIT 1;"))
+    # the closed form as TEN explicit multiplications, not power(): macOS CI's system
+    # sqlite3 ships without the math functions and the check failed closed there —
+    # "6.78 vs " with the fixture-error report naming `no such function: power`
+    expected_ctl = Str.trim(sql!(ctx.db, "SELECT round(ctl * (1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133), 2) FROM daily_load ORDER BY day DESC LIMIT 1;"))
     got_ctl = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' events | jq -r '[.data.events[] | select(.id == ${eid10})][0].ctl * 100 | round / 100'"))
     check!("a windowless projection IS the closed-form decay (${got_ctl} vs ${expected_ctl})", got_ctl == expected_ctl)?
     check!("...projected from a computed baseline, and it says so", strjq!(ctx, ["events"], ".data.baseline_known") == "true")?
