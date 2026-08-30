@@ -1262,6 +1262,22 @@ Render :: [].{
         }
     }
 
+    ## taper projection (#189): one horizon, its numbers, and which plan produced
+    ## them — no verdict, same rule as events_screen (ADR 0010/0012)
+    project_screen : { target_date : Str, days_away : I64, projected_from : Str, baseline_known : Bool, ftp_known : Bool, plan_source : Str, ctl : F64, atl : F64, tsb : F64, sessions_considered : U64, sessions_projected : U64, hypothetical : List({ date : Str, reps : I64, dur_s : I64, watts : F64 }) } -> Str
+    project_screen = |p| {
+        head = "projected to ${p.target_date} (in ${I64.to_str(p.days_away)}d) from ${p.projected_from}, over the ${p.plan_source} plan"
+        nums = "  ctl ${fmt1(p.ctl)}  atl ${fmt1(p.atl)}  tsb ${fmt1(p.tsb)}  (${(p.sessions_projected).to_str()} of ${(p.sessions_considered).to_str()} sessions in the window carry a projectable load)"
+        hyp =
+            if List.is_empty(p.hypothetical) ""
+            else Str.join_with(List.map(p.hypothetical, |h| "\n  hypothetical: ${h.date} ${I64.to_str(h.reps)}×${mmss(h.dur_s)} @ ${(h.watts.to_i64_wrap()).to_str()}W"), "")
+        note =
+            if !(p.baseline_known) "\nno computed history to project from — the numbers are decay over zero; `stride analyze` first"
+            else if !(p.ftp_known) "\nno 60d best-20min power on file, so no session could contribute load — the projection is decay plus nothing"
+            else ""
+        "${head}\n${nums}${hyp}${note}"
+    }
+
     ## event targets (#138): the projection as numbers in a table, its inputs in the
     ## legend, and NO verdict line — "are you on track" is the coach's sentence, and
     ## ADR 0010 notes the denylist would not even catch it, so nothing here says it.
@@ -2197,6 +2213,10 @@ expect {
         Render.events_screen({ projected_from: "2026-08-30", baseline_known: False, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 0.0, atl: 0.0, tsb: 0.0, planned_in_window: 0, sessions_projected: 0 }] }),
         Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 12.0, atl: 3.0, tsb: 9.0, planned_in_window: 2, sessions_projected: 0 }] }),
         Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 2, event_date: "2026-08-01", name: "Past Race", days_away: -29, ctl: 40.0, atl: 50.0, tsb: -10.0, planned_in_window: 0, sessions_projected: 0 }] }),
+        # project_screen (#189) joins on arrival: recorded, hypothetical, and both notes
+        Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "recorded", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 3, sessions_projected: 2, hypothetical: [] }),
+        Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "hypothetical", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 1, sessions_projected: 1, hypothetical: [{ date: "2026-09-15", reps: 3, dur_s: 720, watts: 230.0 }] }),
+        Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: False, ftp_known: False, plan_source: "recorded", ctl: 0.0, atl: 0.0, tsb: 0.0, sessions_considered: 0, sessions_projected: 0, hypothetical: [] }),
     ]
     List.all(notes, |p| !(Metrics.has_coaching_language(p)))
 }

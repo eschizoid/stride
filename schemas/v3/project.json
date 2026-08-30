@@ -1,0 +1,87 @@
+{
+  "title": "project",
+  "description": "Result of `stride project <YYYY-MM-DD> [\"<date>=<target>,...\"]` (ADR 0010): CTL/ATL/TSB on the target date, folded by the same recurrence daily_load runs — over the RECORDED open plan's structured targets (plan_source: recorded), or over a caller-passed hypothetical plan that REPLACES it in the walk (plan_source: hypothetical). The hypothetical is echoed back verbatim and never stored — the recorded plan stays the single source of adherence truth. stride never solves for the plan that reaches a target: plan to consequences only.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "target_date",
+    "days_away",
+    "projected_from",
+    "baseline_known",
+    "ftp_known",
+    "plan_source",
+    "ctl",
+    "atl",
+    "tsb",
+    "sessions_considered",
+    "sessions_projected",
+    "hypothetical"
+  ],
+  "properties": {
+    "target_date": {
+      "type": "string"
+    },
+    "days_away": {
+      "type": "integer"
+    },
+    "projected_from": {
+      "type": "string"
+    },
+    "baseline_known": {
+      "type": "boolean"
+    },
+    "ftp_known": {
+      "type": "boolean"
+    },
+    "plan_source": {
+      "type": "string",
+      "enum": [
+        "recorded",
+        "hypothetical"
+      ]
+    },
+    "ctl": {
+      "type": "number"
+    },
+    "atl": {
+      "type": "number"
+    },
+    "tsb": {
+      "type": "number"
+    },
+    "sessions_considered": {
+      "type": "integer"
+    },
+    "sessions_projected": {
+      "type": "integer"
+    },
+    "hypothetical": {
+      "type": "array",
+      "description": "The caller's plan, echoed verbatim; empty for plan_source: recorded.",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": [
+          "date",
+          "reps",
+          "dur_s",
+          "watts"
+        ],
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "reps": {
+            "type": "integer"
+          },
+          "dur_s": {
+            "type": "integer"
+          },
+          "watts": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

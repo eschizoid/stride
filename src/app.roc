@@ -129,6 +129,9 @@ help_text =
         \\    event remove <event_id>    delete an event target
         \\    events                      projected CTL/ATL/TSB on each event date,
         \\                                from the open plan's structured targets
+        \\    project <date> [plan]       CTL/ATL/TSB on a date — recorded plan, or a
+        \\                                hypothetical one (date=target pairs, echoed
+        \\                                back, never stored)
         \\
         \\REFERENCE
         \\    zones                       power-zone watt ranges (7) from your FTP (alias: pz)
@@ -403,6 +406,8 @@ dispatch! = |cmd|
         Command.EventAdd(date, name) => Plan.event_add!(date, name)
         Command.EventRemove(event_id) => Plan.event_remove!(event_id)
         Command.Events => Plan.events!({})
+        Command.Project(date) => Plan.project!(date, Recorded)
+        Command.ProjectWith(date, plan) => Plan.project!(date, Hypothetical(plan))
         Command.Complete(session_id, activity_id) => Plan.complete!(session_id, activity_id)
         Command.CompleteRest(session_id) => Plan.complete_rest!(session_id)
         Command.Skip(session_id, reason) => Plan.skip!(session_id, reason, NoSub)

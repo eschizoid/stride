@@ -48,6 +48,8 @@ Command := [
 	EventAdd(Str, Str),
 	EventRemove(Str),
 	Events,
+	Project(Str),
+	ProjectWith(Str, Str),
 	ConfigGet(Str),
 	ConfigSet(Str, Str),
 	ConfigUnset(Str),
@@ -176,6 +178,10 @@ Command := [
 			[_, "event", "add", date, name] => Ok(EventAdd(date, name))
 			[_, "event", "remove", event_id] => Ok(EventRemove(event_id))
 			[_, "events"] => Ok(Events)
+			# taper projection (#189, ADR 0010): consequences of the recorded plan on a
+			# date, or of a caller-passed hypothetical plan — echoed, never stored
+			[_, "project", date, plan] => Ok(ProjectWith(date, plan))
+			[_, "project", date] => Ok(Project(date))
 			[_, "config", "get", key] => Ok(ConfigGet(key))
 			# bare `config` LISTS the keys that hold a value (secrets redacted). It was a
 			# Usage error, which made "which config do I actually have set?" a question the
@@ -208,6 +214,7 @@ Command := [
 			[_, "skip", ..] => Err(Usage("skip <session_id> \"<reason>\" [activity_id|none]"))
 			[_, "relabel", ..] => Err(Usage("relabel <session_id> <type> \"<detail>\" [\"<rationale>\"]"))
 			[_, "event", ..] => Err(Usage("event add <YYYY-MM-DD> \"<name>\"  |  event remove <event_id>"))
+			[_, "project", ..] => Err(Usage("project <YYYY-MM-DD> [\"<YYYY-MM-DD>=<RxMM:SS@WWWW>,...\"]"))
 			[_, "activity", ..] => Err(Usage("activity <activity_id>"))
 			[_, "config", ..] => Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>"))
 			# asking for help — bare, or by any of the conventional spellings —
@@ -412,6 +419,7 @@ Command := [
 		errs(writes("event add", [req_ex("<YYYY-MM-DD>", "2099-01-01"), req_ex("<name>", "example")], "event_add.json"), ["bad_date"]),
 		errs(writes("event remove", [req("<event_id>")], "event_remove.json"), ["bad_id", "event_not_found"]),
 		reads("events", [], "events.json"),
+		errs(reads("project", [req_ex("<YYYY-MM-DD>", "2099-01-01"), opt_ex("<date=target,...>", "2099-01-01=3x12:00@230W")], "project.json"), ["bad_date", "bad_target"]),
 		errs(writes("config set", [req_ex("<key>", "timezone"), req_ex("<value>", "UTC")], "config.json"), ["bad_value", "derived_key", "unknown_key"]),
 		# `config unset` declares NO error codes beyond the universal ones. It refuses
 		# nothing: `unknown_key` cannot apply because deleting a key stride does not read is
@@ -846,6 +854,9 @@ expect match Command.parse(["stride", "week", "add", "2026-01-01", "threshold", 
 expect match Command.parse(["stride", "event", "add", "2026-10-15", "Fall Century"]) { Ok(EventAdd("2026-10-15", "Fall Century")) => True  _ => False }
 expect match Command.parse(["stride", "event", "remove", "3"]) { Ok(EventRemove("3")) => True  _ => False }
 expect match Command.parse(["stride", "events"]) { Ok(Events) => True  _ => False }
+expect match Command.parse(["stride", "project", "2026-10-15"]) { Ok(Project("2026-10-15")) => True  _ => False }
+expect match Command.parse(["stride", "project", "2026-10-15", "2026-09-15=3x12:00@230W"]) { Ok(ProjectWith("2026-10-15", "2026-09-15=3x12:00@230W")) => True  _ => False }
+expect match Command.parse(["stride", "project"]) { Err(Usage(_)) => True  _ => False }
 expect match Command.parse(["stride", "event", "add", "2026-10-15"]) { Err(Usage(_)) => True  _ => False }
 expect match Command.parse(["stride", "config", "get", "ftp"]) { Ok(ConfigGet("ftp")) => True  _ => False }
 expect match Command.parse(["stride", "tte", "250"]) { Ok(Tte("250")) => True  _ => False }

@@ -715,6 +715,45 @@ Metrics :: [].{
             intensity * intensity * hours * 100.0
         }
 
+    ## the hypothetical-plan literal (#189, ADR 0010): comma-separated
+    ## `<YYYY-MM-DD>=<reps>x<mm:ss>@<watts>W` pairs. Caller input, echoed back
+    ## verbatim, NEVER stored — the recorded plan stays the single source of
+    ## adherence truth. Errors name the half that failed so the caller's refusal
+    ## carries the same codes the stored surfaces use (bad_date / bad_target).
+    parse_plan_literal : Str -> Try(List({ date : Str, days : I64, target : { reps : I64, dur_s : I64, watts : F64 } }), [PairDate(Str), PairTarget(Str)])
+    parse_plan_literal = |lit|
+        List.map_try(Str.split_on(lit, ","), |pair|
+            match Str.split_first(pair, "=") {
+                Err(_) => Err(PairDate(pair))
+                Ok({ before: date, after: tgt }) =>
+                    if !(is_canonical_date(date)) {
+                        Err(PairDate(date))
+                    } else {
+                        match (date_str_to_days(date), parse_target(tgt)) {
+                            (Ok(days), Ok(t)) => Ok({ date, days, target: t })
+                            (Err(_), _) => Err(PairDate(date))
+                            (_, Err(_)) => Err(PairTarget(tgt))
+                        }
+                    }
+            })
+
+    ## the projection walk (#138/#189, ADR 0010): fold load_step day by day from a
+    ## measured baseline to a horizon, over (day, tss) contributions. PURE — both the
+    ## recorded-plan projection (`events`) and the hypothetical one (`project`) call
+    ## this, so the two can never disagree about the arithmetic.
+    project_walk : { ctl : F64, atl : F64 }, I64, I64, List({ d : I64, tss : F64 }) -> { ctl : F64, atl : F64, tsb : F64 }
+    project_walk = |base, base_days, horizon_days, loads|
+        if horizon_days <= base_days
+            { ctl: base.ctl, atl: base.atl, tsb: base.ctl - base.atl }
+        else {
+            span = (horizon_days - base_days).to_u64_wrap()
+            Iter.fold((0.U64..<span).iter(), { ctl: base.ctl, atl: base.atl, tsb: base.ctl - base.atl }, |acc, i| {
+                d = base_days + 1 + (i).to_i64_wrap()
+                tss = List.fold(loads, 0.0, |t, o| if o.d == d t + o.tss else t)
+                load_step({ ctl_prev: acc.ctl, atl_prev: acc.atl, tss })
+            })
+        }
+
     load_step : { ctl_prev : F64, atl_prev : F64, tss : F64 } -> { ctl : F64, atl : F64, tsb : F64 }
     load_step = |{ ctl_prev, atl_prev, tss }| {
         ctl = ctl_prev + (tss - ctl_prev) * ctl_alpha
@@ -4481,3 +4520,38 @@ expect (Metrics.tss_from_target({ reps: 3, dur_s: 720, watts: 230.0, ftp: 230.0 
 expect (Metrics.tss_from_target({ reps: 1, dur_s: 3600, watts: 220.0, ftp: 200.0 }) - 121.0).abs() < 0.001
 # no FTP = no arithmetic, 0.0 behind the caller's flag — never a guess
 expect (Metrics.tss_from_target({ reps: 3, dur_s: 720, watts: 230.0, ftp: 0.0 })).abs() < 0.001
+
+# ten empty days IS the closed form: ctl_10 = ctl_0·(1-α)^10 — the same identity the
+# e2e pins against sqlite arithmetic, held here against the pure walk
+expect {
+    r = Metrics.project_walk({ ctl: 40.0, atl: 50.0 }, 0, 10, [])
+    f = (1.0 - 0.0235283133)
+    expected = 40.0 * f * f * f * f * f * f * f * f * f * f
+    (r.ctl - expected).abs() < 0.0001
+}
+# a horizon at or before the baseline states the baseline
+expect Metrics.project_walk({ ctl: 40.0, atl: 50.0 }, 100, 100, []) == { ctl: 40.0, atl: 50.0, tsb: -10.0 }
+# one loaded day moves the walk exactly one load_step from the decayed state
+expect {
+    r = Metrics.project_walk({ ctl: 40.0, atl: 40.0 }, 0, 1, [{ d: 1, tss: 100.0 }])
+    s = Metrics.load_step({ ctl_prev: 40.0, atl_prev: 40.0, tss: 100.0 })
+    (r.ctl - s.ctl).abs() < 0.0001 and (r.atl - s.atl).abs() < 0.0001
+}
+# loads OUTSIDE the walk contribute nothing
+expect {
+    r = Metrics.project_walk({ ctl: 40.0, atl: 40.0 }, 0, 5, [{ d: 9, tss: 500.0 }, { d: 0, tss: 500.0 }])
+    d = Metrics.project_walk({ ctl: 40.0, atl: 40.0 }, 0, 5, [])
+    (r.ctl - d.ctl).abs() < 0.0001
+}
+
+expect {
+    d = (Metrics.date_str_to_days("2099-01-05")).ok_or(0)
+    Metrics.parse_plan_literal("2099-01-05=3x12:00@230W") == Ok([{ date: "2099-01-05", days: d, target: { reps: 3, dur_s: 720, watts: 230.0 } }]) and d > 0
+}
+expect {
+    r = Metrics.parse_plan_literal("2099-01-05=3x12:00@230W,2099-01-07=4x8:00@250W")
+    match r { Ok(l) => List.len(l) == 2  Err(_) => False }
+}
+expect Metrics.parse_plan_literal("not-a-date=3x12:00@230W") == Err(PairDate("not-a-date"))
+expect Metrics.parse_plan_literal("2099-01-05=junk") == Err(PairTarget("junk"))
+expect Metrics.parse_plan_literal("nodelimiter") == Err(PairDate("nodelimiter"))
