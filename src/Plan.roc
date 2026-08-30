@@ -1192,22 +1192,118 @@ Plan :: [].{
         projected = List.map(evs, |ev| {
             ev_days = (Metrics.date_str_to_days(ev.event_date)).ok_or(today)
             in_window = List.keep_if(open_days, |o| o.d > base_days and o.d <= ev_days)
-            proj = if ev_days <= base_days {
-                # an event inside computed history projects nothing new — state the
-                # baseline rather than walking backwards
-                { ctl: base.ctl, atl: base.atl, tsb: base.ctl - base.atl }
-            } else {
-                span = (ev_days - base_days).to_u64_wrap()
-                Iter.fold((0.U64..<span).iter(), { ctl: base.ctl, atl: base.atl, tsb: base.ctl - base.atl }, |acc, i| {
-                    d = base_days + 1 + (i).to_i64_wrap()
-                    tss = List.fold(in_window, 0.0, |t, o| if o.d == d and o.treps > 0 and ftp_known t + Metrics.tss_from_target({ reps: o.treps, dur_s: o.tdur, watts: o.twatts, ftp }) else t)
-                    Metrics.load_step({ ctl_prev: acc.ctl, atl_prev: acc.atl, tss })
-                })
-            }
+            # the shared pure walk (#189 extracted it): loads materialized first, so the
+            # walk is arithmetic over (day, tss) with no per-day re-filtering
+            loads = List.keep_oks(in_window, |o|
+                if o.treps > 0 and ftp_known Ok({ d: o.d, tss: Metrics.tss_from_target({ reps: o.treps, dur_s: o.tdur, watts: o.twatts, ftp }) }) else Err(NoLoad))
+            proj = Metrics.project_walk({ ctl: base.ctl, atl: base.atl }, base_days, ev_days, loads)
             sessions_projected = List.len(List.keep_if(in_window, |o| o.treps > 0 and ftp_known))
             { id: ev.id, event_date: ev.event_date, name: ev.name, days_away: ev_days - today, ctl: proj.ctl, atl: proj.atl, tsb: proj.tsb, planned_in_window: List.len(in_window), sessions_projected }
         })
         Output.out!({ projected_from: base.day, baseline_known: base.known, ftp_known, events: projected }, |p| Render.events_screen(p))
+    }
+
+    # ── taper projection (#189, ADR 0010) ────────────────────────────────────────
+    # Bare `project <date>` maps the RECORDED open plan to its consequences on that
+    # date — the same walk `events` runs, at an arbitrary horizon. With the literal,
+    # the walk runs over the CALLER's hypothetical plan INSTEAD: caller input, echoed
+    # back in the payload (dates verbatim, targets as parsed canonical fields), never stored, so the recorded plan stays the
+    # single source of adherence truth (ADR 0010). The direction rule holds whole:
+    # plan → consequences only; stride never solves for the plan that reaches a
+    # target TSB, even when the caller names one — that inverse is prescription.
+    project! : Str, [Recorded, Hypothetical(Str)] => Try({}, _)
+    project! = |date_str, mode| {
+        path = Db.open_db!({})?
+        today = Db.local_today_days!(path)
+        match Metrics.date_str_to_days(date_str) {
+            Err(_) => Output.err_out!("bad_date", "project needs a calendar date written YYYY-MM-DD — got '${date_str}'")
+            Ok(horizon) =>
+                if !(Metrics.is_canonical_date(date_str)) {
+                    Output.err_out!("bad_date", "project needs a calendar date written YYYY-MM-DD — got '${date_str}'")
+                } else {
+                    parsed = match mode {
+                        Recorded => Ok(Recorded)
+                        Hypothetical(lit) =>
+                            match Metrics.parse_plan_literal(lit) {
+                                Ok(pairs) => Ok(Hypo(pairs))
+                                Err(PairDate(bad)) => Err(BadDatePart(bad))
+                                Err(PairTarget(bad)) => Err(BadTargetPart(bad))
+                            }
+                    }
+                    match parsed {
+                        Err(BadDatePart(bad)) => Output.err_out!("bad_date", "each hypothetical session is <YYYY-MM-DD>=<target> — the date half of '${bad}' does not parse")
+                        Err(BadTargetPart(bad)) => Output.err_out!("bad_target", "each hypothetical session is <YYYY-MM-DD>=<reps>x<mm:ss>@<watts>W — the target half '${bad}' does not parse")
+                        Ok(plan_mode) => {
+                            base_rows = Sqlite.query_many!({
+                                path: Path.utf8(path),
+                                query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(COALESCE(ctl, 0) AS REAL) AS ctl, CAST(COALESCE(atl, 0) AS REAL) AS atl FROM daily_load ORDER BY day DESC LIMIT 1",
+                                bindings: [],
+                                rows: |cols| |stmt| {
+                                    day = Sqlite.str("day")(cols)(stmt)?
+                                    ctl = Sqlite.f64("ctl")(cols)(stmt)?
+                                    atl = Sqlite.f64("atl")(cols)(stmt)?
+                                    Ok({ day, ctl, atl })
+                                },
+                            })?
+                            base = match List.first(base_rows) {
+                                Ok(b) => { day: b.day, ctl: b.ctl, atl: b.atl, known: True }
+                                Err(_) => { day: Metrics.days_to_date_str(today), ctl: 0.0, atl: 0.0, known: False }
+                            }
+                            base_days = (Metrics.date_str_to_days(base.day)).ok_or(today)
+                            ftp = Db.derive_sport_ftp!(path, "Ride")?
+                            ftp_known : Bool
+                            ftp_known = ftp > 0.0
+                            source = match plan_mode {
+                                Recorded => {
+                                    opens = Sqlite.query_many!({
+                                        path: Path.utf8(path),
+                                        query:
+                                            \\SELECT COALESCE(CAST(target_date AS TEXT), '') AS target_date,
+                                            \\       COALESCE(target_reps, 0) AS treps, COALESCE(target_dur_s, 0) AS tdur,
+                                            \\       CAST(COALESCE(target_watts, 0) AS REAL) AS twatts
+                                            \\FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'
+                                        ,
+                                        bindings: [],
+                                        rows: |cols| |stmt| {
+                                            target_date = Sqlite.str("target_date")(cols)(stmt)?
+                                            treps = Sqlite.i64("treps")(cols)(stmt)?
+                                            tdur = Sqlite.i64("tdur")(cols)(stmt)?
+                                            twatts = Sqlite.f64("twatts")(cols)(stmt)?
+                                            Ok({ target_date, treps, tdur, twatts })
+                                        },
+                                    })?
+                                    in_w = List.keep_oks(opens, |o| (Metrics.date_str_to_days(o.target_date)).map_ok(|d| { d, treps: o.treps, tdur: o.tdur, twatts: o.twatts }))
+                                       .keep_if(|o| o.d > base_days and o.d <= horizon)
+                                    loads = List.keep_oks(in_w, |o|
+                                        if o.treps > 0 and ftp_known Ok({ d: o.d, tss: Metrics.tss_from_target({ reps: o.treps, dur_s: o.tdur, watts: o.twatts, ftp }) }) else Err(NoLoad))
+                                    { loads, considered: List.len(in_w), projected: List.len(loads), label: "recorded", echo: [] }
+                                }
+                                Hypo(pairs) => {
+                                    in_w = List.keep_if(pairs, |p2| p2.days > base_days and p2.days <= horizon)
+                                    loads = List.keep_oks(in_w, |p2|
+                                        if ftp_known Ok({ d: p2.days, tss: Metrics.tss_from_target({ reps: p2.target.reps, dur_s: p2.target.dur_s, watts: p2.target.watts, ftp }) }) else Err(NoLoad))
+                                    { loads, considered: List.len(in_w), projected: List.len(loads), label: "hypothetical", echo: List.map(pairs, |p2| { date: p2.date, reps: p2.target.reps, dur_s: p2.target.dur_s, watts: p2.target.watts }) }
+                                }
+                            }
+                            proj = Metrics.project_walk({ ctl: base.ctl, atl: base.atl }, base_days, horizon, source.loads)
+                            Output.out!({
+                                target_date: date_str,
+                                days_away: horizon - today,
+                                projected_from: base.day,
+                                baseline_known: base.known,
+                                ftp_known,
+                                plan_source: source.label,
+                                ctl: proj.ctl,
+                                atl: proj.atl,
+                                tsb: proj.tsb,
+                                sessions_considered: source.considered,
+                                sessions_projected: source.projected,
+                                hypothetical: source.echo,
+                            }, |p| Render.project_screen(p))
+                        }
+                    }
+                }
+        }
     }
 
     # weekly-planning bundle: everything the coach needs to plan a week, in one call

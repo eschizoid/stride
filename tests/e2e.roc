@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1080)?
+    checks_ran_exactly!(1088)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1330,7 +1330,7 @@ b_init_config! = |ctx| {
     # here is the deliberate-bump discipline: adding a properly described command still
     # has to change a number a reader sees.
     overlap = Str.trim(sh!("LC_ALL=C comm -12 '${verbs_dir}/parser' '${verbs_dir}/spec' | wc -l | tr -d ' '"))
-    check!("...and the two lists genuinely overlap on all 30 verbs (got ${overlap})", overlap == "30")?
+    check!("...and the two lists genuinely overlap on all 31 verbs (got ${overlap})", overlap == "31")?
     _ = sh!("rm -rf '${verbs_dir}'")
 
     # The sub-form direction. `unknown_command` was the wrong discriminator (only an
@@ -5413,6 +5413,34 @@ b_events! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["event", "remove", eid])
     _ = stride!(ctx.bin, ctx.home, ["event", "remove", eid10])
     check!("removal really removes — the listing is empty again", strjq!(ctx, ["events"], ".data.events | length") == "0")?
+    # ── taper projection (#189) rides the same fixtures. tsid is DONE here (the
+    # double-count check above marked it), so the +10d window holds no live target:
+    # a bare project must equal the SAME closed form events was pinned against —
+    # two commands, one arithmetic, cross-pinned through one expected value.
+    p_ctl = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' project ${ten_days_out!(ctx)} | jq -r '.data.ctl * 100 | round / 100'"))
+    check!("bare project agrees with events' closed form (${p_ctl} vs ${expected_ctl})", p_ctl == expected_ctl)?
+    # re-open the targeted session: the recorded plan now raises a bare project...
+    _ = sql!(ctx.db, "UPDATE planned_sessions SET status = 'open' WHERE id = ${tsid};")
+    p_rec = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' project ${ten_days_out!(ctx)} | jq -r '.data.ctl * 100 | round / 100'"))
+    check!("...a re-opened recorded target raises the bare projection", if fknown == "true" sfloat(p_rec) > sfloat(expected_ctl) else p_rec == expected_ctl)?
+    # ...and a hypothetical plan REPLACES it: one pair BEYOND the horizon carries no
+    # load, so the projection must fall back to pure decay DESPITE the open recorded
+    # target — proof the recorded plan left the walk entirely
+    # the pair list probes BOTH window edges: one pair beyond the horizon, one ON the
+    # base day. The walk starts at base+1 and stops at the horizon, so neither can
+    # contribute ctl — the counts are each edge's only observable, and each edge has
+    # had its own near-equivalent mutant (dropping `<= horizon`, then `>` -> `>=`)
+    p_hyp = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' project ${ten_days_out!(ctx)} \"2099-12-25=3x12:00@230W,${ctx.today}=1x30:00@200W\" | jq -r '.data.ctl * 100 | round / 100'"))
+    check!("a hypothetical plan REPLACES the recorded one in the walk", p_hyp == expected_ctl)?
+    # ...and the beyond-horizon pair is OUTSIDE the window by the counts too. The ctl
+    # check alone cannot see the window filter: the walk never reaches a day beyond
+    # the horizon, so a filter-less binary produces the same arithmetic and differs
+    # only here — a mutant dropping `<= horizon` survived every other check.
+    check!("...and the window counts exclude BOTH edges", strjq!(ctx, ["project", ten_days_out!(ctx), "2099-12-25=3x12:00@230W,${ctx.today}=1x30:00@200W"], "[.data.sessions_considered, .data.sessions_projected] | join(\",\")") == "0,0")?
+    check!("...and is echoed back verbatim, never stored", strjq!(ctx, ["project", ten_days_out!(ctx), "2099-12-25=3x12:00@230W"], ".data.hypothetical[0].date") == "2099-12-25" and Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE target_date = '2099-12-25';")) == "0")?
+    check!("a malformed pair date refuses with the date's own code", strjq!(ctx, ["project", ten_days_out!(ctx), "junk=3x12:00@230W"], ".error.code") == "bad_date")?
+    check!("...and a malformed pair target with the target's", strjq!(ctx, ["project", ten_days_out!(ctx), "2099-12-25=junk"], ".error.code") == "bad_target")?
+    check!("the project payload conforms to its schema", validate_schema!(ctx, "project ${ten_days_out!(ctx)}", "project") == "")?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${tsid};")
     Ok({})
 }

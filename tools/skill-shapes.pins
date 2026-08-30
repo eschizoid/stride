@@ -40,6 +40,8 @@ power_curve.json	dur_s,watts	dur_s,watts	doc
 progress.json	anchor_date,anchor_scored,groups	anchor_date,anchor_scored,groups	doc
 progress.json	avg_hr,avg_hr_scored,date,decoupling_known,decoupling_pct,distance_m,moving_time,np_w,output_kj,rpe,score,sport,tss	avg_hr,date,decoupling_known,decoupling_pct,distance_m,moving_time,np_w,output_kj,rpe,score,sport,tss	-
 progress.json	grouped_by,hidden,hidden_lens,hidden_scope,lens,name,sessions	grouped_by,hidden,hidden_lens,hidden_scope,lens,name,sessions	doc
+project.json	atl,baseline_known,ctl,days_away,ftp_known,hypothetical,plan_source,projected_from,sessions_considered,sessions_projected,target_date,tsb	atl,baseline_known,ctl,days_away,ftp_known,hypothetical,plan_source,projected_from,sessions_considered,sessions_projected,target_date,tsb	doc
+project.json	date,dur_s,reps,watts	date,dur_s,reps,watts	-
 rate.json	rated,rpe	rated,rpe	-
 relabel.json	id,session_type,status,target_date	id,session_type,status,target_date	doc
 reps.json	anchor_activity_id,anchor_date,matched_total,sessions,shape,sport_family	anchor_activity_id,anchor_date,matched_total,sessions,shape,sport_family	doc

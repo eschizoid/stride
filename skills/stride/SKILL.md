@@ -92,6 +92,15 @@ Never do training math yourself: read stride's numbers, add judgment.
      stride projects the recorded plan's consequences and never proposes, ranks, or
      solves for a plan — whether to CHANGE the plan in response is your judgment, and
      "on track" is a sentence only you may write.
+   - TAPER planning: `stride project <YYYY-MM-DD> ["<date>=<target>,..."] --json` returns
+     `{target_date, days_away, projected_from, baseline_known, ftp_known, plan_source,
+     ctl, atl, tsb, sessions_considered, sessions_projected, hypothetical}` — the same
+     walk, at any horizon. Bare = the recorded open plan; with the literal, the walk
+     runs over YOUR hypothetical plan INSTEAD (each pair `<YYYY-MM-DD>=<RxMM:SS@WWWW>`),
+     echoed back in `hypothetical` (dates verbatim, targets as parsed canonical fields) and never stored. Compare candidate tapers
+     by calling it once per candidate — stride will not solve for the plan that reaches
+     a TSB, even if you name one; that inverse is prescription (ADR 0010) and the
+     judgment is yours.
    - completing a TARGETED session against an activity reports the arithmetic:
      `complete` returns `{target_known, target_reps, target_dur_s, target_watts,
      detected_known, detected_reps, detected_mean_dur_s, detected_mean_watts,
