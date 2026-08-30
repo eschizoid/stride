@@ -286,22 +286,25 @@ closed-world validator for third parties.** `additionalKeys: false` exists so th
 payload which GREW without a schema update is caught rather than shipped. In CI that
 enforcement is `just e2e`, which runs `tools/validate.jq` against seeded fixtures;
 `just schema-check` runs the same validator against your own database and is the
-"does MY data conform" pass, local and not part of CI. Coverage is not total, and it now has three tiers rather than two. THREE
-payloads (`complete`, `init`, `rate`) are validated by neither pass, so
-a key added to THOSE is currently caught by nothing. This sentence said FOUR and named
+"does MY data conform" pass, local and not part of CI. Coverage is not total, and it now has three tiers rather than two. FIVE
+payloads (`init`, `rate`, `relabel`, `event add`, `event remove`) are validated by
+neither pass, so a key added to THOSE is currently caught by nothing. The list is now
+PINNED: e2e asserts each named form has zero validate arms in the suite's own source,
+so giving one an arm (do!) fails a check until this sentence and the pin move together —
+as hand-counted prose it rotted twice. This sentence said FOUR and named
 `import` among them until #259 re-derived it; `import` has had an arm at
 `tests/e2e.roc`'s import scenario for some time, and the stale number survived because it
-was read rather than counted. What the remaining three share is not that they
+was read rather than counted. What the remaining five share is not that they
 mutate — `analyze`, `config set`, `week add`, `skip` and `import` all mutate and are all
 validated — but that `just schema-check` DERIVES its form list from the command table
 filtered on `mutates == false and network == false and interactive == false`, so any
 command outside that filter gets no automatic coverage and has to be given an explicit
-`e2e` arm BY HAND. Seven of the ten schema-bearing mutating commands have one; those three
+`e2e` arm BY HAND. Nine of the fourteen schema-bearing mutating commands have one; those five
 do not. #259 gave `auth` a payload and an `e2e-sync` arm in the same commit for that
 reason. That arm
 validates auth's payload against its schema and asserts the tokens it reports storing are
 in the database, which is narrower than `sync`'s coverage in the same recipe: `sync`'s
-payload is validated in eight places across four drivers, and — see the next paragraph —
+payload is validated in eight places across three drivers, and — see the next paragraph —
 `sync` carries closed record annotations that make a key change a build error, where
 `auth`'s payload literal is unannotated with a `|_|` renderer and has no such guard.
 `tte` is covered by the local recipe
@@ -326,14 +329,19 @@ It should not use stride's schema as a closed-world check, and stride does not p
 that it can.
 
 So: adding a key is additive and does not bump `json_schema_version`. Removing or
-retyping one does. A change that would break a reader of known keys is a new `vN/` directory, not an edit to the current one — v3 (the substitute_activity_id break) is the worked example.
+retyping one does. A change that would break a reader of known keys is a new `vN/` directory, not an edit to the current one — v3 (the substitute_activity_id break) is the worked example. The OLD directory lives in git history, not at head:
+pre-1.0 there was no published consumer for a parallel copy to serve, and the 1.x
+promise is the new directory plus the bump, not an archive at head.
 
 **Error codes are additive in 1.x.** The vocabulary is published, and `tests/e2e.roc`
 diffs the enum against the codes the source emits, so the two cannot silently disagree.
 Note what that does NOT enforce: it asserts set EQUALITY, so deleting a code from the
-source and the enum together passes green. Additivity is a promise this document makes,
-not one the suite currently checks — a caller branching on a code must keep working, and
-nothing but review stops that being broken.
+source and the enum together passes green. Additivity was a promise this document made
+with nothing checking it — a coordinated deletion (source and enum together) passed the
+equality diff green, and the same gap existed unstated for CLI command names. Both are
+mechanical now: `tools/error-codes-1.0.pins` and `tools/commands-1.0.pins` freeze what
+1.0 ships, and e2e asserts the live sets are SUPERSETS — additions pass untouched, a
+removed 1.0 code or command name fails by name.
 
 ## 10. Deliberately out of scope
 
