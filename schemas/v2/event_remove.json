@@ -1,0 +1,14 @@
+{
+  "title": "event_remove",
+  "description": "Result of `stride event remove <event_id>`. Events are targets, not records of training done, so removal destroys no adherence history.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "removed"
+  ],
+  "properties": {
+    "removed": {
+      "type": "integer"
+    }
+  }
+}

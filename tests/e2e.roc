@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1068)?
+    checks_ran_exactly!(1079)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -366,6 +366,7 @@ run_scenarios! = |ctx| {
     b_week_plan!(ctx)?
     b_relabel!(ctx)?
     b_targets!(ctx)?
+    b_events!(ctx)?
     b_concurrency!(ctx)?
     b_migration!(ctx)?
     Ok({})
@@ -1329,7 +1330,7 @@ b_init_config! = |ctx| {
     # here is the deliberate-bump discipline: adding a properly described command still
     # has to change a number a reader sees.
     overlap = Str.trim(sh!("LC_ALL=C comm -12 '${verbs_dir}/parser' '${verbs_dir}/spec' | wc -l | tr -d ' '"))
-    check!("...and the two lists genuinely overlap on all 28 verbs (got ${overlap})", overlap == "28")?
+    check!("...and the two lists genuinely overlap on all 30 verbs (got ${overlap})", overlap == "30")?
     _ = sh!("rm -rf '${verbs_dir}'")
 
     # The sub-form direction. `unknown_command` was the wrong discriminator (only an
@@ -5365,6 +5366,51 @@ b_targets! = |ctx| {
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 977; DELETE FROM activities WHERE id IN (977, 978, 979); DELETE FROM planned_sessions WHERE id IN (${tid}, ${tid2}, ${tid3});")
     Ok({})
 }
+
+# ── event targets and the CTL/ATL/TSB projection (#138, ADR 0010) ───────────────────
+# Self-contained: event ids and session ids are captured, every inserted row deleted.
+# The decay leg is pinned against the CLOSED FORM — ctl_n = ctl_0·(1-α)^n computed by
+# sqlite's power() from the same daily_load row the projection starts from — so the
+# recurrence cannot drift from the arithmetic it claims to be. Runs after b_targets!
+# (needs the target columns) and before the two db-rebuilding blocks.
+b_events! : Ctx => Try({}, _)
+b_events! = |ctx| {
+    check!("event add refuses a past date", strjq!(ctx, ["event", "add", "2020-01-01", "long gone"], ".error.code") == "bad_date")?
+    check!("...and a malformed one", strjq!(ctx, ["event", "add", "not-a-date", "x"], ".error.code") == "bad_date")?
+    eid = Str.trim(strjq!(ctx, ["event", "add", "2099-12-01", "Terminal Century"], ".data.id"))
+    check!("the add echoes a real id", !(Str.is_empty(eid)) and eid != "null")?
+    # the DECAY leg: no open session between the baseline and today+10 (every 2099-01
+    # fixture row is outside a +10d window, and b_week_plan/b_targets cleaned theirs),
+    # so the projection must equal the closed form from the SAME baseline row
+    eid10 = Str.trim(strjq!(ctx, ["event", "add", ten_days_out!(ctx), "Decay Probe"], ".data.id"))
+    expected_ctl = Str.trim(sql!(ctx.db, "SELECT round(ctl * power(1 - 0.0235283133, 10), 2) FROM daily_load ORDER BY day DESC LIMIT 1;"))
+    got_ctl = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' events | jq -r '[.data.events[] | select(.id == ${eid10})][0].ctl * 100 | round / 100'"))
+    check!("a windowless projection IS the closed-form decay (${got_ctl} vs ${expected_ctl})", got_ctl == expected_ctl)?
+    check!("...projected from a computed baseline, and it says so", strjq!(ctx, ["events"], ".data.baseline_known") == "true")?
+    # the TARGET leg: a targeted session inside the window raises CTL above pure decay
+    # iff an FTP exists — pin the fixture's actual ftp_known and the count with it
+    tsid = Str.trim(strjq!(ctx, ["week", "add", five_days_out!(ctx), "threshold", "3x12 for projection", "build", "3x12:00@230W"], ".data.id"))
+    fknown = Str.trim(strjq!(ctx, ["events"], ".data.ftp_known"))
+    counted = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' events | jq -r '[.data.events[] | select(.id == ${eid10})][0] | \"\\(.planned_in_window),\\(.sessions_projected)\"'"))
+    check!("the projection counts the window's plan and its own coverage (ftp_known ${fknown}, got ${counted})", if fknown == "true" counted == "1,1" else counted == "1,0")?
+    ctl2 = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' events | jq -r '[.data.events[] | select(.id == ${eid10})][0].ctl * 100 | round / 100'"))
+    check!("a projectable target RAISES the projection above decay (or cannot, and does not)", if fknown == "true" sfloat(ctl2) > sfloat(expected_ctl) else ctl2 == expected_ctl)?
+    check!("the events payload conforms to its schema", validate_schema!(ctx, "events", "events") == "")?
+    check!("event remove refuses an unknown id", strjq!(ctx, ["event", "remove", "99999"], ".error.code") == "event_not_found")?
+    check!("...and a non-numeric one", strjq!(ctx, ["event", "remove", "abc"], ".error.code") == "bad_id")?
+    _ = stride!(ctx.bin, ctx.home, ["event", "remove", eid])
+    _ = stride!(ctx.bin, ctx.home, ["event", "remove", eid10])
+    check!("removal really removes — the listing is empty again", strjq!(ctx, ["events"], ".data.events | length") == "0")?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${tsid};")
+    Ok({})
+}
+
+# ten/five days past the LOCAL today the binary anchors on — computed the same way the
+# fixture's other relative dates are, so the window arithmetic cannot straddle midnight
+ten_days_out! : Ctx => Str
+ten_days_out! = |ctx| Str.trim(sh!("TZ='${ctx.tz}' date -v+10d +%F 2>/dev/null || TZ='${ctx.tz}' date -d '+10 days' +%F"))
+five_days_out! : Ctx => Str
+five_days_out! = |ctx| Str.trim(sh!("TZ='${ctx.tz}' date -v+5d +%F 2>/dev/null || TZ='${ctx.tz}' date -d '+5 days' +%F"))
 
 # ── activities (+ sport filter) ──────────────────────────────────────
 b_activities! : Ctx => Try({}, _)

@@ -1262,6 +1262,27 @@ Render :: [].{
         }
     }
 
+    ## event targets (#138): the projection as numbers in a table, its inputs in the
+    ## legend, and NO verdict line — "are you on track" is the coach's sentence, and
+    ## ADR 0010 notes the denylist would not even catch it, so nothing here says it.
+    events_screen : { projected_from : Str, baseline_known : Bool, ftp_known : Bool, events : List({ id : I64, event_date : Str, name : Str, days_away : I64, ctl : F64, atl : F64, tsb : F64, planned_in_window : U64, sessions_projected : U64 }) } -> Str
+    events_screen = |p|
+        if List.is_empty(p.events) {
+            "no event targets on file — `stride event add <YYYY-MM-DD> \"<name>\"` records one"
+        } else {
+            rows = List.map(p.events, |e|
+                "  #${I64.to_str(e.id)}  ${e.event_date}  in ${I64.to_str(e.days_away)}d  ctl ${fmt1(e.ctl)}  atl ${fmt1(e.atl)}  tsb ${fmt1(e.tsb)}  (${(e.sessions_projected).to_str()} of ${(e.planned_in_window).to_str()} planned sessions carry a projectable load)  ${e.name}")
+            base_note =
+                if !(p.baseline_known) "\nno computed history to project from — every number above is decay over zero; `stride analyze` first"
+                else if !(p.ftp_known) "\nno 60d best-20min power on file, so targeted sessions could not contribute load — the projection is decay plus nothing"
+                else ""
+            body = Str.join_with(
+                List.concat(["projected CTL/ATL/TSB from ${p.projected_from} over the open plan's structured targets"], rows),
+                "\n",
+            )
+            "${body}${base_note}"
+        }
+
     # time to exhaustion: the number, and what the model thinks of it
     tte_screen = |p| {
         # r2 is 1 by construction at two points, where the COUNT is the signal
@@ -2162,6 +2183,14 @@ expect {
         Render.target_match_note({ target_known: True, target_reps: 3, target_dur_s: 720, target_watts: 230.0, detected_known: True, detected_reps: 3, detected_mean_dur_s: 720, detected_mean_watts: 233.0, reps_delta: 0, watts_pct: 101.3 }),
         Render.target_match_note({ target_known: True, target_reps: 3, target_dur_s: 720, target_watts: 230.0, detected_known: False, detected_reps: 0, detected_mean_dur_s: 0, detected_mean_watts: 0.0, reps_delta: 0, watts_pct: 0.0 }),
         Render.target_match_note({ target_known: False, target_reps: 0, target_dur_s: 0, target_watts: 0.0, detected_known: False, detected_reps: 0, detected_mean_dur_s: 0, detected_mean_watts: 0.0, reps_delta: 0, watts_pct: 0.0 }),
+        # events_screen (#138) joins on arrival: the empty state, a populated row, and
+        # both degraded-baseline notes — ADR 0010 warns "you are on track" would slip
+        # the denylist, which is why the screen carries no verdict line AT ALL, and the
+        # sweep is backstop rather than proof
+        Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [] }),
+        Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 38.2, atl: 22.1, tsb: 16.1, planned_in_window: 4, sessions_projected: 2 }] }),
+        Render.events_screen({ projected_from: "2026-08-30", baseline_known: False, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 0.0, atl: 0.0, tsb: 0.0, planned_in_window: 0, sessions_projected: 0 }] }),
+        Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 12.0, atl: 3.0, tsb: 9.0, planned_in_window: 2, sessions_projected: 0 }] }),
     ]
     List.all(notes, |p| !(Metrics.has_coaching_language(p)))
 }
@@ -2271,3 +2300,7 @@ expect
     Render.sync_screen({ synced: 2, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 1, streams_skipped: 1, pending_streams: 1, stopped: "complete", resumable: True }, FromDrain(Complete), False)
     == "synced 0 new, 0 updated (2 re-checked in the 30-day window), fetched streams for 1 — 1 had unreadable stream data — they retry next sync"
 
+
+# the events empty state is a CLOSED output — full-string equality per ADR 0012's hard
+# guard, so no verdict can ever ride into it unpinned
+expect Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [] }) == "no event targets on file — `stride event add <YYYY-MM-DD> \"<name>\"` records one"

@@ -8,6 +8,7 @@ import pf.Path
 import Analyze
 import Metrics
 import Render
+import Sports
 
 Plan :: [].{
     # session-RPE rating: the athlete is the sensor for sports without power meters.
@@ -1067,6 +1068,156 @@ Plan :: [].{
                 }
         }
     }
+    # ── event targets (#138, ADR 0010's projection side) ─────────────────────────
+    # `event add` stores a date the athlete is training toward (judgment tier,
+    # REMOVABLE — a target is not a record of training done). `events` projects
+    # CTL/ATL/TSB onto each date: the same Metrics.load_step recurrence daily_load
+    # runs, folded forward from the last computed row over the OPEN plan's structured
+    # targets (Metrics.tss_from_target — deterministic arithmetic, no modeling).
+    # Untargeted sessions contribute zero and are COUNTED, so the projection's
+    # blindness is data. Whether to change the plan in response stays with the coach:
+    # nothing here proposes, ranks, or solves for a plan (ADR 0010's direction rule).
+    event_add! : Str, Str => Try({}, _)
+    event_add! = |event_date, name| {
+        path = Db.open_db!({})?
+        today = Db.local_today_days!(path)
+        match Metrics.date_str_to_days(event_date) {
+            Err(_) => Output.err_out!("bad_date", "event add needs a calendar date written YYYY-MM-DD — got '${event_date}'")
+            Ok(ev_days) =>
+                if !(Metrics.is_canonical_date(event_date)) {
+                    Output.err_out!("bad_date", "event add needs a calendar date written YYYY-MM-DD — got '${event_date}'")
+                } else if ev_days <= today {
+                    # a past target has nothing to project — and would sit in `events`
+                    # forever as a row whose projection means nothing
+                    Output.err_out!("bad_date", "'${event_date}' is not in the future — an event target is a date still ahead")
+                } else {
+                    Sqlite.execute!({
+                        path: Path.utf8(path),
+                        query: "INSERT INTO events (created_at, event_date, name) VALUES (:at, :date, :name)",
+                        bindings: [
+                            { name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
+                            { name: ":date", value: String(event_date) },
+                            { name: ":name", value: String(name) },
+                        ],
+                    })?
+                    new_id = Sqlite.query!({
+                        path: Path.utf8(path),
+                        query: "SELECT MAX(id) AS id FROM events",
+                        bindings: [],
+                        row: Sqlite.i64("id"),
+                    })?
+                    Output.out!({ id: new_id, event_date, name, days_away: ev_days - today }, |p| "event #${(p.id).to_str()}: ${p.name} on ${p.event_date} (in ${(p.days_away).to_str()} days)")
+                }
+        }
+    }
+    event_remove! : Str => Try({}, _)
+    event_remove! = |event_id_str| {
+        path = Db.open_db!({})?
+        match Metrics.arg_i64(event_id_str) {
+            Err(_) => Output.err_out!("bad_id", "event remove needs a numeric id: event remove <event_id>")
+            Ok(event_id) =>
+                if !(Report.row_exists!(path, "events", event_id)?) {
+                    Output.err_out!("event_not_found", "no event #${(event_id).to_str()} — `stride events` lists them")
+                } else {
+                    Sqlite.execute!({
+                        path: Path.utf8(path),
+                        query: "DELETE FROM events WHERE id = :id",
+                        bindings: [{ name: ":id", value: Integer(event_id) }],
+                    })?
+                    Output.out!({ removed: event_id }, |p| "removed event #${(p.removed).to_str()}")
+                }
+        }
+    }
+    events! : {} => Try({}, _)
+    events! = |{}| {
+        path = Db.open_db!({})?
+        today = Db.local_today_days!(path)
+        # the projection's floor: the last COMPUTED day. Everything at or before it is
+        # measured history; everything after is the recurrence over planned targets.
+        base_rows = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(COALESCE(ctl, 0) AS REAL) AS ctl, CAST(COALESCE(atl, 0) AS REAL) AS atl FROM daily_load ORDER BY day DESC LIMIT 1",
+            bindings: [],
+            rows: |cols| |stmt| {
+                day = Sqlite.str("day")(cols)(stmt)?
+                ctl = Sqlite.f64("ctl")(cols)(stmt)?
+                atl = Sqlite.f64("atl")(cols)(stmt)?
+                Ok({ day, ctl, atl })
+            },
+        })?
+        base = match List.first(base_rows) {
+            Ok(b) => { day: b.day, ctl: b.ctl, atl: b.atl, known: True }
+            # never analyzed: project pure decay from zero, and SAY so — the flag is
+            # the reader's licence to ignore the numbers (ADR 0009)
+            Err(_) => { day: Metrics.days_to_date_str(today), ctl: 0.0, atl: 0.0, known: False }
+        }
+        base_days = (Metrics.date_str_to_days(base.day)).ok_or(today)
+        # the same 60d best-20min derivation summary publishes — targets are power, so
+        # the Ride family FTP is the one the arithmetic needs
+        cutoff60 = Metrics.days_to_date_str(today - 60)
+        best20 = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT CAST(COALESCE(MAX(m.best_20min_w),0) AS REAL) AS b FROM activity_metrics m
+                \\JOIN activities a ON a.id = m.activity_id
+                \\WHERE a.sport_family = :fam AND a.start_local >= :cutoff
+            ,
+            bindings: [{ name: ":fam", value: String(Sports.canonical("Ride")) }, { name: ":cutoff", value: String(cutoff60) }],
+            row: Sqlite.f64("b"),
+        })?
+        ftp = Metrics.ftp_from_best_20min(best20)
+        ftp_known : Bool
+        ftp_known = ftp > 0.0
+        evs = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "SELECT id AS id, COALESCE(CAST(event_date AS TEXT), '') AS event_date, COALESCE(CAST(name AS TEXT), '') AS name FROM events ORDER BY event_date, id",
+            bindings: [],
+            rows: |cols| |stmt| {
+                id = Sqlite.i64("id")(cols)(stmt)?
+                event_date = Sqlite.str("event_date")(cols)(stmt)?
+                name = Sqlite.str("name")(cols)(stmt)?
+                Ok({ id, event_date, name })
+            },
+        })?
+        opens = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT COALESCE(CAST(target_date AS TEXT), '') AS target_date,
+                \\       COALESCE(target_reps, 0) AS treps, COALESCE(target_dur_s, 0) AS tdur,
+                \\       CAST(COALESCE(target_watts, 0) AS REAL) AS twatts
+                \\FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'
+            ,
+            bindings: [],
+            rows: |cols| |stmt| {
+                target_date = Sqlite.str("target_date")(cols)(stmt)?
+                treps = Sqlite.i64("treps")(cols)(stmt)?
+                tdur = Sqlite.i64("tdur")(cols)(stmt)?
+                twatts = Sqlite.f64("twatts")(cols)(stmt)?
+                Ok({ target_date, treps, tdur, twatts })
+            },
+        })?
+        open_days = List.keep_oks(opens, |o| (Metrics.date_str_to_days(o.target_date)).map_ok(|d| { d, treps: o.treps, tdur: o.tdur, twatts: o.twatts }))
+        projected = List.map(evs, |ev| {
+            ev_days = (Metrics.date_str_to_days(ev.event_date)).ok_or(today)
+            in_window = List.keep_if(open_days, |o| o.d > base_days and o.d <= ev_days)
+            proj = if ev_days <= base_days {
+                # an event inside computed history projects nothing new — state the
+                # baseline rather than walking backwards
+                { ctl: base.ctl, atl: base.atl, tsb: base.ctl - base.atl }
+            } else {
+                span = (ev_days - base_days).to_u64_wrap()
+                Iter.fold((0.U64..<span).iter(), { ctl: base.ctl, atl: base.atl, tsb: base.ctl - base.atl }, |acc, i| {
+                    d = base_days + 1 + (i).to_i64_wrap()
+                    tss = List.fold(in_window, 0.0, |t, o| if o.d == d and o.treps > 0 and ftp_known t + Metrics.tss_from_target({ reps: o.treps, dur_s: o.tdur, watts: o.twatts, ftp }) else t)
+                    Metrics.load_step({ ctl_prev: acc.ctl, atl_prev: acc.atl, tss })
+                })
+            }
+            sessions_projected = List.len(List.keep_if(in_window, |o| o.treps > 0 and ftp_known))
+            { id: ev.id, event_date: ev.event_date, name: ev.name, days_away: ev_days - today, ctl: proj.ctl, atl: proj.atl, tsb: proj.tsb, planned_in_window: List.len(in_window), sessions_projected }
+        })
+        Output.out!({ projected_from: base.day, baseline_known: base.known, ftp_known, events: projected }, |p| Render.events_screen(p))
+    }
+
     # weekly-planning bundle: everything the coach needs to plan a week, in one call
     plan_bundle! : {} => Try({}, _)
     plan_bundle! = |{}| {

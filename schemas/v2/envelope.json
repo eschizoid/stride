@@ -37,6 +37,7 @@
             "database_error",
             "derived_key",
             "empty_csv",
+            "event_not_found",
             "internal_error",
             "irregular_anchor",
             "missing_client_creds",

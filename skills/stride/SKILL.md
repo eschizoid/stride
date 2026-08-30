@@ -76,6 +76,18 @@ Never do training math yourself: read stride's numbers, add judgment.
      `target_dur_s`, `target_watts`); `plan`'s open sessions carry the same four. A
      revise REPLACES the whole prescription — re-planning a date WITHOUT the target
      clears it. Malformed literals refuse with `bad_target`.
+   - an EVENT the athlete is training toward: `stride event add <YYYY-MM-DD> "<name>"
+     --json` (future dates only; removable via `stride event remove <id>` — a target is
+     not a record). `stride events --json` returns
+     `{projected_from, baseline_known, ftp_known, events:[{id, event_date, name,
+     days_away, ctl, atl, tsb, planned_in_window, sessions_projected}]}` — CTL/ATL/TSB
+     projected onto each event date by the SAME recurrence daily_load runs, folded over
+     the open plan's structured targets (untargeted sessions contribute zero and the
+     two counts say how blind the projection is; `baseline_known: false` means no
+     computed history and every number is decay over zero). This is ADR 0010 arithmetic:
+     stride projects the recorded plan's consequences and never proposes, ranks, or
+     solves for a plan — whether to CHANGE the plan in response is your judgment, and
+     "on track" is a sentence only you may write.
    - completing a TARGETED session against an activity reports the arithmetic:
      `complete` returns `{target_known, target_reps, target_dur_s, target_watts,
      detected_known, detected_reps, detected_mean_dur_s, detected_mean_watts,

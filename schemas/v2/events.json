@@ -1,0 +1,72 @@
+{
+  "title": "events",
+  "description": "Result of `stride events` — projected CTL/ATL/TSB on each event date (ADR 0010: the arithmetic consequences of the recorded open plan, never a proposed one). The projection folds Metrics.load_step forward from the last computed daily_load row; open sessions with structured targets contribute deterministic TSS (Metrics.tss_from_target), untargeted sessions contribute zero and are counted. baseline_known false = no computed history, every number is decay over zero. ftp_known false = no 60d best-20min power, so targeted sessions could not contribute.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "projected_from",
+    "baseline_known",
+    "ftp_known",
+    "events"
+  ],
+  "properties": {
+    "projected_from": {
+      "type": "string"
+    },
+    "baseline_known": {
+      "type": "boolean"
+    },
+    "ftp_known": {
+      "type": "boolean"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": [
+          "id",
+          "event_date",
+          "name",
+          "days_away",
+          "ctl",
+          "atl",
+          "tsb",
+          "planned_in_window",
+          "sessions_projected"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "event_date": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "days_away": {
+            "type": "integer"
+          },
+          "ctl": {
+            "type": "number"
+          },
+          "atl": {
+            "type": "number"
+          },
+          "tsb": {
+            "type": "number"
+          },
+          "planned_in_window": {
+            "type": "integer",
+            "description": "Open sessions dated inside (projected_from, event_date]."
+          },
+          "sessions_projected": {
+            "type": "integer",
+            "description": "How many of those carried a structured target AND an FTP existed — the sessions whose load the projection actually contains. The gap to planned_in_window is the projection's stated blindness."
+          }
+        }
+      }
+    }
+  }
+}

@@ -45,6 +45,9 @@ Command := [
 	SkipWith(Str, Str, Str),
 	Relabel(Str, Str, Str),
 	RelabelWith(Str, Str, Str, Str),
+	EventAdd(Str, Str),
+	EventRemove(Str),
+	Events,
 	ConfigGet(Str),
 	ConfigSet(Str, Str),
 	ConfigUnset(Str),
@@ -169,6 +172,10 @@ Command := [
 			# was a duplicate row plus a skip tombstone, or hand-run SQL.
 			[_, "relabel", session_id, session_type, detail, rationale] => Ok(RelabelWith(session_id, session_type, detail, rationale))
 			[_, "relabel", session_id, session_type, detail] => Ok(Relabel(session_id, session_type, detail))
+			# event targets (#138, ADR 0010's projection side): a date to project toward
+			[_, "event", "add", date, name] => Ok(EventAdd(date, name))
+			[_, "event", "remove", event_id] => Ok(EventRemove(event_id))
+			[_, "events"] => Ok(Events)
 			[_, "config", "get", key] => Ok(ConfigGet(key))
 			# bare `config` LISTS the keys that hold a value (secrets redacted). It was a
 			# Usage error, which made "which config do I actually have set?" a question the
@@ -200,6 +207,7 @@ Command := [
 			[_, "complete", ..] => Err(Usage("complete <session_id> [activity_id]"))
 			[_, "skip", ..] => Err(Usage("skip <session_id> \"<reason>\" [activity_id|none]"))
 			[_, "relabel", ..] => Err(Usage("relabel <session_id> <type> \"<detail>\" [\"<rationale>\"]"))
+			[_, "event", ..] => Err(Usage("event add <YYYY-MM-DD> \"<name>\"  |  event remove <event_id>"))
 			[_, "activity", ..] => Err(Usage("activity <activity_id>"))
 			[_, "config", ..] => Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>"))
 			# asking for help — bare, or by any of the conventional spellings —
@@ -401,6 +409,9 @@ Command := [
 		errs(writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"), ["activity_already_linked", "activity_not_found", "activity_required", "bad_id", "session_not_found"]),
 		errs(writes("skip", [req("<session_id>"), req("<reason>"), opt("<activity_id|none>")], "skip.json"), ["activity_already_linked", "activity_not_found", "bad_id", "session_done", "session_not_found"]),
 		errs(writes("relabel", [req("<session_id>"), req_ex("<type>", "endurance"), req_ex("<detail>", "example"), opt_ex("<rationale>", "example")], "relabel.json"), ["bad_id", "session_not_found"]),
+		errs(writes("event add", [req_ex("<YYYY-MM-DD>", "2099-01-01"), req_ex("<name>", "example")], "event_add.json"), ["bad_date"]),
+		errs(writes("event remove", [req("<event_id>")], "event_remove.json"), ["bad_id", "event_not_found"]),
+		reads("events", [], "events.json"),
 		errs(writes("config set", [req_ex("<key>", "timezone"), req_ex("<value>", "UTC")], "config.json"), ["bad_value", "derived_key", "unknown_key"]),
 		# `config unset` declares NO error codes beyond the universal ones. It refuses
 		# nothing: `unknown_key` cannot apply because deleting a key stride does not read is
@@ -832,6 +843,10 @@ expect match Command.parse(["stride", "relabel", "45", "threshold", "3x12 @ 230W
 expect match Command.parse(["stride", "relabel", "45", "threshold", "3x12 @ 230W", "day-swapped with Sunday"]) { Ok(RelabelWith("45", "threshold", "3x12 @ 230W", "day-swapped with Sunday")) => True  _ => False }
 expect match Command.parse(["stride", "relabel", "45"]) { Err(Usage(_)) => True  _ => False }
 expect match Command.parse(["stride", "week", "add", "2026-01-01", "threshold", "3x12", "build", "3x12:00@230W"]) { Ok(WeekAddT("2026-01-01", "threshold", "3x12", "build", "3x12:00@230W")) => True  _ => False }
+expect match Command.parse(["stride", "event", "add", "2026-10-15", "Fall Century"]) { Ok(EventAdd("2026-10-15", "Fall Century")) => True  _ => False }
+expect match Command.parse(["stride", "event", "remove", "3"]) { Ok(EventRemove("3")) => True  _ => False }
+expect match Command.parse(["stride", "events"]) { Ok(Events) => True  _ => False }
+expect match Command.parse(["stride", "event", "add", "2026-10-15"]) { Err(Usage(_)) => True  _ => False }
 expect match Command.parse(["stride", "config", "get", "ftp"]) { Ok(ConfigGet("ftp")) => True  _ => False }
 expect match Command.parse(["stride", "tte", "250"]) { Ok(Tte("250")) => True  _ => False }
 expect match Command.parse(["stride", "reps"]) { Ok(Reps("")) => True  _ => False }

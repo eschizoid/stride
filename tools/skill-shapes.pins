@@ -22,6 +22,10 @@ doctor.json	activities,awaiting_metrics,awaiting_metrics_known,concurrent_reads_
 doctor.json	model,n	model,n	-
 envelope.json	code,message	code,message	-
 envelope.json	data,error,schema_version	schema_version	-
+event_add.json	days_away,event_date,id,name	days_away,event_date,id,name	doc
+event_remove.json	removed	removed	-
+events.json	atl,ctl,days_away,event_date,id,name,planned_in_window,sessions_projected,tsb	atl,ctl,days_away,event_date,id,name,planned_in_window,sessions_projected,tsb	doc
+events.json	baseline_known,events,ftp_known,projected_from	baseline_known,events,ftp_known,projected_from	doc
 import.json	imported,skipped	imported,skipped	-
 init.json	initialized	initialized	-
 load.json	atl,ctl,day,tsb,tss	atl,ctl,day,tsb,tss	-

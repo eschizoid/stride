@@ -70,6 +70,17 @@ Schema :: [].{
         \\  completed_activity_id INTEGER
         \\)
 
+    # event targets (#138, judgment tier): a date the athlete is training toward.
+    # REMOVABLE, unlike planned_sessions — an event is a target, not a record of
+    # training done, so deleting one destroys no adherence history.
+    events =
+        \\CREATE TABLE IF NOT EXISTS events (
+        \\  id         INTEGER PRIMARY KEY,
+        \\  created_at TEXT,
+        \\  event_date TEXT,
+        \\  name       TEXT
+        \\)
+
     streams =
         \\CREATE TABLE IF NOT EXISTS streams (
         \\  activity_id INTEGER PRIMARY KEY REFERENCES activities(id),
