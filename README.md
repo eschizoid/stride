@@ -265,8 +265,8 @@ Every query command prints **human tables** in a terminal and **JSON** when
 flag beats the variable, and `--` ends flag parsing for an argument whose literal
 value is `--json`). Nothing is inferred from the environment — a machine caller asks.
 The JSON is
-a versioned envelope: success is `{"schema_version":2,"data":{…}}`, an in-band
-error is `{"schema_version":2,"error":{"code":"…","message":"…"}}` — printed on
+a versioned envelope: success is `{"schema_version":3,"data":{…}}`, an in-band
+error is `{"schema_version":3,"error":{"code":"…","message":"…"}}` — printed on
 stdout AND accompanied by exit status 1, so `set -e`, `&&` chains and CI steps
 see failures while JSON consumers keep reading the same envelope. A bare `stride` prints
 help and exits 0 — machines get `{"data":{"commands":[…]}}` instead. An unknown command

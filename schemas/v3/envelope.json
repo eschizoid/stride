@@ -7,7 +7,11 @@
   "additionalKeys": false,
   "properties": {
     "schema_version": {
-      "type": "integer"
+      "type": "integer",
+      "enum": [
+        3
+      ],
+      "description": "The envelope version. Pinned by enum so a binary stamping the wrong version fails conformance, not just the one e2e equality check."
     },
     "data": {},
     "error": {

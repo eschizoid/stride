@@ -203,8 +203,8 @@ answered), `strava_error` / `rate_limited` (it answered with a status),
 clipped tag in its message — so a failure without a code is a bug, not a shrug.
 An expired token still arrives as `not_authenticated`, from the boundary as well
 as from sync. Success →
-`{"schema_version":2,"data":{…}}`, error →
-`{"schema_version":2,"error":{"code":"…","message":"…"}}`. The payloads described in
+`{"schema_version":3,"data":{…}}`, error →
+`{"schema_version":3,"error":{"code":"…","message":"…"}}`. The payloads described in
 the table below all live under `.data`; every payload here — the
 every query, every action you branch on, the command list and the envelope itself (one
 file per published payload in `schemas/v3/`, so the directory listing is the inventory) —
