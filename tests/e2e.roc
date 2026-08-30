@@ -5426,13 +5426,17 @@ b_events! = |ctx| {
     # ...and a hypothetical plan REPLACES it: one pair BEYOND the horizon carries no
     # load, so the projection must fall back to pure decay DESPITE the open recorded
     # target — proof the recorded plan left the walk entirely
-    p_hyp = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' project ${ten_days_out!(ctx)} \"2099-12-25=3x12:00@230W\" | jq -r '.data.ctl * 100 | round / 100'"))
+    # the pair list probes BOTH window edges: one pair beyond the horizon, one ON the
+    # base day. The walk starts at base+1 and stops at the horizon, so neither can
+    # contribute ctl — the counts are each edge's only observable, and each edge has
+    # had its own near-equivalent mutant (dropping `<= horizon`, then `>` -> `>=`)
+    p_hyp = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' project ${ten_days_out!(ctx)} \"2099-12-25=3x12:00@230W,${ctx.today}=1x30:00@200W\" | jq -r '.data.ctl * 100 | round / 100'"))
     check!("a hypothetical plan REPLACES the recorded one in the walk", p_hyp == expected_ctl)?
     # ...and the beyond-horizon pair is OUTSIDE the window by the counts too. The ctl
     # check alone cannot see the window filter: the walk never reaches a day beyond
     # the horizon, so a filter-less binary produces the same arithmetic and differs
     # only here — a mutant dropping `<= horizon` survived every other check.
-    check!("...and the window counts exclude it", strjq!(ctx, ["project", ten_days_out!(ctx), "2099-12-25=3x12:00@230W"], "[.data.sessions_considered, .data.sessions_projected] | join(\",\")") == "0,0")?
+    check!("...and the window counts exclude BOTH edges", strjq!(ctx, ["project", ten_days_out!(ctx), "2099-12-25=3x12:00@230W,${ctx.today}=1x30:00@200W"], "[.data.sessions_considered, .data.sessions_projected] | join(\",\")") == "0,0")?
     check!("...and is echoed back verbatim, never stored", strjq!(ctx, ["project", ten_days_out!(ctx), "2099-12-25=3x12:00@230W"], ".data.hypothetical[0].date") == "2099-12-25" and Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM planned_sessions WHERE target_date = '2099-12-25';")) == "0")?
     check!("a malformed pair date refuses with the date's own code", strjq!(ctx, ["project", ten_days_out!(ctx), "junk=3x12:00@230W"], ".error.code") == "bad_date")?
     check!("...and a malformed pair target with the target's", strjq!(ctx, ["project", ten_days_out!(ctx), "2099-12-25=junk"], ".error.code") == "bad_target")?

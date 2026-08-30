@@ -97,7 +97,7 @@ Never do training math yourself: read stride's numbers, add judgment.
      ctl, atl, tsb, sessions_considered, sessions_projected, hypothetical}` — the same
      walk, at any horizon. Bare = the recorded open plan; with the literal, the walk
      runs over YOUR hypothetical plan INSTEAD (each pair `<YYYY-MM-DD>=<RxMM:SS@WWWW>`),
-     echoed back verbatim in `hypothetical` and never stored. Compare candidate tapers
+     echoed back in `hypothetical` (dates verbatim, targets as parsed canonical fields) and never stored. Compare candidate tapers
      by calling it once per candidate — stride will not solve for the plan that reaches
      a TSB, even if you name one; that inverse is prescription (ADR 0010) and the
      judgment is yours.

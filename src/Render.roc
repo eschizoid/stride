@@ -1266,7 +1266,14 @@ Render :: [].{
     ## them — no verdict, same rule as events_screen (ADR 0010/0012)
     project_screen : { target_date : Str, days_away : I64, projected_from : Str, baseline_known : Bool, ftp_known : Bool, plan_source : Str, ctl : F64, atl : F64, tsb : F64, sessions_considered : U64, sessions_projected : U64, hypothetical : List({ date : Str, reps : I64, dur_s : I64, watts : F64 }) } -> Str
     project_screen = |p| {
-        head = "projected to ${p.target_date} (in ${I64.to_str(p.days_away)}d) from ${p.projected_from}, over the ${p.plan_source} plan"
+        # a PAST horizon states the current baseline, not a projection — same arm
+        # events_screen carries, same wording convention (review caught this exact
+        # wart returning one PR after events fixed it)
+        head =
+            if p.days_away < 0
+                "${p.target_date} was ${I64.to_str(-p.days_away)}d ago — baseline shown, `stride load` holds the day's reading"
+            else
+                "projected to ${p.target_date} (in ${I64.to_str(p.days_away)}d) from ${p.projected_from}, over the ${p.plan_source} plan"
         nums = "  ctl ${fmt1(p.ctl)}  atl ${fmt1(p.atl)}  tsb ${fmt1(p.tsb)}  (${(p.sessions_projected).to_str()} of ${(p.sessions_considered).to_str()} sessions in the window carry a projectable load)"
         hyp =
             if List.is_empty(p.hypothetical) ""
@@ -2217,6 +2224,8 @@ expect {
         Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "recorded", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 3, sessions_projected: 2, hypothetical: [] }),
         Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "hypothetical", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 1, sessions_projected: 1, hypothetical: [{ date: "2026-09-15", reps: 3, dur_s: 720, watts: 230.0 }] }),
         Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: False, ftp_known: False, plan_source: "recorded", ctl: 0.0, atl: 0.0, tsb: 0.0, sessions_considered: 0, sessions_projected: 0, hypothetical: [] }),
+        Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: False, plan_source: "recorded", ctl: 12.0, atl: 3.0, tsb: 9.0, sessions_considered: 2, sessions_projected: 0, hypothetical: [] }),
+        Render.project_screen({ target_date: "2020-01-01", days_away: -2433, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "recorded", ctl: 40.9, atl: 50.0, tsb: -9.1, sessions_considered: 0, sessions_projected: 0, hypothetical: [] }),
     ]
     List.all(notes, |p| !(Metrics.has_coaching_language(p)))
 }

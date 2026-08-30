@@ -1207,7 +1207,7 @@ Plan :: [].{
     # Bare `project <date>` maps the RECORDED open plan to its consequences on that
     # date — the same walk `events` runs, at an arbitrary horizon. With the literal,
     # the walk runs over the CALLER's hypothetical plan INSTEAD: caller input, echoed
-    # back verbatim in the payload, never stored, so the recorded plan stays the
+    # back in the payload (dates verbatim, targets as parsed canonical fields), never stored, so the recorded plan stays the
     # single source of adherence truth (ADR 0010). The direction rule holds whole:
     # plan → consequences only; stride never solves for the plan that reaches a
     # target TSB, even when the caller names one — that inverse is prescription.
