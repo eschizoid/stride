@@ -1,0 +1,36 @@
+activities
+activity
+analyze
+auth
+compare
+complete
+config
+config get
+config set
+config unset
+doctor
+event add
+event remove
+events
+import
+init
+load
+pc
+plan
+power-curve
+progress
+project
+pz
+rate
+relabel
+reps
+season
+skip
+stats
+summary
+sync
+top
+tte
+week
+week add
+zones

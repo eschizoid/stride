@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1088)?
+    checks_ran_exactly!(1093)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2800,9 +2800,10 @@ b_seed_analyze! = |ctx| {
     act_sess = Str.trim(strjq!(ctx, ["week", "add", "2099-11-11", "endurance", "schema action probe", "r"], ".data.id"))
     check!("week add conforms", validate!("week add 2099-11-12 endurance d r", "week_add") == "")?
     check!("skip conforms", validate!("skip ${act_sess} \"probe reason\"", "skip") == "")?
-    # `complete` — BOTH forms, the oracle ADR 0000 s9c says does not exist:
+    # `complete` — BOTH forms (ADR 0000 s9c counts it among the validated nine):
     # `just schema-check` and the conformance loop select `mutates == false`, so
-    # complete/import/init/rate are validated by neither. #258 learned it the
+    # init/rate/relabel/event add/event remove are validated by neither (the pinned
+    # list in the contract-guards block). #258 learned the cost of a missing arm the
     # expensive way — `replaced_activity` was made REQUIRED on the two-argument
     # form and the rest form silently stopped conforming to its own contract.
     # `skip` was wrong the same way (`substitute_activity` vs the declared
@@ -2847,6 +2848,26 @@ b_seed_analyze! = |ctx| {
     # were both 27.
     code_diff = Str.trim(sh!("cat src/*.roc | tr '\\n' ' ' | grep -oE '(err_out!|emit_err!)\\( *\"[a-z_]+\"' | grep -oE '\"[a-z_]+\"' | tr -d '\"' | sort -u > /tmp/stride_src_codes.$$; jq -r '.properties.error.properties.code.enum[]' schemas/v3/envelope.json | sort > /tmp/stride_enum_codes.$$; diff /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$; rm -f /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$"))
     check!("every error code the source emits is in the contract, and vice versa", code_diff == "")?
+    # ── the 1.0 additivity guards (§9c). Set EQUALITY above cannot see a coordinated
+    # DELETION — remove a code from the source and the enum together and it stays
+    # green, which §9c admitted in prose for both error codes and command names. The
+    # frozen baselines convert that admission into arithmetic: the live sets must be
+    # SUPERSETS of what 1.0 shipped, so a caller branching on a 1.0 code or parsing a
+    # 1.0 command name keeps working. Additions pass untouched; only removal fails.
+    cmd_missing = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' --help | jq -r '.data.commands[].name' | sort -u > /tmp/stride_live_cmds.$$; LC_ALL=C comm -23 tools/commands-1.0.pins /tmp/stride_live_cmds.$$; rm -f /tmp/stride_live_cmds.$$"))
+    check!("every 1.0 command name still parses (baseline superset; missing: ${cmd_missing})", cmd_missing == "")?
+    code_missing = Str.trim(sh!("jq -r '.properties.error.properties.code.enum[]' schemas/v3/envelope.json | sort > /tmp/stride_live_codes.$$; LC_ALL=C comm -23 tools/error-codes-1.0.pins /tmp/stride_live_codes.$$; rm -f /tmp/stride_live_codes.$$"))
+    check!("every 1.0 error code is still in the contract (baseline superset; missing: ${code_missing})", code_missing == "")?
+    # ...and the baselines themselves can speak: an empty pins file would make both
+    # supersets vacuously true, so their line counts are asserted alive
+    check!("the 1.0 baselines are non-empty (${Str.trim(sh!("wc -l < tools/commands-1.0.pins | tr -d ' '"))} cmds, ${Str.trim(sh!("wc -l < tools/error-codes-1.0.pins | tr -d ' '"))} codes)", Str.trim(sh!("wc -l < tools/commands-1.0.pins | tr -d ' '")) == "36" and Str.trim(sh!("wc -l < tools/error-codes-1.0.pins | tr -d ' '")) == "48")?
+    # ── §9c's coverage list, pinned to the e2e source itself. The ADR names the forms
+    # validated by NO pass; that prose rotted twice by hand-counting, so the list is
+    # now held against this file's own validate arms: each never-validated form must
+    # have ZERO validate_schema! mentions here, and adding one (good!) fails this
+    # check until the ADR's list and this pin move together.
+    unvalidated = Str.trim(sh!("for f in init rate relabel 'event add' 'event remove'; do n=$(grep -c \"validate_schema!(ctx, \\\"$f\" tests/e2e.roc); [ \"$n\" = \"0\" ] || printf '%s has %s arms; ' \"$f\" \"$n\"; done"))
+    check!("s9c's never-validated list matches this file's own arms (${unvalidated})", unvalidated == "")?
     # ── the two directions of the error-code declaration (#239) ─────────────────
     # Done in jq, NOT with `comm` and process substitution. `sh!` runs under /bin/sh, which
     # on macOS is bash 3.2 in POSIX mode, where `<(...)` is a SYNTAX ERROR — both
@@ -6572,6 +6593,10 @@ b_migration! = |ctx| {
     migv = str_to_i64(Str.trim(sql!(migdb, "PRAGMA user_version;")))
     check!("migration advances schema version", migv > 1)?
     check!("rename preserves planned session row", Str.trim(sql!(migdb, "SELECT session_type FROM planned_sessions WHERE id=1;")) == "vo2max")?
+    # §9c's judgment-tier promise covers config too, and the fixture carries rows —
+    # planned_sessions was the only judgment table the migration block re-asserted,
+    # so a migration that wiped config passed this suite (audit finding)
+    check!("migration preserves judgment-tier config rows", Str.trim(sql!(migdb, "SELECT value FROM config WHERE key='hr_z2_max';")) == "153")?
     check!("ratings table created", Str.contains(sql!(migdb, "SELECT 1 FROM ratings LIMIT 0; SELECT 'ok';"), "ok"))?
     check!("metric provenance columns added", Str.contains(sql!(migdb, "SELECT load_model, metrics_rev, zones_used FROM activity_metrics LIMIT 0; SELECT 'ok';"), "ok"))?
     check!("weighted_avg_watts column added", Str.contains(sql!(migdb, "SELECT weighted_avg_watts FROM activities LIMIT 0; SELECT 'ok';"), "ok"))?
