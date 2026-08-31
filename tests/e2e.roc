@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1099)?
+    checks_ran_exactly!(1102)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2021,6 +2021,33 @@ b_seed_analyze! = |ctx| {
     units_unset_msg = sh!("HOME='${ctx.home}' STRIDE_FORMAT=human '${ctx.bin}' config unset units 2>&1")
     check!("unsetting names what actually changes — rendering, not a command that starts refusing", Str.contains(units_unset_msg, "render in metric again"))?
     check!("...and the summary is metric again", Str.contains(sh!("HOME='${ctx.home}' STRIDE_FORMAT=human '${ctx.bin}' summary 2>&1"), " km "))?
+    # Two auto-named rides within 10% of each other, so `progress` builds a
+    # SimilarDistance group whose label carries a DISTANCE — the only shape that can
+    # expose a units leak into the payload. Without them the sweep's `progress` leg runs
+    # against labels that hold no number and proves nothing, which is exactly how the
+    # leak shipped. Removed again below so the row counts every later check reads are
+    # untouched.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9001,'Morning Ride','Ride','${ctx.today}T09:00:00Z',3600,30000,50,150),(9002,'Morning Ride','Ride','${ctx.d1}T09:00:00Z',3600,31000,50,148);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (9001,50.0,190.0,3600,1),(9002,52.0,190.0,3600,1);")
+    # ── The SI contract, swept rather than enumerated. Naming commands here would only
+    # cover the ones I thought of, and the leak this guards against shipped in exactly the
+    # command I had not checked: `progress` built its group label with the reader's units
+    # and that label fed the PAYLOAD, so `groups[].name` — what the coaching agent groups
+    # by — moved with a display preference. A sweep catches the next one for free.
+    #
+    # `n` is asserted, not just `differ`: if the loop stops running the commands, zero
+    # differences is the same answer a clean tree gives.
+    units_sweep = Str.trim(sh!("h='${ctx.home}'; n=0; d=0; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance'; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; a=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null | md5); HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; b=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n differ=$d\""))
+    units_probe_live = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' progress 2>/dev/null")
+    check!("the sweep's progress leg is LIVE — the fixture has a distance-keyed group label", Str.contains(units_probe_live, "(~"))?
+    check!("no command's JSON moves with the units setting — SI is the contract, swept not enumerated", units_sweep == "swept=12 differ=0")?
+    # The mirror on the HUMAN side, and the check that would have caught the two screens
+    # this PR missed on its first pass: with imperial set, no command may still print a
+    # metric distance. Enumerating screens is what let `activity` and `top` ship in km
+    # while `summary` showed miles — a sweep does not care which screen I remembered.
+    units_km_leak = Str.trim(sh!("h='${ctx.home}'; HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; n=0; k=0; for c in 'summary' 'stats' 'activities' 'week' 'season' 'reps' 'progress' 'top distance'; do n=$((n+1)); o=$(HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' $c 2>/dev/null); case \"$o\" in *' km '*|*'(km)'*|*'min/km'*) k=$((k+1));; esac; done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"screens=$n metric_leaks=$k\""))
+    check!("with imperial set, no human screen still prints kilometres", units_km_leak == "screens=8 metric_leaks=0")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (9001,9002); DELETE FROM activities WHERE id IN (9001,9002);")
     check!("coverage tiers discriminate (high and medium both live)", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct > 0) and (.medium_pct > 0)") == "true")?
     check!("form coverage carries the 90d window", strjq!(ctx, ["summary"], ".data.form_coverage_90d | (.high_pct + .medium_pct + .low_pct == 100) and ((.known | type) == \"boolean\")") == "true")?
     # with fixtures loaded TSB is known, so the enum arm is required here; the

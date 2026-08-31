@@ -32,6 +32,8 @@ ReportSessions :: [].{
     }
     activity_body! : Str, Str, I64 => Try({}, _)
     activity_body! = |path, id_str, aid| {
+        # Human branch only — the JSON payload above emits distance_m in metres.
+        units = Db.units!(path)?
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
@@ -375,7 +377,7 @@ ReportSessions :: [].{
                         hr_drift_known: seg_drift.is_ok(),
                     })
                 else {
-                    dist_str = if a.distance_m >= 1000.0 " · ${Render.fmt1(a.distance_m / 1000.0)} km" else ""
+                    dist_str = if a.distance_m >= 1000.0 " · ${Render.fmt1(Render.dist_value(units, a.distance_m))} ${Render.dist_unit(units)}" else ""
                     Stdout.line!(a.name)?
                     Stdout.line!("${a.date} · ${a.sport} · ${Render.mins(a.moving_time)}${dist_str}")?
                     Stdout.line!("")?
@@ -672,11 +674,17 @@ ReportSessions :: [].{
     top! : Str, U64, Str => Try({}, _)
     top! = |metric, limit, sport_filter| {
         path = Db.open_db!({})?
+        # Human branch only: `emit_ok!(rows)` below sends raw distance_m in metres.
+        units = Db.units!(path)?
         match top_metric(metric) {
             Err(_) =>
                 Output.err_out!("bad_metric", "unknown metric '${metric}' — use: hr, tss, power, intensity, distance, time, output")
 
-            Ok({ col, header, bound }) => {
+            Ok({ col, header: raw_header, bound }) => {
+                # The column label must name the same unit as its cells. Only `distance`
+                # is affected — every other metric's header is either unit-free or carries
+                # a unit this setting does not touch (bpm, W, kJ).
+                header = if metric == "distance" "distance (${Render.dist_unit(units)})" else raw_header
                 # `bound` is a template over `@` so ONE predicate serves two queries: the
                 # ranking applies it to the column, the count applies it to an alias inside a
                 # subquery. Written twice they would drift, and the drift would be invisible
@@ -765,7 +773,7 @@ ReportSessions :: [].{
                             "tss" => Render.fmt0(r.tss)
                             "power" => "${Render.fmt0(r.np_w)}W"
                             "intensity" => Render.fmt2(r.intensity)
-                            "distance" => "${Render.fmt1(r.distance_m / 1000.0)} km"
+                            "distance" => "${Render.fmt1(Render.dist_value(units, r.distance_m))} ${Render.dist_unit(units)}"
                             "output" => "${Render.fmt0(r.output_kj)} kJ"
                             _ => Render.mins(r.moving_time)
                         }
@@ -1347,7 +1355,7 @@ ReportSessions :: [].{
             # pre-#96 binary). progress_lens(mates) != Unscorable IS keep_scored's
             # survival condition — the first lens any row scores keeps that row.
             survives = match Metrics.progress_lens(mates) { Unscorable => False _ => True }
-            Ok({ group: { name: Render.structure_group_label(k.sh.reps, k.sh.mean_dur, k.sh.sig, k.sh.aname), rows: mates, total: List.len(mates), scope_why: "", grouped_by: "structure" }, claim_sids: if survives k.sids else [] })
+            Ok({ group: { name: Render.structure_group_label(k.sh.reps, k.sh.mean_dur, k.sh.sig, k.sh.aname), display_name: Render.structure_group_label(k.sh.reps, k.sh.mean_dur, k.sh.sig, k.sh.aname), rows: mates, total: List.len(mates), scope_why: "", grouped_by: "structure" }, claim_sids: if survives k.sids else [] })
         })?
         structure_groups = List.map(structure_built, |b| b.group)
         claimed_ids = List.fold(structure_built, [], |acc, b| List.concat(acc, b.claim_sids))
@@ -1361,7 +1369,11 @@ ReportSessions :: [].{
                 on_date = List.keep_if(g.rows, |r| r.date == date)
                 !(List.all(on_date, |r| List.contains(claimed_ids, r.id)))
             })
-           .map(|g| { name: Render.progress_group_label(units, g.name, g.kind), rows: g.rows, total: g.total, scope_why: g.scope_why, grouped_by: "name" })
+            # `name` is the PAYLOAD identity and is always metric — it is what the coaching
+            # agent groups sessions by, and two agents reading one database must not
+            # disagree about a group's identity because one athlete prefers miles.
+            # `display_name` carries the reader's units and never leaves the human render.
+           .map(|g| { name: Render.progress_group_label(Metric, g.name, g.kind), display_name: Render.progress_group_label(units, g.name, g.kind), rows: g.rows, total: g.total, scope_why: g.scope_why, grouped_by: "name" })
         labeled = List.concat(structure_groups, name_labeled)
         # choose each group's lens, keep only rows it can score; drop unscorable groups
         keep_scored = |lens, g| {
@@ -1398,7 +1410,7 @@ ReportSessions :: [].{
             # The PAYLOAD keeps `rows: kept`: `sessions[]` is what the agent trends over, an
             # unscored row has no score to trend, and `hidden_lens` already says how many and
             # why — the two surfaces agree on the COUNT and differ in what they do with it.
-            if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, lens, rows: kept, display_rows: g.rows, scope_why: g.scope_why, anchor_ok, all_days, hidden, scope_dropped, lens_dropped, grouped_by: g.grouped_by })
+            if List.is_empty(kept) Err(Skip) else Ok({ name: g.name, display_name: g.display_name, lens, rows: kept, display_rows: g.rows, scope_why: g.scope_why, anchor_ok, all_days, hidden, scope_dropped, lens_dropped, grouped_by: g.grouped_by })
         }
         scored = List.keep_oks(labeled, |g|
             match Metrics.progress_lens(g.rows) {
@@ -1508,7 +1520,7 @@ ReportSessions :: [].{
                     # directly above a table containing the row it denied.
                     "⚠ the session on ${date} is shown below WITHOUT a score — the lens chosen for its group can't score it (needs power+HR, distance+HR, or a rating), so the trend(s) exclude it even though the row is there\n\n"
                 }
-            Stdout.line!("${note}${Str.join_with(List.map(scored, |g| Render.progress_section(units, g.name, g.display_rows, date, g.lens, sort, g.all_days, g.scope_dropped, g.scope_why)), "\n\n")}")
+            Stdout.line!("${note}${Str.join_with(List.map(scored, |g| Render.progress_section(units, g.display_name, g.display_rows, date, g.lens, sort, g.all_days, g.scope_dropped, g.scope_why)), "\n\n")}")
         }
     }
 }
