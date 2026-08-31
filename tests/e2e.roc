@@ -2039,7 +2039,15 @@ b_seed_analyze! = |ctx| {
     # The km match is a word-boundary REGEX, not a `case` on surrounding spaces. The
     # earlier `*' km '*` needed a trailing space and so was blind to a line ENDING in
     # `km` — which is exactly `activity`'s shape, the screen it was written to catch.
-    units_sweep = Str.trim(sh!("h='${ctx.home}'; n=0; d=0; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance'; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; a=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null | md5); HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; b=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n differ=$d\""))
+    # `ok` counts legs that actually returned a payload, and is asserted alongside the
+    # rest. Without it this sweep had the same hole the human sweep's `activity` leg did:
+    # a command that ERRORS returns the same envelope under both settings and scores
+    # `differ=0`, indistinguishable from a leg that passed honestly. Measured on an empty
+    # home, only 5 of 12 legs produce a payload — so the assertion was satisfiable with
+    # most of it testing nothing. It is 11 here, not 12: `reps` needs a date with rep data
+    # this fixture has not got. Pinning 11 makes that ONE known-blind leg visible instead
+    # of letting the number drift down silently.
+    units_sweep = Str.trim(sh!("h='${ctx.home}'; n=0; d=0; ok=0; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance'; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; raw=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); a=$(printf '%s' \"$raw\" | md5); case \"$raw\" in *'\"data\"'*) ok=$((ok+1));; esac; HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; rawb=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); b=$(printf '%s' \"$rawb\" | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n ok=$ok differ=$d\""))
     units_probe_live = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' progress 2>/dev/null")
     # `plan` belongs here too: it renders summary_screen and therefore a distance. Leaving
     # it out is the same coverage gap that let `activity` ship, and the two sweeps should
@@ -2056,14 +2064,18 @@ b_seed_analyze! = |ctx| {
     # MAGNITUDE, which the km sweep structurally cannot see. It proves no screen SAYS km;
     # it cannot prove a number was converted, so `dist_unit(units)` without
     # `dist_value(units)` — half of the original bug, and the half that is invisible —
-    # passes every other assertion here. The ratio must be the mile: 1.609.
+    # passes every other assertion here. The band separates CONVERTED from not (r=1.0); it
+    # does not pin the constant — `expect Render.dist_value(Imperial, 1609.344) == 1.0`
+    # does that, and rejects `1600.0` which this band would admit. Nor does it cover every
+    # call site: it reads the `last 7 days` line only, so it guards the mechanism rather
+    # than the ten places `dist_value` is called.
     units_ratio = Str.trim(sh!("h='${ctx.home}'; HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; a=$(HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' summary 2>/dev/null | grep 'last 7 days' | grep -oE '[0-9.]+ km' | head -1 | cut -d' ' -f1); HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; b=$(HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' summary 2>/dev/null | grep 'last 7 days' | grep -oE '[0-9.]+ mi' | head -1 | cut -d' ' -f1); HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; awk -v x=\"$a\" -v y=\"$b\" 'BEGIN{ if (x==\"\" || y==\"\" || y+0==0) print \"unreadable\"; else { r=(x+0)/(y+0); print (r>1.55 && r<1.66) ? \"mile\" : \"wrong:\" r } }'"))
     # Cleanup runs BEFORE the assertions. All three use `?`, so asserting first would skip
     # the delete on any failure and leave these rows in the shared fixture for the 868
     # checks that follow — burying the real cause under a storm of unrelated failures.
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (9001,9002); DELETE FROM activities WHERE id IN (9001,9002);")
     check!("the sweep's progress leg is LIVE — the fixture has a distance-keyed group label", Str.contains(units_probe_live, "(~"))?
-    check!("no command's JSON moves with the units setting — SI is the contract, swept not enumerated", units_sweep == "swept=12 differ=0")?
+    check!("no command's JSON moves with the units setting — SI is the contract, swept not enumerated", units_sweep == "swept=12 ok=11 differ=0")?
     check!("with imperial set, no human screen still prints kilometres", units_km_leak == "screens=10 metric_leaks=0")?
     check!("...and the activity leg is LIVE — a bare `activity` with no id would test nothing", units_activity_live != "0")?
     check!("...and the NUMBERS convert, not just the labels — the ratio is the mile", units_ratio == "mile")?
