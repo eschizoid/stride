@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env sh
 # Every TEXT column decoded by `Sqlite.str` OR `Sqlite.nullable_str` must be
 # projected through `CAST(... AS TEXT)`.
 #

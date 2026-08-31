@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env sh
 # Check SKILL.md's documented payload shapes against schemas/v3/*.json.
 #
 # SKILL.md is the coaching agent's instruction sheet; an agent given an undocumented
