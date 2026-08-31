@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1104)?
+    checks_ran_exactly!(1105)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2043,11 +2043,11 @@ b_seed_analyze! = |ctx| {
     # rest. Without it this sweep had the same hole the human sweep's `activity` leg did:
     # a command that ERRORS returns the same envelope under both settings and scores
     # `differ=0`, indistinguishable from a leg that passed honestly. Measured on an empty
-    # home, only 5 of 12 legs produce a payload — so the assertion was satisfiable with
+    # home, only 6 of 12 legs produce a payload — so the assertion was satisfiable with
     # most of it testing nothing. It is 11 here, not 12: `reps` needs a date with rep data
     # this fixture has not got. Pinning 11 makes that ONE known-blind leg visible instead
     # of letting the number drift down silently.
-    units_sweep = Str.trim(sh!("h='${ctx.home}'; n=0; d=0; ok=0; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance'; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; raw=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); a=$(printf '%s' \"$raw\" | md5); case \"$raw\" in *'\"data\"'*) ok=$((ok+1));; esac; HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; rawb=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); b=$(printf '%s' \"$rawb\" | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n ok=$ok differ=$d\""))
+    units_sweep = Str.trim(sh!("h='${ctx.home}'; n=0; d=0; ok=0; blind=; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance'; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; raw=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); a=$(printf '%s' \"$raw\" | md5); case \"$raw\" in *'\"data\"'*) ok=$((ok+1));; *) blind=\"$blind$c \";; esac; HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; rawb=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); b=$(printf '%s' \"$rawb\" | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n ok=$ok blind=$(echo $blind) differ=$d\""))
     units_probe_live = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' progress 2>/dev/null")
     # `plan` belongs here too: it renders summary_screen and therefore a distance. Leaving
     # it out is the same coverage gap that let `activity` ship, and the two sweeps should
@@ -2075,10 +2075,21 @@ b_seed_analyze! = |ctx| {
     # checks that follow — burying the real cause under a storm of unrelated failures.
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (9001,9002); DELETE FROM activities WHERE id IN (9001,9002);")
     check!("the sweep's progress leg is LIVE — the fixture has a distance-keyed group label", Str.contains(units_probe_live, "(~"))?
-    check!("no command's JSON moves with the units setting — SI is the contract, swept not enumerated", units_sweep == "swept=12 ok=11 differ=0")?
+    check!("no command's JSON moves with the units setting — SI is the contract, swept not enumerated", units_sweep == "swept=12 ok=11 blind=reps differ=0")?
     check!("with imperial set, no human screen still prints kilometres", units_km_leak == "screens=10 metric_leaks=0")?
     check!("...and the activity leg is LIVE — a bare `activity` with no id would test nothing", units_activity_live != "0")?
     check!("...and the NUMBERS convert, not just the labels — the ratio is the mile", units_ratio == "mile")?
+    # The same invariant stated STATICALLY, over source rather than output. The runtime
+    # ratio above reads one screen; this reads every site, and it is a predicate rather
+    # than a count of places, so adding a twelfth conversion cannot silently escape it:
+    # a line that NAMES a unit and FORMATS a number must convert that number.
+    #
+    # `examined` is asserted so a broken pattern fails loudly instead of matching nothing
+    # and reporting zero offenders — the failure mode of every guard in this PR.
+    # `top`'s column header names a unit and renders no number, so it is examined and
+    # correctly not required to convert.
+    units_static = Str.trim(sh!("n=0; bad=0; for f in src/Render.roc src/ReportSessions.roc src/ReportHealth.roc; do while IFS= read -r l; do case \"$l\" in *'dist_unit(units)'*|*'pace_unit(units)'*) ;; *) continue;; esac; n=$((n+1)); case \"$l\" in *'fmt0('*|*'fmt1('*|*'fmt2('*) ;; *) continue;; esac; case \"$l\" in *'dist_value(units'*|*'pace_per_dist(units'*) ;; *) bad=$((bad+1));; esac; done < $f; done; echo \"examined=$n unconverted=$bad\""))
+    check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=12 unconverted=0")?
     check!("coverage tiers discriminate (high and medium both live)", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct > 0) and (.medium_pct > 0)") == "true")?
     check!("form coverage carries the 90d window", strjq!(ctx, ["summary"], ".data.form_coverage_90d | (.high_pct + .medium_pct + .low_pct == 100) and ((.known | type) == \"boolean\")") == "true")?
     # with fixtures loaded TSB is known, so the enum arm is required here; the
