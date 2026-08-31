@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 # A `#NNN` in a comment asserting an issue is open/unfixed/pending is a claim with a
 # free oracle: this flags any comment/paragraph BLOCK that both names a ref and makes
 # such a claim (the grep pattern below is the authority on phrasings) when the tracker
@@ -11,8 +11,12 @@
 # false flag costs one read, a miss cost #105. Description accuracy is judgment and out
 # of scope; this is the mechanical half.
 #
-# bash 3.2 (macOS): no mapfile, no associative arrays, no python — block grouping is awk.
-set -uo pipefail
+# POSIX sh, like the other three gates. It was bash only for `set -o pipefail`, which no
+# pipeline here relies on — every one already asserts its own emptiness, which is the
+# portable guard command-claims chose for the same problem. Verified: identical output
+# and identical failure output under sh, bash and dash, including on a planted stale
+# claim. No mapfile, no associative arrays, no python — block grouping is awk.
+set -u
 REPO="${GH_REPO:-eschizoid/stride}"
 CACHE=$(mktemp); BLOCKS=$(mktemp); trap 'rm -f "$CACHE" "$BLOCKS"' EXIT
 fail=0; checked=0; blocks=0; quoting=0

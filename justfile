@@ -50,7 +50,7 @@ test:
 # issue-state claims in comments vs the tracker. Needs `gh` auth, so its own recipe —
 # a suite that fails without network is worse than no check.
 issue-claims:
-    bash tools/issue-claims.sh
+    sh tools/issue-claims.sh
 
 # commands the docs name vs the binary's own table (#219/#252). Needs a built binary.
 # `sh`, not `bash`: the script is POSIX and bash would let a bashism in unnoticed.
