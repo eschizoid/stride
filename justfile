@@ -47,19 +47,13 @@ test:
     just build
     just e2e
 
-# every `#NNN` in a source comment is a claim about an issue's state; this checks the
-# mechanical half of it against the tracker. Needs `gh` auth, so it is its own recipe
-# rather than part of `test` -- a suite that fails without network is worse than no check.
+# issue-state claims in comments vs the tracker. Needs `gh` auth, so its own recipe —
+# a suite that fails without network is worse than no check.
 issue-claims:
-    bash tools/issue-claims.sh
+    sh tools/issue-claims.sh
 
-# every `stride <command>` a doc NAMES is a claim that the binary HAS it, and nothing
-# checked it: #219 made the command table machine-readable so claims about the CLI could be
-# checked rather than trusted, and the docs were the half with no oracle. Needs a built
-# binary to ask, so it is its own recipe rather than part of `test` -- the same reason
-# schema-check is, and the same reason issue-claims is (that one needs `gh`). `sh`, not
-# `bash`, on purpose: the script is POSIX and running it under bash would let a bashism in
-# unnoticed.
+# commands the docs name vs the binary's own table (#219/#252). Needs a built binary.
+# `sh`, not `bash`: the script is POSIX and bash would let a bashism in unnoticed.
 command-claims: build
     sh tools/command-claims.sh
 
@@ -89,37 +83,19 @@ schema-check: build
     # never be skipped — a real contract test even on a fresh install
     errs=$(STRIDE_FORMAT=json ./stride --help 2>&1 | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v3/commands.json -f tools/validate.jq 2>&1 || true)
     if [ -n "$errs" ]; then echo "commands:"; echo "$errs"; rc=1; else echo "commands: conforms"; fi
-    # DERIVED from the command table, not written out. #219 made that table the
-    # authority — every form declares the schemas/v3 file its payload validates against —
-    # and the hand-written list this replaces had already drifted away from it: it named
-    # 15 forms where the table declares 19 read-only ones, silently never checking `pz`,
-    # `pc` or `config get` against a real database. A second copy of a mapping does not
-    # stay wrong in an interesting way; it just stops covering things.
-    #
-    # `activity` is excluded and handled separately below, because its argument is an id
-    # that has to come from the data rather than from the table.
-    #
-    # The `mutates == false` filter is a SAFETY property, not a tidiness one, and it is
-    # the reason this recipe is allowed near a real database: the table declares nine
-    # schema-bearing commands that write — init, sync, analyze, import, rate, week add,
-    # complete, skip, config set — and deriving from it makes invoking one impossible by
-    # construction. The hand-written list simply happened not to name them.
+    # DERIVED from the command table, never written out — a hand-written copy drifted.
+    # `activity` is excluded and handled below (its argument comes from the data).
+    # The `mutates == false` filter is a SAFETY property: it is why this recipe may run
+    # against a real database — invoking a writing command is impossible by construction.
     checked=0
     rejected=0
     forms=$(mktemp) || { echo "schema-check: mktemp failed"; exit 4; }
     trap 'rm -f "$forms"' EXIT
-    # command<TAB>arg<TAB>example, for the `case` block below. Derived, never written out:
-    # the value that satisfies an argument now lives beside the argument (#257), so this
-    # recipe no longer keeps a second answer that can drift from the table's.
-    #
-    # A tab-delimited variable rather than a file because the loop that reads it runs under
-    # `set -f`, and the lookup is an exact two-field match, so nothing here globs.
+    # command<TAB>arg<TAB>example — the satisfying value lives beside the argument in
+    # the table (#257), so no second answer can drift.
     ARGEX=$(STRIDE_FORMAT=json ./stride --help | jq -r '.data.commands[] | .name as $n | .args[]? | [$n, .name, .example] | @tsv')
-    # FIELD 3, not the whole variable. `[$n, .name, .example] | @tsv` still emits a row per
-    # argument when every example is empty, so a `case "$ARGEX" in ""` guard fires only when
-    # the payload declares no argument ROWS at all — it could not detect the state its own
-    # message names. Measured: with every example emptied, ARGEX was 645 bytes and the guard
-    # stayed silent.
+    # FIELD 3, not the whole variable: rows still emit when every example is empty, so a
+    # whole-variable guard cannot detect the state its own message names.
     case "$(printf %s "$ARGEX" | cut -f3 | tr -d '\n')" in
       "") echo "schema-check: the help payload declares argument rows but no examples — the TABLE is broken, not the payloads" >&2; exit 4 ;;
     esac
@@ -129,80 +105,49 @@ schema-check: build
         | select(.name != "activity")
         | [.name, .schema, ([.args[] | select(.required) | .name] | join(" "))]
         | @tsv' > "$forms"
-    # A derivation that yields nothing looks exactly like a suite with nothing to say, so
-    # the count is asserted rather than assumed. The floor is the size of the list this
-    # replaced; it is a floor and not an equality because the table is expected to grow.
+    # A derivation yielding nothing looks like a suite with nothing to say — count it.
     nforms=$(wc -l < "$forms" | tr -d ' ')
-    # DERIVED expectation, not a literal. A hardcoded floor has slack — 18 forms against a
-    # floor of 15 lets three vanish — and it is bump-bait besides: when it trips it cannot
-    # say which side moved. Asking the table twice and comparing makes the failure name the
-    # direction. It also catches jq truncating mid-stream, which is a live route: a command
-    # entry missing `args` makes jq emit the earlier records and exit 5, and `> "$forms"`
-    # discards that status under a recipe with no `set -e`.
+    # DERIVED expectation: asking the table twice and comparing names which side moved,
+    # and catches jq truncating mid-stream (`> "$forms"` discards jq's status, no set -e).
     want=$(STRIDE_FORMAT=json ./stride --help | jq -r '[.data.commands[] | select(.mutates == false and .network == false and .interactive == false and .schema != "" and .name != "activity")] | length')
-    # NUMERIC check first, and `-lt` is why: on this /bin/sh an empty `nforms` makes
-    # `[ "" -lt 15 ]` print "integer expression expected" and take the ELSE branch — the
-    # guard fails OPEN. Reachable if mktemp ever yields an unwritable path.
+    # NUMERIC first: an empty operand makes `[ "" -lt 15 ]` take the ELSE branch —
+    # failing OPEN.
     case "$nforms" in ''|*[!0-9]*) echo "schema-check: could not count the derived forms (got '$nforms')"; exit 4 ;; esac
     case "$want" in ''|*[!0-9]*) echo "schema-check: could not read the expected form count from the table (got '$want')"; exit 4 ;; esac
-    # TWO guards, two directions, because one of them alone is blind in the other.
-    #
-    # ABSOLUTE, on the TABLE side. `nforms` and `want` come from the SAME predicate over
-    # the same table, so a predicate that collapses moves both together and the equality
-    # below reports 0 == 0 and passes — measured, exit 0, nothing validated. Replacing the
-    # literal floor with the equality alone was a regression that lost exactly the property
-    # the floor was added for. It sits on the TABLE rather than on the derivation now, so
-    # its message can name the cause, and on a quantity that only grows.
+    # TWO guards, two directions. ABSOLUTE on the TABLE side: both counts come from the
+    # SAME predicate, so a collapsed predicate moves both together and the equality below
+    # passes 0 == 0.
     if [ "$want" -lt 15 ]; then
         echo "schema-check: the command table declares only $want read-only schema-bearing forms — the selector is broken, not the table"
         exit 4
     fi
-    # RELATIVE, on the DERIVATION side. Catches jq truncating mid-stream, which the floor
-    # alone would shrug at: deleting `.args` from one entry gives 16 against 18, and a
+    # RELATIVE on the DERIVATION side: catches jq truncating mid-stream, which the
+    # floor alone shrugs at — deleting `.args` from one entry gives 16 against 18, and a
     # floor of 15 passes.
     if [ "$nforms" -ne "$want" ]; then
         echo "schema-check: derived $nforms forms but the command table declares $want — the derivation is broken, not the payloads"
         exit 4
     fi
     echo "schema-check: $nforms forms derived from the command table"
-    # Globbing OFF for the loop only: `$req` and `$inv` are unquoted on purpose (a form
-    # name like `config get` has to split into two argv entries), so a future `<file*>`
-    # placeholder would expand against the repo root. Restored after the loop, because the
-    # schema-lint sweep below needs `schemas/v3/*.json` to glob — turning it off globally
-    # broke that, which is how this comment came to exist.
+    # Globbing OFF for the loop only: $req/$inv are unquoted on purpose (form names must
+    # word-split), so a placeholder like <file*> would otherwise expand against the repo
+    # root. Restored after — the schema-lint sweep below needs its glob.
     set -f
     while IFS="$(printf '\t')" read -r c schema req; do
         inv="$c"
         skipform=""
-        # TWO reasons a form can produce no argument, and they are opposite verdicts.
-        # `skipform` is "this recipe does not know what to pass" — its own bug, so it FAILS.
-        # `nodata` is "the database has nothing for this argument to name" — a true fact
-        # about the data, so it skips, in the same class as `no_activities`. Separated
-        # because folding the second into the first turns a correct fresh install red, and
-        # folding the first into the second is how a form silently stops being checked.
+        # Two opposite verdicts: `skipform` = this recipe cannot supply a value (its own
+        # bug, FAILS); `nodata` = the database has nothing to name (a data fact, skips).
         nodata=""
         keyfault=""
         for a in $req; do
             v=""
             case "$a" in
-                # FROM THE TABLE (#257). Every argument now declares an `example` — a value
-                # that satisfies it — so the value comes from the same place the argument's
-                # existence does. This block used to hold its own answer, and so did two
-                # sweeps in tests/e2e.roc, and the three had already drifted: the mutation
-                # sweep proved `config get 1` and `tte 1` do not write while this recipe
-                # executed `tte 300`, and for `config get` a key chosen at RUNTIME from `stride config`'s listing — which is not a fixed value and cannot be cited as one. The safety proof and the
-                # executed invocation were not the same call.
-                #
-                # It also makes #253's HIGH structurally impossible rather than merely loud:
-                # a derived argument the command REJECTS read as a benign "skipped" at exit 0
-                # until the allowlist was inverted, and with the value coming from the table
-                # there is nothing to reject.
-                #
-                # An EMPTY example means "not statically knowable" — `<activity_id>`, whose
-                # value has to come from the data. That FAILS rather than skips, for the
-                # reason the old comment gave: a new required argument must break this
-                # loudly, not quietly drop its form from the check. `activity` is excluded
-                # from the loop above and handled separately for exactly that reason.
+                # Values come FROM THE TABLE (#257) — the same place the argument's
+                # existence does, so three drifting copies became none, and a derived
+                # argument the command rejects is structurally impossible (#253). An
+                # EMPTY example = "not statically knowable" and FAILS rather than skips:
+                # a new required argument must break loudly, not quietly drop its form.
                 "<key>")
                     keyout=$(STRIDE_FORMAT=json ./stride config 2>&1)
                     keyerr=$(printf '%s' "$keyout" | jq -r '.error.code // empty' 2>/dev/null)
@@ -210,8 +155,8 @@ schema-check: build
                         keyfault="$keyerr"
                         v=""
                     else
-                        # `status == "read"` — the listing marks rather than filters, and only
-                        # the read rows have a payload for `config get` to return.
+                        # the listing marks rather than filters; only readable rows
+                        # have a payload for `config get`
                         v=$(printf '%s' "$keyout" | jq -r '[.data.keys[] | select(.status == "settable" or .status == "managed")][0].key // empty')
                         [ -z "$v" ] && nodata="no config key this database has set is one config get returns a payload for"
                     fi ;;
@@ -228,62 +173,34 @@ schema-check: build
         if [ -n "$keyfault" ]; then echo "$c: FAILED ($keyfault) — the database holds a value the engine cannot read; no payload was produced"; rc=1; rejected=$((rejected + 1)); continue; fi
         if [ -n "$nodata" ]; then echo "$c: skipped ($nodata)"; checked=$((checked + 1)); continue; fi
         out=$(STRIDE_FORMAT=json ./stride $inv </dev/null 2>&1 || true)
-        # THREE outcomes, not two. A command that legitimately has nothing to say (fresh
-        # install, no activities) returns an error ENVELOPE and is skipped. A BROKEN
-        # install is not "legitimately nothing to say" — no_database and friends must fail
-        # (#183 gave them envelopes, which is exactly what made them skippable). And a
-        # rejected INVOCATION is this recipe's own bug, which is the third arm.
+        # THREE outcomes: legitimately-nothing-to-say skips; a broken install fails
+        # (envelopes made those skippable, which is why they are enumerated); a rejected
+        # INVOCATION is this recipe's own bug — the third arm.
         code=$(printf '%s' "$out" | jq -r '.error.code // empty' 2>/dev/null)
 
-        # ALLOWLIST, not denylist. The old hand-written list's arguments were literals a
-        # human had checked; this PR derives them from placeholder TEXT, which
-        # Command.roc's own comment names as the one field the table does not enforce. So
-        # a wrong derived argument is now possible, and under a denylist it came back as
-        # `top metric: skipped (bad_metric)` — indistinguishable from a thin database, with
-        # the recipe exiting 0 having validated nothing. Review reproduced exactly that.
-        #
-        # `usage`, `bad_*` and `unknown_command` mean the INVOCATION was rejected, which is
-        # this recipe's own bug, not a fact about the data. Only the codes that genuinely
-        # mean "nothing to say on this database" skip. The e2e mutation sweep learned the
-        # same lesson and grew a `stalled` check for `usage`; this recipe did not inherit
-        # it, and that is the gap.
+        # ALLOWLIST, not denylist: under a denylist a wrong derived argument read as
+        # "skipped (bad_metric)" — indistinguishable from a thin database, exit 0, nothing
+        # validated. Only codes that genuinely mean "nothing to say" skip.
+        # KNOWN GAP: the e2e mutation sweep grew a `stalled` check for `usage` (it asserts
+        # every read-only form reached its handler); this recipe never inherited one.
         case "$code" in
             "") ;;
-            # `not_set` WAS here, under protest, and #254 removed it — the acceptance
-            # criterion the issue named, not a follow-up. It is in the REJECTED arm below
-            # now, because after #254 there is only one way for this recipe to see it: it
-            # asked for a key the binary said holds a value and got nothing back, which is
-            # a contradiction inside one run, not a fact about the data.
-            #
-            # The protest was that `not_set` could not tell a wrong filler from a genuinely
-            # unset key. Two changes retire it. `unknown_key` splits off the unrecognised
-            # case, so retiring `timezone` is a red naming the filler rather than a silent
-            # skip. And the filler is no longer the literal `timezone` at all — it comes
-            # from `stride config`, so the "genuinely unset" case cannot arise for a key
-            # this loop chose. The empty-database case that kept the entry alive is now
-            # `nodata` above: a state the recipe CHECKED, reported in its own words, rather
-            # than an error code standing in for two different situations.
-            #
-            # `irregular_anchor` is here because it is the definition of nothing to say —
-            # its own message ends "nothing to compare it against as a repeated workout".
-            # It was in the rejected arm and that was a LIVE false red, not a latent one:
-            # ReportSessions raises it from the unguarded Ok(a) branch, so a bare `reps`
-            # hits it whenever the most recent session with work segments has blocks
-            # outside 1.6x. Review measured 372 of 389 sessions irregular on the real
-            # database — 95.6% — with only the three most recent rides uniform, which is
-            # the sole reason this recipe was green. It would have exited 1 on essentially
-            # any day between 2026-05-21 and 2026-08-16, and will again after the next
-            # unstructured ride. Intermittent is worse than constant here: a red that comes
-            # and goes teaches the reader to ignore it.
-            #
-            # THREE conditional siblings, all here and all for one reason:
-            # `no_workout_on_date`, `no_intervals_on_date` and `unscorable` have
-            # argument-dependent messages, so each would belong in the rejected arm the day
-            # any form takes a REQUIRED date. Both date-taking forms (`reps`, `progress`)
-            # take it optionally today, so no wrong date can be derived. Named together
-            # because two of them sat in the other arm by accident, and the next person to
-            # notice would have resolved the inconsistency in whichever direction they saw
-            # first.
+            # `not_set` moved to the REJECTED arm (#254): after the filler started coming
+            # from `stride config`, seeing it means the binary contradicted itself within
+            # one run. `irregular_anchor` is the definition of nothing-to-say — one
+            # measurement found 372 of 389 real sessions irregular, and in the rejected
+            # arm that made an intermittent false red, which teaches the reader to ignore
+            # it. The three date-message codes (`no_workout_on_date`,
+            # `no_intervals_on_date`, `unscorable`) have argument-dependent messages, so
+            # they would belong in the rejected arm if this loop could ever derive a wrong
+            # date for a form that emits them. It cannot: the only emitters are `progress`
+            # and `reps`, both declare ZERO required arguments, and the loop supplies
+            # required ones only — so they run bare and no date is derived at all.
+            # (`project` DOES take a required date but emits neither, only `bad_date` and
+            # `bad_target` — which no skip arm claims, so they reach the unclassified
+            # catch-all and are loud at rc=1 rather than skipped.) What to watch: `progress`
+            # or `reps` making its date required would derive the table's example, answer
+            # `no_workout_on_date`, and silently skip.
             no_activities|no_data|no_power_data|no_cp_fit|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals|no_intervals_on_date|unscorable|irregular_anchor)
                 echo "$inv: skipped ($code)"; checked=$((checked + 1)); continue ;;
             # DATA FAULTS — true statements about the DATABASE, not about the invocation,
@@ -324,104 +241,44 @@ schema-check: build
         checked=$((checked + 1))
         if [ -n "$errs" ]; then echo "$inv:"; echo "$errs"; rc=1; else echo "$inv: conforms"; fi
     done < "$forms"
-    # ...and reconcile the two counts. Announcing "18 forms derived" before the loop and
-    # never counting executions is how the output can honestly say 18 while validating
-    # zero, which is the shape the HIGH above produced.
+    # reconcile the counts — announcing "N derived" without counting executions lets the
+    # output say N while validating zero.
     set +f
-    # rejections counted separately, so this fires only on a genuine drop-out. Lumping
-    # them in made one rejected form print two lines, the second of them wrong about why.
+    # rejections counted separately, so this fires only on a genuine drop-out.
     if [ "$((checked + rejected))" -ne "$nforms" ]; then
         echo "schema-check: derived $nforms forms but reached only $((checked + rejected)) — the loop dropped some"
         rc=1
     fi
-    # The FIRST row is deliberately the worst one. #249 hoists undateable activities to the
-    # top of `activities` so a listing cannot hide the row that needs repair — and `activity
-    # <id>` REFUSES on exactly that row, because the screen computes a 90-day window from
-    # the date. So on any database with one bad date, `.data[0].id` names a row whose detail
-    # view is an error envelope, `jq '.data'` is null, and this printed
-    # "activity N: expected object, got null" — a schema violation reported against a
-    # database whose only problem is one unreadable date, with the message pointing at the
-    # wrong thing. That is the wrong-cause diagnosis #249 exists to remove, one level up in
-    # the tooling, and the two halves of that PR caused it between them.
-    #
-    # A DECLARED refusal is a pass here. schema-check's question is "does the payload match
-    # its schema", and a form that correctly refuses has no payload to match — the envelope
-    # check below covers the error shape, and the e2e command-schema loop covers which codes
-    # a form may raise. Only an UNDECLARED code is a finding, which is why the code is
-    # compared against the table rather than merely being non-empty.
-    # PER-COMMAND codes only, never the universal set, and that distinction is the whole
-    # correctness of this block. `universal_error_codes` contains `internal_error` — it is
-    # declared universally precisely BECAUSE it is the catch-all, meaning "can occur
-    # anywhere", not "is a correct answer here". Testing membership against the union made
-    # this print "refused with declared code internal_error" and exit 0 on a database where
-    # `stride activity <id>` answered "unhandled failure: UnexpectedType(Null) — please open
-    # an issue". Before that change the same state was rc=1. A contract checker reporting
-    # green on the exact failure shape #243 and #249 exist to eliminate, in the branch that
-    # closes them. Every other universal member is the same class: something went wrong
-    # OUTSIDE the form's own logic. The per-command list is the one that means "this form may
-    # legitimately answer this instead of a payload".
-    #
-    # WALKS the first rows rather than taking only the first, because #249 hoists undateable
-    # activities to the top of `activities`. Taking `.data[0]` alone means that on precisely
-    # the databases where you most want to know `activity.json` still conforms, the only path
-    # ever exercised is the refusal one. Walking keeps both properties without re-implementing
-    # the date rule in a third language, which is the trap `guard_activity_dates!` exists to
-    # avoid.
+    # `activity` sampling. #249 hoists undateable rows to the TOP of `activities` and
+    # `activity <id>` refuses exactly those, so the sampler WALKS rows rather than taking
+    # .data[0] — otherwise the databases that most need activity.json validated only ever
+    # exercise the refusal path. A DECLARED refusal is a pass (a correct refusal has no
+    # payload to match; the envelope check covers the error shape); only an UNDECLARED
+    # code is a finding. PER-COMMAND codes only, never the universal set:
+    # `internal_error` is universal BECAUSE it is the catch-all, and accepting it here
+    # once turned a real crash into a green run.
     acts=$(STRIDE_FORMAT=json ./stride activities 20 2>&1 || true)
     acode=$(printf '%s' "$acts" | jq -r '.error.code // empty' 2>/dev/null || true)
     ids=$(printf '%s' "$acts" | jq -r '.data[]?.id // empty' 2>/dev/null || true)
-    # PARSEABILITY first, and it is a third branch rather than part of either. Both
-    # derivations above read the same string through jq with errors suppressed, so
-    # unparseable output leaves BOTH empty — `acode` empty skips the envelope branch, and
-    # `-z "$ids"` then reports "skipped (no activities yet)" at rc=0 about a database holding
-    # 736 activities. That is the same false statement fixed one commit ago, reached through
-    # a different door: the envelope branch catches a WELL-FORMED error and nothing caught
-    # malformed output. `// empty` cannot tell "jq parsed it and found no rows" from "jq
-    # could not parse it".
-    #
-    # Narrow but live. The recipe sets STRIDE_FORMAT=json itself, so it needs the JSON path
-    # to break for THIS command — a format regression scoped to `activities`, or `activities`
-    # gaining narration, since `2>&1` merges stderr into the parse and `analyze` already
-    # writes there. And it is the checker going quiet about a regression in the exact thing
-    # it checks: a JSON-mode break is a contract break, and the contract checker would have
-    # said "skipped" and exited 0. The `commands:` check above catches a GLOBAL JSON
-    # regression; one scoped to a single command slips past it.
+    # PARSEABILITY first, its own branch: both derivations suppress jq errors, so
+    # unparseable output leaves both empty and would read as "no activities yet" at rc=0
+    # over a full database — `// empty` cannot tell "no rows" from "could not parse".
     if ! printf '%s' "$acts" | jq -e . >/dev/null 2>&1; then
         echo "activity: cannot sample — \`activities\` did not return JSON"; rc=1
     elif [ -n "$acode" ]; then
-        # NOT "skipped (no activities yet)". `// empty` cannot tell "no rows" from "the
-        # listing returned an envelope", and the old branch said the database was empty
-        # while it held 737 activities — a diagnostic making a false statement, which is the
-        # defect one level up that the rest of this block was fixed for.
         echo "activity: cannot sample — \`activities\` itself refused with $acode"; rc=1
     elif [ -z "$ids" ]; then
-        # THIS BRANCH CAN FAIL OPEN, and what stops it is somewhere else in this recipe.
-        # `-z "$ids"` cannot distinguish "no rows" from "rows that parsed but carried no
-        # usable id" — measured on a real row with its id nulled, deleted, or made a string,
-        # all of which land here at rc=0. Every one of those shapes VIOLATES
-        # activities.json, and `activities` is one of the derived forms, so the loop above
-        # validates it in the same run and the recipe is red anyway. The block's fail-open is
-        # never the sole outcome.
-        #
-        # Which makes the redundancy load-bearing and worth naming: `activity` is excluded
-        # from the derived list by an explicit `select(.name != "activity")`, and that line is
-        # exactly where the next person needing an exclusion will look. If `activities` ever
-        # joins it, this becomes a genuine silent pass and nothing will say so.
-        #
-        # Not made fatal on `activity_not_found` for an id `activities` just returned, though
-        # the two commands disagreeing could not be legitimate: a row deleted by a concurrent
-        # sync between the two calls is an unlikely but real race, and trading a hypothetical
-        # bug-detection for a real flake is the wrong direction for a local tool.
+        # Can fail open (no-id rows land here at rc=0) — but every such shape violates
+        # activities.json, which the forms loop validates in the same run, so the recipe
+        # is red anyway. That redundancy is load-bearing: if `activities` ever joins the
+        # `select(.name != "activity")` exclusion, this becomes a genuine silent pass.
         echo "activity: skipped (no activities yet)"
     else
         decl=$(STRIDE_FORMAT=json ./stride --json --help | jq -r '[.data.commands[] | select(.name == "activity") | .error_codes // []] | flatten | join(" ")' 2>/dev/null || true)
-        # The universal set, read so it can be REFUSED rather than trusted. Excluding it is
-        # currently a property of the TABLE — the block is safe only because no form declares
-        # a universal code in its own error_codes, which is true today and enforced nowhere.
-        # The day someone adds `internal_error` to a form's list, plausibly to make some
-        # other check go green, this silently returns to passing on it, and the comment
-        # explaining why that must never happen is three files from the change that does it.
-        # Held here instead, where it is stated.
+        # The universal set, read so it can be REFUSED rather than trusted. Safe only
+        # while no form declares a universal code in its own error_codes — true today,
+        # enforced nowhere; adding `internal_error` to a form list would silently return
+        # this to passing on it.
         uni=$(STRIDE_FORMAT=json ./stride --json --help | jq -r '(.data.universal_error_codes // []) | join(" ")' 2>/dev/null || true)
         validated=0
         lastcode=""
@@ -429,11 +286,8 @@ schema-check: build
             raw=$(STRIDE_FORMAT=json ./stride activity "$id" 2>&1 || true)
             code=$(printf '%s' "$raw" | jq -r '.error.code // empty' 2>/dev/null || true)
             if [ -z "$code" ]; then
-                # ONE payload, by design rather than by accident. The walk stops at the first
-                # row that yields one, so structural variation — a row with no streams, no
-                # segments, no metrics against one with all three — is never sampled. That
-                # was equally true before the walk existed; widening it means deciding what
-                # "enough shapes" is, which is its own conversation.
+                # ONE payload by design — the walk stops at the first row that yields one;
+                # widening to structural variation means deciding "enough shapes".
                 errs=$(printf '%s' "$raw" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v3/activity.json -f tools/validate.jq 2>&1 || true)
                 if [ -n "$errs" ]; then echo "activity $id:"; echo "$errs"; rc=1; else echo "activity $id: conforms"; fi
                 validated=1; break
@@ -448,10 +302,8 @@ schema-check: build
             esac
         done
         if [ "$validated" = "0" ]; then
-            # rc=1, and provably not a false red: every form that sweeps activity dates has
-            # already FAILED in the forms loop above by the time this state is reachable, so
-            # this line can only ever agree with a red the recipe already is. Names the last
-            # code so the reader does not have to re-derive why.
+            # provably not a false red: the date-sweeping forms already failed above by
+            # the time this state is reachable.
             echo "activity: every sampled row refused (last: $lastcode), so activity.json was never validated against a payload"; rc=1
         fi
     fi
@@ -464,50 +316,27 @@ schema-check: build
     done
     exit $rc
 
-# sync integration: ONE binary in two roles — a mock Strava server (E2E_MODE=mock)
-# and a sync driver (E2E_MODE=sync) that runs real sync + token-refresh against it.
-# Binds a port, so it's separate from `just test`. Runs against the ./stride binary.
-# Runs in CI as well as locally: it binds only loopback and needs no credential. It exercises stride's sync path,
-# which was ~50% flaky until bug C (#105) was root-caused to a basic-cli host double-free
-# and fixed in 0.22.0. It runs SINGLE-SHOT now: the 5x retry that used to absorb that
-# flake was deleted with the bug, and a new flake here deserves an investigation rather
-# than another crutch.
-#
-# Do not read a green run here as "sync works". Every string in the mock fixture is short
-# enough to live inline in a RocStr, and the corruption only bites heap-allocated decoded
-# strings — so this suite is structurally incapable of reproducing the real-data failure
-# that shipped once already. Real payloads need a real sync to verify.
-# depends on `build` for the same reason `just test` does: this recipe rebuilt ./e2e
-# but NOT ./stride, so editing source and re-running silently tested the PREVIOUS
-# binary. That cost a reviewer a wrong diagnosis — a failure reported from code that
-# was no longer on disk. AGENTS.md already names the stale-binary hazard for a FAILED
-# build; a successful build of since-reverted source is the same trap.
+# sync integration: one binary as mock server (E2E_MODE=mock) + drivers against it.
+# Binds loopback only, needs no credential — runs in CI. SINGLE-SHOT: the 5x retry
+# that absorbed bug C's flake died with the bug; a new flake deserves investigation.
+# Do NOT read a green run as "sync works": every mock string is short enough to live
+# inline in a RocStr, so this suite is structurally blind to heap-string bugs — real
+# payloads need a real sync. Depends on `build` or editing source silently tests the
+# PREVIOUS ./stride binary.
 e2e-sync: build
     #!/usr/bin/env bash
     set -uo pipefail
     {{roc}} build tests/e2e.roc --output=e2e --opt=dev || exit 1
     E2E_MODE=mock MOCK_PORT={{mock_port}} ./e2e &
     MOCK=$!
-    # kill the mock on ANY exit, including Ctrl-C — the old single-line form only killed
-    # it on the success path, so an interrupted run left the port bound and every later
-    # run failed to bind until someone found the stray process.
-    #
-    # EXIT alone, deliberately. Adding INT/TERM to a handler that does not itself exit
-    # REPLACES the default terminate-on-signal, so Ctrl-C ran the cleanup and then carried
-    # on instead of stopping. Measured back when the 5x retry loop below still existed:
-    # with `EXIT INT TERM` a SIGTERM'd run completed all five retries and exited 0; with
-    # `EXIT` alone it stopped at once (143) and still ran the cleanup. The loop is gone,
-    # so that exact measurement is no longer reproducible here, but the signal-handling
-    # rule it established is why this trap names only EXIT.
+    # kill the mock on ANY exit, or an interrupted run leaves the port bound. EXIT
+    # alone, deliberately: adding INT/TERM to a handler that does not itself exit
+    # REPLACES terminate-on-signal, so Ctrl-C would run the cleanup and carry on.
     trap 'kill $MOCK 2>/dev/null' EXIT
-    # single shot, no retry. The 5x retry loop that used to live here absorbed bug C's
-    # ~50% flake; with the bug fixed (basic-cli 0.22.0, #105) the flake is gone —
-    # measured 10/10 clean unretried on 2026-08-14. If this starts failing again it
-    # should fail LOUDLY, not be absorbed: a new flake deserves a new investigation.
+    # single shot, no retry — see the recipe header
     E2E_MODE=sync STRIDE_API_BASE=http://127.0.0.1:{{mock_port}} ./e2e || exit 1
-    # a SECOND mock, serving stream bodies that are not UTF-8, for the skip path.
-    # Separate instance rather than a flag on the first: the 404-marker fixture in the
-    # sync scenario has to stay exactly as it is, and one process cannot be both.
+    # second mock: non-UTF-8 stream bodies for the skip path (a separate instance —
+    # the sync scenario's 404-marker fixture must stay as it is)
     E2E_MODE=mock E2E_BAD_STREAM=1 MOCK_PORT={{bad_stream_port}} ./e2e &
     BADMOCK=$!
     trap 'kill $MOCK $BADMOCK 2>/dev/null' EXIT
@@ -533,11 +362,10 @@ e2e-sync: build
     P5MOCK=$!
     trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK 2>/dev/null' EXIT
     E2E_MODE=stops E2E_EXPECT_500=1 STRIDE_API_BASE=http://127.0.0.1:{{http500_port}} ./e2e || exit 1
-    # EVERY driver line ends `|| exit 1`. This recipe runs under `set -uo pipefail` with
-    # no `-e`, so a bare line's failure is swallowed unless it happens to be the last
-    # command — which is how appending this block silently disarmed the 5xx driver above.
-    #
-    # a 429 on the LISTING, which nothing exercised before #235
+    # EVERY driver line ends `|| exit 1`: no `-e` here, so a bare line's failure is
+    # swallowed unless it happens to be last — appending a block once silently disarmed
+    # the driver above it.
+    # a 429 on the LISTING (#235)
     E2E_MODE=mock E2E_LIST_RATE_LIMIT=1 MOCK_PORT={{list429_port}} ./e2e &
     L429MOCK=$!
     trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK $L429MOCK 2>/dev/null' EXIT
