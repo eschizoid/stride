@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.10.0](https://github.com/eschizoid/stride/compare/v0.9.0...v0.10.0) (2026-08-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* envelope v3 — the one parked payload break, before 1.0 freezes the contract ([#336](https://github.com/eschizoid/stride/issues/336))
+
+### Features
+
+* **agents:** make the coaching skill agent-neutral, and AGENTS.md true ([#325](https://github.com/eschizoid/stride/issues/325)) ([5a882fa](https://github.com/eschizoid/stride/commit/5a882fa7f001bda759d638dec0d7ba6a5e82557e))
+* **agents:** zero-setup Claude Code — tracked CLAUDE.md import and gated skill shim ([#329](https://github.com/eschizoid/stride/issues/329)) ([7dbd043](https://github.com/eschizoid/stride/commit/7dbd0433322ac574e4e38724f294696e0a3cc2e1))
+* **codex:** ship the repo as a Codex plugin, and keep ONE copy of the skill ([#328](https://github.com/eschizoid/stride/issues/328)) ([ae430e8](https://github.com/eschizoid/stride/commit/ae430e81687b475ff5d6105b5d916419df555368))
+* envelope v3 — the one parked payload break, before 1.0 freezes the contract ([#336](https://github.com/eschizoid/stride/issues/336)) ([38d99dc](https://github.com/eschizoid/stride/commit/38d99dcdc3e8cfa014109bbdea6a0af835468cbe))
+* **events:** event targets with projected CTL/ATL/TSB — ADR 0010's projection side ([#335](https://github.com/eschizoid/stride/issues/335)) ([5991c01](https://github.com/eschizoid/stride/commit/5991c01d493d554a9862dff4fb3b223fa3ad8164))
+* **plan:** relabel a session in any status — links, status and metrics untouched ([#331](https://github.com/eschizoid/stride/issues/331)) ([680fe66](https://github.com/eschizoid/stride/commit/680fe66e4ca02c4ae175a24df69c8d34792788e9))
+* **plan:** structured prescription targets — numbers beside the prose (ADR 0014) ([#333](https://github.com/eschizoid/stride/issues/333)) ([db0eb1f](https://github.com/eschizoid/stride/commit/db0eb1fec7595c40d7372b3116072f16f7e7f86c))
+* **progress:** group by detected structure, name as the fallback ([#332](https://github.com/eschizoid/stride/issues/332)) ([9f930ea](https://github.com/eschizoid/stride/commit/9f930eab551dcf838615822d5b8320db8bb122f7))
+* **project:** taper projection — recorded or hypothetical plan to consequences (ADR 0010) ([#338](https://github.com/eschizoid/stride/issues/338)) ([c325ff7](https://github.com/eschizoid/stride/commit/c325ff7ce05fc062f4ad61d2124a5412f0f3e6ab))
+
 ## [0.9.0](https://github.com/eschizoid/stride/compare/v0.8.0...v0.9.0) (2026-08-28)
 
 
