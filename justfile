@@ -191,11 +191,15 @@ schema-check: build
             # measurement found 372 of 389 real sessions irregular, and in the rejected
             # arm that made an intermittent false red, which teaches the reader to ignore
             # it. The three date-message codes (`no_workout_on_date`,
-            # `no_intervals_on_date`, `unscorable`) are argument-dependent, so they are
-            # safe here only because the derived date comes from the TABLE's own example
-            # and resolves. `project` already takes a REQUIRED date (it is in the derived
-            # set), so "no form takes one" is no longer the reason — an example that
-            # stopped resolving would be.
+            # `no_intervals_on_date`, `unscorable`) have argument-dependent messages, so
+            # they would belong in the rejected arm if this loop could ever derive a wrong
+            # date for a form that emits them. It cannot: the only emitters are `progress`
+            # and `reps`, both declare ZERO required arguments, and the loop supplies
+            # required ones only — so they run bare and no date is derived at all.
+            # (`project` DOES take a required date but emits neither, only `bad_date`,
+            # which is in the rejected arm and correctly loud.) What to watch: `progress`
+            # or `reps` making its date required would derive the table's example, answer
+            # `no_workout_on_date`, and silently skip.
             no_activities|no_data|no_power_data|no_cp_fit|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals|no_intervals_on_date|unscorable|irregular_anchor)
                 echo "$inv: skipped ($code)"; checked=$((checked + 1)); continue ;;
             # DATA FAULTS — true statements about the DATABASE, not about the invocation,

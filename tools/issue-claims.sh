@@ -57,7 +57,7 @@ awk '
 ' README.md AGENTS.md $(ls PLAN.md 2>/dev/null) docs/*.md docs/adr/*.md skills/stride/SKILL.md >> "$BLOCKS" \
   || { echo "issue-claims: markdown extraction failed — a listed file is missing" >&2; exit 5; }
 
-while IFS=$'\t' read -r f s txt; do
+while IFS="$(printf '\t')" read -r f s txt; do
   blocks=$((blocks + 1))
   # A block quoting history (not asserting state) opts out with a literal marker —
   # deciding asserted-vs-quoted mechanically is a natural-language problem, and every
