@@ -4,14 +4,32 @@
 # SKILL.md is the coaching agent's instruction sheet; an agent given an undocumented
 # field does not error, it silently never uses it (#292, twice in three days). Membership
 # lives in `tools/skill-shapes.pins`, checked in — NOT measured from the doc, because
-# with the doc as denominator, drift lowers coverage and switches the check off. The pin
-# makes any required-set change fail the gate; updating it is the moment someone decides
-# whether the field belongs in SKILL.md (#298).
+# with the doc as denominator, drift lowers coverage and switches the check off. The
+# pin is a DEDUPLICATED set of (schema, property-set, required-set) rows — 79 objects
+# reduce to 73 — so it records which SHAPES a schema holds (its shape rows), not how
+# many or where. A change moving that set fails the gate; updating it is the moment
+# someone decides whether the field belongs in SKILL.md (#298). Known hole: it compares
+# SETS, so any SCHEMA change leaving the set intact is invisible — an object can leave
+# while an identically-shaped sibling still emits its row, and one can arrive whose row
+# a sibling already emits. Activity, compare, stats and summary each carry one (#346).
 #
-# Two directions: (1) schema -> doc — every required field of a `doc`-pinned
-# object must be named in that command's documentation; (2) doc -> schema —
-# every key inside a `{...}` literal must exist as a schema property, catching
-# documentation that still promises a renamed or removed field.
+# Two directions: (1) schema -> doc — every required field of a `doc`-pinned object
+# must be named in that command's documentation; an object pinned `-` is held to the
+# pin alone, so a change to its shape rows still fails there — subject to the hole
+# above — while this check's doc side never runs (`--refresh` does run it, which is
+# how a `-` becomes `doc`). A field's TYPE is not pinned: scalar-to-scalar retypes,
+# enum changes and array-vs-object cardinality all pass, since jq's `..` recurses
+# through arrays and an array wrapper exposes the identical object. The two
+# directions read DIFFERENT sets: the pin takes objects carrying both `properties`
+# and `required`, direction 2 takes every object carrying `properties`. A retype
+# moves the pin only when it adds a row the set lacked or removes the last object
+# carrying one; adding a properties-only object fails nothing and silently widens
+# what direction 2 accepts. (2) doc -> schema — every `{...}` literal's key set must
+# be a SUBSET of some SINGLE schema object's properties, catching documentation that
+# still promises a renamed or removed field. Per-key existence is NOT the rule: keys
+# drawn from different objects each exist and still fail, because no single payload
+# object has them as siblings; nested payloads are written as nested literals,
+# peeled innermost-first.
 set -eu
 # Byte collation everywhere: the pin is a checked-in artifact compared line-by-line
 # against a freshly sorted one, so a locale that orders differently makes the SAME
@@ -29,9 +47,10 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 # SKILL.md with hard-wrapped paragraphs folded to logical lines — the sync/analyze
 # payload literals span source lines, so a line-scoped extractor finds zero `{...}`
 # spans there. Known limits: direction 1 reaches sync but not analyze (paragraph-break
-# accident; analyze stays pinned so schema changes still fail), and a folded paragraph
-# is a big haystack where a common field name can be satisfied by unrelated text — a
-# second line of defence weakening, while the pin fails unconditionally regardless.
+# accident; analyze stays pinned so changes to its shape rows still fail), and
+# a folded paragraph is a big haystack where a common field name can be satisfied by
+# unrelated text — a second line of defence weakening, while the pin still fails on any
+# change that moves the pinned set.
 LOGICAL="$tmp/logical.md"
 awk '
   function isnew(l) {
@@ -55,8 +74,15 @@ grep '\(reads\|writes\)("' src/Command.roc | while IFS= read -r line; do
   if [ -n "$n" ] && [ -n "$s" ]; then printf '%s\t%s\n' "$n" "$s"; fi
 done | sort -u > "$tmp/join"
 
-# Every required-carrying object's signature, keyed by schema + sorted property names:
-# renaming a wrapper does not churn the pin; adding or removing a field always does.
+# Every required-carrying object's signature, keyed by schema + sorted property names,
+# then DEDUPLICATED: renaming a wrapper leaves the wrapped object's own signature
+# untouched, but the parent object's property list moves, so the gate still fails.
+# Adding or removing a field always moves a row — the new shape APPEARS even when a
+# sibling still emits the old one. What a twin hides is a change that does not move the
+# SET: an object leaving without removing its row — dropping `required`, dropping
+# `properties` (membership needs both), or deleting an object no parent's property list
+# mentions, such as an `items` node — or an object arriving whose row a twin already
+# emits (#346).
 : > "$tmp/sig"
 for f in "$SCHEMAS"/*.json; do
   b=$(basename "$f")
@@ -91,7 +117,7 @@ doc_for() {
   # ` *` — alias parentheticals sit before the pipe and the anchored form matched
   # nothing. Known limits: prose invocations bypass the `^|` anchor (config's required
   # `key` rests on one), and a reworded cell can stop matching — second-line defence
-  # weakening only; the pin fails on any schema change regardless.
+  # weakening only; the pin still fails on any change that moves the pinned set.
   sed 's/^| *`[^`]*`[^|]*|//' "$tmp/cand"
 }
 
@@ -145,7 +171,7 @@ if [ "${1:-}" = "--refresh" ]; then
   exit 0
 fi
 
-# ── Pin agreement. Any schema whose required set moved fails here, documented or not. ──
+# ── Pin agreement. Any schema whose set of shape rows moved fails here. ──
 cut -f1,2,3 "$tmp/sig.sorted" > "$tmp/sig.cmp"
 # Read an LF-normalised copy, never the file on disk — gitattributes asks the checkout
 # to behave; this does not have to ask.
@@ -153,7 +179,7 @@ tr -d '\r' < "$PINS" > "$tmp/pins.lf"
 PINS_LF="$tmp/pins.lf"
 cut -f1,2,3 "$PINS_LF" | sort -u > "$tmp/pins.cmp"
 if ! diff -q "$tmp/sig.cmp" "$tmp/pins.cmp" >/dev/null 2>&1; then
-  echo "skill-shapes: a schema's required set changed and $PINS does not agree."
+  echo "skill-shapes: a schema's shape rows changed and $PINS does not agree."
   echo
   diff "$tmp/pins.cmp" "$tmp/sig.cmp" | sed 's/^</  pinned:  /;s/^>/  actual:  /' | grep -v '^[0-9-]' || true
   echo
