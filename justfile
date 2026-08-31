@@ -196,8 +196,9 @@ schema-check: build
             # date for a form that emits them. It cannot: the only emitters are `progress`
             # and `reps`, both declare ZERO required arguments, and the loop supplies
             # required ones only — so they run bare and no date is derived at all.
-            # (`project` DOES take a required date but emits neither, only `bad_date`,
-            # which is in the rejected arm and correctly loud.) What to watch: `progress`
+            # (`project` DOES take a required date but emits neither, only `bad_date` and
+            # `bad_target` — which no skip arm claims, so they reach the unclassified
+            # catch-all and are loud at rc=1 rather than skipped.) What to watch: `progress`
             # or `reps` making its date required would derive the table's example, answer
             # `no_workout_on_date`, and silently skip.
             no_activities|no_data|no_power_data|no_cp_fit|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals|no_intervals_on_date|unscorable|irregular_anchor)
