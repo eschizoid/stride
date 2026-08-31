@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1093)?
+    checks_ran_exactly!(1099)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1810,8 +1810,8 @@ b_config_ftp! = |ctx| {
     #     not stored, so there was nothing to remove" — no routing sentence, scored
     #     as ROUTED. `unseeded` is asserted at 0 so the probe proves it could speak
     #     before its silence counts.
-    unset_sweep = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; { awk '/plain_keys = \\[/,/\\]/' src/Config.roc; awk '/secret_keys = \\[/,/\\]/' src/Config.roc; } | grep -o '\"[^\"]*\"' | tr -d '\"' > $h/keys; n=0; u=0; z=0; while read -r k; do n=$((n+1)); HOME=$h '${ctx.bin}' config set \"$k\" 7 >/dev/null 2>&1; m=$(HOME=$h '${ctx.bin}' config unset \"$k\" 2>&1 | head -1); case \"$m\" in *'starts refusing'*) u=$((u+1));; esac; case \"$m\" in *'was not stored'*) z=$((z+1));; esac; done < $h/keys; echo \"probed=$n unrouted=$u unseeded=$z\""))
-    check!("every LISTED config key reaches a routed `config unset` branch, enumerated from Config.roc", unset_sweep == "probed=10 unrouted=0 unseeded=0")?
+    unset_sweep = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; { awk '/plain_keys = \\[/,/\\]/' src/Config.roc; awk '/secret_keys = \\[/,/\\]/' src/Config.roc; } | grep -o '\"[^\"]*\"' | tr -d '\"' > $h/keys; n=0; u=0; z=0; while read -r k; do n=$((n+1)); case \"$k\" in units) v=metric;; *) v=7;; esac; HOME=$h '${ctx.bin}' config set \"$k\" \"$v\" >/dev/null 2>&1; m=$(HOME=$h '${ctx.bin}' config unset \"$k\" 2>&1 | head -1); case \"$m\" in *'starts refusing'*) u=$((u+1));; esac; case \"$m\" in *'was not stored'*) z=$((z+1));; esac; done < $h/keys; echo \"probed=$n unrouted=$u unseeded=$z\""))
+    check!("every LISTED config key reaches a routed `config unset` branch, enumerated from Config.roc", unset_sweep == "probed=11 unrouted=0 unseeded=0")?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max_ride", "155"])
     # ── bare `config` lists what is set. Its first job is answering "which config do I
     # have?", which nothing did; its second is being the source `just schema-check` fills
@@ -2005,6 +2005,22 @@ b_seed_analyze! = |ctx| {
     # Metrics); the fixture mixes power_stream and HR/RPE-scored rows so both
     # high and medium tiers are live, and known is a typed boolean (ADR 0009).
     check!("28d load coverage sums to exactly 100", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct + .medium_pct + .low_pct == 100) and .known == true") == "true")?
+    # ── units: a DISPLAY preference, and the whole contract is that it changes the human
+    # tables and NOTHING else. The JSON assertion below is the load-bearing one —
+    # `distance_m` is a pinned field the coaching agent reads, so a setting that moved it
+    # would make an agent's reasoning depend on how a human likes their numbers (#349).
+    units_si_metric = strjq!(ctx, ["summary"], ".data.last_7d.distance_m")
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "units", "imperial"])
+    units_si_imperial = strjq!(ctx, ["summary"], ".data.last_7d.distance_m")
+    check!("units=imperial leaves JSON distance_m untouched — SI is the contract", units_si_metric == units_si_imperial and units_si_metric != "")?
+    units_human = sh!("HOME='${ctx.home}' STRIDE_FORMAT=human '${ctx.bin}' summary 2>&1")
+    check!("...while the human summary switches to miles", Str.contains(units_human, " mi "))?
+    check!("...and stops printing km, so the two systems are not mixed in one screen", !(Str.contains(units_human, " km ")))?
+    units_bad = stride!(ctx.bin, ctx.home, ["config", "set", "units", "imperail"])
+    check!("a misspelled system is refused rather than stored to silently render metric", Str.contains(units_bad, "takes metric or imperial"))?
+    units_unset_msg = sh!("HOME='${ctx.home}' STRIDE_FORMAT=human '${ctx.bin}' config unset units 2>&1")
+    check!("unsetting names what actually changes — rendering, not a command that starts refusing", Str.contains(units_unset_msg, "render in metric again"))?
+    check!("...and the summary is metric again", Str.contains(sh!("HOME='${ctx.home}' STRIDE_FORMAT=human '${ctx.bin}' summary 2>&1"), " km "))?
     check!("coverage tiers discriminate (high and medium both live)", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct > 0) and (.medium_pct > 0)") == "true")?
     check!("form coverage carries the 90d window", strjq!(ctx, ["summary"], ".data.form_coverage_90d | (.high_pct + .medium_pct + .low_pct == 100) and ((.known | type) == \"boolean\")") == "true")?
     # with fixtures loaded TSB is known, so the enum arm is required here; the

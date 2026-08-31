@@ -2122,7 +2122,7 @@ Metrics :: [].{
     # flat-equivalent distance: each segment's delta-distance weighted by its grade
     # factor. dist = cumulative metres, alt = metres, index-aligned (Strava distance +
     # altitude streams). Segments with non-positive delta-distance (GPS jitter / pauses)
-    # contribute nothing; fewer than two samples -> 0. Pace reuses Render.pace_per_km.
+    # contribute nothing; fewer than two samples -> 0. Pace reuses Render.pace_per_dist.
     grade_adjusted_distance : List(F64), List(F64) -> F64
     grade_adjusted_distance = |dist, alt| {
         samples = List.map2(dist, alt, |d, a| { d, a })

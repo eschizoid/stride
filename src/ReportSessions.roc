@@ -1137,6 +1137,9 @@ ReportSessions :: [].{
     progress! : Str, [Asc, Desc] => Try({}, _)
     progress! = |date_arg, sort| {
         path = Db.open_db!({})?
+        # Resolved once for the whole screen, not per group or per row: the setting cannot
+        # change mid-render, and both the group labels and the table below read it.
+        units = Db.units!(path)?
         date =
             if !(Str.is_empty(date_arg))
                 date_arg
@@ -1358,7 +1361,7 @@ ReportSessions :: [].{
                 on_date = List.keep_if(g.rows, |r| r.date == date)
                 !(List.all(on_date, |r| List.contains(claimed_ids, r.id)))
             })
-           .map(|g| { name: Render.progress_group_label(g.name, g.kind), rows: g.rows, total: g.total, scope_why: g.scope_why, grouped_by: "name" })
+           .map(|g| { name: Render.progress_group_label(units, g.name, g.kind), rows: g.rows, total: g.total, scope_why: g.scope_why, grouped_by: "name" })
         labeled = List.concat(structure_groups, name_labeled)
         # choose each group's lens, keep only rows it can score; drop unscorable groups
         keep_scored = |lens, g| {
@@ -1505,7 +1508,7 @@ ReportSessions :: [].{
                     # directly above a table containing the row it denied.
                     "⚠ the session on ${date} is shown below WITHOUT a score — the lens chosen for its group can't score it (needs power+HR, distance+HR, or a rating), so the trend(s) exclude it even though the row is there\n\n"
                 }
-            Stdout.line!("${note}${Str.join_with(List.map(scored, |g| Render.progress_section(g.name, g.display_rows, date, g.lens, sort, g.all_days, g.scope_dropped, g.scope_why)), "\n\n")}")
+            Stdout.line!("${note}${Str.join_with(List.map(scored, |g| Render.progress_section(units, g.name, g.display_rows, date, g.lens, sort, g.all_days, g.scope_dropped, g.scope_why)), "\n\n")}")
         }
     }
 }

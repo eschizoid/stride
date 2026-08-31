@@ -26,6 +26,11 @@ ReportHealth :: [].{
     stats! : {} => Try({}, _)
     stats! = |{}| {
         path = Db.open_db!({})?
+        # Human table only. The JSON branch below emits the `km` field this schema has
+        # always carried — a converted, unit-bearing payload field, and the one exception
+        # to "payloads are SI". Renaming it is an envelope break, so it stays km and the
+        # setting reaches only the rendered table (#349).
+        units = Db.units!(path)?
         today_days = Db.local_today_days!(path)
         year = (Metrics.civil_from_days(today_days)).y
         # The cutoff below is the literal "0000-01-01", whose only job is to mean
@@ -47,7 +52,7 @@ ReportHealth :: [].{
                         r.sport,
                         (r.sessions).to_str(),
                         "${Render.fmt0(r.hours)}h",
-                        (if r.km >= 1.0 "${Render.fmt0(r.km)} km" else "-"),
+                        (if r.km >= 1.0 "${Render.fmt0(Render.dist_value(units, r.km * 1000.0))} ${Render.dist_unit(units)}" else "-"),
                     ]),
                 )
             Stdout.line!("ALL TIME")?

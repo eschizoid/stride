@@ -235,6 +235,7 @@ streams_skipped, pending_streams, stopped, resumable}` / `{computed, stream_erro
 form_delta_7d, form_delta_known, converged}`), and `stride config get <key> --json` emits `{key, value}` (or the `not_set`
 error envelope) — that is how you read `timezone` back, which governs what "today"
 means for every date below. `stride config unset <key> --json` REMOVES a stored key, emitting `{key, removed}` — `removed: false` means it was already absent, which is not an error. Use it rather than `config set <key> ""`: an empty value is refused for every key class now, because it used to mean three different things depending on the key and two of them left no way to remove a row at all (a per-sport zone override could not be dropped, and an empty write to a token left a row reading as SET).
+`stride config set units imperial` switches the HUMAN tables to miles and min/mi; `metric` is the default. It does not change JSON at all — every payload stays SI, so `distance_m` is metres and `stats`' `km` is kilometres whatever the setting says. If the athlete mentions miles, that is a display preference, not a change to the numbers you read.
 
 ## Query commands (add `--json` to every one of these)
 

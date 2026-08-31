@@ -290,6 +290,10 @@ Report :: [].{
     summary! : {} => Try({}, _)
     summary! = |{}| {
         path = Db.open_db!({})?
+        # Resolved beside the payload, not inside the renderer: the JSON half of this
+        # command must stay SI whatever `units` says, so the setting is applied only to
+        # the human closure below.
+        units = Db.units!(path)?
         match Analyze.load_zone_config!(path) {
             Err(MissingConfig) => Output.missing_config!({})
             Err(other) => Err(other)
@@ -297,7 +301,7 @@ Report :: [].{
                 match summary_payload!(path, zb) {
                     Err(NoDataYet) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
                     Err(e) => Err(e)
-                    Ok(payload) => Output.out!(payload, Render.summary_screen)
+                    Ok(payload) => Output.out!(payload, |p| Render.summary_screen(units, p))
                 }
         }
     }

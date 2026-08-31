@@ -374,13 +374,43 @@ Render :: [].{
         "${sign}${I64.to_str(whole)}.${frac_str}"
     }
 
-    # distance+time -> running pace "M:SS" per km (blank if no distance)
-    pace_per_km : F64, I64 -> Str
-    pace_per_km = |distance_m, moving_time|
+    # ── Units ───────────────────────────────────────────────────────────────────────
+    # Storage and every computation stay SI (metres, m/s); these convert at the LAST
+    # moment, for human tables only. JSON payloads keep `distance_m` whatever the setting
+    # says — the envelope is the coaching agent's contract, and a display preference must
+    # not change what a tool reads (#349).
+    #
+    # 1609.344 is the international mile, exact by definition.
+    dist_value : [Metric, Imperial], F64 -> F64
+    dist_value = |units, m|
+        match units {
+            Metric => m / 1000.0
+            Imperial => m / 1609.344
+        }
+
+    dist_unit : [Metric, Imperial] -> Str
+    dist_unit = |units|
+        match units {
+            Metric => "km"
+            Imperial => "mi"
+        }
+
+    pace_unit : [Metric, Imperial] -> Str
+    pace_unit = |units|
+        match units {
+            Metric => "min/km"
+            Imperial => "min/mi"
+        }
+
+    # m:ss per km or per mile. Was `pace_per_km`, renamed when it stopped always being
+    # per km: a name asserting a unit while returning the other is exactly the drift this
+    # codebase keeps paying for.
+    pace_per_dist : [Metric, Imperial], F64, I64 -> Str
+    pace_per_dist = |units, distance_m, moving_time|
         if distance_m <= 0.0 or moving_time <= 0 {
             "-"
         } else {
-            total = (moving_time.to_f64() / (distance_m / 1000.0)).round_to_i64_try().ok_or(0)
+            total = (moving_time.to_f64() / dist_value(units, distance_m)).round_to_i64_try().ok_or(0)
             m = total // 60
             s = total % 60
             ss = if s < 10 "0${I64.to_str(s)}" else I64.to_str(s)
@@ -515,11 +545,11 @@ Render :: [].{
         else if tm.detected_known " (target ${(tm.target_reps).to_str()}×${mmss(tm.target_dur_s)} @ ${(tm.target_watts.to_i64_wrap()).to_str()}W; detected ${(tm.detected_reps).to_str()}×~${mmss(tm.detected_mean_dur_s)} @ ${(tm.detected_mean_watts.to_i64_wrap()).to_str()}W)"
         else " (target ${(tm.target_reps).to_str()}×${mmss(tm.target_dur_s)} @ ${(tm.target_watts.to_i64_wrap()).to_str()}W; no detected power intervals to compare)"
 
-    progress_group_label : Str, [Exact, SimilarDistance(F64), LoneNoDistance] -> Str
-    progress_group_label = |name, kind|
+    progress_group_label : [Metric, Imperial], Str, [Exact, SimilarDistance(F64), LoneNoDistance] -> Str
+    progress_group_label = |units, name, kind|
         match kind {
             Exact => name
-            SimilarDistance(m) => "${name} (~${fmt1(m / 1000.0)} km rides)"
+            SimilarDistance(m) => "${name} (~${fmt1(dist_value(units, m))} ${dist_unit(units)} rides)"
             LoneNoDistance => "${name} (no distance recorded — can't match similar rides)"
         }
 
@@ -538,8 +568,8 @@ Render :: [].{
     # (power->EF, distance->speed/HR, rated->RPE; RPE is lower-is-better). The last two
     # parameters are `scope_dropped`/`scope_why`: the caller passes only the SCOPE half
     # of the old `hidden` pair (#286).
-    progress_section : Str, List(Metrics.ProgressRow), Str, [Ef, SpeedHr, Rpe], [Asc, Desc], List(I64), U64, Str -> Str
-    progress_section = |name, rows, asked, lens, sort, all_days, scope_dropped, scope_why| {
+    progress_section : [Metric, Imperial], Str, List(Metrics.ProgressRow), Str, [Ef, SpeedHr, Rpe], [Asc, Desc], List(I64), U64, Str -> Str
+    progress_section = |units, name, rows, asked, lens, sort, all_days, scope_dropped, scope_why| {
         higher = Metrics.lens_higher_better(lens)
         sc = |row| Metrics.lens_score(lens, row).ok_or(0.0)
         # `rows` arrives BEFORE the lens gate, so the table can show a session the lens
@@ -598,13 +628,13 @@ Render :: [].{
                     ("load", |row| fmt0(row.tss)),
                 ]
                 SpeedHr => [
-                    ("pace (min/km)", |row| pace_per_km(row.distance_m, row.moving_time)),
+                    ("pace (${pace_unit(units)})", |row| pace_per_dist(units, row.distance_m, row.moving_time)),
                     ("hr", hr_of),
                     ("spd/hr", prim_of),
                     ("drift", |row| if row.decoupling_known "${signed(row.decoupling_pct)}%" else "-"),
                     # same rule: the speed/HR lens requires `distance_m > 0`, so 0.0 km on
                     # a row it refused is an absence rather than a measurement
-                    ("km", |row| if row.distance_m > 0.0 fmt1(row.distance_m / 1000.0) else "-"),
+                    (dist_unit(units), |row| if row.distance_m > 0.0 fmt1(dist_value(units, row.distance_m)) else "-"),
                     ("load", |row| fmt0(row.tss)),
                 ]
                 Rpe => [
@@ -708,7 +738,7 @@ Render :: [].{
         }
         legend = match lens {
             Ef => "ef = normalized power (np) / avg HR — watts per heartbeat, climbing = fitter · drift = aerobic decoupling, 2nd half vs 1st — LOWER is better, - = not computable · kJ = total work"
-            SpeedHr => "spd/hr (aero-eff) = speed per heartbeat — climbing = fitter · drift = aerobic decoupling, 2nd half vs 1st — LOWER is better, - = not computable · pace is min/km"
+            SpeedHr => "spd/hr (aero-eff) = speed per heartbeat — climbing = fitter · drift = aerobic decoupling, 2nd half vs 1st — LOWER is better, - = not computable · pace is ${pace_unit(units)}"
             Rpe => "rpe = how hard it felt (1-10) — for a fixed workout, dropping = adapting"
         }
         # no baseline -> no percentage. Printing "(0%)" there claimed a measurement we
@@ -1079,7 +1109,7 @@ Render :: [].{
     # numbers for the whole screen. (No type annotation: the payload is the summary
     # record, typed at the app.roc call site; inference keeps this open.)
 
-    summary_screen = |s| {
+    summary_screen = |units, s| {
         z = s.last_28d
         zone_gap =
             if z.hr_streams > 0 and z.z5_s == 0 {
@@ -1105,9 +1135,9 @@ Render :: [].{
                 ["    polarization: unavailable (requires HR, power, or distance streams)"]
         last7_line =
             if s.last_7d.intensity_streams > 0
-                "  last 7 days: ${I64.to_str(s.last_7d.sessions)} sessions · ${fmt1(s.last_7d.moving_time.to_f64() / 3600.0)}h · ${fmt1(s.last_7d.distance_m / 1000.0)} km · ${fmt0(s.last_7d.tss)} load — ${I64.to_str(s.last_7d.easy_pct)}% easy / ${I64.to_str(s.last_7d.moderate_pct)}% moderate / ${I64.to_str(s.last_7d.hard_pct)}% hard"
+                "  last 7 days: ${I64.to_str(s.last_7d.sessions)} sessions · ${fmt1(s.last_7d.moving_time.to_f64() / 3600.0)}h · ${fmt1(dist_value(units, s.last_7d.distance_m))} ${dist_unit(units)} · ${fmt0(s.last_7d.tss)} load — ${I64.to_str(s.last_7d.easy_pct)}% easy / ${I64.to_str(s.last_7d.moderate_pct)}% moderate / ${I64.to_str(s.last_7d.hard_pct)}% hard"
             else
-                "  last 7 days: ${I64.to_str(s.last_7d.sessions)} sessions · ${fmt1(s.last_7d.moving_time.to_f64() / 3600.0)}h · ${fmt1(s.last_7d.distance_m / 1000.0)} km · ${fmt0(s.last_7d.tss)} load — intensity unavailable"
+                "  last 7 days: ${I64.to_str(s.last_7d.sessions)} sessions · ${fmt1(s.last_7d.moving_time.to_f64() / 3600.0)}h · ${fmt1(dist_value(units, s.last_7d.distance_m))} ${dist_unit(units)} · ${fmt0(s.last_7d.tss)} load — intensity unavailable"
         last_hard_str =
             if s.last_hard_session_date != "" s.last_hard_session_date
             else if z.intensity_streams == 0 "unavailable (no detailed streams)"
@@ -1116,7 +1146,7 @@ Render :: [].{
             if List.is_empty(s.sports_28d) []
             else List.concat(
                 ["", "  sport mix (28d):"],
-                List.map(s.sports_28d, |sport| "    ${sport.sport}: ${I64.to_str(sport.sessions)} sessions · ${fmt1(sport.moving_time.to_f64() / 3600.0)}h · ${fmt1(sport.distance_m / 1000.0)} km · ${fmt0(sport.tss)} load"),
+                List.map(s.sports_28d, |sport| "    ${sport.sport}: ${I64.to_str(sport.sessions)} sessions · ${fmt1(sport.moving_time.to_f64() / 3600.0)}h · ${fmt1(dist_value(units, sport.distance_m))} ${dist_unit(units)} · ${fmt0(sport.tss)} load"),
             )
         Str.join_with(
             List.join([
@@ -1140,7 +1170,7 @@ Render :: [].{
                     warming_up_note(s.ctl_warming_up, s.load_days),
                     "",
                     "  last 28 days:",
-                    "    ${I64.to_str(z.sessions)} sessions · ${fmt1(z.moving_time.to_f64() / 3600.0)}h · ${fmt1(z.distance_m / 1000.0)} km",
+                    "    ${I64.to_str(z.sessions)} sessions · ${fmt1(z.moving_time.to_f64() / 3600.0)}h · ${fmt1(dist_value(units, z.distance_m))} ${dist_unit(units)}",
                     "    training load: ${fmt0(z.tss)} (${I64.to_str(z.measured_pct)}% measured by power or pace — rest estimated from HR/RPE; see doctor)",
                 ],
                 # tier line (#157): descriptive provenance for the load number above
@@ -1618,7 +1648,10 @@ expect {
     t == "╭───────╮\n│ a     │\n├───────┤\n│ short │\n╰───────╯"
 }
 
-expect Render.progress_group_label("Morning Ride", SimilarDistance(31400.0)) == "Morning Ride (~31.4 km rides)"
+expect Render.progress_group_label(Metric, "Morning Ride", SimilarDistance(31400.0)) == "Morning Ride (~31.4 km rides)"
+# The same distance under the other system — 31400 m is 19.5 mi. Both are asserted
+# because a converter tested on one system only proves the identity path.
+expect Render.progress_group_label(Imperial, "Morning Ride", SimilarDistance(31400.0)) == "Morning Ride (~19.5 mi rides)"
 
 # EF lens: gap row for >90-day breaks, asked marker, last-vs-best all present.
 # The gap half COUNTS markers: the legend ends with `··· = a break over 90 days`,
@@ -1628,7 +1661,7 @@ expect Render.progress_group_label("Morning Ride", SimilarDistance(31400.0)) == 
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, avg_hr_scored: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     dayof = |x| Metrics.date_str_to_days(x).ok_or(0)
-    s = Render.progress_section("X", [pr("2025-01-01", 1.5), pr("2025-08-01", 1.2)], "2025-08-01", Ef, Asc, [dayof("2025-01-01"), dayof("2025-08-01")], 0, "a different distance for this workout")
+    s = Render.progress_section(Metric, "X", [pr("2025-01-01", 1.5), pr("2025-08-01", 1.2)], "2025-08-01", Ef, Asc, [dayof("2025-01-01"), dayof("2025-08-01")], 0, "a different distance for this workout")
     marks = List.len(Str.split_on(s, "···")) - 1
     marks == 8 and Str.contains(s, "2025-08-01 ◀") and Str.contains(s, "below your best") and Str.contains(s, "declining")
 }
@@ -1637,7 +1670,7 @@ expect {
 # 0%, and "holding steady" would read as a measured finding rather than an absent one
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, avg_hr_scored: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
-    s = Render.progress_section("X", [pr("2025-01-01", 1.5)], "2025-01-01", Ef, Asc, [], 0, "a different distance for this workout")
+    s = Render.progress_section(Metric, "X", [pr("2025-01-01", 1.5)], "2025-01-01", Ef, Asc, [], 0, "a different distance for this workout")
     Str.contains(s, "first session of this workout, nothing to compare against yet") and !(Str.contains(s, "holding steady")) and !(Str.contains(s, "(0%)"))
 }
 
@@ -1652,9 +1685,9 @@ expect {
     rendered = [pr("2025-10-05", 1.5), pr("2026-01-16", 1.6)]
     # the dropped 2025-12-06 ride is present in all_days and absent from the rows
     dayof = |x| Metrics.date_str_to_days(x).ok_or(0)
-    with_dropped = Render.progress_section("X", rendered, "2026-01-16", Ef, Asc, [dayof("2025-10-05"), dayof("2025-12-06"), dayof("2026-01-16")], 1, "a different distance for this workout")
+    with_dropped = Render.progress_section(Metric, "X", rendered, "2026-01-16", Ef, Asc, [dayof("2025-10-05"), dayof("2025-12-06"), dayof("2026-01-16")], 1, "a different distance for this workout")
     # ...and with nothing dropped, the same two rows ARE 103 days apart and DO get a marker
-    without = Render.progress_section("X", rendered, "2026-01-16", Ef, Asc, [dayof("2025-10-05"), dayof("2026-01-16")], 0, "a different distance for this workout")
+    without = Render.progress_section(Metric, "X", rendered, "2026-01-16", Ef, Asc, [dayof("2025-10-05"), dayof("2026-01-16")], 0, "a different distance for this workout")
     # COUNTED, not `Str.contains`: the legend line ends with "··· = a break over 90 days",
     # so a plain substring test is true of every rendering and the suppression half of this
     # expect passed for the wrong reason. Counting separates the table's marker row from the
@@ -1669,8 +1702,8 @@ expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, avg_hr_scored: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     rows = [pr("2025-10-05", 1.5), pr("2026-01-16", 1.6)]
     dayof = |x| Metrics.date_str_to_days(x).ok_or(0)
-    hid = Render.progress_section("X", rows, "2026-01-16", Ef, Asc, [dayof("2025-10-05"), dayof("2025-12-06"), dayof("2026-01-16")], 1, "a different distance for this workout")
-    none = Render.progress_section("X", rows, "2026-01-16", Ef, Asc, [dayof("2025-10-05"), dayof("2026-01-16")], 0, "a different distance for this workout")
+    hid = Render.progress_section(Metric, "X", rows, "2026-01-16", Ef, Asc, [dayof("2025-10-05"), dayof("2025-12-06"), dayof("2026-01-16")], 1, "a different distance for this workout")
+    none = Render.progress_section(Metric, "X", rows, "2026-01-16", Ef, Asc, [dayof("2025-10-05"), dayof("2026-01-16")], 0, "a different distance for this workout")
     Str.contains(hid, "2 sessions (1 hidden: a different distance for this workout)") and Str.contains(none, "2 sessions —")
 }
 
@@ -1683,8 +1716,8 @@ expect {
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, avg_hr_scored: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
     lone = [pr("2025-01-01", 1.5)]
-    genuine = Render.progress_section("X", lone, "2025-01-01", Ef, Asc, [], 0, "a different distance for this workout")
-    withheld = Render.progress_section("X", lone, "2025-01-01", Ef, Asc, [], 10, "a different distance for this workout")
+    genuine = Render.progress_section(Metric, "X", lone, "2025-01-01", Ef, Asc, [], 0, "a different distance for this workout")
+    withheld = Render.progress_section(Metric, "X", lone, "2025-01-01", Ef, Asc, [], 10, "a different distance for this workout")
     Str.contains(genuine, "first session of this workout")
     and !(Str.contains(genuine, "the only session this lens can score"))
     and Str.contains(withheld, "the only session shown (10 hidden: a different distance for this workout)")
@@ -1696,7 +1729,7 @@ expect {
 # widest-column victim of squeeze-and-word-wrap (a split bar reads as broken output)
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, avg_hr_scored: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
-    s = Render.progress_section("X", [pr("2025-01-01", 1.2), pr("2025-02-01", 1.66)], "2025-02-01", Ef, Asc, [], 0, "a different distance for this workout")
+    s = Render.progress_section(Metric, "X", [pr("2025-01-01", 1.2), pr("2025-02-01", 1.66)], "2025-02-01", Ef, Asc, [], 0, "a different distance for this workout")
     Str.contains(s, "1.66 ████████████")
 }
 
@@ -1705,7 +1738,7 @@ expect {
 # computed chronologically (1.2 → 1.66 reads as improving, not declining)
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, avg_hr_scored: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
-    s = Render.progress_section("X", [pr("2025-01-01", 1.2), pr("2025-02-01", 1.66)], "2025-02-01", Ef, Desc, [], 0, "a different distance for this workout")
+    s = Render.progress_section(Metric, "X", [pr("2025-01-01", 1.2), pr("2025-02-01", 1.66)], "2025-02-01", Ef, Desc, [], 0, "a different distance for this workout")
     before_old = List.first(Str.split_on(s, "2025-01-01")).ok_or("")
     Str.contains(before_old, "2025-02-01") and Str.contains(s, "improving")
 }
@@ -1725,7 +1758,7 @@ expect List.all(
 # RPE lens is lower-is-better: RPE dropping 8 -> 6 reads as improving, "above your easiest"
 expect {
     pr = |date, rpe| { name: "Lift", date, sport: "WeightTraining", distance_m: 0.0, moving_time: 2700, np_w: 0.0, avg_hr: 0.0, avg_hr_scored: 0.0, rpe, output_kj: 0.0, tss: 0.0, load_model: "session_rpe", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
-    s = Render.progress_section("Lift", [pr("2025-01-01", 8.0), pr("2025-02-01", 6.0), pr("2025-03-01", 7.0)], "2025-03-01", Rpe, Asc, [], 0, "a different distance for this workout")
+    s = Render.progress_section(Metric, "Lift", [pr("2025-01-01", 8.0), pr("2025-02-01", 6.0), pr("2025-03-01", 7.0)], "2025-03-01", Rpe, Asc, [], 0, "a different distance for this workout")
     Str.contains(s, "│ rpe") and Str.contains(s, "improving") and Str.contains(s, "above your easiest")
 }
 
@@ -1803,7 +1836,7 @@ expect {
         pending_sessions: 2.I64,
         sports_28d: [{ sport: "Run", sessions: 4.I64, tss: 100.0, moving_time: 7200.I64, distance_m: 30000.0 }],
     }
-    out = Render.summary_screen(s)
+    out = Render.summary_screen(Metric, s)
     Str.contains(out, "stride report") and Str.contains(out, "zone gap") and Str.contains(out, "none on record")
         # a build and an unload each keep their sign in the same line
         and Str.contains(out, "+4/wk")
@@ -1841,7 +1874,7 @@ expect {
         pending_sessions: 2.I64,
         sports_28d: [{ sport: "Run", sessions: 4.I64, tss: 100.0, moving_time: 7200.I64, distance_m: 30000.0 }],
     }
-    out = Render.summary_screen(s)
+    out = Render.summary_screen(Metric, s)
     Str.contains(out, "form 10 —") and !(Str.contains(out, "week ago"))
 }
 
@@ -1858,12 +1891,22 @@ expect {
         last_hard_session_date: "", hard_days: { d14: 0.I64, d28: 0.I64, spacing_median_days_28d: 0.I64, spacing_known: False, days_since_last: 0.I64, days_since_known: False }, pending_sessions: 0.I64,
         sports_28d: [{ sport: "Run", sessions: 4.I64, tss: 100.0, moving_time: 7200.I64, distance_m: 30000.0 }],
     }
-    out = Render.summary_screen(s)
+    out = Render.summary_screen(Metric, s)
     Str.contains(out, "time in HR zones: unavailable") and Str.contains(out, "intensity unavailable") and !(Str.contains(out, "zone gap"))
 }
 
 # pace: 10km in 3000s = 5:00/km; padded seconds; no distance -> "-"
-expect Render.pace_per_km(10000.0, 3000) == "5:00" and Render.pace_per_km(10000.0, 3070) == "5:07" and Render.pace_per_km(0.0, 100) == "-"
+expect Render.pace_per_dist(Metric, 10000.0, 3000) == "5:00" and Render.pace_per_dist(Metric, 10000.0, 3070) == "5:07" and Render.pace_per_dist(Metric, 0.0, 100) == "-"
+# 10 km in 50:00 is 5:00/km and 8:03/mi. The imperial arm is asserted separately because
+# the metric one divides by 1000.0 and would pass against a converter that ignored its
+# units argument entirely.
+expect Render.pace_per_dist(Imperial, 10000.0, 3000) == "8:03" and Render.pace_per_dist(Imperial, 0.0, 100) == "-"
+# The conversion itself, both directions, so a wrong constant fails here rather than
+# only inside a formatted sentence.
+expect Render.dist_unit(Metric) == "km" and Render.dist_unit(Imperial) == "mi"
+expect Render.pace_unit(Metric) == "min/km" and Render.pace_unit(Imperial) == "min/mi"
+expect Render.dist_value(Metric, 1609.344) == 1.609344
+expect Render.dist_value(Imperial, 1609.344) == 1.0
 
 # compare table + verdict render; ramp shows in the load word
 expect {

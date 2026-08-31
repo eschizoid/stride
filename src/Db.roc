@@ -7,7 +7,7 @@ import pf.Path
 import Schema
 import Metrics
 import Sports
-
+import Config
 Db :: [].{
     # ── paths ────────────────────────────────────────────────────────────
 
@@ -67,6 +67,23 @@ Db :: [].{
             Err(NoRowsReturned) => Ok(NotFound)
             Err(other) => Err(other)
 
+        }
+
+    # The display unit system, resolved for rendering. Absent reads as Metric — the
+    # documented default — and so does an unrecognised value, via Config.units_of. A
+    # display preference must never be the reason a command fails, and `config set`
+    # already refuses anything but metric/imperial, so an odd value here means a row
+    # written before this key existed or by something bypassing the CLI.
+    #
+    # Read once per command and threaded into the renderer, NOT consulted per row: the
+    # value cannot change mid-render, and a query per table row would be the same
+    # mistake as re-deriving a constant in a loop.
+    units! : Str => Try([Metric, Imperial], _)
+    units! = |path|
+        match config_opt!(path, "units") {
+            Ok(Found(v)) => Ok(Config.units_of(v))
+            Ok(NotFound) => Ok(Metric)
+            Err(other) => Err(other)
         }
     # Remove a config row outright. Used by `config set <unrecognised> ""` (#254), which is
     # the way out for a row the engine no longer reads.
