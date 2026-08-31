@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1102)?
+    checks_ran_exactly!(1104)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2041,14 +2041,32 @@ b_seed_analyze! = |ctx| {
     # `km` — which is exactly `activity`'s shape, the screen it was written to catch.
     units_sweep = Str.trim(sh!("h='${ctx.home}'; n=0; d=0; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance'; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; a=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null | md5); HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; b=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n differ=$d\""))
     units_probe_live = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' progress 2>/dev/null")
-    units_km_leak = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; n=0; k=0; for c in 'summary' 'stats' 'activities' 'week' 'season' 'reps' 'progress' 'top distance' \"activity $aid\"; do n=$((n+1)); HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' $c 2>/dev/null | grep -qE '(^|[^a-z])km([^a-z]|$)|min/km' && k=$((k+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"screens=$n metric_leaks=$k\""))
+    # `plan` belongs here too: it renders summary_screen and therefore a distance. Leaving
+    # it out is the same coverage gap that let `activity` ship, and the two sweeps should
+    # agree about which screens carry a distance.
+    #
+    # NOTE for whoever edits the fixture: the regex fires on any `km` bounded by
+    # non-letters, so naming a seeded activity "10km Race" will trip this check on the
+    # NAME rather than a unit. Rename the activity; the guard is not wrong.
+    units_km_leak = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; n=0; k=0; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'top distance' \"activity $aid\"; do n=$((n+1)); HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' $c 2>/dev/null | grep -qE '(^|[^a-z])km([^a-z]|$)|min/km' && k=$((k+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"screens=$n metric_leaks=$k\""))
+    # The `activity` leg's own liveness. Without this it can go silent exactly as the
+    # progress leg did: an empty `aid` makes the loop run bare `stride activity`, which
+    # prints a usage line, contains no km, and scores as clean while testing nothing.
+    units_activity_live = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' activity \"$aid\" 2>/dev/null | grep -cE '(^|[^a-z])km([^a-z]|$)'"))
+    # MAGNITUDE, which the km sweep structurally cannot see. It proves no screen SAYS km;
+    # it cannot prove a number was converted, so `dist_unit(units)` without
+    # `dist_value(units)` — half of the original bug, and the half that is invisible —
+    # passes every other assertion here. The ratio must be the mile: 1.609.
+    units_ratio = Str.trim(sh!("h='${ctx.home}'; HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; a=$(HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' summary 2>/dev/null | grep 'last 7 days' | grep -oE '[0-9.]+ km' | head -1 | cut -d' ' -f1); HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; b=$(HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' summary 2>/dev/null | grep 'last 7 days' | grep -oE '[0-9.]+ mi' | head -1 | cut -d' ' -f1); HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; awk -v x=\"$a\" -v y=\"$b\" 'BEGIN{ if (x==\"\" || y==\"\" || y+0==0) print \"unreadable\"; else { r=(x+0)/(y+0); print (r>1.55 && r<1.66) ? \"mile\" : \"wrong:\" r } }'"))
     # Cleanup runs BEFORE the assertions. All three use `?`, so asserting first would skip
     # the delete on any failure and leave these rows in the shared fixture for the 868
     # checks that follow — burying the real cause under a storm of unrelated failures.
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (9001,9002); DELETE FROM activities WHERE id IN (9001,9002);")
     check!("the sweep's progress leg is LIVE — the fixture has a distance-keyed group label", Str.contains(units_probe_live, "(~"))?
     check!("no command's JSON moves with the units setting — SI is the contract, swept not enumerated", units_sweep == "swept=12 differ=0")?
-    check!("with imperial set, no human screen still prints kilometres", units_km_leak == "screens=9 metric_leaks=0")?
+    check!("with imperial set, no human screen still prints kilometres", units_km_leak == "screens=10 metric_leaks=0")?
+    check!("...and the activity leg is LIVE — a bare `activity` with no id would test nothing", units_activity_live != "0")?
+    check!("...and the NUMBERS convert, not just the labels — the ratio is the mile", units_ratio == "mile")?
     check!("coverage tiers discriminate (high and medium both live)", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct > 0) and (.medium_pct > 0)") == "true")?
     check!("form coverage carries the 90d window", strjq!(ctx, ["summary"], ".data.form_coverage_90d | (.high_pct + .medium_pct + .low_pct == 100) and ((.known | type) == \"boolean\")") == "true")?
     # with fixtures loaded TSB is known, so the enum arm is required here; the
