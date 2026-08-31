@@ -18,7 +18,9 @@ CACHE=$(mktemp); BLOCKS=$(mktemp); trap 'rm -f "$CACHE" "$BLOCKS"' EXIT
 fail=0; checked=0; blocks=0; quoting=0
 # every `issue-claims: quoting` marker in the repo, pinned so a new one is deliberate.
 # PLAN.md is listed via `ls` so absence is not an error while presence is scanned —
-# AGENTS.md permits a root PLAN.md only on condition this tool reads it.
+# AGENTS.md and ADR 0000 both permit a root PLAN.md only on condition this tool reads it.
+# If this count DROPS, do not "correct" the pin: deleting PLAN.md once reported 1 marker
+# instead of 4, and the truncated run's number nearly became the new expectation.
 # The `|| exit` guards matter: macOS awk ABORTS its remaining argument list on a missing
 # file (it does not skip), so one absent entry silently truncates the scan and every file
 # listed after it goes unread while the run still exits 0.

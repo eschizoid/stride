@@ -69,7 +69,9 @@ sort -u "$tmp/sig" > "$tmp/sig.sorted"
 
 # Every SKILL.md line documenting a command — rows AND prose (sync/analyze literals
 # live in bullets). A line is attributed to the LONGEST command it names, derived from
-# the join: `stride week add ...` documents `week add`, not `week`.
+# the join: `stride week add ...` documents `week add`, not `week`. Do NOT reach for a
+# word boundary instead: `([^a-z0-9-]|$)` contains a SPACE, so under it `week` claims
+# `week add`'s row and is satisfied by its neighbour's text.
 doc_for() {
   cmd=$1
   grep -F "stride $cmd" "$LOGICAL" 2>/dev/null > "$tmp/cand" || true

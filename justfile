@@ -122,7 +122,8 @@ schema-check: build
         exit 4
     fi
     # RELATIVE on the DERIVATION side: catches jq truncating mid-stream, which the
-    # floor alone shrugs at.
+    # floor alone shrugs at — deleting `.args` from one entry gives 16 against 18, and a
+    # floor of 15 passes.
     if [ "$nforms" -ne "$want" ]; then
         echo "schema-check: derived $nforms forms but the command table declares $want — the derivation is broken, not the payloads"
         exit 4
@@ -180,16 +181,21 @@ schema-check: build
         # ALLOWLIST, not denylist: under a denylist a wrong derived argument read as
         # "skipped (bad_metric)" — indistinguishable from a thin database, exit 0, nothing
         # validated. Only codes that genuinely mean "nothing to say" skip.
+        # KNOWN GAP: the e2e mutation sweep grew a `stalled` check for `usage` (it asserts
+        # every read-only form reached its handler); this recipe never inherited one.
         case "$code" in
             "") ;;
             # `not_set` moved to the REJECTED arm (#254): after the filler started coming
             # from `stride config`, seeing it means the binary contradicted itself within
-            # one run. `irregular_anchor` is the definition of nothing-to-say (95.6% of
-            # real sessions are irregular — in the rejected arm it was an intermittent
-            # false red, which teaches the reader to ignore it). The three date-message
-            # codes (`no_workout_on_date`, `no_intervals_on_date`, `unscorable`) belong in
-            # the rejected arm the day any form takes a REQUIRED date; both date-takers
-            # are optional today, so no wrong date can be derived.
+            # one run. `irregular_anchor` is the definition of nothing-to-say — one
+            # measurement found 372 of 389 real sessions irregular, and in the rejected
+            # arm that made an intermittent false red, which teaches the reader to ignore
+            # it. The three date-message codes (`no_workout_on_date`,
+            # `no_intervals_on_date`, `unscorable`) are argument-dependent, so they are
+            # safe here only because the derived date comes from the TABLE's own example
+            # and resolves. `project` already takes a REQUIRED date (it is in the derived
+            # set), so "no form takes one" is no longer the reason — an example that
+            # stopped resolving would be.
             no_activities|no_data|no_power_data|no_cp_fit|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals|no_intervals_on_date|unscorable|irregular_anchor)
                 echo "$inv: skipped ($code)"; checked=$((checked + 1)); continue ;;
             # DATA FAULTS — true statements about the DATABASE, not about the invocation,
