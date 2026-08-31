@@ -4,32 +4,27 @@
 # SKILL.md is the coaching agent's instruction sheet; an agent given an undocumented
 # field does not error, it silently never uses it (#292, twice in three days). Membership
 # lives in `tools/skill-shapes.pins`, checked in — NOT measured from the doc, because
-# with the doc as denominator, drift lowers coverage and switches the check off. The
-# pin is a DEDUPLICATED set of (schema, property-set, required-set) rows — 79 objects
-# reduce to 73 — so it records which SHAPES a schema holds (its shape rows), not how
-# many or where. A change moving that set fails the gate; updating it is the moment
-# someone decides whether the field belongs in SKILL.md (#298). Known hole: it compares
-# SETS, so any SCHEMA change leaving the set intact is invisible — an object can leave
-# while an identically-shaped sibling still emits its row, and one can arrive whose row
-# a sibling already emits. Activity, compare, stats and summary each carry one (#346).
+# with the doc as denominator, drift lowers coverage and switches the check off. Any
+# change the pin sees fails the gate; updating it is the moment someone decides whether
+# the field belongs in SKILL.md (#298). What it pins, and what it cannot see, is stated
+# once under "Pin agreement" below — this file used to paraphrase that in six places and
+# every paraphrase was wrong (#345).
 #
 # Two directions: (1) schema -> doc — every required field of a `doc`-pinned object
 # must be named in that command's documentation; an object pinned `-` is held to the
-# pin alone, so a change to its shape rows still fails there — subject to the hole
-# above — while this check's doc side never runs (`--refresh` does run it, which is
-# how a `-` becomes `doc`). A field's TYPE is not pinned: scalar-to-scalar retypes,
-# enum changes and array-vs-object cardinality all pass, since jq's `..` recurses
-# through arrays and an array wrapper exposes the identical object. The two
-# directions read DIFFERENT sets: the pin takes objects carrying both `properties`
-# and `required`, direction 2 takes every object carrying `properties`. A retype
-# moves the pin only when it adds a row the set lacked or removes the last object
-# carrying one; adding a properties-only object fails nothing and silently widens
-# what direction 2 accepts. (2) doc -> schema — every `{...}` literal's key set must
-# be a SUBSET of some SINGLE schema object's properties, catching documentation that
-# still promises a renamed or removed field. Per-key existence is NOT the rule: keys
-# drawn from different objects each exist and still fail, because no single payload
-# object has them as siblings; nested payloads are written as nested literals,
-# peeled innermost-first.
+# pin alone, so a change the pin sees still fails there while this check's doc side
+# never runs (`--refresh` does run it, which is how a `-` becomes `doc`).
+#
+# (2) doc -> schema — every `{...}` literal's key set must be a SUBSET of some SINGLE
+# schema object's properties, catching documentation that still promises a renamed or
+# removed field. Per-key existence is NOT the rule: keys drawn from different objects
+# each exist and still fail, because no single payload object has them as siblings;
+# nested payloads are written as nested literals, peeled innermost-first.
+#
+# The two directions read DIFFERENT membership: the pin takes objects carrying both
+# `properties` and `required`, direction 2 every object carrying `properties`. So a
+# properties-only object would widen what direction 2 accepts without the pin moving —
+# see "Pin agreement" for why none exists today.
 set -eu
 # Byte collation everywhere: the pin is a checked-in artifact compared line-by-line
 # against a freshly sorted one, so a locale that orders differently makes the SAME
@@ -47,10 +42,10 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 # SKILL.md with hard-wrapped paragraphs folded to logical lines — the sync/analyze
 # payload literals span source lines, so a line-scoped extractor finds zero `{...}`
 # spans there. Known limits: direction 1 reaches sync but not analyze (paragraph-break
-# accident; analyze stays pinned so changes to its shape rows still fail), and
+# accident; analyze stays pinned so a change the pin sees still fails), and
 # a folded paragraph is a big haystack where a common field name can be satisfied by
 # unrelated text — a second line of defence weakening, while the pin still fails on any
-# change that moves the pinned set.
+# change the pin sees (see "Pin agreement").
 LOGICAL="$tmp/logical.md"
 awk '
   function isnew(l) {
@@ -74,24 +69,24 @@ grep '\(reads\|writes\)("' src/Command.roc | while IFS= read -r line; do
   if [ -n "$n" ] && [ -n "$s" ]; then printf '%s\t%s\n' "$n" "$s"; fi
 done | sort -u > "$tmp/join"
 
-# Every required-carrying object's signature, keyed by schema + sorted property names,
-# then DEDUPLICATED: renaming a wrapper leaves the wrapped object's own signature
-# untouched, but the parent object's property list moves, so the gate still fails.
-# Adding or removing a field always moves a row — the new shape APPEARS even when a
-# sibling still emits the old one. What a twin hides is a change that does not move the
-# SET: an object leaving without removing its row — dropping `required`, dropping
-# `properties` (membership needs both), or deleting an object no parent's property list
-# mentions, such as an `items` node — or an object arriving whose row a twin already
-# emits (#346).
+# Every required-carrying object's signature, keyed by schema + its JSON PATH — see
+# "Pin agreement" for why the path is what makes the comparison total. Renaming a
+# wrapper leaves the wrapped object's own property list untouched, but moves both the
+# parent's list and the child's path, so the gate fails on either.
 : > "$tmp/sig"
 for f in "$SCHEMAS"/*.json; do
   b=$(basename "$f")
+  # `paths` never emits the empty path, so the root object is added explicitly — without
+  # it 32 schemas silently lose their top-level object (79 objects would read as 47).
   jq -r --arg b "$b" '
-    [.. | objects | select(has("required")) | select(has("properties"))]
-    | .[] | $b + "\t" + ((.properties | keys | sort | join(",")))
-          + "\t" + ((.required | sort | join(",")))' "$f" 2>/dev/null | tr -d '\r' >> "$tmp/sig" || true
+    ([paths as $p | {p: $p, o: getpath($p)}] + [{p: [], o: .}])
+    | .[] | select(.o | type == "object" and has("required") and has("properties"))
+    | $b + "\t" + ((.o.properties | keys | sort | join(",")))
+         + "\t" + ((.o.required | sort | join(",")))
+         + "\t" + (if (.p | length) == 0 then "$" else (.p | map(tostring) | join(".")) end)' \
+    "$f" 2>/dev/null | tr -d '\r' >> "$tmp/sig" || true
 done
-sort -u "$tmp/sig" > "$tmp/sig.sorted"
+sort "$tmp/sig" > "$tmp/sig.sorted"
 
 # Every SKILL.md line documenting a command — rows AND prose (sync/analyze literals
 # live in bullets). A line is attributed to the LONGEST command it names, derived from
@@ -117,7 +112,7 @@ doc_for() {
   # ` *` — alias parentheticals sit before the pipe and the anchored form matched
   # nothing. Known limits: prose invocations bypass the `^|` anchor (config's required
   # `key` rests on one), and a reworded cell can stop matching — second-line defence
-  # weakening only; the pin still fails on any change that moves the pinned set.
+  # weakening only; the pin still fails on any change it sees (see "Pin agreement").
   sed 's/^| *`[^`]*`[^|]*|//' "$tmp/cand"
 }
 
@@ -137,7 +132,7 @@ pinned=0
 # the check, so refreshing is never something the gate does for you on the way past.
 if [ "${1:-}" = "--refresh" ]; then
   : > "$tmp/new"
-  while IFS="$(printf '\t')" read -r schema props req; do
+  while IFS="$(printf '\t')" read -r schema props req path; do
     cmd=$(awk -F'\t' -v s="$schema" '$2 == s {print $1; exit}' "$tmp/join")
     flag="-"
     if [ -n "$cmd" ]; then
@@ -150,14 +145,14 @@ if [ "${1:-}" = "--refresh" ]; then
         [ "$miss" = 0 ] && flag="doc"
       fi
     fi
-    printf '%s\t%s\t%s\t%s\n' "$schema" "$props" "$req" "$flag" >> "$tmp/new"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$schema" "$props" "$req" "$flag" "$path" >> "$tmp/new"
   done < "$tmp/sig.sorted"
   # A doc -> - transition = an object STOPPED being enforced, and refresh is the one
   # place that can happen silently — named loudly here, and the count moves too.
   # Temp files, not `<(...)`: /bin/sh parses process substitution as a syntax error.
   tr -d '\r' < "$PINS" > "$tmp/pins.lf.refresh"
-  awk -F'\t' '$4=="doc" {print $1"  "$2}' "$tmp/pins.lf.refresh" | sort > "$tmp/was_doc"
-  awk -F'\t' '$4!="doc" {print $1"  "$2}' "$tmp/new" | sort > "$tmp/now_not"
+  awk -F'\t' '$4=="doc" {print $1"  "$5}' "$tmp/pins.lf.refresh" | sort > "$tmp/was_doc"
+  awk -F'\t' '$4!="doc" {print $1"  "$5}' "$tmp/new" | sort > "$tmp/now_not"
   comm -12 "$tmp/was_doc" "$tmp/now_not" > "$tmp/downgraded"
   if [ -s "$tmp/downgraded" ]; then
     echo "skill-shapes: WARNING — these objects are being DOWNGRADED from enforced to unenforced:"
@@ -171,15 +166,35 @@ if [ "${1:-}" = "--refresh" ]; then
   exit 0
 fi
 
-# ── Pin agreement. Any schema whose set of shape rows moved fails here. ──
-cut -f1,2,3 "$tmp/sig.sorted" > "$tmp/sig.cmp"
+# ── Pin agreement. THE INVARIANT — stated once here; other comments point at it. ──
+#
+# The pin is a checked-in set of (schema, property-set, required-set, JSON path) rows,
+# one per object: 79 objects, 79 rows. Keying by PATH is what makes the comparison
+# total — every object has its own row, so any object that gains a field, loses one,
+# stops being pinned, appears, disappears, moves, or trades shapes with a neighbour
+# moves a row. Two weaker keys were tried first and each missed something:
+# deduplicating by shape hid an object leaving or arriving beside an identical twin
+# (#346), and counting shapes still hid two objects SWAPPING shapes, since a
+# permutation preserves every count. A path cannot be permuted.
+#
+# What it reads is NAMES AND LOCATION ONLY: property names, required names, and the
+# path. So a retype or an enum change leaves every row identical and passes, as would
+# any attribute that does not RELOCATE a pinned object. Wrapping one in an array does
+# relocate it, to `<path>.items`, so that is caught rather than invisible.
+# Membership is `properties` AND `required`, so an object carrying only one of them is
+# not pinned at all, though no such object exists in the schemas today.
+#
+# The path also names the object in a failure diff, which shape-keyed rows could not:
+# `pinned:` and `actual:` lines now say WHICH object moved, as does the refresh's
+# DOWNGRADED warning.
+cut -f1,2,3,4 "$tmp/sig.sorted" | sort > "$tmp/sig.cmp"
 # Read an LF-normalised copy, never the file on disk — gitattributes asks the checkout
 # to behave; this does not have to ask.
 tr -d '\r' < "$PINS" > "$tmp/pins.lf"
 PINS_LF="$tmp/pins.lf"
-cut -f1,2,3 "$PINS_LF" | sort -u > "$tmp/pins.cmp"
+cut -f1,2,3,5 "$PINS_LF" | sort > "$tmp/pins.cmp"
 if ! diff -q "$tmp/sig.cmp" "$tmp/pins.cmp" >/dev/null 2>&1; then
-  echo "skill-shapes: a schema's shape rows changed and $PINS does not agree."
+  echo "skill-shapes: a schema's pinned shapes changed and $PINS does not agree."
   echo
   diff "$tmp/pins.cmp" "$tmp/sig.cmp" | sed 's/^</  pinned:  /;s/^>/  actual:  /' | grep -v '^[0-9-]' || true
   echo
@@ -189,7 +204,7 @@ if ! diff -q "$tmp/sig.cmp" "$tmp/pins.cmp" >/dev/null 2>&1; then
 fi
 
 # ── Direction 1: every required field of a `doc`-pinned object appears in the doc text. ──
-while IFS="$(printf '\t')" read -r schema props req flag; do
+while IFS="$(printf '\t')" read -r schema props req flag path; do
   [ "$flag" = "doc" ] || continue
   pinned=$((pinned + 1))
   # Label with the command that DOCUMENTS the schema, not the alphabetically first
@@ -262,7 +277,7 @@ if [ "$n" -gt 0 ]; then
 fi
 # Both counts asserted EXACTLY, not as floors: under a floor, rows can stop matching
 # while the gate prints the same clean line a healthy tree prints.
-EXPECT_PINNED=33
+EXPECT_PINNED=39
 EXPECT_LITERALS=30
 if [ "$pinned" != "$EXPECT_PINNED" ] || [ "$literals" != "$EXPECT_LITERALS" ]; then
   echo "skill-shapes: enforced $pinned doc-pinned objects and matched $literals brace literals;"
