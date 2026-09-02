@@ -179,6 +179,8 @@ stride config set timezone America/Chicago    # optional: anchor "today" to your
                                               #   `stride config set utc_offset_minutes -300`
                                               # Precedence: timezone > offset > UTC.
                                               # `stride doctor` shows which is active.
+stride config set units imperial              # optional: miles and min/mi in the
+                                              # human tables. JSON always stays SI
 stride sync                                   # pull all activities + all stream history
 stride analyze                                # compute everything
 ```

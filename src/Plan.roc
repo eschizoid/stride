@@ -1310,6 +1310,9 @@ Plan :: [].{
     plan_bundle! : {} => Try({}, _)
     plan_bundle! = |{}| {
         path = Db.open_db!({})?
+        # Same rule as Report.summary!: the bundle's JSON stays SI, and this only reaches
+        # the human branch below.
+        units = Db.units!(path)?
         match Analyze.load_zone_config!(path) {
             Err(MissingConfig) => Output.missing_config!({})
             Err(other) => Err(other)
@@ -1577,7 +1580,7 @@ Plan :: [].{
                         },
                     })
                 } else {
-                    Stdout.line!(Render.summary_screen(s))?
+                    Stdout.line!(Render.summary_screen(units, s))?
                     Stdout.line!("")?
                     # "" when nothing is outstanding, so this prints nothing on a current
                     # database rather than a row of zeros before every planning session.

@@ -584,6 +584,12 @@ config_unset! = |key| {
                 # one of the three settable families — never recomputed and never re-fetched,
                 # and removing it collapses to the same state as removing `timezone`.
                 "${p.key} removed — stride reads dates as UTC until a zone or offset is set"
+            } else if p.key == "units" {
+                # Its own branch rather than the catch-all, which would say "run `stride
+                # doctor` if a command starts refusing" — nothing refuses. Removing this key
+                # cannot break a command, it only changes how numbers are printed, and the
+                # message says exactly that.
+                "${p.key} removed — distances and pace render in metric again"
             } else if Config.is_bookkeeping(p.key) {
                 "${p.key} removed — stride recomputes or re-fetches this one as needed"
             } else if Config.known_key(p.key) {
@@ -654,6 +660,17 @@ config_store! = |key, val|
     # value nothing will ever consult".
     else if !(Config.known_key(key))
         Output.err_out!("unknown_key", unknown_key_message(key))
+    # The enum half of the same rule numeric_refusal enforces for numbers. Not folded into
+    # numeric_key, which answers "how does this parse as a NUMBER" — units is the only key
+    # with a closed value set, and a general mechanism for one member would be machinery
+    # nothing else uses. Refused here so a typo cannot be stored: every read resolves an
+    # unrecognised value to metric, so without this `config set units imperail` would
+    # succeed, echo back, and render metric forever.
+    else if key == "units" and !(Config.is_unit_value(val))
+        Output.err_out!(
+            "bad_value",
+            "units takes metric or imperial — got '${val}'",
+        )
     else if numeric_refusal(key, val) != ""
         # a stored value that parses nowhere is the same trap as one that is read
         # nowhere (Config.is_derived's comment) -- refuse it here rather than let

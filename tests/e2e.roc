@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1093)?
+    checks_ran_exactly!(1105)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1810,8 +1810,8 @@ b_config_ftp! = |ctx| {
     #     not stored, so there was nothing to remove" — no routing sentence, scored
     #     as ROUTED. `unseeded` is asserted at 0 so the probe proves it could speak
     #     before its silence counts.
-    unset_sweep = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; { awk '/plain_keys = \\[/,/\\]/' src/Config.roc; awk '/secret_keys = \\[/,/\\]/' src/Config.roc; } | grep -o '\"[^\"]*\"' | tr -d '\"' > $h/keys; n=0; u=0; z=0; while read -r k; do n=$((n+1)); HOME=$h '${ctx.bin}' config set \"$k\" 7 >/dev/null 2>&1; m=$(HOME=$h '${ctx.bin}' config unset \"$k\" 2>&1 | head -1); case \"$m\" in *'starts refusing'*) u=$((u+1));; esac; case \"$m\" in *'was not stored'*) z=$((z+1));; esac; done < $h/keys; echo \"probed=$n unrouted=$u unseeded=$z\""))
-    check!("every LISTED config key reaches a routed `config unset` branch, enumerated from Config.roc", unset_sweep == "probed=10 unrouted=0 unseeded=0")?
+    unset_sweep = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; { awk '/plain_keys = \\[/,/\\]/' src/Config.roc; awk '/secret_keys = \\[/,/\\]/' src/Config.roc; } | grep -o '\"[^\"]*\"' | tr -d '\"' > $h/keys; n=0; u=0; z=0; while read -r k; do n=$((n+1)); case \"$k\" in units) v=metric;; *) v=7;; esac; HOME=$h '${ctx.bin}' config set \"$k\" \"$v\" >/dev/null 2>&1; m=$(HOME=$h '${ctx.bin}' config unset \"$k\" 2>&1 | head -1); case \"$m\" in *'starts refusing'*) u=$((u+1));; esac; case \"$m\" in *'was not stored'*) z=$((z+1));; esac; done < $h/keys; echo \"probed=$n unrouted=$u unseeded=$z\""))
+    check!("every LISTED config key reaches a routed `config unset` branch, enumerated from Config.roc", unset_sweep == "probed=11 unrouted=0 unseeded=0")?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max_ride", "155"])
     # ── bare `config` lists what is set. Its first job is answering "which config do I
     # have?", which nothing did; its second is being the source `just schema-check` fills
@@ -2005,6 +2005,91 @@ b_seed_analyze! = |ctx| {
     # Metrics); the fixture mixes power_stream and HR/RPE-scored rows so both
     # high and medium tiers are live, and known is a typed boolean (ADR 0009).
     check!("28d load coverage sums to exactly 100", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct + .medium_pct + .low_pct == 100) and .known == true") == "true")?
+    # ── units: a DISPLAY preference, and the whole contract is that it changes the human
+    # tables and NOTHING else. The JSON assertion below is the load-bearing one —
+    # `distance_m` is a pinned field the coaching agent reads, so a setting that moved it
+    # would make an agent's reasoning depend on how a human likes their numbers (#349).
+    units_si_metric = strjq!(ctx, ["summary"], ".data.last_7d.distance_m")
+    _ = stride!(ctx.bin, ctx.home, ["config", "set", "units", "imperial"])
+    units_si_imperial = strjq!(ctx, ["summary"], ".data.last_7d.distance_m")
+    check!("units=imperial leaves JSON distance_m untouched — SI is the contract", units_si_metric == units_si_imperial and units_si_metric != "")?
+    units_human = sh!("HOME='${ctx.home}' STRIDE_FORMAT=human '${ctx.bin}' summary 2>&1")
+    check!("...while the human summary switches to miles", Str.contains(units_human, " mi "))?
+    check!("...and stops printing km, so the two systems are not mixed in one screen", !(Str.contains(units_human, " km ")))?
+    units_bad = stride!(ctx.bin, ctx.home, ["config", "set", "units", "imperail"])
+    check!("a misspelled system is refused rather than stored to silently render metric", Str.contains(units_bad, "takes metric or imperial"))?
+    units_unset_msg = sh!("HOME='${ctx.home}' STRIDE_FORMAT=human '${ctx.bin}' config unset units 2>&1")
+    check!("unsetting names what actually changes — rendering, not a command that starts refusing", Str.contains(units_unset_msg, "render in metric again"))?
+    check!("...and the summary is metric again", Str.contains(sh!("HOME='${ctx.home}' STRIDE_FORMAT=human '${ctx.bin}' summary 2>&1"), " km "))?
+    # Two auto-named rides within 10% of each other, so `progress` builds a
+    # SimilarDistance group whose label carries a DISTANCE — the only shape that can
+    # expose a units leak into the payload. Without them the sweep's `progress` leg runs
+    # against labels holding no number and proves nothing, which is how the leak survived
+    # a check written to catch it.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9001,'Morning Ride','Ride','${ctx.today}T09:00:00Z',3600,30000,50,150),(9002,'Morning Ride','Ride','${ctx.d1}T09:00:00Z',3600,31000,50,148);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (9001,50.0,190.0,3600,1),(9002,52.0,190.0,3600,1);")
+    # ── The SI contract and its human mirror, both SWEPT rather than enumerated. Naming
+    # commands only covers the ones I thought of, and both bugs this guards against are
+    # ones I did not think of: `progress` fed its units-bearing group label into the
+    # PAYLOAD, and `activity`/`top` kept printing kilometres while `summary` showed miles.
+    #
+    # The counters (`swept`, `screens`) are asserted alongside the findings, so a loop
+    # that stops running commands cannot report the same clean answer a healthy tree does.
+    #
+    # The km match is a word-boundary REGEX, not a `case` on surrounding spaces. The
+    # earlier `*' km '*` needed a trailing space and so was blind to a line ENDING in
+    # `km` — which is exactly `activity`'s shape, the screen it was written to catch.
+    # `ok` counts legs that actually returned a payload, and is asserted alongside the
+    # rest. Without it this sweep had the same hole the human sweep's `activity` leg did:
+    # a command that ERRORS returns the same envelope under both settings and scores
+    # `differ=0`, indistinguishable from a leg that passed honestly. Measured on an empty
+    # home, only 6 of 12 legs produce a payload — so the assertion was satisfiable with
+    # most of it testing nothing. It is 11 here, not 12: `reps` needs a date with rep data
+    # this fixture has not got. Pinning 11 makes that ONE known-blind leg visible instead
+    # of letting the number drift down silently.
+    units_sweep = Str.trim(sh!("h='${ctx.home}'; n=0; d=0; ok=0; blind=; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance'; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; raw=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); a=$(printf '%s' \"$raw\" | md5); case \"$raw\" in *'\"data\"'*) ok=$((ok+1));; *) blind=\"$blind$c \";; esac; HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; rawb=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); b=$(printf '%s' \"$rawb\" | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n ok=$ok blind=$(echo $blind) differ=$d\""))
+    units_probe_live = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' progress 2>/dev/null")
+    # `plan` belongs here too: it renders summary_screen and therefore a distance. Leaving
+    # it out is the same coverage gap that let `activity` ship, and the two sweeps should
+    # agree about which screens carry a distance.
+    #
+    # NOTE for whoever edits the fixture: the regex fires on any `km` bounded by
+    # non-letters, so naming a seeded activity "10km Race" will trip this check on the
+    # NAME rather than a unit. Rename the activity; the guard is not wrong.
+    units_km_leak = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; n=0; k=0; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'top distance' \"activity $aid\"; do n=$((n+1)); HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' $c 2>/dev/null | grep -qE '(^|[^a-z])km([^a-z]|$)|min/km' && k=$((k+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"screens=$n metric_leaks=$k\""))
+    # The `activity` leg's own liveness. Without this it can go silent exactly as the
+    # progress leg did: an empty `aid` makes the loop run bare `stride activity`, which
+    # prints a usage line, contains no km, and scores as clean while testing nothing.
+    units_activity_live = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' activity \"$aid\" 2>/dev/null | grep -cE '(^|[^a-z])km([^a-z]|$)'"))
+    # MAGNITUDE, which the km sweep structurally cannot see. It proves no screen SAYS km;
+    # it cannot prove a number was converted, so `dist_unit(units)` without
+    # `dist_value(units)` — half of the original bug, and the half that is invisible —
+    # passes every other assertion here. The band separates CONVERTED from not (r=1.0); it
+    # does not pin the constant — `expect Render.dist_value(Imperial, 1609.344) == 1.0`
+    # does that, and rejects `1600.0` which this band would admit. Nor does it cover every
+    # call site: it reads the `last 7 days` line only, so it guards the mechanism rather
+    # than the ten places `dist_value` is called.
+    units_ratio = Str.trim(sh!("h='${ctx.home}'; HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; a=$(HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' summary 2>/dev/null | grep 'last 7 days' | grep -oE '[0-9.]+ km' | head -1 | cut -d' ' -f1); HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; b=$(HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' summary 2>/dev/null | grep 'last 7 days' | grep -oE '[0-9.]+ mi' | head -1 | cut -d' ' -f1); HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; awk -v x=\"$a\" -v y=\"$b\" 'BEGIN{ if (x==\"\" || y==\"\" || y+0==0) print \"unreadable\"; else { r=(x+0)/(y+0); print (r>1.55 && r<1.66) ? \"mile\" : \"wrong:\" r } }'"))
+    # Cleanup runs BEFORE the assertions. All three use `?`, so asserting first would skip
+    # the delete on any failure and leave these rows in the shared fixture for the 868
+    # checks that follow — burying the real cause under a storm of unrelated failures.
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (9001,9002); DELETE FROM activities WHERE id IN (9001,9002);")
+    check!("the sweep's progress leg is LIVE — the fixture has a distance-keyed group label", Str.contains(units_probe_live, "(~"))?
+    check!("no command's JSON moves with the units setting — SI is the contract, swept not enumerated", units_sweep == "swept=12 ok=11 blind=reps differ=0")?
+    check!("with imperial set, no human screen still prints kilometres", units_km_leak == "screens=10 metric_leaks=0")?
+    check!("...and the activity leg is LIVE — a bare `activity` with no id would test nothing", units_activity_live != "0")?
+    check!("...and the NUMBERS convert, not just the labels — the ratio is the mile", units_ratio == "mile")?
+    # The same invariant stated STATICALLY, over source rather than output. The runtime
+    # ratio above reads one screen; this reads every site, and it is a predicate rather
+    # than a count of places, so adding a twelfth conversion cannot silently escape it:
+    # a line that NAMES a unit and FORMATS a number must convert that number.
+    #
+    # `examined` is asserted so a broken pattern fails loudly instead of matching nothing
+    # and reporting zero offenders — the failure mode of every guard in this PR.
+    # `top`'s column header names a unit and renders no number, so it is examined and
+    # correctly not required to convert.
+    units_static = Str.trim(sh!("n=0; bad=0; for f in src/Render.roc src/ReportSessions.roc src/ReportHealth.roc; do while IFS= read -r l; do case \"$l\" in *'dist_unit(units)'*|*'pace_unit(units)'*) ;; *) continue;; esac; n=$((n+1)); case \"$l\" in *'fmt0('*|*'fmt1('*|*'fmt2('*) ;; *) continue;; esac; case \"$l\" in *'dist_value(units'*|*'pace_per_dist(units'*) ;; *) bad=$((bad+1));; esac; done < $f; done; echo \"examined=$n unconverted=$bad\""))
+    check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=12 unconverted=0")?
     check!("coverage tiers discriminate (high and medium both live)", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct > 0) and (.medium_pct > 0)") == "true")?
     check!("form coverage carries the 90d window", strjq!(ctx, ["summary"], ".data.form_coverage_90d | (.high_pct + .medium_pct + .low_pct == 100) and ((.known | type) == \"boolean\")") == "true")?
     # with fixtures loaded TSB is known, so the enum arm is required here; the

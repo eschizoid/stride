@@ -46,6 +46,7 @@ Config :: [].{
 	plain_keys : List(Str)
 	plain_keys = [
 		"timezone",
+		"units",
 		"utc_offset_minutes",
 		"last_sync_epoch",
 		"strava_client_id",
@@ -69,7 +70,7 @@ Config :: [].{
 	# scanning it could not tell which four were theirs — the `unknown_key` refusal drew the
 	# distinction and the listing beside it did not.
 	user_settable : Str -> Bool
-	user_settable = |k| k == "timezone" or k == "utc_offset_minutes" or is_zone_key(k)
+	user_settable = |k| k == "timezone" or k == "units" or k == "utc_offset_minutes" or is_zone_key(k)
 
 	# What the `unknown_key` refusal tells the reader, in one place beside the predicate it
 	# describes. Naming a subset (four keys, while `config set` accepted twelve) is the
@@ -81,7 +82,24 @@ Config :: [].{
 	# Pinned against `known_key` below: every literal that predicate accepts has an expect
 	# asserting it appears here, so the two cannot drift.
 	known_key_summary : Str
-	known_key_summary = "Settable: timezone, utc_offset_minutes, hr_z1_max..hr_z4_max (optionally per sport, e.g. hr_z2_max_ride). Written by stride and rarely set by hand: last_sync_epoch, strava_client_id, strava_expires_at, strava_reads_today, strava_reads_day, strava_access_token, strava_refresh_token, strava_client_secret. FTP is derived, never set."
+	known_key_summary = "Settable: timezone, units (metric|imperial), utc_offset_minutes, hr_z1_max..hr_z4_max (optionally per sport, e.g. hr_z2_max_ride). Written by stride and rarely set by hand: last_sync_epoch, strava_client_id, strava_expires_at, strava_reads_today, strava_reads_day, strava_access_token, strava_refresh_token, strava_client_secret. FTP is derived, never set."
+
+	# The one key whose value is an ENUM rather than a number or free text. Validated at
+	# the WRITE for the same reason numeric_key is: a value nothing recognises would fall
+	# back to metric at every read, which is a setting that appears to take and then does
+	# nothing — the "stored and permanently ignored" trap #206 is about.
+	unit_values : List(Str)
+	unit_values = ["metric", "imperial"]
+
+	is_unit_value : Str -> Bool
+	is_unit_value = |v| List.contains(unit_values, v)
+
+	# Absent, empty or unrecognised all read as Metric. The write gate above rejects a bad
+	# value, so an unrecognised one here means a row written before this key existed or by
+	# something bypassing `config set` — metric is what the docs promise as the default, so
+	# it is what an unreadable setting must resolve to rather than an error at render time.
+	units_of : Str -> [Metric, Imperial]
+	units_of = |v| if v == "imperial" Imperial else Metric
 
 	# `hr_z1_max` .. `hr_z4_max`, optionally suffixed with a sport family
 	# (`hr_z2_max_ride`) — exactly what `Metrics.hr_zone_key_global` and
@@ -263,6 +281,22 @@ expect Config.numeric_key("strava_client_id") == Free
 # ALONE — a union of predicates makes it very easy to write an expect that some OTHER
 # clause satisfies, so deleting the clause under test leaves the suite green.
 expect Config.known_key("timezone") == True
+expect Config.known_key("units") == True
+# Free, not Int or Decimal — the enum is gated by is_unit_value at the write, and
+# numeric_refusal must not also claim "units takes a number".
+expect Config.numeric_key("units") == Free
+# The write gate: exactly two values, and everything else refused. `Metric` is the
+# fallback for anything unreadable, so the refusal is what keeps a typo from silently
+# rendering metric while `config get units` echoes the typo back.
+expect Config.is_unit_value("metric") == True
+expect Config.is_unit_value("imperial") == True
+expect Config.is_unit_value("Imperial") == False
+expect Config.is_unit_value("miles") == False
+expect Config.is_unit_value("") == False
+expect Config.units_of("imperial") == Imperial
+expect Config.units_of("metric") == Metric
+expect Config.units_of("") == Metric
+expect Config.units_of("nonsense") == Metric
 expect Config.known_key("utc_offset_minutes") == True
 expect Config.known_key("last_sync_epoch") == True
 expect Config.known_key("strava_client_id") == True
@@ -310,6 +344,7 @@ expect Config.known_key("hr_z1_max_standuppaddling") == True
 # clause pinned, because the mutant dropping the zone clause marked the four
 # lines README tells a new user to type as "stride's own bookkeeping".
 expect Config.user_settable("timezone") == True
+expect Config.user_settable("units") == True
 expect Config.user_settable("utc_offset_minutes") == True
 expect Config.user_settable("hr_z1_max") == True
 expect Config.user_settable("hr_z4_max") == True
@@ -336,6 +371,7 @@ expect Config.known_key("hr_z5_max_ride") == False
 # drift — a message naming four keys for a predicate accepting twelve, contradicting the
 # listing shipped beside it.
 expect Str.contains(Config.known_key_summary, "timezone")
+expect Str.contains(Config.known_key_summary, "units")
 expect Str.contains(Config.known_key_summary, "utc_offset_minutes")
 expect Str.contains(Config.known_key_summary, "last_sync_epoch")
 expect Str.contains(Config.known_key_summary, "strava_client_id")
