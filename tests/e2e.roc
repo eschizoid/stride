@@ -2080,16 +2080,42 @@ b_seed_analyze! = |ctx| {
     check!("...and the activity leg is LIVE — a bare `activity` with no id would test nothing", units_activity_live != "0")?
     check!("...and the NUMBERS convert, not just the labels — the ratio is the mile", units_ratio == "mile")?
     # The same invariant stated STATICALLY, over source rather than output. The runtime
-    # ratio above reads one screen; this reads every site, and it is a predicate rather
-    # than a count of places, so adding a twelfth conversion cannot silently escape it:
-    # a line that NAMES a unit and FORMATS a number must convert that number.
+    # ratio above reads one screen; this reads every site, as a predicate rather than a
+    # list of places: a line that NAMES a unit and FORMATS a number must convert it.
     #
-    # `examined` is asserted so a broken pattern fails loudly instead of matching nothing
-    # and reporting zero offenders — the failure mode of every guard in this PR.
-    # `top`'s column header names a unit and renders no number, so it is examined and
-    # correctly not required to convert.
-    units_static = Str.trim(sh!("n=0; bad=0; for f in src/Render.roc src/ReportSessions.roc src/ReportHealth.roc; do while IFS= read -r l; do case \"$l\" in *'dist_unit(units)'*|*'pace_unit(units)'*) ;; *) continue;; esac; n=$((n+1)); case \"$l\" in *'fmt0('*|*'fmt1('*|*'fmt2('*) ;; *) continue;; esac; case \"$l\" in *'dist_value(units'*|*'pace_per_dist(units'*) ;; *) bad=$((bad+1));; esac; done < $f; done; echo \"examined=$n unconverted=$bad\""))
-    check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=12 unconverted=0")?
+    # THREE counters, because each one silently permits a different edit:
+    #   examined   a new unit-naming site, or the pattern matching nothing
+    #   formatted  an EXISTING site rewritten out of the fmt shape while dropping the
+    #              conversion — `unconverted` cannot see it, because the fmt filter
+    #              `continue`s first. Measured: that half-bug at `stride activity` passed
+    #              the whole suite rc=0 before this was pinned.
+    #   unconverted the half-bug itself, at a site still in the fmt shape
+    #
+    # `src/*.roc`, not a hand-listed set. Plan.roc and Report.roc both resolve `Db.units!`
+    # and were missing from the first list — the files most likely to gain a distance
+    # render, since `units` is already in scope there. A hand-list lets a whole FILE
+    # escape, which is wider than what `formatted` closes.
+    #
+    # Four sites depend on this check rather than on expects: `activity`, `top`, `stats`,
+    # and `progress_section`'s distance cell — the last because it lives in the `SpeedHr`
+    # arm and all six `progress_section` expects pass `Ef`, so nothing reaches it. The
+    # legend and `top`'s header name a unit and render no number. The pace column renders
+    # one — a pace string — and DOES convert, via `pace_per_dist`, which the fmt filter does
+    # not match; it is exempt for that reason, not for rendering nothing.
+    #
+    # `expect*` skips top-level expects, which is every unit expect that exists. It does
+    # NOT skip a block-expect BODY (`expect {` on one line, `Render.dist_unit(...)` on the
+    # next) — that line is indistinguishable from production at line granularity, and
+    # separating them needs a brace-depth state machine over 219 block expects. Left
+    # deliberately: triggering it needs a contrived pair, deleting a no-`fmt` site AND
+    # adding a block expect that calls dist_unit directly.
+    #
+    # If a reformat WRAPS one of these lines, `formatted` drops and this fails with
+    # nothing wrong — the sites run to 204 characters, so it is a live risk. Rejoin the
+    # line; do not lower the number. A comment containing `dist_unit(` would also count
+    # toward `examined`. Both are loud false positives, which is the safe direction.
+    units_static = Str.trim(sh!("n=0; fmt=0; bad=0; for f in src/*.roc; do while IFS= read -r l; do case \"$l\" in expect*) continue;; esac; case \"$l\" in *'dist_unit('*|*'pace_unit('*) ;; *) continue;; esac; n=$((n+1)); case \"$l\" in *'fmt0('*|*'fmt1('*|*'fmt2('*) fmt=$((fmt+1));; *) continue;; esac; case \"$l\" in *'dist_value(units'*|*'pace_per_dist(units'*) ;; *) bad=$((bad+1));; esac; done < $f; done; echo \"examined=$n formatted=$fmt unconverted=$bad\""))
+    check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=12 formatted=9 unconverted=0")?
     check!("coverage tiers discriminate (high and medium both live)", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct > 0) and (.medium_pct > 0)") == "true")?
     check!("form coverage carries the 90d window", strjq!(ctx, ["summary"], ".data.form_coverage_90d | (.high_pct + .medium_pct + .low_pct == 100) and ((.known | type) == \"boolean\")") == "true")?
     # with fixtures loaded TSB is known, so the enum arm is required here; the
