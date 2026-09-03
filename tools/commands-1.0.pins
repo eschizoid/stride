@@ -8,6 +8,7 @@ config
 config get
 config set
 config unset
+cs
 doctor
 event add
 event remove
@@ -15,6 +16,7 @@ events
 import
 init
 load
+pace-curve
 pc
 plan
 power-curve

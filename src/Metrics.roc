@@ -789,42 +789,48 @@ Metrics :: [].{
             { dur_s: d, watts: w }
         })
 
-    # Critical Power model: P(t) = W'/t + CP. Fit by least-squares regression of power (y)
-    # against 1/duration (x) — slope = W' (the finite anaerobic work capacity, joules),
-    # intercept = CP (the sustainable aerobic ceiling, watts). Pass the mid-range bests
-    # (~2-20 min) where the 2-parameter model holds; needs >= 2 points at distinct durations.
-    critical_power : List({ dur_s : F64, watts : F64 }) -> Try({ cp : F64, w_prime : F64, r2 : F64 }, [TooFew])
-    critical_power = |points| {
-        pts = List.keep_if(points, |p| p.dur_s > 0.0 and p.watts > 0.0)
+    # Both performance models are the SAME line. Power says P(t) = W'/t + CP;
+    # speed says S(t) = D'/t + CS. Fit either by least-squares regression of the
+    # measured value (y) against 1/duration (x): the slope is the finite capacity
+    # spent above the ceiling, the intercept is the sustainable ceiling itself.
+    # Only the units differ — joules over watts for power, metres over metres per
+    # second for speed — so this is kept as ONE regression rather than two. A
+    # twin would let a correction to the refusal rules below land in one copy and
+    # silently miss the other, and those refusals are the whole point of it.
+    # Needs >= 2 points at distinct durations.
+    hyperbolic_fit : List({ dur_s : F64, y : F64 }) -> Try({ intercept : F64, slope : F64, r2 : F64 }, [TooFew])
+    hyperbolic_fit = |points| {
+        pts = List.keep_if(points, |p| p.dur_s > 0.0 and p.y > 0.0)
         n = List.len(pts)
         if n < 2
             Err(TooFew)
         else {
             nf = n.to_f64()
             mx = List.fold(pts, 0.0, |a, p| a + 1.0 / p.dur_s) / nf
-            my = List.fold(pts, 0.0, |a, p| a + p.watts) / nf
+            my = List.fold(pts, 0.0, |a, p| a + p.y) / nf
             sxx = List.fold(pts, 0.0, |a, p| {
                 dx = 1.0 / p.dur_s - mx
                 a + dx * dx
             })
             sxy = List.fold(pts, 0.0, |a, p| {
                 dx = 1.0 / p.dur_s - mx
-                dy = p.watts - my
+                dy = p.y - my
                 a + dx * dy
             })
             syy = List.fold(pts, 0.0, |a, p| {
-                dy = p.watts - my
+                dy = p.y - my
                 a + dy * dy
             })
             # sxx == 0 means every point is at the same duration — can't fit a line
             if sxx < 0.0000001
                 Err(TooFew)
             else {
-                w_prime = sxy / sxx
-                cp = my - w_prime * mx
-                # A fit can land on a negative CP or W' (noisy or near-collinear points).
-                # Neither is physically meaningful, so refuse rather than hand back a
-                # nonsense number the caller has to remember to check.
+                slope = sxy / sxx
+                intercept = my - slope * mx
+                # A fit can land on a negative ceiling or capacity (noisy or
+                # near-collinear points). Neither is physically meaningful, so refuse
+                # rather than hand back a nonsense number the caller has to remember
+                # to check.
                 # How well the line actually fits, so a caller has ONE number
                 # that does not depend on what it is later asked to predict.
                 # Without it the only quality signal is the point COUNT, which
@@ -832,10 +838,37 @@ Metrics :: [].{
                 # by construction at two points -- there the count is the
                 # signal and this carries no information.
                 r2 = if syy < 0.0000001 0.0 else (sxy * sxy) / (sxx * syy)
-                if cp <= 0.0 or w_prime <= 0.0 Err(TooFew) else Ok({ cp, w_prime, r2 })
+                if intercept <= 0.0 or slope <= 0.0 Err(TooFew) else Ok({ intercept, slope, r2 })
             }
         }
     }
+
+    # Critical Power model: P(t) = W'/t + CP. Pass the mid-range bests (~2-20 min)
+    # where the 2-parameter model holds. CP is the sustainable aerobic ceiling in
+    # watts, W' the finite anaerobic work capacity in joules.
+    critical_power : List({ dur_s : F64, watts : F64 }) -> Try({ cp : F64, w_prime : F64, r2 : F64 }, [TooFew])
+    critical_power = |points|
+        match hyperbolic_fit(List.map(points, |p| { dur_s: p.dur_s, y: p.watts })) {
+            Ok(f) => Ok({ cp: f.intercept, w_prime: f.slope, r2: f.r2 })
+            Err(e) => Err(e)
+        }
+
+    # Critical Speed model: S(t) = D'/t + CS — the pace-sport twin of critical
+    # power (#188). CS is the sustainable speed in METRES PER SECOND, D' the finite
+    # distance capacity above it in METRES (the running analog of W', and the reason
+    # the slope is a distance here and an energy there).
+    #
+    # Feed this a GRADE-ADJUSTED speed curve. Raw speed makes a hilly interval look
+    # slower than an identical effort on the flat, which drags CS down for exactly
+    # the athletes whose terrain varies most; GAS is what makes the ladder's points
+    # comparable to each other. That choice is stated here rather than left to be
+    # inferred from whichever field the caller happened to pass.
+    critical_speed : List({ dur_s : F64, speed : F64 }) -> Try({ cs : F64, d_prime : F64, r2 : F64 }, [TooFew])
+    critical_speed = |points|
+        match hyperbolic_fit(List.map(points, |p| { dur_s: p.dur_s, y: p.speed })) {
+            Ok(f) => Ok({ cs: f.intercept, d_prime: f.slope, r2: f.r2 })
+            Err(e) => Err(e)
+        }
 
     # e^(-x) for x >= 0. There is no `.exp()` on this compiler — the method
     # does not exist on F64 at all, so the CTL/ATL constants above are literals
@@ -3266,6 +3299,30 @@ expect {
 # fewer than two usable points -> TooFew (can't fit a line)
 expect {
     match Metrics.critical_power([{ dur_s: 300.0, watts: 300.0 }]) {
+        Err(TooFew) => 1 == 1
+        Ok(_) => 1 == 0
+    }
+}
+
+# Critical Speed: two points on S(t) = D'/t + CS (CS 4.0 m/s == 4:10/km, D' 200 m)
+# recover CS and D'. S(300) = 200/300 + 4.0 = 4.6667; S(1200) = 200/1200 + 4.0 = 4.1667
+expect {
+    match Metrics.critical_speed([{ dur_s: 300.0, speed: 4.6667 }, { dur_s: 1200.0, speed: 4.1667 }]) {
+        Ok(r) => (r.cs - 4.0).abs() < 0.01 and (r.d_prime - 200.0).abs() < 1.0
+        Err(_) => 1 == 0
+    }
+}
+# critical_speed refuses a physically meaningless fit, exactly as its power twin does:
+# speed RISING with duration means a negative D', which no athlete has.
+expect {
+    match Metrics.critical_speed([{ dur_s: 300.0, speed: 4.0 }, { dur_s: 1200.0, speed: 4.5 }]) {
+        Err(TooFew) => 1 == 1
+        Ok(_) => 1 == 0
+    }
+}
+# fewer than two usable points -> TooFew (can't fit a line)
+expect {
+    match Metrics.critical_speed([{ dur_s: 1200.0, speed: 4.1667 }]) {
         Err(TooFew) => 1 == 1
         Ok(_) => 1 == 0
     }

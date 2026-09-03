@@ -1171,6 +1171,58 @@ Render :: [].{
         }
     }
 
+
+    # Critical speed's screen (#188). Takes units as a PARAMETER rather than reading a
+    # field off the payload: the payload is SI end-to-end (cs in m/s, d_prime in metres)
+    # and must not move with the setting, so pace_curve! passes units through a closure
+    # and only this function converts.
+    #
+    # CS prints as a PACE, not as a converted speed. It is a running number and runners
+    # read 4:00/km, not 4.17 m/s or 9.3 mph — rendering it as a speed would repeat the
+    # defect #351 fixed on the segment screens.
+    pace_curve_screen : [Metric, Imperial], { window_days : U64, sport : Str, points : List({ dur_s : U64, speed : F64 }), cs : F64, d_prime : F64, fit_r2 : F64, fit_points : I64 } -> Str
+    pace_curve_screen = |units, pc| {
+        dur_label = |s|
+            if s < 60 "${U64.to_str(s)}s"
+            else if s % 60 == 0 "${U64.to_str(s // 60)}m"
+            else "${U64.to_str(s // 60)}m${U64.to_str(s % 60)}s"
+        sport_lbl = if pc.sport == "" "all pace sports" else pc.sport
+        header = "speed-duration curve — ${sport_lbl}, last ${U64.to_str(pc.window_days)} days"
+        if List.is_empty(pc.points) {
+            "${header}\n\nno pace data in this window."
+        } else {
+            table = render_table(
+                ["duration", "best pace (${pace_unit(units)})"],
+                List.map(pc.points, |p| [dur_label(p.dur_s), pace_from_speed(units, p.speed)]),
+            )
+            # same rule as the power curve: at exactly two points the line is exact, so r2
+            # is 1 by construction and would be false reassurance.
+            quality =
+                if pc.fit_points >= 3.I64 {
+                    " · fit r2 ${fmt2(pc.fit_r2)} from ${I64.to_str(pc.fit_points)} bests"
+                } else {
+                    " · from ${I64.to_str(pc.fit_points)} bests (r2 needs 3)"
+                }
+            # D' is a DISTANCE, so it converts to yards rather than to miles: the value is
+            # a couple of hundred metres and "0.12 mi" would be unreadable at that size.
+            dprime =
+                match units {
+                    Metric => "${fmt0(pc.d_prime)} m"
+                    Imperial => "${fmt0(pc.d_prime * 1.0936133)} yd"
+                }
+            cs_line =
+                # both must be positive: pace_curve! already zeroes a non-positive fit, but
+                # gate here too so a stray negative D′ can never print as a real fit
+                if pc.cs > 0.0 and pc.d_prime > 0.0
+                    "→ Critical Speed ${pace_from_speed(units, pc.cs)} ${pace_unit(units)} · D′ ${dprime}${quality}"
+                else
+                    "→ Critical Speed: not enough long-duration (≥5 min) data to fit"
+            legend =
+                \\best mean-max grade-adjusted pace held for each duration (the peak across the window).
+                \\CS ≈ sustainable ceiling; D′ = the finite above-CS distance battery.
+            "${header}\n\n${table}\n\n${cs_line}\n\n${legend}"
+        }
+    }
     # ── summary command screen ──────────────────────────────────────────
     # renders the human report straight from the summary payload — ONE source of
     # numbers for the whole screen. (No type annotation: the payload is the summary
@@ -1878,6 +1930,27 @@ expect {
 expect {
     s = Render.power_curve_screen({ window_days: 30, sport: "", points: [], cp: 0.0, w_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
     Str.contains(s, "no power data") and Str.contains(s, "all power sports")
+}
+
+# the pace twin (#188). CS renders as a PACE and D' as a DISTANCE, and both follow the
+# reader's units while the underlying payload stays SI — the same session, two readings.
+expect {
+    pts = [{ dur_s: 300, speed: 4.6667 }, { dur_s: 600, speed: 4.3 }, { dur_s: 1200, speed: 4.1667 }]
+    m = Render.pace_curve_screen(Metric, { window_days: 90, sport: "Run", points: pts, cs: 4.0, d_prime: 200.0, fit_r2: 0.91, fit_points: 3.I64 })
+    i = Render.pace_curve_screen(Imperial, { window_days: 90, sport: "Run", points: pts, cs: 4.0, d_prime: 200.0, fit_r2: 0.91, fit_points: 3.I64 })
+    # 1000/4.0 = 250 s -> 4:10/km; 1609.344/4.0 = 402.3 s -> 6:42/mi; 200 m -> 219 yd
+    Str.contains(m, "Critical Speed 4:10 min/km") and Str.contains(m, "D′ 200 m")
+    and Str.contains(i, "Critical Speed 6:42 min/mi") and Str.contains(i, "D′ 219 yd")
+    and Str.contains(m, "fit r2 0.91") and Str.contains(m, "Run")
+}
+# a fit refused (cs 0) must not print as a real fit, and two points is not a quality signal
+expect {
+    none = Render.pace_curve_screen(Metric, { window_days: 90, sport: "Run", points: [{ dur_s: 1200, speed: 4.1667 }], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 1.I64 })
+    thin = Render.pace_curve_screen(Metric, { window_days: 90, sport: "Run", points: [{ dur_s: 300, speed: 4.6667 }, { dur_s: 1200, speed: 4.1667 }], cs: 4.0, d_prime: 200.0, fit_r2: 1.0, fit_points: 2.I64 })
+    empty = Render.pace_curve_screen(Metric, { window_days: 30, sport: "", points: [], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
+    Str.contains(none, "not enough long-duration") and !(Str.contains(none, "Critical Speed 0"))
+    and !(Str.contains(thin, "r2 1.00")) and Str.contains(thin, "r2 needs 3")
+    and Str.contains(empty, "no pace data") and Str.contains(empty, "all pace sports")
 }
 
 # zone-gap warning fires on 0 Z5; empty last-hard reads as none on record

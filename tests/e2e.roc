@@ -1330,7 +1330,7 @@ b_init_config! = |ctx| {
     # here is the deliberate-bump discipline: adding a properly described command still
     # has to change a number a reader sees.
     overlap = Str.trim(sh!("LC_ALL=C comm -12 '${verbs_dir}/parser' '${verbs_dir}/spec' | wc -l | tr -d ' '"))
-    check!("...and the two lists genuinely overlap on all 31 verbs (got ${overlap})", overlap == "31")?
+    check!("...and the two lists genuinely overlap on all 33 verbs (got ${overlap})", overlap == "33")?
     _ = sh!("rm -rf '${verbs_dir}'")
 
     # The sub-form direction. `unknown_command` was the wrong discriminator (only an
@@ -2066,7 +2066,7 @@ b_seed_analyze! = |ctx| {
     # `units` already in scope at line 36.
     #
     # assume this leg provides it.
-    units_sweep = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); n=0; d=0; ok=0; blind=; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance' \"activity $aid\"; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; raw=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); a=$(printf '%s' \"$raw\" | md5); case \"$raw\" in *'\"data\"'*) ok=$((ok+1));; *) blind=\"$blind$c \";; esac; HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; rawb=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); b=$(printf '%s' \"$rawb\" | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n ok=$ok blind=$(echo $blind) differ=$d\""))
+    units_sweep = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); n=0; d=0; ok=0; blind=; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance' 'pace-curve' \"activity $aid\"; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; raw=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); a=$(printf '%s' \"$raw\" | md5); case \"$raw\" in *'\"data\"'*) ok=$((ok+1));; *) blind=\"$blind$c \";; esac; HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; rawb=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); b=$(printf '%s' \"$rawb\" | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n ok=$ok blind=$(echo $blind) differ=$d\""))
     units_iv_live = Str.trim(sh!("h='${ctx.home}'; HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' activity 9003 2>/dev/null | jq -r '.data.interval_summary // \"\"'"))
     units_swept_id = Str.trim(sh!("sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'"))
     units_probe_live = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' progress 2>/dev/null")
@@ -2096,7 +2096,7 @@ b_seed_analyze! = |ctx| {
     # checks that follow — burying the real cause under a storm of unrelated failures.
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 9003; DELETE FROM activity_metrics WHERE activity_id IN (9001,9002,9003); DELETE FROM activities WHERE id IN (9001,9002,9003);")
     check!("the sweep's progress leg is LIVE — the fixture has a distance-keyed group label", Str.contains(units_probe_live, "(~"))?
-    check!("no command's JSON moves with the units setting — SI is the contract, swept not enumerated", units_sweep == "swept=13 ok=13 blind= differ=0")?
+    check!("no command's JSON moves with the units setting — SI is the contract, swept not enumerated", units_sweep == "swept=14 ok=14 blind= differ=0")?
     check!("...and the swept activity HAS an interval_summary, else the leg is blind to the field it guards", units_iv_live != "")?
     # The probe reads 9003 by NAME while the sweep resolves `aid` dynamically. They are the
     # same row only because 9003 is newest — assert it rather than assume it, or the probe
@@ -2128,7 +2128,12 @@ b_seed_analyze! = |ctx| {
     # arm and all six `progress_section` expects pass `Ef`, so nothing reaches it. The
     # legend and `top`'s header name a unit and render no number. The pace column renders
     # one — a pace string — and DOES convert, via `pace_per_dist`, which the fmt filter does
-    # not match; it is exempt for that reason, not for rendering nothing.
+    # not match; it is exempt for that reason, not for rendering nothing. `pace-curve`
+    # (#188) adds two more of the same kind: its table header names a unit and renders no
+    # number, and its Critical Speed line converts via `pace_from_speed`, which the fmt
+    # filter does not match either. Both are pinned by Render expects (metric AND imperial
+    # arms) instead — and so is D′, whose line writes the literal "m"/"yd" rather than
+    # calling a unit helper, so this check cannot see it at all.
     #
     # `expect*` skips top-level expects, which is every unit expect that exists. It does
     # NOT skip a block-expect BODY (`expect {` on one line, `Render.dist_unit(...)` on the
@@ -2142,7 +2147,7 @@ b_seed_analyze! = |ctx| {
     # line; do not lower the number. A comment containing `dist_unit(` would also count
     # toward `examined`. Both are loud false positives, which is the safe direction.
     units_static = Str.trim(sh!("n=0; fmt=0; bad=0; for f in src/*.roc; do while IFS= read -r l; do case \"$l\" in expect*) continue;; esac; case \"$l\" in *'dist_unit('*|*'pace_unit('*|*'seg_unit('*) ;; *) continue;; esac; n=$((n+1)); case \"$l\" in *'fmt0('*|*'fmt1('*|*'fmt2('*|*'seg_value('*) fmt=$((fmt+1));; *) continue;; esac; case \"$l\" in *'dist_value(units'*|*'pace_per_dist(units'*|*'seg_value(units'*) ;; *) bad=$((bad+1));; esac; done < $f; done; echo \"examined=$n formatted=$fmt unconverted=$bad\""))
-    check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=15 formatted=11 unconverted=0")?
+    check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=17 formatted=11 unconverted=0")?
     check!("coverage tiers discriminate (high and medium both live)", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct > 0) and (.medium_pct > 0)") == "true")?
     check!("form coverage carries the 90d window", strjq!(ctx, ["summary"], ".data.form_coverage_90d | (.high_pct + .medium_pct + .low_pct == 100) and ((.known | type) == \"boolean\")") == "true")?
     # with fixtures loaded TSB is known, so the enum arm is required here; the
@@ -2998,7 +3003,7 @@ b_seed_analyze! = |ctx| {
     check!("every 1.0 error code is still in the contract (baseline superset; missing: ${code_missing})", code_missing == "")?
     # ...and the baselines themselves can speak: an empty pins file would make both
     # supersets vacuously true, so their line counts are asserted alive
-    check!("the 1.0 baselines are non-empty (${Str.trim(sh!("wc -l < tools/commands-1.0.pins | tr -d ' '"))} cmds, ${Str.trim(sh!("wc -l < tools/error-codes-1.0.pins | tr -d ' '"))} codes)", Str.trim(sh!("wc -l < tools/commands-1.0.pins | tr -d ' '")) == "36" and Str.trim(sh!("wc -l < tools/error-codes-1.0.pins | tr -d ' '")) == "48")?
+    check!("the 1.0 baselines are non-empty (${Str.trim(sh!("wc -l < tools/commands-1.0.pins | tr -d ' '"))} cmds, ${Str.trim(sh!("wc -l < tools/error-codes-1.0.pins | tr -d ' '"))} codes)", Str.trim(sh!("wc -l < tools/commands-1.0.pins | tr -d ' '")) == "38" and Str.trim(sh!("wc -l < tools/error-codes-1.0.pins | tr -d ' '")) == "48")?
     # ── §9c's coverage list, pinned to the e2e source itself. The ADR names the forms
     # validated by NO pass; that prose rotted twice by hand-counting, so the list is
     # now held against this file's own validate arms: each never-validated form must

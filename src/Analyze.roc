@@ -734,6 +734,11 @@ Analyze :: [].{
         gas_speeds = List.map(gas_1s_pairs, |p| p.v)
         ngp_speed = Metrics.normalized_power(gas_speeds)
         best20_speed = Metrics.best_rolling_mean_1s(gas_1s_pairs, 1200)
+        # the 300 s and 600 s rungs of the same grade-adjusted ladder (#188). Same source
+        # stream as best20_speed, so a hilly rep is comparable with a flat one; together
+        # the three points are what critical speed fits S(t) = D'/t + CS against.
+        best300_speed = Metrics.best_rolling_mean_1s(gas_1s_pairs, 300)
+        best600_speed = Metrics.best_rolling_mean_1s(gas_1s_pairs, 600)
         # ADR 0005 as amended: the threshold in force on THIS activity's date, carried on the
         # row by the SELECT — not one global current threshold applied to all of history.
         threshold_speed = row.pthr
@@ -814,6 +819,18 @@ Analyze :: [].{
                 Err(_) => Null
 
             }
+        best300_speed_binding =
+            match best300_speed {
+                Ok(b) => Real(b)
+                Err(_) => Null
+
+            }
+        best600_speed_binding =
+            match best600_speed {
+                Ok(b) => Real(b)
+                Err(_) => Null
+
+            }
         # ADR 0008: detected interval structure — same lifecycle as the metrics row
         # (invalidate paths DELETE it; it recomputes here whenever the row recomputes).
         # Segments are written BEFORE the metrics row on purpose: the metrics row is
@@ -836,8 +853,8 @@ Analyze :: [].{
             path: Path.utf8(path),
             query:
                 \\INSERT OR REPLACE INTO activity_metrics
-                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped, mt_used, dist_used, elev_used, aw_used, ahr_used, waw_used, re_used, dw_used, sport_used, start_used, stream_len_used, decoupling_pct, decoupling_signal, avg_hr_stream)
-                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :thru, :hrt, :hrd, :wt, :wd, :umt, :udist, :uelev, :uaw, :uahr, :uwaw, :ure, :udw, :usport, :ustart, :uslen, :decoup, :dsig, :ahrs)
+                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, best_300s_speed, best_600s_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped, mt_used, dist_used, elev_used, aw_used, ahr_used, waw_used, re_used, dw_used, sport_used, start_used, stream_len_used, decoupling_pct, decoupling_signal, avg_hr_stream)
+                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :b300s, :b600s, :thru, :hrt, :hrd, :wt, :wd, :umt, :udist, :uelev, :uaw, :uahr, :uwaw, :ure, :udw, :usport, :ustart, :uslen, :decoup, :dsig, :ahrs)
             ,
             bindings: [
                 { name: ":umt", value: Integer(row.s_mt) },
@@ -886,6 +903,8 @@ Analyze :: [].{
                 { name: ":bc600", value: cw(5) },
                 { name: ":bc3600", value: cw(6) },
                 { name: ":b20s", value: best20_speed_binding },
+                { name: ":b300s", value: best300_speed_binding },
+                { name: ":b600s", value: best600_speed_binding },
                 # store the threshold the row was scored against — the pace twin of ftp_used,
                 # so a later threshold change invalidates via the recompute WHERE
                 { name: ":thru", value: Real(threshold_speed) },
@@ -1080,6 +1099,11 @@ Analyze :: [].{
 
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
     # HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
-    # zones_used) can't catch algorithm changes
-    metrics_rev = 32
+    # zones_used) can't catch algorithm changes.
+    #
+    # Bump for a new stored metric COLUMN too. A column added without a bump stays NULL
+    # on every row already in the db, so the feature reading it is inert for exactly the
+    # history that would make it useful — the whole activity archive. 33 adds the #188
+    # speed ladder (best_300s_speed / best_600s_speed).
+    metrics_rev = 33
 }

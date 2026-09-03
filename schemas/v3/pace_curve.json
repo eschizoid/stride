@@ -1,0 +1,54 @@
+{
+  "title": "pace_curve",
+  "description": "Payload of `stride pace-curve`. The pace-sport twin of `power_curve`: the same hyperbolic model fitted against a mean-max SPEED curve, giving `cs` (critical speed, the sustainable ceiling) and `d_prime` (D', the finite distance capacity above it). UNITS ARE SI AND DO NOT MOVE WITH THE `units` SETTING: `cs` is METRES PER SECOND and `d_prime` is METRES, whether the human screen is rendering min/km or min/mi. `d_prime` is a distance where the power model's `w_prime` is an energy — that is the real difference between the two models, not a renaming. The curve is GRADE-ADJUSTED, so a hilly interval is comparable with a flat one; raw speed would drag `cs` down for whoever runs the most terrain. Sport matching is EXACT here, not by family as `power_curve` matches: a pool swim, an open-water swim and a trail run do not share a speed model. `fit_r2` carries the same meaning and the same caveats as in `power_curve` — 1 by construction at exactly two points, 0 when no fit was made, and a quality signal only when `fit_points` is 3. `cs` of 0 is what says there is no fit.",
+  "type": "object",
+  "required": [
+    "cs",
+    "d_prime",
+    "points",
+    "sport",
+    "window_days",
+    "fit_r2",
+    "fit_points"
+  ],
+  "additionalKeys": false,
+  "properties": {
+    "cs": {
+      "type": "number"
+    },
+    "d_prime": {
+      "type": "number"
+    },
+    "points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "dur_s",
+          "speed"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "dur_s": {
+            "type": "integer"
+          },
+          "speed": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "sport": {
+      "type": "string"
+    },
+    "window_days": {
+      "type": "integer"
+    },
+    "fit_r2": {
+      "type": "number"
+    },
+    "fit_points": {
+      "type": "integer"
+    }
+  }
+}

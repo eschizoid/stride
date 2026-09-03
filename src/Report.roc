@@ -749,6 +749,20 @@ Report :: [].{
             { frag: " AND a.sport_type COLLATE NOCASE IN (${Str.join_with(names, ", ")})", binds: List.map_with_index(fam, |s, i| { name: ":sp${(i).to_str()}", value: String(s) }) }
         }
 
+
+    # Pace's sport filter is EXACT, where power's is by family (ADR 0002 amendment).
+    # A pool swim, an open-water swim and a trail run share the arithmetic of a speed
+    # model and nothing else: still water, chop and a rocky descent produce speeds that
+    # are not comparable at all, so pooling them the way sport_filter_sql pools a power
+    # family would fit one curve through three unrelated populations. Empty word = no
+    # filter, matching sport_filter_sql's contract (a lone SPACE, never "").
+    sport_exact_sql : Str -> { frag : Str, binds : List({ name : Str, value : [Null, Real(F64), Integer(I64), String(Str), Bytes(List(U8))] }) }
+    sport_exact_sql = |word|
+        if Str.is_empty(word) {
+            { frag: " ", binds: [] }
+        } else {
+            { frag: " AND a.sport_type COLLATE NOCASE = :spx", binds: [{ name: ":spx", value: String(word) }] }
+        }
     # the no-silent-empty hint: what sports DOES the data hold
     load_series! : U64 => Try({}, _)
     load_series! = |days| {
