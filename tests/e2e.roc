@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1105)?
+    checks_ran_exactly!(1107)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2027,6 +2027,19 @@ b_seed_analyze! = |ctx| {
     # against labels holding no number and proves nothing, which is how the leak survived
     # a check written to catch it.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9001,'Morning Ride','Ride','${ctx.today}T09:00:00Z',3600,30000,50,150),(9002,'Morning Ride','Ride','${ctx.d1}T09:00:00Z',3600,31000,50,148);")
+    # A THIRD synthetic ride, newer than 9001, carrying work segments — so the sweep's
+    # `aid` resolves to it and the swept payload has a NON-EMPTY `interval_summary`.
+    # Seeding 9001 instead would re-key progress's grouping to structure and kill the
+    # `(~` the progress leg asserts; 9003 is outside 9001/9002's ±10% distance band and
+    # differently named, so their SimilarDistance pairing is untouched.
+    # Nothing between this insert and the delete below may be a `check!`. The window holds
+    # a synthetic ride that is newest, so any assertion placed here observes it — sport
+    # counts, the activities listing, load windows. Every check in this block fires AFTER
+    # the delete, on a fixture without 9003, which is why its shape is free to be whatever
+    # the sweep needs.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9003,'Track Session','Run','${ctx.today}T23:00:00Z',1800,8000,10,160);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (9003,40.0,190.0,1800,1);")
+    _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (9003,1,'work',0,240,4.1667,'pace'),(9003,2,'work',300,240,4.13,'pace');")
     _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (9001,50.0,190.0,3600,1),(9002,52.0,190.0,3600,1);")
     # ── The SI contract and its human mirror, both SWEPT rather than enumerated. Naming
     # commands only covers the ones I thought of, and both bugs this guards against are
@@ -2044,10 +2057,18 @@ b_seed_analyze! = |ctx| {
     # a command that ERRORS returns the same envelope under both settings and scores
     # `differ=0`, indistinguishable from a leg that passed honestly. Measured on an empty
     # home, only 6 of 12 legs produce a payload — so the assertion was satisfiable with
-    # most of it testing nothing. It is 11 here, not 12: `reps` needs a date with rep data
-    # this fixture has not got. Pinning 11 makes that ONE known-blind leg visible instead
-    # of letting the number drift down silently.
-    units_sweep = Str.trim(sh!("h='${ctx.home}'; n=0; d=0; ok=0; blind=; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance'; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; raw=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); a=$(printf '%s' \"$raw\" | md5); case \"$raw\" in *'\"data\"'*) ok=$((ok+1));; *) blind=\"$blind$c \";; esac; HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; rawb=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); b=$(printf '%s' \"$rawb\" | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n ok=$ok blind=$(echo $blind) differ=$d\""))
+    # most of it testing nothing. Every leg is live here (`blind=` is empty): the segments
+    # seeded on 9003 give `reps` a payload it otherwise lacks. `blind` is an IDENTITY, not a
+    # count, so a leg going quiet names itself rather than hiding in a total.
+    # `activity` is swept because `interval_summary` is a REQUIRED payload field built at
+    # ReportSessions.roc:153 and used BOTH at line 370 (payload) and 416/423 (human) — the
+    # one-value-two-consumers shape that leaked into progress's groups[].name in #350, with
+    # `units` already in scope at line 36.
+    #
+    # assume this leg provides it.
+    units_sweep = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); n=0; d=0; ok=0; blind=; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance' \"activity $aid\"; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; raw=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); a=$(printf '%s' \"$raw\" | md5); case \"$raw\" in *'\"data\"'*) ok=$((ok+1));; *) blind=\"$blind$c \";; esac; HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; rawb=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); b=$(printf '%s' \"$rawb\" | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n ok=$ok blind=$(echo $blind) differ=$d\""))
+    units_iv_live = Str.trim(sh!("h='${ctx.home}'; HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' activity 9003 2>/dev/null | jq -r '.data.interval_summary // \"\"'"))
+    units_swept_id = Str.trim(sh!("sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'"))
     units_probe_live = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' progress 2>/dev/null")
     # `plan` belongs here too: it renders summary_screen and therefore a distance. Leaving
     # it out is the same coverage gap that let `activity` ship, and the two sweeps should
@@ -2073,9 +2094,15 @@ b_seed_analyze! = |ctx| {
     # Cleanup runs BEFORE the assertions. All three use `?`, so asserting first would skip
     # the delete on any failure and leave these rows in the shared fixture for the 868
     # checks that follow — burying the real cause under a storm of unrelated failures.
-    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (9001,9002); DELETE FROM activities WHERE id IN (9001,9002);")
+    _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 9003; DELETE FROM activity_metrics WHERE activity_id IN (9001,9002,9003); DELETE FROM activities WHERE id IN (9001,9002,9003);")
     check!("the sweep's progress leg is LIVE — the fixture has a distance-keyed group label", Str.contains(units_probe_live, "(~"))?
-    check!("no command's JSON moves with the units setting — SI is the contract, swept not enumerated", units_sweep == "swept=12 ok=11 blind=reps differ=0")?
+    check!("no command's JSON moves with the units setting — SI is the contract, swept not enumerated", units_sweep == "swept=13 ok=13 blind= differ=0")?
+    check!("...and the swept activity HAS an interval_summary, else the leg is blind to the field it guards", units_iv_live != "")?
+    # The probe reads 9003 by NAME while the sweep resolves `aid` dynamically. They are the
+    # same row only because 9003 is newest — assert it rather than assume it, or the probe
+    # certifies a row the sweep never visited. Captured BEFORE the cleanup, since 9003 is
+    # deleted below and a check reading it afterwards resolves a different row entirely.
+    check!("...and the row the sweep resolves IS the one the probe certifies", units_swept_id == "9003")?
     check!("with imperial set, no human screen still prints kilometres", units_km_leak == "screens=10 metric_leaks=0")?
     check!("...and the activity leg is LIVE — a bare `activity` with no id would test nothing", units_activity_live != "0")?
     check!("...and the NUMBERS convert, not just the labels — the ratio is the mile", units_ratio == "mile")?
