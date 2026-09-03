@@ -766,6 +766,10 @@ Report :: [].{
 
     # Which sports actually hold a speed ladder in the window — the no-silent-empty hint for
     # `pace-curve`, which refuses a pooled fit and has to say what the athlete CAN ask for.
+    # Each rung is tested separately rather than COALESCEd into one: COALESCE returns the
+    # first NON-NULL, so a stored 0.0 in the 20-min rung would mask positive 5- and 10-min
+    # ones — and Db.roc documents these columns as "0/NULL = no data", so 0 is an admitted
+    # stored value. That predicate denied a sport whose curve fits.
     # Ordered by row count so the sport they train most is named first.
     sports_with_speed! : Str, U64 => Try(List(Str), _)
     sports_with_speed! = |path, days| {
@@ -776,7 +780,8 @@ Report :: [].{
                 \\SELECT COALESCE(CAST(a.sport_type AS TEXT), '') AS s
                 \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
                 \\WHERE a.start_local >= :cutoff
-                \\  AND COALESCE(m.best_20min_speed, m.best_600s_speed, m.best_300s_speed, 0) > 0
+                \\  AND (COALESCE(m.best_20min_speed, 0) > 0 OR COALESCE(m.best_600s_speed, 0) > 0
+                \\       OR COALESCE(m.best_300s_speed, 0) > 0)
                 \\GROUP BY a.sport_type
                 \\ORDER BY COUNT(*) DESC
             ,

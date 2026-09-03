@@ -1227,7 +1227,16 @@ Render :: [].{
                 if pc.cs > 0.0 and pc.d_prime > 0.0
                     "→ Critical Speed ${pace_from_speed(units, pc.cs)} ${pace_unit(units)} · D′ ${dprime}${quality}"
                 else
-                    "→ Critical Speed: needs two ladder durations with data, at different lengths"
+                    # TWO different refusals, and the power screen's single message described only
+                    # one. Too few rungs is a DATA gap; enough rungs that do not fall on a
+                    # descending line is a MODEL refusal — the curve is flat or rising, which no
+                    # athlete produces, so the fit is declined rather than fudged. Printing the
+                    # data message under a table showing three durations denied what the table
+                    # directly above it displayed.
+                    if pc.fit_points >= 2.I64
+                        "→ Critical Speed: these bests do not fall on a descending curve, so no fit is possible"
+                    else
+                        "→ Critical Speed: needs two ladder durations with data, at different lengths"
             legend =
                 \\best mean-max grade-adjusted pace held for each duration (the peak across the window).
                 \\CS ≈ sustainable ceiling; D′ = the finite above-CS distance battery.
@@ -1968,6 +1977,12 @@ expect {
     and Str.contains(empty, "no pace data")
     and Str.contains(nosport, "per-sport") and Str.contains(nosport, "Run, Rowing") and !(Str.contains(nosport, "Critical Speed"))
     and Str.contains(bare, "none in this window")
+    # three rungs at the SAME speed: enough data, but a flat curve the model must decline.
+    # The data-gap message would be false here — the table above it shows three durations.
+    and Str.contains(
+        Render.pace_curve_screen(Metric, ["Run"], { window_days: 90, sport: "Run", points: [{ dur_s: 300, speed: 4.0 }, { dur_s: 600, speed: 4.0 }, { dur_s: 1200, speed: 4.0 }], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 3.I64 }),
+        "do not fall on a descending curve",
+    )
 }
 
 # zone-gap warning fires on 0 Z5; empty last-hard reads as none on record

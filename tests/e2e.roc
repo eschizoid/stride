@@ -2038,11 +2038,14 @@ b_seed_analyze! = |ctx| {
     # the delete, on a fixture without 9003, which is why its shape is free to be whatever
     # the sweep needs.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9003,'Track Session','Run','${ctx.today}T23:00:00Z',1800,8000,10,160);")
-    # 9003 carries the 300/600 s speed rungs so `pace-curve` has a REAL fit to sweep — the
+    # 9003 carries all three speed rungs so `pace-curve` has a REAL fit to sweep — the
     # units arm below is otherwise blind, since a payload of all zeros moves with no setting
-    # and would certify nothing (#188). best_20min_speed is deliberately left NULL: it feeds
-    # the 60-day threshold-pace derivation, and seeding it here would move the pace zones.
-    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev,best_300s_speed,best_600s_speed) VALUES (9003,40.0,190.0,1800,1,4.6667,4.1667);")
+    # and would certify nothing (#188). All THREE rungs are seeded so `fit_points` reaches 3,
+    # which is the only value at which `fit_r2` carries information — no integration test
+    # reached that branch otherwise. Seeding best_20min_speed does NOT disturb the 60-day
+    # threshold-pace derivation: no `analyze` runs between this insert and 9003's delete, so
+    # period_threshold_sql never sees the row.
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev,best_300s_speed,best_600s_speed,best_20min_speed) VALUES (9003,40.0,190.0,1800,1,4.6667,4.1667,4.0);")
     _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (9003,1,'work',0,240,4.1667,'pace'),(9003,2,'work',300,240,4.13,'pace');")
     _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (9001,50.0,190.0,3600,1),(9002,52.0,190.0,3600,1);")
     # ── The SI contract and its human mirror, both SWEPT rather than enumerated. Naming
@@ -2070,7 +2073,12 @@ b_seed_analyze! = |ctx| {
     # `units` already in scope at line 36.
     #
     # assume this leg provides it.
-    units_sweep = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); n=0; d=0; ok=0; blind=; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance' 'pace-curve 90 Run' \"activity $aid\"; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; raw=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); a=$(printf '%s' \"$raw\" | md5); case \"$raw\" in *'\"data\"'*) ok=$((ok+1));; *) blind=\"$blind$c \";; esac; HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; rawb=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); b=$(printf '%s' \"$rawb\" | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n ok=$ok blind=$(echo $blind) differ=$d\""))
+    # The sweep and the certificate below must exercise the SAME invocation. Two copies of
+    # the string drift: reverting the sweep entry to a bare `pace-curve` (its round-1
+    # spelling) left a planted units leak passing while the certificate still reported ok,
+    # because the certificate was certifying its own hardcoded call. One variable, both sites.
+    pc_cmd = "pace-curve 90 Run"
+    units_sweep = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); n=0; d=0; ok=0; blind=; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance' '${pc_cmd}' \"activity $aid\"; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; raw=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); a=$(printf '%s' \"$raw\" | md5); case \"$raw\" in *'\"data\"'*) ok=$((ok+1));; *) blind=\"$blind$c \";; esac; HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; rawb=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); b=$(printf '%s' \"$rawb\" | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n ok=$ok blind=$(echo $blind) differ=$d\""))
     units_iv_live = Str.trim(sh!("h='${ctx.home}'; HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' activity 9003 2>/dev/null | jq -r '.data.interval_summary // \"\"'"))
     units_swept_id = Str.trim(sh!("sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'"))
     units_probe_live = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' progress 2>/dev/null")
@@ -2102,9 +2110,12 @@ b_seed_analyze! = |ctx| {
     # all zeros: nothing in it moves with the units setting because nothing in it is a
     # measurement. A planted leak (cs *= 2.23694 under Imperial) survived the whole suite on
     # a build with rc=0 while this arm reported ok, which is what the certificate closes.
-    # cs is METRES PER SECOND in both settings, so a fixed value is the assertion.
-    units_pc_live = Str.trim(sh!("h='${ctx.home}'; HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' pace-curve 90 Run 2>/dev/null | jq -r '.data | \"cs=\\(.cs > 0) pts=\\(.fit_points)\"'"))
-    check!("...and the swept pace-curve HAS a fit, else the units arm certifies a payload of zeros (${units_pc_live})", units_pc_live == "cs=true pts=2")?
+    # cs is METRES PER SECOND in both settings, so the VALUE is asserted, not merely that a
+    # fit exists: 3.75 m/s from rungs 4.6667/4.1667/4.0, scaled x100 because an exact float
+    # string is brittle. Three points is also the only count at which fit_r2 carries
+    # information, so this is the one place the r2 branch is exercised end to end.
+    units_pc_live = Str.trim(sh!("h='${ctx.home}'; HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' ${pc_cmd} 2>/dev/null | jq -r '.data | \"cs=\\(.cs*100|round) pts=\\(.fit_points) r2=\\(.fit_r2*100|round)\"'"))
+    check!("...and the swept pace-curve HAS a fit, else the units arm certifies a payload of zeros (${units_pc_live})", units_pc_live == "cs=375 pts=3 r2=99")?
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 9003; DELETE FROM activity_metrics WHERE activity_id IN (9001,9002,9003); DELETE FROM activities WHERE id IN (9001,9002,9003);")
     check!("the sweep's progress leg is LIVE — the fixture has a distance-keyed group label", Str.contains(units_probe_live, "(~"))?
     check!("no command's JSON moves with the units setting — SI is the contract, swept not enumerated", units_sweep == "swept=14 ok=14 blind= differ=0")?
@@ -2918,11 +2929,18 @@ b_seed_analyze! = |ctx| {
     check!("doctor conforms", validate!("doctor", "doctor") == "")?
     check!("zones conforms", validate!("zones", "zones") == "")?
     check!("power-curve conforms", validate!("power-curve", "power_curve") == "")?
-    # BOTH pace-curve forms: the fitted one and the no-sport refusal, which returns a
+    # BOTH pace-curve forms. The FITTED one needs its own row: 9003 is deleted ~800 lines
+    # earlier, so validating the fitted form against the ambient db checks an EMPTY payload
+    # and never exercises properties.points.items — mutating items.speed.type to "string"
+    # passed the whole suite that way. 9004 exists only for these two lines.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9004,'Schema Probe','Run','${ctx.today}T06:00:00Z',1800,8000,10,150);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev,best_300s_speed,best_600s_speed,best_20min_speed) VALUES (9004,40.0,190.0,1800,1,4.6667,4.1667,4.0);")
+    # the no-sport refusal, which returns a
     # different-shaped payload (empty points, cs 0) and would otherwise be a never-validated
     # form — the §9c guard below is a hardcoded list and cannot see a new one.
-    check!("pace-curve conforms", validate!("pace-curve 90 Run", "pace_curve") == "")?
+    check!("pace-curve conforms — with rows, so points.items is exercised", validate!("pace-curve 90 Run", "pace_curve") == "")?
     check!("...and its no-sport refusal conforms too", validate!("pace-curve 90", "pace_curve") == "")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 9004; DELETE FROM activities WHERE id = 9004;")
     check!("compare conforms", validate!("compare week", "compare") == "")?
     check!("progress conforms", validate!("progress", "progress") == "")?
     # `week` is the CURRENT Mon-Sun window, and the fixture's sessions are dated
