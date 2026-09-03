@@ -659,6 +659,7 @@ ReportHealth :: [].{
         path = Db.open_db!({})?
         units = Db.units!(path)?
         sx = Report.sport_exact_sql(sport)
+        avail = Report.sports_with_speed!(path, days)?
         cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
         r = Sqlite.query!({
             path: Path.utf8(path),
@@ -684,7 +685,10 @@ ReportHealth :: [].{
             { dur_s: 600, speed: r.d600 },
             { dur_s: 1200, speed: r.d1200 },
         ]
-        points = List.keep_if(raw, |p| p.speed > 0.0)
+        # No sport named -> no points -> no fit. The refusal has to happen HERE and not only
+        # in the renderer: JSON consumers never reach the screen, and a pooled `cs` reads as
+        # a real number to them. `cs` of 0 is the documented refusal signal.
+        points = if Str.is_empty(sport) [] else List.keep_if(raw, |p| p.speed > 0.0)
         fit_points = List.map(points, |p| { dur_s: (p.dur_s).to_f64(), speed: p.speed })
         csfit =
             match Metrics.critical_speed(fit_points) {
@@ -697,7 +701,7 @@ ReportHealth :: [].{
             }
         Output.out!(
             { window_days: days, sport, points, cs: csfit.cs, d_prime: csfit.d_prime, fit_r2: csfit.r2, fit_points: csfit.points },
-            |p| Render.pace_curve_screen(units, p),
+            |p| Render.pace_curve_screen(units, avail, p),
         )
     }
 }

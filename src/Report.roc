@@ -763,6 +763,27 @@ Report :: [].{
         } else {
             { frag: " AND a.sport_type COLLATE NOCASE = :spx", binds: [{ name: ":spx", value: String(word) }] }
         }
+
+    # Which sports actually hold a speed ladder in the window — the no-silent-empty hint for
+    # `pace-curve`, which refuses a pooled fit and has to say what the athlete CAN ask for.
+    # Ordered by row count so the sport they train most is named first.
+    sports_with_speed! : Str, U64 => Try(List(Str), _)
+    sports_with_speed! = |path, days| {
+        cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
+        Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT COALESCE(CAST(a.sport_type AS TEXT), '') AS s
+                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                \\WHERE a.start_local >= :cutoff
+                \\  AND COALESCE(m.best_20min_speed, m.best_600s_speed, m.best_300s_speed, 0) > 0
+                \\GROUP BY a.sport_type
+                \\ORDER BY COUNT(*) DESC
+            ,
+            bindings: [{ name: ":cutoff", value: String(cutoff) }],
+            rows: Sqlite.str("s"),
+        })
+    }
     # the no-silent-empty hint: what sports DOES the data hold
     load_series! : U64 => Try({}, _)
     load_series! = |days| {

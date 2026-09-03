@@ -1180,15 +1180,26 @@ Render :: [].{
     # CS prints as a PACE, not as a converted speed. It is a running number and runners
     # read 4:00/km, not 4.17 m/s or 9.3 mph — rendering it as a speed would repeat the
     # defect #351 fixed on the segment screens.
-    pace_curve_screen : [Metric, Imperial], { window_days : U64, sport : Str, points : List({ dur_s : U64, speed : F64 }), cs : F64, d_prime : F64, fit_r2 : F64, fit_points : I64 } -> Str
-    pace_curve_screen = |units, pc| {
+    pace_curve_screen : [Metric, Imperial], List(Str), { window_days : U64, sport : Str, points : List({ dur_s : U64, speed : F64 }), cs : F64, d_prime : F64, fit_r2 : F64, fit_points : I64 } -> Str
+    pace_curve_screen = |units, avail, pc| {
         dur_label = |s|
             if s < 60 "${U64.to_str(s)}s"
             else if s % 60 == 0 "${U64.to_str(s // 60)}m"
             else "${U64.to_str(s // 60)}m${U64.to_str(s % 60)}s"
-        sport_lbl = if pc.sport == "" "all pace sports" else pc.sport
+        sport_lbl = pc.sport
         header = "speed-duration curve — ${sport_lbl}, last ${U64.to_str(pc.window_days)} days"
-        if List.is_empty(pc.points) {
+        # No sport named means no fit, deliberately. Pooling every sport that stores a speed
+        # would fit ONE curve through unrelated populations — and because analyze writes the
+        # speed ladder for anything with a distance stream, that population is mostly RIDES,
+        # so the pooled answer came back at bike speed while the screen called it "all pace
+        # sports" and SKILL.md told the reading agent to render it as a running pace. The
+        # ADR 0002 amendment this command already follows for its WHERE clause says the same
+        # thing: a pool swim, an open-water swim and a trail run do not share a speed model.
+        # So name the sports that actually hold data rather than inventing a cross-sport one.
+        if Str.is_empty(pc.sport) {
+            listed = if List.is_empty(avail) "none in this window" else Str.join_with(avail, ", ")
+            "speed-duration curve — last ${U64.to_str(pc.window_days)} days\n\ncritical speed is per-sport: a pool swim, an open-water swim and a trail run\ndo not share a speed model, so there is no combined curve to draw.\n\nname one — sports with speed data in this window: ${listed}\n\n  stride pace-curve ${U64.to_str(pc.window_days)} <sport>"
+        } else if List.is_empty(pc.points) {
             "${header}\n\nno pace data in this window."
         } else {
             table = render_table(
@@ -1216,7 +1227,7 @@ Render :: [].{
                 if pc.cs > 0.0 and pc.d_prime > 0.0
                     "→ Critical Speed ${pace_from_speed(units, pc.cs)} ${pace_unit(units)} · D′ ${dprime}${quality}"
                 else
-                    "→ Critical Speed: not enough long-duration (≥5 min) data to fit"
+                    "→ Critical Speed: needs two ladder durations with data, at different lengths"
             legend =
                 \\best mean-max grade-adjusted pace held for each duration (the peak across the window).
                 \\CS ≈ sustainable ceiling; D′ = the finite above-CS distance battery.
@@ -1936,8 +1947,8 @@ expect {
 # reader's units while the underlying payload stays SI — the same session, two readings.
 expect {
     pts = [{ dur_s: 300, speed: 4.6667 }, { dur_s: 600, speed: 4.3 }, { dur_s: 1200, speed: 4.1667 }]
-    m = Render.pace_curve_screen(Metric, { window_days: 90, sport: "Run", points: pts, cs: 4.0, d_prime: 200.0, fit_r2: 0.91, fit_points: 3.I64 })
-    i = Render.pace_curve_screen(Imperial, { window_days: 90, sport: "Run", points: pts, cs: 4.0, d_prime: 200.0, fit_r2: 0.91, fit_points: 3.I64 })
+    m = Render.pace_curve_screen(Metric, ["Run"], { window_days: 90, sport: "Run", points: pts, cs: 4.0, d_prime: 200.0, fit_r2: 0.91, fit_points: 3.I64 })
+    i = Render.pace_curve_screen(Imperial, ["Run"], { window_days: 90, sport: "Run", points: pts, cs: 4.0, d_prime: 200.0, fit_r2: 0.91, fit_points: 3.I64 })
     # 1000/4.0 = 250 s -> 4:10/km; 1609.344/4.0 = 402.3 s -> 6:42/mi; 200 m -> 219 yd
     Str.contains(m, "Critical Speed 4:10 min/km") and Str.contains(m, "D′ 200 m")
     and Str.contains(i, "Critical Speed 6:42 min/mi") and Str.contains(i, "D′ 219 yd")
@@ -1945,12 +1956,18 @@ expect {
 }
 # a fit refused (cs 0) must not print as a real fit, and two points is not a quality signal
 expect {
-    none = Render.pace_curve_screen(Metric, { window_days: 90, sport: "Run", points: [{ dur_s: 1200, speed: 4.1667 }], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 1.I64 })
-    thin = Render.pace_curve_screen(Metric, { window_days: 90, sport: "Run", points: [{ dur_s: 300, speed: 4.6667 }, { dur_s: 1200, speed: 4.1667 }], cs: 4.0, d_prime: 200.0, fit_r2: 1.0, fit_points: 2.I64 })
-    empty = Render.pace_curve_screen(Metric, { window_days: 30, sport: "", points: [], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
-    Str.contains(none, "not enough long-duration") and !(Str.contains(none, "Critical Speed 0"))
+    none = Render.pace_curve_screen(Metric, ["Run"], { window_days: 90, sport: "Run", points: [{ dur_s: 1200, speed: 4.1667 }], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 1.I64 })
+    thin = Render.pace_curve_screen(Metric, ["Run"], { window_days: 90, sport: "Run", points: [{ dur_s: 300, speed: 4.6667 }, { dur_s: 1200, speed: 4.1667 }], cs: 4.0, d_prime: 200.0, fit_r2: 1.0, fit_points: 2.I64 })
+    empty = Render.pace_curve_screen(Metric, ["Run"], { window_days: 30, sport: "Run", points: [], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
+    # no sport named: refuse a pooled fit and name what the athlete CAN ask for, rather than
+    # fitting one curve through rides and runs together and labelling it "all pace sports"
+    nosport = Render.pace_curve_screen(Metric, ["Run", "Rowing"], { window_days: 30, sport: "", points: [], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
+    bare = Render.pace_curve_screen(Metric, [], { window_days: 30, sport: "", points: [], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
+    Str.contains(none, "needs two ladder durations") and !(Str.contains(none, "Critical Speed 0"))
     and !(Str.contains(thin, "r2 1.00")) and Str.contains(thin, "r2 needs 3")
-    and Str.contains(empty, "no pace data") and Str.contains(empty, "all pace sports")
+    and Str.contains(empty, "no pace data")
+    and Str.contains(nosport, "per-sport") and Str.contains(nosport, "Run, Rowing") and !(Str.contains(nosport, "Critical Speed"))
+    and Str.contains(bare, "none in this window")
 }
 
 # zone-gap warning fires on 0 Z5; empty last-hard reads as none on record
