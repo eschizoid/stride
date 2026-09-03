@@ -2089,7 +2089,7 @@ b_seed_analyze! = |ctx| {
     # NOTE for whoever edits the fixture: the regex fires on any `km` bounded by
     # non-letters, so naming a seeded activity "10km Race" will trip this check on the
     # NAME rather than a unit. Rename the activity; the guard is not wrong.
-    units_km_leak = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; n=0; k=0; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'top distance' \"activity $aid\"; do n=$((n+1)); HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' $c 2>/dev/null | grep -qE '(^|[^a-z])km([^a-z]|$)|min/km' && k=$((k+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"screens=$n metric_leaks=$k\""))
+    units_km_leak = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; n=0; k=0; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'top distance' '${pc_cmd}' \"activity $aid\"; do n=$((n+1)); HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' $c 2>/dev/null | grep -qE '(^|[^a-z])km([^a-z]|$)|min/km' && k=$((k+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"screens=$n metric_leaks=$k\""))
     # The `activity` leg's own liveness. Without this it can go silent exactly as the
     # progress leg did: an empty `aid` makes the loop run bare `stride activity`, which
     # prints a usage line, contains no km, and scores as clean while testing nothing.
@@ -2113,7 +2113,9 @@ b_seed_analyze! = |ctx| {
     # cs is METRES PER SECOND in both settings, so the VALUE is asserted, not merely that a
     # fit exists: 3.75 m/s from rungs 4.6667/4.1667/4.0, scaled x100 because an exact float
     # string is brittle. Three points is also the only count at which fit_r2 carries
-    # information, so this is the one place the r2 branch is exercised end to end.
+    # information. The pace-curve SCREEN is swept below too, so the fit_points >= 3 branch is
+    # exercised end to end on both sides — the payload here, the rendered line there. Before
+    # that the screen was never rendered anywhere in e2e, only in Render expects.
     units_pc_live = Str.trim(sh!("h='${ctx.home}'; HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' ${pc_cmd} 2>/dev/null | jq -r '.data | \"cs=\\(.cs*100|round) pts=\\(.fit_points) r2=\\(.fit_r2*100|round)\"'"))
     check!("...and the swept pace-curve HAS a fit, else the units arm certifies a payload of zeros (${units_pc_live})", units_pc_live == "cs=375 pts=3 r2=99")?
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 9003; DELETE FROM activity_metrics WHERE activity_id IN (9001,9002,9003); DELETE FROM activities WHERE id IN (9001,9002,9003);")
@@ -2125,7 +2127,7 @@ b_seed_analyze! = |ctx| {
     # certifies a row the sweep never visited. Captured BEFORE the cleanup, since 9003 is
     # deleted below and a check reading it afterwards resolves a different row entirely.
     check!("...and the row the sweep resolves IS the one the probe certifies", units_swept_id == "9003")?
-    check!("with imperial set, no human screen still prints kilometres", units_km_leak == "screens=10 metric_leaks=0")?
+    check!("with imperial set, no human screen still prints kilometres", units_km_leak == "screens=11 metric_leaks=0")?
     check!("...and the activity leg is LIVE — a bare `activity` with no id would test nothing", units_activity_live != "0")?
     check!("...and the NUMBERS convert, not just the labels — the ratio is the mile", units_ratio == "mile")?
     # The same invariant stated STATICALLY, over source rather than output. The runtime
