@@ -150,7 +150,13 @@ ReportSessions :: [].{
                         Ok({ ordinal, kind, start_s, dur_s, avg_signal, signal, peak_hr, avg_hr, rec_drop, rec_drop_known: rdk == 1 })
                     },
                 })?
-                interval_summary = Render.interval_summary(seg_rows)
+                # SPLIT, and the reason is the whole units contract. `interval_summary` is a
+                # REQUIRED payload field: the coaching agent reads it, so it stays METRIC
+                # whatever the athlete set. The display copy carries the reader's units and
+                # never leaves the human branch. Same shape as progress's name/display_name
+                # after the leak in #350, and #354 added the sweep leg that catches it.
+                interval_summary = Render.interval_summary(Metric, seg_rows)
+                interval_summary_display = Render.interval_summary(units, seg_rows)
                 seg_drift = Render.seg_hr_drift(seg_rows)
                 detail =
                     match raw_opt {
@@ -413,14 +419,14 @@ ReportSessions :: [].{
                     else
                         Ok({}))?
                     # detected structure — absent line when nothing detected (honest absence)
-                    (if Str.is_empty(interval_summary)
+                    (if Str.is_empty(interval_summary_display)
                         Ok({})
                     else {
                         drift_line = match seg_drift {
                             Ok(d) => "\nhr drift ${Render.signed(d)} bpm across reps — rising = fatigue accumulating"
                             Err(_) => ""
                         }
-                        Stdout.line!("shape  ${interval_summary}\n${Render.segments_block(seg_rows)}${drift_line}")
+                        Stdout.line!("shape  ${interval_summary_display}\n${Render.segments_block(units, seg_rows)}${drift_line}")
                     })?
                     # aerobic decoupling (#94). Printed ONLY when it was computable —
                     # an absent line is honest, a "drift 0%" line on a session with no
@@ -891,6 +897,9 @@ ReportSessions :: [].{
     reps! : Str => Try({}, _)
     reps! = |date_arg| {
         path = Db.open_db!({})?
+        # Human branch only — the JSON branch below emits reps in m/s, which is SI and what
+        # the payload has always carried.
+        units = Db.units!(path)?
         # the anchor: the named date's session with work blocks, else the most
         # recent one that has any. A date with no detected structure is an
         # honest in-band error rather than an empty comparison.
@@ -1137,7 +1146,7 @@ ReportSessions :: [].{
                         sessions: built,
                     })
                 else
-                    Stdout.line!(Render.reps_screen({ anchor_date: a.date, shape_reps: a.reps, shape_dur: a.mean_dur, matched_total: matched, signal: a.signal, sessions: built }))
+                    Stdout.line!(Render.reps_screen(units, { anchor_date: a.date, shape_reps: a.reps, shape_dur: a.mean_dur, matched_total: matched, signal: a.signal, sessions: built }))
                 }
             }
         }

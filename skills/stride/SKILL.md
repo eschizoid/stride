@@ -169,7 +169,10 @@ Never do training math yourself: read stride's numbers, add judgment.
   within-session fade. Use it when a structured session repeats; `progress` when
   comparing whole sessions.
 - **Detected structure** (`stride activity <id> --json`): `interval_summary` ("3×[12:00 @
-  230W / 4:00 easy]"), `segments` (per-rep kind/duration/avg + HR peak/avg/60s
+  230W / 4:00 easy]"; a pace-routed sport reads as time-per-distance — "5×[4:00 @
+  4:00/km / 2:00 easy]" — and the payload is ALWAYS metric whatever `units` is set to.
+  The human screen follows the setting; this field does not), `segments` (per-rep
+  kind/duration/avg + HR peak/avg/60s
   recovery drop), `hr_drift` + `hr_drift_known` (rising across reps = fatigue), and
   `detection_attempted` (false = couldn't look — no power/pace signal — which is NOT
   the same as "verified: no structure"). The detector reports; matching structure to

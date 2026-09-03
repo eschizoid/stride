@@ -2141,8 +2141,8 @@ b_seed_analyze! = |ctx| {
     # nothing wrong — the sites run to 204 characters, so it is a live risk. Rejoin the
     # line; do not lower the number. A comment containing `dist_unit(` would also count
     # toward `examined`. Both are loud false positives, which is the safe direction.
-    units_static = Str.trim(sh!("n=0; fmt=0; bad=0; for f in src/*.roc; do while IFS= read -r l; do case \"$l\" in expect*) continue;; esac; case \"$l\" in *'dist_unit('*|*'pace_unit('*) ;; *) continue;; esac; n=$((n+1)); case \"$l\" in *'fmt0('*|*'fmt1('*|*'fmt2('*) fmt=$((fmt+1));; *) continue;; esac; case \"$l\" in *'dist_value(units'*|*'pace_per_dist(units'*) ;; *) bad=$((bad+1));; esac; done < $f; done; echo \"examined=$n formatted=$fmt unconverted=$bad\""))
-    check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=12 formatted=9 unconverted=0")?
+    units_static = Str.trim(sh!("n=0; fmt=0; bad=0; for f in src/*.roc; do while IFS= read -r l; do case \"$l\" in expect*) continue;; esac; case \"$l\" in *'dist_unit('*|*'pace_unit('*|*'seg_unit('*) ;; *) continue;; esac; n=$((n+1)); case \"$l\" in *'fmt0('*|*'fmt1('*|*'fmt2('*|*'seg_value('*) fmt=$((fmt+1));; *) continue;; esac; case \"$l\" in *'dist_value(units'*|*'pace_per_dist(units'*|*'seg_value(units'*) ;; *) bad=$((bad+1));; esac; done < $f; done; echo \"examined=$n formatted=$fmt unconverted=$bad\""))
+    check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=15 formatted=11 unconverted=0")?
     check!("coverage tiers discriminate (high and medium both live)", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct > 0) and (.medium_pct > 0)") == "true")?
     check!("form coverage carries the 90d window", strjq!(ctx, ["summary"], ".data.form_coverage_90d | (.high_pct + .medium_pct + .low_pct == 100) and ((.known | type) == \"boolean\")") == "true")?
     # with fixtures loaded TSB is known, so the enum arm is required here; the
