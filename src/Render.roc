@@ -210,11 +210,34 @@ Render :: [].{
     # signed(), at the precision the signal is displayed in. A pace delta of
     # -0.04 m/s is the difference between 4:00/km and 4:03/km; through fmt0 it
     # renders as "0" and the column reports no change at all.
-    signed_value : F64, Str -> Str
-    signed_value = |x, signal| {
-        mag = seg_value((x).abs(), signal)
-        if x >= 0.0 "+${mag}" else "-${mag}"
-    }
+    # The session's change from first rep to last, signed so NEGATIVE always means WORSE —
+    # weaker watts, or slower pace. Sport-consistent by decision (#351): a cyclist and a
+    # runner read the same sign for the same event. The cost is that for pace this is the
+    # inverse of raw last-minus-first, since pace counts UP as you slow down, so the legend
+    # states what the number is rather than how it was subtracted.
+    #
+    # Takes both ENDPOINTS, not the delta: pace cannot be derived from a speed difference,
+    # because k/v_last - k/v_first is not a function of (v_last - v_first).
+    fade_value : [Metric, Imperial], F64, F64, Str -> Str
+    fade_value = |units, first, last, signal|
+        if signal == "pace" {
+            if first <= 0.0 or last <= 0.0 {
+                "-"
+            } else {
+                per = match units {
+                    Metric => 1000.0
+                    Imperial => 1609.344
+                }
+                # seconds per unit at each end; slowing means MORE seconds, so first-minus-last
+                # is negative exactly when the athlete faded
+                d = ((per / first) - (per / last)).round_to_i64_try().ok_or(0)
+                if d >= 0 "+${mmss(d)}" else "-${mmss((d).abs())}"
+            }
+        } else {
+            d = last - first
+            mag = seg_value(units, (d).abs(), signal)
+            if d >= 0.0 "+${mag}" else "-${mag}"
+        }
 
     # How long the band has held, appended to the state (#123). Takes the TAG, not a
     # flattened number: the caller must not decide what Unknown means on the renderer's
@@ -451,11 +474,55 @@ Render :: [].{
 
     SegRow : { ordinal : I64, kind : Str, start_s : I64, dur_s : I64, avg_signal : F64, signal : Str, peak_hr : F64, avg_hr : F64, rec_drop : F64, rec_drop_known : Bool }
 
-    seg_unit : Str -> Str
-    seg_unit = |signal| if signal == "power" "W" else " m/s"
+    # A rep's rate, in the reader's units. Power stays watts; a PACE signal is stored as
+    # m/s (SI, like every other distance in the engine) and rendered as time-per-distance,
+    # which is what a runner reads. #351: `m/s` was a raw engine value leaking into a human
+    # screen — the defect was the QUANTITY, not the unit, so converting it to mph would
+    # have preserved the wrong presentation in a new unit.
+    #
+    # An empty signal keeps fmt2: it means "no signal identified", and inventing a pace for
+    # it would assert something the detector did not find.
+    pace_from_speed : [Metric, Imperial], F64 -> Str
+    pace_from_speed = |units, mps|
+        if mps <= 0.0 {
+            "-"
+        } else {
+            per = match units {
+                Metric => 1000.0
+                Imperial => 1609.344
+            }
+            mmss((per / mps).round_to_i64_try().ok_or(0))
+        }
 
-    seg_value : F64, Str -> Str
-    seg_value = |v, signal| if signal == "power" fmt0(v) else fmt2(v)
+    seg_unit : [Metric, Imperial], Str -> Str
+    seg_unit = |units, signal|
+        if signal == "power" {
+            "W"
+        } else if signal == "pace" {
+            match units {
+                Metric => "/km"
+                Imperial => "/mi"
+            }
+        } else {
+            " m/s"
+        }
+
+    # The legend names the unit in prose, where the inline suffix's "/km" would read as
+    # "reps ... in /km". Same information, different position, so it gets its own spelling
+    # rather than the legend trimming a suffix meant to butt against a number.
+    seg_legend_unit : [Metric, Imperial], Str -> Str
+    seg_legend_unit = |units, signal|
+        if signal == "power" {
+            "W"
+        } else if signal == "pace" {
+            pace_unit(units)
+        } else {
+            "m/s"
+        }
+
+    seg_value : [Metric, Imperial], F64, Str -> Str
+    seg_value = |units, v, signal|
+        if signal == "power" fmt0(v) else if signal == "pace" pace_from_speed(units, v) else fmt2(v)
 
     # "4×[3:00 @ 251W / 2:00 easy]" — the detected shape in one line. Reps vary in
     # the wild, so durations/levels are MEDIANS of the work reps; recovery is the
@@ -463,8 +530,8 @@ Render :: [].{
     # mislabeled pre-work block must not become the "easy" half of a summary).
     # No between-works recoveries (blocks back to back, or a single rep) drops
     # the "/ ..." half.
-    interval_summary : List(SegRow) -> Str
-    interval_summary = |segs| {
+    interval_summary : [Metric, Imperial], List(SegRow) -> Str
+    interval_summary = |units, segs| {
         works = List.keep_if(segs, |s| s.kind == "work")
         n = List.len(works)
         if n == 0 {
@@ -480,7 +547,7 @@ Render :: [].{
             sig = (List.first(works)).map_ok(|w| w.signal).ok_or("power")
             dur_med = med(List.map(works, |w| ((w.dur_s)).to_f64()))
             level_med = med(List.map(works, |w| w.avg_signal))
-            work_part = "${I64.to_str((n).to_i64_wrap())}×[${mmss((dur_med).round_to_i64_try().ok_or(0))} @ ${seg_value(level_med, sig)}${seg_unit(sig)}"
+            work_part = "${I64.to_str((n).to_i64_wrap())}×[${mmss((dur_med).round_to_i64_try().ok_or(0))} @ ${seg_value(units, level_med, sig)}${seg_unit(units, sig)}"
             if List.is_empty(recs) {
                 Str.concat(work_part, "]")
             } else {
@@ -492,11 +559,11 @@ Render :: [].{
 
     # per-rep detail lines under the summary — one work rep per line, HR only when
     # measured (honest absence: a rep with no HR simply has no hr clause)
-    segments_block : List(SegRow) -> Str
-    segments_block = |segs| {
+    segments_block : [Metric, Imperial], List(SegRow) -> Str
+    segments_block = |units, segs| {
         works = List.keep_if(segs, |s| s.kind == "work")
         lines = List.map_with_index(works, |w, i| {
-            base = "rep ${I64.to_str(((i)).to_i64_wrap() + 1)}  ${mmss(w.dur_s)} @ ${seg_value(w.avg_signal, w.signal)}${seg_unit(w.signal)}"
+            base = "rep ${I64.to_str(((i)).to_i64_wrap() + 1)}  ${mmss(w.dur_s)} @ ${seg_value(units, w.avg_signal, w.signal)}${seg_unit(units, w.signal)}"
             hr_part = if w.avg_hr > 0.0 " · hr ${fmt0(w.avg_hr)} avg / ${fmt0(w.peak_hr)} peak" else ""
             drop_part = if w.rec_drop_known " · 60s drop ${signed(w.rec_drop)}" else ""
             Str.join_with([base, hr_part, drop_part], "")
@@ -1374,11 +1441,11 @@ Render :: [].{
     # One row per session, newest first, with the per-rep watts spelled out so
     # the shape of a session is visible at a glance rather than summarized away.
     # Numbers only — a fade is reported, never judged (#154).
-    reps_screen = |p| {
+    reps_screen = |units, p| {
         shown = (List.len(p.sessions)).to_i64_wrap()
         # seg_unit carries a leading space for " m/s" so it can suffix a
         # number directly; the legend needs it bare.
-        unit = Str.trim(seg_unit(p.signal))
+        unit = seg_legend_unit(units, p.signal)
         # Rows are RANKED by uniformity and then capped, so saying only "12 of
         # 21" invites the reading that the other 9 are older, when they are in
         # fact the least regular. On this athlete the dropped rows included
@@ -1433,14 +1500,14 @@ Render :: [].{
             # seg_value/seg_unit, not fmt0: on a run avg_signal is metres per
             # second, and fmt0 rendered every rep of a 4:00/km and a 4:13/km
             # session as an identical "4".
-            vals = Str.join_with(List.map(s.reps, |r| seg_value(r.avg_signal, p.signal)), " · ")
+            vals = Str.join_with(List.map(s.reps, |r| seg_value(units, r.avg_signal, p.signal)), " · ")
             # signed(), not a hardcoded "+": a HR DROP across reps is a real
             # signal and rendered as "hr +-8" three times on real data.
             hr = if s.hr_rise_known " · hr ${signed(s.hr_rise_bpm)}" else ""
             spread = if s.uniformity >= 1.15 " · reps ${mmss(s.min_dur_s)}-${mmss(s.max_dur_s)}" else ""
-            "${s.date}  ${vals}  (mean ${seg_value(s.mean_signal, p.signal)}, fade ${signed_value(s.fade_signal, p.signal)}${hr}${spread})"
+            "${s.date}  ${vals}  (mean ${seg_value(units, s.mean_signal, p.signal)}, fade ${fade_value(units, (List.first(s.reps)).map_ok(|r| r.avg_signal).ok_or(0.0), (List.last(s.reps)).map_ok(|r| r.avg_signal).ok_or(0.0), p.signal)}${hr}${spread})"
         })
-        legend = "reps left to right within each session, in ${unit} · fade = last rep minus first · hr = first-to-last change across reps"
+        legend = "reps left to right within each session, in ${unit} · fade = change across the session, NEGATIVE means faded (weaker watts, slower pace) · hr = first-to-last change across reps"
         Str.join_with(List.join([[header, "", census, ""], rows, ["", legend]]), "\n")
     }
 
@@ -1927,19 +1994,19 @@ expect {
 # summary uses medians and drops the recovery half when there are no recoveries
 expect {
     seg = |o, k, d, v| { ordinal: o, kind: k, start_s: 0.I64, dur_s: d, avg_signal: v, signal: "power", peak_hr: 0.0, avg_hr: 0.0, rec_drop: 0.0, rec_drop_known: False }
-    full = Render.interval_summary([seg(0.I64, "warmup", 300.I64, 120.0), seg(1.I64, "work", 181.I64, 251.0), seg(2.I64, "recovery", 120.I64, 100.0), seg(3.I64, "work", 179.I64, 249.0), seg(4.I64, "cooldown", 300.I64, 110.0)])
-    lone = Render.interval_summary([seg(0.I64, "work", 1200.I64, 258.0)])
-    none = Render.interval_summary([seg(0.I64, "recovery", 600.I64, 100.0)])
+    full = Render.interval_summary(Metric, [seg(0.I64, "warmup", 300.I64, 120.0), seg(1.I64, "work", 181.I64, 251.0), seg(2.I64, "recovery", 120.I64, 100.0), seg(3.I64, "work", 179.I64, 249.0), seg(4.I64, "cooldown", 300.I64, 110.0)])
+    lone = Render.interval_summary(Metric, [seg(0.I64, "work", 1200.I64, 258.0)])
+    none = Render.interval_summary(Metric, [seg(0.I64, "recovery", 600.I64, 100.0)])
     # a recovery-shaped block BEFORE the first work must not become the "easy" half
-    pre = Render.interval_summary([seg(0.I64, "recovery", 300.I64, 100.0), seg(1.I64, "work", 1200.I64, 258.0)])
+    pre = Render.interval_summary(Metric, [seg(0.I64, "recovery", 300.I64, 100.0), seg(1.I64, "work", 1200.I64, 258.0)])
     full == "2×[3:01 @ 251W / 2:00 easy]" and lone == "1×[20:00 @ 258W]" and none == "" and pre == "1×[20:00 @ 258W]"
 }
 
 # rep lines carry HR only when measured; drift needs two measured reps
 expect {
     seg = |hr, drop_known| { ordinal: 0.I64, kind: "work", start_s: 0.I64, dur_s: 180.I64, avg_signal: 250.0, signal: "power", peak_hr: hr + 8.0, avg_hr: hr, rec_drop: 20.0, rec_drop_known: drop_known }
-    with_hr = Render.segments_block([seg(150.0, True)])
-    no_hr = Render.segments_block([seg(0.0, False)])
+    with_hr = Render.segments_block(Metric, [seg(150.0, True)])
+    no_hr = Render.segments_block(Metric, [seg(0.0, False)])
     drift = Render.seg_hr_drift([seg(150.0, True), seg(158.0, True)])
     Str.contains(with_hr, "hr 150 avg / 158 peak") and Str.contains(with_hr, "60s drop +20")
     and !(Str.contains(no_hr, "hr"))
@@ -1964,7 +2031,7 @@ expect {
         hr_rise_known: True,
         reps: List.map(vals, rep),
     }
-    power = Render.reps_screen({
+    power = Render.reps_screen(Metric, {
         anchor_date: "2026-08-16",
         shape_reps: 3.I64,
         shape_dur: 718.I64,
@@ -1972,7 +2039,7 @@ expect {
         signal: "power",
         sessions: [sess("2026-08-16", 1.01, 11.0, 262.0, -16.0, [268.0, 265.0, 252.0])],
     })
-    pace = Render.reps_screen({
+    pace = Render.reps_screen(Metric, {
         anchor_date: "2026-08-10",
         shape_reps: 5.I64,
         shape_dur: 241.I64,
@@ -1985,7 +2052,7 @@ expect {
     })
     # some shown rows do NOT conform, so the count is exact and the remainder
     # is named rather than hedged -- and "the other one" agrees in number
-    mixed = Render.reps_screen({
+    mixed = Render.reps_screen(Metric, {
         anchor_date: "2026-08-16",
         shape_reps: 3.I64,
         shape_dur: 718.I64,
@@ -1996,7 +2063,7 @@ expect {
             { date: "2025-10-15", uniformity: 4.3, min_dur_s: 264.I64, max_dur_s: 1144.I64, mean_signal: 236.0, fade_signal: -5.0, hr_rise_bpm: 13.0, hr_rise_known: True, reps: List.map([231.0, 227.0], rep) },
         ],
     })
-    dropped = Render.reps_screen({
+    dropped = Render.reps_screen(Metric, {
         anchor_date: "2023-02-11",
         shape_reps: 7.I64,
         shape_dur: 63.I64,
@@ -2004,11 +2071,11 @@ expect {
         signal: "power",
         sessions: [sess("2023-02-11", 1.02, -8.0, 248.0, -11.0, [248.0, 236.0])],
     })
-    # pace is metres per second: through fmt0 a 4:00/km and a 4:13/km session
+    # pace renders as time-per-distance, not the stored m/s (#351): 4.1667 m/s is 4:00/km
     # both rendered every rep as "4", making the whole screen useless for runs
-    Str.contains(pace, "4.17") and Str.contains(pace, "in m/s")
-    # and a sub-1 m/s fade is a real difference, not "0"
-    and Str.contains(pace, "fade -0.04")
+    Str.contains(pace, "4:00") and Str.contains(pace, "in min/km")
+    # and the fade is signed so NEGATIVE means slower, matching how watts read
+    and Str.contains(pace, "fade -0:02")
     # a HR DROP across reps rendered as "hr +-8" -- the + was hardcoded
     and Str.contains(dropped, "hr -8") and !(Str.contains(dropped, "+-"))
     # rows are ranked by uniformity then capped, so "showing 12 of 21" read as
@@ -2027,7 +2094,7 @@ expect {
     # ...and the HEDGED branch needs the singular too. Fixing number agreement
     # on the exact branch and not this one left "up to 1 others match", which
     # is the very defect the round was opened to close.
-    and Str.contains(Render.reps_screen({
+    and Str.contains(Render.reps_screen(Metric, {
         anchor_date: "2026-08-16",
         shape_reps: 3.I64,
         shape_dur: 718.I64,
@@ -2053,7 +2120,17 @@ expect {
 # signed_value differs from signed ONLY in precision -- it inherits the
 # rounds-away-but-still-a-direction contract pinned above, which is why a pace
 # fade keeps its sign instead of collapsing to a bare zero.
-expect Render.signed_value(-0.04, "pace") == "-0.04" and Render.signed_value(-16.0, "power") == "-16" and Render.signed_value(-0.27, "power") == "-0"
+# fade_value takes ENDPOINTS, not a delta, because a pace change cannot be derived from a
+# speed change. Sign is flipped for pace so NEGATIVE means worse in both sports (#351):
+# 4.1667 m/s -> 4.13 m/s is a slowdown of 2.13 s/km, so it reads -0:02, not +0:02.
+expect Render.fade_value(Metric, 4.1667, 4.13, "pace") == "-0:02"
+expect Render.fade_value(Imperial, 4.1667, 4.13, "pace") == "-0:03"
+# speeding up reads positive, the same direction a power gain does
+expect Render.fade_value(Metric, 4.13, 4.1667, "pace") == "+0:02"
+expect Render.fade_value(Metric, 250.0, 240.0, "power") == "-10"
+expect Render.fade_value(Metric, 240.0, 250.0, "power") == "+10"
+# a missing endpoint is not a fade of zero
+expect Render.fade_value(Metric, 0.0, 4.13, "pace") == "-"
 
 # ftp_path splices the peak or trough in when the threshold left its own
 # endpoints. "Ride 234→239" read as a flat block that actually ran 234→271→239,
