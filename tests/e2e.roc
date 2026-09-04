@@ -5673,13 +5673,19 @@ b_load_stats! = |ctx| {
     # far upstream, so a healthy series and a lagging one were indistinguishable. Rebuilding
     # here is what removes that, rather than widening what the check will accept.
     before_day = need("date +%F before rebuild", Str.trim(sh!("TZ=${ctx.tz} date +%F")))?
-    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    # The rebuild's exit code is ASSERTED, not discarded. `stride!` returns stdout even when
+    # the command exits non-zero — it captures Err(NonZeroExitCode) as a string — so a failing
+    # `analyze` would be swallowed here. The series would then be whatever it already was, the
+    # comparison below would still pass on a healthy fixture, and this check would quietly
+    # revert to the racy one it replaced while reporting ok. Folded into the existing
+    # predicate rather than added as a second check, so the check count is unchanged.
+    rebuild_rc = stride_status!(ctx.bin, ctx.home, ["analyze"])
     after_day = need("date +%F after rebuild", Str.trim(sh!("TZ=${ctx.tz} date +%F")))?
     load_last_day = strjq!(ctx, ["load"], ".data[-1].day")
     crossed = before_day != after_day
     check!(
-        "load extends to today (${after_day}${if crossed " — midnight fell inside the rebuild window, either day accepted" else ""})",
-        load_last_day == after_day or (crossed and load_last_day == before_day),
+        "load extends to today (${after_day}, rebuild exited ${(rebuild_rc).to_str()}${if crossed " — midnight fell inside the rebuild window, either day accepted" else ""})",
+        rebuild_rc == 0 and (load_last_day == after_day or (crossed and load_last_day == before_day)),
     )?
     check!("load nonzero fitness", sfloat(strjq!(ctx, ["load"], ".data[-1].ctl")) > 0.0)?
     check!("Ride 1 session", strjq!(ctx, ["stats"], ".data.all_time[] | select(.sport==\"Ride\") | .sessions") == "1")?
