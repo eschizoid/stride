@@ -632,7 +632,7 @@ ReportHealth :: [].{
         )
         cpfit =
             match Metrics.critical_power(fit_points) {
-                # a fit is only meaningful when BOTH are positive; inconsistent bests can yield a
+                # UNREACHABLE today, and kept deliberately: hyperbolic_fit already refuses a yield a
                 # non-positive CP or W' — treat that as no fit. fit_points counts the bests
                 # AVAILABLE to the fit (same meaning tte and activity publish); `cp` of 0 is the
                 # refusal signal, so the key means one thing across commands.
@@ -659,7 +659,8 @@ ReportHealth :: [].{
         path = Db.open_db!({})?
         units = Db.units!(path)?
         sx = Report.sport_exact_sql(sport)
-        avail = Report.sports_with_speed!(path, days)?
+        # only the refusal path renders this, so only the refusal path pays for it
+        avail = if Str.is_empty(sport) Report.sports_with_speed!(path, days)? else []
         cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
         r = Sqlite.query!({
             path: Path.utf8(path),
@@ -692,8 +693,11 @@ ReportHealth :: [].{
         fit_points = List.map(points, |p| { dur_s: (p.dur_s).to_f64(), speed: p.speed })
         csfit =
             match Metrics.critical_speed(fit_points) {
-                # a fit is only meaningful when BOTH are positive; inconsistent bests can
-                # yield a non-positive CS or D' — treat that as no fit. fit_points counts the
+                # UNREACHABLE today, and kept deliberately: hyperbolic_fit already refuses a
+                # non-positive intercept or slope, so Ok(c) cannot carry a non-positive cs or
+                # d_prime. This gate stays so that relaxing the SHARED fit can never silently
+                # publish one here — the power twin carries the same gate for the same reason,
+                # and losing it in one twin only is how the two would diverge. fit_points counts the
                 # bests AVAILABLE to the fit; `cs` of 0 is the refusal signal, so the key
                 # means one thing across commands, exactly as `cp` does for power.
                 Ok(c) => (if c.cs > 0.0 and c.d_prime > 0.0 { cs: c.cs, d_prime: c.d_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cs: 0.0, d_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() })
