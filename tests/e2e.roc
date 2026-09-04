@@ -5680,7 +5680,45 @@ b_top! = |ctx| {
 b_load_stats! : Ctx => Try({}, _)
 b_load_stats! = |ctx| {
     check!("load >= 4 daily rows", sfloat(strjq!(ctx, ["load"], ".data | length")) >= 4.0)?
-    check!("load extends to today", strjq!(ctx, ["load"], ".data[-1].day") == ctx.today)?
+    # `ctx.today` is read once from `date +%F` when the fixture is built; the binary reads
+    # its own clock when `load` runs, minutes later. A run crossing local midnight compared
+    # two different days and failed with nothing wrong — observed 2026-09-02, passing on an
+    # immediate re-run (#357).
+    #
+    # The anchor stays a real CALENDAR day. Comparing the series end against `summary.as_of`
+    # instead looked like it removed the harness clock, but both are reads of
+    # MAX(daily_load.day) from the same table (Report.roc:392 and :758) — no database state
+    # can make them disagree, so that check could not see the series failing to reach today
+    # at all, which is the #200 regression this exists for.
+    #
+    # So: rebuild the series HERE, bracketed by two clock reads. `analyze` calls
+    # rebuild_daily_load! unconditionally (Analyze.roc:44), so after it the series ends on
+    # the binary's today by construction, and the comparison window shrinks from the whole
+    # run to the ~0.2 s spanned by the two statements between the clock reads (`load` is
+    # OUTSIDE the bracket on purpose: it reads no clock and cannot alter daily_load, so
+    # including it could only widen the tolerance, never catch anything). When the two reads
+    # agree — every run but the vanishingly rare one — the assertion is STRICT, with no
+    # tolerance arm at all. Only when midnight fell inside that window is either day taken.
+    #
+    # The earlier form of this fix put the tolerance on `ctx.today` instead, which hid a
+    # genuine one-day lag on most straddling runs: the series end was frozen at an `analyze`
+    # far upstream, so a healthy series and a lagging one were indistinguishable. Rebuilding
+    # here is what removes that, rather than widening what the check will accept.
+    before_day = need("date +%F before rebuild", Str.trim(sh!("TZ=${ctx.tz} date +%F")))?
+    # The rebuild's exit code is ASSERTED, not discarded. `stride!` returns stdout even when
+    # the command exits non-zero — it captures Err(NonZeroExitCode) as a string — so a failing
+    # `analyze` would be swallowed here. The series would then be whatever it already was, the
+    # comparison below would still pass on a healthy fixture, and this check would quietly
+    # revert to the racy one it replaced while reporting ok. Folded into the existing
+    # predicate rather than added as a second check, so the check count is unchanged.
+    rebuild_rc = stride_status!(ctx.bin, ctx.home, ["analyze"])
+    after_day = need("date +%F after rebuild", Str.trim(sh!("TZ=${ctx.tz} date +%F")))?
+    load_last_day = strjq!(ctx, ["load"], ".data[-1].day")
+    crossed = before_day != after_day
+    check!(
+        "load extends to today (${after_day}, rebuild exited ${(rebuild_rc).to_str()}${if crossed " — midnight fell inside the rebuild window, either day accepted" else ""})",
+        rebuild_rc == 0 and (load_last_day == after_day or (crossed and load_last_day == before_day)),
+    )?
     check!("load nonzero fitness", sfloat(strjq!(ctx, ["load"], ".data[-1].ctl")) > 0.0)?
     check!("Ride 1 session", strjq!(ctx, ["stats"], ".data.all_time[] | select(.sport==\"Ride\") | .sessions") == "1")?
     check_near!("Ride ~1.0h", sfloat(strjq!(ctx, ["stats"], ".data.all_time[] | select(.sport==\"Ride\") | .hours")), 1.0, 0.01)?
