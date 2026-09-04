@@ -2002,6 +2002,22 @@ expect {
     full == "2×[3:01 @ 251W / 2:00 easy]" and lone == "1×[20:00 @ 258W]" and none == "" and pre == "1×[20:00 @ 258W]"
 }
 
+# The same shape for a PACE-routed session, which #355 introduced and nothing pinned —
+# the power arm above has been exact since it was written, the pace arm had no expect at
+# all. This is the documented format in SKILL.md, so it is asserted rather than described.
+expect {
+    pseg = |o, k, d, v| { ordinal: o, kind: k, start_s: 0.I64, dur_s: d, avg_signal: v, signal: "pace", peak_hr: 0.0, avg_hr: 0.0, rec_drop: 0.0, rec_drop_known: False }
+    reps = [pseg(0.I64, "work", 240.I64, 4.1667), pseg(1.I64, "recovery", 120.I64, 2.0), pseg(2.I64, "work", 240.I64, 4.1667)]
+    Render.interval_summary(Metric, reps) == "2×[4:00 @ 4:00/km / 2:00 easy]"
+    # and the unit follows the reader, while the VALUE is the same session
+    and Render.interval_summary(Imperial, reps) == "2×[4:00 @ 6:26/mi / 2:00 easy]"
+    # and the NO-RECOVERY form, which is what the e2e fixture (activity 9003) actually
+    # emits — two work reps and no recovery row. Without this the shipped string is the
+    # one string nothing pins: the arms above cover only the with-recovery shape, and the
+    # e2e regex accepts either, so the exact form the payload really carries went unasserted.
+    and Render.interval_summary(Metric, [pseg(0.I64, "work", 240.I64, 4.1667), pseg(1.I64, "work", 240.I64, 4.13)]) == "2×[4:00 @ 4:00/km]"
+}
+
 # rep lines carry HR only when measured; drift needs two measured reps
 expect {
     seg = |hr, drop_known| { ordinal: 0.I64, kind: "work", start_s: 0.I64, dur_s: 180.I64, avg_signal: 250.0, signal: "power", peak_hr: hr + 8.0, avg_hr: hr, rec_drop: 20.0, rec_drop_known: drop_known }
