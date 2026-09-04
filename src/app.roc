@@ -107,7 +107,7 @@ help_text =
         \\    activity <id>               one session in depth: zones, bests, hard minutes
         \\    load [days]                 fitness/fatigue/form series (default 90)
         \\    power-curve [days] [sport]  power-duration curve + Critical Power (alias: pc)
-        \\    pace-curve [days] <sport>   speed-duration curve + Critical Speed (alias: cs)
+        \\    pace-curve [days] [sport]   speed-duration curve + Critical Speed; name a sport (alias: cs)
         \\
         \\WHAT SHOULD I DO?
         \\    plan                        planning bundle: summary + open sessions + 14d

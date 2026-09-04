@@ -632,10 +632,18 @@ ReportHealth :: [].{
         )
         cpfit =
             match Metrics.critical_power(fit_points) {
-                # UNREACHABLE today, and kept deliberately: hyperbolic_fit already refuses a yield a
-                # non-positive CP or W' — treat that as no fit. fit_points counts the bests
-                # AVAILABLE to the fit (same meaning tte and activity publish); `cp` of 0 is the
-                # refusal signal, so the key means one thing across commands.
+                # UNREACHABLE today: hyperbolic_fit returns Ok only when intercept and slope
+                # are both > 0, and this adapter maps them straight through, so Ok(c) cannot
+                # carry a non-positive cp or w_prime. Kept anyway, for SYMMETRY with the pace
+                # twin and as a second line — not because it protects the contract. It does
+                # not: if the shared fit were relaxed, this gate would turn the bad values
+                # into `cp: 0`, the documented refusal signal, and publish a schema-conforming
+                # payload with no error and no failing test. What actually catches that
+                # relaxation is the expect at Metrics.roc:2830 (dropping `or slope <= 0.0`
+                # fails it), and the pace twin's at :3317. Trust those, not this.
+                # fit_points counts the bests AVAILABLE to the fit (same meaning tte and
+                # activity publish); `cp` of 0 is the refusal signal, so the key means one
+                # thing across commands.
                 Ok(c) => (if c.cp > 0.0 and c.w_prime > 0.0 { cp: c.cp, w_prime: c.w_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cp: 0.0, w_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() })
                 Err(_) => { cp: 0.0, w_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() }
             }
@@ -693,13 +701,17 @@ ReportHealth :: [].{
         fit_points = List.map(points, |p| { dur_s: (p.dur_s).to_f64(), speed: p.speed })
         csfit =
             match Metrics.critical_speed(fit_points) {
-                # UNREACHABLE today, and kept deliberately: hyperbolic_fit already refuses a
-                # non-positive intercept or slope, so Ok(c) cannot carry a non-positive cs or
-                # d_prime. This gate stays so that relaxing the SHARED fit can never silently
-                # publish one here — the power twin carries the same gate for the same reason,
-                # and losing it in one twin only is how the two would diverge. fit_points counts the
-                # bests AVAILABLE to the fit; `cs` of 0 is the refusal signal, so the key
-                # means one thing across commands, exactly as `cp` does for power.
+                # UNREACHABLE today: hyperbolic_fit returns Ok only when intercept and slope
+                # are both > 0, and this adapter maps them straight through, so Ok(c) cannot
+                # carry a non-positive cs or d_prime. Kept anyway, for SYMMETRY with the power
+                # twin and as a second line — not because it protects the contract. It does
+                # not: if the shared fit were relaxed, this gate would turn the bad values
+                # into `cs: 0`, the documented refusal signal, and publish a schema-conforming
+                # payload with no error and no failing test. What actually catches that
+                # relaxation is the expect at Metrics.roc:3317 (dropping `or slope <= 0.0`
+                # fails it), and the power twin's at :2830. Trust those, not this.
+                # fit_points counts the bests AVAILABLE to the fit; `cs` of 0 is the refusal
+                # signal, so the key means one thing across commands, exactly as `cp` does.
                 Ok(c) => (if c.cs > 0.0 and c.d_prime > 0.0 { cs: c.cs, d_prime: c.d_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cs: 0.0, d_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() })
                 Err(_) => { cs: 0.0, d_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() }
             }
