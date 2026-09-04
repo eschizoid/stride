@@ -2068,7 +2068,7 @@ b_seed_analyze! = |ctx| {
     # seeded on 9003 give `reps` a payload it otherwise lacks. `blind` is an IDENTITY, not a
     # count, so a leg going quiet names itself rather than hiding in a total.
     # `activity` is swept because `interval_summary` is a REQUIRED payload field built at
-    # ReportSessions.roc:153 and used BOTH at line 370 (payload) and 416/423 (human) — the
+    # ReportSessions.roc:158 and used BOTH at line 376 (payload) and 422/429 (human) — the
     # one-value-two-consumers shape that leaked into progress's groups[].name in #350, with
     # `units` already in scope at line 36.
     #
@@ -2079,7 +2079,7 @@ b_seed_analyze! = |ctx| {
     # because the certificate was certifying its own hardcoded call. One variable, both sites.
     pc_cmd = "pace-curve 90 Run"
     units_sweep = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); n=0; d=0; ok=0; blind=; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance' '${pc_cmd}' \"activity $aid\"; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; raw=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); a=$(printf '%s' \"$raw\" | md5); case \"$raw\" in *'\"data\"'*) ok=$((ok+1));; *) blind=\"$blind$c \";; esac; HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; rawb=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); b=$(printf '%s' \"$rawb\" | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n ok=$ok blind=$(echo $blind) differ=$d\""))
-    units_iv_live = Str.trim(sh!("h='${ctx.home}'; HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' activity 9003 2>/dev/null | jq -r '.data.interval_summary // \"\"'"))
+    units_iv_live = Str.trim(sh!("h='${ctx.home}'; reps=$(sqlite3 '${ctx.db}' \"SELECT count(*) FROM activity_segments WHERE activity_id=9003 AND kind='work'\"); HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' activity 9003 2>/dev/null | jq -r '.data.interval_summary // \"\"' | grep -qE '^'\"$reps\"'×\\[[0-9]+:[0-9]{2} @ [0-9]+:[0-9]{2}/km( / [0-9]+:[0-9]{2} easy)?\\]$' && echo \"reps=$reps shape-ok\" || echo \"reps=$reps shape-bad\""))
     units_swept_id = Str.trim(sh!("sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'"))
     units_probe_live = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' progress 2>/dev/null")
     # `plan` belongs here too: it renders summary_screen and therefore a distance. Leaving
@@ -2129,7 +2129,39 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 9003; DELETE FROM activity_metrics WHERE activity_id IN (9001,9002,9003); DELETE FROM activities WHERE id IN (9001,9002,9003);")
     check!("the sweep's progress leg is LIVE — the fixture has a distance-keyed group label", Str.contains(units_probe_live, "(~"))?
     check!("no command's JSON moves with the units setting — SI is the contract, swept not enumerated", units_sweep == "swept=14 ok=14 blind= differ=0")?
-    check!("...and the swept activity HAS an interval_summary, else the leg is blind to the field it guards", units_iv_live != "")?
+    # A REGEX, and the couplings it went through are worth stating. `sed 's/[0-9]/N/g'`
+    # was per-digit, so it pinned how MANY digits each field had — 10:00/km would fail a
+    # check about FORMAT. Replacing it with an anchored regex fixed that and introduced a
+    # second coupling: anchored to the no-recovery form, so a qualifying recovery segment
+    # on 9003 would fail it for the same non-reason. The `( / [0-9]+:[0-9]{2} easy)?` clause accepts
+    # both documented forms.
+    #
+    # The rep COUNT is derived from activity_segments rather than accepted as `[0-9]+×`,
+    # which was a real hole: with `n` -> `n + 1` the payload becomes `3×[...]` and the old
+    # probe still said shape-ok on a build with rc=0 and no warnings. Deriving it compares
+    # two implementations of one rule (`kind='work'` in SQL, `s.kind == "work"` in Roc), so
+    # the REGEX can never disagree with the fixture.
+    #
+    # The asserted string pins `reps=2` deliberately, and that is a third coupling rather
+    # than an escape from the other two: adding a rep to 9003 fails this check. It is kept
+    # for two reasons. It is how this leg already works (`swept=13`, `screens=10`,
+    # `examined=15` all pin the same way), and it is load-bearing for SAFETY — a `$reps`
+    # containing a regex metacharacter would make the pattern accept a payload the count
+    # does not justify, and only the echoed literal catches that. Unreachable today, since
+    # sqlite3 writes errors to stderr and `count(*)` yields digits or nothing, but anyone
+    # "simplifying" this back to `== "shape-ok"` reopens it. A fixture edit costs one
+    # literal; the check name interpolates the derived value, so the failure prints
+    # `(reps=3 shape-ok)` and points at the pin rather than at the payload. `check!` prints
+    # only its NAME, never the compared value, so without that interpolation the message
+    # would blame the one thing that was fine.
+    #
+    # What survives rejection: a wrong rep count, lost zero-padding (inside the optional
+    # clause too), a wrong unit, a prefixed field, an empty payload. What does NOT: the
+    # presence or absence of the recovery clause — deriving that means reimplementing
+    # "recovery strictly between the first and last work ordinal" in SQL, duplicating the
+    # rule predicate instead of sharing it. The Render expects pin that form, and `roc test`
+    # runs before `just e2e`.
+    check!("...and the swept payload matches the DOCUMENTED interval_summary shape, at the rep count the fixture declares (${units_iv_live})", units_iv_live == "reps=2 shape-ok")?
     # The probe reads 9003 by NAME while the sweep resolves `aid` dynamically. They are the
     # same row only because 9003 is newest — assert it rather than assume it, or the probe
     # certifies a row the sweep never visited. Captured BEFORE the cleanup, since 9003 is
