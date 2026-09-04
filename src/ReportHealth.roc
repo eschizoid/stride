@@ -670,34 +670,45 @@ ReportHealth :: [].{
         # only the refusal path renders this, so only the refusal path pays for it
         avail = if Str.is_empty(sport) Report.sports_with_speed!(path, days)? else []
         cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
-        r = Sqlite.query!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT
-                \\  CAST(COALESCE(MAX(m.best_300s_speed), 0) AS REAL) AS d300,
-                \\  CAST(COALESCE(MAX(m.best_600s_speed), 0) AS REAL) AS d600,
-                \\  CAST(COALESCE(MAX(m.best_20min_speed), 0) AS REAL) AS d1200
-                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
-                \\WHERE a.start_local >= :cutoff${sx.frag}
-            ,
-            bindings: List.concat([{ name: ":cutoff", value: String(cutoff) }], sx.binds),
-            row: |cols| |stmt| {
-                d300 = Sqlite.f64("d300")(cols)(stmt)?
-                d600 = Sqlite.f64("d600")(cols)(stmt)?
-                d1200 = Sqlite.f64("d1200")(cols)(stmt)?
-                Ok({ d300, d600, d1200 })
-            },
-        })?
-        raw : List({ dur_s : U64, speed : F64 })
-        raw = [
-            { dur_s: 300, speed: r.d300 },
-            { dur_s: 600, speed: r.d600 },
-            { dur_s: 1200, speed: r.d1200 },
-        ]
-        # No sport named -> no points -> no fit. The refusal has to happen HERE and not only
-        # in the renderer: JSON consumers never reach the screen, and a pooled `cs` reads as
-        # a real number to them. `cs` of 0 is the documented refusal signal.
-        points = if Str.is_empty(sport) [] else List.keep_if(raw, |p| p.speed > 0.0)
+        # No sport named -> no fit, and no reason to touch the ladder at all. The refusal has
+        # to happen HERE and not only in the renderer: JSON consumers never reach the screen,
+        # and a pooled `cs` reads as a real number to them. `cs` of 0 is the documented
+        # refusal signal. Skipping the aggregate matters because this is the DEFAULT
+        # invocation — `stride pace-curve` and `cs` both land here — so the query would run,
+        # scan the window, and have its result discarded on the most common call.
+        points =
+            if Str.is_empty(sport) {
+                []
+            } else {
+            r = Sqlite.query!({
+                path: Path.utf8(path),
+                query:
+                    \\SELECT
+                    \\  CAST(COALESCE(MAX(m.best_300s_speed), 0) AS REAL) AS d300,
+                    \\  CAST(COALESCE(MAX(m.best_600s_speed), 0) AS REAL) AS d600,
+                    \\  CAST(COALESCE(MAX(m.best_20min_speed), 0) AS REAL) AS d1200
+                    \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                    \\WHERE a.start_local >= :cutoff${sx.frag}
+                ,
+                bindings: List.concat([{ name: ":cutoff", value: String(cutoff) }], sx.binds),
+                row: |cols| |stmt| {
+                    d300 = Sqlite.f64("d300")(cols)(stmt)?
+                    d600 = Sqlite.f64("d600")(cols)(stmt)?
+                    d1200 = Sqlite.f64("d1200")(cols)(stmt)?
+                    Ok({ d300, d600, d1200 })
+                },
+            })?
+            raw : List({ dur_s : U64, speed : F64 })
+            raw = [
+                { dur_s: 300, speed: r.d300 },
+                { dur_s: 600, speed: r.d600 },
+                { dur_s: 1200, speed: r.d1200 },
+            ]
+            # No sport named -> no points -> no fit. The refusal has to happen HERE and not only
+            # in the renderer: JSON consumers never reach the screen, and a pooled `cs` reads as
+            # a real number to them. `cs` of 0 is the documented refusal signal.
+                List.keep_if(raw, |p| p.speed > 0.0)
+            }
         fit_points = List.map(points, |p| { dur_s: (p.dur_s).to_f64(), speed: p.speed })
         csfit =
             match Metrics.critical_speed(fit_points) {
