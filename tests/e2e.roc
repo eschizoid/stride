@@ -2068,9 +2068,9 @@ b_seed_analyze! = |ctx| {
     # seeded on 9003 give `reps` a payload it otherwise lacks. `blind` is an IDENTITY, not a
     # count, so a leg going quiet names itself rather than hiding in a total.
     # `activity` is swept because `interval_summary` is a REQUIRED payload field built at
-    # ReportSessions.roc:158 and used BOTH at line 376 (payload) and 422/429 (human) — the
+    # once in ReportSessions and used BOTH in the payload record and the human output — the
     # one-value-two-consumers shape that leaked into progress's groups[].name in #350, with
-    # `units` already in scope at line 36.
+    # `units` already resolved at the top of that function.
     #
     # assume this leg provides it.
     # The sweep and the certificate below must exercise the SAME invocation. Two copies of
@@ -5736,12 +5736,12 @@ b_load_stats! = |ctx| {
     #
     # The anchor stays a real CALENDAR day. Comparing the series end against `summary.as_of`
     # instead looked like it removed the harness clock, but both are reads of
-    # MAX(daily_load.day) from the same table (Report.roc:392 and :758) — no database state
-    # can make them disagree, so that check could not see the series failing to reach today
-    # at all, which is the #200 regression this exists for.
+    # MAX(daily_load.day) from the same table, read by two different queries in Report — no
+    # database state can make them disagree, so that check could not see the series failing
+    # to reach today at all, which is the #200 regression this exists for.
     #
     # So: rebuild the series HERE, bracketed by two clock reads. `analyze` calls
-    # rebuild_daily_load! unconditionally (Analyze.roc:44), so after it the series ends on
+    # rebuild_daily_load! unconditionally, so after it the series ends on
     # the binary's today by construction, and the comparison window shrinks from the whole
     # run to the ~0.2 s spanned by the two statements between the clock reads (`load` is
     # OUTSIDE the bracket on purpose: it reads no clock and cannot alter daily_load, so

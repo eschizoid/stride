@@ -639,8 +639,8 @@ ReportHealth :: [].{
                 # not: if the shared fit were relaxed, this gate would turn the bad values
                 # into `cp: 0`, the documented refusal signal, and publish a schema-conforming
                 # payload with no error and no failing test. What actually catches that
-                # relaxation is the expect at Metrics.roc:2830 (dropping `or slope <= 0.0`
-                # fails it), and the pace twin's at :3317. Trust those, not this.
+                # relaxation is the POWER refusal expect in Metrics (dropping `or slope <= 0.0`
+                # fails it), and its pace twin. Trust those, not this.
                 # fit_points counts the bests AVAILABLE to the fit (same meaning tte and
                 # activity publish); `cp` of 0 is the refusal signal, so the key means one
                 # thing across commands.
@@ -716,8 +716,8 @@ ReportHealth :: [].{
                 # not: if the shared fit were relaxed, this gate would turn the bad values
                 # into `cs: 0`, the documented refusal signal, and publish a schema-conforming
                 # payload with no error and no failing test. What actually catches that
-                # relaxation is the expect at Metrics.roc:3317 (dropping `or slope <= 0.0`
-                # fails it), and the power twin's at :2830. Trust those, not this.
+                # relaxation is the SPEED refusal expect in Metrics (dropping `or slope <= 0.0`
+                # fails it), and its power twin. Trust those, not this.
                 # fit_points counts the bests AVAILABLE to the fit; `cs` of 0 is the refusal
                 # signal, so the key means one thing across commands, exactly as `cp` does.
                 Ok(c) => (if c.cs > 0.0 and c.d_prime > 0.0 { cs: c.cs, d_prime: c.d_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cs: 0.0, d_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() })

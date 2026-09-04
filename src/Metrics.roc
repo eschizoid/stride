@@ -2871,7 +2871,7 @@ expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "date(substr(a.s
 # on the helper enforcing it. Shrinking the key to `substr(col, 1, 10)` while leaving the
 # guard at 1..19 passed the entire suite: guard domain 19, consumer domain 10, inside
 # `rank_ts_sql`. It collapses every intra-day comparison to a tie, which falls through to
-# `a.id` at six sites and to NOTHING at Plan.roc:301 and Strava.roc:475.
+# `a.id` at six sites, and to NOTHING in the two callers that pass no tiebreak column.
 expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "THEN substr(a.start_local, 1, 19) ELSE NULL END")
 # the caller's column reaches every term — a helper that hardcoded one would be wrong at
 # the one site that ranks on a bare `start_local` rather than `a.start_local`
