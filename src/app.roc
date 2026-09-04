@@ -107,6 +107,7 @@ help_text =
         \\    activity <id>               one session in depth: zones, bests, hard minutes
         \\    load [days]                 fitness/fatigue/form series (default 90)
         \\    power-curve [days] [sport]  power-duration curve + Critical Power (alias: pc)
+        \\    pace-curve [days] [sport]   speed-duration curve + Critical Speed; name a sport (alias: cs)
         \\
         \\WHAT SHOULD I DO?
         \\    plan                        planning bundle: summary + open sessions + 14d
@@ -396,6 +397,7 @@ dispatch! = |cmd|
         Command.Activity(id_str) => ReportSessions.activity!(id_str)
         Command.Load(days) => Report.load_series!(days)
         Command.PowerCurve(days, sport) => ReportHealth.power_curve!(days, sport)
+        Command.PaceCurve(days, sport) => ReportHealth.pace_curve!(days, sport)
         Command.Season => ReportSeason.season!({})
         Command.WeekView => Plan.plan_view!(ThisWeek)
         Command.WeekViewAll => Plan.plan_view!(AllTime)

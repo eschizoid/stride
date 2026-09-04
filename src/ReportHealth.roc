@@ -632,16 +632,100 @@ ReportHealth :: [].{
         )
         cpfit =
             match Metrics.critical_power(fit_points) {
-                # a fit is only meaningful when BOTH are positive; inconsistent bests can yield a
-                # non-positive CP or W' — treat that as no fit. fit_points counts the bests
-                # AVAILABLE to the fit (same meaning tte and activity publish); `cp` of 0 is the
-                # refusal signal, so the key means one thing across commands.
+                # UNREACHABLE today: hyperbolic_fit returns Ok only when intercept and slope
+                # are both > 0, and this adapter maps them straight through, so Ok(c) cannot
+                # carry a non-positive cp or w_prime. Kept anyway, for SYMMETRY with the pace
+                # twin and as a second line — not because it protects the contract. It does
+                # not: if the shared fit were relaxed, this gate would turn the bad values
+                # into `cp: 0`, the documented refusal signal, and publish a schema-conforming
+                # payload with no error and no failing test. What actually catches that
+                # relaxation is the expect at Metrics.roc:2830 (dropping `or slope <= 0.0`
+                # fails it), and the pace twin's at :3317. Trust those, not this.
+                # fit_points counts the bests AVAILABLE to the fit (same meaning tte and
+                # activity publish); `cp` of 0 is the refusal signal, so the key means one
+                # thing across commands.
                 Ok(c) => (if c.cp > 0.0 and c.w_prime > 0.0 { cp: c.cp, w_prime: c.w_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cp: 0.0, w_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() })
                 Err(_) => { cp: 0.0, w_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() }
             }
         Output.out!(
             { window_days: days, sport, points, cp: cpfit.cp, w_prime: cpfit.w_prime, fit_r2: cpfit.r2, fit_points: cpfit.points },
             Render.power_curve_screen,
+        )
+    }
+
+    # Critical speed: the pace twin of power_curve! (#188). Three grade-adjusted rungs
+    # (300/600/1200 s), MAXed over the window, fitted to S(t) = D'/t + CS.
+    #
+    # Two deliberate differences from the power side, both required rather than stylistic:
+    # the sport filter is EXACT (sport_exact_sql, not sport_filter_sql) because speed
+    # populations do not pool across a family the way power does; and every stored rung
+    # already sits inside the 2-20 min band where the 2-parameter model holds, so there is
+    # no aerobic/anaerobic trim here — the power version needs one only because it stores
+    # sprint and 60-min rungs that this ladder does not have.
+    pace_curve! : U64, Str => Try({}, _)
+    pace_curve! = |days, sport| {
+        path = Db.open_db!({})?
+        units = Db.units!(path)?
+        sx = Report.sport_exact_sql(sport)
+        # only the refusal path renders this, so only the refusal path pays for it
+        avail = if Str.is_empty(sport) Report.sports_with_speed!(path, days)? else []
+        # No sport named -> no fit, and no reason to touch the ladder at all. The refusal has
+        # to happen HERE and not only in the renderer: JSON consumers never reach the screen,
+        # and a pooled `cs` reads as a real number to them. `cs` of 0 is the documented
+        # refusal signal. Skipping the aggregate matters because this is the DEFAULT
+        # invocation — `stride pace-curve` and `cs` both land here — so the query would run,
+        # scan the window, and have its result discarded on the most common call.
+        points =
+            if Str.is_empty(sport) {
+                []
+            } else {
+                cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
+                r = Sqlite.query!({
+                    path: Path.utf8(path),
+                    query:
+                        \\SELECT
+                        \\  CAST(COALESCE(MAX(m.best_300s_speed), 0) AS REAL) AS d300,
+                        \\  CAST(COALESCE(MAX(m.best_600s_speed), 0) AS REAL) AS d600,
+                        \\  CAST(COALESCE(MAX(m.best_20min_speed), 0) AS REAL) AS d1200
+                        \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                        \\WHERE a.start_local >= :cutoff${sx.frag}
+                    ,
+                    bindings: List.concat([{ name: ":cutoff", value: String(cutoff) }], sx.binds),
+                    row: |cols| |stmt| {
+                        d300 = Sqlite.f64("d300")(cols)(stmt)?
+                        d600 = Sqlite.f64("d600")(cols)(stmt)?
+                        d1200 = Sqlite.f64("d1200")(cols)(stmt)?
+                        Ok({ d300, d600, d1200 })
+                    },
+                })?
+                raw : List({ dur_s : U64, speed : F64 })
+                raw = [
+                    { dur_s: 300, speed: r.d300 },
+                    { dur_s: 600, speed: r.d600 },
+                    { dur_s: 1200, speed: r.d1200 },
+                ]
+                List.keep_if(raw, |p| p.speed > 0.0)
+            }
+        fit_points = List.map(points, |p| { dur_s: (p.dur_s).to_f64(), speed: p.speed })
+        csfit =
+            match Metrics.critical_speed(fit_points) {
+                # UNREACHABLE today: hyperbolic_fit returns Ok only when intercept and slope
+                # are both > 0, and this adapter maps them straight through, so Ok(c) cannot
+                # carry a non-positive cs or d_prime. Kept anyway, for SYMMETRY with the power
+                # twin and as a second line — not because it protects the contract. It does
+                # not: if the shared fit were relaxed, this gate would turn the bad values
+                # into `cs: 0`, the documented refusal signal, and publish a schema-conforming
+                # payload with no error and no failing test. What actually catches that
+                # relaxation is the expect at Metrics.roc:3317 (dropping `or slope <= 0.0`
+                # fails it), and the power twin's at :2830. Trust those, not this.
+                # fit_points counts the bests AVAILABLE to the fit; `cs` of 0 is the refusal
+                # signal, so the key means one thing across commands, exactly as `cp` does.
+                Ok(c) => (if c.cs > 0.0 and c.d_prime > 0.0 { cs: c.cs, d_prime: c.d_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cs: 0.0, d_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() })
+                Err(_) => { cs: 0.0, d_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() }
+            }
+        Output.out!(
+            { window_days: days, sport, points, cs: csfit.cs, d_prime: csfit.d_prime, fit_r2: csfit.r2, fit_points: csfit.points },
+            |p| Render.pace_curve_screen(units, avail, p),
         )
     }
 }

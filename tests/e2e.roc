@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1107)?
+    checks_ran_exactly!(1110)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1330,7 +1330,7 @@ b_init_config! = |ctx| {
     # here is the deliberate-bump discipline: adding a properly described command still
     # has to change a number a reader sees.
     overlap = Str.trim(sh!("LC_ALL=C comm -12 '${verbs_dir}/parser' '${verbs_dir}/spec' | wc -l | tr -d ' '"))
-    check!("...and the two lists genuinely overlap on all 31 verbs (got ${overlap})", overlap == "31")?
+    check!("...and the two lists genuinely overlap on all 33 verbs (got ${overlap})", overlap == "33")?
     _ = sh!("rm -rf '${verbs_dir}'")
 
     # The sub-form direction. `unknown_command` was the wrong discriminator (only an
@@ -2038,7 +2038,14 @@ b_seed_analyze! = |ctx| {
     # the delete, on a fixture without 9003, which is why its shape is free to be whatever
     # the sweep needs.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9003,'Track Session','Run','${ctx.today}T23:00:00Z',1800,8000,10,160);")
-    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (9003,40.0,190.0,1800,1);")
+    # 9003 carries all three speed rungs so `pace-curve` has a REAL fit to sweep — the
+    # units arm below is otherwise blind, since a payload of all zeros moves with no setting
+    # and would certify nothing (#188). All THREE rungs are seeded so `fit_points` reaches 3,
+    # which is the only value at which `fit_r2` carries information — no integration test
+    # reached that branch otherwise. Seeding best_20min_speed does NOT disturb the 60-day
+    # threshold-pace derivation: no `analyze` runs between this insert and 9003's delete, so
+    # period_threshold_sql never sees the row.
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev,best_300s_speed,best_600s_speed,best_20min_speed) VALUES (9003,40.0,190.0,1800,1,4.6667,4.1667,4.0);")
     _ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (9003,1,'work',0,240,4.1667,'pace'),(9003,2,'work',300,240,4.13,'pace');")
     _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (9001,50.0,190.0,3600,1),(9002,52.0,190.0,3600,1);")
     # ── The SI contract and its human mirror, both SWEPT rather than enumerated. Naming
@@ -2066,7 +2073,12 @@ b_seed_analyze! = |ctx| {
     # `units` already in scope at line 36.
     #
     # assume this leg provides it.
-    units_sweep = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); n=0; d=0; ok=0; blind=; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance' \"activity $aid\"; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; raw=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); a=$(printf '%s' \"$raw\" | md5); case \"$raw\" in *'\"data\"'*) ok=$((ok+1));; *) blind=\"$blind$c \";; esac; HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; rawb=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); b=$(printf '%s' \"$rawb\" | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n ok=$ok blind=$(echo $blind) differ=$d\""))
+    # The sweep and the certificate below must exercise the SAME invocation. Two copies of
+    # the string drift: reverting the sweep entry to a bare `pace-curve` (its round-1
+    # spelling) left a planted units leak passing while the certificate still reported ok,
+    # because the certificate was certifying its own hardcoded call. One variable, both sites.
+    pc_cmd = "pace-curve 90 Run"
+    units_sweep = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); n=0; d=0; ok=0; blind=; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance' '${pc_cmd}' \"activity $aid\"; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; raw=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); a=$(printf '%s' \"$raw\" | md5); case \"$raw\" in *'\"data\"'*) ok=$((ok+1));; *) blind=\"$blind$c \";; esac; HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; rawb=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); b=$(printf '%s' \"$rawb\" | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n ok=$ok blind=$(echo $blind) differ=$d\""))
     units_iv_live = Str.trim(sh!("h='${ctx.home}'; reps=$(sqlite3 '${ctx.db}' \"SELECT count(*) FROM activity_segments WHERE activity_id=9003 AND kind='work'\"); HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' activity 9003 2>/dev/null | jq -r '.data.interval_summary // \"\"' | grep -qE '^'\"$reps\"'×\\[[0-9]+:[0-9]{2} @ [0-9]+:[0-9]{2}/km( / [0-9]+:[0-9]{2} easy)?\\]$' && echo \"reps=$reps shape-ok\" || echo \"reps=$reps shape-bad\""))
     units_swept_id = Str.trim(sh!("sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'"))
     units_probe_live = sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' progress 2>/dev/null")
@@ -2077,7 +2089,15 @@ b_seed_analyze! = |ctx| {
     # NOTE for whoever edits the fixture: the regex fires on any `km` bounded by
     # non-letters, so naming a seeded activity "10km Race" will trip this check on the
     # NAME rather than a unit. Rename the activity; the guard is not wrong.
-    units_km_leak = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; n=0; k=0; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'top distance' \"activity $aid\"; do n=$((n+1)); HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' $c 2>/dev/null | grep -qE '(^|[^a-z])km([^a-z]|$)|min/km' && k=$((k+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"screens=$n metric_leaks=$k\""))
+    #
+    # CAPTURED BEFORE THE CLEANUP, and that now matters more than it used to. 9003 is
+    # deleted below, and `pace-curve` is in this sweep — reading it afterwards renders "no
+    # pace data in this window", which contains no unit and so passes while testing nothing.
+    # A probe moved down to the assertion site instead of this capture site sees exactly
+    # that. It has already happened twice on this leg — once when the pace-curve certificate
+    # was first written, once when a reviewer probed it. Same warning as the swept-id note
+    # further down; it applies here too.
+    units_km_leak = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; n=0; k=0; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'top distance' '${pc_cmd}' \"activity $aid\"; do n=$((n+1)); HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' $c 2>/dev/null | grep -qE '(^|[^a-z])km([^a-z]|$)|min/km' && k=$((k+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"screens=$n metric_leaks=$k\""))
     # The `activity` leg's own liveness. Without this it can go silent exactly as the
     # progress leg did: an empty `aid` makes the loop run bare `stride activity`, which
     # prints a usage line, contains no km, and scores as clean while testing nothing.
@@ -2094,9 +2114,21 @@ b_seed_analyze! = |ctx| {
     # Cleanup runs BEFORE the assertions. All three use `?`, so asserting first would skip
     # the delete on any failure and leave these rows in the shared fixture for the 868
     # checks that follow — burying the real cause under a storm of unrelated failures.
+    # ...and the pace-curve leg is LIVE. `swept=N ok=N differ=0` is satisfied by a payload of
+    # all zeros: nothing in it moves with the units setting because nothing in it is a
+    # measurement. A planted leak (cs *= 2.23694 under Imperial) survived the whole suite on
+    # a build with rc=0 while this arm reported ok, which is what the certificate closes.
+    # cs is METRES PER SECOND in both settings, so the VALUE is asserted, not merely that a
+    # fit exists: 3.75 m/s from rungs 4.6667/4.1667/4.0, scaled x100 because an exact float
+    # string is brittle. Three points is also the only count at which fit_r2 carries
+    # information. The pace-curve SCREEN is swept below too, so the fit_points >= 3 branch is
+    # exercised end to end on both sides — the payload here, the rendered line there. Before
+    # that the screen was never rendered anywhere in e2e, only in Render expects.
+    units_pc_live = Str.trim(sh!("h='${ctx.home}'; HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' ${pc_cmd} 2>/dev/null | jq -r '.data | \"cs=\\(.cs*100|round) pts=\\(.fit_points) r2=\\(.fit_r2*100|round)\"'"))
+    check!("...and the swept pace-curve HAS a fit, else the units arm certifies a payload of zeros (${units_pc_live})", units_pc_live == "cs=375 pts=3 r2=99")?
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 9003; DELETE FROM activity_metrics WHERE activity_id IN (9001,9002,9003); DELETE FROM activities WHERE id IN (9001,9002,9003);")
     check!("the sweep's progress leg is LIVE — the fixture has a distance-keyed group label", Str.contains(units_probe_live, "(~"))?
-    check!("no command's JSON moves with the units setting — SI is the contract, swept not enumerated", units_sweep == "swept=13 ok=13 blind= differ=0")?
+    check!("no command's JSON moves with the units setting — SI is the contract, swept not enumerated", units_sweep == "swept=14 ok=14 blind= differ=0")?
     # A REGEX, and the couplings it went through are worth stating. `sed 's/[0-9]/N/g'`
     # was per-digit, so it pinned how MANY digits each field had — 10:00/km would fail a
     # check about FORMAT. Replacing it with an anchored regex fixed that and introduced a
@@ -2135,7 +2167,7 @@ b_seed_analyze! = |ctx| {
     # certifies a row the sweep never visited. Captured BEFORE the cleanup, since 9003 is
     # deleted below and a check reading it afterwards resolves a different row entirely.
     check!("...and the row the sweep resolves IS the one the probe certifies", units_swept_id == "9003")?
-    check!("with imperial set, no human screen still prints kilometres", units_km_leak == "screens=10 metric_leaks=0")?
+    check!("with imperial set, no human screen still prints kilometres", units_km_leak == "screens=11 metric_leaks=0")?
     check!("...and the activity leg is LIVE — a bare `activity` with no id would test nothing", units_activity_live != "0")?
     check!("...and the NUMBERS convert, not just the labels — the ratio is the mile", units_ratio == "mile")?
     # The same invariant stated STATICALLY, over source rather than output. The runtime
@@ -2160,7 +2192,12 @@ b_seed_analyze! = |ctx| {
     # arm and all six `progress_section` expects pass `Ef`, so nothing reaches it. The
     # legend and `top`'s header name a unit and render no number. The pace column renders
     # one — a pace string — and DOES convert, via `pace_per_dist`, which the fmt filter does
-    # not match; it is exempt for that reason, not for rendering nothing.
+    # not match; it is exempt for that reason, not for rendering nothing. `pace-curve`
+    # (#188) adds two more of the same kind: its table header names a unit and renders no
+    # number, and its Critical Speed line converts via `pace_from_speed`, which the fmt
+    # filter does not match either. Both are pinned by Render expects (metric AND imperial
+    # arms) instead — and so is D′, whose line writes the literal "m"/"yd" rather than
+    # calling a unit helper, so this check cannot see it at all.
     #
     # `expect*` skips top-level expects, which is every unit expect that exists. It does
     # NOT skip a block-expect BODY (`expect {` on one line, `Render.dist_unit(...)` on the
@@ -2174,7 +2211,7 @@ b_seed_analyze! = |ctx| {
     # line; do not lower the number. A comment containing `dist_unit(` would also count
     # toward `examined`. Both are loud false positives, which is the safe direction.
     units_static = Str.trim(sh!("n=0; fmt=0; bad=0; for f in src/*.roc; do while IFS= read -r l; do case \"$l\" in expect*) continue;; esac; case \"$l\" in *'dist_unit('*|*'pace_unit('*|*'seg_unit('*) ;; *) continue;; esac; n=$((n+1)); case \"$l\" in *'fmt0('*|*'fmt1('*|*'fmt2('*|*'seg_value('*) fmt=$((fmt+1));; *) continue;; esac; case \"$l\" in *'dist_value(units'*|*'pace_per_dist(units'*|*'seg_value(units'*) ;; *) bad=$((bad+1));; esac; done < $f; done; echo \"examined=$n formatted=$fmt unconverted=$bad\""))
-    check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=15 formatted=11 unconverted=0")?
+    check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=17 formatted=11 unconverted=0")?
     check!("coverage tiers discriminate (high and medium both live)", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct > 0) and (.medium_pct > 0)") == "true")?
     check!("form coverage carries the 90d window", strjq!(ctx, ["summary"], ".data.form_coverage_90d | (.high_pct + .medium_pct + .low_pct == 100) and ((.known | type) == \"boolean\")") == "true")?
     # with fixtures loaded TSB is known, so the enum arm is required here; the
@@ -2934,6 +2971,18 @@ b_seed_analyze! = |ctx| {
     check!("doctor conforms", validate!("doctor", "doctor") == "")?
     check!("zones conforms", validate!("zones", "zones") == "")?
     check!("power-curve conforms", validate!("power-curve", "power_curve") == "")?
+    # BOTH pace-curve forms. The FITTED one needs its own row: 9003 is deleted ~800 lines
+    # earlier, so validating the fitted form against the ambient db checks an EMPTY payload
+    # and never exercises properties.points.items — mutating items.speed.type to "string"
+    # passed the whole suite that way. 9004 exists only for these two lines.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9004,'Schema Probe','Run','${ctx.today}T06:00:00Z',1800,8000,10,150);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev,best_300s_speed,best_600s_speed,best_20min_speed) VALUES (9004,40.0,190.0,1800,1,4.6667,4.1667,4.0);")
+    # the no-sport refusal, which returns a
+    # different-shaped payload (empty points, cs 0) and would otherwise be a never-validated
+    # form — the §9c guard below is a hardcoded list and cannot see a new one.
+    check!("pace-curve conforms — with rows, so points.items is exercised", validate!("pace-curve 90 Run", "pace_curve") == "")?
+    check!("...and its no-sport refusal conforms too", validate!("pace-curve 90", "pace_curve") == "")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 9004; DELETE FROM activities WHERE id = 9004;")
     check!("compare conforms", validate!("compare week", "compare") == "")?
     check!("progress conforms", validate!("progress", "progress") == "")?
     # `week` is the CURRENT Mon-Sun window, and the fixture's sessions are dated
@@ -3030,7 +3079,7 @@ b_seed_analyze! = |ctx| {
     check!("every 1.0 error code is still in the contract (baseline superset; missing: ${code_missing})", code_missing == "")?
     # ...and the baselines themselves can speak: an empty pins file would make both
     # supersets vacuously true, so their line counts are asserted alive
-    check!("the 1.0 baselines are non-empty (${Str.trim(sh!("wc -l < tools/commands-1.0.pins | tr -d ' '"))} cmds, ${Str.trim(sh!("wc -l < tools/error-codes-1.0.pins | tr -d ' '"))} codes)", Str.trim(sh!("wc -l < tools/commands-1.0.pins | tr -d ' '")) == "36" and Str.trim(sh!("wc -l < tools/error-codes-1.0.pins | tr -d ' '")) == "48")?
+    check!("the 1.0 baselines are non-empty (${Str.trim(sh!("wc -l < tools/commands-1.0.pins | tr -d ' '"))} cmds, ${Str.trim(sh!("wc -l < tools/error-codes-1.0.pins | tr -d ' '"))} codes)", Str.trim(sh!("wc -l < tools/commands-1.0.pins | tr -d ' '")) == "38" and Str.trim(sh!("wc -l < tools/error-codes-1.0.pins | tr -d ' '")) == "48")?
     # ── §9c's coverage list, pinned to the e2e source itself. The ADR names the forms
     # validated by NO pass; that prose rotted twice by hand-counting, so the list is
     # now held against this file's own validate arms: each never-validated form must

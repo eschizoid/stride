@@ -34,6 +34,7 @@ Command := [
 	Activity(Str),
 	Load(U64),
 	PowerCurve(U64, Str),
+	PaceCurve(U64, Str),
 	Season,
 	WeekView,
 	WeekViewAll,
@@ -159,6 +160,12 @@ Command := [
 			[_, "pc", n] => count(n, |c| PowerCurve(c, ""))
 			[_, "power-curve", n, sport] => count(n, |c| PowerCurve(c, sport))
 			[_, "pc", n, sport] => count(n, |c| PowerCurve(c, sport))
+			[_, "pace-curve"] => Ok(PaceCurve(90, ""))
+			[_, "cs"] => Ok(PaceCurve(90, ""))
+			[_, "pace-curve", n] => count(n, |c| PaceCurve(c, ""))
+			[_, "cs", n] => count(n, |c| PaceCurve(c, ""))
+			[_, "pace-curve", n, sport] => count(n, |c| PaceCurve(c, sport))
+			[_, "cs", n, sport] => count(n, |c| PaceCurve(c, sport))
 			[_, "week"] => Ok(WeekView)
 			[_, "week", "all"] => Ok(WeekViewAll)
 			# optional fifth argument: a structured target `<reps>x<mm:ss>@<watts>W`
@@ -458,6 +465,8 @@ Command := [
 		errs(reads("load", [opt_ex("<days>", "30")], "load.json"), ["bad_count", "unreadable_daily_load_day"]),
 		errs(reads("power-curve", [opt_ex("<days>", "30"), opt_ex("<sport>", "Ride")], "power_curve.json"), ["bad_count"]),
 		errs(reads("pc", [opt_ex("<days>", "30"), opt_ex("<sport>", "Ride")], "power_curve.json"), ["bad_count"]),
+		errs(reads("pace-curve", [opt_ex("<days>", "30"), opt_ex("<sport>", "Run")], "pace_curve.json"), ["bad_count"]),
+		errs(reads("cs", [opt_ex("<days>", "30"), opt_ex("<sport>", "Run")], "pace_curve.json"), ["bad_count"]),
 		## A DATE, not a workout name. The parse arm bound this to a variable called
 		## `name`, which is where a `<name>` placeholder once came from — the
 		## handler queries `substr(start_local, 1, 10) = :date` and answers
@@ -907,3 +916,6 @@ expect {
     r = Command.split_format_args(["stride", "--json", "skip", "5", "--", "--human"])
     r.mode == ForceJson and r.rest == ["stride", "skip", "5", "--human"]
 }
+expect match Command.parse(["stride", "pace-curve"]) { Ok(PaceCurve(90, "")) => True  _ => False }
+expect match Command.parse(["stride", "cs"]) { Ok(PaceCurve(90, "")) => True  _ => False }
+expect match Command.parse(["stride", "pace-curve", "60", "Run"]) { Ok(PaceCurve(60, "Run")) => True  _ => False }

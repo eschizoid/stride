@@ -749,6 +749,46 @@ Report :: [].{
             { frag: " AND a.sport_type COLLATE NOCASE IN (${Str.join_with(names, ", ")})", binds: List.map_with_index(fam, |s, i| { name: ":sp${(i).to_str()}", value: String(s) }) }
         }
 
+
+    # Pace's sport filter is EXACT, where power's is by family (ADR 0002 amendment).
+    # A pool swim, an open-water swim and a trail run share the arithmetic of a speed
+    # model and nothing else: still water, chop and a rocky descent produce speeds that
+    # are not comparable at all, so pooling them the way sport_filter_sql pools a power
+    # family would fit one curve through three unrelated populations. Empty word = no
+    # filter, matching sport_filter_sql's contract (a lone SPACE, never "").
+    sport_exact_sql : Str -> { frag : Str, binds : List({ name : Str, value : [Null, Real(F64), Integer(I64), String(Str), Bytes(List(U8))] }) }
+    sport_exact_sql = |word|
+        if Str.is_empty(word) {
+            { frag: " ", binds: [] }
+        } else {
+            { frag: " AND a.sport_type COLLATE NOCASE = :spx", binds: [{ name: ":spx", value: String(word) }] }
+        }
+
+    # Which sports actually hold a speed ladder in the window — the no-silent-empty hint for
+    # `pace-curve`, which refuses a pooled fit and has to say what the athlete CAN ask for.
+    # Each rung is tested separately rather than COALESCEd into one: COALESCE returns the
+    # first NON-NULL, so a stored 0.0 in the 20-min rung would mask positive 5- and 10-min
+    # ones — and Db.roc documents these columns as "0/NULL = no data", so 0 is an admitted
+    # stored value. That predicate denied a sport whose curve fits.
+    # Ordered by row count so the sport they train most is named first.
+    sports_with_speed! : Str, U64 => Try(List(Str), _)
+    sports_with_speed! = |path, days| {
+        cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
+        Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT COALESCE(CAST(a.sport_type AS TEXT), '') AS s
+                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                \\WHERE a.start_local >= :cutoff
+                \\  AND (COALESCE(m.best_20min_speed, 0) > 0 OR COALESCE(m.best_600s_speed, 0) > 0
+                \\       OR COALESCE(m.best_300s_speed, 0) > 0)
+                \\GROUP BY a.sport_type
+                \\ORDER BY COUNT(*) DESC
+            ,
+            bindings: [{ name: ":cutoff", value: String(cutoff) }],
+            rows: Sqlite.str("s"),
+        })
+    }
     # the no-silent-empty hint: what sports DOES the data hold
     load_series! : U64 => Try({}, _)
     load_series! = |days| {

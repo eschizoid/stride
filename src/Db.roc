@@ -256,7 +256,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 27
+    schema_version = 28
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -349,6 +349,15 @@ Db :: [].{
         # pace twin of ftp_used, compared in the recompute WHERE so a threshold change reanalyzes.
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_20min_speed REAL")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN threshold_pace_used REAL")?
+        # v28 (#188): the mean-max SPEED ladder — the pace twin of the v12 power curve.
+        # best_20min_speed above is the 1200 s point and already existed; critical speed
+        # needs at least two points at DISTINCT durations to fit S(t) = D'/t + CS, so the
+        # 300 s and 600 s rungs are added here rather than a fuller ladder: they are the
+        # mid-range durations where the 2-parameter model holds, and they mirror exactly
+        # the three the power fit reads. Grade-adjusted (m/s), so a hilly interval is
+        # comparable with a flat one. REAL; 0/NULL = no data (activity shorter than the rung).
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_300s_speed REAL")?
+        alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_600s_speed REAL")?
         # v16 (#92): HR / power samples dropped by the validity filters vs offered, recorded
         # here because the filtered values are gone before anything downstream sees the
         # metrics. Counts ONLY valid_hr / valid_watts rejections — the wholesale exclusion of
