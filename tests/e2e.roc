@@ -2089,6 +2089,14 @@ b_seed_analyze! = |ctx| {
     # NOTE for whoever edits the fixture: the regex fires on any `km` bounded by
     # non-letters, so naming a seeded activity "10km Race" will trip this check on the
     # NAME rather than a unit. Rename the activity; the guard is not wrong.
+    #
+    # CAPTURED BEFORE THE CLEANUP, and that now matters more than it used to. 9003 is
+    # deleted below, and `pace-curve` is in this sweep — reading it afterwards renders "no
+    # pace data in this window", which contains no unit and so passes while testing nothing.
+    # A probe moved down to the assertion site instead of this capture site sees exactly
+    # that. It has already happened twice on this leg — once when the pace-curve certificate
+    # was first written, once when a reviewer probed it. Same warning as the swept-id note
+    # further down; it applies here too.
     units_km_leak = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; n=0; k=0; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'top distance' '${pc_cmd}' \"activity $aid\"; do n=$((n+1)); HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' $c 2>/dev/null | grep -qE '(^|[^a-z])km([^a-z]|$)|min/km' && k=$((k+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"screens=$n metric_leaks=$k\""))
     # The `activity` leg's own liveness. Without this it can go silent exactly as the
     # progress leg did: an empty `aid` makes the loop run bare `stride activity`, which
