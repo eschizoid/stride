@@ -510,11 +510,13 @@ ReportHealth :: [].{
             }
         }
     }
-    # "am I improving on THIS workout?" — anchored on a date: resolves that day's workout(s)
-    # and shows every comparable instance chronologically, with Efficiency Factor (NP/HR) as
-    # the fitness tell. Named classes match by exact name; Strava auto-names ("Morning Ride")
-    # cover different routes, so those only compare sessions within ±10% of the anchor's distance.
-    # JSON tag for a chosen lens
+    # Time to exhaustion at a caller-named power (#187). NOT the same fit
+    # power-curve publishes: that one spans every power sport and includes
+    # today, this one is per-family and excludes its anchor date. They agree
+    # on an athlete whose rides dominate the curve, and only then. Every refusal is explicit:
+    # no fit, at-or-below CP, or a result outside the 2-20 minute band where the
+    # 2-parameter model holds — that last still returns the number, LABELLED,
+    # rather than hiding it or pretending it is trustworthy.
     tte! : Str => Try({}, _)
     tte! = |watts_arg|
         match Metrics.arg_f64(Str.trim(watts_arg)) {

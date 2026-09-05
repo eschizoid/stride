@@ -869,6 +869,7 @@ ReportSessions :: [].{
             device_watts: Err(Missing),
         })
     }
+    # JSON tag for a chosen lens
     lens_name : [Ef, SpeedHr, Rpe] -> Str
     lens_name = |lens|
         match lens {
@@ -877,9 +878,6 @@ ReportSessions :: [].{
             Rpe => "rpe"
 
         }
-    # "am I improving on THIS workout?" — anchored on a date, rendered through the
-    # sport-aware lens (power->EF, distance->speed/HR, rated->RPE). Bare `progress`
-    # uses the latest analyzed workout.
     # ── rep-level comparison (#149) ──────────────────────────────────────
     # `progress` compares whole SESSIONS; this compares the reps inside them. The
     # anchor is a session with detected work blocks (#95/#171); comparables are
@@ -1145,6 +1143,12 @@ ReportSessions :: [].{
             }
         }
     }
+    # "am I improving on THIS workout?" — anchored on a date: resolves that day's workout(s)
+    # and shows every comparable instance chronologically, rendered through the sport-aware
+    # lens (power -> EF, distance -> speed/HR, rated -> RPE). Named classes match by exact
+    # name; Strava auto-names ("Morning Ride") cover different routes, so those only compare
+    # sessions within ±10% of the anchor's distance. Bare `progress` uses the latest
+    # analyzed workout.
     progress! : Str, [Asc, Desc] => Try({}, _)
     progress! = |date_arg, sort| {
         path = Db.open_db!({})?

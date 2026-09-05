@@ -873,11 +873,4 @@ Report :: [].{
         }
     }
 
-    # Time to exhaustion at a caller-named power (#187). NOT the same fit
-    # power-curve publishes: that one spans every power sport and includes
-    # today, this one is per-family and excludes its anchor date. They agree
-    # on an athlete whose rides dominate the curve, and only then. Every refusal is explicit:
-    # no fit, at-or-below CP, or a result outside the 2-20 minute band where the
-    # 2-parameter model holds — that last still returns the number, LABELLED,
-    # rather than hiding it or pretending it is trustworthy.
 }
