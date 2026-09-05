@@ -66,6 +66,10 @@ ReportSeason :: [].{
                     }
                 Err(_) => List.append(acc, { fam: r.fam, n: r.n, ftp_lo: r.ftp_lo, ftp_hi: r.ftp_hi, ftp_first: r.ftp_hi, ftp_last: r.ftp_hi })
             })
+    # ── season view (#139, ADR 0011) ────────────────────────────────────
+    # Blocks are bounded by ABSENCE and described by measurement. Nothing here
+    # names a phase: "base"/"build"/"peak" are claims about intent, and load
+    # observes only volume.
     season! : {} => Try({}, _)
     season! = |_| {
         path = Db.open_db!({})?
@@ -281,18 +285,4 @@ ReportSeason :: [].{
             )
         }
     }
-    # The athlete's CP/W' fit for ONE SPORT FAMILY as of a DATE, over the same
-    # 2-20 minute band power-curve fits (#186/#187 spend this model, so they
-    # must not fit a second, differently-shaped one).
-    #
-    # Strictly BEFORE the date, not on-or-before: a ride inside its own fit
-    # window raises the very W' it is then measured against. Measured on a
-    # breakthrough 3x12 — W' 2490 J excluding the
-    # ride, 6416 J including it, a 2.58x change in the denominator that scales
-    # every W' number for that ride, and it fires precisely on the rides where
-    # the athlete did something new.
-    #
-    # The family is the CALLER's, never a hardcoded Ride: a rowing session was
-    # being scored against a cyclist's CP and flagged known, which is worse than
-    # having no number at all.
 }

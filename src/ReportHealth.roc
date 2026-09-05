@@ -577,6 +577,10 @@ ReportHealth :: [].{
                     }
                 }
         }
+    # power-duration curve: the best mean-max power sustained for each ladder duration,
+    # taken as the MAX across a window (per sport), plus a Critical Power / W' fit over the
+    # aerobic points. Reads the stored best_<dur>_w columns — no stream re-read. 0-power
+    # durations (no ride long enough) are dropped, so the curve only shows real data.
     power_curve! : U64, Str => Try({}, _)
     power_curve! = |days, sport| {
         path = Db.open_db!({})?
