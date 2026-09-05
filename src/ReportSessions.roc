@@ -404,7 +404,7 @@ ReportSessions :: [].{
                     # which is which is the gap #311 opened. When they differ, the recorded value is
                     # named beside it — that number is what the athlete compares against Strava.
                     # Compared as RENDERED, not as floats: 161.461 vs 161.2 differs by 0.26 and would
-                    # print "avg 161 (recorded 161)" (measured on 336 of 490 firing rows). And only
+                    # print "avg 161 (recorded 161)" (measured on most firing rows). And only
                     # when a reading was RECORDED: a stream-only session stores no average, COALESCE
                     # makes it 0.0, and "(recorded 0)" states a measurement where `avg 0` merely read
                     # as absent (numeric-0 invariant, ADR 0009).

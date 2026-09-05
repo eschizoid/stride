@@ -290,7 +290,7 @@ Plan :: [].{
         # of a window clause that is NULL-false on both comparisons, so a NULL-dated
         # activity never enters the list and the guard was provably dead for half the
         # class — and whether a POISONED (non-NULL) value can even exist inside a week
-        # window depends on the calendar (18 of 72 Mondays have none), so a test against
+        # window depends on the calendar (a quarter of Mondays have none), so a test against
         # the scoped guard goes red on a quarter of weeks for no regression. The sweep is
         # the same one `rate`, `compare`, `summary`, `plan` and `stats` use; `season`
         # guards inline over a differently-grouped query for its own stated reason.
