@@ -122,8 +122,8 @@ schema-check: build
         exit 4
     fi
     # RELATIVE on the DERIVATION side: catches jq truncating mid-stream, which the
-    # floor alone shrugs at — deleting `.args` from one entry gives 16 against 18, and a
-    # floor of 15 passes.
+    # floor alone shrugs at — deleting `.args` from one entry drops the derived count by
+    # one while leaving the floor satisfied.
     if [ "$nforms" -ne "$want" ]; then
         echo "schema-check: derived $nforms forms but the command table declares $want — the derivation is broken, not the payloads"
         exit 4
@@ -210,7 +210,7 @@ schema-check: build
             #
             # Not skipped, for a reason worth stating: `season`, `summary`, `plan` and
             # `compare` can ALL raise the #247 date codes, so allowing them to skip would
-            # silently drop four of eighteen forms — 22% of coverage — on exactly the
+            # silently drop four forms' worth of coverage, on exactly the
             # databases where payload validation matters most. They are also
             # argument-independent, so failing on them can never be a false accusation
             # caused by this recipe's own derived filler.
