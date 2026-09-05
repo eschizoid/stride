@@ -45,12 +45,11 @@ Output :: [].{
     # the builtin encoder stringifies tags ("None"/"Null"), verified by probe. So the
     # contract is per-field, in ADR 0009's three classes:
     #   IMPOSSIBLE-ZERO fields (np_w, avg_hr, intensity, ftp_used): a real 0 cannot
-    #   occur, so 0 means "not available". THREE of those four carry a flag — ftp_used
-    #   deliberately does not, because analyze always binds it (0 when no FTP is
-    #   derivable), so a NULL-decoded flag would be all-true. Do NOT "fix" that
-    #   asymmetry by adding a phantom ftp_used_known; see ADR 0009.
-    #   The _known companion flags decode the
-    #   STORED NULLs (CASE WHEN … IS NULL), never the coalesced magnitudes — np can
+    #   occur, so 0 means "not available". THREE of those four carry a flag; ftp_used
+    #   does not, because analyze always binds it (0 when no FTP is derivable), so a
+    #   NULL-decoded flag would be all-true and carry no information (ADR 0009).
+    #   The _known companion flags decode the STORED NULLs (CASE WHEN … IS NULL),
+    #   never the coalesced magnitudes — np can
     #   be present while intensity is NULL (power stream, no FTP yet), which is why
     #   power_known and intensity_known are separate flags.
     #   REAL-ZERO fields (z1_s..z5_s when zones_known, distance on strength): 0 is an

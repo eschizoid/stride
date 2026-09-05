@@ -1909,9 +1909,8 @@ Metrics :: [].{
     # Overflow stays the stdlib's call ("99999999999999999999" passes the shape, fails
     # from_str). A leading `+` is deliberately dropped.
     #
-    # DO NOT "simplify" this away by calling from_str directly (#201,
-    # docs/roc-new-compiler-notes.md) — that silently restores an unrecoverable write
-    # on a fat-fingered argument.
+    # Calling from_str directly instead silently restores an unrecoverable write on a
+    # fat-fingered argument (#201, docs/roc-new-compiler-notes.md).
 
     is_plain_int : Str -> Bool
     is_plain_int = |s| {
