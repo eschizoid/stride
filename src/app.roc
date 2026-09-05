@@ -260,8 +260,8 @@ reexec_with_format! = |cleaned, fmt| {
 #
 # An uncaught platform error reaches main! as an opaque tag and the platform
 # prints `Program exited with error: <Tag>` to STDERR with empty stdout — no
-# code, no envelope, nothing a machine can branch on, and it was the first
-# thing a new user met (a query before `stride init`). Catching here rather
+# code, no envelope, nothing a machine can branch on — and that is what a
+# new user meets on a query before `stride init`. Catching here rather
 # than at each of the many platform call sites means one place decides, and a failure
 # that reaches a caller without a code is a missing arm in this match rather
 # than a habit nobody enforced.
@@ -468,7 +468,7 @@ config_show! = |key|
                 # An empty ROW is not a set key. Every read path in the engine already says
                 # so — `Db.roc` collapses `''` and absent to the same `NoTz`, and `doctor`
                 # reports the identical UTC fallback for each — so `config get` answering
-                # success with `value: ""` was the outlier, and it made this command
+                # success with `value: ""` is the outlier: it makes this command
                 # disagree with bare `config`, which lists only keys holding a value.
                 # A key that reads as configured while nothing consults it is the shape of
                 # #254 itself, one layer in.
@@ -542,9 +542,8 @@ config_unset! = |key| {
         }
     # Q1: a per-sport override falls back to the GLOBAL bound — when one exists. Read that
     # before the closure, beside `existed`, and let the message capture it: the payload and
-    # `config_unset.json` stay a two-field `{key, removed}`. I had deferred this claiming it
-    # "needs a database read inside the message closure, a different shape"; the read fits
-    # here, and the claim was wrong.
+    # `config_unset.json` stay a two-field `{key, removed}`. The database read fits
+    # inside the message closure.
     global_present =
         match Str.split_first(key, "_max_") {
             Ok({ before, .. }) =>
@@ -570,11 +569,10 @@ config_unset! = |key| {
                 "${p.key} removed — stride derives it from your power history anyway; `stride summary` shows the current value"
             } else if Config.is_client_credential(p.key) {
                 # BOTH client credentials, by predicate rather than name-and-position:
-                # `strava_client_id` reached the catch-all and was told stride "will re-fetch it
-                # as needed" — false, the next sync asks the user to supply it by hand — while
-                # its sibling got the truthful sentence. Ordering was the wrong mechanism too:
-                # below `is_secret` this arm is unreachable, and only one branch is asserted
-                # anywhere.
+                # `strava_client_id` must not reach the catch-all, which promises stride
+                # "will re-fetch it as needed" — false: the next sync asks the user to
+                # supply it by hand. Ordering cannot carry this: below `is_secret` such an
+                # arm is unreachable.
                 "${p.key} removed — stride cannot re-authenticate until you supply it again and run `stride auth`"
             } else if Config.is_session_credential(p.key) or Config.is_secret(p.key) {
                 "${p.key} removed — stride is no longer authenticated; run `stride auth` to reconnect"
@@ -598,13 +596,11 @@ config_unset! = |key| {
             } else if Config.is_bookkeeping(p.key) {
                 "${p.key} removed — stride recomputes or re-fetches this one as needed"
             } else if Config.known_key(p.key) {
-                # The catch-all is now the SAFE default rather than the unrouted default.
-                # It used to promise "recompute or re-fetch", which was false for whichever
-                # `known_key` member had not been routed yet — `strava_client_id`,
-                # `utc_offset_minutes` and `strava_expires_at` in three consecutive rounds,
-                # each found by enumerating the list rather than by anything in the code.
-                # This sentence is true of every key that reaches it, so a member added
-                # tomorrow and not routed inherits a weaker message rather than a lie.
+                # The catch-all is the SAFE default rather than the unrouted default. A
+                # promise of "recompute or re-fetch" is false for any `known_key` member
+                # not yet routed to its own arm. The sentence below is true of EVERY key
+                # that reaches it, so a member added tomorrow and not routed inherits a
+                # weaker message rather than a lie.
                 "${p.key} removed — stride reads this key; run `stride doctor` if a command starts refusing"
             } else {
                 "${p.key} removed — stride does not read it"
@@ -710,8 +706,8 @@ init! = |{}| {
     Db.secure_perms!(dir)?
     Db.ensure_schema!(path)?
     Db.secure_perms!(dir)?
-    # init printed its line directly, so it was the ONE command that ignored
-    # --json — an absolute the skill states ("EVERY machine response is a
-    # versioned envelope") is only true if the setup step honors it too
+    # init goes through Output.out! like every other command. The skill states an
+    # absolute — "EVERY machine response is a versioned envelope" — which is only
+    # true if the setup step honors it too.
     Output.out!({ initialized: path }, |p| "initialized ${p.initialized}")
 }
