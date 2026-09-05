@@ -23,6 +23,7 @@ import pf.Stdout
 import pf.Path
 
 ReportHealth :: [].{
+    # career + year-to-date totals per sport
     stats! : {} => Try({}, _)
     stats! = |{}| {
         path = Db.open_db!({})?
@@ -83,6 +84,8 @@ ReportHealth :: [].{
             },
         })
 
+    # dataset health report: how much of the history has usable data, which ladder
+    # rung scored each activity, and what's honestly unscored. Trust, quantified.
     # the one-call coach-input payload
     doctor! : {} => Try({}, _)
     doctor! = |{}| {

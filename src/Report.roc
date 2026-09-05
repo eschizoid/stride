@@ -735,6 +735,9 @@ Report :: [].{
             sports_28d: sports,
         })
     }
+    # sport-word filter shared by top/activities/power-curve: the human word
+    # widens to its Strava family (Sports.family), matched IN (...) with
+    # NOCASE. Placeholders are numbered so the bindings stay real bindings.
     sport_filter_sql : Str -> { frag : Str, binds : List({ name : Str, value : [Null, Real(F64), Integer(I64), String(Str), Bytes(List(U8))] }) }
     sport_filter_sql = |word|
         if Str.is_empty(word) {

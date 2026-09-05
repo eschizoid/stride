@@ -465,7 +465,6 @@ ReportSessions :: [].{
             }
         }
     }
-    # career + year-to-date totals per sport
     activities! : U64, Str => Try({}, _)
     activities! = |limit, sport_filter| {
         path = Db.open_db!({})?
@@ -642,11 +641,6 @@ ReportSessions :: [].{
             _ => Err(BadMetric)
 
         }
-    # ranked "best sessions": top N activities by a chosen metric (vs `activities`,
-    # which is chronological). e.g. `top hr`, `top tss 5 rowing`.
-    # sport-word filter shared by top/activities/power-curve: the human word
-    # widens to its Strava family (Sports.family), matched IN (...) with
-    # NOCASE. Placeholders are numbered so the bindings stay real bindings.
     known_sports! : Str => Try(List(Str), _)
     known_sports! = |path|
         Sqlite.query_many!({
@@ -677,6 +671,8 @@ ReportSessions :: [].{
             Ok("${I64.to_str(n)} '${word}' ${noun}, but none with ${what} data")
         }
     }
+    # ranked "best sessions": top N activities by a chosen metric (vs `activities`,
+    # which is chronological). e.g. `top hr`, `top tss 5 rowing`.
     top! : Str, U64, Str => Try({}, _)
     top! = |metric, limit, sport_filter| {
         path = Db.open_db!({})?
@@ -873,8 +869,6 @@ ReportSessions :: [].{
             device_watts: Err(Missing),
         })
     }
-    # dataset health report: how much of the history has usable data, which ladder
-    # rung scored each activity, and what's honestly unscored. Trust, quantified.
     lens_name : [Ef, SpeedHr, Rpe] -> Str
     lens_name = |lens|
         match lens {
