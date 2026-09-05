@@ -401,8 +401,10 @@ Analyze :: [].{
 
     # Each activity input that feeds scoring, expressed ONCE as a SQL expression. The
     # SELECT that stores the value (inputs_select_sql) and the predicate that compares it
-    # (inputs_changed_sql) both interpolate these, so the write and the check cannot drift
-    # apart into rescoring forever or never. Compile-time constants, never user data.
+    # (inputs_changed_sql) both interpolate these — except `e_sport`/`e_start`, which the
+    # write spells separately through the `:usport`/`:ustart` bindings — so the write and
+    # the check cannot drift apart into rescoring forever or never. Compile-time
+    # constants, never user data.
     # The design rationale lives on inputs_changed_sql below.
     e_mt = "COALESCE(a.moving_time,0)"
     e_dist = "CAST(ROUND(COALESCE(a.distance,0)) AS INTEGER)"

@@ -232,7 +232,9 @@ Db :: [].{
     sport_ftp! : Str, Str => Try(F64, _)
     sport_ftp! = |path, sport| {
         raw = derive_sport_ftp!(path, sport)?
-        # whole watts — keeps the stored ftp_used and the invalidation CASE exactly equal
+        # whole watts — the displayed value rounds the way the stored `ftp_used`
+        # comparison does, so the screen cannot show a figure the invalidation
+        # check would disagree with.
         Ok(((raw).round_to_i64_try().ok_or(0)).to_f64())
     }
     derive_sport_ftp! : Str, Str => Try(F64, _)
