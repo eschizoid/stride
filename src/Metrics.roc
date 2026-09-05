@@ -1501,7 +1501,7 @@ Metrics :: [].{
             order = List.sort_with([0.U64, 1, 2], |a, b| {
                 ra = List.get(rema, a) ?? 0.0
                 rb = List.get(rema, b) ?? 0.0
-                if ra > rb Before else if ra < rb After else if a < b Before else After
+                if ra > rb Before else if ra < rb After else if a < b Before else if a > b After else Same
             })
             bump = List.take_first(order, (remainder).to_u64_wrap())
             out = List.map_with_index(floors, |f, i| f + (if List.contains(bump, i) 1 else 0))
