@@ -54,8 +54,8 @@ for f in src/*.roc; do
       continue
     fi
     while IFS= read -r expr; do
-      sites=$((sites + 1))
       [ -n "$expr" ] || continue
+      sites=$((sites + 1))
       # Scope to THIS projection — an earlier projection's CAST must not vouch for this
       # alias. Boundary: the last ` AS <name>` that is not a type cast.
       tail_expr=$(printf '%s' "$expr" | awk '{
