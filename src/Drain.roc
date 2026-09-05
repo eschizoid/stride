@@ -32,9 +32,10 @@ Drain :: [].{
 
     # Why a SYNC run ended — the value behind the payload's `stopped` field. Wider
     # than StopReason by two inhabitants: the activity LIST can be refused before the
-    # drain runs. WRAPPING rather than a fifth StopReason arm is the point — a fifth
-    # arm would be in scope where drain_streams! constructs `stopped`, so the
-    # compiler would accept a drain claiming a list refusal. Here drain_streams!
+    # drain runs, for either of its two limits. WRAPPING rather than two more
+    # StopReason arms is the point — those arms would be in scope where
+    # drain_streams! constructs `stopped`, so the compiler would accept a drain
+    # claiming a list refusal. Here drain_streams!
     # cannot name ListRateLimited at all; only sync!, which issues both requests.
     # Reusing RateLimited for both left Render unable to write the right sentence:
     # its only discriminator was `pending_streams > 0`, true on precisely the
