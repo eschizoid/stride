@@ -2840,7 +2840,6 @@ expect
         Err(_) => False
     }
 
-# NP requires at least 30 samples
 # rank_ts_sql emits TWO terms, and the FLAG is the half no fixture reaches from a
 # DESC site: NULL is SQLite's smallest value, so `key DESC` already sinks unrankable
 # rows and dropping the flag is invisible there; `key ASC` inverts. The flag is
@@ -2878,6 +2877,7 @@ expect Str.contains(Metrics.hoist_unrankable_sql("a.start_local"), "substr(a.sta
 expect Str.contains(Metrics.hoist_unrankable_sql("a.start_local"), "END) ASC,")
 expect !(Str.contains(Metrics.hoist_unrankable_sql("start_local"), "a.start_local"))
 
+# NP requires at least 30 samples
 expect Metrics.normalized_power(List.repeat(200.0, 10)).is_err()
 
 # riding exactly at FTP for one hour == 100 TSS
