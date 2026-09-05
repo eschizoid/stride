@@ -726,8 +726,8 @@ ReportHealth :: [].{
                 Err(_) => { cs: 0.0, d_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() }
             }
         Output.out!(
-            { window_days: days, sport, points, cs: csfit.cs, d_prime: csfit.d_prime, fit_r2: csfit.r2, fit_points: csfit.points },
-            |p| Render.pace_curve_screen(units, avail, p),
+            { window_days: days, sport, points, cs: csfit.cs, d_prime: csfit.d_prime, fit_r2: csfit.r2, fit_points: csfit.points, available_sports: avail },
+            |p| Render.pace_curve_screen(units, p),
         )
     }
 }
