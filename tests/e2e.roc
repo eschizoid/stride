@@ -2072,7 +2072,6 @@ b_seed_analyze! = |ctx| {
     # one-value-two-consumers shape that leaked into progress's groups[].name in #350, with
     # `units` already resolved at the top of that function.
     #
-    # assume this leg provides it.
     # The sweep and the certificate below must exercise the SAME invocation. Two copies of
     # the string drift: reverting the sweep entry to a bare `pace-curve` (its round-1
     # spelling) left a planted units leak passing while the certificate still reported ok,
@@ -2093,10 +2092,8 @@ b_seed_analyze! = |ctx| {
     # CAPTURED BEFORE THE CLEANUP, and that now matters more than it used to. 9003 is
     # deleted below, and `pace-curve` is in this sweep — reading it afterwards renders "no
     # pace data in this window", which contains no unit and so passes while testing nothing.
-    # A probe moved down to the assertion site instead of this capture site sees exactly
-    # that. It has already happened twice on this leg — once when the pace-curve certificate
-    # was first written, once when a reviewer probed it. Same warning as the swept-id note
-    # further down; it applies here too.
+    # A probe placed at the assertion site rather than here sees exactly that. Same warning
+    # as the swept-id note further down; it applies to this capture too.
     units_km_leak = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; n=0; k=0; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'top distance' '${pc_cmd}' \"activity $aid\"; do n=$((n+1)); HOME=\"$h\" STRIDE_FORMAT=human '${ctx.bin}' $c 2>/dev/null | grep -qE '(^|[^a-z])km([^a-z]|$)|min/km' && k=$((k+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"screens=$n metric_leaks=$k\""))
     # The `activity` leg's own liveness. Without this it can go silent exactly as the
     # progress leg did: an empty `aid` makes the loop run bare `stride activity`, which
@@ -2880,7 +2877,7 @@ b_seed_analyze! = |ctx| {
     check!("hr rise spans first to last rep", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 331) | .hr_rise_bpm] | .[0] == 20") == "true")?
     check!("each session reports its own dispersion", strjq!(ctx, ["reps"], "[.data.sessions[] | has(\"uniformity\") and has(\"min_dur_s\") and has(\"max_dur_s\")] | all") == "true")?
     check!("the payload discloses how many matched", strjq!(ctx, ["reps"], ".data.matched_total >= (.data.sessions | length)") == "true")?
-    # ── each round-2 guarantee gets a mutation-killing probe ────────────
+    # ── each guarantee above gets a mutation-killing probe ─────────────
     # count: a 4-rep session whose mean duration sits in the SAME band must be
     # excluded, or `HAVING COUNT(*) = :reps` is untested (it was)
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,weighted_avg_watts,avg_watts,device_watts) VALUES (332,'four reps','Ride','Ride',date('${ctx.d1}','-19 days')||'T06:00:00Z',1800,200,200,1);")
@@ -3685,7 +3682,7 @@ b_seed_analyze! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (949,'impossible time','Ride','Ride',(SELECT substr(start_local,1,10) FROM activities WHERE id=101) || 'T37:00:00Z',3600);")
     # `activities 3`, not the default 30. With a ten-row fixture there is no limit for a
     # sunk row to fall below, so this assertion could not show what its name claims — and
-    # the limit interaction is exactly where the round-2 regression lived, untested
+    # the limit interaction is exactly where the regression lived, untested
     # anywhere else in the suite. Three rows makes absence real.
     check!("...and an impossible TIME is HOISTED into view, not sunk below a small limit", strjq!(ctx, ["activities", "3"], "[.data[] | select(.id == 949)] | length") == "1")?
     # ...which is the property, not "it does not outrank": SINKING the row instead
@@ -6483,7 +6480,7 @@ b_progress_structure! = |ctx| {
     # only ever validates a name-grouped payload and the "structure" enum value passes
     # through no validator without this
     check!("a structure-grouped payload conforms to the progress schema", validate_schema!(ctx, "progress 2025-07-15", "progress") == "")?
-    # ── the two ways a shaped anchor must NOT claim (review round 1, both measured) ──
+    # ── the two ways a shaped anchor must NOT claim (both measured) ──────────────
     # A structure group that will DIE in scoring must not take its name group with it:
     # 981/982 are the same 4-rep shape under two names — a rep count NOTHING else in
     # this block carries, so the group's only members are these two — with no HR and no
