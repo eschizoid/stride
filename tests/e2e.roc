@@ -4377,7 +4377,6 @@ b_invalidation! = |ctx| {
     Ok({})
 }
 
-# ── plan lifecycle: revise-in-place, skip, re-plan, done ─────────────
 ## The `schema` field's VALUE, checked by running each form (#219). Its own scenario, and
 ## registered LATE, because it has to run where the fixture has data: sitting inside
 ## b_init_config! it validated only the seven commands that succeed on an empty database,
@@ -5047,6 +5046,7 @@ b_week_plan! = |ctx| {
     Ok({})
 }
 
+# ── plan lifecycle: revise-in-place, skip, re-plan, done ─────────────
 b_plan! : Ctx => Try({}, _)
 b_plan! = |ctx| {
     # #100: a bad date is refused at the door — planned_sessions is judgment tier,
@@ -6988,13 +6988,6 @@ report_sandbox! = |home| {
     }
 }
 
-# seed a constant-power stream (n 1 Hz samples at w watts) as Strava-style
-# raw_json, so an analyzed ride computes best_20min_w -> a derived per-sport
-# FTP (post-#26, FTP derives from stream power, not config). Inserted via the
-# heredoc sql! — the JSON's double-quotes sit fine inside the single-quoted
-# SQL literal.
-# a pace stream: time + CUMULATIVE distance at constant speed, no altitude —
-# the flat-triple path a swim or indoor row produces.
 # pace + HR stream: constant speed, HR drifting up in the second half — the
 # shape pace decoupling (#134) exists to measure.
 seed_pace_hr_stream! : Str, I64, U64, U64 => {}
@@ -7012,6 +7005,8 @@ seed_pace_hr_stream! = |db, id, n, mps| {
     {}
 }
 
+# a pace stream: time + CUMULATIVE distance at constant speed, no altitude —
+# the flat-triple path a swim or indoor row produces.
 seed_pace_stream! : Str, I64, U64, U64 => {}
 seed_pace_stream! = |db, id, n, mps| {
     times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
@@ -7021,6 +7016,11 @@ seed_pace_stream! = |db, id, n, mps| {
     {}
 }
 
+# seed a constant-power stream (n 1 Hz samples at w watts) as Strava-style
+# raw_json, so an analyzed ride computes best_20min_w -> a derived per-sport
+# FTP (post-#26, FTP derives from stream power, not config). Inserted via the
+# heredoc sql! — the JSON's double-quotes sit fine inside the single-quoted
+# SQL literal.
 seed_power_stream! : Str, I64, U64, U64 => {}
 seed_power_stream! = |db, id, n, w| {
     times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")

@@ -322,13 +322,15 @@ Strava :: [].{
                 # The pages already upserted are kept — upsert_all! ran per page — and are
                 # reported below, so the caller sees what landed rather than nothing.
                 if counts.rate_limited {
-                    # `resumable: True` unconditionally, and that is a DEPARTURE from the
-                    # rule stated below — "resumable is pending_streams > 0, re-measured in
-                    # every arm". Here the thing left undone is the LIST, not the queue: a
-                    # run refused on page one has zero pending streams and absolutely must
-                    # be repeated. The field's definition widens to "something is still
-                    # missing — pending streams, or a list that was cut short", and the
-                    # schema and SKILL.md say so rather than the old equality.
+                    # `resumable: True` unconditionally, and that is a DEPARTURE from the rule
+                    # stated below — "resumable is pending_streams > 0, measured from the queue".
+                    # Two of the three exit arms depart from it: this one and the daily-cap arm
+                    # above. Only the third measures.
+                    #
+                    # Here the thing left undone is the LIST, not the queue: a run refused on
+                    # page one has zero pending streams and absolutely must be repeated. The
+                    # field's definition widens to "something is still owed", and the queue is
+                    # only one of the things that can owe it.
                     pending = pending_streams!(path)?
                     # BOUND once, then used twice: the payload's string and the screen's tag must
                     # describe the same run, and writing the tag at both spots made that a

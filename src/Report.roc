@@ -735,6 +735,9 @@ Report :: [].{
             sports_28d: sports,
         })
     }
+    # sport-word filter shared by top/activities/power-curve: the human word
+    # widens to its Strava family (Sports.family), matched IN (...) with
+    # NOCASE. Placeholders are numbered so the bindings stay real bindings.
     sport_filter_sql : Str -> { frag : Str, binds : List({ name : Str, value : [Null, Real(F64), Integer(I64), String(Str), Bytes(List(U8))] }) }
     sport_filter_sql = |word|
         if Str.is_empty(word) {
@@ -821,14 +824,20 @@ Report :: [].{
         Output.out!(ordered, Render.load_screen)
     }
 
-    # power-duration curve: the best mean-max power sustained for each ladder duration,
-    # taken as the MAX across a window (per sport), plus a Critical Power / W' fit over the
-    # aerobic points. Reads the stored best_<dur>_w columns — no stream re-read. 0-power
-    # durations (no ride long enough) are dropped, so the curve only shows real data.
-    # ── season view (#139, ADR 0011) ────────────────────────────────────
-    # Blocks are bounded by ABSENCE and described by measurement. Nothing here
-    # names a phase: "base"/"build"/"peak" are claims about intent, and load
-    # observes only volume.
+    # The athlete's CP/W' fit for ONE SPORT FAMILY as of a DATE, over the same
+    # 2-20 minute band power-curve fits (#186/#187 spend this model, so they
+    # must not fit a second, differently-shaped one).
+    #
+    # Strictly BEFORE the date, not on-or-before: a ride inside its own fit
+    # window raises the very W' it is then measured against. Measured on a
+    # breakthrough 3x12 — W' 2490 J excluding the
+    # ride, 6416 J including it, a 2.58x change in the denominator that scales
+    # every W' number for that ride, and it fires precisely on the rides where
+    # the athlete did something new.
+    #
+    # The family is the CALLER's, never a hardcoded Ride: a rowing session was
+    # being scored against a cyclist's CP and flagged known, which is worse than
+    # having no number at all.
     cp_fit_as_of! : Str, Str, Str, U64 => Try({ cp : F64, w_prime : F64, points : I64, family : Str, r2 : F64, pts : List({ dur_s : F64, watts : F64 }) }, _)
     cp_fit_as_of! = |path, family, on_date, days| {
         row = Sqlite.query!({
@@ -864,11 +873,4 @@ Report :: [].{
         }
     }
 
-    # Time to exhaustion at a caller-named power (#187). NOT the same fit
-    # power-curve publishes: that one spans every power sport and includes
-    # today, this one is per-family and excludes its anchor date. They agree
-    # on an athlete whose rides dominate the curve, and only then. Every refusal is explicit:
-    # no fit, at-or-below CP, or a result outside the 2-20 minute band where the
-    # 2-parameter model holds — that last still returns the number, LABELLED,
-    # rather than hiding it or pretending it is trustworthy.
 }

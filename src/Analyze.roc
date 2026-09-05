@@ -1012,7 +1012,7 @@ Analyze :: [].{
         by_day = List.fold(
             day_rows,
             Dict.empty(),
-            # calls usable_day rather than restating it: a day excluded here but not counted
+            # calls usable_date_days rather than restating it: a day excluded here but not counted
             # `unusable` is dropped silently (the #243 bug itself), and one accepted here but
             # counted `unusable` makes the run refuse over data it did use.
             |dict, r|

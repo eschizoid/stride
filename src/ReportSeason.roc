@@ -66,6 +66,10 @@ ReportSeason :: [].{
                     }
                 Err(_) => List.append(acc, { fam: r.fam, n: r.n, ftp_lo: r.ftp_lo, ftp_hi: r.ftp_hi, ftp_first: r.ftp_hi, ftp_last: r.ftp_hi })
             })
+    # ── season view (#139, ADR 0011) ────────────────────────────────────
+    # Blocks are bounded by ABSENCE and described by measurement. Nothing here
+    # names a phase: "base"/"build"/"peak" are claims about intent, and load
+    # observes only volume.
     season! : {} => Try({}, _)
     season! = |_| {
         path = Db.open_db!({})?
@@ -108,7 +112,7 @@ ReportSeason :: [].{
                     \\       -- the house fallback (see zone_sum!): the pi_* split when the activity
                     \\       -- has one -- power-derived with watts, pace-derived for a distance
                     \\       -- sport without them -- else the HR zones. Summing the pi_ columns
-                    \\       -- raw drops every session without a split -- 50 of 731 here, 46 of which
+                    \\       -- raw drops every session without a split -- a small minority here, most of which
                     \\       -- DO have zone seconds, and overwhelmingly easy ones, so the raw sum
                     \\       -- understates easy time and disagrees with what `summary` publishes.
                     \\       CAST(COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_easy_s ELSE m.z1_s + m.z2_s END), 0) AS REAL) AS easy_s,
@@ -221,7 +225,7 @@ ReportSeason :: [].{
                     mean_weekly_load: if span_weeks > 0 b.total_load / (span_weeks).to_f64() else 0.0,
                     # Activities, not days-with-load: weekly_rollup counts a day
                     # as one session because daily_load carries load and not a
-                    # count, which lost 9 of 731. It is NOT required to equal
+                    # count, which lost a handful. It is NOT required to equal
                     # months[].sessions -- an activity that scored no load
                     # inside an absence belongs to a month and to no block, and
                     # one dated before any daily_load row belongs to neither.
@@ -281,18 +285,4 @@ ReportSeason :: [].{
             )
         }
     }
-    # The athlete's CP/W' fit for ONE SPORT FAMILY as of a DATE, over the same
-    # 2-20 minute band power-curve fits (#186/#187 spend this model, so they
-    # must not fit a second, differently-shaped one).
-    #
-    # Strictly BEFORE the date, not on-or-before: a ride inside its own fit
-    # window raises the very W' it is then measured against. Measured on a
-    # breakthrough 3x12 — W' 2490 J excluding the
-    # ride, 6416 J including it, a 2.58x change in the denominator that scales
-    # every W' number for that ride, and it fires precisely on the rides where
-    # the athlete did something new.
-    #
-    # The family is the CALLER's, never a hardcoded Ride: a rowing session was
-    # being scored against a cyclist's CP and flagged known, which is worse than
-    # having no number at all.
 }

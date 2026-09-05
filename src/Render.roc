@@ -239,6 +239,13 @@ Render :: [].{
             if d >= 0.0 "+${mag}" else "-${mag}"
         }
 
+    # The progress trend verdict: a closed set of three, pinned by equality below
+    # (ADR 0012). Named rather than inline for exactly that reason — see the pin.
+    trend_label : Bool, Bool -> Str
+    trend_label = |improved, declined|
+        if improved "improving" else if declined "declining" else "holding steady"
+
+
     # How long the band has held, appended to the state (#123). Takes the TAG, not a
     # flattened number: the caller must not decide what Unknown means on the renderer's
     # behalf, and AtLeast must not arrive collapsed into an exact-looking integer.
@@ -251,12 +258,6 @@ Render :: [].{
     # The `+` is the point of AtLeast reaching this far: `summary` reads a 31-day
     # window, so a 45-day streak truncates, and a bare "31" would present the window
     # size as a measurement.
-    # The progress trend verdict: a closed set of three, pinned by equality below
-    # (ADR 0012). Named rather than inline for exactly that reason — see the pin.
-    trend_label : Bool, Bool -> Str
-    trend_label = |improved, declined|
-        if improved "improving" else if declined "declining" else "holding steady"
-
     band_days_phrase : [Known(I64), AtLeast(I64), Unknown] -> Str
     band_days_phrase = |band|
         match band {
@@ -585,7 +586,6 @@ Render :: [].{
         }
     }
 
-    # display label for a progress group, from anchor_filter's structured kind
     ## the group label when progress keys on detected structure rather than name: the
     ## shape first, then one anchor-day class name so the reader recognizes the session.
     ## "~" because mates match by duration BAND, not exact duration — the label must not
@@ -612,6 +612,7 @@ Render :: [].{
         else if tm.detected_known " (target ${(tm.target_reps).to_str()}×${mmss(tm.target_dur_s)} @ ${(tm.target_watts.to_i64_wrap()).to_str()}W; detected ${(tm.detected_reps).to_str()}×~${mmss(tm.detected_mean_dur_s)} @ ${(tm.detected_mean_watts.to_i64_wrap()).to_str()}W)"
         else " (target ${(tm.target_reps).to_str()}×${mmss(tm.target_dur_s)} @ ${(tm.target_watts.to_i64_wrap()).to_str()}W; no detected power intervals to compare)"
 
+    # display label for a progress group, from anchor_filter's structured kind
     progress_group_label : [Metric, Imperial], Str, [Exact, SimilarDistance(F64), LoneNoDistance] -> Str
     progress_group_label = |units, name, kind|
         match kind {
@@ -673,7 +674,7 @@ Render :: [].{
             }
         # The ◀ marker rides on the DATE cell, and headers stay terse (meaning lives in
         # the legend, per the numbers-in-tables philosophy) — both keep every column
-        # under render_table's 80-col budget so the BAR column is never the widest one
+        # under render_table's column budget so the BAR column is never the widest one
         # that gets squeezed and word-wrapped mid-bar.
         date_of = |row| if row.date == asked "${row.date} ◀" else row.date
         # each lens picks its own columns (list of header + per-row cell); the primary
@@ -1883,7 +1884,7 @@ expect {
 }
 
 # the best row's value + full 12-block bar stay on ONE line: terse headers keep the
-# progress table under render_table's 80-col budget, so the bar column is never the
+# progress table under render_table's column budget, so the bar column is never the
 # widest-column victim of squeeze-and-word-wrap (a split bar reads as broken output)
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, avg_hr_scored: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
@@ -2265,11 +2266,10 @@ expect {
     and Str.contains(power, "W ·") and !(Str.contains(power, "m/s"))
 }
 
-# signed_value differs from signed ONLY in precision -- it inherits the
-# rounds-away-but-still-a-direction contract pinned above, which is why a pace
-# fade keeps its sign instead of collapsing to a bare zero.
-# fade_value takes ENDPOINTS, not a delta, because a pace change cannot be derived from a
-# speed change. Sign is flipped for pace so NEGATIVE means worse in both sports (#351):
+# fade_value inherits the rounds-away-but-still-a-direction contract pinned above, which
+# is why a pace fade keeps its sign instead of collapsing to a bare zero. It takes
+# ENDPOINTS, not a delta, because a pace change cannot be derived from a speed change.
+# Sign is flipped for pace so NEGATIVE means worse in both sports (#351):
 # 4.1667 m/s -> 4.13 m/s is a slowdown of 2.13 s/km, so it reads -0:02, not +0:02.
 expect Render.fade_value(Metric, 4.1667, 4.13, "pace") == "-0:02"
 expect Render.fade_value(Imperial, 4.1667, 4.13, "pace") == "-0:03"

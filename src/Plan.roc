@@ -545,7 +545,9 @@ Plan :: [].{
         })?
         Output.out!(plan_echo(new_id, target_date, session_type, pt), |p| "planned #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}${Render.target_note(pt)}")
     }
-    # ONE not-found message for complete/complete-rest/skip — can't drift apart
+    # ONE not-found message for every command that resolves a planned session by id —
+    # complete, complete-rest, skip and relabel — so the four cannot drift apart. Adding a
+    # fifth means calling this, not writing a fifth sentence.
     session_not_found! : I64 => Try({}, _)
     session_not_found! = |session_id|
         Output.err_out!("session_not_found", "no planned session #${(session_id).to_str()} — `stride plan` lists open ones, `stride week all` the whole log")
@@ -788,8 +790,8 @@ Plan :: [].{
                         # THIS arm is `complete` too, and complete.json is one contract for both:
                         # `replaced_activity` added to the two-argument form only left this payload
                         # failing its own schema, and nothing catches it — schema-check and the e2e
-                        # conformance loop both select `mutates == false` (ADR 0000 s9c names `complete`
-                        # as validated by neither). The e2e check below is that missing oracle.
+                        # conformance loop both select `mutates == false`, and `complete` mutates, so it is
+                        # validated by neither. The e2e check below is that missing oracle.
                         # A bare rest completion links no activity, so `replaced_activity` is honestly 0
                         # — but the same UPDATE NULLs `substitute_activity_id`, so `dropped_substitute`
                         # must be read before the write on this arm too.
