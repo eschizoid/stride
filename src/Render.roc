@@ -1472,9 +1472,10 @@ Render :: [].{
         "${head}\n${nums}${hyp}${note}"
     }
 
-    ## event targets (#138): the projection as numbers in a table, its inputs in the
-    ## legend, and NO verdict line — "are you on track" is the coach's sentence, and
-    ## ADR 0010 notes the denylist would not even catch it, so nothing here says it.
+    ## event targets (#138): the projection as numbers in plain indented rows, its inputs
+    ## in the lead line and the degraded-baseline note, and NO verdict line — "are you on
+    ## track" is the coach's sentence, and ADR 0010 notes the denylist would not even
+    ## catch it, so nothing here says it.
     events_screen : { projected_from : Str, baseline_known : Bool, ftp_known : Bool, events : List({ id : I64, event_date : Str, name : Str, days_away : I64, ctl : F64, atl : F64, tsb : F64, planned_in_window : U64, sessions_projected : U64 }) } -> Str
     events_screen = |p|
         if List.is_empty(p.events) {
@@ -2198,7 +2199,7 @@ expect {
         ],
     })
     # some shown rows do NOT conform, so the count is exact and the remainder
-    # is named rather than hedged -- and "the other one" agrees in number
+    # is named rather than hedged
     mixed = Render.reps_screen(Metric, {
         anchor_date: "2026-08-16",
         shape_reps: 3.I64,

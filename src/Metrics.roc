@@ -381,12 +381,9 @@ Metrics :: [].{
     # The config key holding a sport's threshold PACE, as a SPEED in m/s (the pace engine
     # works in speeds). Per-sport `threshold_pace_<sport>` (threshold_pace_run, ...), same
     # built from the sport name, no hardcoded list. Zero-config derivation from a stored
-    # best-sustained-pace column is a later slice.
-    #
-    # WHEN THAT SLICE LANDS: add this family to `Config.known_key` in the SAME commit.
-    # Until then these names are `unrecognised`, which is correct — but `config set
-    # <unrecognised> ""` DELETES the row, so a wired-up key that is not in `known_key` can
-    # be silently removed while the CLI says "stride does not read it".
+    # best-sustained-pace column SHIPPED instead (Analyze.period_threshold_sql stores
+    # threshold_pace_used), so no such config key exists or is planned — see the
+    # known_key note in Config.roc. This helper survives for its expects.
     threshold_pace_key : Str -> Str
     threshold_pace_key = |sport|
         "threshold_pace_${Str.with_ascii_lowercased(sport)}"
@@ -762,7 +759,8 @@ Metrics :: [].{
     # ── derived FTP ─────────────────────────────────────────────────────
     # Invariant: FTP is derived from power history, never configured (a calibration
     # check against a configured FTP compared the same number to itself, so it died).
-    # The standard 95% of the 20-min best. One constant, one place — used by the
+    # The standard 95% of the 20-min best. One Roc constant — the SQL twins in Analyze's
+    # period_ftp_sql / period_threshold_sql spell it again, as SQL must. Used by the
     # per-sport derive (Db.derive_sport_ftp!) and the summary display.
     ftp_from_best_20min : F64 -> F64
     ftp_from_best_20min = |best_20min| best_20min * 0.95
@@ -2869,7 +2867,7 @@ expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "date(substr(a.s
 # sync query, the two that ORDER BY it without appending `a.id`.
 expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "THEN substr(a.start_local, 1, 19) ELSE NULL END")
 # the caller's column reaches every term — a helper that hardcoded one would be wrong at
-# the one site that ranks on a bare `start_local` rather than `a.start_local`
+# any caller that ranks on a bare `start_local` rather than `a.start_local`
 expect !(Str.contains(Metrics.rank_ts_sql("start_local", Desc), "a.start_local"))
 
 # ...and the same three for the HOISTING twin, which shipped with none. Sharing `rankable_sql`
@@ -3179,7 +3177,7 @@ expect {
 # Flat 200W for 20 minutes; HR rises 100 -> 110 exactly at the half boundary (mid =
 # t_lo + span//2 = 599, which belongs to the SECOND half). Efficiency goes 200/100 = 2.0 to 200/110 = 1.818,
 # so the drift is (2.0 - 1.818) / 2.0 = 9.09% — the same output costing more heartbeats.
-# 20 minutes, not 20 samples: each half must clear the 5-minute coverage gate.
+# 20 minutes, not 20 samples: the SIGNAL must span ~9.5 min and at least half the session.
 expect {
     power = Iter.fold((0.I64..<1200).iter(), [], |acc, t| List.append(acc, { t, v: 200.0 }))
     hr = Iter.fold((0.I64..<1200).iter(), [], |acc, t| List.append(acc, { t, v: if t < 599 100.0 else 110.0 }))
@@ -3210,7 +3208,7 @@ expect {
 }
 
 # a signal that only spans a FRAGMENT of the session (foot pod died at minute 10 of 60)
-# must not have that fragment sold as the session's drift — under 5 min per half is Unknown
+# must not have that fragment sold as the session's drift — a short span is Unknown
 expect {
     power = Iter.fold((0.I64..<400).iter(), [], |acc, t| List.append(acc, { t, v: 200.0 }))
     hr = Iter.fold((0.I64..<400).iter(), [], |acc, t| List.append(acc, { t, v: 120.0 }))
