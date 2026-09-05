@@ -1,0 +1,34 @@
+name: Set up Roc
+description: >-
+  Installs the Roc nightly this repo is pinned to, retrying the download once.
+  Every workflow calls this instead of setup-roc directly, so the default below
+  is the only place a nightly bump has to be edited.
+
+inputs:
+  nightly-tag:
+    description: The roc-lang/nightlies tag to install. Defaults to the repo-wide pin.
+    required: false
+    default: nightly-2026-09-04-c125b82
+
+runs:
+  using: composite
+  steps:
+    # The nightlies host intermittently serves a bad cert chain, which fails the
+    # download with `curl: (60)` on every runner before a line is compiled. The
+    # failure is transient and one retry absorbs it. Caching the toolchain would
+    # also work, but setup-roc owns the extraction layout and it differs per OS,
+    # so guessing at those paths trades a known flake for an unknown one.
+    - name: Install Roc (new compiler)
+      id: roc
+      uses: roc-lang/setup-roc@v0.3.0
+      continue-on-error: true
+      with:
+        version: nightly-new-compiler
+        nightly-tag: ${{ inputs.nightly-tag }}
+
+    - name: Install Roc (retry — the first attempt hit a transient download failure)
+      if: ${{ steps.roc.outcome == 'failure' }}
+      uses: roc-lang/setup-roc@v0.3.0
+      with:
+        version: nightly-new-compiler
+        nightly-tag: ${{ inputs.nightly-tag }}

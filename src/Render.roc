@@ -541,7 +541,7 @@ Render :: [].{
             last_work = (List.last(works)).map_ok(|w| w.ordinal).ok_or(0)
             recs = List.keep_if(segs, |s| s.kind == "recovery" and s.ordinal > first_work and s.ordinal < last_work)
             med = |xs| {
-                sorted = List.sort_with(xs, |a, b| if a < b LT else if a > b GT else EQ)
+                sorted = List.sort_with(xs, |a, b| if a < b Before else if a > b After else Same)
                 (List.get(sorted, List.len(sorted) // 2)).ok_or(0.0)
             }
             sig = (List.first(works)).map_ok(|w| w.signal).ok_or("power")
@@ -849,7 +849,7 @@ Render :: [].{
         desc = List.sort_with(rows, |a, b| {
             x = sc(b)
             y = sc(a)
-            if x < y LT else if x > y GT else EQ
+            if x < y Before else if x > y After else Same
         })
         best_row = if higher List.first(desc) else List.last(desc)
         match (List.last(rows), best_row) {

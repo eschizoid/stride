@@ -345,10 +345,10 @@ Plan :: [].{
                     ord: if r.id != 0 r.id else r.activity_id,
                 })
                 sorted = List.sort_with(keyed, |x, y| {
-                    d = I64.compare(x.day, y.day)
-                    if d != EQ d else {
-                        rk = I64.compare(x.rank, y.rank)
-                        if rk != EQ rk else I64.compare(x.ord, y.ord)
+                    d = x.day.order_relative_to(y.day)
+                    if d != Same d else {
+                        rk = x.rank.order_relative_to(y.rank)
+                        if rk != Same rk else x.ord.order_relative_to(y.ord)
                     }
                 })
                 List.map(sorted, |k| k.row)
