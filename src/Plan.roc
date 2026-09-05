@@ -788,8 +788,8 @@ Plan :: [].{
                         # THIS arm is `complete` too, and complete.json is one contract for both:
                         # `replaced_activity` added to the two-argument form only left this payload
                         # failing its own schema, and nothing catches it — schema-check and the e2e
-                        # conformance loop both select `mutates == false` (ADR 0000 s9c names `complete`
-                        # as validated by neither). The e2e check below is that missing oracle.
+                        # conformance loop both select `mutates == false`, and `complete` mutates, so it is
+                        # validated by neither. The e2e check below is that missing oracle.
                         # A bare rest completion links no activity, so `replaced_activity` is honestly 0
                         # — but the same UPDATE NULLs `substitute_activity_id`, so `dropped_substitute`
                         # must be read before the write on this arm too.
