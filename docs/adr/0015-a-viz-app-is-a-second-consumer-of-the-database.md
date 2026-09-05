@@ -48,10 +48,16 @@ human can audit. Third, deterministic recordings for posts, since roc-ray render
 from code and a regenerated graphic cannot rot the way a hand-authored one does. A
 power-duration view with the CP fit and its `fit_r2` drawn comes after those.
 
-**4. The platform pin rides the same discipline as the compiler pin.** roc-ray tracks Roc
-nightlies, so it is a third toolchain constraint. Its version is pinned next to the Roc
-tag in the one place pins now live (post-#370), and the bump checklist gains one line:
-verify the roc-ray release against the target nightly before moving either.
+**4. One toolchain, never two.** The viz app builds with the engine's pinned nightly, and
+the roc-ray version is pinned beside the Roc tag in the one place pins now live
+(post-#370). Measured 2026-09-05 with the pinned `nightly-2026-09-04-c125b82`: roc-ray's
+own platform modules (`Text.roc`, `Font.roc`) fail `roc check` with 5 errors — field
+defaults in structural records plus numeric type mismatches, the same inference class as
+#371 — while roc-ray's `.roc-version` still names `nightly-2026-08-23-fb208ba`. So the
+precondition for starting is empirical and checkable in one command: roc-ray's platform
+checks clean on the engine's pin. Until then this ADR stays Proposed and no viz code
+exists to rot. A second compiler in the repo to bridge the gap is rejected outright; it
+would undo #370's single-pin discipline the week it landed.
 
 **5. Capture is an export for humans, and no UI in this repo is for the coach.** Every
 view the app can show, it can also render to a PNG and exit — `stride viz pmc --out
@@ -68,7 +74,21 @@ The same holds one level up for a TUI, which the coach could drive through a ter
 multiplexer and still gain nothing over the JSON. The coach's surface is the engine; this
 app is for the human, and its design owes the coach nothing beyond capture.
 
+**6. The viz build stays out of the default gate.** `just viz-check` exists once viz
+exists; `just test` and the merge gate never depend on it. The engine's release cadence
+answers to the engine's own suite, not to whether a single-maintainer graphics platform
+has caught up with this week's nightly — that is decision 1's boundary applied to CI.
+
+**7. Rendering is tested by golden capture.** Deterministic capture makes UI testing fit
+this repo's ethos: a fixture database renders each view to a PNG and the bytes are
+compared against a committed golden. A drawing regression fails a diff instead of waiting
+for a human to squint. This is the load-bearing use of decision 5's determinism.
+
 ## Consequences
+
+There is deliberately no usage-based kill criterion. The app is built on conviction, for
+one human, and it answers to whether he opens it, not to a metric. If it stops being
+opened, parking it is a one-line pin removal and this ADR's record is the receipt.
 
 The engine's thesis is untouched: local-first, deterministic, the coach reads JSON. The
 viz app is optional at build and at runtime; a machine that never runs `just viz` behaves
