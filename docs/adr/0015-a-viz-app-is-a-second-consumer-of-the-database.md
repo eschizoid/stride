@@ -53,14 +53,20 @@ nightlies, so it is a third toolchain constraint. Its version is pinned next to 
 tag in the one place pins now live (post-#370), and the bump checklist gains one line:
 verify the roc-ray release against the target nightly before moving either.
 
-**5. Capture mode is how the coach sees it.** Every view the app can show, it can also
-render to a PNG and exit: `stride viz pmc --out pmc.png`. roc-ray's capture support is
-deterministic, so the same database state yields the same bytes. This is not an export
-convenience; it is the LLM surface. The coach reads images, so a captured frame makes the
-PMC curve and the shaded interval boundaries something the coach can look at and judge,
-rather than something it must reconstruct from JSON. The windowed mode and the captured
-frame draw through the same code path, so what the human sees and what the coach sees
-cannot diverge.
+**5. Capture is an export for humans, and no UI in this repo is for the coach.** Every
+view the app can show, it can also render to a PNG and exit — `stride viz pmc --out
+pmc.png` — deterministic for a given database state. That earns its keep three ways:
+post assets that regenerate instead of rotting, sharing a view without a screen present,
+and letting the coach verify a rendering before it ships, the one look at pixels JSON
+cannot replace because the defect may be in the drawing.
+
+What capture is not is a coaching surface. Every value the app draws derives from JSON
+the coach already consumes losslessly, so a rendered frame is a lossy re-encoding of what
+the coach holds exactly: the taper is judged from `load`'s series and a detector boundary
+is audited by querying the samples around it, both more precisely than reading pixels.
+The same holds one level up for a TUI, which the coach could drive through a terminal
+multiplexer and still gain nothing over the JSON. The coach's surface is the engine; this
+app is for the human, and its design owes the coach nothing beyond capture.
 
 ## Consequences
 
