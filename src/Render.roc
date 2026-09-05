@@ -1180,8 +1180,8 @@ Render :: [].{
     # CS prints as a PACE, not as a converted speed. It is a running number and runners
     # read 4:00/km, not 4.17 m/s or 9.3 mph — rendering it as a speed would repeat the
     # defect #351 fixed on the segment screens.
-    pace_curve_screen : [Metric, Imperial], List(Str), { window_days : U64, sport : Str, points : List({ dur_s : U64, speed : F64 }), cs : F64, d_prime : F64, fit_r2 : F64, fit_points : I64 } -> Str
-    pace_curve_screen = |units, avail, pc| {
+    pace_curve_screen : [Metric, Imperial], { window_days : U64, sport : Str, points : List({ dur_s : U64, speed : F64 }), cs : F64, d_prime : F64, fit_r2 : F64, fit_points : I64, available_sports : List(Str) } -> Str
+    pace_curve_screen = |units, pc| {
         dur_label = |s|
             if s < 60 "${U64.to_str(s)}s"
             else if s % 60 == 0 "${U64.to_str(s // 60)}m"
@@ -1197,7 +1197,7 @@ Render :: [].{
         # thing: a pool swim, an open-water swim and a trail run do not share a speed model.
         # So name the sports that actually hold data rather than inventing a cross-sport one.
         if Str.is_empty(pc.sport) {
-            listed = if List.is_empty(avail) "none in this window" else Str.join_with(avail, ", ")
+            listed = if List.is_empty(pc.available_sports) "none in this window" else Str.join_with(pc.available_sports, ", ")
             "speed-duration curve — last ${U64.to_str(pc.window_days)} days\n\ncritical speed is per-sport: a pool swim, an open-water swim and a trail run\ndo not share a speed model, so there is no combined curve to draw.\n\nname one — sports with speed data in this window: ${listed}\n\n  stride pace-curve ${U64.to_str(pc.window_days)} <sport>"
         } else if List.is_empty(pc.points) {
             "${header}\n\nno pace data in this window."
@@ -1975,8 +1975,8 @@ expect {
 # reader's units while the underlying payload stays SI — the same session, two readings.
 expect {
     pts = [{ dur_s: 300, speed: 4.6667 }, { dur_s: 600, speed: 4.3 }, { dur_s: 1200, speed: 4.1667 }]
-    m = Render.pace_curve_screen(Metric, ["Run"], { window_days: 90, sport: "Run", points: pts, cs: 4.0, d_prime: 200.0, fit_r2: 0.91, fit_points: 3.I64 })
-    i = Render.pace_curve_screen(Imperial, ["Run"], { window_days: 90, sport: "Run", points: pts, cs: 4.0, d_prime: 200.0, fit_r2: 0.91, fit_points: 3.I64 })
+    m = Render.pace_curve_screen(Metric, { available_sports: ["Run"],  window_days: 90, sport: "Run", points: pts, cs: 4.0, d_prime: 200.0, fit_r2: 0.91, fit_points: 3.I64 })
+    i = Render.pace_curve_screen(Imperial, { available_sports: ["Run"],  window_days: 90, sport: "Run", points: pts, cs: 4.0, d_prime: 200.0, fit_r2: 0.91, fit_points: 3.I64 })
     # 1000/4.0 = 250 s -> 4:10/km; 1609.344/4.0 = 402.3 s -> 6:42/mi; 200 m -> 219 yd
     Str.contains(m, "Critical Speed 4:10 min/km") and Str.contains(m, "D′ 200 m")
     and Str.contains(i, "Critical Speed 6:42 min/mi") and Str.contains(i, "D′ 219 yd")
@@ -1984,20 +1984,20 @@ expect {
 }
 # a fit refused (cs 0) must not print as a real fit, and two points is not a quality signal
 expect {
-    none = Render.pace_curve_screen(Metric, ["Run"], { window_days: 90, sport: "Run", points: [{ dur_s: 1200, speed: 4.1667 }], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 1.I64 })
-    thin = Render.pace_curve_screen(Metric, ["Run"], { window_days: 90, sport: "Run", points: [{ dur_s: 300, speed: 4.6667 }, { dur_s: 1200, speed: 4.1667 }], cs: 4.0, d_prime: 200.0, fit_r2: 1.0, fit_points: 2.I64 })
-    empty = Render.pace_curve_screen(Metric, ["Run"], { window_days: 30, sport: "Run", points: [], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
+    none = Render.pace_curve_screen(Metric, { available_sports: ["Run"],  window_days: 90, sport: "Run", points: [{ dur_s: 1200, speed: 4.1667 }], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 1.I64 })
+    thin = Render.pace_curve_screen(Metric, { available_sports: ["Run"],  window_days: 90, sport: "Run", points: [{ dur_s: 300, speed: 4.6667 }, { dur_s: 1200, speed: 4.1667 }], cs: 4.0, d_prime: 200.0, fit_r2: 1.0, fit_points: 2.I64 })
+    empty = Render.pace_curve_screen(Metric, { available_sports: ["Run"],  window_days: 30, sport: "Run", points: [], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
     # no sport named: refuse a pooled fit and name what the athlete CAN ask for, rather than
     # fitting one curve through rides and runs together and labelling it "all pace sports"
-    nosport = Render.pace_curve_screen(Metric, ["Run", "Rowing"], { window_days: 30, sport: "", points: [], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
-    bare = Render.pace_curve_screen(Metric, [], { window_days: 30, sport: "", points: [], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
+    nosport = Render.pace_curve_screen(Metric, { available_sports: ["Run", "Rowing"],  window_days: 30, sport: "", points: [], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
+    bare = Render.pace_curve_screen(Metric, { available_sports: [],  window_days: 30, sport: "", points: [], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
     Str.contains(none, "needs two ladder durations") and !(Str.contains(none, "Critical Speed 0"))
     # three rungs DESCENDING but too steeply for the model — the fitted ceiling lands below
     # zero, so the fit is refused for a reason that is neither a data gap nor a flat curve.
     # 10.0/3.0/2.0 m/s renders 1:40, 5:33, 8:20 per km: visibly descending, and the old
     # single message told the reader they were not.
     and Str.contains(
-        Render.pace_curve_screen(Metric, ["Run"], { window_days: 90, sport: "Run", points: [{ dur_s: 300, speed: 10.0 }, { dur_s: 600, speed: 3.0 }, { dur_s: 1200, speed: 2.0 }], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 3.I64 }),
+        Render.pace_curve_screen(Metric, { available_sports: ["Run"],  window_days: 90, sport: "Run", points: [{ dur_s: 300, speed: 10.0 }, { dur_s: 600, speed: 3.0 }, { dur_s: 1200, speed: 2.0 }], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 3.I64 }),
         "fall too steeply",
     )
     and !(Str.contains(thin, "r2 1.00")) and Str.contains(thin, "r2 needs 3")
@@ -2007,7 +2007,7 @@ expect {
     # three rungs at the SAME speed: enough data, but a flat curve the model must decline.
     # The data-gap message would be false here — the table above it shows three durations.
     and Str.contains(
-        Render.pace_curve_screen(Metric, ["Run"], { window_days: 90, sport: "Run", points: [{ dur_s: 300, speed: 4.0 }, { dur_s: 600, speed: 4.0 }, { dur_s: 1200, speed: 4.0 }], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 3.I64 }),
+        Render.pace_curve_screen(Metric, { available_sports: ["Run"],  window_days: 90, sport: "Run", points: [{ dur_s: 300, speed: 4.0 }, { dur_s: 600, speed: 4.0 }, { dur_s: 1200, speed: 4.0 }], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 3.I64 }),
         "hold or rise with duration",
     )
 }

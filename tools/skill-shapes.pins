@@ -32,7 +32,7 @@ events.json	baseline_known,events,ftp_known,projected_from	baseline_known,events
 import.json	imported,skipped	imported,skipped	-	$
 init.json	initialized	initialized	-	$
 load.json	atl,ctl,day,tsb,tss	atl,ctl,day,tsb,tss	-	items
-pace_curve.json	cs,d_prime,fit_points,fit_r2,points,sport,window_days	cs,d_prime,fit_points,fit_r2,points,sport,window_days	doc	$
+pace_curve.json	available_sports,cs,d_prime,fit_points,fit_r2,points,sport,window_days	available_sports,cs,d_prime,fit_points,fit_r2,points,sport,window_days	doc	$
 pace_curve.json	dur_s,speed	dur_s,speed	doc	properties.points.items
 plan.json	activities_awaiting_metrics,activities_awaiting_metrics_known,activities_awaiting_streams,last_sync,newest_activity	activities_awaiting_metrics,activities_awaiting_metrics_known,activities_awaiting_streams,last_sync,newest_activity	doc	properties.data_freshness
 plan.json	adherence_28d,data_freshness,open_sessions,plan_history_28d,recent_activities_14d,summary	adherence_28d,data_freshness,open_sessions,plan_history_28d,recent_activities_14d,summary	doc	$
