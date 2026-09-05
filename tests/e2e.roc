@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1110)?
+    checks_ran_exactly!(1111)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3323,11 +3323,27 @@ b_seed_analyze! = |ctx| {
     # nothing asserted it — season shipped a 126-column table wrapping rows
     # mid-number. Applied CLI-wide, because a guard on one command is a guard
     # nobody generalises. awk's length() counts BYTES on macOS (box glyphs are
-    # three each), so `wc -m` is what measures a column. The list is every command
-    # that DRAWS a table — listing the three that emit none added vacuous passes
-    # and hid that `top` and `week all` were missing.
-    wide = Str.trim(sh!("for c in season activities plan week 'week all' compare progress load stats zones 'power-curve' 'top tss'; do HOME='${ctx.home}' '${ctx.bin}' $c 2>/dev/null; done | grep -E '[│╭├╰]' | while IFS= read -r l; do printf '%s' \"$l\" | LC_ALL=en_US.UTF-8 wc -m; done | tr -d ' ' | awk '$1 > 100' | sort -rn | head -1"))
+    # three each), so `wc -m` is what measures a column. The list is every command whose
+    # screen calls `render_table` — six of them, cross-checked against Render rather than
+    # remembered: compare, load, pace-curve, power-curve, progress and season. Listing a
+    # command that emits no table adds a vacuous pass, which is how `top` and `week all`
+    # went missing once and `pace-curve` went missing again; each entry that CAN render
+    # empty carries its own liveness check for that reason.
+    # 9005 exists only for the two lines below. `pace-curve` draws a table and had no width
+    # bound; the fixture here holds three activities, none with a speed ladder, so adding it
+    # to the sweep without a row would have passed on a screen that renders no table — the
+    # vacuous pass this sweep's own note warns about. Two rungs at distinct durations are the
+    # minimum that reaches the table branch.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9005,'Width Probe','Run','${ctx.today}T07:00:00Z',1800,8000,10,150);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev,best_300s_speed,best_600s_speed,best_20min_speed) VALUES (9005,40.0,190.0,1800,1,4.6667,4.1667,4.0);")
+    wide = Str.trim(sh!("for c in season activities plan week 'week all' compare progress load stats zones 'power-curve' 'pace-curve 90 Run' 'top tss'; do HOME='${ctx.home}' '${ctx.bin}' $c 2>/dev/null; done | grep -E '[│╭├╰]' | while IFS= read -r l; do printf '%s' \"$l\" | LC_ALL=en_US.UTF-8 wc -m; done | tr -d ' ' | awk '$1 > 100' | sort -rn | head -1"))
     check!("no human table exceeds the 100-column budget", wide == "")?
+    # ...and that leg is LIVE. A screen that renders no table trivially fits the budget, so
+    # without this the entry above would pass on an empty refusal exactly as it would on a
+    # correct table. Counts the box-drawing rows the table itself emits.
+    pc_rows = Str.trim(sh!("HOME='${ctx.home}' '${ctx.bin}' pace-curve 90 Run 2>/dev/null | grep -c '│' || true"))
+    check!("...and the swept pace-curve DRAWS a table, else the width bound proves nothing (${pc_rows} rows)", pc_rows == "4")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 9005; DELETE FROM activities WHERE id = 9005;")
     # ...and again with a cell that has NO break opportunity, which is what gives
     # the sweep above teeth: on the fixture every table sits inside the budget, so
     # it passes even on a binary whose squeeze does not work (#194). The lever is a
