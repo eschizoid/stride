@@ -954,9 +954,10 @@ Render :: [].{
     # sync's human line. Extracted from an inline closure in Strava.roc so pure expects
     # can reach it (#232). Takes the payload AND the tag it was built from: `p.stopped`
     # is the WIRE string (sync.json is a flat enum) and nothing here reads it —
-    # recovering the tag from it was a lookup a maintainer can leave stale, shipping
-    # the raw token. Passed alongside, a new reason is a non-exhaustive match here and
-    # in drain_note, and the branch you are made to write is the branch that runs.
+    # recovering the tag from it would be a lookup a maintainer can leave stale,
+    # shipping the raw token. Passed alongside, a new reason is a non-exhaustive
+    # match here and in drain_note, and the branch you are made to write is the
+    # branch that runs.
     #
     # DO NOT, not CANNOT: the signature takes payload and tag independently, so a
     # caller CAN pass a mismatched pair. All three producer sites bind the tag once and
@@ -1368,7 +1369,7 @@ Render :: [].{
     # a fitted line reported by its ENDPOINTS, because a slope plus a low r2 gets read
     # as "no trend" and r2 is scatter, not evidence the slope is zero.
     #
-    # Held under the 100-column budget (it shipped at 126, the CLI's only violator).
+    # Held under the 100-column budget.
     # The block TOTAL and SLOPE moved to the payload; the total is recoverable from the
     # row (/wk x span) but the SLOPE is NOT — its divisor is the ordinal distance
     # between fitted endpoints, which equals span_weeks - 1 only while the last week is
@@ -1454,8 +1455,7 @@ Render :: [].{
     project_screen : { target_date : Str, days_away : I64, projected_from : Str, baseline_known : Bool, ftp_known : Bool, plan_source : Str, ctl : F64, atl : F64, tsb : F64, sessions_considered : U64, sessions_projected : U64, hypothetical : List({ date : Str, reps : I64, dur_s : I64, watts : F64 }) } -> Str
     project_screen = |p| {
         # a PAST horizon states the current baseline, not a projection — same arm
-        # events_screen carries, same wording convention (review caught this exact
-        # wart returning one PR after events fixed it)
+        # events_screen carries, same wording convention
         head =
             if p.days_away < 0
                 "${p.target_date} was ${I64.to_str(-p.days_away)}d ago — baseline shown, `stride load` holds the day's reading"
