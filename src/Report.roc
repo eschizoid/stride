@@ -286,7 +286,7 @@ Report :: [].{
         else
             ((part).to_f64() * 100.0 / (total).to_f64()).round_to_i64_try().ok_or(0)
 
-    # one session in depth: metrics + zones + power bests computed from local streams
+    # the whole-athlete report: form, 7d/28d zone split + polarization, derived FTP, per-sport 28d
     summary! : {} => Try({}, _)
     summary! = |{}| {
         path = Db.open_db!({})?
@@ -792,7 +792,6 @@ Report :: [].{
             rows: Sqlite.str("s"),
         })
     }
-    # the no-silent-empty hint: what sports DOES the data hold
     load_series! : U64 => Try({}, _)
     load_series! = |days| {
         path = Db.open_db!({})?

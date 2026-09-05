@@ -475,14 +475,10 @@ Render :: [].{
 
     SegRow : { ordinal : I64, kind : Str, start_s : I64, dur_s : I64, avg_signal : F64, signal : Str, peak_hr : F64, avg_hr : F64, rec_drop : F64, rec_drop_known : Bool }
 
-    # A rep's rate, in the reader's units. Power stays watts; a PACE signal is stored as
-    # m/s (SI, like every other distance in the engine) and rendered as time-per-distance,
-    # which is what a runner reads. #351: `m/s` was a raw engine value leaking into a human
-    # screen — the defect was the QUANTITY, not the unit, so converting it to mph would
-    # have preserved the wrong presentation in a new unit.
-    #
-    # An empty signal keeps fmt2: it means "no signal identified", and inventing a pace for
-    # it would assert something the detector did not find.
+    # A speed in m/s (SI, like every other distance in the engine), rendered as
+    # time-per-distance, which is what a runner reads. #351: `m/s` was a raw engine
+    # value leaking into a human screen — the defect was the QUANTITY, not the unit,
+    # so converting it to mph would have preserved the wrong presentation in a new unit.
     pace_from_speed : [Metric, Imperial], F64 -> Str
     pace_from_speed = |units, mps|
         if mps <= 0.0 {
@@ -521,6 +517,9 @@ Render :: [].{
             "m/s"
         }
 
+    # A rep's rate, in the reader's units. Power stays watts; a PACE signal goes through
+    # pace_from_speed. An empty signal keeps fmt2: it means "no signal identified", and
+    # inventing a pace for it would assert something the detector did not find.
     seg_value : [Metric, Imperial], F64, Str -> Str
     seg_value = |units, v, signal|
         if signal == "power" fmt0(v) else if signal == "pace" pace_from_speed(units, v) else fmt2(v)
@@ -1788,7 +1787,6 @@ expect Render.hard_break("abcdefghij", 4) == ["abcd", "efgh", "ij"]
 expect Render.hard_break("🚴ab🚴", 3) == ["🚴a", "b🚴"]
 # a token that already fits is returned untouched, so wrap_cell's fast path is unaffected
 expect Render.hard_break("short", 12) == ["short"]
-# a short cell is rendered whole on one line — exact match proves no wrapping
 # #123: the phrase distinguishes an exact streak from a truncated one, and stays silent
 # where the number carries no information. The n=1/n=2 pair pins the suppression threshold
 # — with only n=0 and n=16 tested, `n <= 1` could drift to `n <= 0` and ship ", 1 days".
@@ -1801,6 +1799,7 @@ expect Render.band_days_phrase(Known(16)) == ", 16 days in this band"
 expect Render.band_days_phrase(AtLeast(31)) == ", 31+ days in this band"
 expect Render.band_days_phrase(AtLeast(1)) == ""
 
+# a short cell is rendered whole on one line — exact match proves no wrapping
 expect {
     t = Render.render_table(["a"], [["short"]])
     t == "╭───────╮\n│ a     │\n├───────┤\n│ short │\n╰───────╯"
