@@ -83,7 +83,7 @@ Sports :: [].{
     # keep the stored sport_family column current. Queries compare the COLUMN
     # (sargable via idx_activities_family_start); wrapping query predicates in
     # this CASE instead was measured 8.5x slower per analyze on the real db
-    # (non-sargable — the round-1 approach, reverted). Names are our own
+    # (non-sargable — the approach this replaced). Names are our own
     # literals (no quotes — the expect below pins that), so the splice is safe.
     sql_canonical_case : Str -> Str
     sql_canonical_case = |col| {
