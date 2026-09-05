@@ -35,7 +35,9 @@ Config :: [].{
 	# DELETE: a read key absent from this list is now removable with "stride does
 	# not read it" — silent and destructive, not annoying and visible. Two
 	# documented keys are waiting to enter that state: `threshold_pace_<sport>` and
-	# `model_<sport>`. Whoever wires one up MUST add it here in the same commit.
+	# `model_<sport>`, which ADR 0003 records as SHIPPED DIFFERENTLY — there is no such
+	# key and none is planned. If that ever changes, it has to be added here in the same
+	# commit as the key itself.
 	# The reverse trap is why this derives from READ SITES, not docs: `metrics_rev`
 	# sat here for one revision on the strength of an AGENTS.md sentence and has
 	# never been read from config.

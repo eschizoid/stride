@@ -589,7 +589,8 @@ Analyze :: [].{
         decoded = Streams.decode_streams(row.raw)
         streams = decoded.streams
         # this sport's zone bounds: per-sport override or global, resolved purely from
-        # the in-memory config (no per-key DB hit — that path corrupts the heap here)
+        # the in-memory config. No per-key DB hit, for the reason given where the config is
+        # loaded — an absent override is a missing row, not a missing value.
         row_zb = resolve_zones_pure(cfg, row.sport, zb)
 
         # sanity-filter HR: some sources (Peloton strength workouts) emit junk
