@@ -1207,8 +1207,7 @@ Render :: [].{
                 ["duration", "best pace (${pace_unit(units)})"],
                 List.map(pc.points, |p| [dur_label(p.dur_s), pace_from_speed(units, p.speed)]),
             )
-            # same rule as the power curve: at exactly two points the line is exact, so r2
-            # is 1 by construction and would be false reassurance.
+            # suppressed below 3 points, for the reason power_curve_screen gives.
             quality =
                 if pc.fit_points >= 3.I64 {
                     " · fit r2 ${fmt2(pc.fit_r2)} from ${I64.to_str(pc.fit_points)} bests"
@@ -1502,8 +1501,8 @@ Render :: [].{
 
     # time to exhaustion: the number, and what the model thinks of it
     tte_screen = |p| {
-        # r2 is 1 by construction at two points, where the COUNT is the signal
-        # and this number would be false reassurance.
+        # suppressed below 3 points, for the reason power_curve_screen gives — there the
+        # COUNT is the signal.
         quality = if p.fit_points >= 3.I64 ", r2 ${fmt2(p.fit_r2)}" else ""
         head = "at ${fmt0(p.watts)}W against CP ${fmt0(p.cp)} (${p.sport_family} fit, W' ${fmt1(p.w_prime / 1000.0)} kJ from ${I64.to_str(p.fit_points)} of the 5/10/20-min bests over ${I64.to_str(p.window_days)}d${quality})"
         # The athlete's own record at or above this power, when it is on file.
@@ -1963,8 +1962,8 @@ expect {
     })
     Str.contains(s, "5s") and Str.contains(s, "20m") and Str.contains(s, "Critical Power 250") and Str.contains(s, "Ride")
     and Str.contains(s, "fit r2 0.72")
-    # at two points a line is exact, so r2 is 1 by construction and must NOT be
-    # shown as if it were a quality signal
+    # ...and is suppressed at two points, where it would be false reassurance —
+    # power_curve_screen states why.
     and !(Str.contains(thin, "r2 1.00")) and Str.contains(thin, "r2 needs 3")
 }
 expect {
@@ -2345,9 +2344,8 @@ expect {
     # the query-independent fit-quality number reaches the human screen -- a
     # coach reading only the terminal must see what the payload sees
     and Str.contains(tte("in_model", False, False), "r2 0.72")
-    # ...and is SUPPRESSED at two points, where it is 1 by construction. Only
-    # the presence direction was asserted, so mutating the gate to always-show
-    # left the suite green.
+    # ...and is SUPPRESSED at two points. Only the presence direction was asserted, so
+    # mutating the gate to always-show left the suite green.
     and !(Str.contains(Render.tte_screen({
         watts: 265.0, seconds: 596.0, known: True, status: "in_model",
         cp: 254.0, w_prime: 6416.0, fit_points: 2.I64, fit_r2: 1.0,
