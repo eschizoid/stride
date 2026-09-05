@@ -1,6 +1,6 @@
 {
   "name": "stride",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Local-first, deterministic multi-sport training analytics. The engine computes the numbers; the agent adds judgment.",
   "author": {
     "name": "Mariano Gonzalez",
