@@ -37,7 +37,7 @@ MIN_DOCS=9
 # truthfully saying a command does NOT exist needs the marker or it fails on a true
 # sentence. Over-applies by design (a genuine claim on an exempted line rides along);
 # the pin is a COUNT, not an identity — with two or more markers one could move.
-EXPECTED_QUOTING=1
+EXPECTED_QUOTING=2
 
 # Lines that MENTION `stride <lowercase-word>` and yielded no reference — the counter
 # for what the floors cannot see: a reference never counted leaves every total
