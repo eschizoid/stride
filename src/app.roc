@@ -6,7 +6,7 @@ app [main!] {
 # stride — a local-first multi-sport training engine.
 #
 # This module is argv -> dispatch, plus the handful of effects that have no better
-# home yet (`init!`, `config_show!`, `config_store!`) and a set of platform imports
+# home yet (`init!` and the four `config_*` effects) and a set of platform imports
 # left over from when it owned everything. It used to own every effect,
 # because alpha4 could not type-check a wide decoder once effects were injected
 # into a module; the new compiler lifted that wall, so effects now live with
@@ -328,8 +328,8 @@ run_command! = |cmd|
         # internal_error, telling users to file an issue for an expired token.
         Err(HttpStatus(status, body)) =>
             if status == 401 or status == 403 {
-                # `body` was bound and DISCARDED here, unlike the strava_error arm two
-                # lines down. That flattened two 401s with different causes and different
+                # `body` was bound and DISCARDED here, unlike the strava_error arm below.
+                # That flattened two 401s with different causes and different
                 # remedies into one message: a dead credential, where `stride auth` is
                 # right, and a resource that keeps 401ing after the token was successfully
                 # refreshed twice — a missing scope or a clock skew, where re-authing with
@@ -490,10 +490,11 @@ config_show! = |key|
 # Every row that holds a value, MARKED, not filtered: dropping the rows the
 # engine does not read made the command unable to answer its own question and
 # turned a visible dead row invisible — for an issue whose subject is "a row
-# nothing reads", backwards. `status` says which: `read`, `derived` (stored,
-# ignored), `unrecognised` (retired name or pre-#254 typo). `just schema-check`
-# selects `status == "read"` rather than trusting an upstream filter. The
-# emptiness test is the SAME rule `config get` uses, decided in SQL once.
+# nothing reads", backwards. `status` says which: `settable`, `managed` (stride's
+# own bookkeeping), `derived` (stored, ignored), `unrecognised` (retired name or
+# pre-#254 typo). `just schema-check` selects the settable/managed rows rather than
+# trusting an upstream filter. The emptiness test is the SAME rule `config get`
+# uses, decided in SQL once.
 config_list! : {} => Try({}, _)
 config_list! = |{}| {
     path = Db.open_db!({})?

@@ -10,7 +10,7 @@ app [Context, program] {
 #   • "skips"           drive the undecodable-stream skip path against a mock serving one
 #   • "stops"           drive the budget_reached / rate_limited stop reasons
 #   • "mock"            serve the four Strava endpoints the drivers hit, and listen
-# One binary, FIVE roles — `just e2e` runs the offline suite; `just e2e-sync` starts three
+# One binary, FIVE roles — `just e2e` runs the offline suite; `just e2e-sync` starts the
 # mock instances and points each driver at the one it needs.
 #
 # It shells out to the built `stride` binary plus `sqlite3`/`jq`/`mktemp`/`date`/`awk`
@@ -256,7 +256,7 @@ run_all! = || {
     check!("the litter sweep keeps a tally whose owner is still running", Str.trim(sh!("[ -e '.e2e-checks.${probe_mode}.${probe_mypid}' ] && echo kept || echo swept")) == "kept")?
     # ...CONDITIONALLY, because asserting collection unconditionally cancels the
     # `ps` guard on the one platform that guard exists for (on a PATH with no `ps`,
-    # the suite died at check 2 of 851 under a message about litter collection).
+    # the suite died at its second check under a message about litter collection).
     # This asserts the DEGRADATION instead: where `ps -p` works, the dead owner's
     # file is collected; where it does not, nothing is — and the guard becomes
     # detectable on the degraded platform, where removing it deletes the LIVE
@@ -976,7 +976,7 @@ run_stops! = || {
         # actually exhausts the allowance — was pinned by nothing: reporting
         # `BudgetReached` instead left all checks green.
         check!("...and stopped on the DAILY cap, the one arm no 429 produces", bfq!(".data.stopped") == "daily_cap_reached")?
-        # The count assertion two lines up has the shape its own comment warns about, one
+        # The count assertion above has the shape its own comment warns about, one
         # field over: a run that IGNORED the stamp also ends at the cap, because it stops
         # when it gets there. `streams_fetched == 2` is what discriminates, and this pins
         # the reason it stopped. Three assertions, three different failure modes.
@@ -1098,7 +1098,7 @@ run_stops! = || {
     checks_ran_at_least!(
         if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
             # its own floor: this branch returns before the shared drain assertions, so the
-            # 12 the default arm expects would never be reachable here
+            # 14 the default arm expects would never be reachable here
             28
         } else if env_or!("E2E_EXPECT_DAILY_CAP", "") == "1" {
             # its own floor, and TIGHT: a floor below the arm's own count lets a check be
@@ -1109,7 +1109,7 @@ run_stops! = || {
         } else if env_or!("E2E_EXPECT_401", "") == "1" {
             10
         } else if rate_limited {
-            # 12 since this arm gained the daily-cap-via-429 pair — the path the daily
+            # 14 since this arm gained the daily-cap-via-429 pair — the path the daily
             # arm's own driver structurally cannot reach.
             14
         } else {
@@ -1339,7 +1339,7 @@ b_init_config! = |ctx| {
     # an answer that is not `usage`.
     # Run against a DISCARDED COPY: two of the three forms write, and probing
     # ctx.home inserted the suite's first planned_sessions row, colliding with a
-    # stray-write guard 1500 lines below (it passed by luck — the probe landed on a
+    # stray-write guard far below (it passed by luck — the probe landed on a
     # date the next add revised in place). An INITIALISED copy, not a bare temp dir:
     # an empty HOME answers `no_database` to everything, which is also not usage,
     # and the check would pass on nothing.
@@ -1404,7 +1404,7 @@ b_init_config! = |ctx| {
     # byte-identical and land in the -wal sidecar, so hash `sqlite3 .dump`.
     #
     # Arguments come from the TABLE'S OWN `args`, one filler per required argument:
-    # a blanket `1 1` made 15 of 19 forms a wrong arity, rejected before dispatch,
+    # a blanket `1 1` made most forms a wrong arity, rejected before dispatch,
     # so the hash comparison was a tautology — green and measuring nothing, with a
     # "did it run" guard counting the jq list rather than executions. A wrong-TYPE
     # filler is rejected like an arity error (`reps 1` answers "not a date"); a
@@ -1585,7 +1585,7 @@ b_auth! = |ctx| {
     # that vacuity. The real-base probe failing is the only reason it was noticed.
     check!("a loopback token endpoint opens no browser — nothing on this machine is authorizing", Str.trim(sh!("rm -f '${stub}/opened'; PATH=\"${stub}:$PATH\" ${creds} '${ctx.bin}' auth < /dev/null 2>&1 | grep -qi 'stdin closed' && { [ -e '${stub}/opened' ] && echo opened || echo quiet; } || echo 'auth did not run'")) == "quiet")?
     # ...and `localhost`, the OTHER spelling the gate accepts and the suite never uses.
-    # Every base string in this repo is `127.0.0.1` — seven mock instances in the justfile
+    # Every base string in this repo is `127.0.0.1` — the mock instances in the justfile
     # and the one above — so deleting the `localhost` disjunct was fully green while a
     # contributor pointing a mock at `localhost:8799`, a spelling `api_base_allowed`
     # explicitly permits, got a browser tab per run.
@@ -2063,7 +2063,7 @@ b_seed_analyze! = |ctx| {
     # rest. Without it this sweep had the same hole the human sweep's `activity` leg did:
     # a command that ERRORS returns the same envelope under both settings and scores
     # `differ=0`, indistinguishable from a leg that passed honestly. Measured on an empty
-    # home, only 6 of 12 legs produce a payload — so the assertion was satisfiable with
+    # home, only 6 of 14 legs produce a payload — so the assertion was satisfiable with
     # most of it testing nothing. Every leg is live here (`blind=` is empty): the segments
     # seeded on 9003 give `reps` a payload it otherwise lacks. `blind` is an IDENTITY, not a
     # count, so a leg going quiet names itself rather than hiding in a total.
@@ -2141,8 +2141,8 @@ b_seed_analyze! = |ctx| {
     #
     # The asserted string pins `reps=2` deliberately, and that is a third coupling rather
     # than an escape from the other two: adding a rep to 9003 fails this check. It is kept
-    # for two reasons. It is how this leg already works (`swept=13`, `screens=10`,
-    # `examined=15` all pin the same way), and it is load-bearing for SAFETY — a `$reps`
+    # for two reasons. It is how this leg already works (`swept=14`, `screens=11`,
+    # `examined=17` all pin the same way), and it is load-bearing for SAFETY — a `$reps`
     # containing a regex metacharacter would make the pattern accept a payload the count
     # does not justify, and only the echoed literal catches that. Unreachable today, since
     # sqlite3 writes errors to stderr and `count(*)` yields digits or nothing, but anyone
@@ -2186,7 +2186,7 @@ b_seed_analyze! = |ctx| {
     #
     # Four sites depend on this check rather than on expects: `activity`, `top`, `stats`,
     # and `progress_section`'s distance cell — the last because it lives in the `SpeedHr`
-    # arm and all six `progress_section` expects pass `Ef`, so nothing reaches it. The
+    # arm and no `progress_section` expect passes `SpeedHr`, so nothing reaches it. The
     # legend and `top`'s header name a unit and render no number. The pace column renders
     # one — a pace string — and DOES convert, via `pace_per_dist`, which the fmt filter does
     # not match; it is exempt for that reason, not for rendering nothing. `pace-curve`
@@ -2199,7 +2199,7 @@ b_seed_analyze! = |ctx| {
     # `expect*` skips top-level expects, which is every unit expect that exists. It does
     # NOT skip a block-expect BODY (`expect {` on one line, `Render.dist_unit(...)` on the
     # next) — that line is indistinguishable from production at line granularity, and
-    # separating them needs a brace-depth state machine over 219 block expects. Left
+    # separating them needs a brace-depth state machine over every block expect in the tree. Left
     # deliberately: triggering it needs a contrived pair, deleting a no-`fmt` site AND
     # adding a block expect that calls dist_unit directly.
     #
@@ -2810,7 +2810,7 @@ b_seed_analyze! = |ctx| {
     # 101 is the STEADY ride — zero segments, so its `segments` item schema (ten
     # required keys and two enums) passes vacuously on an empty array. 103 is the
     # interval ride and carries every segment kind, so it is what actually
-    # exercises those declarations. It is deleted a few lines below.
+    # exercises those declarations. It is deleted at the end of the schema block, far below.
     check!("interval activity conforms (non-empty segments)", validate!("activity 103", "activity") == "")?
     # ── spending the CP model (#186/#187) ────────────────────────────────
     # The fixture has no 5/10/20-min power bests spread widely enough to fit a
@@ -2953,7 +2953,7 @@ b_seed_analyze! = |ctx| {
     check!("a same-count session in another rep band is not comparable", Str.trim(strjq!(ctx, ["reps"], ".data.sessions | length")) == before_n)?
     # every probe activity leaves before the block ends — a later analyze would
     # otherwise score them and move CTL, which surfaced as an unrelated form
-    # check failing 90 lines further down
+    # check failing later in the run
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (330,331,332,333,334); DELETE FROM activity_metrics WHERE activity_id IN (330,331,332,333,334); DELETE FROM activities WHERE id IN (330,331,332,333,334);")
     # --help rather than a bare call: interpolating a compile-time empty string
     # into the command slot is the #32-class crash, and --help returns the
@@ -2984,7 +2984,7 @@ b_seed_analyze! = |ctx| {
     check!("progress conforms", validate!("progress", "progress") == "")?
     # `week` is the CURRENT Mon-Sun window, and the fixture's sessions are dated
     # relative to today — d1/d2 can both land in the PREVIOUS week, leaving the
-    # payload empty and the item schema (14 required keys + the status enum)
+    # payload empty and the item schema (15 required keys, one of them the status enum)
     # evaluated against nothing. Seed a session dated TODAY and assert the array
     # is non-empty before trusting the validation. Third instance of this trap
     # in this PR; the assertion is the cheap half.
@@ -3056,7 +3056,7 @@ b_seed_analyze! = |ctx| {
     # error code that is not in the schema fails here, which is the same drift
     # bargain additionalKeys makes for payload keys
     check!("an error envelope conforms, code included", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' activity 99999999 2>&1 | jq -r --slurpfile schema schemas/v3/envelope.json -f tools/validate.jq 2>&1")) == "")?
-    # The enum is hand-maintained beside 27 emit sites, and this PR proved twice
+    # The enum is hand-maintained beside every emit site, and this PR proved twice
     # in one file that it drifts: a fabricated code (bad_args, left over from a
     # rewritten branch) and a missing one (activity_required, a routine
     # response). Set equality in BOTH directions, extracted multi-line-aware
@@ -3102,7 +3102,7 @@ b_seed_analyze! = |ctx| {
     # below trivially satisfiable in one of the two, and a jq error yields "" not 0.
     check!("the declared error-code set is non-empty (got ${ndecl})", ndecl != "" and ndecl != "0")?
     # The selector is PINNED to the error-code enum's path rather than sweeping
-    # every enum: enums are the house style (11 of 26 schemas carry one), and
+    # every enum: enums are the house style where a field has a closed set, and
     # envelope.json is a likely home for a second whose members would be wrongly
     # folded into the contract set. A pinned path is only safe because of the
     # guard below — pinned and unguarded, a restructure that moved the enum would
@@ -3324,8 +3324,8 @@ b_seed_analyze! = |ctx| {
     # mid-number. Applied CLI-wide, because a guard on one command is a guard
     # nobody generalises. awk's length() counts BYTES on macOS (box glyphs are
     # three each), so `wc -m` is what measures a column. The list is every command whose
-    # screen calls `render_table` — six of them, cross-checked against Render rather than
-    # remembered: compare, load, pace-curve, power-curve, progress and season. Listing a
+    # screen calls `render_table`, cross-checked against the source rather than
+    # remembered. Listing a
     # command that emits no table adds a vacuous pass, which is how `top` and `week all`
     # went missing once and `pace-curve` went missing again; each entry that CAN render
     # empty carries its own liveness check for that reason.
@@ -3615,8 +3615,8 @@ b_seed_analyze! = |ctx| {
     # ...and the SIX other commands that read the same column through different
     # queries — a fix applied where the issue was REPORTED, not everywhere the
     # column is projected, leaves six of seven crashing. Enumerated by
-    # running every command against a planted BLOB, not by reading (105 references
-    # across 12 files is not a list anyone reads correctly).
+    # running every command against a planted BLOB, not by reading (the references
+    # are spread across the tree and are not a list anyone reads correctly).
     # `unreadable_activity_date` is the project's own graceful-degradation code, so
     # this asserts the contract rather than the absence of a crash. The sharpest of
     # the seven: `guard_activity_dates!` itself — the guard whose job is turning an
@@ -3675,7 +3675,7 @@ b_seed_analyze! = |ctx| {
     class_codes = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; /bin/cp -f '${ctx.db}' $h/.stride/db.sqlite; sqlite3 $h/.stride/db.sqlite \"DELETE FROM activities WHERE start_local IS NULL OR start_local NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]*' OR COALESCE(strftime('%Y-%m-%d', julianday(substr(CAST(start_local AS TEXT),1,10))),'x') <> substr(CAST(start_local AS TEXT),1,10); DELETE FROM daily_load WHERE day IS NULL OR day NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'; UPDATE activities SET sport_type = CAST(sport_type AS BLOB), name = CAST(name AS BLOB), start_local = CAST(start_local AS BLOB) WHERE id = (SELECT id FROM activities ORDER BY start_local DESC LIMIT 1); UPDATE daily_load SET day = CAST(day AS BLOB) WHERE day = (SELECT MAX(day) FROM daily_load);\" >/dev/null 2>&1; for c in summary plan stats doctor activities progress season load compare week; do HOME=$h STRIDE_FORMAT=json '${ctx.bin}' $c 2>&1 | jq -r '.error.code // \"ok\"'; done | grep -c internal_error"))
     check!("a blob in any TEXT column crashes nothing, in a window where the date guard passes (got: ${class_codes})", class_codes == "0")?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 954;")
-    # deleted immediately: `doctor`'s undateable count is pinned at 4 twelve lines below, and
+    # deleted immediately: `doctor`'s undateable count is pinned at 4 just below, and
     # a probe row that outlives its own checks moves a number asserted for another reason.
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 952;")
     # `doctor`'s COUNT, which is the whole of #265 and had nothing asserting its behaviour.
@@ -4518,7 +4518,7 @@ b_command_schemas! = |ctx| {
     # ORDERING: required arguments must form a PREFIX. Both probes verify the
     # required COUNT, neither its position, so swapping a required and an optional
     # preserves both counts and passes. Not only a contract lie:
-    # schemas/v3/commands.json states "optional ones last" and THREE probes build
+    # schemas/v3/commands.json states "required ones first" and THREE probes build
     # command lines with `select(.required)`, which silently drops an optional
     # sitting between required ones — asserting it makes those three sound rather
     # than lucky.
@@ -4847,10 +4847,9 @@ b_agent_loop! = |ctx| {
     # point: the arm exists because `reps asc` once answered "no detected interval
     # structure on asc" — a data fact about a date that does not exist. What this
     # catches is a message that still says "not a date" but drops the VALUE (the
-    # Command.roc expects pin the phrase). `usage` is one code fed by 30 distinct
+    # Command.roc expects pin the phrase). `usage` is one code fed by dozens of distinct
     # raises, so `code == "usage"` proves only that SOME malformed invocation was
-    # refused; the token is the only thing separating the date arm from the other
-    # 29.
+    # refused; the token is the only thing separating the date arm from the rest.
     check!("...and the date-refusal message names what it refused", Str.contains(stride!(ctx.bin, ctx.home, ["reps", "notadate"]), "notadate"))?
     _ = sh!("rm -f '${ctx.home}/.err-probe.out'")
 
@@ -6193,8 +6192,8 @@ b_progress_b! = |ctx| {
     check!("...and not the singular one the inverted rule would print here", !(Str.contains(ev_human2, "2 shown unscored: needs power and HR")))?
     # ...and the SpeedHr arm, the one the real database actually renders (all 35
     # both-cause groups take `speed_hr`): replacing either SpeedHr string with
-    # garbage left the suite green, because `needs`/`needs_plural` are three-armed
-    # matches and a fixture on one arm tests a SIBLING of the case the rule fires
+    # garbage left the suite green, because `lens_needs` is a three-armed
+    # match and a fixture on one arm tests a SIBLING of the case the rule fires
     # on. Rowing with distance and HR and no power takes this lens.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (281,'Evening Row','Rowing','2025-06-02T18:00:00Z',3600,12000,140),(282,'Evening Row','Rowing','2025-06-09T18:00:00Z',3600,12000,18),(283,'Evening Row','Rowing','2025-06-16T18:00:00Z',3600,12000,145),(284,'Evening Row','Rowing','2025-06-05T18:00:00Z',3600,24000,140);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
@@ -6930,7 +6929,7 @@ sh! = |script|
 # recurs.
 # The failure log: a failing write used to be invisible three times over
 # (sqlite3 reports on stderr, sh! discards stderr AND the exit code, and 199
-# of 277 call sites discard the return) — it surfaced later as an
+# of the call sites discard the return) — it surfaced later as an
 # unrelated-looking assertion about state.
 sql! : Str, Str => Str
 sql! = |db, query|
@@ -7190,7 +7189,7 @@ seed_ride! : Str, Str, Str, Str, Str, Str, Str, Str => Str
 seed_ride! = |db, id, name, date, secs, meters, watts, hr|
     sql!(db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (${id},'${name}','Ride','${date}',${secs},${meters},${watts},${watts},${hr});")
 
-# the 9999W-spike stream fixture (120 samples @200W, index 60 spiked), built by
+# the 9999W-spike stream fixture (1300 samples @200W, index 60 spiked), built by
 # awk in the shell — NOT by a recursive Roc closure (that would trip roc#10469).
 spike_json! : {} => Str
 spike_json! = |{}|
@@ -7379,7 +7378,7 @@ reset_checks! = |{}| {
 
 # A floor, NOT an exact count — `>=`, so setting one to today's count does not
 # make it exact: adding checks never fails it. It must be TIGHT (a floor of 400
-# against 564 actual lets 164 checks vanish silently); a tight
+# against a smaller actual lets checks vanish silently); a tight
 # floor only needs touching when checks are REMOVED, exactly the event that
 # should force a conversation. run_all uses checks_ran_exactly!; the mock
 # drivers keep floors. A tight floor costs something: one lost tally append

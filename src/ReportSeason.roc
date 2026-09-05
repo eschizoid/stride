@@ -41,11 +41,11 @@ ReportSeason :: [].{
         }
     }
 
-    # ONE fold for blocks and months. They diverged the first time months got
-    # their own query: it aliased ftp_first/ftp_last to MIN/MAX, so every month
-    # was non-decreasing by construction and a falling threshold rendered as a
-    # rise. pol_rows arrives ORDER BY date, fam, so folding it in order is what makes
-    # first/last chronological.
+    # ONE fold for blocks and months. A separate months query aliases
+    # ftp_first/ftp_last to MIN/MAX, which makes every month non-decreasing by
+    # construction and renders a falling threshold as a rise. pol_rows arrives
+    # ORDER BY date, fam, so folding it in order is what makes first/last
+    # chronological.
     FamRow : { fam : Str, n : I64, ftp_lo : F64, ftp_hi : F64, ftp_first : F64, ftp_last : F64 }
     fold_families : List({ days : I64, fam : Str, n : I64, easy_s : F64, mod_s : F64, hard_s : F64, ftp_lo : F64, ftp_hi : F64 }) -> List(FamRow)
     fold_families = |rows|
@@ -89,11 +89,11 @@ ReportSeason :: [].{
                 ctl = Sqlite.f64("ctl")(cols)(stmt)?
                 atl = Sqlite.f64("atl")(cols)(stmt)?
                 tsb = Sqlite.f64("tsb")(cols)(stmt)?
-                # NOT ok_or(0): an unparseable day became epoch 0 and produced a
-                # block with span_weeks -2937 and zero load at exit 0. `summary`
-                # refuses the same row loudly, and so should this. Parseable is
-                # not enough either -- date_str_to_days accepts "2026-3-05",
-                # which sorts after every 2026-1x day and yielded span_weeks -6.
+                # NOT ok_or(0): an unparseable day collapses to epoch 0, giving a block
+                # a nonsense span and zero load while still exiting 0. `summary` refuses
+                # the same row loudly, and so should this. Parseable is not enough either
+                # -- date_str_to_days accepts "2026-3-05", which sorts after every 2026-1x
+                # day and yields a negative span.
                 days = (Metrics.usable_date_days(d)).map_err(|_| BadDailyLoadDay(d))?
                 Ok({ days, tss, ctl, atl, tsb })
             },
@@ -149,9 +149,9 @@ ReportSeason :: [].{
                     ftp_hi = Sqlite.f64("ftp_hi")(cols)(stmt)?
                     example_id = Sqlite.i64("example_id")(cols)(stmt)?
                     # Same rule as daily_load.day: absorbing silently drops the activity from
-                    # sessions, polarization AND the threshold range at exit 0 — and merely
-                    # PARSEABLE is not enough: "2026-3-01T" sorts last, became ftp_end for its
-                    # month, and published the threshold running backwards.
+                    # sessions, polarization AND the threshold range while still exiting 0.
+                    # Merely PARSEABLE is not enough — "2026-3-01T" sorts last, so it becomes
+                    # ftp_end for its month and publishes the threshold running backwards.
                     # (`d` is substr(start_local, 1, 10), so every value named here and in the
                     # error is a ten-character PREFIX of the column, never the column itself.)
                     days = (Metrics.usable_date_days(d)).map_err(|_| BadActivityDate(d, example_id))?
@@ -185,9 +185,9 @@ ReportSeason :: [].{
             this_week = ((today + 3) // 7) * 7 - 3
             built = List.map_with_index(blocks, |b, idx| {
                 block_idx = (idx).to_i64_wrap()
-                # The block ends on its last TRAINING day, not the Sunday that
-                # closes its last training week -- the latter dated the current
-                # block up to six days into the future.
+                # The block ends on its last TRAINING day, not the Sunday that closes its
+                # last training week -- the latter dates the current block up to six days
+                # into the future.
                 week_end = b.last_week + 6
                 trained_days = List.keep_if(day_rows, |r| r.tss > 0.0 and r.days >= b.first_week and r.days <= week_end)
                 last_day = List.fold(trained_days, b.first_week, |acc, r| if r.days > acc r.days else acc)

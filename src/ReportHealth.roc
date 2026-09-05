@@ -1,15 +1,21 @@
-# ── reference and diagnostics: doctor, stats, zones, power-curve, tte ─
+# ── reference and diagnostics: doctor, stats, zones, power-curve, pace-curve, tte ─
 #
 # Split from Report.roc under ADR 0001 (doctor! had passed the ~250-line
 # trigger). These are the commands you run to check the ENGINE rather than the
-# training: coverage, provenance, the configured zones, the power-duration
-# curve and what it implies.
+# training: coverage, provenance, the configured zones, the power- and speed-duration
+# curves and what they imply.
 #
-# Three helpers stay in Report.roc rather than move here, because each is shared
-# with another family: the high/medium/low model lists (doctor + summary's
-# coverage), Report.sport_filter_sql (power-curve + activities/top) and Report.cp_fit_as_of!
-# (tte + activity). Moving a shared helper into one family is how a split turns
-# into a tangle.
+# Five helpers live in Report.roc rather than here. Three because each is shared with
+# another family — the high/medium/low model lists (doctor + summary's coverage),
+# Report.sport_filter_sql (power-curve + activities/top) and Report.cp_fit_as_of!
+# (tte + activity). Moving a shared helper into one family is how a split turns into a
+# tangle.
+#
+# Two are NOT shared and are here only by adjacency: Report.sport_exact_sql and
+# Report.sports_with_speed! serve pace-curve alone. They sit beside sport_filter_sql
+# because they are the same concern — resolving a sport word to a SQL predicate — and
+# splitting one across two files would be worse than the rule they break. Stated rather
+# than left for a reader to notice the rule does not hold.
 import Strava
 import Report
 import Analyze
@@ -27,7 +33,7 @@ ReportHealth :: [].{
     stats! : {} => Try({}, _)
     stats! = |{}| {
         path = Db.open_db!({})?
-        # Human table only. The JSON branch below emits the `km` field this schema has
+        # Human table only. The JSON branch below emits the `km` and `hours` fields this schema has
         # always carried — a converted, unit-bearing payload field, and the one exception
         # to "payloads are SI". Renaming it is an envelope break, so it stays km and the
         # setting reaches only the rendered table (#349).

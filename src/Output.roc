@@ -195,8 +195,8 @@ Output :: [].{
     # The setup remedy for a client credential neither in the environment nor stored.
     # ONE definition, two call sites (`auth!` and the app.roc boundary arm) — two
     # spellings of one remedy is how they drift. NOT split into a `_msg` half: only
-    # `unreadable_config_msg` earns that split, because `ReportHealth` embeds it in a
-    # PAYLOAD; the other message pairs have a single caller each.
+    # `unreadable_config_msg`'s split is load-bearing, because `ReportHealth` embeds it in a
+    # PAYLOAD; the other three exist for symmetry and have a single caller each.
     missing_client_creds! : Str => Try({}, _)
     missing_client_creds! = |name|
         Output.err_out!("missing_client_creds", "${name} not set and no stored credentials yet — create a (free) Strava API app at strava.com/settings/api, then run:\n  STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth")

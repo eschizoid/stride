@@ -475,14 +475,10 @@ Render :: [].{
 
     SegRow : { ordinal : I64, kind : Str, start_s : I64, dur_s : I64, avg_signal : F64, signal : Str, peak_hr : F64, avg_hr : F64, rec_drop : F64, rec_drop_known : Bool }
 
-    # A rep's rate, in the reader's units. Power stays watts; a PACE signal is stored as
-    # m/s (SI, like every other distance in the engine) and rendered as time-per-distance,
-    # which is what a runner reads. #351: `m/s` was a raw engine value leaking into a human
-    # screen — the defect was the QUANTITY, not the unit, so converting it to mph would
-    # have preserved the wrong presentation in a new unit.
-    #
-    # An empty signal keeps fmt2: it means "no signal identified", and inventing a pace for
-    # it would assert something the detector did not find.
+    # A speed in m/s (SI, like every other distance in the engine), rendered as
+    # time-per-distance, which is what a runner reads. #351: `m/s` was a raw engine
+    # value leaking into a human screen — the defect was the QUANTITY, not the unit,
+    # so converting it to mph would have preserved the wrong presentation in a new unit.
     pace_from_speed : [Metric, Imperial], F64 -> Str
     pace_from_speed = |units, mps|
         if mps <= 0.0 {
@@ -521,6 +517,9 @@ Render :: [].{
             "m/s"
         }
 
+    # A rep's rate, in the reader's units. Power stays watts; a PACE signal goes through
+    # pace_from_speed. An empty signal keeps fmt2: it means "no signal identified", and
+    # inventing a pace for it would assert something the detector did not find.
     seg_value : [Metric, Imperial], F64, Str -> Str
     seg_value = |units, v, signal|
         if signal == "power" fmt0(v) else if signal == "pace" pace_from_speed(units, v) else fmt2(v)
@@ -960,9 +959,9 @@ Render :: [].{
     # in drain_note, and the branch you are made to write is the branch that runs.
     #
     # DO NOT, not CANNOT: the signature takes payload and tag independently, so a
-    # caller CAN pass a mismatched pair. Both producer sites bind the tag once and
+    # caller CAN pass a mismatched pair. All three producer sites bind the tag once and
     # derive `stopped:` from that binding — that is discipline, not enforcement, and a
-    # third caller has to keep it.
+    # fourth caller has to keep it.
     sync_screen : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }, Drain.SyncStop, Bool -> Str
     sync_screen = |p, stop, all| {
         prune_note = if p.pruned > 0 " (pruned ${U64.to_str(p.pruned)} removed on Strava)" else ""
@@ -1207,8 +1206,7 @@ Render :: [].{
                 ["duration", "best pace (${pace_unit(units)})"],
                 List.map(pc.points, |p| [dur_label(p.dur_s), pace_from_speed(units, p.speed)]),
             )
-            # same rule as the power curve: at exactly two points the line is exact, so r2
-            # is 1 by construction and would be false reassurance.
+            # suppressed below 3 points, for the reason power_curve_screen gives.
             quality =
                 if pc.fit_points >= 3.I64 {
                     " · fit r2 ${fmt2(pc.fit_r2)} from ${I64.to_str(pc.fit_points)} bests"
@@ -1266,7 +1264,7 @@ Render :: [].{
     # ── summary command screen ──────────────────────────────────────────
     # renders the human report straight from the summary payload — ONE source of
     # numbers for the whole screen. (No type annotation: the payload is the summary
-    # record, typed at the app.roc call site; inference keeps this open.)
+    # record, typed at its call sites in Report and Plan; inference keeps this open.)
 
     summary_screen = |units, s| {
         z = s.last_28d
@@ -1474,9 +1472,10 @@ Render :: [].{
         "${head}\n${nums}${hyp}${note}"
     }
 
-    ## event targets (#138): the projection as numbers in a table, its inputs in the
-    ## legend, and NO verdict line — "are you on track" is the coach's sentence, and
-    ## ADR 0010 notes the denylist would not even catch it, so nothing here says it.
+    ## event targets (#138): the projection as numbers in plain indented rows, its inputs
+    ## in the lead line and the degraded-baseline note, and NO verdict line — "are you on
+    ## track" is the coach's sentence, and ADR 0010 notes the denylist would not even
+    ## catch it, so nothing here says it.
     events_screen : { projected_from : Str, baseline_known : Bool, ftp_known : Bool, events : List({ id : I64, event_date : Str, name : Str, days_away : I64, ctl : F64, atl : F64, tsb : F64, planned_in_window : U64, sessions_projected : U64 }) } -> Str
     events_screen = |p|
         if List.is_empty(p.events) {
@@ -1502,8 +1501,8 @@ Render :: [].{
 
     # time to exhaustion: the number, and what the model thinks of it
     tte_screen = |p| {
-        # r2 is 1 by construction at two points, where the COUNT is the signal
-        # and this number would be false reassurance.
+        # suppressed below 3 points, for the reason power_curve_screen gives — there the
+        # COUNT is the signal.
         quality = if p.fit_points >= 3.I64 ", r2 ${fmt2(p.fit_r2)}" else ""
         head = "at ${fmt0(p.watts)}W against CP ${fmt0(p.cp)} (${p.sport_family} fit, W' ${fmt1(p.w_prime / 1000.0)} kJ from ${I64.to_str(p.fit_points)} of the 5/10/20-min bests over ${I64.to_str(p.window_days)}d${quality})"
         # The athlete's own record at or above this power, when it is on file.
@@ -1789,7 +1788,6 @@ expect Render.hard_break("abcdefghij", 4) == ["abcd", "efgh", "ij"]
 expect Render.hard_break("🚴ab🚴", 3) == ["🚴a", "b🚴"]
 # a token that already fits is returned untouched, so wrap_cell's fast path is unaffected
 expect Render.hard_break("short", 12) == ["short"]
-# a short cell is rendered whole on one line — exact match proves no wrapping
 # #123: the phrase distinguishes an exact streak from a truncated one, and stays silent
 # where the number carries no information. The n=1/n=2 pair pins the suppression threshold
 # — with only n=0 and n=16 tested, `n <= 1` could drift to `n <= 0` and ship ", 1 days".
@@ -1802,6 +1800,7 @@ expect Render.band_days_phrase(Known(16)) == ", 16 days in this band"
 expect Render.band_days_phrase(AtLeast(31)) == ", 31+ days in this band"
 expect Render.band_days_phrase(AtLeast(1)) == ""
 
+# a short cell is rendered whole on one line — exact match proves no wrapping
 expect {
     t = Render.render_table(["a"], [["short"]])
     t == "╭───────╮\n│ a     │\n├───────┤\n│ short │\n╰───────╯"
@@ -1963,8 +1962,8 @@ expect {
     })
     Str.contains(s, "5s") and Str.contains(s, "20m") and Str.contains(s, "Critical Power 250") and Str.contains(s, "Ride")
     and Str.contains(s, "fit r2 0.72")
-    # at two points a line is exact, so r2 is 1 by construction and must NOT be
-    # shown as if it were a quality signal
+    # ...and is suppressed at two points, where it would be false reassurance —
+    # power_curve_screen states why.
     and !(Str.contains(thin, "r2 1.00")) and Str.contains(thin, "r2 needs 3")
 }
 expect {
@@ -2200,7 +2199,7 @@ expect {
         ],
     })
     # some shown rows do NOT conform, so the count is exact and the remainder
-    # is named rather than hedged -- and "the other one" agrees in number
+    # is named rather than hedged
     mixed = Render.reps_screen(Metric, {
         anchor_date: "2026-08-16",
         shape_reps: 3.I64,
@@ -2345,9 +2344,8 @@ expect {
     # the query-independent fit-quality number reaches the human screen -- a
     # coach reading only the terminal must see what the payload sees
     and Str.contains(tte("in_model", False, False), "r2 0.72")
-    # ...and is SUPPRESSED at two points, where it is 1 by construction. Only
-    # the presence direction was asserted, so mutating the gate to always-show
-    # left the suite green.
+    # ...and is SUPPRESSED at two points. Only the presence direction was asserted, so
+    # mutating the gate to always-show left the suite green.
     and !(Str.contains(Render.tte_screen({
         watts: 265.0, seconds: 596.0, known: True, status: "in_model",
         cp: 254.0, w_prime: 6416.0, fit_points: 2.I64, fit_r2: 1.0,

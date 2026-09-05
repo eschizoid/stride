@@ -223,8 +223,7 @@ Metrics :: [].{
     max_sample_gap_s = 30.I64
 
     # ── time in zones (HR-based, universal across sports) ───────────────
-    # dt between consecutive samples, capped at max_sample_gap_s — a pause contributes AT
-    # MOST that, never its full length (a 100 s stop credits 30 s, not 100). Attributed to
+    # dt between consecutive samples, capped at max_sample_gap_s. Attributed to
     # the zone of the current sample.
 
     zone_of : F64, ZoneBounds -> U8
@@ -275,8 +274,7 @@ Metrics :: [].{
     # 76-90% (Z3), hard >= 91% FTP (Z4+). For a power-equipped ride this is the truer
     # "how hard was it" — an athlete's threshold HR can sit right on a zone boundary, so
     # a genuine threshold effort reads as moderate by HR while the power says threshold.
-    # Same max_sample_gap_s cap as the HR walk: a paused or dropped stream contributes at
-    # most that per gap, so it cannot bank the whole stop.
+    # Same max_sample_gap_s cap as the HR walk.
     PowerIntensity : { easy_s : I64, moderate_s : I64, hard_s : I64 }
 
     # Which intensity band a power sample belongs to.
@@ -299,10 +297,8 @@ Metrics :: [].{
     # polarization sums pi_* across sports, so a ride and a run were being added on
     # different units.
     #
-    # dt is capped at max_sample_gap_s: a longer gap is a pause or a dropout, and crediting it to
-    # whichever band the next sample happens to land in would invent intensity that was
-    # never ridden. The cost is that a stream genuinely sampled slower than that loses the
-    # excess — acceptable, because the alternative silently manufactures time.
+    # dt is capped at max_sample_gap_s, for the reason given where that constant is
+    # defined.
     time_in_bands : List({ t : I64, v : F64 }), (F64 -> [Skip, Easy, Moderate, Hard]) -> PowerIntensity
     time_in_bands = |samples, classify| {
         state = List.fold(
@@ -385,12 +381,9 @@ Metrics :: [].{
     # The config key holding a sport's threshold PACE, as a SPEED in m/s (the pace engine
     # works in speeds). Per-sport `threshold_pace_<sport>` (threshold_pace_run, ...), same
     # built from the sport name, no hardcoded list. Zero-config derivation from a stored
-    # best-sustained-pace column is a later slice.
-    #
-    # WHEN THAT SLICE LANDS: add this family to `Config.known_key` in the SAME commit.
-    # Until then these names are `unrecognised`, which is correct — but `config set
-    # <unrecognised> ""` DELETES the row, so a wired-up key that is not in `known_key` can
-    # be silently removed while the CLI says "stride does not read it".
+    # best-sustained-pace column SHIPPED instead (Analyze.period_threshold_sql stores
+    # threshold_pace_used), so no such config key exists or is planned — see the
+    # known_key note in Config.roc. This helper survives for its expects.
     threshold_pace_key : Str -> Str
     threshold_pace_key = |sport|
         "threshold_pace_${Str.with_ascii_lowercased(sport)}"
@@ -766,7 +759,8 @@ Metrics :: [].{
     # ── derived FTP ─────────────────────────────────────────────────────
     # Invariant: FTP is derived from power history, never configured (a calibration
     # check against a configured FTP compared the same number to itself, so it died).
-    # The standard 95% of the 20-min best. One constant, one place — used by the
+    # The standard 95% of the 20-min best. One Roc constant — the SQL twins in Analyze's
+    # period_ftp_sql / period_threshold_sql spell it again, as SQL must. Used by the
     # per-sport derive (Db.derive_sport_ftp!) and the summary display.
     ftp_from_best_20min : F64 -> F64
     ftp_from_best_20min = |best_20min| best_20min * 0.95
@@ -776,7 +770,7 @@ Metrics :: [].{
     power_curve_durations = [5, 15, 30, 60, 300, 600, 1200, 3600]
 
     # best rolling-mean power at each ladder duration, from a 1 Hz watts stream. A duration
-    # longer than the ride yields 0 (best_rolling_mean -> TooShort). Feeds the stored
+    # longer than the ride yields 0 (best_rolling_mean_1s -> TooShort). Feeds the stored
     # best_<dur>_w columns and, aggregated across activities, the power-duration curve.
     mean_max_curve : List({ t : I64, v : F64 }), List(U64) -> List({ dur_s : U64, watts : F64 })
     mean_max_curve = |watts_1s, durations|
@@ -1439,7 +1433,6 @@ Metrics :: [].{
             VeryFresh
         }
 
-    # Stable machine identifier for the form band — the JSON face of form_label.
     # ONE vocabulary shared by every boundary guard — a tripwire for coaching language
     # reappearing in any label producer, without triplicating the list.
     has_coaching_language : Str -> Bool
@@ -1626,7 +1619,7 @@ Metrics :: [].{
         # EXACT lookup for the anchor, not at-or-before. With at-or-before, a `today` the
         # series has no row for would borrow an older day's value and then count today as
         # day 1 of a streak the series cannot vouch for — precisely what tsb_as_of_exact
-        # exists to prevent one function below. Unknown now means exactly what the contract
+        # exists to prevent, below. Unknown now means exactly what the contract
         # says: nothing is known about the anchor day itself.
         match tsb_as_of_exact(series, today) {
             Missing => Unknown
@@ -1701,11 +1694,11 @@ Metrics :: [].{
         })
 
     # ── season blocks (ADR 0011) ────────────────────────────────────────
-    # A block is a maximal run of consecutive TRAINING weeks, closed by an
-    # absence of `gap_weeks` or more calendar weeks carrying no load. That is
-    # the only boundary in this data that is not a judgment call. The textbook
-    # alternative — build weeks followed by a recovery week — was measured
-    # against real history and fits 8-10 of 96 weeks depending on how adjacency
+    # A block is a maximal run of training weeks, closed by `gap_weeks` or more
+    # CONSECUTIVE calendar weeks carrying no load — a single blank week does not close
+    # one. That threshold is the one judgment; everything downstream is arithmetic.
+    # The textbook alternative — build weeks followed by a recovery week — was measured
+    # against real history and fits a handful of weeks depending on how adjacency
     # is read, so a detector built on it
     # segments noise; any changepoint rule instead lets its own sensitivity
     # parameter choose the answer. Blocks are DESCRIBED (span, load, measured
@@ -1851,7 +1844,6 @@ Metrics :: [].{
         { y: (if m <= 2 (y + 1) else y), m, d }
     }
 
-    # "2026-07-25T15:30:21Z" (or "2026-07-25") -> epoch day number
     # The widest spacing between CONSECUTIVE REAL sessions strictly between two rendered
     # ones. `progress` filters out rides its lens cannot score, and the gap marker used to be
     # folded over what SURVIVED — so a dropped ride merged its two neighbouring intervals
@@ -1881,6 +1873,7 @@ Metrics :: [].{
     # the largest step wins wherever it falls, not the first or last
     expect Metrics.max_real_gap([5, 100], 0, 110) == 95
 
+    # "2026-07-25T15:30:21Z" (or "2026-07-25") -> epoch day number
     date_str_to_days : Str -> Try(I64, [BadDate])
     date_str_to_days = |s| {
         date_part = List.first(Str.split_on(s, "T")).ok_or(s)
@@ -2290,7 +2283,7 @@ Metrics :: [].{
     # Otsu split of the segment LEVEL MEANS (#170 — never the session's global
     # distribution), merge adjacent work, then gate on contrast and work fraction.
     # HR never places edges (it lags effort by 30+ s);
-    # it only enriches segments already found (enrich_hr below).
+    # it only enriches segments already found (segment_hr below).
     #
     # These constants are the ADR 0008 starting point, validated against the
     # maintainer's own VO2/threshold sessions — every change bumps metrics_rev
@@ -2874,7 +2867,7 @@ expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "date(substr(a.s
 # sync query, the two that ORDER BY it without appending `a.id`.
 expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "THEN substr(a.start_local, 1, 19) ELSE NULL END")
 # the caller's column reaches every term — a helper that hardcoded one would be wrong at
-# the one site that ranks on a bare `start_local` rather than `a.start_local`
+# any caller that ranks on a bare `start_local` rather than `a.start_local`
 expect !(Str.contains(Metrics.rank_ts_sql("start_local", Desc), "a.start_local"))
 
 # ...and the same three for the HOISTING twin, which shipped with none. Sharing `rankable_sql`
@@ -3184,7 +3177,7 @@ expect {
 # Flat 200W for 20 minutes; HR rises 100 -> 110 exactly at the half boundary (mid =
 # t_lo + span//2 = 599, which belongs to the SECOND half). Efficiency goes 200/100 = 2.0 to 200/110 = 1.818,
 # so the drift is (2.0 - 1.818) / 2.0 = 9.09% — the same output costing more heartbeats.
-# 20 minutes, not 20 samples: each half must clear the 5-minute coverage gate.
+# 20 minutes, not 20 samples: the SIGNAL must span ~9.5 min and at least half the session.
 expect {
     power = Iter.fold((0.I64..<1200).iter(), [], |acc, t| List.append(acc, { t, v: 200.0 }))
     hr = Iter.fold((0.I64..<1200).iter(), [], |acc, t| List.append(acc, { t, v: if t < 599 100.0 else 110.0 }))
@@ -3215,7 +3208,7 @@ expect {
 }
 
 # a signal that only spans a FRAGMENT of the session (foot pod died at minute 10 of 60)
-# must not have that fragment sold as the session's drift — under 5 min per half is Unknown
+# must not have that fragment sold as the session's drift — a short span is Unknown
 expect {
     power = Iter.fold((0.I64..<400).iter(), [], |acc, t| List.append(acc, { t, v: 200.0 }))
     hr = Iter.fold((0.I64..<400).iter(), [], |acc, t| List.append(acc, { t, v: 120.0 }))
@@ -3284,7 +3277,9 @@ expect {
 
 # generic: every sport maps to its own config key, no hardcoded allowlist. A sport
 # without that key set (or with no power meter) resolves to 0 in sport_ftp! and falls
-# back to HR — so swimming, soccer, paddleboard all "just work" once configured.
+# back to HR — so swimming, soccer and paddleboard score without a per-sport FTP,
+# which is the only way they CAN score: `Config.is_derived` refuses every `ftp_<sport>`
+# key, including sports that do not exist yet.
 expect (Metrics.ftp_from_best_20min(200.0) - 190.0).abs() < 0.001
 expect (Metrics.ftp_from_best_20min(256.0) - 243.2).abs() < 0.001
 
@@ -3528,7 +3523,7 @@ expect {
 # The case that prompted the issue: 16 days inside -15..-5 without ever leaving. The
 # values DRIFT (-12.5 up to -5.1) rather than repeating, because that is what real TSB
 # does and because a constant fixture cannot tell band identity from value equality — an
-# implementation comparing `v == now` instead of `form_label(v) == label_now` would pass a
+# implementation comparing `v == now` instead of `form_band(v) == band_now` would pass a
 # constant fixture and then return 1 every day in production, silently emitting nothing.
 expect {
     series = [

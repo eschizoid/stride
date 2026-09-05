@@ -150,7 +150,7 @@ Analyze :: [].{
     # only the HR zones are required config — those are universal across sports. FTP is
     # never configured; it is derived per sport, and for SCORING it is the value in force when
     # the activity happened (ADR 0005). Db.sport_ftp! keeps today's-window semantics for the
-    # DISPLAY paths (summary, zones) — the two are deliberately different questions.
+    # DISPLAY paths (zones, activity) — the two are deliberately different questions.
     load_zone_config! : Str => Try(Metrics.ZoneBounds, _)
     load_zone_config! = |path| {
         z1 = config_f64!(path, "hr_z1_max")?
@@ -174,8 +174,6 @@ Analyze :: [].{
 
                 }
         }
-    # canonical AND parseable. Both halves, for the reason spelled out at the fold above:
-    # the parse alone accepts "2026-3-05T", and this module WRITES the result.
 
 
     ActivityRow : {
@@ -589,11 +587,13 @@ Analyze :: [].{
         decoded = Streams.decode_streams(row.raw)
         streams = decoded.streams
         # this sport's zone bounds: per-sport override or global, resolved purely from
-        # the in-memory config (no per-key DB hit — that path corrupts the heap here)
+        # the in-memory config. No per-key DB hit, for the reason given where the config is
+        # loaded — an absent override is a missing row, not a missing value.
         row_zb = resolve_zones_pure(cfg, row.sport, zb)
 
         # sanity-filter HR: some sources (Peloton strength workouts) emit junk
-        # near-zero samples — Metrics.valid_hr is the one place the bounds live
+        # near-zero samples — Metrics.valid_hr owns the bounds for Roc-side
+        # filtering (valid_hr_sql is the SQL twin; `top hr` still inlines a copy)
         hr_raw = Streams.stream_pairs(streams.time, streams.heartrate)
         hr_pairs = List.keep_if(hr_raw, |p| Metrics.valid_hr(p.v))
         # drop non-physiological power samples (sensor glitches) the same way HR is
@@ -626,7 +626,7 @@ Analyze :: [].{
         # measured gap: broken straps span 0.003-0.24, rescued sessions 0.58 up.
         # The denominator is the LONGER of moving time and the stream's own extent:
         # moving_time excludes stops while stream timestamps are elapsed, so a stop-heavy
-        # session would inflate the ratio (35 of 672 streams run longer than moving time,
+        # session would inflate the ratio (a minority of streams run longer than moving time,
         # up to 1.198x).
         hr_extent =
             match (List.first(hr_raw), List.last(hr_raw)) {

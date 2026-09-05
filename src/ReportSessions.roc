@@ -1,12 +1,13 @@
 # ── what happened: individual sessions and their comparisons ────────
 #
-# Split from Report.roc under ADR 0001. activity_body! (378) and reps! (246)
+# Split from Report.roc under ADR 0001. activity_body! and reps!
 # had both passed the ~250-line command trigger.
 #
 # Report.sport_filter_sql and Report.cp_fit_as_of! stay in Report.roc and are called
 # qualified: the first is shared with power-curve, the second with tte. Only
 # helpers used by THIS family alone moved here — empty_hint!, known_sports!,
-# top_metric, lens_name.
+# top_metric, lens_name. (export_row_to_summary also lives here and is called
+# only by Import.)
 import Report
 import Strava
 import Db
@@ -32,7 +33,7 @@ ReportSessions :: [].{
     }
     activity_body! : Str, Str, I64 => Try({}, _)
     activity_body! = |path, id_str, aid| {
-        # Human branch only — the JSON payload above emits distance_m in metres.
+        # Human branch only — the JSON payload below emits distance_m in metres.
         units = Db.units!(path)?
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
@@ -96,11 +97,12 @@ ReportSessions :: [].{
             Err(_) => Output.err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
             Ok(a) => {
                 # REFUSES rather than rendering an empty date, because this screen COMPUTES
-                # from the date and the computation fails silently. `Report.cp_fit_as_of!`
-                # takes a 90-day window anchored here, an unreadable date makes that window
-                # empty, and the whole `vs self (90d, same family+band)` line DISAPPEARS —
-                # indistinguishable from an athlete who genuinely has no comparables. The
-                # header's blank date is at least visible; the missing line is not.
+                # from the date and the computation fails silently. The personal-baselines
+                # query windows on `date(self.start_local, '-90 days')`, so an unreadable date
+                # makes that window empty and the whole `vs self (90d, same family+band)`
+                # line DISAPPEARS — indistinguishable from an athlete who genuinely has
+                # no comparables. The header's blank date is at least visible; the missing
+                # line is not.
                 #
                 # The split in #249 is by what a command DOES with the date, not by which
                 # table it read: `activities` and `top` LIST or RANK and can report a row
@@ -404,7 +406,7 @@ ReportSessions :: [].{
                     # which is which is the gap #311 opened. When they differ, the recorded value is
                     # named beside it — that number is what the athlete compares against Strava.
                     # Compared as RENDERED, not as floats: 161.461 vs 161.2 differs by 0.26 and would
-                    # print "avg 161 (recorded 161)" (measured on 336 of 490 firing rows). And only
+                    # print "avg 161 (recorded 161)" (measured on most firing rows). And only
                     # when a reading was RECORDED: a stream-only session stores no average, COALESCE
                     # makes it 0.0, and "(recorded 0)" states a measurement where `avg 0` merely read
                     # as absent (numeric-0 invariant, ADR 0009).
@@ -687,7 +689,7 @@ ReportSessions :: [].{
                 # is affected — every other metric's header is either unit-free or carries
                 # a unit this setting does not touch (bpm, W, kJ).
                 header = if metric == "distance" "distance (${Render.dist_unit(units)})" else raw_header
-                # `bound` is a template over `@` so ONE predicate serves two queries: the
+                # `bound` is a template over `@` so ONE predicate serves three queries: the
                 # ranking applies it to the column, the count applies it to an alias inside a
                 # subquery. Written twice they would drift, and the drift would be invisible
                 # — the ranking would exclude rows while the count reported a different set.
