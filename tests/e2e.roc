@@ -256,7 +256,7 @@ run_all! = || {
     check!("the litter sweep keeps a tally whose owner is still running", Str.trim(sh!("[ -e '.e2e-checks.${probe_mode}.${probe_mypid}' ] && echo kept || echo swept")) == "kept")?
     # ...CONDITIONALLY, because asserting collection unconditionally cancels the
     # `ps` guard on the one platform that guard exists for (on a PATH with no `ps`,
-    # the suite died at check 2 of 851 under a message about litter collection).
+    # the suite died at its second check under a message about litter collection).
     # This asserts the DEGRADATION instead: where `ps -p` works, the dead owner's
     # file is collected; where it does not, nothing is — and the guard becomes
     # detectable on the degraded platform, where removing it deletes the LIVE
@@ -1098,7 +1098,7 @@ run_stops! = || {
     checks_ran_at_least!(
         if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
             # its own floor: this branch returns before the shared drain assertions, so the
-            # 12 the default arm expects would never be reachable here
+            # 14 the default arm expects would never be reachable here
             28
         } else if env_or!("E2E_EXPECT_DAILY_CAP", "") == "1" {
             # its own floor, and TIGHT: a floor below the arm's own count lets a check be
@@ -1109,7 +1109,7 @@ run_stops! = || {
         } else if env_or!("E2E_EXPECT_401", "") == "1" {
             10
         } else if rate_limited {
-            # 12 since this arm gained the daily-cap-via-429 pair — the path the daily
+            # 14 since this arm gained the daily-cap-via-429 pair — the path the daily
             # arm's own driver structurally cannot reach.
             14
         } else {
@@ -1404,7 +1404,7 @@ b_init_config! = |ctx| {
     # byte-identical and land in the -wal sidecar, so hash `sqlite3 .dump`.
     #
     # Arguments come from the TABLE'S OWN `args`, one filler per required argument:
-    # a blanket `1 1` made 15 of 19 forms a wrong arity, rejected before dispatch,
+    # a blanket `1 1` made most forms a wrong arity, rejected before dispatch,
     # so the hash comparison was a tautology — green and measuring nothing, with a
     # "did it run" guard counting the jq list rather than executions. A wrong-TYPE
     # filler is rejected like an arity error (`reps 1` answers "not a date"); a
@@ -1585,7 +1585,7 @@ b_auth! = |ctx| {
     # that vacuity. The real-base probe failing is the only reason it was noticed.
     check!("a loopback token endpoint opens no browser — nothing on this machine is authorizing", Str.trim(sh!("rm -f '${stub}/opened'; PATH=\"${stub}:$PATH\" ${creds} '${ctx.bin}' auth < /dev/null 2>&1 | grep -qi 'stdin closed' && { [ -e '${stub}/opened' ] && echo opened || echo quiet; } || echo 'auth did not run'")) == "quiet")?
     # ...and `localhost`, the OTHER spelling the gate accepts and the suite never uses.
-    # Every base string in this repo is `127.0.0.1` — seven mock instances in the justfile
+    # Every base string in this repo is `127.0.0.1` — the mock instances in the justfile
     # and the one above — so deleting the `localhost` disjunct was fully green while a
     # contributor pointing a mock at `localhost:8799`, a spelling `api_base_allowed`
     # explicitly permits, got a browser tab per run.
@@ -2199,7 +2199,7 @@ b_seed_analyze! = |ctx| {
     # `expect*` skips top-level expects, which is every unit expect that exists. It does
     # NOT skip a block-expect BODY (`expect {` on one line, `Render.dist_unit(...)` on the
     # next) — that line is indistinguishable from production at line granularity, and
-    # separating them needs a brace-depth state machine over 219 block expects. Left
+    # separating them needs a brace-depth state machine over every block expect in the tree. Left
     # deliberately: triggering it needs a contrived pair, deleting a no-`fmt` site AND
     # adding a block expect that calls dist_unit directly.
     #
@@ -3056,7 +3056,7 @@ b_seed_analyze! = |ctx| {
     # error code that is not in the schema fails here, which is the same drift
     # bargain additionalKeys makes for payload keys
     check!("an error envelope conforms, code included", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' activity 99999999 2>&1 | jq -r --slurpfile schema schemas/v3/envelope.json -f tools/validate.jq 2>&1")) == "")?
-    # The enum is hand-maintained beside 27 emit sites, and this PR proved twice
+    # The enum is hand-maintained beside every emit site, and this PR proved twice
     # in one file that it drifts: a fabricated code (bad_args, left over from a
     # rewritten branch) and a missing one (activity_required, a routine
     # response). Set equality in BOTH directions, extracted multi-line-aware
@@ -3102,7 +3102,7 @@ b_seed_analyze! = |ctx| {
     # below trivially satisfiable in one of the two, and a jq error yields "" not 0.
     check!("the declared error-code set is non-empty (got ${ndecl})", ndecl != "" and ndecl != "0")?
     # The selector is PINNED to the error-code enum's path rather than sweeping
-    # every enum: enums are the house style (11 of 26 schemas carry one), and
+    # every enum: enums are the house style (most schemas carry one), and
     # envelope.json is a likely home for a second whose members would be wrongly
     # folded into the contract set. A pinned path is only safe because of the
     # guard below — pinned and unguarded, a restructure that moved the enum would
@@ -3615,8 +3615,8 @@ b_seed_analyze! = |ctx| {
     # ...and the SIX other commands that read the same column through different
     # queries — a fix applied where the issue was REPORTED, not everywhere the
     # column is projected, leaves six of seven crashing. Enumerated by
-    # running every command against a planted BLOB, not by reading (105 references
-    # across 12 files is not a list anyone reads correctly).
+    # running every command against a planted BLOB, not by reading (the references
+    # are spread across the tree and are not a list anyone reads correctly).
     # `unreadable_activity_date` is the project's own graceful-degradation code, so
     # this asserts the contract rather than the absence of a crash. The sharpest of
     # the seven: `guard_activity_dates!` itself — the guard whose job is turning an
@@ -6930,7 +6930,7 @@ sh! = |script|
 # recurs.
 # The failure log: a failing write used to be invisible three times over
 # (sqlite3 reports on stderr, sh! discards stderr AND the exit code, and 199
-# of 277 call sites discard the return) — it surfaced later as an
+# of the call sites discard the return) — it surfaced later as an
 # unrelated-looking assertion about state.
 sql! : Str, Str => Str
 sql! = |db, query|
@@ -7190,7 +7190,7 @@ seed_ride! : Str, Str, Str, Str, Str, Str, Str, Str => Str
 seed_ride! = |db, id, name, date, secs, meters, watts, hr|
     sql!(db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (${id},'${name}','Ride','${date}',${secs},${meters},${watts},${watts},${hr});")
 
-# the 9999W-spike stream fixture (120 samples @200W, index 60 spiked), built by
+# the 9999W-spike stream fixture (1300 samples @200W, index 60 spiked), built by
 # awk in the shell — NOT by a recursive Roc closure (that would trip roc#10469).
 spike_json! : {} => Str
 spike_json! = |{}|
@@ -7379,7 +7379,7 @@ reset_checks! = |{}| {
 
 # A floor, NOT an exact count — `>=`, so setting one to today's count does not
 # make it exact: adding checks never fails it. It must be TIGHT (a floor of 400
-# against 564 actual lets 164 checks vanish silently); a tight
+# against a smaller actual lets checks vanish silently); a tight
 # floor only needs touching when checks are REMOVED, exactly the event that
 # should force a conversation. run_all uses checks_ran_exactly!; the mock
 # drivers keep floors. A tight floor costs something: one lost tally append
