@@ -1435,7 +1435,6 @@ Metrics :: [].{
             VeryFresh
         }
 
-    # Stable machine identifier for the form band — the JSON face of form_label.
     # ONE vocabulary shared by every boundary guard — a tripwire for coaching language
     # reappearing in any label producer, without triplicating the list.
     has_coaching_language : Str -> Bool
@@ -1847,7 +1846,6 @@ Metrics :: [].{
         { y: (if m <= 2 (y + 1) else y), m, d }
     }
 
-    # "2026-07-25T15:30:21Z" (or "2026-07-25") -> epoch day number
     # The widest spacing between CONSECUTIVE REAL sessions strictly between two rendered
     # ones. `progress` filters out rides its lens cannot score, and the gap marker used to be
     # folded over what SURVIVED — so a dropped ride merged its two neighbouring intervals
@@ -1877,6 +1875,7 @@ Metrics :: [].{
     # the largest step wins wherever it falls, not the first or last
     expect Metrics.max_real_gap([5, 100], 0, 110) == 95
 
+    # "2026-07-25T15:30:21Z" (or "2026-07-25") -> epoch day number
     date_str_to_days : Str -> Try(I64, [BadDate])
     date_str_to_days = |s| {
         date_part = List.first(Str.split_on(s, "T")).ok_or(s)

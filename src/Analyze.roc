@@ -174,8 +174,6 @@ Analyze :: [].{
 
                 }
         }
-    # canonical AND parseable. Both halves, for the reason spelled out at the fold above:
-    # the parse alone accepts "2026-3-05T", and this module WRITES the result.
 
 
     ActivityRow : {
