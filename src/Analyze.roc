@@ -627,7 +627,7 @@ Analyze :: [].{
         # measured gap: broken straps span 0.003-0.24, rescued sessions 0.58 up.
         # The denominator is the LONGER of moving time and the stream's own extent:
         # moving_time excludes stops while stream timestamps are elapsed, so a stop-heavy
-        # session would inflate the ratio (35 of 672 streams run longer than moving time,
+        # session would inflate the ratio (a minority of streams run longer than moving time,
         # up to 1.198x).
         hr_extent =
             match (List.first(hr_raw), List.last(hr_raw)) {

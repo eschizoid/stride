@@ -1705,7 +1705,7 @@ Metrics :: [].{
     # absence of `gap_weeks` or more calendar weeks carrying no load. That is
     # the only boundary in this data that is not a judgment call. The textbook
     # alternative — build weeks followed by a recovery week — was measured
-    # against real history and fits 8-10 of 96 weeks depending on how adjacency
+    # against real history and fits a handful of weeks depending on how adjacency
     # is read, so a detector built on it
     # segments noise; any changepoint rule instead lets its own sensitivity
     # parameter choose the answer. Blocks are DESCRIBED (span, load, measured
