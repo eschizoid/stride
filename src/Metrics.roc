@@ -1096,9 +1096,9 @@ Metrics :: [].{
     lens_score : Lens, ProgressRow -> Try(F64, [Unscorable])
     lens_score = |lens, r|
         match lens {
-            # `valid_hr`, not `avg_hr > 0.0`: two rowing sessions storing 18.0 and 31.3 bpm
-            # produced "improving (221%)" and "88% below your best" on a workout whose other
-            # sessions sit near 0.85 (#294). Both HR lenses, not just EF — speed/HR divides by
+            # `valid_hr`, not `avg_hr > 0.0`: a rowing session storing 18.0 or 31.3 bpm
+            # scores "improving (221%)" or "88% below your best" against sessions sitting
+            # near 0.85 (#294). Both HR lenses, not just EF — speed/HR divides by
             # the same number.
             #
             # EF is NP-per-heartbeat, so it is only comparable when np_w really IS normalized
@@ -1964,11 +1964,10 @@ Metrics :: [].{
 
     # "is this timestamp RANKABLE", and the ordering that uses it — emitted together, as
     # one clause, because that is the only form that stays correct (#247, #255):
-    # THE GUARD'S DOMAIN MUST EQUAL ITS CONSUMER'S. `rate latest` compared
-    # `MAX(start_local)` as a string, so a malformed timestamp outranked every real one
-    # and the rating landed on the wrong activity; eight other queries ordered on the
-    # whole column with no guard at all.
-    #
+    # THE GUARD'S DOMAIN MUST EQUAL ITS CONSUMER'S. Comparing `MAX(start_local)` as a
+    # string lets a malformed timestamp outrank every real one, putting `rate latest`
+    # on the wrong activity; eight other queries order on the whole column with no
+    # guard at all.
     # TWO terms, always both — the clause form exists so no caller pairs the predicate
     # with a key by hand. The flag sorts DESC unconditionally so unrankable rows go last
     # in EITHER direction: NULL is SQLite's smallest value, so a bare `key ASC` would
@@ -2869,10 +2868,11 @@ expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "THEN substr(a.s
 # any caller that ranks on a bare `start_local` rather than `a.start_local`
 expect !(Str.contains(Metrics.rank_ts_sql("start_local", Desc), "a.start_local"))
 
-# ...and the same three for the HOISTING twin, which shipped with none. Sharing `rankable_sql`
-# holds the PREDICATE across both helpers; the direction and the key are per-helper, and only
-# one of them was pinned. Shrinking this key to 1..10 while its guard stayed at 1..19 — the
-# identical mutant already closed for rank_ts_sql — passed the whole suite.
+# ...and the same three for the HOISTING twin. Sharing `rankable_sql` holds the
+# PREDICATE across both helpers; the direction and the key are per-helper, so pinning
+# one leaves the other open. Without these, shrinking this key to 1..10 while its
+# guard stays at 1..19 — the identical mutant already closed for rank_ts_sql —
+# passes the whole suite.
 expect Str.contains(Metrics.hoist_unrankable_sql("a.start_local"), "substr(a.start_local, 1, 19) DESC")
 expect Str.contains(Metrics.hoist_unrankable_sql("a.start_local"), "END) ASC,")
 expect !(Str.contains(Metrics.hoist_unrankable_sql("start_local"), "a.start_local"))
