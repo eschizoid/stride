@@ -3102,7 +3102,7 @@ b_seed_analyze! = |ctx| {
     # below trivially satisfiable in one of the two, and a jq error yields "" not 0.
     check!("the declared error-code set is non-empty (got ${ndecl})", ndecl != "" and ndecl != "0")?
     # The selector is PINNED to the error-code enum's path rather than sweeping
-    # every enum: enums are the house style (most schemas carry one), and
+    # every enum: enums are the house style where a field has a closed set, and
     # envelope.json is a likely home for a second whose members would be wrongly
     # folded into the contract set. A pinned path is only safe because of the
     # guard below — pinned and unguarded, a restructure that moved the enum would
