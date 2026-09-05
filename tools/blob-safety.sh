@@ -25,6 +25,7 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 
 : > "$tmp/problems"
 decodes=0
+sites=0
 for f in src/*.roc; do
   # BOTH string decoders, ANY alias — a lowercase-only alias class misses
   # `Sqlite.str("sportType")` without moving the asserted count.
@@ -53,6 +54,7 @@ for f in src/*.roc; do
       continue
     fi
     while IFS= read -r expr; do
+      sites=$((sites + 1))
       [ -n "$expr" ] || continue
       # Scope to THIS projection — an earlier projection's CAST must not vouch for this
       # alias. Boundary: the last ` AS <name>` that is not a type cast.
@@ -111,10 +113,20 @@ done
 # Asserted exactly, not as a floor — an enumeration that silently matches nothing
 # prints the same clean line a healthy tree prints.
 EXPECT_DECODES=58
+# Asserted, not printed-and-forgotten. The success line carried a hardcoded "91 call
+# sites" while nothing computed or checked it; by the time anyone looked it was 108.
+# A number a gate prints on every green run has to be a number the gate enforces.
+EXPECT_SITES=100
 if [ "$decodes" != "$EXPECT_DECODES" ]; then
   echo "blob-safety: inspected $decodes (file, alias) decode pairs, expected $EXPECT_DECODES."
   echo "blob-safety: if that change is intended, update the number in the same commit;"
   echo "blob-safety: if it is not, the decode scan stopped matching and this gate is blind."
+  exit 1
+fi
+if [ "$sites" != "$EXPECT_SITES" ]; then
+  echo "blob-safety: examined $sites call sites, expected $EXPECT_SITES."
+  echo "blob-safety: same rule as the decode count — if the change is intended, update it"
+  echo "blob-safety: here; if it is not, the projection scan stopped matching."
   exit 1
 fi
 
@@ -129,4 +141,4 @@ if [ "$n" -gt 0 ]; then
   echo "Wrap the projection: COALESCE(CAST(<col> AS TEXT), '') AS <alias>"
   exit 1
 fi
-echo "blob-safety: $decodes (file, alias) decode pairs across 91 call sites, every projection CAST to TEXT"
+echo "blob-safety: $decodes (file, alias) decode pairs across $sites call sites, every projection CAST to TEXT"
