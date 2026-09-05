@@ -331,7 +331,7 @@ Command := [
 		## "no power data in the window" (specific to this form and this data).
 		##
 		## Two tiers rather than one list per form because most of the codes raised in
-		## app.roc are boundary codes that ANY form can hit — nineteen copies of
+		## app.roc are boundary codes that ANY form can hit — a copy on every form of
 		## `no_database` would be a drift surface with no information in it, which is the
 		## trap #219 named when it left this bullet undone.
 		##

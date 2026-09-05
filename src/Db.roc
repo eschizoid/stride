@@ -86,7 +86,7 @@ Db :: [].{
             Ok(NotFound) => Ok(Metric)
             Err(other) => Err(other)
         }
-    # Remove a config row outright. Used by `config set <unrecognised> ""` (#254), which is
+    # Remove a config row outright. Used by `config unset <key>` (#254, #276), which is
     # the way out for a row the engine no longer reads.
     #
     # DELETE and not `value = ''`, which is worse than doing nothing for the family
@@ -389,7 +389,7 @@ Db :: [].{
         # v2: index the column every date-range filter and the activities sort use
         # (queries now compare a.start_local directly — sargable — instead of substr)
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })?
-        # v14: the period-FTP subquery (ADR 0005) filters on sport_type AND start_local
+        # v14: the period-THRESHOLD subquery (the pace twin) filters on sport_type AND start_local
         # together, once per row being scored. start_local alone leaves a scan over every
         # activity of every OTHER sport on each lookup; the composite makes it a range seek.
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_sport_start ON activities(sport_type, start_local)", bindings: [] })?

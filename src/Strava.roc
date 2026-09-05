@@ -27,7 +27,8 @@ Strava :: [].{
     api_base! : {} => Str
     api_base! = |{}|
         match Env.var_str!(OsStr.from_str("STRIDE_API_BASE")) {
-            # only honor an allowed override (https, or http to loopback) — a disallowed
+            # only honor an allowed override (exact hosts only — real Strava, or
+            # http to loopback) — a disallowed
             # base can't exfiltrate the client_secret/refresh token; fall back to real Strava
             Ok(b) if !(Str.is_empty(b)) and Config.api_base_allowed(b) => b
             _ => "https://www.strava.com"
@@ -722,9 +723,9 @@ Strava :: [].{
         }
     # Per-run drain state: `window` = reads this run (vs the 15-min cap; never reset,
     # a run does not span windows); `stored`/`skipped` = what the reads produced.
-    # `done` and `stored` are deliberately different: pacing is about READS (a 404
+    # `window` and `stored` are deliberately different: pacing is about READS (a 404
     # spends a read and stores a marker) while the payload reports WORK — publishing
-    # `done` as `streams_fetched` reported rows that do not exist. `total` is the
+    # `window` as `streams_fetched` reported rows that do not exist. `total` is the
     # queue length at start, for a real progress bar; nothing decrements it.
     # `day` is the UTC day the count belongs to, RE-READ at the top of each iteration
     # and reset with its count when it changes (Drain.roll_day); `today` is the
@@ -770,7 +771,7 @@ Strava :: [].{
                         # persistently 401ing activity (revoked scope, private without activity:read_all)
                         # would spin forever — measured at ~113 requests/second unbounded, 4,500
                         # reads against a 1000/day cap in under a minute, which is the shape that
-                        # gets an API app suspended. `decide` does not charge a 401 against `done`,
+                        # gets an API app suspended. `decide` does not charge a 401 against `window`,
                         # so the read budget never ends it. Same token back is a real auth problem.
                         if st.refreshes >= max_refreshes {
                             # no bar_done! here: this propagates, and the boundary reporter
@@ -1046,7 +1047,7 @@ Strava :: [].{
     }
 
     # remove activities that vanished from Strava. A row is a victim when this sync run
-    # did NOT re-stamp it (synced_at stale or null) AND it sits inside the pulled window
+    # did NOT re-stamp it (synced_at present but stale) AND it sits inside the pulled window
     # (start_local >= window_start; "" = full pull = all rows). Three judgment-tier guards:
     # never prune an activity that carries a rating, completed a planned session, or stands in as a substitute for one —
     # those rows can't be re-derived, so we leave the (now-orphaned) activity as a

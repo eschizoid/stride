@@ -33,7 +33,7 @@ ReportHealth :: [].{
     stats! : {} => Try({}, _)
     stats! = |{}| {
         path = Db.open_db!({})?
-        # Human table only. The JSON branch below emits the `km` field this schema has
+        # Human table only. The JSON branch below emits the `km` and `hours` fields this schema has
         # always carried — a converted, unit-bearing payload field, and the one exception
         # to "payloads are SI". Renaming it is an envelope break, so it stays km and the
         # setting reaches only the rendered table (#349).

@@ -24,16 +24,16 @@ Drain :: [].{
     PostStore : [Continue, WindowFull, DayFull]
 
     # Why a DRAIN run ended. A TAG, not a Str, so the COMPILER enforces the set at the
-    # producer: drain_streams! cannot invent a fourth reason or typo an existing one.
+    # producer: drain_streams! cannot invent a fifth reason or typo an existing one.
     # This shape was chosen after the Str version shipped pinned by nothing: Render's
     # expects hand-type their own literals, so they check Render against itself, and
     # renaming a literal in the producer left every test green.
     StopReason : [Complete, BudgetReached, RateLimited, DailyCapReached]
 
     # Why a SYNC run ended — the value behind the payload's `stopped` field. Wider
-    # than StopReason by one inhabitant: the activity LIST can be refused before the
-    # drain runs. WRAPPING rather than a fourth StopReason arm is the point — a
-    # fourth arm would be in scope where drain_streams! constructs `stopped`, so the
+    # than StopReason by two inhabitants: the activity LIST can be refused before the
+    # drain runs. WRAPPING rather than a fifth StopReason arm is the point — a fifth
+    # arm would be in scope where drain_streams! constructs `stopped`, so the
     # compiler would accept a drain claiming a list refusal. Here drain_streams!
     # cannot name ListRateLimited at all; only sync!, which issues both requests.
     # Reusing RateLimited for both left Render unable to write the right sentence:
@@ -99,11 +99,11 @@ Drain :: [].{
 
     # The tag <-> wire-string vocabulary, in one place. `sync_stopped_label` is the only
     # PRODUCTION entry point — both payload sites in Strava.sync! go through it, and it
-    # delegates the three drain reasons to `stopped_label` rather than restating them, so
+    # delegates the four drain reasons to `stopped_label` rather than restating them, so
     # a rename cannot land on one spelling only. `stopped_label` exists for the narrower
     # domain: Render.drain_note handles drain reasons and nothing else, and its expects
     # say so by composing against this rather than against the wider function.
-    # These four strings are also the enum in schemas/v3/sync.json; changing one without
+    # These four strings are four of the six in schemas/v3/sync.json's enum; changing one without
     # the other is a contract break.
     stopped_label : StopReason -> Str
     stopped_label = |r|
@@ -223,7 +223,7 @@ expect match Drain.decide({ status: 200, window: 9, today: 9 }, Drain.test_lim) 
 }
 
 # the wire strings, pinned by equality. These must equal the enum in
-# schemas/v3/sync.json; Render.drain_note matches on the same three, and a
+# schemas/v3/sync.json; Render.drain_note matches on the same four, and a
 # composed expect there ties producer to consumer so a rename cannot pass either side.
 expect Drain.stopped_label(Complete) == "complete"
 expect Drain.stopped_label(BudgetReached) == "budget_reached"

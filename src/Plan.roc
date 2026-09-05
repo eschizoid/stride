@@ -128,12 +128,12 @@ Plan :: [].{
     plan_view! : [ThisWeek, AllTime] => Try({}, _)
     plan_view! = |scope| {
         path = Db.open_db!({})?
-        # default view is the CURRENT training week (Mon-Sun containing today) so `plan`
+        # default view is the CURRENT training week (Mon-Sun containing today) so `week`
         # is "this week at a glance", not the whole history spilling into next week. The
         # Monday offset is rem(days+3,7) — the same convention as Metrics.day_of_week.
         today = Db.local_today_days!(path)
         mon = today - (today + 3) % (7)
-        # default `plan` is the LIVE current-week plan. Re-planning a date leaves skipped
+        # default `week` is the LIVE current-week log. Re-planning a date leaves skipped
         # tombstones (skip-then-add), so hide a skipped row that something SUPERSEDES —
         # a live open/done session on that date, or a LATER row on that date. The second
         # arm matters when the whole day ends up skipped: with no live session, every
@@ -361,7 +361,7 @@ Plan :: [].{
         # presentation only; the JSON payload stays one flat array.
         # Two id columns, because they are two different things and the table was the only
         # place either was visible. `id` is the SESSION — the handle every command takes
-        # (`complete`, `skip`, `rate`). `activity` is the Strava activity linked to it,
+        # (`complete`, `skip`, `relabel`). `activity` is the Strava activity linked to it,
         # which exists only once the session is done; an open row has nothing to show yet,
         # so it reads `-` like every other unavailable value.
         plan_headers = ["day", "date", "type", "status", "detail", "id", "activity"]
