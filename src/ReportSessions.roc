@@ -6,7 +6,8 @@
 # Report.sport_filter_sql and Report.cp_fit_as_of! stay in Report.roc and are called
 # qualified: the first is shared with power-curve, the second with tte. Only
 # helpers used by THIS family alone moved here — empty_hint!, known_sports!,
-# top_metric, lens_name.
+# top_metric, lens_name. (export_row_to_summary also lives here and is called
+# only by Import.)
 import Report
 import Strava
 import Db
@@ -96,11 +97,12 @@ ReportSessions :: [].{
             Err(_) => Output.err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
             Ok(a) => {
                 # REFUSES rather than rendering an empty date, because this screen COMPUTES
-                # from the date and the computation fails silently. `Report.cp_fit_as_of!`
-                # takes a 90-day window anchored here, an unreadable date makes that window
-                # empty, and the whole `vs self (90d, same family+band)` line DISAPPEARS —
-                # indistinguishable from an athlete who genuinely has no comparables. The
-                # header's blank date is at least visible; the missing line is not.
+                # from the date and the computation fails silently. The personal-baselines
+                # query windows on `date(self.start_local, '-90 days')`, so an unreadable date
+                # makes that window empty and the whole `vs self (90d, same family+band)`
+                # line DISAPPEARS — indistinguishable from an athlete who genuinely has
+                # no comparables. The header's blank date is at least visible; the missing
+                # line is not.
                 #
                 # The split in #249 is by what a command DOES with the date, not by which
                 # table it read: `activities` and `top` LIST or RANK and can report a row

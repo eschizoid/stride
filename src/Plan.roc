@@ -399,9 +399,9 @@ Plan :: [].{
                     # every section below tests the same boundaries, so filtering on the
                     # date string re-parsed it four times per row. Keyed here rather than
                     # folded into `enriched` so the JSON payload keeps its shape.
-                    # `dated` matters as much as the number. `week add` stores whatever
-                    # date string it is handed (no validation), so an unparseable one is
-                    # reachable from the CLI, not just by hand-editing the db. Collapsing
+                    # `dated` matters as much as the number. `week add` REJECTS a
+                    # non-canonical target_date on the write path, so an unparseable one
+                    # can only arrive by hand-editing the db. Collapsing
                     # it to day 0 would file a typo under "older sessions" and quietly
                     # claim it was in the past — it is undated, which is a different fact.
                     keyed = List.map(rows_enriched, |p|

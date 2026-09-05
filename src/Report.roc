@@ -22,13 +22,13 @@ Report :: [].{
     high_models_sql = "'power_stream','weighted_watts','avg_watts','rtss'"
 
     # "is this activity's stored date readable", in SQL, for the sites that need the
-    # answer inside a query — the `activities` hoist, `date_known` on `activities`
-    # and `top`, and `doctor`'s undateable count. ONE constant because it was four
+    # answer inside a query — `date_known` on `activities` and `top`, and
+    # `doctor`'s undateable count. ONE constant because they were
     # byte-identical copies, and only one was value-pinned: collapsing them makes the
-    # '1000-02-30' fixture hold all four sites by construction.
+    # '1000-02-30' fixture hold every site by construction.
     # The rule itself lives in Metrics.usable_date_days / date_known_sql_for, beside
     # its Roc twin (`Analyze` and `Strava` cannot import Report); this stays as the
-    # name four sites already use. The SQL round-trips through SQLite's own date(),
+    # name they already share. The SQL round-trips through SQLite's own date(),
     # which is version-dependent — 3.43.2 returns '2026-02-30' verbatim, the linked
     # 3.49.1 rejects it — so the e2e fixture is what holds SQL to the Roc rule
     # across a platform upgrade.
