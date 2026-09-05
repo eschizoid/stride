@@ -60,7 +60,7 @@ Metrics :: [].{
     # against a stray timestamp is preserved for the streams that genuinely need it.
     sorted_by_t : List({ t : I64, v : F64 }) -> List({ t : I64, v : F64 })
     sorted_by_t = |samples|
-        if ascending_by_t(samples) samples else List.sort_with(samples, |a, b| I64.compare(a.t, b.t))
+        if ascending_by_t(samples) samples else List.sort_with(samples, |a, b| a.t.order_relative_to(b.t))
 
     # What to do with the next sample. Pure classification, kept flat and separate so the
     # step below reads as a four-case table instead of a staircase of nested else-ifs.
@@ -248,11 +248,11 @@ Metrics :: [].{
             { z: { z1: 0.I64, z2: 0.I64, z3: 0.I64, z4: 0.I64, z5: 0.I64 }, prev_t: 0.I64, started: False },
             |acc, s|
                 if !(acc.started) {
-                    { ..acc, prev_t: s.t, started: True }
+                    { z: acc.z, prev_t: s.t, started: True }
                 } else {
                     dt = (s.t - acc.prev_t).min(max_sample_gap_s)
                     if dt <= 0 {
-                        { ..acc, prev_t: s.t }
+                        { z: acc.z, prev_t: s.t, started: acc.started }
                     } else {
                         z = acc.z
                         updated =
@@ -263,7 +263,7 @@ Metrics :: [].{
                                 4 => { ..z, z4: z.z4 + dt }
                                 _ => { ..z, z5: z.z5 + dt }
                             }
-                        { ..acc, z: updated, prev_t: s.t }
+                        { z: updated, prev_t: s.t, started: acc.started }
                     }
                 },
         )
@@ -310,7 +310,7 @@ Metrics :: [].{
             { i: { easy_s: 0.I64, moderate_s: 0.I64, hard_s: 0.I64 }, prev_t: 0.I64, started: False },
             # the first sample only anchors prev_t — there is no interval before it, and
             # computing dt against the 0 sentinel would be arithmetic on a non-time
-            |acc, s| if !(acc.started) { { ..acc, prev_t: s.t, started: True } } else band_step(acc, s, classify),
+            |acc, s| if !(acc.started) { { i: acc.i, prev_t: s.t, started: True } } else band_step(acc, s, classify),
         )
         state.i
     }
@@ -330,7 +330,7 @@ Metrics :: [].{
                     Hard => { ..i, hard_s: i.hard_s + dt }
                 }
             }
-        { ..acc, i: updated, prev_t: s.t }
+        { i: updated, prev_t: s.t, started: acc.started }
     }
 
     time_in_power_intensity : List({ t : I64, v : F64 }), F64 -> PowerIntensity
@@ -1460,7 +1460,7 @@ Metrics :: [].{
     median_gap_days : List(I64) -> [Known(I64), Unknown]
     median_gap_days = |days| {
         distinct = List.fold(days, [], |acc, d| if List.contains(acc, d) acc else List.append(acc, d))
-        sorted = List.sort_with(distinct, |a, b| if a < b LT else if a > b GT else EQ)
+        sorted = List.sort_with(distinct, |a, b| if a < b Before else if a > b After else Same)
         if List.len(sorted) < 2 {
             Unknown
         } else {
@@ -1471,7 +1471,7 @@ Metrics :: [].{
                 }
                 { prev: Ok(d), out }
             })).out
-            gs = List.sort_with(gaps, |a, b| if a < b LT else if a > b GT else EQ)
+            gs = List.sort_with(gaps, |a, b| if a < b Before else if a > b After else Same)
             Known(List.get(gs, List.len(gs) // 2) ?? 0)
         }
     }
@@ -1501,7 +1501,7 @@ Metrics :: [].{
             order = List.sort_with([0.U64, 1, 2], |a, b| {
                 ra = List.get(rema, a) ?? 0.0
                 rb = List.get(rema, b) ?? 0.0
-                if ra > rb LT else if ra < rb GT else if a < b LT else GT
+                if ra > rb Before else if ra < rb After else if a < b Before else After
             })
             bump = List.take_first(order, (remainder).to_u64_wrap())
             out = List.map_with_index(floors, |f, i| f + (if List.contains(bump, i) 1 else 0))
@@ -2365,7 +2365,7 @@ Metrics :: [].{
     # contrast gate, where nearest-rank precision is plenty
     median_f64 : List(F64) -> F64
     median_f64 = |xs| {
-        sorted = List.sort_with(xs, |a, b| if a < b LT else if a > b GT else EQ)
+        sorted = List.sort_with(xs, |a, b| if a < b Before else if a > b After else Same)
         List.get(sorted, List.len(sorted) // 2) ?? 0.0
     }
 
@@ -2456,7 +2456,7 @@ Metrics :: [].{
         } else {
             xs = List.map(pairs, |x| x.v)
             sm = smooth_trailing(xs, p.smooth_w)
-            sorted = if ascending_f64(sm) sm else List.sort_with(sm, |a, b| if a < b LT else if a > b GT else EQ)
+            sorted = if ascending_f64(sm) sm else List.sort_with(sm, |a, b| if a < b Before else if a > b After else Same)
             q25 = sorted_quantile(sorted, 0.25)
             q75 = sorted_quantile(sorted, 0.75)
             iqr = q75 - q25
@@ -2503,7 +2503,7 @@ Metrics :: [].{
                 if List.len(kept) < 2 {
                     []
                 } else {
-                    sorted_means = List.sort_with(List.map(kept, |s| s.mean), |a, b| if a < b LT else if a > b GT else EQ)
+                    sorted_means = List.sort_with(List.map(kept, |s| s.mean), |a, b| if a < b Before else if a > b After else Same)
                     # two-cluster split maximizing between-class variance (Otsu in 1D),
                     # gated on CLUSTER-MEAN separation. Largest-adjacent-gap was tried
                     # first and failed on real rowing intervals: ten work and ten

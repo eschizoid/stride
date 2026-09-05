@@ -1090,7 +1090,7 @@ ReportSessions :: [].{
                     (Metrics.usable_date_days(sn.date))
                         .map_err(|_| BadActivityDate(sn.date, sn.id))
                         .map_ok(|d| { d, sn }))?
-                by_date = List.map(List.sort_with(keyed, |x, y| if x.d > y.d LT else if x.d < y.d GT else EQ), |k| k.sn)
+                by_date = List.map(List.sort_with(keyed, |x, y| if x.d > y.d Before else if x.d < y.d After else Same), |k| k.sn)
                 built = List.map_try!(by_date, |sn| {
                     rs = rows_for!(sn.id)?
                     first_w = (List.first(rs)).map_ok(|r| r.avg_signal).ok_or(0.0)

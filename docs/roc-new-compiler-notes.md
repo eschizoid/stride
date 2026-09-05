@@ -4,7 +4,23 @@ Working reference for the new (Zig) compiler + basic-cli 0.22, learned empirical
 against the compiler and roc-lang/roc source during the migration (completed
 2026-08-02). The migration's progress log is gone — this is the part worth keeping.
 
-## Toolchain pin: `nightly-2026-08-27-8fa1a34` (the hold below is LIFTED)
+## Toolchain pin: `nightly-2026-09-04-c125b82` (the hold below is LIFTED)
+
+**Bumped 2026-09-04**, from `nightly-2026-08-27-8fa1a34`. Verified on x86_64 macOS with the
+nightly's own binary before bumping: `roc check` clean, `just build` clean, `just test` and
+`just e2e` both `1111 == 1111` with ALL E2E CHECKS PASS. Two source migrations were required.
+
+First, roc#10975 replaced the ordering API: `compare` became `order_relative_to`, and the
+`[LT, GT, EQ]` tags became `[Before, Same, After]`. That is 33 tag tokens and 4 call sites, and
+it is unavoidable for any bump past 08-27, because the rename landed 2026-08-28, eight commits
+after that tag.
+
+Second, **a record spread `{ ..acc, ... }` written in each branch of an `if`/`else` inside
+`List.fold` stops resolving the accumulator's numeric type and defaults it to `Dec`**, so `I64`
+arithmetic on the accumulator fails to check. Writing the record's fields out explicitly in each
+branch restores it; a single spread with no branching is fine. `time_in_zones` and `band_step`
+are written that way for this reason. The same 13-line shape compiles on 08-27 and fails from
+08-30 on, so this is a change in the compiler rather than in the code.
 
 **Bumped 2026-08-30**, from `nightly-2026-08-23-fb208ba`. No source change. Verified on
 x86_64 macOS before bumping: `just test` → `1068 == 1068` and ALL E2E CHECKS PASS, every

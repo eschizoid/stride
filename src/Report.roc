@@ -369,7 +369,7 @@ Report :: [].{
         hard_d14 = List.len(List.keep_if(hard_day_nums, |d| d >= anchor - 13))
         spacing = Metrics.median_gap_days(hard_day_nums)
         days_since_hard =
-            match List.sort_with(hard_day_nums, |a, b| if a > b LT else if a < b GT else EQ) {
+            match List.sort_with(hard_day_nums, |a, b| if a > b Before else if a < b After else Same) {
                 [newest_hard, ..] => Known(anchor - newest_hard)
                 [] => Unknown
             }
