@@ -112,7 +112,7 @@ ReportSeason :: [].{
                     \\       -- the house fallback (see zone_sum!): the pi_* split when the activity
                     \\       -- has one -- power-derived with watts, pace-derived for a distance
                     \\       -- sport without them -- else the HR zones. Summing the pi_ columns
-                    \\       -- raw drops every session without a split -- 50 of 731 here, 46 of which
+                    \\       -- raw drops every session without a split -- a small minority here, most of which
                     \\       -- DO have zone seconds, and overwhelmingly easy ones, so the raw sum
                     \\       -- understates easy time and disagrees with what `summary` publishes.
                     \\       CAST(COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_easy_s ELSE m.z1_s + m.z2_s END), 0) AS REAL) AS easy_s,
@@ -225,7 +225,7 @@ ReportSeason :: [].{
                     mean_weekly_load: if span_weeks > 0 b.total_load / (span_weeks).to_f64() else 0.0,
                     # Activities, not days-with-load: weekly_rollup counts a day
                     # as one session because daily_load carries load and not a
-                    # count, which lost 9 of 731. It is NOT required to equal
+                    # count, which lost a handful. It is NOT required to equal
                     # months[].sessions -- an activity that scored no load
                     # inside an absence belongs to a month and to no block, and
                     # one dated before any daily_load row belongs to neither.

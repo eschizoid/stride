@@ -545,7 +545,9 @@ Plan :: [].{
         })?
         Output.out!(plan_echo(new_id, target_date, session_type, pt), |p| "planned #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}${Render.target_note(pt)}")
     }
-    # ONE not-found message for complete/complete-rest/skip — can't drift apart
+    # ONE not-found message for every command that resolves a planned session by id —
+    # complete, complete-rest, skip and relabel — so the four cannot drift apart. Adding a
+    # fifth means calling this, not writing a fifth sentence.
     session_not_found! : I64 => Try({}, _)
     session_not_found! = |session_id|
         Output.err_out!("session_not_found", "no planned session #${(session_id).to_str()} — `stride plan` lists open ones, `stride week all` the whole log")

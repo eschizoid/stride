@@ -2011,7 +2011,7 @@ Metrics :: [].{
     # repair: unrankable rows go FIRST. The two intents pull opposite ways — ranking
     # wants an unrankable row last so it is never mistaken for the newest; #249's
     # `activities` hoist wants it first so it cannot fall past the limit and hide
-    # (measured: an impossible-time row sank to position 737 of 737, outside the
+    # (measured: an impossible-time row sank to LAST position, outside the
     # default limit, uncounted and published as `date_known: true`).
     #
     # It hoists on RANKABILITY, not `date_known` — the flag subsumes that term. Within
