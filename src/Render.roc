@@ -239,6 +239,13 @@ Render :: [].{
             if d >= 0.0 "+${mag}" else "-${mag}"
         }
 
+    # The progress trend verdict: a closed set of three, pinned by equality below
+    # (ADR 0012). Named rather than inline for exactly that reason — see the pin.
+    trend_label : Bool, Bool -> Str
+    trend_label = |improved, declined|
+        if improved "improving" else if declined "declining" else "holding steady"
+
+
     # How long the band has held, appended to the state (#123). Takes the TAG, not a
     # flattened number: the caller must not decide what Unknown means on the renderer's
     # behalf, and AtLeast must not arrive collapsed into an exact-looking integer.
@@ -251,12 +258,6 @@ Render :: [].{
     # The `+` is the point of AtLeast reaching this far: `summary` reads a 31-day
     # window, so a 45-day streak truncates, and a bare "31" would present the window
     # size as a measurement.
-    # The progress trend verdict: a closed set of three, pinned by equality below
-    # (ADR 0012). Named rather than inline for exactly that reason — see the pin.
-    trend_label : Bool, Bool -> Str
-    trend_label = |improved, declined|
-        if improved "improving" else if declined "declining" else "holding steady"
-
     band_days_phrase : [Known(I64), AtLeast(I64), Unknown] -> Str
     band_days_phrase = |band|
         match band {
@@ -585,7 +586,6 @@ Render :: [].{
         }
     }
 
-    # display label for a progress group, from anchor_filter's structured kind
     ## the group label when progress keys on detected structure rather than name: the
     ## shape first, then one anchor-day class name so the reader recognizes the session.
     ## "~" because mates match by duration BAND, not exact duration — the label must not
@@ -612,6 +612,7 @@ Render :: [].{
         else if tm.detected_known " (target ${(tm.target_reps).to_str()}×${mmss(tm.target_dur_s)} @ ${(tm.target_watts.to_i64_wrap()).to_str()}W; detected ${(tm.detected_reps).to_str()}×~${mmss(tm.detected_mean_dur_s)} @ ${(tm.detected_mean_watts.to_i64_wrap()).to_str()}W)"
         else " (target ${(tm.target_reps).to_str()}×${mmss(tm.target_dur_s)} @ ${(tm.target_watts.to_i64_wrap()).to_str()}W; no detected power intervals to compare)"
 
+    # display label for a progress group, from anchor_filter's structured kind
     progress_group_label : [Metric, Imperial], Str, [Exact, SimilarDistance(F64), LoneNoDistance] -> Str
     progress_group_label = |units, name, kind|
         match kind {

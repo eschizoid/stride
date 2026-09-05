@@ -423,17 +423,6 @@ Metrics :: [].{
         f = hr_tss_per_hour
         (zs.z1.to_f64() * f.z1 + zs.z2.to_f64() * f.z2 + zs.z3.to_f64() * f.z3 + zs.z4.to_f64() * f.z4 + zs.z5.to_f64() * f.z5) / 3600.0
     }
-
-    # ── the TSS ladder ──────────────────────────────────────────────────
-    # Best-available-data fallback chain, one decision in one testable place:
-    #   stream NP -> Strava weighted watts -> avg watts -> pace rTSS -> zone-based
-    #   hrTSS -> avg-HR classified into one zone -> session-RPE -> relative_effort
-    #   -> 0 (no data). For strength-class sports the athlete's session-RPE outranks
-    #   HR — it moves above BOTH HR rungs, which are one slot here (hr_zones falls back
-    #   to hr_avg internally), with relative_effort last in either class. HR-based load
-    #   systematically underestimates lifting: the aerobic model doesn't see bar weight.
-    #   `Sports.class` decides which order applies.
-    # Returns the tss and the power figure used (Err NoPower if HR/RE path).
     # ── ramp rate (#93): weekly CTL delta, as a number ───────────────────
     #
     # CTL on the most recent day at or before `target`. Missing is NOT zero: a series that
@@ -544,6 +533,17 @@ Metrics :: [].{
     srpe_load = |{ rpe, moving_time }|
         (moving_time.to_f64() / 3600.0) * rpe * 10.0
 
+
+    # ── the TSS ladder ──────────────────────────────────────────────────
+    # Best-available-data fallback chain, one decision in one testable place:
+    #   stream NP -> Strava weighted watts -> avg watts -> pace rTSS -> zone-based
+    #   hrTSS -> avg-HR classified into one zone -> session-RPE -> relative_effort
+    #   -> 0 (no data). For strength-class sports the athlete's session-RPE outranks
+    #   HR — it moves above BOTH HR rungs, which are one slot here (hr_zones falls back
+    #   to hr_avg internally), with relative_effort last in either class. HR-based load
+    #   systematically underestimates lifting: the aerobic model doesn't see bar weight.
+    #   `Sports.class` decides which order applies.
+    # Returns the tss and the power figure used (Err NoPower if HR/RE path).
     tss_ladder :
         {
             np_stream : Try(F64, [TooShort]),
@@ -1527,14 +1527,6 @@ Metrics :: [].{
         # the catch-all is OPEN ABOVE (the SQL band filter is `< hi`, so a finite
         # ceiling would orphan ultra-length activities from ever being comparable)
         else { lo: 7200, hi: 8640000 }
-
-    # The rep-scale twin of duration_band (#149). Session band EDGES sit at
-    # 20/45/75/120 minutes, which at rep scale is useless: a 3x2min VO2 set and a 3x17min
-    # tempo block both land in "under 20 minutes" and would be compared as the
-    # same workout. These edges follow how intervals are actually prescribed —
-    # sprints, short VO2, classic 3-6min VO2, 6-10min, threshold 10-15, sweet
-    # spot 15-30, and long. Fixed edges for the same reason duration_band uses
-    # them: comparability must be symmetric, which a +/-% window is not.
     # The one judgment in the reps comparison: how far rep durations may spread
     # and still be "the same repeated shape". It lives here because THREE things
     # depend on them agreeing — the anchor gate, the census count on the screen,
@@ -1557,6 +1549,14 @@ Metrics :: [].{
     is_uniform_reps = |min_dur, max_dur|
         min_dur > 0 and max_dur * anchor_uniformity_den <= min_dur * anchor_uniformity_num
 
+
+    # The rep-scale twin of duration_band (#149). Session band EDGES sit at
+    # 20/45/75/120 minutes, which at rep scale is useless: a 3x2min VO2 set and a 3x17min
+    # tempo block both land in "under 20 minutes" and would be compared as the
+    # same workout. These edges follow how intervals are actually prescribed —
+    # sprints, short VO2, classic 3-6min VO2, 6-10min, threshold 10-15, sweet
+    # spot 15-30, and long. Fixed edges for the same reason duration_band uses
+    # them: comparability must be symmetric, which a +/-% window is not.
     rep_duration_band : I64 -> { lo : I64, hi : I64 }
     rep_duration_band = |dur_s|
         if dur_s < 60 { lo: 0, hi: 60 }
