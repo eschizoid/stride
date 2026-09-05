@@ -1551,13 +1551,13 @@ Render :: [].{
         conforming = (List.len(List.keep_if(p.sessions, |s| Metrics.is_uniform_reps(s.min_dur_s, s.max_dur_s)))).to_i64_wrap()
         atleast = if conforming == shown and p.matched_total > shown "≥" else ""
         # the NOUN follows how many were matched, the VERB how many conform:
-        # "1 of 8 matched sessions is itself" -- pluralizing both produced
-        # "1 of 8 matched session is itself" on 7 of 15 real anchors
+        # "1 of 8 matched sessions is itself" -- pluralizing both gives
+        # "1 of 8 matched session is itself"
         noun = if p.matched_total == 1.I64 "matched session" else "matched sessions"
         verb = if conforming == 1.I64 "is itself" else "are themselves"
-        # The trailing clause described rows that may not exist: on a first
-        # structured session it read "1 of 1 ... the rest are listed", naming a
-        # rest of zero. It also implied the un-annotated rows were the
+        # A trailing clause would describe rows that may not exist: on a first
+        # structured session "1 of 1 ... the rest are listed" names a
+        # rest of zero. It would also imply the un-annotated rows are the
         # conforming ones, but the annotation fires at a spread of 1.15 and the
         # census counts at 1.6, so on real data that mapping gives 1 where the
         # census says 3.
@@ -2226,8 +2226,8 @@ expect {
     and Str.contains(pace, "fade -0:02")
     # a HR DROP across reps rendered as "hr +-8" -- the + was hardcoded
     and Str.contains(dropped, "hr -8") and !(Str.contains(dropped, "+-"))
-    # rows are ranked by uniformity then capped, so "showing 12 of 21" read as
-    # "the other 9 are older" when they were the least regular
+    # rows are ranked by uniformity then capped, so "showing 12 of 21" reads as
+    # "the other 9 are older" when they are the least regular
     and Str.contains(power, "most uniform of 21")
     # and the count of like-for-like evidence leads, rather than hiding in a
     # per-row caveat that fired on 11 of 12 rows
