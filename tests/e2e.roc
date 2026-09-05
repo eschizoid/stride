@@ -5735,10 +5735,11 @@ b_load_stats! = |ctx| {
     # immediate re-run (#357).
     #
     # The anchor stays a real CALENDAR day. Comparing the series end against `summary.as_of`
-    # instead looked like it removed the harness clock, but both are reads of
-    # MAX(daily_load.day) from the same table, read by two different queries in Report — no
-    # database state can make them disagree, so that check could not see the series failing
-    # to reach today at all, which is the #200 regression this exists for.
+    # instead looked like it removed the harness clock, but both come from the same stored
+    # row — Report reaches the latest day with `ORDER BY day DESC LIMIT`, twice, once for the
+    # series and once for as_of — so no database state can make them disagree, and that check
+    # could not see the series failing to reach today at all, which is the #200 regression
+    # this exists for.
     #
     # So: rebuild the series HERE, bracketed by two clock reads. `analyze` calls
     # rebuild_daily_load! unconditionally, so after it the series ends on
