@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.11.0](https://github.com/eschizoid/stride/compare/v0.10.0...v0.11.0) (2026-09-05)
+
+
+### Features
+
+* **config:** render distance and pace in imperial or metric ([#350](https://github.com/eschizoid/stride/issues/350)) ([ff7b258](https://github.com/eschizoid/stride/commit/ff7b258784e56e96fa71ad59d877ca208bb96c0d))
+* critical speed and D′, the pace analog of the CP model ([#360](https://github.com/eschizoid/stride/issues/360)) ([d36ed9b](https://github.com/eschizoid/stride/commit/d36ed9b0124cb47ff628ad2d2de84ac801868879))
+* **reps:** render interval reps as pace, not a raw m/s rate ([#355](https://github.com/eschizoid/stride/issues/355)) ([63fb862](https://github.com/eschizoid/stride/commit/63fb862f664ee60d71a7ecd2f57e26e7e802384e))
+* **toolchain:** bump Roc to nightly-2026-09-04 and pin it in one place ([08563a8](https://github.com/eschizoid/stride/commit/08563a829a07ca4d0d6db2b4a5e2b679a3b34a2d))
+
+
+### Bug Fixes
+
+* **blob-safety:** compute and assert the call-site count ([#368](https://github.com/eschizoid/stride/issues/368)) ([c1ddf81](https://github.com/eschizoid/stride/commit/c1ddf8156544bd470068b70a8658ce44ca861c20))
+* pace-curve refusal causes, available_sports payload, and a table-width bound ([#367](https://github.com/eschizoid/stride/issues/367)) ([ff2377e](https://github.com/eschizoid/stride/commit/ff2377eabe49bb5488213b64105ccb64b7b19249))
+* **tools:** key pinned shapes by JSON path, and state the invariant once ([#347](https://github.com/eschizoid/stride/issues/347)) ([a32bb44](https://github.com/eschizoid/stride/commit/a32bb44dfa5ec8fb24d6f018c449f3e67cac502a))
+
 ## [0.10.0](https://github.com/eschizoid/stride/compare/v0.9.0...v0.10.0) (2026-08-31)
 
 
