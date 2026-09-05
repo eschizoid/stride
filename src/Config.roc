@@ -42,9 +42,9 @@ Config :: [].{
 	# sat here for one revision on the strength of an AGENTS.md sentence and has
 	# never been read from config.
 	# Hoisted out of `known_key` so it can be ENUMERATED: `config unset` writes one
-	# sentence per key, and hand-typing this membership from memory shipped a false
-	# one three rounds running. `tests/e2e.roc` walks this list and asserts every
-	# member reaches a routed branch.
+	# sentence per key, and a membership typed from memory drifts from the routed
+	# branches. `tests/e2e.roc` walks this list and asserts every member reaches a
+	# routed branch.
 	plain_keys : List(Str)
 	plain_keys = [
 		"timezone",
@@ -170,7 +170,7 @@ Config :: [].{
 		}
 
 	# Keys the engine DERIVES and never reads from config. Accepting one would be worse
-	# than refusing it: `config set ftp_ride 250` used to succeed, print a confirmation,
+	# than refusing it: `config set ftp_ride 250` would succeed, print a confirmation,
 	# and change nothing, because Db.sport_ftp! computes FTP from the athlete's own power
 	# history (ADR 0002, ADR 0005) and never consults config. A stored value that is
 	# silently ignored is a trap, so setting one is rejected with the reason.

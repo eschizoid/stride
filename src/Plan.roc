@@ -222,9 +222,10 @@ Plan :: [].{
             skipped_reason: p.skipped_reason,
             substitute_activity_id: p.substitute_activity_id,
             done_date: p.done_date,
-            # A session completed by an activity from ANOTHER day used to render exactly
-            # like one completed on time — the plan silently implied the work happened on
-            # the date it was prescribed for. Show the real day when they differ.
+            # A session completed by an activity from ANOTHER day would otherwise render
+            # exactly like one completed on time, so the plan would silently imply the
+            # work happened on the date it was prescribed for. Show the real day when
+            # they differ.
             status_shown:
                 if p.status == "done" and p.done_date != "" and p.done_date != p.target_date {
                     # Full date, year included: `week all` spans years, so a bare month-day
