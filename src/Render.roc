@@ -1227,16 +1227,35 @@ Render :: [].{
                 if pc.cs > 0.0 and pc.d_prime > 0.0
                     "→ Critical Speed ${pace_from_speed(units, pc.cs)} ${pace_unit(units)} · D′ ${dprime}${quality}"
                 else
-                    # TWO different refusals, and the power screen's single message described only
-                    # one. Too few rungs is a DATA gap; enough rungs that do not fall on a
-                    # descending line is a MODEL refusal — the curve is flat or rising, which no
-                    # athlete produces, so the fit is declined rather than fudged. Printing the
-                    # data message under a table showing three durations denied what the table
-                    # directly above it displayed.
-                    if pc.fit_points >= 2.I64
-                        "→ Critical Speed: these bests do not fall on a descending curve, so no fit is possible"
-                    else
-                        "→ Critical Speed: needs two ladder durations with data, at different lengths"
+                {
+                        # THREE causes, and they are not interchangeable. Too few rungs is a DATA
+                        # gap. Rungs that hold or rise with duration are a curve no athlete
+                        # produces, so the model declines rather than fudges. And a curve that
+                        # descends so steeply the fitted ceiling lands below zero is refused for a
+                        # third reason entirely — the bests are real and ordered, they just cannot
+                        # come from one athlete's 2-parameter model.
+                        #
+                        # The payload cannot tell these apart: `cs` and `d_prime` are 0 in all
+                        # three. The points can, and the screen has them — so the shape of the
+                        # ladder decides which sentence is true, rather than one sentence covering
+                        # cases it does not describe. A reader seeing three descending durations
+                        # above "these bests do not descend" learns to distrust the line.
+                        # Strictly decreasing speed as duration grows. Seeded above any real
+                        # speed so the first rung always passes; a human sprints nowhere near
+                        # 1000 m/s.
+                        descending =
+                            (List.fold(
+                                pc.points,
+                                { ok: True, prev: 1000.0 },
+                                |a, p| { ok: a.ok and p.speed < a.prev, prev: p.speed },
+                            )).ok
+                        if pc.fit_points < 2.I64
+                            "→ Critical Speed: needs two ladder durations with data, at different lengths"
+                        else if !(descending)
+                            "→ Critical Speed: these bests hold or rise with duration, so no fit is possible"
+                        else
+                            "→ Critical Speed: these bests fall too steeply to fit one athlete's curve"
+                }
             legend =
                 \\best mean-max grade-adjusted pace held for each duration (the peak across the window).
                 \\CS ≈ sustainable ceiling; D′ = the finite above-CS distance battery.
@@ -1973,6 +1992,14 @@ expect {
     nosport = Render.pace_curve_screen(Metric, ["Run", "Rowing"], { window_days: 30, sport: "", points: [], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
     bare = Render.pace_curve_screen(Metric, [], { window_days: 30, sport: "", points: [], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
     Str.contains(none, "needs two ladder durations") and !(Str.contains(none, "Critical Speed 0"))
+    # three rungs DESCENDING but too steeply for the model — the fitted ceiling lands below
+    # zero, so the fit is refused for a reason that is neither a data gap nor a flat curve.
+    # 10.0/3.0/2.0 m/s renders 1:40, 5:33, 8:20 per km: visibly descending, and the old
+    # single message told the reader they were not.
+    and Str.contains(
+        Render.pace_curve_screen(Metric, ["Run"], { window_days: 90, sport: "Run", points: [{ dur_s: 300, speed: 10.0 }, { dur_s: 600, speed: 3.0 }, { dur_s: 1200, speed: 2.0 }], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 3.I64 }),
+        "fall too steeply",
+    )
     and !(Str.contains(thin, "r2 1.00")) and Str.contains(thin, "r2 needs 3")
     and Str.contains(empty, "no pace data")
     and Str.contains(nosport, "per-sport") and Str.contains(nosport, "Run, Rowing") and !(Str.contains(nosport, "Critical Speed"))
@@ -1981,7 +2008,7 @@ expect {
     # The data-gap message would be false here — the table above it shows three durations.
     and Str.contains(
         Render.pace_curve_screen(Metric, ["Run"], { window_days: 90, sport: "Run", points: [{ dur_s: 300, speed: 4.0 }, { dur_s: 600, speed: 4.0 }, { dur_s: 1200, speed: 4.0 }], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 3.I64 }),
-        "do not fall on a descending curve",
+        "hold or rise with duration",
     )
 }
 
