@@ -2956,7 +2956,7 @@ b_seed_analyze! = |ctx| {
     # check failing later in the run
     _ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (330,331,332,333,334); DELETE FROM activity_metrics WHERE activity_id IN (330,331,332,333,334); DELETE FROM activities WHERE id IN (330,331,332,333,334);")
     # --help rather than a bare call: interpolating a compile-time empty string
-    # into the command slot is the #32-class crash, and --help returns the
+    # into the command slot crashes str_concat (roc#10595), and --help returns the
     # identical discovery payload
     check!("the command list conforms to its schema", validate!("--help", "commands") == "")?
     # the remaining query payloads (#164 shipped three; the coach reads all of

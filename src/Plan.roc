@@ -141,7 +141,7 @@ Plan :: [].{
         # shows its one final tombstone. `week all` shows the full log unfiltered.
         # scope filter via a BOUND :all flag, never string interpolation: the earlier
         # approach spliced a compile-time-constant "" into the query, crashing the
-        # backend in str_concat (#32 class). The date literals below are always
+        # backend in str_concat (roc#10595). The date literals below are always
         # non-empty, so they interpolate safely.
         scope_all =
             match scope {
@@ -298,7 +298,7 @@ Plan :: [].{
         _ = Report.guard_activity_dates!(path)?
         unplanned_rows = List.map(unplanned, |u| {
             # bind first, then interpolate — `${if … else ""}` splices a compile-time
-            # "" into str_concat, the #32-class heap trap. Fixed upstream in roc#10595
+            # "" into str_concat, a heap trap. Fixed upstream in roc#10595
             # and our pin now carries the fix, so this is style rather than survival;
             # kept because non-empty-by-construction is the clearer rule either way.
             load_part = if u.tss >= 1.0 ", ${Render.fmt0(u.tss)} load" else " "

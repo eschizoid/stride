@@ -374,7 +374,7 @@ Report :: [].{
                 [] => Unknown
             }
         # ANNOTATED Bools: this payload is encode-only, and a bare tag would
-        # serialize as the STRING "True" (the #32-class flag bug, pinned in e2e)
+        # serialize as the STRING "True" rather than a JSON bool (pinned in e2e)
         spacing_known_b : Bool
         spacing_known_b = match spacing { Known(_) => True  Unknown => False }
         days_since_known_b : Bool
@@ -742,7 +742,7 @@ Report :: [].{
     sport_filter_sql = |word|
         if Str.is_empty(word) {
             # a lone SPACE, never "": interpolating a compile-time-constant empty
-            # string was the #32-class str_concat trap. Fixed upstream in
+            # string was the str_concat trap. Fixed upstream in
             # roc#10595 (closed 2026-08-04, before this pin), so this is now a style
             # rule rather than survival — non-empty by construction, same as Plan.roc
             { frag: " ", binds: [] }
