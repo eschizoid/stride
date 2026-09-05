@@ -1,9 +1,9 @@
-# ── reference and diagnostics: doctor, stats, zones, power-curve, tte ─
+# ── reference and diagnostics: doctor, stats, zones, power-curve, pace-curve, tte ─
 #
 # Split from Report.roc under ADR 0001 (doctor! had passed the ~250-line
 # trigger). These are the commands you run to check the ENGINE rather than the
-# training: coverage, provenance, the configured zones, the power-duration
-# curve and what it implies.
+# training: coverage, provenance, the configured zones, the power- and speed-duration
+# curves and what they imply.
 #
 # Three helpers stay in Report.roc rather than move here, because each is shared
 # with another family: the high/medium/low model lists (doctor + summary's

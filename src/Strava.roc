@@ -420,7 +420,7 @@ Strava :: [].{
             # ORDER MATTERS. Say the sentence FIRST, then open the bar. narrate! writes a
             # bar frame with no trailing newline, so a say! after it lands on the bar's row
             # — and since the next frame's \r rewrites only the frame's own width, the tail
-            # of a 138-character message stays welded to the right of a 33-character bar
+            # of a message longer than the bar stays welded to the right of it
             # for the whole drain. That is the failure bar_done!'s comment names, and it
             # shipped because nothing asserts on stderr framing.
             Output.say!("draining ${U64.to_str(total)} activities' streams — Strava caps reads per 15-minute window, so a large first pull takes several runs; every stream stored is kept")?
