@@ -113,10 +113,11 @@ done
 # Asserted exactly, not as a floor — an enumeration that silently matches nothing
 # prints the same clean line a healthy tree prints.
 EXPECT_DECODES=58
-# Asserted, not printed-and-forgotten. The success line carried a hardcoded "91 call
-# sites" while nothing computed or checked it; by the time anyone looked it was 108.
-# A number a gate prints on every green run has to be a number the gate enforces.
-EXPECT_SITES=100
+# Asserted, not printed-and-forgotten. The success line once carried a hardcoded site
+# count that nothing computed and nothing checked, so it drifted from the truth without
+# anything failing. A number a gate prints on every green run has to be a number the gate
+# enforces — which is why no historical value is quoted here either.
+EXPECT_SITES=100  # matched `... AS <alias>` projection expressions, not decoder call sites
 if [ "$decodes" != "$EXPECT_DECODES" ]; then
   echo "blob-safety: inspected $decodes (file, alias) decode pairs, expected $EXPECT_DECODES."
   echo "blob-safety: if that change is intended, update the number in the same commit;"
@@ -124,7 +125,7 @@ if [ "$decodes" != "$EXPECT_DECODES" ]; then
   exit 1
 fi
 if [ "$sites" != "$EXPECT_SITES" ]; then
-  echo "blob-safety: examined $sites call sites, expected $EXPECT_SITES."
+  echo "blob-safety: examined $sites projection sites, expected $EXPECT_SITES."
   echo "blob-safety: same rule as the decode count — if the change is intended, update it"
   echo "blob-safety: here; if it is not, the projection scan stopped matching."
   exit 1
@@ -141,4 +142,4 @@ if [ "$n" -gt 0 ]; then
   echo "Wrap the projection: COALESCE(CAST(<col> AS TEXT), '') AS <alias>"
   exit 1
 fi
-echo "blob-safety: $decodes (file, alias) decode pairs across $sites call sites, every projection CAST to TEXT"
+echo "blob-safety: $decodes (file, alias) decode pairs across $sites projection sites, every projection CAST to TEXT"
