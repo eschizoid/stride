@@ -902,8 +902,8 @@ ReportSessions :: [].{
             query:
                 \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, COALESCE(CAST(a.name AS TEXT), '') AS name,
                 # The trailing `''` is a behaviour change beyond blob handling: a row with BOTH
-                # columns NULL used to decode as an error and now reads empty. An improvement, and
-                # deliberate, but not something the CAST alone would have done.
+                # columns NULL decodes as empty rather than as an error. Deliberate, and
+                # not something the CAST alone would do.
                 \\       COALESCE(CAST(a.sport_family AS TEXT), CAST(a.sport_type AS TEXT), '') AS fam,
                 \\       COUNT(*) AS reps, CAST(AVG(s.dur_s) AS INTEGER) AS mean_dur,
                 \\       MIN(s.dur_s) AS min_dur, MAX(s.dur_s) AS max_dur,
@@ -1239,8 +1239,8 @@ ReportSessions :: [].{
         # work segments is grouped by SHAPE, through the same predicate `reps` uses: sport
         # family exact, rep count exact, mean work-rep duration inside the fixed band,
         # signal exact. A class name is evidence of neither sameness nor difference —
-        # measured, the same 3×12 threshold shipped under three names in three weeks
-        # (three groups of one), while one recurring name held 17 sessions of unlike
+        # measured, the same 3×12 threshold appears under three names in three weeks
+        # (three groups of one), while one recurring name holds 17 sessions of unlike
         # shapes. Sessions without detected structure keep name grouping unchanged.
         structure_mates! = |fam, sig, reps, blo, bhi|
             Sqlite.query_many!({
@@ -1359,10 +1359,10 @@ ReportSessions :: [].{
             # a name group is claimed only by a structure group that will SURVIVE
             # scoring. Claiming on shape alone erased visible data: a lens-unscorable
             # structure group dies in keep_scored AFTER the name group it claimed is
-            # gone, and a date that used to answer with an honest partial trend answers
-            # unscorable over a database still holding one (measured against the
-            # pre-#96 binary). progress_lens(mates) != Unscorable IS keep_scored's
-            # survival condition — the first lens any row scores keeps that row.
+            # gone, and a date that would answer with an honest partial trend instead
+            # answers unscorable over a database still holding one.
+            # progress_lens(mates) != Unscorable IS keep_scored's survival condition —
+            # the first lens any row scores keeps that row.
             survives = match Metrics.progress_lens(mates) { Unscorable => False _ => True }
             Ok({ group: { name: Render.structure_group_label(k.sh.reps, k.sh.mean_dur, k.sh.sig, k.sh.aname), display_name: Render.structure_group_label(k.sh.reps, k.sh.mean_dur, k.sh.sig, k.sh.aname), rows: mates, total: List.len(mates), scope_why: "", grouped_by: "structure" }, claim_sids: if survives k.sids else [] })
         })?
