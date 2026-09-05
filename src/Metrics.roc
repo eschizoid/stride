@@ -223,8 +223,7 @@ Metrics :: [].{
     max_sample_gap_s = 30.I64
 
     # ── time in zones (HR-based, universal across sports) ───────────────
-    # dt between consecutive samples, capped at max_sample_gap_s — a pause contributes AT
-    # MOST that, never its full length (a 100 s stop credits 30 s, not 100). Attributed to
+    # dt between consecutive samples, capped at max_sample_gap_s. Attributed to
     # the zone of the current sample.
 
     zone_of : F64, ZoneBounds -> U8
@@ -275,8 +274,7 @@ Metrics :: [].{
     # 76-90% (Z3), hard >= 91% FTP (Z4+). For a power-equipped ride this is the truer
     # "how hard was it" — an athlete's threshold HR can sit right on a zone boundary, so
     # a genuine threshold effort reads as moderate by HR while the power says threshold.
-    # Same max_sample_gap_s cap as the HR walk: a paused or dropped stream contributes at
-    # most that per gap, so it cannot bank the whole stop.
+    # Same max_sample_gap_s cap as the HR walk.
     PowerIntensity : { easy_s : I64, moderate_s : I64, hard_s : I64 }
 
     # Which intensity band a power sample belongs to.
@@ -299,10 +297,8 @@ Metrics :: [].{
     # polarization sums pi_* across sports, so a ride and a run were being added on
     # different units.
     #
-    # dt is capped at max_sample_gap_s: a longer gap is a pause or a dropout, and crediting it to
-    # whichever band the next sample happens to land in would invent intensity that was
-    # never ridden. The cost is that a stream genuinely sampled slower than that loses the
-    # excess — acceptable, because the alternative silently manufactures time.
+    # dt is capped at max_sample_gap_s, for the reason given where that constant is
+    # defined.
     time_in_bands : List({ t : I64, v : F64 }), (F64 -> [Skip, Easy, Moderate, Hard]) -> PowerIntensity
     time_in_bands = |samples, classify| {
         state = List.fold(
