@@ -960,9 +960,9 @@ Render :: [].{
     # in drain_note, and the branch you are made to write is the branch that runs.
     #
     # DO NOT, not CANNOT: the signature takes payload and tag independently, so a
-    # caller CAN pass a mismatched pair. Both producer sites bind the tag once and
+    # caller CAN pass a mismatched pair. All three producer sites bind the tag once and
     # derive `stopped:` from that binding — that is discipline, not enforcement, and a
-    # third caller has to keep it.
+    # fourth caller has to keep it.
     sync_screen : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }, Drain.SyncStop, Bool -> Str
     sync_screen = |p, stop, all| {
         prune_note = if p.pruned > 0 " (pruned ${U64.to_str(p.pruned)} removed on Strava)" else ""
@@ -1265,7 +1265,7 @@ Render :: [].{
     # ── summary command screen ──────────────────────────────────────────
     # renders the human report straight from the summary payload — ONE source of
     # numbers for the whole screen. (No type annotation: the payload is the summary
-    # record, typed at the app.roc call site; inference keeps this open.)
+    # record, typed at its call sites in Report and Plan; inference keeps this open.)
 
     summary_screen = |units, s| {
         z = s.last_28d

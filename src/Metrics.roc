@@ -772,7 +772,7 @@ Metrics :: [].{
     power_curve_durations = [5, 15, 30, 60, 300, 600, 1200, 3600]
 
     # best rolling-mean power at each ladder duration, from a 1 Hz watts stream. A duration
-    # longer than the ride yields 0 (best_rolling_mean -> TooShort). Feeds the stored
+    # longer than the ride yields 0 (best_rolling_mean_1s -> TooShort). Feeds the stored
     # best_<dur>_w columns and, aggregated across activities, the power-duration curve.
     mean_max_curve : List({ t : I64, v : F64 }), List(U64) -> List({ dur_s : U64, watts : F64 })
     mean_max_curve = |watts_1s, durations|
@@ -1622,7 +1622,7 @@ Metrics :: [].{
         # EXACT lookup for the anchor, not at-or-before. With at-or-before, a `today` the
         # series has no row for would borrow an older day's value and then count today as
         # day 1 of a streak the series cannot vouch for — precisely what tsb_as_of_exact
-        # exists to prevent one function below. Unknown now means exactly what the contract
+        # exists to prevent, below. Unknown now means exactly what the contract
         # says: nothing is known about the anchor day itself.
         match tsb_as_of_exact(series, today) {
             Missing => Unknown
@@ -1697,10 +1697,10 @@ Metrics :: [].{
         })
 
     # ── season blocks (ADR 0011) ────────────────────────────────────────
-    # A block is a maximal run of consecutive TRAINING weeks, closed by an
-    # absence of `gap_weeks` or more calendar weeks carrying no load. That is
-    # the only boundary in this data that is not a judgment call. The textbook
-    # alternative — build weeks followed by a recovery week — was measured
+    # A block is a maximal run of training weeks, closed by `gap_weeks` or more
+    # CONSECUTIVE calendar weeks carrying no load — a single blank week does not close
+    # one. That threshold is the one judgment; everything downstream is arithmetic.
+    # The textbook alternative — build weeks followed by a recovery week — was measured
     # against real history and fits a handful of weeks depending on how adjacency
     # is read, so a detector built on it
     # segments noise; any changepoint rule instead lets its own sensitivity
@@ -2286,7 +2286,7 @@ Metrics :: [].{
     # Otsu split of the segment LEVEL MEANS (#170 — never the session's global
     # distribution), merge adjacent work, then gate on contrast and work fraction.
     # HR never places edges (it lags effort by 30+ s);
-    # it only enriches segments already found (enrich_hr below).
+    # it only enriches segments already found (segment_hr below).
     #
     # These constants are the ADR 0008 starting point, validated against the
     # maintainer's own VO2/threshold sessions — every change bumps metrics_rev
@@ -3526,7 +3526,7 @@ expect {
 # The case that prompted the issue: 16 days inside -15..-5 without ever leaving. The
 # values DRIFT (-12.5 up to -5.1) rather than repeating, because that is what real TSB
 # does and because a constant fixture cannot tell band identity from value equality — an
-# implementation comparing `v == now` instead of `form_label(v) == label_now` would pass a
+# implementation comparing `v == now` instead of `form_band(v) == band_now` would pass a
 # constant fixture and then return 1 every day in production, silently emitting nothing.
 expect {
     series = [

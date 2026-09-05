@@ -1,6 +1,6 @@
 # ── what happened: individual sessions and their comparisons ────────
 #
-# Split from Report.roc under ADR 0001. activity_body! (378) and reps! (246)
+# Split from Report.roc under ADR 0001. activity_body! and reps!
 # had both passed the ~250-line command trigger.
 #
 # Report.sport_filter_sql and Report.cp_fit_as_of! stay in Report.roc and are called
@@ -32,7 +32,7 @@ ReportSessions :: [].{
     }
     activity_body! : Str, Str, I64 => Try({}, _)
     activity_body! = |path, id_str, aid| {
-        # Human branch only — the JSON payload above emits distance_m in metres.
+        # Human branch only — the JSON payload below emits distance_m in metres.
         units = Db.units!(path)?
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
@@ -687,7 +687,7 @@ ReportSessions :: [].{
                 # is affected — every other metric's header is either unit-free or carries
                 # a unit this setting does not touch (bpm, W, kJ).
                 header = if metric == "distance" "distance (${Render.dist_unit(units)})" else raw_header
-                # `bound` is a template over `@` so ONE predicate serves two queries: the
+                # `bound` is a template over `@` so ONE predicate serves three queries: the
                 # ranking applies it to the column, the count applies it to an alias inside a
                 # subquery. Written twice they would drift, and the drift would be invisible
                 # — the ranking would exclude rows while the count reported a different set.
