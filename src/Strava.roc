@@ -385,9 +385,9 @@ Strava :: [].{
             {}
         }
 
-    # ONE stream loop for the whole engine (#232). There were two — a capped unpaced
-    # one for `sync`, a paced one for `backfill` — and every rate-limit inconsistency
-    # came out of the drift between them. No per-run cap: `sync` drains what is
+    # ONE stream loop for the whole engine (#232). Separate loops — a capped unpaced
+    # one for `sync`, a paced one for `backfill` — drift, and every rate-limit
+    # inconsistency lives in that drift. No per-run cap: `sync` drains what is
     # missing, paced against Strava's limits, and stops on the read budget with
     # `resumable: true`. Steady state is a handful of reads; `stride import` and a
     # deleted streams table both walk into a full drain, one run per 15-minute
@@ -530,7 +530,7 @@ Strava :: [].{
     # ── test seams, same species as STRIDE_API_BASE ─────────────────────
     # Without these, reaching the budget stops honestly costs a full window (95) —
     # and the daily cap a full day (1000) — of real HTTP reads, so a transposed
-    # counter in a terminal arm shipped green.
+    # counter in a terminal arm cannot be caught.
     # An override may only LOWER a limit, never raise it: a raised cap lets a typo
     # hammer the API and get the athlete's own API app suspended. Lowering is all a
     # test needs, so the useful direction is the safe one.
@@ -569,8 +569,8 @@ Strava :: [].{
 
     # is the allowance already spent, WITHOUT spending anything to find out? `decide` is
     # structurally unable to answer this — it is only reachable with a response in hand —
-    # so a capped run used to spend a list read and a stream read to report that it had
-    # none left. At the cadence stride's own advice implies that is ~190 reads a day
+    # so without it a capped run spends a list read and a stream read to report that it
+    # has none left. At the cadence stride's own advice implies that is ~190 reads a day
     # burned against an allowance that is already gone, with the counter climbing past the
     # cap all day. The day is knowable from the database with zero requests.
     day_spent! : Str => Try(Bool, _)
@@ -658,11 +658,11 @@ Strava :: [].{
     # trip is not worth optimising, and batching reintroduces the loss window.
     #
     # It writes against the day the count BELONGS to, which is not always the day it
-    # is written on: a run in flight at UTC midnight used to stamp the new day with
-    # the old day's total — start at 23:59 with 795 spent, cross midnight, and the
+    # is written on: a run in flight at UTC midnight would otherwise stamp the new day
+    # with the old day's total — start at 23:59 with 795 spent, cross midnight, and the
     # athlete gets 205 of tomorrow's 1000. The caller passes the day it is CURRENTLY
-    # on, re-read each iteration: captured once, the crossing stamped every read
-    # after midnight onto the day before, so day D+1 began already owing them.
+    # on, re-read each iteration: captured once, the crossing stamps every read after
+    # midnight onto the day before, so day D+1 begins already owing them.
     save_reads_for_day! : Str, I64, I64 => Try({}, _)
     save_reads_for_day! = |path, day, n| {
         Db.config_set!(path, "strava_reads_day", I64.to_str(day))?
@@ -674,8 +674,8 @@ Strava :: [].{
         # stop before Strava's 100-reads-per-15-minutes window fills. There is no second
         # per-run budget: `window` is never reset inside a run, so a larger one could
         # never fire. The day gets no margin because it counts the list read directly
-        # (#246); it used to be "respected by arithmetic", which assumed ten runs a day
-        # and enforced nothing.
+        # (#246). "Respected by arithmetic" assumes ten runs a day and enforces
+        # nothing.
         #
         # The 5-read margin does NOT reliably absorb the list read.
         # `window` only advances in the drain's Store arm —
@@ -920,12 +920,12 @@ Strava :: [].{
 
     SyncCounts : { new_n : U64, updated_n : U64 }
 
-    # The classify SELECT runs per row. It used to be skippable, because `backfill!`
-    # re-listed the whole account and never read the counts — paying a query each would
-    # have been a real cost for nothing, the same mistake as running classify inside
-    # upsert_activity! where CSV import paid it. With one caller that wants the counts,
-    # the skip is gone; if a future caller does not want them, bring the flag back rather
-    # than making this function guess.
+    # The classify SELECT runs per row, unconditionally. It is skippable only for a
+    # caller that re-lists the whole account and never reads the counts — paying a
+    # query each would then be a real cost for nothing, the same mistake as running
+    # classify inside upsert_activity! where CSV import pays it. The one caller here
+    # wants the counts, so there is no flag; if a future caller does not, add one
+    # rather than making this function guess.
     upsert_all! : Str, I64, List(ActivitySummary), SyncCounts => Try(SyncCounts, _)
     upsert_all! = |path, stamp, acts, acc|
         match acts {
