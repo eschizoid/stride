@@ -5,11 +5,17 @@
 # training: coverage, provenance, the configured zones, the power- and speed-duration
 # curves and what they imply.
 #
-# Three helpers stay in Report.roc rather than move here, because each is shared
-# with another family: the high/medium/low model lists (doctor + summary's
-# coverage), Report.sport_filter_sql (power-curve + activities/top) and Report.cp_fit_as_of!
-# (tte + activity). Moving a shared helper into one family is how a split turns
-# into a tangle.
+# Five helpers live in Report.roc rather than here. Three because each is shared with
+# another family — the high/medium/low model lists (doctor + summary's coverage),
+# Report.sport_filter_sql (power-curve + activities/top) and Report.cp_fit_as_of!
+# (tte + activity). Moving a shared helper into one family is how a split turns into a
+# tangle.
+#
+# Two are NOT shared and are here only by adjacency: Report.sport_exact_sql and
+# Report.sports_with_speed! serve pace-curve alone. They sit beside sport_filter_sql
+# because they are the same concern — resolving a sport word to a SQL predicate — and
+# splitting one across two files would be worse than the rule they break. Stated rather
+# than left for a reader to notice the rule does not hold.
 import Strava
 import Report
 import Analyze

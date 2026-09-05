@@ -3284,7 +3284,9 @@ expect {
 
 # generic: every sport maps to its own config key, no hardcoded allowlist. A sport
 # without that key set (or with no power meter) resolves to 0 in sport_ftp! and falls
-# back to HR — so swimming, soccer, paddleboard all "just work" once configured.
+# back to HR — so swimming, soccer and paddleboard score without a per-sport FTP,
+# which is the only way they CAN score: `Config.is_derived` refuses every `ftp_<sport>`
+# key, including sports that do not exist yet.
 expect (Metrics.ftp_from_best_20min(200.0) - 190.0).abs() < 0.001
 expect (Metrics.ftp_from_best_20min(256.0) - 243.2).abs() < 0.001
 
