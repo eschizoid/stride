@@ -809,7 +809,7 @@ expect {
 }
 # One expect per name in `command_names`, each in its minimal valid form,
 # asserting each maps to its OWN variant — membership avoiding UnknownCmd is
-# true by construction and could not fail, and pinning only ten of thirty-two
+# true by construction and could not fail, and pinning only a handful of the
 # names let a deleted `season` arm ship green. Aliases share a variant with
 # their long form on purpose: deleting either arm still fails here.
 # example_of: mutation-proved one clause at a time, because the consuming sweeps

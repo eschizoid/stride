@@ -674,7 +674,7 @@ Render :: [].{
             }
         # The ◀ marker rides on the DATE cell, and headers stay terse (meaning lives in
         # the legend, per the numbers-in-tables philosophy) — both keep every column
-        # under render_table's 80-col budget so the BAR column is never the widest one
+        # under render_table's column budget so the BAR column is never the widest one
         # that gets squeezed and word-wrapped mid-bar.
         date_of = |row| if row.date == asked "${row.date} ◀" else row.date
         # each lens picks its own columns (list of header + per-row cell); the primary
@@ -1865,7 +1865,7 @@ expect {
 }
 
 # the best row's value + full 12-block bar stay on ONE line: terse headers keep the
-# progress table under render_table's 80-col budget, so the bar column is never the
+# progress table under render_table's column budget, so the bar column is never the
 # widest-column victim of squeeze-and-word-wrap (a split bar reads as broken output)
 expect {
     pr = |date, ef| { name: "X", date, sport: "Ride", distance_m: 0.0, moving_time: 3600, np_w: ef * 100.0, avg_hr: 100.0, avg_hr_scored: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }

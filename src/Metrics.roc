@@ -691,7 +691,7 @@ Metrics :: [].{
     #                   session you just uploaded (TrainingPeaks reports yesterday's).
     #
     # The discrete factor for time constant tau is a = 1 - e^(-1/tau), NOT 1/tau —
-    # 1/tau delivers effective constants of 41.5 and 6.9 days and runs transients 1-7%
+    # 1/tau delivers effective constants of 41.7 and 6.5 days and runs transients 1-7%
     # fast; steady state is identical, which is how it hides. Literals because this
     # compiler has no `.exp()` on F64; an expect pins each against `exp_neg`, so the
     # literal cannot drift from the formula.
