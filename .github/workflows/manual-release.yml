@@ -70,18 +70,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.tag }}
       - name: Install Roc (new compiler)
-        id: roc
-        uses: roc-lang/setup-roc@v0.3.0
-        continue-on-error: true
-        with:
-          version: nightly-new-compiler
-          nightly-tag: nightly-2026-08-27-8fa1a34
-      - name: Install Roc (retry — the first attempt hit a transient download failure)
-        if: ${{ steps.roc.outcome == 'failure' }}
-        uses: roc-lang/setup-roc@v0.3.0
-        with:
-          version: nightly-new-compiler
-          nightly-tag: nightly-2026-08-27-8fa1a34
+        uses: ./.github/actions/setup-roc
       - name: Build
         run: |
           set -euo pipefail
