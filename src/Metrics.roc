@@ -1440,8 +1440,6 @@ Metrics :: [].{
         }
 
     # Stable machine identifier for the form band — the JSON face of form_label.
-    # snake_case, enum-stable: clients switch on these, so renaming one is a contract
-    # change; the human label may evolve, these must not.
     # ONE vocabulary shared by every boundary guard — a tripwire for coaching language
     # reappearing in any label producer, without triplicating the list.
     has_coaching_language : Str -> Bool
@@ -1584,6 +1582,8 @@ Metrics :: [].{
         }
     }
 
+    # snake_case, enum-stable: clients switch on these, so renaming one is a contract
+    # change; the human label may evolve, these must not.
     form_state : F64 -> Str
     form_state = |tsb|
         match form_band(tsb) {
@@ -1961,9 +1961,6 @@ Metrics :: [].{
     # columns are compared and sorted as STRINGS in SQL — days_from_civil also silently
     # NORMALIZES out-of-range fields (2026-02-30 becomes March 2). The year bound holds
     # the string at ten characters, since a 3-digit year sorts after every 2xxx one.
-    # Returns the DAY, not a Bool, so a caller never parses twice; the Bool form below
-    # is defined in terms of it.
-    #
     # The SQL twins live here (not `Report`) because `Analyze` and `Strava` also rank
     # on this column and cannot import `Report`. The SQL round-trips through SQLite's
     # own date(), which is version-dependent: 3.43.2 returns '2026-02-30' verbatim
@@ -2023,6 +2020,8 @@ Metrics :: [].{
     hoist_unrankable_sql : Str -> Str
     hoist_unrankable_sql = |col| "(CASE WHEN ${rankable_sql(col)} THEN 1 ELSE 0 END) ASC, substr(${col}, 1, 19) DESC"
 
+    # Returns the DAY, not a Bool, so a caller never parses twice; the Bool form beneath it
+    # is defined in terms of it.
     usable_date_days : Str -> Try(I64, _)
     usable_date_days = |s|
         match date_str_to_days(s) {

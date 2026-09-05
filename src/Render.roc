@@ -2238,11 +2238,10 @@ expect {
     and Str.contains(power, "W ·") and !(Str.contains(power, "m/s"))
 }
 
-# signed_value differs from signed ONLY in precision -- it inherits the
-# rounds-away-but-still-a-direction contract pinned above, which is why a pace
-# fade keeps its sign instead of collapsing to a bare zero.
-# fade_value takes ENDPOINTS, not a delta, because a pace change cannot be derived from a
-# speed change. Sign is flipped for pace so NEGATIVE means worse in both sports (#351):
+# fade_value inherits the rounds-away-but-still-a-direction contract pinned above, which
+# is why a pace fade keeps its sign instead of collapsing to a bare zero. It takes
+# ENDPOINTS, not a delta, because a pace change cannot be derived from a speed change.
+# Sign is flipped for pace so NEGATIVE means worse in both sports (#351):
 # 4.1667 m/s -> 4.13 m/s is a slowdown of 2.13 s/km, so it reads -0:02, not +0:02.
 expect Render.fade_value(Metric, 4.1667, 4.13, "pace") == "-0:02"
 expect Render.fade_value(Imperial, 4.1667, 4.13, "pace") == "-0:03"
