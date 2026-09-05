@@ -2067,7 +2067,7 @@ b_seed_analyze! = |ctx| {
     # most of it testing nothing. Every leg is live here (`blind=` is empty): the segments
     # seeded on 9003 give `reps` a payload it otherwise lacks. `blind` is an IDENTITY, not a
     # count, so a leg going quiet names itself rather than hiding in a total.
-    # `activity` is swept because `interval_summary` is a REQUIRED payload field built at
+    # `activity` is swept because `interval_summary` is a REQUIRED payload field built
     # once in ReportSessions and used BOTH in the payload record and the human output — the
     # one-value-two-consumers shape that leaked into progress's groups[].name in #350, with
     # `units` already resolved at the top of that function.
