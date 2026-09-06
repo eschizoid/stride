@@ -380,9 +380,9 @@ Analyze :: [].{
 
     # The pace twin of period_ftp_sql (ADR 0005, as amended): the sport's best 20-minute
     # grade-adjusted SPEED over the 60 days ending on THIS activity's date, × 0.95, with the
-    # same cold-start forward-fill. It was previously one global number anchored to today,
-    # which scored a 2021 run against 2026 fitness and — because the window moved whenever a
-    # recent metrics row was deleted — invalidated every activity of that sport at once (#79).
+    # same cold-start forward-fill. ONE global number anchored to today would score a
+    # 2021 run against 2026 fitness and — because the window moves whenever a recent
+    # metrics row is deleted — invalidate every activity of that sport at once (#79).
     # Speeds are metres per second, so the ×1000 comparisons downstream are mm/s.
     period_threshold_sql : Str
     period_threshold_sql =
@@ -574,7 +574,7 @@ Analyze :: [].{
         })
         # zero sports (fresh db, analyze before first sync): "CASE x ELSE y END"
         # with no WHEN arms is a SQL syntax error, so emit the ELSE literal bare —
-        # found by the #154 e2e ""-arm check; analyze used to crash right here
+        # found by the #154 e2e ""-arm check; without the bare ELSE, analyze crashes here
         if Str.is_empty(whens) {
             "'${zones_sig(g)}'"
         } else {

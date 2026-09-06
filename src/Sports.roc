@@ -1,10 +1,9 @@
 # ── sport vocabulary (pure) ─────────────────────────────────────────
 #
-# One home for every "what kind of sport is this string" question. The answers
-# used to live scattered through Metrics.roc beside resampling math; four
-# separate policies (family filters, load-model class, pace routing for
-# detection AND decoupling, the pace-TSS exponent) each answered it their own way.
-# Gathering them here did NOT make them uniform, and the header used to claim it had:
+# One home for every "what kind of sport is this string" question. Four separate
+# policies (family filters, load-model class, pace routing for detection AND
+# decoupling, the pace-TSS exponent) each answer it their own way, so gathering them
+# here does NOT make them uniform:
 # only `families` is a table of rows, so adding a family or a synonym is editing one
 # row. (Adding a `sports` spelling also needs a schema_version bump — see the note on
 # `families` below. A `words` synonym does not: nothing stored reads it.) `class` reads a

@@ -27,9 +27,9 @@ Metrics :: [].{
     # which is what keeps a rolling window from stitching across a pause.
     resample_1s_pairs : List({ t : I64, v : F64 }), [Hold, Interpolate] -> List({ t : I64, v : F64 })
     resample_1s_pairs = |samples, mode|
-        # The fold below assumes ascending timestamps: a single out-of-order sample used to
-        # be dropped WITHOUT advancing the anchor, so one spuriously large timestamp
-        # swallowed every sample after it until the stream caught up. Ordering is enforced
+        # The fold below assumes ascending timestamps: an out-of-order sample dropped
+        # WITHOUT advancing the anchor lets one spuriously large timestamp swallow
+        # every sample after it until the stream catches up. Ordering is enforced
         # by sorted_by_t, which sorts only when a stream actually needs it.
         List.fold(
             sorted_by_t(samples),
@@ -290,11 +290,12 @@ Metrics :: [].{
 
     # Sum REAL elapsed seconds into three intensity bands, given a per-sample classifier.
     #
-    # ONE implementation for power and pace. They used to disagree about what a "second"
-    # meant: the power path summed actual `dt` between samples, while the pace path counted
-    # one second per surviving sample — and `grade_adjusted_speeds` drops every stopped or
-    # gap interval, so its totals ran below moving time by an unknown amount. Weekly
-    # polarization sums pi_* across sports, so a ride and a run were being added on
+    # ONE implementation for power and pace. Separate ones disagree about what a
+    # "second" means: the power path sums actual `dt` between samples, while the pace
+    # path counts one second per surviving sample — and `grade_adjusted_speeds` drops
+    # every stopped or gap interval, so its totals run below moving time by an
+    # unknown amount. Weekly
+    # polarization sums pi_* across sports, so a ride and a run would be added on
     # different units.
     #
     # dt is capped at max_sample_gap_s, for the reason given where that constant is
@@ -3623,10 +3624,10 @@ expect {
 }
 
 # the labels NAME the state and no longer prescribe (#123)
-# Band BOUNDARIES, pinned exactly. Every comparator here (<= vs <) used to survive any
-# mutation, because the five samples sat far from the edges. It matters more now than it
-# did for prose: days_in_band derives identity from form_band, so a boundary that shifts by
-# one comparator silently changes streak COUNTS rather than one word of text.
+# Band BOUNDARIES, pinned exactly. Samples sitting far from the edges let every
+# comparator here (<= vs <) survive any mutation, so these sit ON the edges. It
+# matters more than it would for prose: days_in_band derives identity from form_band,
+# so a boundary that shifts by one comparator silently changes streak COUNTS.
 expect Metrics.form_band(-15.0) == HighFatigue      # <= -15 is high fatigue
 expect Metrics.form_band(-14.9) == FatigueBuilding
 expect Metrics.form_band(-5.0) == FatigueBuilding   # <= -5 is still building

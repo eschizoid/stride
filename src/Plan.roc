@@ -684,8 +684,8 @@ Plan :: [].{
                             # caller still holds.
                             released = if prior.s != activity_id prior.s else 0
                             # ...and the note NAMES THE REPAIR while the id is still on screen — the pattern
-                            # `skip`'s refusal already uses. It used to be the ONLY place the erased id
-                            # survived; #274 added `superseded_activity_id`, written in the same UPDATE, so
+                            # `skip`'s refusal already uses. Since #274 the erased id also
+                            # survives in `superseded_activity_id`, written in the same UPDATE, so
                             # the record outlives the line.
                             #
                             # The remedy is EXACTLY invertible on this row: `replaced_activity` and
@@ -1052,9 +1052,9 @@ Plan :: [].{
                         row: Sqlite.str("td"),
                     })?
                     # the echoed type is READ BACK, never the input argument: an echo of
-                    # the input printed "threshold" while the row still held "endurance"
-                    # under a binary whose UPDATE had been neutered — the payload claimed
-                    # the write it was supposed to be evidence for
+                    # the input would print "threshold" while the row still held
+                    # "endurance" if the UPDATE failed — the payload claiming
+                    # the write it is meant to be evidence for
                     stored_type = Sqlite.query!({
                         path: Path.utf8(path),
                         query: "SELECT CAST(session_type AS TEXT) AS ty FROM planned_sessions WHERE id = :id",
