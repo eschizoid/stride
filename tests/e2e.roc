@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1111)?
+    checks_ran_exactly!(1113)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1332,6 +1332,26 @@ b_init_config! = |ctx| {
     overlap = Str.trim(sh!("LC_ALL=C comm -12 '${verbs_dir}/parser' '${verbs_dir}/spec' | wc -l | tr -d ' '"))
     check!("...and the two lists genuinely overlap on all 33 verbs (got ${overlap})", overlap == "33")?
     _ = sh!("rm -rf '${verbs_dir}'")
+
+    # ...and the HUMAN help names every command the table declares. `help_text` is a
+    # hand-maintained string literal in app.roc while the JSON help is generated from
+    # `Command.specs`, so nothing structural keeps them together: `config unset` shipped
+    # in the parser and the JSON help while the human help omitted it, which is how a
+    # doc came to document a command its own stated oracle did not mention. Matched on
+    # the command as a WHOLE WORD, not the whole usage line: the help spells its
+    # arguments differently, and a SUBSTRING match is vacuous for the three aliases
+    # that have no line of their own — `cs` would be satisfied by "metrics", `pc` by
+    # "upcoming". They appear only in an "(alias: pc)" parenthetical, which -w finds.
+    help_dir = "${ctx.home}/.helpnames"
+    spec_names = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' --help 2>/dev/null | jq -r '.data.commands[].name' | LC_ALL=C sort -u"
+    human_help = "HOME='${ctx.home}' '${ctx.bin}' --help 2>/dev/null"
+    _ = sh!("rm -rf '${help_dir}' && mkdir -p '${help_dir}' && ${spec_names} > '${help_dir}/spec' && ${human_help} > '${help_dir}/human'")
+    # Fail-closed: an empty extraction on either side would make the loop below vacuous.
+    help_sizes = Str.trim(sh!("wc -l < '${help_dir}/spec' | tr -d ' '"))
+    check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "38")?
+    missing_from_help = Str.trim(sh!("while IFS= read -r c; do grep -qw -- \"\$c\" '${help_dir}/human' || printf '%s ' \"\$c\"; done < '${help_dir}/spec'"))
+    check!("every command in the table is named in `stride --help` (missing: ${missing_from_help})", missing_from_help == "")?
+    _ = sh!("rm -rf '${help_dir}'")
 
     # The sub-form direction. `unknown_command` was the wrong discriminator (only an
     # unknown FIRST token produces it), so renaming a sub-form went undetected —
