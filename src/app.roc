@@ -326,7 +326,7 @@ run_command! = |cmd|
         # Strava ANSWERED, with a status the caller must distinguish: an expired
         # or revoked token is the routine one and has a code already, rate limits
         # need their own so a caller can back off, and anything else is Strava's
-        # problem rather than a stride bug. All of these once landed in
+        # problem rather than a stride bug. Without the split they all land in
         # internal_error, telling users to file an issue for an expired token.
         Err(HttpStatus(status, body)) =>
             if status == 401 or status == 403 {

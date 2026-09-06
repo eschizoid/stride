@@ -11,7 +11,7 @@
 # (tte + activity). Moving a shared helper into one family is how a split turns into a
 # tangle.
 #
-# Two are NOT shared and are here only by adjacency: Report.sport_exact_sql and
+# Two are NOT shared and stay there only by adjacency: Report.sport_exact_sql and
 # Report.sports_with_speed! serve pace-curve alone. They sit beside sport_filter_sql
 # because they are the same concern — resolving a sport word to a SQL predicate — and
 # splitting one across two files would be worse than the rule they break. Stated rather
@@ -34,9 +34,9 @@ ReportHealth :: [].{
     stats! = |{}| {
         path = Db.open_db!({})?
         # Human table only. The JSON branch below emits the `km` and `hours` fields this schema has
-        # always carried — a converted, unit-bearing payload field, and the one exception
-        # to "payloads are SI". Renaming it is an envelope break, so it stays km and the
-        # setting reaches only the rendered table (#349).
+        # always carried — converted, unit-bearing payload fields, and the only
+        # exceptions to "payloads are SI". Renaming them is an envelope break, so they
+        # stay km and hours, and the setting reaches only the rendered table (#349).
         units = Db.units!(path)?
         today_days = Db.local_today_days!(path)
         year = (Metrics.civil_from_days(today_days)).y

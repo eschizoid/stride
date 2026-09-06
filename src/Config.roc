@@ -182,11 +182,11 @@ Config :: [].{
 	# like proof it took.
 	#
 	# This exists because #201's narrowing created exactly that trap. Refusing exponent
-	# notation at the READ sites means `config set hr_z1_max 1.18e2` succeeds, echoes
-	# `1.18e2`, and then makes `summary` report missing_config -- the value WAS set. And
-	# `utc_offset_minutes +330` silently reads as UTC instead of +05:30, because that
-	# path coalesces a parse failure to 0. Validating at the WRITE makes the refusal loud
-	# and keeps the read sites honest.
+	# notation at the READ sites ALONE would mean `config set hr_z1_max 1.18e2` succeeds,
+	# echoes `1.18e2`, and then makes `summary` report missing_config -- the value WAS
+	# set. And `utc_offset_minutes +330` would read as UTC instead of +05:30, because
+	# that path coalesces a parse failure to 0. Validating at the WRITE makes the
+	# refusal loud and keeps the read sites honest.
 	numeric_key : Str -> [Int, Decimal, Free]
 	numeric_key = |k|
 		if k == "utc_offset_minutes" or k == "last_sync_epoch" or k == "strava_reads_today" or k == "strava_reads_day" or Str.ends_with(k, "_expires_at")

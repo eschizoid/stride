@@ -285,10 +285,10 @@ Output :: [].{
 
     # `stride analyze`, NOT `--all` — that form does not exist and exits `usage`,
     # the same defect this change is about: a remedy that does not work. The remedy
-    # itself also failed once, in a state this error is reachable from:
-    # rebuild_daily_load! only reached its DELETE when at least one activity date
-    # parsed, so `analyze` said `converged: true` while `season` answered this error
-    # forever. Fixed in Analyze.roc by clearing on that branch too.
+    # itself is reachable in a state this error also reaches: rebuild_daily_load!
+    # clears its DELETE only when at least one activity date parses, so without that
+    # branch `analyze` reports `converged: true` while `season` answers this error
+    # forever. Analyze.roc clears on that branch too.
     unreadable_daily_load_day_msg : Str -> Str
     unreadable_daily_load_day_msg = |raw|
         "daily_load holds the day '${raw}', which is not a readable date — rebuild the table with `stride analyze`"

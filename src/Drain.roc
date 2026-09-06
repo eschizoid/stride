@@ -99,7 +99,7 @@ Drain :: [].{
         }
 
     # The tag <-> wire-string vocabulary, in one place. `sync_stopped_label` is the only
-    # PRODUCTION entry point — both payload sites in Strava.sync! go through it, and it
+    # PRODUCTION entry point — all three payload sites in Strava.sync! go through it, and
     # delegates the four drain reasons to `stopped_label` rather than restating them, so
     # a rename cannot land on one spelling only. `stopped_label` exists for the narrower
     # domain: Render.drain_note handles drain reasons and nothing else, and its expects

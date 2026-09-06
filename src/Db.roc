@@ -391,7 +391,7 @@ Db :: [].{
         # v2: index the column every date-range filter and the activities sort use
         # (queries now compare a.start_local directly — sargable — instead of substr)
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })?
-        # v14: the period-THRESHOLD subquery (the pace twin) filters on sport_type AND start_local
+        # v14: period_threshold_sql, the pace-side twin of period_ftp_sql, filters on sport_type AND start_local
         # together, once per row being scored. start_local alone leaves a scan over every
         # activity of every OTHER sport on each lookup; the composite makes it a range seek.
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_sport_start ON activities(sport_type, start_local)", bindings: [] })?

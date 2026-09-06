@@ -690,9 +690,10 @@ ReportSessions :: [].{
                 # a unit this setting does not touch (bpm, W, kJ).
                 header = if metric == "distance" "distance (${Render.dist_unit(units)})" else raw_header
                 # `bound` is a template over `@` so ONE predicate serves three queries: the
-                # ranking applies it to the column, the count applies it to an alias inside a
-                # subquery. Written twice they would drift, and the drift would be invisible
-                # — the ranking would exclude rows while the count reported a different set.
+                # ranking and the no-LIMIT hint count apply it to the column, the capped
+                # count applies it to an alias inside a subquery. Written three times they
+                # would drift, and the drift would be invisible — the ranking would exclude
+                # rows while the count reported a different set.
                 bound_sql = if Str.is_empty(bound) "" else " AND ${Str.replace_each(bound, "@", col)}"
                 sf = Report.sport_filter_sql(sport_filter)
                 sport_where = sf.frag
