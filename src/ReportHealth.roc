@@ -725,16 +725,11 @@ ReportHealth :: [].{
         fit_points = List.map(points, |p| { dur_s: (p.dur_s).to_f64(), speed: p.speed })
         csfit =
             match Metrics.critical_speed(fit_points) {
-                # UNREACHABLE today: hyperbolic_fit returns Ok only when intercept and slope
-                # are both > 0, and this adapter maps them straight through, so Ok(c) cannot
-                # carry a non-positive cs or d_prime. Kept anyway, for SYMMETRY with the power
-                # twin and as a second line — not because it protects the contract. It does
-                # not: if the shared fit were relaxed, this gate would turn the bad values
-                # into `cs: 0`, the documented refusal signal, and publish a schema-conforming
-                # payload with no error and no failing test. What actually catches that
-                # relaxation is the Metrics expect headed "critical_speed refuses a
-                # physically meaningless fit" — dropping `or slope <= 0.0` fails it — and its
-                # power twin. Trust those, not this.
+                # UNREACHABLE today, and kept for SYMMETRY with the power twin above —
+                # see that gate for why it does NOT protect the contract. The values
+                # here are `cs`/`d_prime`, and the guard that actually catches a
+                # relaxed fit is the Metrics expect headed "critical_speed refuses a
+                # physically meaningless fit".
                 # fit_points counts the bests AVAILABLE to the fit; `cs` of 0 is the refusal
                 # signal, so the key means one thing across commands, exactly as `cp` does.
                 Ok(c) => (if c.cs > 0.0 and c.d_prime > 0.0 { cs: c.cs, d_prime: c.d_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cs: 0.0, d_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() })
