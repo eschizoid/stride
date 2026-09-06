@@ -77,7 +77,9 @@ help_text =
         \\    init                        create ~/.stride and migrate the SQLite db
         \\    auth                        authorize with Strava (one-time paste flow; stores creds)
         \\    config                      list the config that is set (secrets redacted)
-        \\    config get|set <key> [value]   read or write one key (hr zone bounds, timezone)
+        \\    config get <key>            read one key's value
+        \\    config set <key> <value>    write one key (hr zone bounds, timezone, units)
+        \\    config unset <key>          remove a key outright
         \\                                — FTP is derived, never set
         \\
         \\GET DATA
