@@ -3789,7 +3789,7 @@ expect
 
 # rTSS commensurability: NGP == threshold => IF 1 => 1 h => 100 TSS
 expect (Metrics.pace_tss({ ngp_speed: 3.5, threshold_speed: 3.5, dur_s: 3600.0, exponent: 2.0 }) - 100.0).abs() < 0.001
-# faster than threshold scores MORE, not less (the IF-direction bug the fleet caught)
+# faster than threshold scores MORE, not less — the IF direction is the whole point
 expect Metrics.pace_tss({ ngp_speed: 4.0, threshold_speed: 3.5, dur_s: 3600.0, exponent: 2.0 }) > 100.0
 # swim sTSS uses the same function (normalized swim speed vs CSS, no grade term)
 expect Metrics.pace_tss({ ngp_speed: 1.4, threshold_speed: 1.25, dur_s: 3600.0, exponent: 3.0 }) > 100.0
