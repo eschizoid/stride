@@ -2073,9 +2073,10 @@ b_seed_analyze! = |ctx| {
     # `units` already resolved at the top of that function.
     #
     # The sweep and the certificate below must exercise the SAME invocation. Two copies of
-    # the string drift: reverting the sweep entry to a bare `pace-curve` (its round-1
-    # spelling) left a planted units leak passing while the certificate still reported ok,
-    # because the certificate was certifying its own hardcoded call. One variable, both sites.
+    # the string drift: pointing the sweep entry at a bare `pace-curve` while the
+    # certificate calls something else lets a planted units leak pass with the
+    # certificate still reporting ok, because it certifies its own hardcoded call.
+    # One variable, both sites.
     pc_cmd = "pace-curve 90 Run"
     units_sweep = Str.trim(sh!("h='${ctx.home}'; aid=$(sqlite3 '${ctx.db}' 'SELECT id FROM activities ORDER BY start_local DESC LIMIT 1'); n=0; d=0; ok=0; blind=; for c in 'summary' 'stats' 'plan' 'activities' 'week' 'season' 'reps' 'progress' 'doctor' 'zones' 'load' 'top distance' '${pc_cmd}' \"activity $aid\"; do HOME=\"$h\" '${ctx.bin}' config set units metric >/dev/null 2>&1; raw=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); a=$(printf '%s' \"$raw\" | md5); case \"$raw\" in *'\"data\"'*) ok=$((ok+1));; *) blind=\"$blind$c \";; esac; HOME=\"$h\" '${ctx.bin}' config set units imperial >/dev/null 2>&1; rawb=$(HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' $c 2>/dev/null); b=$(printf '%s' \"$rawb\" | md5); n=$((n+1)); [ \"$a\" != \"$b\" ] && d=$((d+1)); done; HOME=\"$h\" '${ctx.bin}' config unset units >/dev/null 2>&1; echo \"swept=$n ok=$ok blind=$(echo $blind) differ=$d\""))
     units_iv_live = Str.trim(sh!("h='${ctx.home}'; reps=$(sqlite3 '${ctx.db}' \"SELECT count(*) FROM activity_segments WHERE activity_id=9003 AND kind='work'\"); HOME=\"$h\" STRIDE_FORMAT=json '${ctx.bin}' activity 9003 2>/dev/null | jq -r '.data.interval_summary // \"\"' | grep -qE '^'\"$reps\"'×\\[[0-9]+:[0-9]{2} @ [0-9]+:[0-9]{2}/km( / [0-9]+:[0-9]{2} easy)?\\]$' && echo \"reps=$reps shape-ok\" || echo \"reps=$reps shape-bad\""))
@@ -4062,10 +4063,10 @@ b_seed_analyze! = |ctx| {
     _ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (810,'impossible hour','Ride','Ride','${ctx.d1}T37:00:00Z',3600);")
     an_t37 = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' rate latest 6 2>/dev/null")
     check!("an impossible HOUR on a valid date is refused, not ranked above a real session", Str.contains(an_t37, "unreadable_activity_date") and Str.contains(an_t37, "activity 810"))?
-    # ...and the message names the half that FAILED. It used to hand back the date — a
-    # perfectly readable '2026-08-24' — for a row whose fault is the hour, which is the
-    # round-1 defect ("quotes a value the column does not hold") wearing new clothes:
-    # quoting the half that is correct.
+    # ...and the message names the half that FAILED. Handing back the date — a
+    # perfectly readable '2026-08-24' — for a row whose fault is the hour quotes a
+    # value the column does not hold, in the worst way: it quotes the half that is
+    # correct.
     check!("...naming the TIME, not the date half that is perfectly readable", Str.contains(an_t37, "T37:00:00") and !(Str.contains(an_t37, "('${ctx.d1}')")))?
     _ = sql!(an_db, "DELETE FROM activities WHERE id = 810;")
     # ...and the ranker compares exactly the slice the guard validates. Anything past
