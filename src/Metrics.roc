@@ -1966,8 +1966,8 @@ Metrics :: [].{
     # one clause, because that is the only form that stays correct (#247, #255):
     # THE GUARD'S DOMAIN MUST EQUAL ITS CONSUMER'S. Comparing `MAX(start_local)` as a
     # string lets a malformed timestamp outrank every real one, putting `rate latest`
-    # on the wrong activity; eight other queries order on the whole column with no
-    # guard at all.
+    # on the wrong activity. When #247/#255 opened, eight other queries ordered on the
+    # whole column with no guard at all; every ranking site now emits this clause.
     # TWO terms, always both — the clause form exists so no caller pairs the predicate
     # with a key by hand. The flag sorts DESC unconditionally so unrankable rows go last
     # in EITHER direction: NULL is SQLite's smallest value, so a bare `key ASC` would

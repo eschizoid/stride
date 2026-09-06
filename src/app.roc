@@ -542,8 +542,8 @@ config_unset! = |key| {
         }
     # Q1: a per-sport override falls back to the GLOBAL bound — when one exists. Read that
     # before the closure, beside `existed`, and let the message capture it: the payload and
-    # `config_unset.json` stay a two-field `{key, removed}`. The database read fits
-    # inside the message closure.
+    # `config_unset.json` stay a two-field `{key, removed}`. The read does not need to
+    # live inside the message closure at all.
     global_present =
         match Str.split_first(key, "_max_") {
             Ok({ before, .. }) =>
@@ -569,8 +569,8 @@ config_unset! = |key| {
                 "${p.key} removed — stride derives it from your power history anyway; `stride summary` shows the current value"
             } else if Config.is_client_credential(p.key) {
                 # BOTH client credentials, by predicate rather than name-and-position:
-                # `strava_client_id` must not reach the catch-all, which promises stride
-                # "will re-fetch it as needed" — false: the next sync asks the user to
+                # `strava_client_id` must not fall to the `known_key` catch-all, which
+                # never says the thing that matters: the next sync asks the user to
                 # supply it by hand. Ordering cannot carry this: below `is_secret` such an
                 # arm is unreachable.
                 "${p.key} removed — stride cannot re-authenticate until you supply it again and run `stride auth`"

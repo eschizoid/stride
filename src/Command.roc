@@ -461,7 +461,7 @@ Command := [
 		## `unreadable_daily_load_day` because `load` refuses a day it cannot read as
 		## a week (#249). The e2e union check cannot catch an omission here: it
 		## asserts the UNION of declared codes across forms, so summary, plan and
-		## compare declaring this code satisfies it while `load` does not — a gate
+		## compare declaring this code would satisfy it even if `load` did not — a gate
 		## that is green because of its neighbours, not because of the form under it.
 		errs(reads("load", [opt_ex("<days>", "30")], "load.json"), ["bad_count", "unreadable_daily_load_day"]),
 		errs(reads("power-curve", [opt_ex("<days>", "30"), opt_ex("<sport>", "Ride")], "power_curve.json"), ["bad_count"]),

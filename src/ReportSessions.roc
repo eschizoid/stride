@@ -474,7 +474,7 @@ ReportSessions :: [].{
         # optional sport filter via Report.sport_filter_sql: the FRAGMENT is interpolated
         # (its placeholders are numbered, values stay real bindings), and the empty
         # branch is a single space, never "" — interpolating a compile-time-constant
-        # empty string crashes this backend in str_concat (roc#10595,
+        # empty string CRASHED this backend in str_concat (roc#10595,
         # fixed upstream and carried by the current pin). Non-empty by construction is
         # the rule the :all-flag comment in Plan.roc states, and it stays.
         rows = Sqlite.query_many!({
