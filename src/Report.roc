@@ -22,13 +22,13 @@ Report :: [].{
     high_models_sql = "'power_stream','weighted_watts','avg_watts','rtss'"
 
     # "is this activity's stored date readable", in SQL, for the sites that need the
-    # answer inside a query — the `activities` hoist, `date_known` on `activities`
-    # and `top`, and `doctor`'s undateable count. ONE constant because it was four
+    # answer inside a query — `date_known` on `activities` and `top`, and
+    # `doctor`'s undateable count. ONE constant because they were
     # byte-identical copies, and only one was value-pinned: collapsing them makes the
-    # '1000-02-30' fixture hold all four sites by construction.
+    # '1000-02-30' fixture hold every site by construction.
     # The rule itself lives in Metrics.usable_date_days / date_known_sql_for, beside
     # its Roc twin (`Analyze` and `Strava` cannot import Report); this stays as the
-    # name four sites already use. The SQL round-trips through SQLite's own date(),
+    # name they already share. The SQL round-trips through SQLite's own date(),
     # which is version-dependent — 3.43.2 returns '2026-02-30' verbatim, the linked
     # 3.49.1 rejects it — so the e2e fixture is what holds SQL to the Roc rule
     # across a platform upgrade.
@@ -286,7 +286,7 @@ Report :: [].{
         else
             ((part).to_f64() * 100.0 / (total).to_f64()).round_to_i64_try().ok_or(0)
 
-    # one session in depth: metrics + zones + power bests computed from local streams
+    # the whole-athlete report: form, 7d/28d zone split + polarization, derived FTP, per-sport 28d
     summary! : {} => Try({}, _)
     summary! = |{}| {
         path = Db.open_db!({})?
@@ -374,7 +374,7 @@ Report :: [].{
                 [] => Unknown
             }
         # ANNOTATED Bools: this payload is encode-only, and a bare tag would
-        # serialize as the STRING "True" (the #32-class flag bug, pinned in e2e)
+        # serialize as the STRING "True" rather than a JSON bool (pinned in e2e)
         spacing_known_b : Bool
         spacing_known_b = match spacing { Known(_) => True  Unknown => False }
         days_since_known_b : Bool
@@ -742,7 +742,7 @@ Report :: [].{
     sport_filter_sql = |word|
         if Str.is_empty(word) {
             # a lone SPACE, never "": interpolating a compile-time-constant empty
-            # string was the #32-class str_concat trap. Fixed upstream in
+            # string was the str_concat trap. Fixed upstream in
             # roc#10595 (closed 2026-08-04, before this pin), so this is now a style
             # rule rather than survival — non-empty by construction, same as Plan.roc
             { frag: " ", binds: [] }
@@ -792,7 +792,6 @@ Report :: [].{
             rows: Sqlite.str("s"),
         })
     }
-    # the no-silent-empty hint: what sports DOES the data hold
     load_series! : U64 => Try({}, _)
     load_series! = |days| {
         path = Db.open_db!({})?
@@ -811,7 +810,7 @@ Report :: [].{
         })?
         # GUARDED here rather than in Render: a pure renderer can DROP the row but cannot
         # NAME it, and naming the row is the whole of #243. What Render absorbed was real —
-        # `.ok_or(0)` collapsed an unreadable day to epoch 0, rendering a 1969 week row
+        # `.ok_or(0)` collapses an unreadable day to epoch 0, rendering a 1969 week row
         # AND anchoring the verdict on it (`List.last(ordered)` makes it `today`).
         # Dropping via keep_oks would silently under-count the rollup instead; daily_load
         # is DERIVED, so refusing with a one-command remedy costs nothing that was ever

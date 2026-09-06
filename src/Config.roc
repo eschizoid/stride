@@ -31,18 +31,19 @@ Config :: [].{
 	# fail-open RECOGNITION — `config get strava_acess_token` (a typo, #254's own
 	# scenario) answered "(not set)" again.
 	#
-	# The cost of a MISSING entry went up when `config set <key> ""` became a
-	# DELETE: a read key absent from this list is now removable with "stride does
-	# not read it" — silent and destructive, not annoying and visible. Two
-	# documented keys are waiting to enter that state: `threshold_pace_<sport>` and
-	# `model_<sport>`. Whoever wires one up MUST add it here in the same commit.
+	# The cost of a MISSING entry is that a read key absent from this list is reported
+	# as "stride does not read it" — a lie the CLI tells confidently. `model_<sport>` is
+	# documented but, per ADR 0003 Decision 3, shipped differently: there is no such key
+	# and none is planned. `threshold_pace_<sport>` shipped as a stored derivation
+	# instead. Whoever wires either up MUST add it here in the same commit as the key
+	# itself.
 	# The reverse trap is why this derives from READ SITES, not docs: `metrics_rev`
 	# sat here for one revision on the strength of an AGENTS.md sentence and has
 	# never been read from config.
 	# Hoisted out of `known_key` so it can be ENUMERATED: `config unset` writes one
-	# sentence per key, and hand-typing this membership from memory shipped a false
-	# one three rounds running. `tests/e2e.roc` walks this list and asserts every
-	# member reaches a routed branch.
+	# sentence per key, and a membership typed from memory drifts from the routed
+	# branches. `tests/e2e.roc` walks this list and asserts every member reaches a
+	# routed branch.
 	plain_keys : List(Str)
 	plain_keys = [
 		"timezone",
@@ -168,7 +169,7 @@ Config :: [].{
 		}
 
 	# Keys the engine DERIVES and never reads from config. Accepting one would be worse
-	# than refusing it: `config set ftp_ride 250` used to succeed, print a confirmation,
+	# than refusing it: `config set ftp_ride 250` would succeed, print a confirmation,
 	# and change nothing, because Db.sport_ftp! computes FTP from the athlete's own power
 	# history (ADR 0002, ADR 0005) and never consults config. A stored value that is
 	# silently ignored is a trap, so setting one is rejected with the reason.
@@ -181,11 +182,11 @@ Config :: [].{
 	# like proof it took.
 	#
 	# This exists because #201's narrowing created exactly that trap. Refusing exponent
-	# notation at the READ sites meant `config set hr_z1_max 1.18e2` succeeded, echoed
-	# `1.18e2`, and then made `summary` report missing_config -- the value WAS set. And
-	# `utc_offset_minutes +330` silently became UTC instead of +05:30, because that read
-	# path coalesces a parse failure to 0. Validating at the WRITE makes the refusal loud
-	# and keeps the read sites honest.
+	# notation at the READ sites ALONE would mean `config set hr_z1_max 1.18e2` succeeds,
+	# echoes `1.18e2`, and then makes `summary` report missing_config -- the value WAS
+	# set. And `utc_offset_minutes +330` would read as UTC instead of +05:30, because
+	# that path coalesces a parse failure to 0. Validating at the WRITE makes the
+	# refusal loud and keeps the read sites honest.
 	numeric_key : Str -> [Int, Decimal, Free]
 	numeric_key = |k|
 		if k == "utc_offset_minutes" or k == "last_sync_epoch" or k == "strava_reads_today" or k == "strava_reads_day" or Str.ends_with(k, "_expires_at")

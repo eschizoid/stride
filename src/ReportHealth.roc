@@ -1,15 +1,21 @@
-# ── reference and diagnostics: doctor, stats, zones, power-curve, tte ─
+# ── reference and diagnostics: doctor, stats, zones, power-curve, pace-curve, tte ─
 #
 # Split from Report.roc under ADR 0001 (doctor! had passed the ~250-line
 # trigger). These are the commands you run to check the ENGINE rather than the
-# training: coverage, provenance, the configured zones, the power-duration
-# curve and what it implies.
+# training: coverage, provenance, the configured zones, the power- and speed-duration
+# curves and what they imply.
 #
-# Three helpers stay in Report.roc rather than move here, because each is shared
-# with another family: the high/medium/low model lists (doctor + summary's
-# coverage), Report.sport_filter_sql (power-curve + activities/top) and Report.cp_fit_as_of!
-# (tte + activity). Moving a shared helper into one family is how a split turns
-# into a tangle.
+# Five helpers live in Report.roc rather than here. Three because each is shared with
+# another family — the high/medium/low model lists (doctor + summary's coverage),
+# Report.sport_filter_sql (power-curve + activities/top) and Report.cp_fit_as_of!
+# (tte + activity). Moving a shared helper into one family is how a split turns into a
+# tangle.
+#
+# Two are NOT shared and stay there only by adjacency: Report.sport_exact_sql and
+# Report.sports_with_speed! serve pace-curve alone. They sit beside sport_filter_sql
+# because they are the same concern — resolving a sport word to a SQL predicate — and
+# splitting one across two files would be worse than the rule they break. Stated rather
+# than left for a reader to notice the rule does not hold.
 import Strava
 import Report
 import Analyze
@@ -27,17 +33,17 @@ ReportHealth :: [].{
     stats! : {} => Try({}, _)
     stats! = |{}| {
         path = Db.open_db!({})?
-        # Human table only. The JSON branch below emits the `km` field this schema has
-        # always carried — a converted, unit-bearing payload field, and the one exception
-        # to "payloads are SI". Renaming it is an envelope break, so it stays km and the
-        # setting reaches only the rendered table (#349).
+        # Human table only. The JSON branch below emits the `km` and `hours` fields this schema has
+        # always carried — converted, unit-bearing payload fields, and the only
+        # exceptions to "payloads are SI". Renaming them is an envelope break, so they
+        # stay km and hours, and the setting reaches only the rendered table (#349).
         units = Db.units!(path)?
         today_days = Db.local_today_days!(path)
         year = (Metrics.civil_from_days(today_days)).y
         # The cutoff below is the literal "0000-01-01", whose only job is to mean
         # EVERYTHING — and `WHERE start_local >= :cutoff` is NULL-false, so an unreadable
-        # date silently removes an activity from a total printed under ALL TIME (measured:
-        # 475 sessions became 474 at exit 0). Refuses rather than reports: `stats` LISTS
+        # date silently removes an activity from a total printed under ALL TIME — the
+        # count drops by one at exit 0. Refuses rather than reports: `stats` LISTS
         # totals, but the date decides MEMBERSHIP in an aggregate here, so a wrong date is
         # a wrong total — the compute side of #249's split.
         _ = Report.guard_activity_dates!(path)?
@@ -413,8 +419,8 @@ ReportHealth :: [].{
             # parsed fine and whose clock did not, while this section read as "nothing else is
             # wrong" (#282). Printed as the REMAINDER — the populations are nested, and 4
             # under 3 invites subtraction. SELF-CONTAINED when it prints alone: the undateable
-            # line it used to borrow the repair pointer from is suppressed at zero, and on the
-            # real database a lone bad-clock row is the ONLY path such a row can take.
+            # line it would otherwise borrow the repair pointer from is suppressed at zero,
+            # and on the real database a lone bad-clock row is the ONLY path such a row can take.
             unrankable =
                 if p.unrankable_activities > p.undateable_activities
                     if p.undateable_activities > 0
@@ -719,16 +725,11 @@ ReportHealth :: [].{
         fit_points = List.map(points, |p| { dur_s: (p.dur_s).to_f64(), speed: p.speed })
         csfit =
             match Metrics.critical_speed(fit_points) {
-                # UNREACHABLE today: hyperbolic_fit returns Ok only when intercept and slope
-                # are both > 0, and this adapter maps them straight through, so Ok(c) cannot
-                # carry a non-positive cs or d_prime. Kept anyway, for SYMMETRY with the power
-                # twin and as a second line — not because it protects the contract. It does
-                # not: if the shared fit were relaxed, this gate would turn the bad values
-                # into `cs: 0`, the documented refusal signal, and publish a schema-conforming
-                # payload with no error and no failing test. What actually catches that
-                # relaxation is the Metrics expect headed "critical_speed refuses a
-                # physically meaningless fit" — dropping `or slope <= 0.0` fails it — and its
-                # power twin. Trust those, not this.
+                # UNREACHABLE today, and kept for SYMMETRY with the power twin above —
+                # see that gate for why it does NOT protect the contract. The values
+                # here are `cs`/`d_prime`, and the guard that actually catches a
+                # relaxed fit is the Metrics expect headed "critical_speed refuses a
+                # physically meaningless fit".
                 # fit_points counts the bests AVAILABLE to the fit; `cs` of 0 is the refusal
                 # signal, so the key means one thing across commands, exactly as `cp` does.
                 Ok(c) => (if c.cs > 0.0 and c.d_prime > 0.0 { cs: c.cs, d_prime: c.d_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cs: 0.0, d_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() })

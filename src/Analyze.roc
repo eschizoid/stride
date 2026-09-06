@@ -150,7 +150,7 @@ Analyze :: [].{
     # only the HR zones are required config — those are universal across sports. FTP is
     # never configured; it is derived per sport, and for SCORING it is the value in force when
     # the activity happened (ADR 0005). Db.sport_ftp! keeps today's-window semantics for the
-    # DISPLAY paths (summary, zones) — the two are deliberately different questions.
+    # DISPLAY paths (zones, activity) — the two are deliberately different questions.
     load_zone_config! : Str => Try(Metrics.ZoneBounds, _)
     load_zone_config! = |path| {
         z1 = config_f64!(path, "hr_z1_max")?
@@ -174,8 +174,6 @@ Analyze :: [].{
 
                 }
         }
-    # canonical AND parseable. Both halves, for the reason spelled out at the fold above:
-    # the parse alone accepts "2026-3-05T", and this module WRITES the result.
 
 
     ActivityRow : {
@@ -382,9 +380,9 @@ Analyze :: [].{
 
     # The pace twin of period_ftp_sql (ADR 0005, as amended): the sport's best 20-minute
     # grade-adjusted SPEED over the 60 days ending on THIS activity's date, × 0.95, with the
-    # same cold-start forward-fill. It was previously one global number anchored to today,
-    # which scored a 2021 run against 2026 fitness and — because the window moved whenever a
-    # recent metrics row was deleted — invalidated every activity of that sport at once (#79).
+    # same cold-start forward-fill. ONE global number anchored to today would score a
+    # 2021 run against 2026 fitness and — because the window moves whenever a recent
+    # metrics row is deleted — invalidate every activity of that sport at once (#79).
     # Speeds are metres per second, so the ×1000 comparisons downstream are mm/s.
     period_threshold_sql : Str
     period_threshold_sql =
@@ -403,8 +401,10 @@ Analyze :: [].{
 
     # Each activity input that feeds scoring, expressed ONCE as a SQL expression. The
     # SELECT that stores the value (inputs_select_sql) and the predicate that compares it
-    # (inputs_changed_sql) both interpolate these, so the write and the check cannot drift
-    # apart into rescoring forever or never. Compile-time constants, never user data.
+    # (inputs_changed_sql) both interpolate these — except `e_sport`/`e_start`, which the
+    # write spells separately through the `:usport`/`:ustart` bindings — so the write and
+    # the check cannot drift apart into rescoring forever or never. Compile-time
+    # constants, never user data.
     # The design rationale lives on inputs_changed_sql below.
     e_mt = "COALESCE(a.moving_time,0)"
     e_dist = "CAST(ROUND(COALESCE(a.distance,0)) AS INTEGER)"
@@ -574,7 +574,7 @@ Analyze :: [].{
         })
         # zero sports (fresh db, analyze before first sync): "CASE x ELSE y END"
         # with no WHEN arms is a SQL syntax error, so emit the ELSE literal bare —
-        # found by the #154 e2e ""-arm check; analyze used to crash right here
+        # found by the #154 e2e ""-arm check; without the bare ELSE, analyze crashes here
         if Str.is_empty(whens) {
             "'${zones_sig(g)}'"
         } else {
@@ -589,11 +589,13 @@ Analyze :: [].{
         decoded = Streams.decode_streams(row.raw)
         streams = decoded.streams
         # this sport's zone bounds: per-sport override or global, resolved purely from
-        # the in-memory config (no per-key DB hit — that path corrupts the heap here)
+        # the in-memory config. No per-key DB hit, for the reason given where the config is
+        # loaded — an absent override is a missing row, not a missing value.
         row_zb = resolve_zones_pure(cfg, row.sport, zb)
 
         # sanity-filter HR: some sources (Peloton strength workouts) emit junk
-        # near-zero samples — Metrics.valid_hr is the one place the bounds live
+        # near-zero samples — Metrics.valid_hr owns the bounds for Roc-side
+        # filtering (valid_hr_sql is the SQL twin; `top hr` still inlines a copy)
         hr_raw = Streams.stream_pairs(streams.time, streams.heartrate)
         hr_pairs = List.keep_if(hr_raw, |p| Metrics.valid_hr(p.v))
         # drop non-physiological power samples (sensor glitches) the same way HR is
@@ -626,7 +628,7 @@ Analyze :: [].{
         # measured gap: broken straps span 0.003-0.24, rescued sessions 0.58 up.
         # The denominator is the LONGER of moving time and the stream's own extent:
         # moving_time excludes stops while stream timestamps are elapsed, so a stop-heavy
-        # session would inflate the ratio (35 of 672 streams run longer than moving time,
+        # session would inflate the ratio (a minority of streams run longer than moving time,
         # up to 1.198x).
         hr_extent =
             match (List.first(hr_raw), List.last(hr_raw)) {

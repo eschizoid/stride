@@ -1,12 +1,13 @@
 # ── what happened: individual sessions and their comparisons ────────
 #
-# Split from Report.roc under ADR 0001. activity_body! (378) and reps! (246)
+# Split from Report.roc under ADR 0001. activity_body! and reps!
 # had both passed the ~250-line command trigger.
 #
 # Report.sport_filter_sql and Report.cp_fit_as_of! stay in Report.roc and are called
 # qualified: the first is shared with power-curve, the second with tte. Only
 # helpers used by THIS family alone moved here — empty_hint!, known_sports!,
-# top_metric, lens_name.
+# top_metric, lens_name. (export_row_to_summary also lives here and is called
+# only by Import.)
 import Report
 import Strava
 import Db
@@ -32,7 +33,7 @@ ReportSessions :: [].{
     }
     activity_body! : Str, Str, I64 => Try({}, _)
     activity_body! = |path, id_str, aid| {
-        # Human branch only — the JSON payload above emits distance_m in metres.
+        # Human branch only — the JSON payload below emits distance_m in metres.
         units = Db.units!(path)?
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
@@ -96,11 +97,12 @@ ReportSessions :: [].{
             Err(_) => Output.err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
             Ok(a) => {
                 # REFUSES rather than rendering an empty date, because this screen COMPUTES
-                # from the date and the computation fails silently. `Report.cp_fit_as_of!`
-                # takes a 90-day window anchored here, an unreadable date makes that window
-                # empty, and the whole `vs self (90d, same family+band)` line DISAPPEARS —
-                # indistinguishable from an athlete who genuinely has no comparables. The
-                # header's blank date is at least visible; the missing line is not.
+                # from the date and the computation fails silently. The personal-baselines
+                # query windows on `date(self.start_local, '-90 days')`, so an unreadable date
+                # makes that window empty and the whole `vs self (90d, same family+band)`
+                # line DISAPPEARS — indistinguishable from an athlete who genuinely has
+                # no comparables. The header's blank date is at least visible; the missing
+                # line is not.
                 #
                 # The split in #249 is by what a command DOES with the date, not by which
                 # table it read: `activities` and `top` LIST or RANK and can report a row
@@ -404,7 +406,7 @@ ReportSessions :: [].{
                     # which is which is the gap #311 opened. When they differ, the recorded value is
                     # named beside it — that number is what the athlete compares against Strava.
                     # Compared as RENDERED, not as floats: 161.461 vs 161.2 differs by 0.26 and would
-                    # print "avg 161 (recorded 161)" (measured on 336 of 490 firing rows). And only
+                    # print "avg 161 (recorded 161)" (measured on most firing rows). And only
                     # when a reading was RECORDED: a stream-only session stores no average, COALESCE
                     # makes it 0.0, and "(recorded 0)" states a measurement where `avg 0` merely read
                     # as absent (numeric-0 invariant, ADR 0009).
@@ -472,7 +474,7 @@ ReportSessions :: [].{
         # optional sport filter via Report.sport_filter_sql: the FRAGMENT is interpolated
         # (its placeholders are numbered, values stay real bindings), and the empty
         # branch is a single space, never "" — interpolating a compile-time-constant
-        # empty string used to crash this backend in str_concat (#32 class, roc#10595,
+        # empty string CRASHED this backend in str_concat (roc#10595,
         # fixed upstream and carried by the current pin). Non-empty by construction is
         # the rule the :all-flag comment in Plan.roc states, and it stays.
         rows = Sqlite.query_many!({
@@ -687,10 +689,11 @@ ReportSessions :: [].{
                 # is affected — every other metric's header is either unit-free or carries
                 # a unit this setting does not touch (bpm, W, kJ).
                 header = if metric == "distance" "distance (${Render.dist_unit(units)})" else raw_header
-                # `bound` is a template over `@` so ONE predicate serves two queries: the
-                # ranking applies it to the column, the count applies it to an alias inside a
-                # subquery. Written twice they would drift, and the drift would be invisible
-                # — the ranking would exclude rows while the count reported a different set.
+                # `bound` is a template over `@` so ONE predicate serves three queries: the
+                # ranking and the no-LIMIT hint count apply it to the column, the capped
+                # count applies it to an alias inside a subquery. Written three times they
+                # would drift, and the drift would be invisible — the ranking would exclude
+                # rows while the count reported a different set.
                 bound_sql = if Str.is_empty(bound) "" else " AND ${Str.replace_each(bound, "@", col)}"
                 sf = Report.sport_filter_sql(sport_filter)
                 sport_where = sf.frag
@@ -900,8 +903,8 @@ ReportSessions :: [].{
             query:
                 \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, COALESCE(CAST(a.name AS TEXT), '') AS name,
                 # The trailing `''` is a behaviour change beyond blob handling: a row with BOTH
-                # columns NULL used to decode as an error and now reads empty. An improvement, and
-                # deliberate, but not something the CAST alone would have done.
+                # columns NULL decodes as empty rather than as an error. Deliberate, and
+                # not something the CAST alone would do.
                 \\       COALESCE(CAST(a.sport_family AS TEXT), CAST(a.sport_type AS TEXT), '') AS fam,
                 \\       COUNT(*) AS reps, CAST(AVG(s.dur_s) AS INTEGER) AS mean_dur,
                 \\       MIN(s.dur_s) AS min_dur, MAX(s.dur_s) AS max_dur,
@@ -1075,7 +1078,7 @@ ReportSessions :: [].{
                 # selection ranked by uniformity, DISPLAY by date — the coach reads a trend down
                 # the page. Str has no ordering in this Roc, so sort on parsed day numbers.
                 # GUARDED, and the guard produces the key rather than sitting beside it (#270):
-                # `.ok_or(0)` collapsed an unreadable comparable to the epoch and headed the
+                # `.ok_or(0)` collapses an unreadable comparable to the epoch and heads the
                 # by-date table with it. One expression, so the guard's domain IS the sort key's
                 # domain.
                 keyed = List.map_try(sessions, |sn|
@@ -1237,8 +1240,8 @@ ReportSessions :: [].{
         # work segments is grouped by SHAPE, through the same predicate `reps` uses: sport
         # family exact, rep count exact, mean work-rep duration inside the fixed band,
         # signal exact. A class name is evidence of neither sameness nor difference —
-        # measured, the same 3×12 threshold shipped under three names in three weeks
-        # (three groups of one), while one recurring name held 17 sessions of unlike
+        # measured, the same 3×12 threshold appears under three names in three weeks
+        # (three groups of one), while one recurring name holds 17 sessions of unlike
         # shapes. Sessions without detected structure keep name grouping unchanged.
         structure_mates! = |fam, sig, reps, blo, bhi|
             Sqlite.query_many!({
@@ -1357,10 +1360,10 @@ ReportSessions :: [].{
             # a name group is claimed only by a structure group that will SURVIVE
             # scoring. Claiming on shape alone erased visible data: a lens-unscorable
             # structure group dies in keep_scored AFTER the name group it claimed is
-            # gone, and a date that used to answer with an honest partial trend answers
-            # unscorable over a database still holding one (measured against the
-            # pre-#96 binary). progress_lens(mates) != Unscorable IS keep_scored's
-            # survival condition — the first lens any row scores keeps that row.
+            # gone, and a date that would answer with an honest partial trend instead
+            # answers unscorable over a database still holding one.
+            # progress_lens(mates) != Unscorable IS keep_scored's survival condition —
+            # the first lens any row scores keeps that row.
             survives = match Metrics.progress_lens(mates) { Unscorable => False _ => True }
             Ok({ group: { name: Render.structure_group_label(k.sh.reps, k.sh.mean_dur, k.sh.sig, k.sh.aname), display_name: Render.structure_group_label(k.sh.reps, k.sh.mean_dur, k.sh.sig, k.sh.aname), rows: mates, total: List.len(mates), scope_why: "", grouped_by: "structure" }, claim_sids: if survives k.sids else [] })
         })?
@@ -1522,9 +1525,9 @@ ReportSessions :: [].{
                     "⚠ a session on ${date} isn't shown in any table below — every session in its group was withheld, so there is nothing to compare it against\n\n"
                 } else {
                     # It IS in the table now, so the banner says where to look rather than
-                    # that it is missing. The old wording — "isn't shown in its own table" —
-                    # became false the moment unscorable rows started rendering, and it sat
-                    # directly above a table containing the row it denied.
+                    # that it is missing. Wording it "isn't shown in its own table" would be
+                    # false wherever unscorable rows render, and would sit directly above a
+                    # table containing the row it denied.
                     "⚠ the session on ${date} is shown below WITHOUT a score — the lens chosen for its group can't score it (needs power+HR, distance+HR, or a rating), so the trend(s) exclude it even though the row is there\n\n"
                 }
             Stdout.line!("${note}${Str.join_with(List.map(scored, |g| Render.progress_section(units, g.display_name, g.display_rows, date, g.lens, sort, g.all_days, g.scope_dropped, g.scope_why)), "\n\n")}")

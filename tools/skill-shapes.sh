@@ -77,7 +77,7 @@ done | sort -u > "$tmp/join"
 for f in "$SCHEMAS"/*.json; do
   b=$(basename "$f")
   # `paths` never emits the empty path, so the root object is added explicitly — without
-  # it 32 schemas silently lose their top-level object (79 objects would read as 47).
+  # it 33 schemas silently lose their top-level object (81 objects would read as 48).
   jq -r --arg b "$b" '
     ([paths as $p | {p: $p, o: getpath($p)}] + [{p: [], o: .}])
     | .[] | select(.o | type == "object" and has("required") and has("properties"))
@@ -169,7 +169,7 @@ fi
 # ── Pin agreement. THE INVARIANT — stated once here; other comments point at it. ──
 #
 # The pin is a checked-in set of (schema, property-set, required-set, JSON path) rows,
-# one per object: 79 objects, 79 rows. Keying by PATH is what makes the comparison
+# one per object: 81 objects, 81 rows. Keying by PATH is what makes the comparison
 # total — every object has its own row, so any object that gains a field, loses one,
 # stops being pinned, appears, disappears, moves, or trades shapes with a neighbour
 # moves a row. Two weaker keys were tried first and each missed something:

@@ -128,12 +128,12 @@ Plan :: [].{
     plan_view! : [ThisWeek, AllTime] => Try({}, _)
     plan_view! = |scope| {
         path = Db.open_db!({})?
-        # default view is the CURRENT training week (Mon-Sun containing today) so `plan`
+        # default view is the CURRENT training week (Mon-Sun containing today) so `week`
         # is "this week at a glance", not the whole history spilling into next week. The
         # Monday offset is rem(days+3,7) — the same convention as Metrics.day_of_week.
         today = Db.local_today_days!(path)
         mon = today - (today + 3) % (7)
-        # default `plan` is the LIVE current-week plan. Re-planning a date leaves skipped
+        # default `week` is the LIVE current-week log. Re-planning a date leaves skipped
         # tombstones (skip-then-add), so hide a skipped row that something SUPERSEDES —
         # a live open/done session on that date, or a LATER row on that date. The second
         # arm matters when the whole day ends up skipped: with no live session, every
@@ -141,7 +141,7 @@ Plan :: [].{
         # shows its one final tombstone. `week all` shows the full log unfiltered.
         # scope filter via a BOUND :all flag, never string interpolation: the earlier
         # approach spliced a compile-time-constant "" into the query, crashing the
-        # backend in str_concat (#32 class). The date literals below are always
+        # backend in str_concat (roc#10595). The date literals below are always
         # non-empty, so they interpolate safely.
         scope_all =
             match scope {
@@ -222,9 +222,10 @@ Plan :: [].{
             skipped_reason: p.skipped_reason,
             substitute_activity_id: p.substitute_activity_id,
             done_date: p.done_date,
-            # A session completed by an activity from ANOTHER day used to render exactly
-            # like one completed on time — the plan silently implied the work happened on
-            # the date it was prescribed for. Show the real day when they differ.
+            # A session completed by an activity from ANOTHER day would otherwise render
+            # exactly like one completed on time, so the plan would silently imply the
+            # work happened on the date it was prescribed for. Show the real day when
+            # they differ.
             status_shown:
                 if p.status == "done" and p.done_date != "" and p.done_date != p.target_date {
                     # Full date, year included: `week all` spans years, so a bare month-day
@@ -290,14 +291,14 @@ Plan :: [].{
         # of a window clause that is NULL-false on both comparisons, so a NULL-dated
         # activity never enters the list and the guard was provably dead for half the
         # class — and whether a POISONED (non-NULL) value can even exist inside a week
-        # window depends on the calendar (18 of 72 Mondays have none), so a test against
+        # window depends on the calendar (a quarter of Mondays have none), so a test against
         # the scoped guard goes red on a quarter of weeks for no regression. The sweep is
         # the same one `rate`, `compare`, `summary`, `plan` and `stats` use; `season`
         # guards inline over a differently-grouped query for its own stated reason.
         _ = Report.guard_activity_dates!(path)?
         unplanned_rows = List.map(unplanned, |u| {
             # bind first, then interpolate — `${if … else ""}` splices a compile-time
-            # "" into str_concat, the #32-class heap trap. Fixed upstream in roc#10595
+            # "" into str_concat, a heap trap. Fixed upstream in roc#10595
             # and our pin now carries the fix, so this is style rather than survival;
             # kept because non-empty-by-construction is the clearer rule either way.
             load_part = if u.tss >= 1.0 ", ${Render.fmt0(u.tss)} load" else " "
@@ -361,7 +362,7 @@ Plan :: [].{
         # presentation only; the JSON payload stays one flat array.
         # Two id columns, because they are two different things and the table was the only
         # place either was visible. `id` is the SESSION — the handle every command takes
-        # (`complete`, `skip`, `rate`). `activity` is the Strava activity linked to it,
+        # (`complete`, `skip`, `relabel`). `activity` is the Strava activity linked to it,
         # which exists only once the session is done; an open row has nothing to show yet,
         # so it reads `-` like every other unavailable value.
         plan_headers = ["day", "date", "type", "status", "detail", "id", "activity"]
@@ -399,9 +400,9 @@ Plan :: [].{
                     # every section below tests the same boundaries, so filtering on the
                     # date string re-parsed it four times per row. Keyed here rather than
                     # folded into `enriched` so the JSON payload keeps its shape.
-                    # `dated` matters as much as the number. `week add` stores whatever
-                    # date string it is handed (no validation), so an unparseable one is
-                    # reachable from the CLI, not just by hand-editing the db. Collapsing
+                    # `dated` matters as much as the number. `week add` REJECTS a
+                    # non-canonical target_date on the write path, so an unparseable one
+                    # can only arrive by hand-editing the db. Collapsing
                     # it to day 0 would file a typo under "older sessions" and quietly
                     # claim it was in the past — it is undated, which is a different fact.
                     keyed = List.map(rows_enriched, |p|
@@ -683,8 +684,8 @@ Plan :: [].{
                             # caller still holds.
                             released = if prior.s != activity_id prior.s else 0
                             # ...and the note NAMES THE REPAIR while the id is still on screen — the pattern
-                            # `skip`'s refusal already uses. It used to be the ONLY place the erased id
-                            # survived; #274 added `superseded_activity_id`, written in the same UPDATE, so
+                            # `skip`'s refusal already uses. Since #274 the erased id also
+                            # survives in `superseded_activity_id`, written in the same UPDATE, so
                             # the record outlives the line.
                             #
                             # The remedy is EXACTLY invertible on this row: `replaced_activity` and
@@ -1051,9 +1052,9 @@ Plan :: [].{
                         row: Sqlite.str("td"),
                     })?
                     # the echoed type is READ BACK, never the input argument: an echo of
-                    # the input printed "threshold" while the row still held "endurance"
-                    # under a binary whose UPDATE had been neutered — the payload claimed
-                    # the write it was supposed to be evidence for
+                    # the input would print "threshold" while the row still held
+                    # "endurance" if the UPDATE failed — the payload claiming
+                    # the write it is meant to be evidence for
                     stored_type = Sqlite.query!({
                         path: Path.utf8(path),
                         query: "SELECT CAST(session_type AS TEXT) AS ty FROM planned_sessions WHERE id = :id",

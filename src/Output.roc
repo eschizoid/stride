@@ -9,7 +9,7 @@ Output :: [].{
     # Every error surface prints its envelope (or human text) to stdout and then
     # returns Err(Exit(1)), which the platform turns into a non-zero process
     # status WITHOUT printing anything of its own. The ENVELOPE is unchanged —
-    # this adds information to a channel that previously carried none, so JSON
+    # this adds information to a channel that otherwise carries none, so JSON
     # consumers are unaffected while `set -e`, `&&` chains, CI steps, and
     # supervisors stop reading failures as success. Success paths still exit 0.
     error_status : I32
@@ -45,12 +45,11 @@ Output :: [].{
     # the builtin encoder stringifies tags ("None"/"Null"), verified by probe. So the
     # contract is per-field, in ADR 0009's three classes:
     #   IMPOSSIBLE-ZERO fields (np_w, avg_hr, intensity, ftp_used): a real 0 cannot
-    #   occur, so 0 means "not available". THREE of those four carry a flag — ftp_used
-    #   deliberately does not, because analyze always binds it (0 when no FTP is
-    #   derivable), so a NULL-decoded flag would be all-true. Do NOT "fix" that
-    #   asymmetry by adding a phantom ftp_used_known; see ADR 0009.
-    #   The _known companion flags decode the
-    #   STORED NULLs (CASE WHEN … IS NULL), never the coalesced magnitudes — np can
+    #   occur, so 0 means "not available". THREE of those four carry a flag; ftp_used
+    #   does not, because analyze always binds it (0 when no FTP is derivable), so a
+    #   NULL-decoded flag would be all-true and carry no information (ADR 0009).
+    #   The _known companion flags decode the STORED NULLs (CASE WHEN … IS NULL),
+    #   never the coalesced magnitudes — np can
     #   be present while intensity is NULL (power stream, no FTP yet), which is why
     #   power_known and intensity_known are separate flags.
     #   REAL-ZERO fields (z1_s..z5_s when zones_known, distance on strength): 0 is an
@@ -195,8 +194,8 @@ Output :: [].{
     # The setup remedy for a client credential neither in the environment nor stored.
     # ONE definition, two call sites (`auth!` and the app.roc boundary arm) — two
     # spellings of one remedy is how they drift. NOT split into a `_msg` half: only
-    # `unreadable_config_msg` earns that split, because `ReportHealth` embeds it in a
-    # PAYLOAD; the other message pairs have a single caller each.
+    # `unreadable_config_msg`'s split is load-bearing, because `ReportHealth` embeds it in a
+    # PAYLOAD; the other three exist for symmetry and have a single caller each.
     missing_client_creds! : Str => Try({}, _)
     missing_client_creds! = |name|
         Output.err_out!("missing_client_creds", "${name} not set and no stored credentials yet — create a (free) Strava API app at strava.com/settings/api, then run:\n  STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth")
@@ -286,10 +285,10 @@ Output :: [].{
 
     # `stride analyze`, NOT `--all` — that form does not exist and exits `usage`,
     # the same defect this change is about: a remedy that does not work. The remedy
-    # itself also failed once, in a state this error is reachable from:
-    # rebuild_daily_load! only reached its DELETE when at least one activity date
-    # parsed, so `analyze` said `converged: true` while `season` answered this error
-    # forever. Fixed in Analyze.roc by clearing on that branch too.
+    # itself is reachable in a state this error also reaches: rebuild_daily_load!
+    # clears its DELETE only when at least one activity date parses, so without that
+    # branch `analyze` reports `converged: true` while `season` answers this error
+    # forever. Analyze.roc clears on that branch too.
     unreadable_daily_load_day_msg : Str -> Str
     unreadable_daily_load_day_msg = |raw|
         "daily_load holds the day '${raw}', which is not a readable date — rebuild the table with `stride analyze`"

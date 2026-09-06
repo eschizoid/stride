@@ -27,7 +27,8 @@ Strava :: [].{
     api_base! : {} => Str
     api_base! = |{}|
         match Env.var_str!(OsStr.from_str("STRIDE_API_BASE")) {
-            # only honor an allowed override (https, or http to loopback) — a disallowed
+            # only honor an allowed override (exact hosts only — real Strava, or
+            # http to loopback) — a disallowed
             # base can't exfiltrate the client_secret/refresh token; fall back to real Strava
             Ok(b) if !(Str.is_empty(b)) and Config.api_base_allowed(b) => b
             _ => "https://www.strava.com"
@@ -142,9 +143,11 @@ Strava :: [].{
         # ONE atomic multi-row upsert: Strava rotates the refresh token on every refresh,
         # so three separate writes risked a crash leaving new-access + a DEAD refresh
         # token — auth bricked until a manual re-`auth`.
-        # DO NOT wrap these bindings in "${...}" to force a copy: tried against #105 and
-        # crashed real sync every run. #105 is FIXED (basic-cli 0.22.0); this note stays
-        # so nobody re-tries the copy on the next mystery crash.
+        # Wrapping these bindings in "${...}" to force a copy CRASHED real sync every
+        # run on 0.21: interpolation makes every binding a heap Str, which is exactly
+        # what bug C double-freed. #105 is FIXED (basic-cli 0.22.0), so the copy is now
+        # merely pointless; this note stays because it is a tempting fix for the next
+        # mystery crash.
         Sqlite.execute!({
             path: Path.utf8(path),
             query:
@@ -252,8 +255,8 @@ Strava :: [].{
                 #
                 # THREE outcomes, not two. Absent means never synced and a full pull is
                 # right. A db read error propagates rather than silently burning the rate
-                # budget. Unreadable used to collapse into the first, so a bad value
-                # forced a full re-pull every run -- conservative, and therefore
+                # budget. Collapsing Unreadable into the first would make a bad value
+                # force a full re-pull every run -- conservative, and therefore
                 # invisible forever (#208). arg_i64 rather than I64.from_str, so the
                 # shape accepted here matches what `config set` enforces.
                 after_epoch =
@@ -384,9 +387,9 @@ Strava :: [].{
             {}
         }
 
-    # ONE stream loop for the whole engine (#232). There were two — a capped unpaced
-    # one for `sync`, a paced one for `backfill` — and every rate-limit inconsistency
-    # came out of the drift between them. No per-run cap: `sync` drains what is
+    # ONE stream loop for the whole engine (#232). Separate loops — a capped unpaced
+    # one for `sync`, a paced one for `backfill` — drift, and every rate-limit
+    # inconsistency lives in that drift. No per-run cap: `sync` drains what is
     # missing, paced against Strava's limits, and stops on the read budget with
     # `resumable: true`. Steady state is a handful of reads; `stride import` and a
     # deleted streams table both walk into a full drain, one run per 15-minute
@@ -420,7 +423,7 @@ Strava :: [].{
             # ORDER MATTERS. Say the sentence FIRST, then open the bar. narrate! writes a
             # bar frame with no trailing newline, so a say! after it lands on the bar's row
             # — and since the next frame's \r rewrites only the frame's own width, the tail
-            # of a 138-character message stays welded to the right of a 33-character bar
+            # of a message longer than the bar stays welded to the right of it
             # for the whole drain. That is the failure bar_done!'s comment names, and it
             # shipped because nothing asserts on stderr framing.
             Output.say!("draining ${U64.to_str(total)} activities' streams — Strava caps reads per 15-minute window, so a large first pull takes several runs; every stream stored is kept")?
@@ -529,7 +532,7 @@ Strava :: [].{
     # ── test seams, same species as STRIDE_API_BASE ─────────────────────
     # Without these, reaching the budget stops honestly costs a full window (95) —
     # and the daily cap a full day (1000) — of real HTTP reads, so a transposed
-    # counter in a terminal arm shipped green.
+    # counter in a terminal arm cannot be caught.
     # An override may only LOWER a limit, never raise it: a raised cap lets a typo
     # hammer the API and get the athlete's own API app suspended. Lowering is all a
     # test needs, so the useful direction is the safe one.
@@ -568,8 +571,8 @@ Strava :: [].{
 
     # is the allowance already spent, WITHOUT spending anything to find out? `decide` is
     # structurally unable to answer this — it is only reachable with a response in hand —
-    # so a capped run used to spend a list read and a stream read to report that it had
-    # none left. At the cadence stride's own advice implies that is ~190 reads a day
+    # so without it a capped run spends a list read and a stream read to report that it
+    # has none left. At the cadence stride's own advice implies that is ~190 reads a day
     # burned against an allowance that is already gone, with the counter climbing past the
     # cap all day. The day is knowable from the database with zero requests.
     day_spent! : Str => Try(Bool, _)
@@ -657,11 +660,11 @@ Strava :: [].{
     # trip is not worth optimising, and batching reintroduces the loss window.
     #
     # It writes against the day the count BELONGS to, which is not always the day it
-    # is written on: a run in flight at UTC midnight used to stamp the new day with
-    # the old day's total — start at 23:59 with 795 spent, cross midnight, and the
+    # is written on: a run in flight at UTC midnight would otherwise stamp the new day
+    # with the old day's total — start at 23:59 with 795 spent, cross midnight, and the
     # athlete gets 205 of tomorrow's 1000. The caller passes the day it is CURRENTLY
-    # on, re-read each iteration: captured once, the crossing stamped every read
-    # after midnight onto the day before, so day D+1 began already owing them.
+    # on, re-read each iteration: captured once, the crossing stamps every read after
+    # midnight onto the day before, so day D+1 begins already owing them.
     save_reads_for_day! : Str, I64, I64 => Try({}, _)
     save_reads_for_day! = |path, day, n| {
         Db.config_set!(path, "strava_reads_day", I64.to_str(day))?
@@ -673,8 +676,8 @@ Strava :: [].{
         # stop before Strava's 100-reads-per-15-minutes window fills. There is no second
         # per-run budget: `window` is never reset inside a run, so a larger one could
         # never fire. The day gets no margin because it counts the list read directly
-        # (#246); it used to be "respected by arithmetic", which assumed ten runs a day
-        # and enforced nothing.
+        # (#246). "Respected by arithmetic" assumes ten runs a day and enforces
+        # nothing.
         #
         # The 5-read margin does NOT reliably absorb the list read.
         # `window` only advances in the drain's Store arm —
@@ -722,9 +725,9 @@ Strava :: [].{
         }
     # Per-run drain state: `window` = reads this run (vs the 15-min cap; never reset,
     # a run does not span windows); `stored`/`skipped` = what the reads produced.
-    # `done` and `stored` are deliberately different: pacing is about READS (a 404
+    # `window` and `stored` are deliberately different: pacing is about READS (a 404
     # spends a read and stores a marker) while the payload reports WORK — publishing
-    # `done` as `streams_fetched` reported rows that do not exist. `total` is the
+    # `window` as `streams_fetched` reported rows that do not exist. `total` is the
     # queue length at start, for a real progress bar; nothing decrements it.
     # `day` is the UTC day the count belongs to, RE-READ at the top of each iteration
     # and reset with its count when it changes (Drain.roll_day); `today` is the
@@ -770,7 +773,7 @@ Strava :: [].{
                         # persistently 401ing activity (revoked scope, private without activity:read_all)
                         # would spin forever — measured at ~113 requests/second unbounded, 4,500
                         # reads against a 1000/day cap in under a minute, which is the shape that
-                        # gets an API app suspended. `decide` does not charge a 401 against `done`,
+                        # gets an API app suspended. `decide` does not charge a 401 against `window`,
                         # so the read budget never ends it. Same token back is a real auth problem.
                         if st.refreshes >= max_refreshes {
                             # no bar_done! here: this propagates, and the boundary reporter
@@ -919,12 +922,12 @@ Strava :: [].{
 
     SyncCounts : { new_n : U64, updated_n : U64 }
 
-    # The classify SELECT runs per row. It used to be skippable, because `backfill!`
-    # re-listed the whole account and never read the counts — paying a query each would
-    # have been a real cost for nothing, the same mistake as running classify inside
-    # upsert_activity! where CSV import paid it. With one caller that wants the counts,
-    # the skip is gone; if a future caller does not want them, bring the flag back rather
-    # than making this function guess.
+    # The classify SELECT runs per row, unconditionally. It is skippable only for a
+    # caller that re-lists the whole account and never reads the counts — paying a
+    # query each would then be a real cost for nothing, the same mistake as running
+    # classify inside upsert_activity! where CSV import pays it. The one caller here
+    # wants the counts, so there is no flag; if a future caller does not, add one
+    # rather than making this function guess.
     upsert_all! : Str, I64, List(ActivitySummary), SyncCounts => Try(SyncCounts, _)
     upsert_all! = |path, stamp, acts, acc|
         match acts {
@@ -999,9 +1002,9 @@ Strava :: [].{
         { name: ":id", value: Integer(a.id) },
         # Binding the decoded Str straight through is correct on basic-cli 0.22+ — the
         # 0.21 host double-freed heap Strs in bindings (bug C, #105, fixed upstream in
-        # basic-cli#472). Still DO NOT wrap these in "${...}" to force a copy: the copy
-        # "fix" built on the wrong theory crashed real sync 12/12 while the short-name
-        # e2e mock stayed green. See #105 for the full history.
+        # basic-cli#472). Still do not wrap these in "${...}" to force a copy: the copy
+        # "fix" was built on the wrong theory and crashed real sync 12/12 while the
+        # short-name e2e mock stayed green. See #105 for the full history.
         { name: ":name", value: String(a.name) },
         { name: ":sport", value: String(a.sport_type) },
         { name: ":start", value: String(a.start_date_local) },
@@ -1046,7 +1049,7 @@ Strava :: [].{
     }
 
     # remove activities that vanished from Strava. A row is a victim when this sync run
-    # did NOT re-stamp it (synced_at stale or null) AND it sits inside the pulled window
+    # did NOT re-stamp it (synced_at present but stale) AND it sits inside the pulled window
     # (start_local >= window_start; "" = full pull = all rows). Three judgment-tier guards:
     # never prune an activity that carries a rating, completed a planned session, or stands in as a substitute for one —
     # those rows can't be re-derived, so we leave the (now-orphaned) activity as a

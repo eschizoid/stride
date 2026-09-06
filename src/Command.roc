@@ -276,9 +276,10 @@ Command := [
 
 	## What a caller needs to INVOKE a command, not merely to name it (#219).
 	##
-	## `stride --json` used to answer with bare strings, which lets an agent enumerate
-	## and nothing more: it could not learn the argument shape, whether a call writes to
-	## the database, whether it needs the network, or which schema the answer follows.
+	## `stride --json` answers with typed entries rather than bare strings. A bare
+	## list lets an agent enumerate and nothing more: it cannot learn the argument
+	## shape, whether a call writes to the database, whether it needs the network,
+	## or which schema the answer follows.
 	## ADR 0000 §10 declines an MCP server on the grounds that the CLI plus versioned
 	## JSON already IS the agent interface. This is that claim taken seriously.
 	##
@@ -331,7 +332,7 @@ Command := [
 		## "no power data in the window" (specific to this form and this data).
 		##
 		## Two tiers rather than one list per form because most of the codes raised in
-		## app.roc are boundary codes that ANY form can hit — nineteen copies of
+		## app.roc are boundary codes that ANY form can hit — a copy on every form of
 		## `no_database` would be a drift surface with no information in it, which is the
 		## trap #219 named when it left this bullet undone.
 		##
@@ -457,11 +458,11 @@ Command := [
 		## DAYS of lookback, not a row count — `power-curve` returns a fixed set of
 		## points regardless, so `<n>` beside `activities`' `<n>` left two identical
 		## shapes meaning different things.
-		## `unreadable_daily_load_day` because #249 made `load` refuse a day it used to
-		## render as a 1969 week. It was the ONLY reader of that table not declaring the
-		## code, and nothing caught the gap: the e2e union check at tests/e2e.roc passes
-		## because summary, plan and compare declare it, so the union was satisfied by
-		## three other forms while this one was wrong — a check green for the wrong reason.
+		## `unreadable_daily_load_day` because `load` refuses a day it cannot read as
+		## a week (#249). The e2e union check cannot catch an omission here: it
+		## asserts the UNION of declared codes across forms, so summary, plan and
+		## compare declaring this code would satisfy it even if `load` did not — a gate
+		## that is green because of its neighbours, not because of the form under it.
 		errs(reads("load", [opt_ex("<days>", "30")], "load.json"), ["bad_count", "unreadable_daily_load_day"]),
 		errs(reads("power-curve", [opt_ex("<days>", "30"), opt_ex("<sport>", "Ride")], "power_curve.json"), ["bad_count"]),
 		errs(reads("pc", [opt_ex("<days>", "30"), opt_ex("<sport>", "Ride")], "power_curve.json"), ["bad_count"]),
@@ -476,8 +477,8 @@ Command := [
 		errs(reads("tte", [req_ex("<watts>", "300")], "tte.json"), ["bad_watts", "no_cp_fit"]),
 		errs(reads("reps", [opt("<YYYY-MM-DD>")], "reps.json"), ["irregular_anchor", "no_detected_intervals", "no_intervals_on_date", "unreadable_activity_date"]),
 		errs(reads("season", [], "season.json"), ["no_activities", "unreadable_activity_date", "unreadable_daily_load_day"]),
-		## `week` had NO declared codes at all, and now has one: #249 made it refuse an
-		## unplanned activity whose date it used to sort to the epoch and list first.
+		## `week` refuses an unplanned activity whose date it cannot read (#249),
+		## rather than sorting it to the epoch and listing it first.
 		errs(reads("week", [opt("all")], "week.json"), ["unreadable_activity_date"]),
 		reads("config", [], "config_list.json"),
 		errs(reads("config get", [req_ex("<key>", "timezone")], "config.json"), ["derived_key", "not_set", "unknown_key"]),
@@ -613,9 +614,9 @@ expect
 		_ => False
 	}
 # a third arg that isn't asc/desc gets the targeted usage hint
-# reps takes a DATE or nothing. `reps asc` used to reach the database and come
-# back "no detected interval structure on asc" -- a data fact about a date that
-# does not exist. This validation had no test at all until it moved here.
+# reps takes a DATE or nothing. A sort word here must be REFUSED at parse time —
+# reaching the database returns "no detected interval structure on asc", a data
+# fact about a date that does not exist.
 expect
 	match Command.parse(["stride", "reps", "asc"]) {
 		Err(Usage(u)) => Str.contains(u, "not a date")
@@ -650,8 +651,8 @@ expect
 		Err(Usage(u)) => Str.contains(u, "asc|desc")
 		_ => False
 	}
-# a sort word in the DATE position is never a date: `progress desc asc` used to anchor on
-# a workout named "desc" instead of refusing
+# a sort word in the DATE position is never a date: `progress desc asc` must refuse
+# rather than anchor on a workout named "desc"
 expect
 	match Command.parse(["stride", "progress", "desc", "asc"]) {
 		Err(Usage(u)) => Str.contains(u, "asc|desc")
