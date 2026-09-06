@@ -54,8 +54,6 @@ Loads a **Strava account export** (the ZIP from Settings → My Account → Down
 Computes metrics for new (or invalidated) activities — TSS, time-in-zone, normalized power — then rebuilds the daily fitness/fatigue/form series through today. Prints what it did plus a one-line form verdict.
 
 
-Each answers a different question.
-
 ## Reading your training
 
 Each answers a different question.
@@ -171,6 +169,4 @@ _If the plan is executed as written, where is my form on date D?_ CTL/ATL/TSB on
 
 Fixes a session's label — any status, done ones included. Edits only the descriptive fields: status, activity links and metrics never move, and `analyze` after a relabel recomputes nothing. The day-swap fix: a completed session whose label still describes the plan it displaced no longer needs a duplicate row or hand-run SQL. Omitting the rationale keeps the stored one.
 
-
-The adaptation loop.
 
