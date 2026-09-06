@@ -810,7 +810,7 @@ Report :: [].{
         })?
         # GUARDED here rather than in Render: a pure renderer can DROP the row but cannot
         # NAME it, and naming the row is the whole of #243. What Render absorbed was real —
-        # `.ok_or(0)` collapsed an unreadable day to epoch 0, rendering a 1969 week row
+        # `.ok_or(0)` collapses an unreadable day to epoch 0, rendering a 1969 week row
         # AND anchoring the verdict on it (`List.last(ordered)` makes it `today`).
         # Dropping via keep_oks would silently under-count the rollup instead; daily_load
         # is DERIVED, so refusing with a one-command remedy costs nothing that was ever

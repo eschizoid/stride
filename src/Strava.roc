@@ -253,8 +253,8 @@ Strava :: [].{
                 #
                 # THREE outcomes, not two. Absent means never synced and a full pull is
                 # right. A db read error propagates rather than silently burning the rate
-                # budget. Unreadable used to collapse into the first, so a bad value
-                # forced a full re-pull every run -- conservative, and therefore
+                # budget. Collapsing Unreadable into the first would make a bad value
+                # force a full re-pull every run -- conservative, and therefore
                 # invisible forever (#208). arg_i64 rather than I64.from_str, so the
                 # shape accepted here matches what `config set` enforces.
                 after_epoch =

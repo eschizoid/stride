@@ -7,9 +7,9 @@ app [main!] {
 #
 # This module is argv -> dispatch, plus the handful of effects that have no better
 # home yet (`init!` and the four `config_*` effects) and a set of platform imports
-# left over from when it owned everything. It used to own every effect,
-# because alpha4 could not type-check a wide decoder once effects were injected
-# into a module; the new compiler lifted that wall, so effects now live with
+# left over from when it owned everything: alpha4 could not type-check a wide
+# decoder once effects were injected into a module. The new compiler lifted that
+# wall, so effects now live with
 # their concern — Db (SQLite + migrations), Strava (OAuth + sync), Analyze/Plan/
 # Import, and the report family (Report plus ReportSessions/ReportHealth/
 # ReportSeason, split by read-command family in #196). See ADR 0001.

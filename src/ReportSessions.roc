@@ -1077,7 +1077,7 @@ ReportSessions :: [].{
                 # selection ranked by uniformity, DISPLAY by date — the coach reads a trend down
                 # the page. Str has no ordering in this Roc, so sort on parsed day numbers.
                 # GUARDED, and the guard produces the key rather than sitting beside it (#270):
-                # `.ok_or(0)` collapsed an unreadable comparable to the epoch and headed the
+                # `.ok_or(0)` collapses an unreadable comparable to the epoch and heads the
                 # by-date table with it. One expression, so the guard's domain IS the sort key's
                 # domain.
                 keyed = List.map_try(sessions, |sn|
