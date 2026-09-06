@@ -143,9 +143,9 @@ Strava :: [].{
         # ONE atomic multi-row upsert: Strava rotates the refresh token on every refresh,
         # so three separate writes risked a crash leaving new-access + a DEAD refresh
         # token — auth bricked until a manual re-`auth`.
-        # DO NOT wrap these bindings in "${...}" to force a copy: tried against #105 and
-        # crashed real sync every run. #105 is FIXED (basic-cli 0.22.0); this note stays
-        # so nobody re-tries the copy on the next mystery crash.
+        # Wrapping these bindings in "${...}" to force a copy crashes real sync every
+        # run. #105, the bug that motivated trying it, is FIXED (basic-cli 0.22.0); this
+        # note stays because the copy is a tempting fix for the next mystery crash.
         Sqlite.execute!({
             path: Path.utf8(path),
             query:
@@ -1000,9 +1000,9 @@ Strava :: [].{
         { name: ":id", value: Integer(a.id) },
         # Binding the decoded Str straight through is correct on basic-cli 0.22+ — the
         # 0.21 host double-freed heap Strs in bindings (bug C, #105, fixed upstream in
-        # basic-cli#472). Still DO NOT wrap these in "${...}" to force a copy: the copy
-        # "fix" built on the wrong theory crashed real sync 12/12 while the short-name
-        # e2e mock stayed green. See #105 for the full history.
+        # basic-cli#472). Still do not wrap these in "${...}" to force a copy: the copy
+        # "fix" is built on the wrong theory and crashes real sync 12/12 while the
+        # short-name e2e mock stays green. See #105 for the full history.
         { name: ":name", value: String(a.name) },
         { name: ":sport", value: String(a.sport_type) },
         { name: ":start", value: String(a.start_date_local) },

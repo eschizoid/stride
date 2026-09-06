@@ -636,10 +636,10 @@ config_store! = |key, val|
     # restating deleted behaviour above its replacement is how a reader gets told
     # the opposite of what runs.
     if val == ""
-        # An empty value is not a WRITE, and `config set` says so instead of guessing: it
-        # used to mean three things by key class — removal, `bad_value`, or an empty
-        # WRITE that left a row reading as SET so `sync` spent a round trip to be told
-        # 401 (#276). The removal payload also failed config.json's `value` requirement,
+        # An empty value is not a WRITE, and `config set` says so instead of guessing. It
+        # would otherwise mean three things by key class — removal, `bad_value`, or an
+        # empty WRITE that leaves a row reading as SET so `sync` spends a round trip to be
+        # told 401 (#276). The removal payload also failed config.json's `value` requirement,
         # unseen because the form is `mutates: true` and schema-check covers read-only
         # forms. `config unset` carries the removal shape under its own schema now.
         Output.err_out!(

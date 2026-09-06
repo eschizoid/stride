@@ -1524,9 +1524,9 @@ ReportSessions :: [].{
                     "⚠ a session on ${date} isn't shown in any table below — every session in its group was withheld, so there is nothing to compare it against\n\n"
                 } else {
                     # It IS in the table now, so the banner says where to look rather than
-                    # that it is missing. The old wording — "isn't shown in its own table" —
-                    # became false the moment unscorable rows started rendering, and it sat
-                    # directly above a table containing the row it denied.
+                    # that it is missing. Wording it "isn't shown in its own table" would be
+                    # false wherever unscorable rows render, and would sit directly above a
+                    # table containing the row it denied.
                     "⚠ the session on ${date} is shown below WITHOUT a score — the lens chosen for its group can't score it (needs power+HR, distance+HR, or a rating), so the trend(s) exclude it even though the row is there\n\n"
                 }
             Stdout.line!("${note}${Str.join_with(List.map(scored, |g| Render.progress_section(units, g.display_name, g.display_rows, date, g.lens, sort, g.all_days, g.scope_dropped, g.scope_why)), "\n\n")}")

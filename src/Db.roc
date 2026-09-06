@@ -135,9 +135,9 @@ Db :: [].{
     #                we fall back to the fixed offset (NEVER silently to UTC) and warn.
     #   Utc        — neither configured.
     # BadOffset carries the STORED TEXT, not a number, because there is no number to
-    # carry -- that is the whole point. An unreadable `utc_offset_minutes` used to be
-    # coalesced to 0, which is indistinguishable from a real UTC offset, so a typo read
-    # as "you are on UTC" and silently shifted every civil-day boundary (#206). It is
+    # carry -- that is the whole point. Coalescing an unreadable `utc_offset_minutes`
+    # to 0 makes it indistinguishable from a real UTC offset, so a typo reads
+    # as "you are on UTC" and silently shifts every civil-day boundary (#206). It is
     # the offset twin of BadZone: report it, do not guess it.
     TimeMode : [Zone(Str, I64), FixedOffset(I64), BadZone(Str, I64), BadOffset(Str), Utc]
 

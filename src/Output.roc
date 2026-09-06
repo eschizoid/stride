@@ -9,7 +9,7 @@ Output :: [].{
     # Every error surface prints its envelope (or human text) to stdout and then
     # returns Err(Exit(1)), which the platform turns into a non-zero process
     # status WITHOUT printing anything of its own. The ENVELOPE is unchanged —
-    # this adds information to a channel that previously carried none, so JSON
+    # this adds information to a channel that otherwise carries none, so JSON
     # consumers are unaffected while `set -e`, `&&` chains, CI steps, and
     # supervisors stop reading failures as success. Success paths still exit 0.
     error_status : I32
