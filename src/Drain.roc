@@ -11,10 +11,10 @@ Drain :: [].{
     # 15-minute window fills, then stops and asks to be re-run (sleeping blocked a
     # routine sync ~30 min). No separate per-run budget: `window` never resets
     # inside a run, so a per-run cap could never fire — both arms proved dead.
-    # The DAILY cap used to be "respected by arithmetic" (~10 runs/day assumed,
-    # nothing enforcing it — least of all stride's own "run again in ~15 minutes",
-    # which crosses 1000 reads in ~2.5 hours if followed). Now counted against a
-    # persisted per-UTC-day total: an approximation (other users of the token are
+    # "Respected by arithmetic" does not hold for the DAILY cap (~10 runs/day
+    # assumed, nothing enforcing it — least of all stride's own "run again in ~15
+    # minutes", which crosses 1000 reads in ~2.5 hours if followed). It is counted
+    # against a persisted per-UTC-day total: an approximation (other users of the token are
     # invisible), but the approximation stride was already making, kept.
     Limits : { reads_per_window : I64, reads_per_day : I64 }
 

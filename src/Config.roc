@@ -183,9 +183,9 @@ Config :: [].{
 	# like proof it took.
 	#
 	# This exists because #201's narrowing created exactly that trap. Refusing exponent
-	# notation at the READ sites meant `config set hr_z1_max 1.18e2` succeeded, echoed
-	# `1.18e2`, and then made `summary` report missing_config -- the value WAS set. And
-	# `utc_offset_minutes +330` silently became UTC instead of +05:30, because that read
+	# notation at the READ sites means `config set hr_z1_max 1.18e2` succeeds, echoes
+	# `1.18e2`, and then makes `summary` report missing_config -- the value WAS set. And
+	# `utc_offset_minutes +330` silently reads as UTC instead of +05:30, because that
 	# path coalesces a parse failure to 0. Validating at the WRITE makes the refusal loud
 	# and keeps the read sites honest.
 	numeric_key : Str -> [Int, Decimal, Free]

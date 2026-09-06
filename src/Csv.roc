@@ -62,7 +62,7 @@ Csv :: [].{
         }
 
     # Accumulating at the front is O(1); reversing once at a field/row boundary keeps
-    # parsing linear. The previous append-per-byte implementation became quadratic on
+    # parsing linear. Appending per byte instead is quadratic on
     # real Strava exports and could trigger the pre-2026-08-17 compiler's heap-corruption
     # bug (#32, fixed on the current pin — the linear shape is still the right one).
     reverse : List(a) -> List(a)

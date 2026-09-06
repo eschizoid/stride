@@ -42,8 +42,8 @@ ReportHealth :: [].{
         year = (Metrics.civil_from_days(today_days)).y
         # The cutoff below is the literal "0000-01-01", whose only job is to mean
         # EVERYTHING — and `WHERE start_local >= :cutoff` is NULL-false, so an unreadable
-        # date silently removes an activity from a total printed under ALL TIME (measured:
-        # 475 sessions became 474 at exit 0). Refuses rather than reports: `stats` LISTS
+        # date silently removes an activity from a total printed under ALL TIME — the
+        # count drops by one at exit 0. Refuses rather than reports: `stats` LISTS
         # totals, but the date decides MEMBERSHIP in an aggregate here, so a wrong date is
         # a wrong total — the compute side of #249's split.
         _ = Report.guard_activity_dates!(path)?
