@@ -220,13 +220,13 @@ against the parser's own verb list; it is the authoritative list and this table 
 
 **Setup (once)**
 
-| Command                                       | What it does                                                    |
-| --------------------------------------------- | --------------------------------------------------------------- |
-| `init`                                        | create `~/.stride` and migrate the SQLite db — idempotent       |
-| `auth`                                        | one-time Strava OAuth; stores tokens and client creds in the db |
-| `config`                                      | list the config that is set (secrets redacted)                  |
-| `config set <key> <val>` / `config get <key>` | your numbers: HR zone bounds, timezone, units                   |
-| `config unset <key>`                          | remove a key outright                                           |
+| Command                                         | What it does                                                    |
+| ----------------------------------------------- | --------------------------------------------------------------- |
+| `init`                                          | create `~/.stride` and migrate the SQLite db — idempotent       |
+| `auth`                                          | one-time Strava OAuth; stores tokens and client creds in the db |
+| `config`                                        | list the config that is set (secrets redacted)                  |
+| `config set <key> <value>` / `config get <key>` | your numbers: HR zone bounds, timezone, units                   |
+| `config unset <key>`                            | remove a key outright                                           |
 
 **Data (daily)**
 

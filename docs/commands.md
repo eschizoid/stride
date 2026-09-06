@@ -21,7 +21,7 @@ One-time Strava OAuth: prints an authorize URL, you paste back the `code=` param
 Lists the config that is set, with secrets redacted. Bare `config` shows only keys
 holding a value, which is what `just schema-check` selects on.
 
-### `stride config set <key> <val>` / `stride config get <key>`
+### `stride config set <key> <value>` / `stride config get <key>`
 
 Your numbers: HR zone bounds `hr_z1_max`…`hr_z4_max`, `units` (metric or imperial), and either `timezone` (IANA, DST-aware) or `utc_offset_minutes` (fixed) to anchor "today". FTP is **not** configured — each sport derives its own from your power history.
 
