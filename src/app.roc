@@ -78,6 +78,7 @@ help_text =
         \\    auth                        authorize with Strava (one-time paste flow; stores creds)
         \\    config                      list the config that is set (secrets redacted)
         \\    config get|set <key> [value]   read or write one key (hr zone bounds, timezone)
+        \\    config unset <key>          remove a key outright
         \\                                — FTP is derived, never set
         \\
         \\GET DATA

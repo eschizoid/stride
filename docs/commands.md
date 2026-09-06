@@ -3,9 +3,8 @@
 One section per command, with the behaviour you need to use it correctly.
 The [README table](../README.md#commands) is the index; this is the detail.
 
-`stride --help` is the authoritative list of commands and their arguments —
-it is generated from the parser, so it cannot drift. This file explains what
-the commands *mean*.
+`STRIDE_FORMAT=json stride --help` is generated from the parser, so its list of
+commands and arguments cannot drift. This file explains what they *mean*.
 
 ## Setup (once)
 
@@ -17,9 +16,14 @@ Creates `~/.stride/db.sqlite` and runs migrations. Idempotent — safe to re-run
 
 One-time Strava OAuth: prints an authorize URL, you paste back the `code=` param. Stores tokens _and_ client credentials in the db — no env vars needed afterward.
 
+### `stride config`
+
+Lists the config that is set, with secrets redacted. Bare `config` shows only keys
+holding a value, which is what `just schema-check` selects on.
+
 ### `stride config set <key> <val>` / `stride config get <key>`
 
-Your numbers: HR zone bounds `hr_z1_max`…`hr_z4_max`, and either `timezone` (IANA, DST-aware) or `utc_offset_minutes` (fixed) to anchor "today". FTP is **not** configured — each sport derives its own from your power history.
+Your numbers: HR zone bounds `hr_z1_max`…`hr_z4_max`, `units` (metric or imperial), and either `timezone` (IANA, DST-aware) or `utc_offset_minutes` (fixed) to anchor "today". FTP is **not** configured — each sport derives its own from your power history.
 
 ### `stride config unset <key>`
 
@@ -28,11 +32,14 @@ command is safe to re-run and a no-op is visible rather than silent. This is the
 out for a row the engine no longer reads — `config set <key> ""` does NOT remove a key
 (#276); an empty value is refused for every key class.
 
+
 ## Data (daily)
 
 ### `stride sync`
 
 Pulls new activities + the next batch of HR/power streams. Re-pulls a rolling 30-day window so edits made on Strava self-heal. The fast daily command.
+
+`--all` forces a full re-list from scratch rather than the rolling window — a dev escape hatch, not part of the daily loop.
 
 ### `stride rate <activity_id|latest> <1-10>`
 
@@ -45,6 +52,9 @@ Loads a **Strava account export** (the ZIP from Settings → My Account → Down
 ### `stride analyze`
 
 Computes metrics for new (or invalidated) activities — TSS, time-in-zone, normalized power — then rebuilds the daily fitness/fatigue/form series through today. Prints what it did plus a one-line form verdict.
+
+
+Each answers a different question.
 
 ## Reading your training
 
@@ -66,7 +76,7 @@ _What were my best sessions?_ Ranks activities (default top 10) by a metric — 
 
 _Can I trust my data?_ Coverage (HR/power/streams/ratings), how each activity was scored and the **measured-vs-estimated confidence split**, config gaps (HR zones), streams still pending, and the active time anchor. Every gap says what, why, and the fix.
 
-### `stride zones` (alias `pz`)
+### `stride zones` (alias `stride pz`)
 
 _What watts is each power zone for me?_ The 7 Coggan/Peloton power zones as watt ranges derived from your FTP (they shift when FTP changes). The targets you'd set on a Power Zone ride.
 
@@ -76,7 +86,22 @@ _Am I riding the same workout harder?_ One level below `progress`: the anchor se
 
 ### `stride progress [date] [asc|desc]`
 
-_Am I improving on this workout?_ Every past instance of a workout, compared with a **sport-aware lens** — Efficiency Factor (NP ÷ HR) for power rides, speed ÷ HR for distance sports, RPE for rated strength/HIIT — with a trend verdict and last-vs-best. A session with detected interval structure is grouped by SHAPE — reps' mate predicate plus its anchor uniformity gate — so the trend finds the workout under any class name and excludes different workouts sharing one; sessions without structure (or too irregular to be one repeated shape) group by name. Bare `progress` uses your latest session; `Metrics.anchor_filter` carries the exact name-side matching rules (exact-named workouts compare every instance; auto-named sessions — Morning/Lunch/Afternoon/Evening/Night, any sport — compare only within ±10% of the anchor distance, and an auto-named anchor with no distance recorded shows alone). Sessions list oldest-first (`asc`, the default) so the trend reads left to right; `desc` puts the newest first when you only want the last few. The verdict is computed chronologically either way.
+_Am I improving on this workout?_ Every past instance of a workout, compared with a
+**sport-aware lens** — Efficiency Factor (NP ÷ HR) for power rides, speed ÷ HR for
+distance sports, RPE for rated strength/HIIT — with a trend verdict and last-vs-best.
+
+A session with detected interval structure is grouped by SHAPE — reps' mate predicate
+plus its anchor uniformity gate — so the trend finds the workout under any class name
+and excludes different workouts sharing one. Sessions without structure, or too
+irregular to be one repeated shape, group by name instead.
+
+Name-side matching: exact-named workouts compare every instance. Auto-named sessions
+(Morning/Lunch/Afternoon/Evening/Night, any sport) compare only within ±10% of the
+anchor distance, and an auto-named anchor with no distance recorded shows alone.
+
+Bare `progress` uses your latest session. Sessions list oldest-first (`asc`, the
+default) so the trend reads left to right; `desc` puts the newest first when you only
+want the last few. The verdict is computed chronologically either way.
 
 ### `stride load [days]`
 
@@ -86,29 +111,21 @@ _Is my training working over time?_ Daily fitness/fatigue/form rows for windows 
 
 _Is this period better than the last?_ The last rolling window (7 or 28 days) beside the one before it — load, sessions, hard minutes, easy %, and end-of-window fitness — with signed deltas and a ramp/fitness verdict.
 
-### `stride plan`
-
-_What should I do next?_ One call bundling `summary` + every open session + the last 14 days of activities — the complete planning context.
-
-### `stride week` / `stride week all`
-
-_What was planned, and did it happen?_ `week` is the current training week (Mon–Sun). `week all` sections the log — **upcoming**, **this week**, **last week** — and counts anything older rather than hiding it; the JSON payload always carries every row. Status is open / done / skipped, and a session completed on a different day than planned shows that date.
-
 ### `stride activity <id>`
 
 _How did one session actually go?_ Deep view of a single activity: load, intensity, zone minutes, hard time, and power bests (1/3/5/20 min) computed from its streams. The session-review tool.
 
-### `stride power-curve [days] [sport]` (alias `pc`)
+### `stride power-curve [days] [sport]` (alias `stride pc`)
 
 _What's my power at every duration?_ The power-duration curve — best watts held for 5 s through 60 min across a window (default 90 days), across every power sport unless you name one — with a **Critical Power / W′** fit: your sustainable aerobic ceiling and the finite battery above it. Reads the stored per-activity bests; the shape behind FTP.
 
-### `stride pace-curve [days] [sport]` (alias `cs`)
+### `stride pace-curve [days] [sport]` (alias `stride cs`)
 
 _What's my pace at every duration?_ The pace twin of the power curve — best grade-adjusted speed held for 5, 10 and 20 min across a window (default 90 days), with a **Critical Speed / D′** fit: the sustainable ceiling and the finite DISTANCE spendable above it, where W′ is an energy. Name a sport — a pool swim and a trail run do not share a speed model, so there is no combined curve to draw.
 
 ### `stride season`
 
-_What has my training actually looked like, block by block?_ (the whole history, not a year — currently 2021 to today) Training blocks, monthly load, polarization and FTP over time. A block is a run of training weeks closed by two or more weeks off — the only boundary in the data that is not a judgment call — and each one is described by its measured load trend rather than labelled a phase. See ADR 0011.
+_What has my training actually looked like, block by block?_ (the whole history, not a calendar year) Training blocks, monthly load, polarization and FTP over time. A block is a run of training weeks closed by two or more weeks off — the only boundary in the data that is not a judgment call — and each one is described by its measured load trend rather than labelled a phase. See ADR 0011.
 
 ### `stride tte <watts>`
 
@@ -118,13 +135,25 @@ _How long could I hold this?_ Time to exhaustion at a power you name, from a Cri
 
 _What have I done, ever and this year?_ Career and year-to-date totals per sport: sessions, hours, distance.
 
+## Coaching log
+
+The adaptation loop.
+
+### `stride plan`
+
+_What should I do next?_ One call bundling `summary` + every open session + the last 14 days of activities — the complete planning context.
+
+### `stride week` / `stride week all`
+
+_What was planned, and did it happen?_ `week` is the current training week (Mon–Sun). `week all` sections the log — **upcoming**, **this week**, **last week** — and counts anything older rather than hiding it; the JSON payload always carries every row. Status is open / done / skipped, and a session completed on a different day than planned shows that date.
+
 ### `stride week add <date> <type> <detail> <rationale> [target]`
 
 Records a planned session. `type` is the intensity intent (vo2max, threshold, endurance, recovery, strength, rest); the sport goes in `detail`. The optional target is a strict `<reps>x<mm:ss>@<watts>W` literal (`3x12:00@230W`, ADR 0014) stored beside the prose — completing a targeted session then reports the recorded numbers beside the detected shape, arithmetic with no verdict. Re-planning a date revises its open session in place rather than stacking a second row; omitting the target on a re-plan clears it. Refuses a bad date (`bad_date`) or a malformed target (`bad_target`).
 
 ### `stride complete <id> [activity_id]`
 
-Marks a planned session done, linked to the activity that fulfilled it (rest days need no activity). Refuses ids that don't exist.
+Marks a planned session done, linked to the activity that fulfilled it. Only a REST session may be completed bare — anything else raises `activity_required`, because done means evidence. Refuses ids that don't exist.
 
 ### `stride skip <id> <reason> [activity_id]`
 
@@ -142,7 +171,6 @@ _If the plan is executed as written, where is my form on date D?_ CTL/ATL/TSB on
 
 Fixes a session's label — any status, done ones included. Edits only the descriptive fields: status, activity links and metrics never move, and `analyze` after a relabel recomputes nothing. The day-swap fix: a completed session whose label still describes the plan it displaced no longer needs a duplicate row or hand-run SQL. Omitting the rationale keeps the stored one.
 
-## Coaching log
 
 The adaptation loop.
 

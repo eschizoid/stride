@@ -214,8 +214,9 @@ stride plan                                       # everything needed to plan a 
 ## Commands
 
 Full detail for every command — grouping rules, matching semantics, output
-shapes — lives in **[docs/commands.md](docs/commands.md)**. `stride --help` is
-the authoritative list; this table is the index.
+shapes — lives in **[docs/commands.md](docs/commands.md)**.
+`STRIDE_FORMAT=json stride --help` is generated from the parser and is the
+authoritative list; this table is the index.
 
 **Setup (once)**
 
@@ -223,7 +224,8 @@ the authoritative list; this table is the index.
 | --------------------------------------------- | --------------------------------------------------------------- |
 | `init`                                        | create `~/.stride` and migrate the SQLite db — idempotent       |
 | `auth`                                        | one-time Strava OAuth; stores tokens and client creds in the db |
-| `config set <key> <val>` / `config get <key>` | your numbers: HR zone bounds, timezone                          |
+| `config`                                      | list the config that is set (secrets redacted)                  |
+| `config set <key> <val>` / `config get <key>` | your numbers: HR zone bounds, timezone, units                   |
 | `config unset <key>`                          | remove a key outright                                           |
 
 **Data (daily)**
@@ -237,34 +239,34 @@ the authoritative list; this table is the index.
 
 **Reading your training**
 
-| Command                                   | What it does                                              |
-| ----------------------------------------- | --------------------------------------------------------- |
-| `summary`                                 | form, 7d/28d zones + polarization, derived FTP, per-sport |
-| `stats`                                   | career + year-to-date totals per sport                    |
-| `doctor`                                  | dataset health: coverage + how each activity was scored   |
-| `activities [n] [sport]`                  | recent sessions with metrics (default 30)                 |
-| `activity <id>`                           | one session in depth: zones, bests, hard minutes          |
-| `top <metric> [n] [sport]`                | best sessions by a metric — hr, tss, power, distance      |
-| `load [days]`                             | fitness/fatigue/form series (default 90)                  |
-| `zones` (alias `pz`)                      | power-zone watt ranges from your derived FTP              |
-| `compare [week\|month]`                   | this period vs the one before it                          |
-| `season`                                  | training blocks, monthly load, polarization, FTP          |
-| `power-curve [days] [sport]` (alias `pc`) | power-duration curve + Critical Power                     |
-| `pace-curve [days] [sport]` (alias `cs`)  | speed-duration curve + Critical Speed                     |
-| `tte <watts>`                             | how long the CP model says you could hold a power         |
-| `reps [date]`                             | the same workout shape across sessions, rep by rep        |
-| `progress [date] [asc\|desc]`             | trend on a repeated workout, sport-aware lens             |
+| Command                                   | What it does                                                |
+| ----------------------------------------- | ----------------------------------------------------------- |
+| `summary`                                 | form, 7d/28d zones + polarization, derived FTP, per-sport   |
+| `stats`                                   | career + year-to-date totals per sport                      |
+| `doctor`                                  | dataset health: coverage + how each activity was scored     |
+| `activities [n] [sport]`                  | recent sessions with metrics (default 30)                   |
+| `activity <id>`                           | one session in depth: zones, bests, hard minutes            |
+| `top <metric> [n] [sport]`                | best by hr, tss, power, intensity, distance, time or output |
+| `load [days]`                             | fitness/fatigue/form series (default 90)                    |
+| `zones` (alias `pz`)                      | power-zone watt ranges from your derived FTP                |
+| `compare [week\|month]`                   | this period vs the one before it                            |
+| `season`                                  | training blocks, monthly load, polarization, FTP            |
+| `power-curve [days] [sport]` (alias `pc`) | power-duration curve + Critical Power                       |
+| `pace-curve [days] [sport]` (alias `cs`)  | speed-duration curve + Critical Speed; name a sport         |
+| `tte <watts>`                             | how long the CP model says you could hold a power           |
+| `reps [date]`                             | the same workout shape across sessions, rep by rep          |
+| `progress [date] [asc\|desc]`             | trend on a repeated workout, sport-aware lens               |
 
 **Coaching log**
 
 | Command                                                    | What it does                                            |
 | ---------------------------------------------------------- | ------------------------------------------------------- |
-| `plan`                                                     | planning bundle: summary + open sessions + 14d outlook  |
+| `plan`                                                     | planning bundle: summary + open sessions + last 14d     |
 | `week` / `week all`                                        | this week's sessions; `all` adds upcoming and last week |
 | `week add <date> <type> <detail> <rationale> [target]`     | add a planned session                                   |
-| `complete <id> [activity_id]`                              | mark done (bare = rest day)                             |
-| `skip <id> <reason> [activity_id]`                         | mark skipped, naming what was done instead              |
-| `relabel <id> <type> <detail> [rationale]`                 | correct a planned session in place                      |
+| `complete <id> [activity_id]`                              | mark done (bare = rest days only)                       |
+| `skip <id> <reason> [activity_id\|none]`                   | mark skipped; `none` releases an existing link          |
+| `relabel <id> <type> <detail> [rationale]`                 | fix a session's label, any status                       |
 | `event add <date> <name>` / `event remove <id>` / `events` | event targets                                           |
 | `project <date> [plan]`                                    | projected CTL/ATL/TSB on a date                         |
 
