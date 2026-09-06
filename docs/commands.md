@@ -1,6 +1,8 @@
 # Command reference
 
-One section per command, with the behaviour you need to use it correctly.
+One section per command, with the behaviour you need to use it correctly. Closely
+related subcommands share a section — `config set` with `config get`, `week` with
+`week all` — so the count of sections is smaller than the count of commands.
 The [README table](../README.md#commands) is the index; this is the detail.
 
 `STRIDE_FORMAT=json stride --help` is emitted from `Command.specs`, whose verbs e2e
