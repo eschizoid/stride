@@ -419,8 +419,8 @@ ReportHealth :: [].{
             # parsed fine and whose clock did not, while this section read as "nothing else is
             # wrong" (#282). Printed as the REMAINDER — the populations are nested, and 4
             # under 3 invites subtraction. SELF-CONTAINED when it prints alone: the undateable
-            # line it used to borrow the repair pointer from is suppressed at zero, and on the
-            # real database a lone bad-clock row is the ONLY path such a row can take.
+            # line it would otherwise borrow the repair pointer from is suppressed at zero,
+            # and on the real database a lone bad-clock row is the ONLY path such a row can take.
             unrankable =
                 if p.unrankable_activities > p.undateable_activities
                     if p.undateable_activities > 0

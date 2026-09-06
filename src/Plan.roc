@@ -151,7 +151,7 @@ Plan :: [].{
         # `week all` must mean ALL: the older-sessions count and the note pointing at the
         # JSON are both lies if the query silently truncates. SQLite treats a negative
         # LIMIT as unbounded, so this stays a BOUND value — no interpolated clause, which
-        # is the pattern that spliced an empty string into the query and crashed the
+        # is the pattern that splices an empty string into the query and crashes the
         # backend (see the :all note above).
         row_limit =
             match scope {

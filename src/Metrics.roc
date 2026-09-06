@@ -1846,9 +1846,9 @@ Metrics :: [].{
     }
 
     # The widest spacing between CONSECUTIVE REAL sessions strictly between two rendered
-    # ones. `progress` filters out rides its lens cannot score, and the gap marker used to be
-    # folded over what SURVIVED — so a dropped ride merged its two neighbouring intervals
-    # into one and the table announced a break the athlete never took. Measured on real data:
+    # ones. `progress` filters out rides its lens cannot score, so folding the gap
+    # marker over what SURVIVED would merge a dropped ride's two neighbouring intervals
+    # into one and announce a break the athlete never took. Measured on real data:
     # a 2025-12-06 ride with no HR was dropped from an EF group, turning 62 days + 41 days
     # into a single 103-day span and printing `··· = a break over 90 days`.
     #
