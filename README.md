@@ -215,8 +215,8 @@ stride plan                                       # everything needed to plan a 
 
 Full detail for every command — grouping rules, matching semantics, output
 shapes — lives in **[docs/commands.md](docs/commands.md)**.
-`STRIDE_FORMAT=json stride --help` is generated from the parser and is the
-authoritative list; this table is the index.
+`STRIDE_FORMAT=json stride --help` is emitted from `Command.specs`, which e2e pins
+against the parser's own verb list; it is the authoritative list and this table is the index.
 
 **Setup (once)**
 
@@ -239,23 +239,23 @@ authoritative list; this table is the index.
 
 **Reading your training**
 
-| Command                                   | What it does                                                |
-| ----------------------------------------- | ----------------------------------------------------------- |
-| `summary`                                 | form, 7d/28d zones + polarization, derived FTP, per-sport   |
-| `stats`                                   | career + year-to-date totals per sport                      |
-| `doctor`                                  | dataset health: coverage + how each activity was scored     |
-| `activities [n] [sport]`                  | recent sessions with metrics (default 30)                   |
-| `activity <id>`                           | one session in depth: zones, bests, hard minutes            |
-| `top <metric> [n] [sport]`                | best by hr, tss, power, intensity, distance, time or output |
-| `load [days]`                             | fitness/fatigue/form series (default 90)                    |
-| `zones` (alias `pz`)                      | power-zone watt ranges from your derived FTP                |
-| `compare [week\|month]`                   | this period vs the one before it                            |
-| `season`                                  | training blocks, monthly load, polarization, FTP            |
-| `power-curve [days] [sport]` (alias `pc`) | power-duration curve + Critical Power                       |
-| `pace-curve [days] [sport]` (alias `cs`)  | speed-duration curve + Critical Speed; name a sport         |
-| `tte <watts>`                             | how long the CP model says you could hold a power           |
-| `reps [date]`                             | the same workout shape across sessions, rep by rep          |
-| `progress [date] [asc\|desc]`             | trend on a repeated workout, sport-aware lens               |
+| Command                                          | What it does                                                |
+| ------------------------------------------------ | ----------------------------------------------------------- |
+| `summary`                                        | form, 7d/28d zones + polarization, derived FTP, per-sport   |
+| `stats`                                          | career + year-to-date totals per sport                      |
+| `doctor`                                         | dataset health: coverage + how each activity was scored     |
+| `activities [n] [sport]`                         | recent sessions with metrics (default 30)                   |
+| `activity <id>`                                  | one session in depth: zones, bests, hard minutes            |
+| `top <metric> [n] [sport]`                       | best by hr, tss, power, intensity, distance, time or output |
+| `load [days]`                                    | fitness/fatigue/form series (default 90)                    |
+| `zones` (alias `stride pz`)                      | power-zone watt ranges from your derived FTP                |
+| `compare [week\|month]`                          | this period vs the one before it                            |
+| `season`                                         | training blocks, monthly load, polarization, FTP            |
+| `power-curve [days] [sport]` (alias `stride pc`) | power-duration curve + Critical Power                       |
+| `pace-curve [days] [sport]` (alias `stride cs`)  | speed-duration curve + Critical Speed; name a sport         |
+| `tte <watts>`                                    | how long the CP model says you could hold a power           |
+| `reps [date]`                                    | the same workout shape across sessions, rep by rep          |
+| `progress [date] [asc\|desc]`                    | trend on a repeated workout, sport-aware lens               |
 
 **Coaching log**
 

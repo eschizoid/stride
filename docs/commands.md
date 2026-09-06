@@ -3,8 +3,8 @@
 One section per command, with the behaviour you need to use it correctly.
 The [README table](../README.md#commands) is the index; this is the detail.
 
-`STRIDE_FORMAT=json stride --help` is generated from the parser, so its list of
-commands and arguments cannot drift. This file explains what they *mean*.
+`STRIDE_FORMAT=json stride --help` is emitted from `Command.specs`, whose verbs e2e
+pins against the parser's own list. That is the authoritative set; this file explains what the commands *mean*.
 
 ## Setup (once)
 
@@ -153,7 +153,7 @@ Records a planned session. `type` is the intensity intent (vo2max, threshold, en
 
 Marks a planned session done, linked to the activity that fulfilled it. Only a REST session may be completed bare — anything else raises `activity_required`, because done means evidence. Refuses ids that don't exist.
 
-### `stride skip <id> <reason> [activity_id]`
+### `stride skip <id> <reason> [activity_id|none]`
 
 Marks a planned session skipped, with the reason — optionally linking the activity done instead (rendered `→ id` in `week`). Adherence history stays honest either way; a bare re-skip keeps an existing link; pass a new id to change it or `none` to release it. A done session refuses skip — re-complete to fix a mis-link.
 
