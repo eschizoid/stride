@@ -87,7 +87,10 @@ load_series! = |db| {
 	# day is the engine-written PRIMARY KEY in canonical YYYY-MM-DD; for
 	# ISO-8601 text, lexical order IS date order, and the bare column keeps
 	# the primary-key index usable — wrapping it in date() would forfeit both.
-	q = "SELECT CAST(day AS TEXT) AS day, CAST(ROUND(COALESCE(ctl, 0.0)*10) AS INTEGER) AS c10, CAST(ROUND(COALESCE(atl, 0.0)*10) AS INTEGER) AS a10, CAST(ROUND(COALESCE(tsb, 0.0)*10) AS INTEGER) AS t10, CAST(ROUND(COALESCE(tss, 0.0)*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY day DESC LIMIT 90) ORDER BY day ASC"
+	# The numeric columns are never NULL on the engine's write path (analyze
+	# binds all five on every INSERT OR REPLACE), so a NULL is corruption:
+	# the decode fails into the visible error state rather than plotting 0s.
+	q = "SELECT CAST(day AS TEXT) AS day, CAST(ROUND(ctl*10) AS INTEGER) AS c10, CAST(ROUND(atl*10) AS INTEGER) AS a10, CAST(ROUND(tsb*10) AS INTEGER) AS t10, CAST(ROUND(tss*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY day DESC LIMIT 90) ORDER BY day ASC"
 	match Sqlite.query!({ db, query: q, bindings: [] }) {
 		Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "daily_load query failed — analyzed yet?" }
 		Ok(rows) => {
@@ -117,6 +120,10 @@ load_series! = |db| {
 
 Event : { day : Str, name : Str, ahead : I64 }
 
+# "today" is the series' own last day (MAX(day) rides the PK index), so the
+# marker and the plot share one clock; the wall clock only answers when
+# daily_load is empty. Stride's time-mode config can shift its current day
+# away from localtime, and daily_load is built against stride's day.
 load_event! : Sqlite.Db => Event
 load_event! = |db|
 	match Sqlite.query!({ db, query: "SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(event_date) - julianday(date('now','localtime')) AS INTEGER) AS ahead FROM events WHERE event_date >= date('now', 'localtime') ORDER BY event_date ASC LIMIT 1", bindings: [] }) {
