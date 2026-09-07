@@ -39,6 +39,10 @@ Model : {
 	ev_idx : U64,
 	ev_ahead : I64,
 	ev_far_label : Text.Prepared,
+	ev_warn : Text.Prepared,
+	ev_warn_found : Bool,
+	stale : Text.Prepared,
+	stale_found : Bool,
 	view : U8,
 	curve : List(CurvePt),
 	curve_lbls : List({ p : Text.Prepared, d : I64 }),
@@ -126,26 +130,46 @@ load_series! = |db| {
 	}
 }
 
-Event : { day : Str, name : Str, ahead : I64 }
+Event : { day : Str, name : Str, ahead : I64, err : Str }
 
 # "today" is the series' own last day (MAX(day) rides the PK index), so the
 # marker and the plot share one clock; the wall clock only answers when
 # daily_load is empty. Stride's time-mode config can shift its current day
 # away from localtime, and daily_load is built against stride's day.
+# days the wall clock is past MAX(day) — 0 when analyze ran today or the
+# table is empty (NULL diff decodes as Err and lands on the 0 default)
+load_stale! : Sqlite.Db => I64
+load_stale! = |db|
+	match Sqlite.query!({ db, query: "SELECT CAST(julianday(date('now','localtime')) - julianday(MAX(day)) AS INTEGER) AS st FROM daily_load", bindings: [] }) {
+		Err(_) => 0
+		Ok(rows) => match List.first(rows) {
+			Err(_) => 0
+			Ok(r) => match r.i64("st") { Ok(x) => if x > 0 x else 0
+				Err(_) => 0 }
+		}
+	}
+
 load_event! : Sqlite.Db => Event
 load_event! = |db|
 	match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(event_date) - julianday(today) AS INTEGER) AS ahead FROM events, anchor WHERE event_date >= today ORDER BY event_date ASC LIMIT 1", bindings: [] }) {
-		Err(_) => { day: "", name: "", ahead: 0 }
+		Err(_) => { day: "", name: "", ahead: 0, err: "events query failed" }
 		Ok(rows) => match List.first(rows) {
-			Err(_) => { day: "", name: "", ahead: 0 }
+			# no rows is the normal no-upcoming-event state, not an error
+			Err(_) => { day: "", name: "", ahead: 0, err: "" }
 			Ok(r) => {
-				d = match r.str("event_date") { Ok(x) => x
-					Err(_) => "" }
-				nm = match r.str("name") { Ok(x) => x
-					Err(_) => "" }
-				ah = match r.i64("ahead") { Ok(x) => x
-					Err(_) => 0 }
-				{ day: d, name: nm, ahead: ah }
+				# a row that exists but does not decode is corruption, and the
+				# board's rule is that corruption surfaces — same as load_series!
+				decoded = match r.str("event_date") {
+					Ok(d) => match r.str("name") {
+						Ok(nm) => match r.i64("ahead") {
+							Ok(ah) => { day: d, name: nm, ahead: ah, err: "" }
+							Err(_) => { day: "", name: "", ahead: 0, err: "event record unreadable" }
+						}
+						Err(_) => { day: "", name: "", ahead: 0, err: "event record unreadable" }
+					}
+					Err(_) => { day: "", name: "", ahead: 0, err: "event record unreadable" }
+				}
+				decoded
 			}
 		}
 	}
@@ -217,15 +241,16 @@ init! = App.init(
 		}
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0 }, c: [] }
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				s = load_series!(db)
 				e = load_event!(db)
 				c = load_curve!(db)
-				{ s, e, c }
+				st = load_stale!(db)
+				{ s, e, c, st }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0 }, c: [] }
+			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 }
 		}
 		ev = find_idx(loaded.s.days, loaded.e.day)
 		fit = load_fit!({})
@@ -269,6 +294,16 @@ init! = App.init(
 			ev_found: ev.found,
 			ev_idx: ev.idx,
 			ev_ahead: loaded.e.ahead,
+			ev_warn: mk!(loaded.e.err, 13)?,
+			ev_warn_found: loaded.e.err != "",
+			stale: mk!(
+				match List.last(loaded.s.days) {
+					Ok(ld) => "data as of ${ld} — analyze to refresh"
+					Err(_) => ""
+				},
+				13,
+			)?,
+			stale_found: loaded.st > 0,
 			ev_far_label: mk!("${loaded.e.name}  ${I64.to_str(loaded.e.ahead)}d", 13)?,
 			view: 0,
 			curve: loaded.c,
@@ -376,10 +411,16 @@ render! = |model, frame| {
 
 	# The next planned event, when it lies BEYOND the plotted window. The dashed
 	# in-plot marker below can only fire for a date the series contains, and the
-	# series ends today — so for a genuine future event it never draws. This is
-	# the header countdown that does.
+	# series ends on the last analyzed day — so for a future event it does not
+	# draw. This is the header countdown that does.
 	if !(model.ev_found) and model.ev_ahead > 0 {
 		model.ev_far_label.draw!(frame, { pos: { x: 940.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
+	} else {}
+	if model.ev_warn_found {
+		model.ev_warn.draw!(frame, { pos: { x: 940.0, y: 52.0 }, color: atl_c, align: (Top, Right) })
+	} else {}
+	if model.stale_found {
+		model.stale.draw!(frame, { pos: { x: 940.0, y: 34.0 }, color: ink_faint, align: (Top, Right) })
 	} else {}
 
 	if model.has_error {
