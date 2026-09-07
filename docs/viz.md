@@ -29,7 +29,7 @@ just viz-check    # type-check only, no window
 ```
 
 The viz pins **its own compiler** — roc-ray's platform needs
-`nightly-2026-08-23`, not the engine's pin. The pin lives in the app header of
+`nightly-2026-08-23-fb208ba`, not the engine's pin. The pin lives in the app header of
 `src/viz.roc`; point `ROC_VIZ` at a matching nightly if your PATH `roc` is the
 engine's. CI checks it in its own job (`viz-check` in `build.yml`) with that
 same tag.

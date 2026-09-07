@@ -32,6 +32,8 @@ Model : {
 	ev_label : Text.Prepared,
 	ev_found : Bool,
 	ev_idx : U64,
+	ev_ahead : I64,
+	ev_far_label : Text.Prepared,
 	data : List(Point),
 	days : List(Str),
 	status : Text.Prepared,
@@ -80,7 +82,7 @@ Loaded : { data : List(Point), days : List(Str), last : { c : I64, a : I64, t : 
 
 load_series! : Sqlite.Db => Loaded
 load_series! = |db| {
-	q = "SELECT CAST(day AS TEXT) AS day, CAST(ROUND(COALESCE(ctl, 0.0)*10) AS INTEGER) AS c10, CAST(ROUND(COALESCE(atl, 0.0)*10) AS INTEGER) AS a10, CAST(ROUND(COALESCE(tsb, 0.0)*10) AS INTEGER) AS t10, CAST(ROUND(COALESCE(tss, 0.0)*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY day DESC LIMIT 90) ORDER BY day ASC"
+	q = "SELECT CAST(day AS TEXT) AS day, CAST(ROUND(COALESCE(ctl, 0.0)*10) AS INTEGER) AS c10, CAST(ROUND(COALESCE(atl, 0.0)*10) AS INTEGER) AS a10, CAST(ROUND(COALESCE(tsb, 0.0)*10) AS INTEGER) AS t10, CAST(ROUND(COALESCE(tss, 0.0)*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY date(day) DESC LIMIT 90) ORDER BY date(day) ASC"
 	match Sqlite.query!({ db, query: q, bindings: [] }) {
 		Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "daily_load query failed — analyzed yet?" }
 		Ok(rows) => {
@@ -108,20 +110,22 @@ load_series! = |db| {
 	}
 }
 
-Event : { day : Str, name : Str }
+Event : { day : Str, name : Str, ahead : I64 }
 
 load_event! : Sqlite.Db => Event
 load_event! = |db|
-	match Sqlite.query!({ db, query: "SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name FROM events WHERE event_date >= date('now', 'localtime') ORDER BY event_date ASC LIMIT 1", bindings: [] }) {
-		Err(_) => { day: "", name: "" }
+	match Sqlite.query!({ db, query: "SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(event_date) - julianday(date('now','localtime')) AS INTEGER) AS ahead FROM events WHERE event_date >= date('now', 'localtime') ORDER BY event_date ASC LIMIT 1", bindings: [] }) {
+		Err(_) => { day: "", name: "", ahead: 0 }
 		Ok(rows) => match List.first(rows) {
-			Err(_) => { day: "", name: "" }
+			Err(_) => { day: "", name: "", ahead: 0 }
 			Ok(r) => {
 				d = match r.str("event_date") { Ok(x) => x
 					Err(_) => "" }
 				nm = match r.str("name") { Ok(x) => x
 					Err(_) => "" }
-				{ day: d, name: nm }
+				ah = match r.i64("ahead") { Ok(x) => x
+					Err(_) => 0 }
+				{ day: d, name: nm, ahead: ah }
 			}
 		}
 	}
@@ -149,14 +153,14 @@ init! = App.init(
 		}
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "" } }
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0 } }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				s = load_series!(db)
 				e = load_event!(db)
 				{ s, e }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "" } }
+			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0 } }
 		}
 		ev = find_idx(loaded.s.days, loaded.e.day)
 		mk! = |txt, sz| Text.from(txt, font).size(sz).prepare!()
@@ -190,6 +194,8 @@ init! = App.init(
 			ev_label: mk!(loaded.e.name, 13)?,
 			ev_found: ev.found,
 			ev_idx: ev.idx,
+			ev_ahead: loaded.e.ahead,
+			ev_far_label: mk!("${loaded.e.name}  ${I64.to_str(loaded.e.ahead)}d", 13)?,
 			data: loaded.s.data,
 			days: loaded.s.days,
 			status: mk!(loaded.s.err, 16)?,
@@ -254,6 +260,14 @@ render! = |model, frame| {
 		if s.r == model.range {
 			s.p.draw!(frame, { pos: { x: 280.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		} else {})
+
+	# The next planned event, when it lies BEYOND the plotted window. The dashed
+	# in-plot marker below can only fire for a date the series contains, and the
+	# series ends today — so for a genuine future event it never draws. This is
+	# the header countdown that does.
+	if !(model.ev_found) and model.ev_ahead > 0 {
+		model.ev_far_label.draw!(frame, { pos: { x: 940.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
+	} else {}
 
 	if model.has_error {
 		model.status.draw!(frame, { pos: { x: 36.0, y: 120.0 }, color: atl_c, align: (Top, Left) })
