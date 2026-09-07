@@ -18,6 +18,8 @@ import rr.Draw
 import rr.Text
 import rr.Sqlite
 import rr.Cmd
+import rr.Capture
+import rr.Task
 
 CurvePt : { dur_s : I64, watts : F32 }
 Seg : { kind : Str, start_s : I64, dur_s : I64 }
@@ -58,6 +60,8 @@ Model : {
 	segs : List(Seg),
 	trace_title : Text.Prepared,
 	trace_dur : F32,
+	fit_cp : F32,
+	cp_lbl : Text.Prepared,
 	data : List(Point),
 	days : List(Str),
 	status : Text.Prepared,
@@ -96,6 +100,13 @@ fmt1 = |t| {
 }
 
 # F32 -> "41.9", through the same integer-tenths door as fmt1
+# A COUNT, not a magnitude: fmt_f would render 3 bests as "3.0".
+fmt_i : F32 -> Str
+fmt_i = |v| match F32.round_to_i64_try(v) {
+	Ok(n) => I64.to_str(n)
+	Err(_) => "?"
+}
+
 fmt_f : F32 -> Str
 fmt_f = |v| match F32.round_to_i64_try(v * 10.0) {
 	Ok(t) => fmt1(t)
@@ -302,7 +313,8 @@ init! = App.init(
 	App.default
 		.with_title("Stride Form Board")
 		.with_size({ width: win_w, height: win_h })
-		.with_frame_pacing(Capped(60)),
+		.with_frame_pacing(Capped(60))
+		.with_output_dir("captures"),
 	|_startup| {
 		font = Draw.default_font!()
 		# ~/.stride/db.sqlite, resolved at launch — the platform has no Env
@@ -332,7 +344,7 @@ init! = App.init(
 		fit = load_fit!({})
 		fit_text =
 			if fit.ok
-				"CP ${fmt_f(fit.cp)} W · W' ${fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${fmt_f(fit.r2)} from ${fmt_f(fit.points)} bests"
+				"CP ${fmt_f(fit.cp)} W · W' ${fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${fmt_f(fit.r2)} from ${fmt_i(fit.points)} bests"
 			else "CP fit unavailable — the engine did not answer"
 		mk! = |txt, sz| Text.from(txt, font).size(sz).prepare!()
 		curve_lbls = List.map_try(loaded.c, |c| {
@@ -385,16 +397,15 @@ init! = App.init(
 			curve: loaded.c,
 			curve_lbls: curve_lbls,
 			fit_lbl: mk!(fit_text, 14)?,
-			curve_title: mk!("power-duration curve — Ride, last 90 days", 15)?,
-			cp_w: fit.cp,
-			cp_ok: fit.ok,
-			cp_lbl: mk!("CP ${fmt_f(fit.cp)}", 13)?,
+			curve_title: mk!("power-duration curve - Ride, last 90 days", 15)?,
 			curve_hint: mk!("TAB  form board      ESC quit", 13)?,
-			curve_empty: mk!("no rides in the last 90 days — the curve has nothing to draw", 16)?,
+			curve_empty: mk!("no rides in the last 90 days - the curve has nothing to draw", 16)?,
 			trace: loaded.tr,
 			segs: loaded.sg,
-			trace_title: mk!("last structured session — detected blocks shaded behind the power trace", 15)?,
+			trace_title: mk!("last structured session - detected blocks shaded behind the power trace", 15)?,
 			trace_dur: loaded.du,
+			fit_cp: if fit.ok (fit.cp) else 0.0,
+			cp_lbl: mk!("CP ${fmt_f(fit.cp)}W", 12)?,
 			data: loaded.s.data,
 			days: loaded.s.days,
 			status: mk!(loaded.s.err, 16)?,
@@ -409,7 +420,10 @@ init! = App.init(
 	},
 )
 
-Msg : []
+# The app spawns one kind of task: a screenshot, whose result it ignores —
+# a failed shot must not take the window down, and the file's absence is the
+# report. Was `[]` while nothing spawned.
+Msg : [Shot(Try({}, Capture.ScreenshotError))]
 
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
 update! = |model, program_input| {
@@ -424,6 +438,14 @@ update! = |model, program_input| {
 			else model.range
 		view = if d.key_pressed(KeyTab) (if model.view == 2 0 else model.view + 1) else model.view
 		m = d.mouse.position()
+		# S writes a PNG of the CURRENT view into ./captures — #372's "session
+		# graphic for a training log". Spawned rather than called inline: a
+		# screenshot waits for the end of a frame, and update! is not one.
+		# The name carries the view so three presses do not overwrite each other.
+		_ = if d.key_pressed(KeyS) {
+			shot_name = if model.view == 0 ("form-board.png") else if model.view == 1 ("power-curve.png") else "session-trace.png"
+			Task.spawn!(program_input, || Shot(Capture.screenshot!(shot_name)))
+		} else {}
 		Ok({ ..model, range, view, mouse_x: m.x, mouse_in: m.y > pad_t and m.y < I32.to_f32(win_h) - pad_b })
 	}
 }
@@ -453,9 +475,13 @@ render! = |model, frame| {
 	frame.rounded_rectangle!({ x: 16.0, y: 16.0, width: I32.to_f32(win_w) - 32.0, height: I32.to_f32(win_h) - 32.0, radius: 14.0, segments: 10, style: Draw.filled(Color.from_hex_rgb(0x131318)) })
 
 	model.title.draw!(frame, { pos: { x: 34.0, y: 30.0 }, color: Color.white, align: (Top, Left) })
-	model.leg_fit.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ctl_c, align: (Top, Left) })
-	model.leg_fat.draw!(frame, { pos: { x: 118.0, y: 70.0 }, color: atl_c, align: (Top, Left) })
-	model.leg_form.draw!(frame, { pos: { x: 206.0, y: 70.0 }, color: tsb_c, align: (Top, Left) })
+	# Legend and subtitle belong to the FORM BOARD only. They draw in the same
+	# row the other views put their titles in, and overprinted them.
+	if model.view == 0 {
+		model.leg_fit.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ctl_c, align: (Top, Left) })
+		model.leg_fat.draw!(frame, { pos: { x: 118.0, y: 70.0 }, color: atl_c, align: (Top, Left) })
+		model.leg_form.draw!(frame, { pos: { x: 206.0, y: 70.0 }, color: tsb_c, align: (Top, Left) })
+	} else {}
 
 	# ── session trace view (TAB) ────────────────────────────────────────────
 	# The detector's blocks shaded BEHIND the real power trace, so the two can
@@ -516,6 +542,17 @@ render! = |model, frame| {
 			nlast = List.len(model.curve) - 1
 			cx = |i| if nlast == 0 (pad_l + pw / 2.0) else pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
 			cy = |w| pad_t + ph * (1.0 - w / w_hi)
+			# CP as a horizontal line: the curve should flatten toward it, and a fit
+			# drawn far from the long rungs is visibly wrong — which is the whole
+			# reason #372 wanted this view rather than the table.
+			if model.fit_cp > 0.0 {
+				cpy = cy(model.fit_cp)
+				List.for_each!(List.map_with_index(List.repeat({}, 60), |_u, k| k), |k| {
+					x0 = pad_l + U64.to_f32(k) * (pw / 60.0)
+					frame.line!({ start: { x: x0, y: cpy }, end: { x: x0 + pw / 120.0, y: cpy }, stroke: Draw.stroke(Color.with_alpha(tsb_c, 120), 1.0) })
+				})
+				model.cp_lbl.draw!(frame, { pos: { x: pad_l + pw + 8.0, y: cpy }, color: tsb_c, align: (Middle, Left) })
+			} else {}
 			# CP as a horizontal asymptote: the curve should flatten toward it,
 			# and a fit drawn far from the long rungs is visibly wrong.
 			if model.cp_ok and model.cp_w > 0.0 and model.cp_w < w_hi {
@@ -533,14 +570,14 @@ render! = |model, frame| {
 				frame.circle!({ center: { x: cx(x.i), y: cy(x.c.watts) }, radius: 4.0, style: Draw.filled(ctl_c) })
 			})
 			List.for_each!(List.map_with_index(model.curve_lbls, |l, i| { l, i }), |x| {
-				x.l.p.draw!(frame, { pos: { x: cx(x.i), y: pad_t + ph + 6.0 }, color: ink_faint, align: (Top, Center) })
+				x.l.p.draw!(frame, { pos: { x: cx(x.i), y: pad_t + ph - 18.0 }, color: ink_faint, align: (Top, Center) })
 			})
 			model.curve_hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
 			Ok({})
 		}
 	} else {
 	List.for_each!(model.subs, |s|
-		if s.r == model.range {
+		if s.r == model.range and model.view == 0 {
 			s.p.draw!(frame, { pos: { x: 280.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		} else {})
 
