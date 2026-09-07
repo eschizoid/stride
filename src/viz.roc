@@ -48,6 +48,11 @@ Model : {
 	curve_lbls : List({ p : Text.Prepared, d : I64 }),
 	fit_lbl : Text.Prepared,
 	curve_title : Text.Prepared,
+	cp_w : F32,
+	cp_ok : Bool,
+	cp_lbl : Text.Prepared,
+	curve_hint : Text.Prepared,
+	curve_empty : Text.Prepared,
 	data : List(Point),
 	days : List(Str),
 	status : Text.Prepared,
@@ -310,6 +315,11 @@ init! = App.init(
 			curve_lbls: curve_lbls,
 			fit_lbl: mk!(fit_text, 14)?,
 			curve_title: mk!("power-duration curve — Ride, last 90 days", 15)?,
+			cp_w: fit.cp,
+			cp_ok: fit.ok,
+			cp_lbl: mk!("CP ${fmt_f(fit.cp)}", 13)?,
+			curve_hint: mk!("TAB  form board      ESC quit", 13)?,
+			curve_empty: mk!("no rides in the last 90 days — the curve has nothing to draw", 16)?,
 			data: loaded.s.data,
 			days: loaded.s.days,
 			status: mk!(loaded.s.err, 16)?,
@@ -379,7 +389,8 @@ render! = |model, frame| {
 		model.curve_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		model.fit_lbl.draw!(frame, { pos: { x: 940.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
 		if List.is_empty(model.curve) {
-			model.hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
+			model.curve_empty.draw!(frame, { pos: { x: 36.0, y: 120.0 }, color: ink_muted, align: (Top, Left) })
+			model.curve_hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
 			Ok({})
 		} else {
 			pw = I32.to_f32(win_w) - pad_l - pad_r
@@ -394,13 +405,24 @@ render! = |model, frame| {
 			cy = |w| pad_t + ph * (1.0 - w / w_hi)
 			# CP as a horizontal asymptote: the curve should flatten toward it,
 			# and a fit drawn far from the long rungs is visibly wrong.
-			List.for_each!(List.map_with_index(model.curve, |c, i| { c, i }), |x| {
+			if model.cp_ok and model.cp_w > 0.0 and model.cp_w < w_hi {
+				cpy = cy(model.cp_w)
+				frame.line!({ start: { x: pad_l, y: cpy }, end: { x: I32.to_f32(win_w) - pad_r, y: cpy }, stroke: Draw.stroke(Color.with_alpha(tsb_c, 90), 1) })
+				model.cp_lbl.draw!(frame, { pos: { x: I32.to_f32(win_w) - pad_r + 8.0, y: cpy - 7.0 }, color: tsb_c, align: (Top, Left) })
+			} else {}
+			rungs = List.map_with_index(model.curve, |c, i| { c, i })
+			List.for_each!(rungs, |x|
+				match List.get(rungs, x.i + 1) {
+					Ok(nxt) => frame.line!({ start: { x: cx(x.i), y: cy(x.c.watts) }, end: { x: cx(nxt.i), y: cy(nxt.c.watts) }, stroke: Draw.stroke(Color.with_alpha(ctl_c, 150), 2) })
+					Err(_) => {}
+				})
+			List.for_each!(rungs, |x| {
 				frame.circle!({ center: { x: cx(x.i), y: cy(x.c.watts) }, radius: 4.0, style: Draw.filled(ctl_c) })
 			})
 			List.for_each!(List.map_with_index(model.curve_lbls, |l, i| { l, i }), |x| {
 				x.l.p.draw!(frame, { pos: { x: cx(x.i), y: pad_t + ph + 6.0 }, color: ink_faint, align: (Top, Center) })
 			})
-			model.hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
+			model.curve_hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
 			Ok({})
 		}
 	} else {
