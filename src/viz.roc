@@ -230,8 +230,10 @@ load_trace_id! = |db|
 # stream directly — SQLite has JSON1, and this platform has no JSON decoder.
 load_trace! : Sqlite.Db, I64 => List(F32)
 load_trace! = |db, aid| {
-	q = "WITH w AS (SELECT ROW_NUMBER() OVER () - 1 AS i, CAST(value AS INTEGER) AS v FROM streams, json_each(json_extract(streams.raw_json,'$.watts.data')) WHERE streams.activity_id = ${I64.to_str(aid)}), n AS (SELECT MAX(i)+1 AS c FROM w) SELECT v FROM w, n WHERE i % (MAX(n.c/800,1)) = 0 ORDER BY i"
-	match Sqlite.query!({ db, query: q, bindings: [] }) {
+	# json_each's key column IS the array index for a JSON array, so ordering
+	# is the array's own — no window function, nothing left unspecified.
+	q = "WITH w AS (SELECT json_each.key AS i, CAST(json_each.value AS INTEGER) AS v FROM streams, json_each(json_extract(streams.raw_json,'$.watts.data')) WHERE streams.activity_id = :aid), n AS (SELECT MAX(i)+1 AS c FROM w) SELECT v FROM w, n WHERE i % (MAX(n.c/800,1)) = 0 ORDER BY i"
+	match Sqlite.query!({ db, query: q, bindings: [{ name: ":aid", value: Integer(aid) }] }) {
 		Err(_) => []
 		Ok(rows) => List.keep_oks(rows, |r| {
 			v = r.i64("v") ? |_| "bad v"
@@ -243,8 +245,8 @@ load_trace! = |db, aid| {
 # The detector's blocks for the same activity, in seconds from the start.
 load_segs! : Sqlite.Db, I64 => List(Seg)
 load_segs! = |db, aid| {
-	q = "SELECT CAST(kind AS TEXT) AS kind, start_s, dur_s FROM activity_segments WHERE activity_id = ${I64.to_str(aid)} ORDER BY ordinal"
-	match Sqlite.query!({ db, query: q, bindings: [] }) {
+	q = "SELECT CAST(kind AS TEXT) AS kind, start_s, dur_s FROM activity_segments WHERE activity_id = :aid ORDER BY ordinal"
+	match Sqlite.query!({ db, query: q, bindings: [{ name: ":aid", value: Integer(aid) }] }) {
 		Err(_) => []
 		Ok(rows) => List.keep_oks(rows, |r| {
 			k = r.str("kind") ? |_| "bad kind"
@@ -264,7 +266,7 @@ load_segs! = |db, aid| {
 # hidden the bug.
 load_dur! : Sqlite.Db, I64 => F32
 load_dur! = |db, aid|
-	match Sqlite.query!({ db, query: "SELECT CAST(json_extract(raw_json,'$.time.data[#-1]') AS INTEGER) AS t FROM streams WHERE activity_id = ${I64.to_str(aid)}", bindings: [] }) {
+	match Sqlite.query!({ db, query: "SELECT CAST(json_extract(raw_json,'$.time.data[#-1]') AS INTEGER) AS t FROM streams WHERE activity_id = :aid", bindings: [{ name: ":aid", value: Integer(aid) }] }) {
 		Err(_) => 1.0
 		Ok(rows) => match List.first(rows) {
 			Err(_) => 1.0
