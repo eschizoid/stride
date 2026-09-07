@@ -146,3 +146,20 @@ jobs:
         run: just issue-claims
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The Form Board (src/viz.roc) rides a different platform (roc-ray) and a
+  # different nightly than the engine — its own pin lives in its app header.
+  # Nothing above imports it, so without this job it would land unchecked.
+  viz-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Roc (the viz pin, not the engine pin)
+        uses: ./.github/actions/setup-roc
+        with:
+          nightly-tag: nightly-2026-08-23-fb208ba
+
+      - name: Type-check the Form Board
+        run: roc check src/viz.roc

@@ -406,3 +406,17 @@ e2e:
     {{roc}} build tests/e2e.roc --output=e2e --opt=dev
     test -x ./stride || {  echo "e2e needs a ./stride binary — run \`just build\` first"; exit 1; }
     ./e2e
+
+# ── Form Board (src/viz.roc — the roc-ray window, ADR 0015) ─────────────────
+# The viz pins ITS OWN compiler (see the header of src/viz.roc): roc-ray's
+# platform needs nightly-2026-08-23, not the engine's pin. Point ROC_VIZ at a
+# matching nightly, or leave it and hope the PATH roc is close enough.
+roc_viz := env("ROC_VIZ", "roc")
+
+# open the Form Board window (reads ~/.stride/db.sqlite at launch; ESC quits)
+viz:
+    {{roc_viz}} src/viz.roc
+
+# type-check the viz without opening a window
+viz-check:
+    {{roc_viz}} check src/viz.roc
