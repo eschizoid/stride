@@ -1,42 +1,44 @@
-# Spike: Form Board as a native RocRay window
+# Spike: Form Board as a native RocRay window — live from the database
 
-A throwaway proof that ADR 0015's viz app is buildable, not vapor. It draws 90
-days of the engine's PMC series — fitness (CTL), fatigue (ATL), form (TSB) — in
-a native window, the same data the coach currently renders to an artifact.
+A native window drawing the last 90 days of the engine's PMC series (fitness,
+fatigue, form), read at launch directly from `~/.stride/db.sqlite` through
+RocRay's own `Sqlite` module. No export step, no baked data: the app is a
+second consumer of the database, which is ADR 0015's core claim, demonstrated.
+Compiles clean and runs on this hardware (x86_64 macOS).
 
-**This is a spike, not a target.** It does not build in this repo's CI and is
-not meant to: it depends on the RocRay platform, which currently pins
-`nightly-2026-08-23-fb208ba` while this repo pins `nightly-2026-09-04-c125b82`.
-That gap is the whole reason ADR 0015 stays Proposed. `spikes/` is outside
-`src/` and `tests/` on purpose, so no gate touches it.
+## What it proved
 
-## What it proves
+- RocRay's platform ships `Sqlite`, `Cmd`, `Task`, `Files`, `Http` — everything
+  ADR 0015's db-bus needs is expressible on it. `Sqlite.Db.open!` + `query!` +
+  `Row.i64` read stride's `daily_load` in `init!`.
+- The numeric boundary belongs to SQL. This nightly has no F64-to-F32
+  narrowing, so the query CASTs to integer tenths and `I64.to_f32 / 10`
+  restores the one-decimal fidelity the board displays anyway. Same instinct
+  as the repo's CAST-at-the-projection blob rule.
+- Prebuilt platform from a release URL: no zig, no host build, one `roc`
+  command to run.
 
-- RocRay apps pull a prebuilt platform from a release URL — no local zig, no
-  host build. The first line of the app downloads it.
-- The app checks parse-clean on RocRay's pin (08-23), and the real 90-day series
-  bakes straight in as a Roc literal.
-- The draw path is ordinary: `init!`/`update!`/`render!`, `Draw.line!` per
-  segment, self-scaling to the data.
+## Why it still cannot merge
 
-## Honest state
+RocRay pins `nightly-2026-08-23`; this repo pins `nightly-2026-09-04`, past
+the ordering-API rename. One toolchain per repo is ADR 0015 decision 4, so
+this waits in `spikes/` — outside every gate — until RocRay crosses the
+rename.
 
-Written and parse-clean; ~7 type errors remain, all the `Dec`-vs-`F32` literal
-defaulting documented in #371 (bare `0.0` in `F32` arithmetic infers `Dec`).
-Finishing them is annotation work, not architecture, and was stopped here
-deliberately — the spike had already answered the question it was built to ask.
-
-## To run it (on RocRay's pin, not this repo's)
+## To run (on RocRay's pin, not this repo's)
 
     git clone https://github.com/lukewilliamboswell/roc-ray.git
-    cp spikes/roc-ray-form-board/main.roc roc-ray/examples/form_board.roc
+    mkdir -p roc-ray/examples/stride_form_board
+    cp spikes/roc-ray-form-board/main.roc roc-ray/examples/stride_form_board/
     cd roc-ray
     # install nightly-2026-08-23-fb208ba, then:
-    roc examples/form_board.roc
+    roc examples/stride_form_board/main.roc
 
-## The real design
+ESC quits. A database that will not open is reported on screen, not fatal.
 
-Not this. The real app reads the series from the stride SQLite instead of a
-baked literal, and is driven through the database — `viz_directives` coach to
-window, `viz_focus` window to coach — per ADR 0015. This spike only proves the
-window can exist and draw our numbers.
+## Distance to the real thing
+
+Remaining work is plumbing, not research: a `Task` polling `viz_directives`
+(coach to window) a few times a second, `viz_focus` written back (window to
+coach), and the interaction layer. The architecture risk this spike existed
+to retire is retired.
