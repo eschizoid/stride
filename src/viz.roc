@@ -23,7 +23,7 @@ EndLabel : { p : Text.Prepared, sel : U8 }
 
 Model : {
 	title : Text.Prepared,
-	sub : Text.Prepared,
+	subs : List({ p : Text.Prepared, r : U64 }),
 	leg_fit : Text.Prepared,
 	leg_fat : Text.Prepared,
 	leg_form : Text.Prepared,
@@ -33,10 +33,12 @@ Model : {
 	ev_found : Bool,
 	ev_idx : U64,
 	data : List(Point),
+	days : List(Str),
 	status : Text.Prepared,
 	has_error : Bool,
 	font : Text.Font,
 	hint : Text.Prepared,
+	empty : Text.Prepared,
 	range : U64,
 	mouse_x : F32,
 	mouse_in : Bool,
@@ -67,11 +69,18 @@ fmt1 = |t| {
 	"${sign}${I64.to_str(a // 10)}.${I64.to_str(a % 10)}"
 }
 
+# F32 -> "41.9", through the same integer-tenths door as fmt1
+fmt_f : F32 -> Str
+fmt_f = |v| match F32.round_to_i64_try(v * 10.0) {
+	Ok(t) => fmt1(t)
+	Err(_) => "?"
+}
+
 Loaded : { data : List(Point), days : List(Str), last : { c : I64, a : I64, t : I64 }, err : Str }
 
 load_series! : Sqlite.Db => Loaded
 load_series! = |db| {
-	q = "SELECT day, CAST(ROUND(ctl*10) AS INTEGER) AS c10, CAST(ROUND(atl*10) AS INTEGER) AS a10, CAST(ROUND(tsb*10) AS INTEGER) AS t10, CAST(ROUND(tss*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY day DESC LIMIT 90) ORDER BY day ASC"
+	q = "SELECT CAST(day AS TEXT) AS day, CAST(ROUND(ctl*10) AS INTEGER) AS c10, CAST(ROUND(atl*10) AS INTEGER) AS a10, CAST(ROUND(tsb*10) AS INTEGER) AS t10, CAST(ROUND(tss*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY day DESC LIMIT 90) ORDER BY day ASC"
 	match Sqlite.query!({ db, query: q, bindings: [] }) {
 		Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "query failed" }
 		Ok(rows) => {
@@ -103,7 +112,7 @@ Event : { day : Str, name : Str }
 
 load_event! : Sqlite.Db => Event
 load_event! = |db|
-	match Sqlite.query!({ db, query: "SELECT event_date, name FROM events ORDER BY event_date DESC LIMIT 1", bindings: [] }) {
+	match Sqlite.query!({ db, query: "SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name FROM events WHERE event_date >= date('now', 'localtime') ORDER BY event_date ASC LIMIT 1", bindings: [] }) {
 		Err(_) => { day: "", name: "" }
 		Ok(rows) => match List.first(rows) {
 			Err(_) => { day: "", name: "" }
@@ -166,7 +175,11 @@ init! = App.init(
 		)?
 		Ok({
 			title: mk!("Stride Form Board", 30)?,
-			sub: mk!("last 90 days, live from stride", 15)?,
+			subs: [
+				{ p: mk!("last 30 days, live from stride", 15)?, r: 30.U64 },
+				{ p: mk!("last 60 days, live from stride", 15)?, r: 60.U64 },
+				{ p: mk!("last 90 days, live from stride", 15)?, r: 90.U64 },
+			],
 			leg_fit: mk!("Fitness", 15)?,
 			leg_fat: mk!("Fatigue", 15)?,
 			leg_form: mk!("Form", 15)?,
@@ -176,10 +189,12 @@ init! = App.init(
 			ev_found: ev.found,
 			ev_idx: ev.idx,
 			data: loaded.s.data,
+			days: loaded.s.days,
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
 			font,
 			hint: mk!("1 / 2 / 3  range 30 / 60 / 90 days      hover to read a day      ESC quit", 13)?,
+			empty: mk!("no data yet — sync and analyze first, then reopen", 16)?,
 			range: 90.U64,
 			mouse_x: 0.0,
 			mouse_in: Bool.False,
@@ -201,7 +216,7 @@ update! = |model, program_input| {
 			else if d.key_pressed(Key3) 90.U64
 			else model.range
 		m = d.mouse.position()
-		Ok({ ..model, range, mouse_x: m.x, mouse_in: m.y > 100.0 })
+		Ok({ ..model, range, mouse_x: m.x, mouse_in: m.y > pad_t })
 	}
 }
 
@@ -233,12 +248,16 @@ render! = |model, frame| {
 	model.leg_fit.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ctl_c, align: (Top, Left) })
 	model.leg_fat.draw!(frame, { pos: { x: 118.0, y: 70.0 }, color: atl_c, align: (Top, Left) })
 	model.leg_form.draw!(frame, { pos: { x: 206.0, y: 70.0 }, color: tsb_c, align: (Top, Left) })
-	model.sub.draw!(frame, { pos: { x: 280.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+	List.for_each!(model.subs, |s|
+		if s.r == model.range {
+			s.p.draw!(frame, { pos: { x: 280.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		} else {})
 
 	if model.has_error {
 		model.status.draw!(frame, { pos: { x: 36.0, y: 120.0 }, color: atl_c, align: (Top, Left) })
 		Ok({})
 	} else if List.len(model.data) < 2 {
+		model.empty.draw!(frame, { pos: { x: 36.0, y: 120.0 }, color: ink_muted, align: (Top, Left) })
 		Ok({})
 	} else {
 		full = model.data
@@ -281,9 +300,11 @@ render! = |model, frame| {
 				Err(_) => {}
 			})
 
-		# event marker: dashed vertical + label
-		if model.ev_found {
-			ex = xf(model.ev_idx)
+		# event marker: dashed vertical + label. ev_idx indexes the full series,
+		# so shift it by however many days the range switch sliced off the front.
+		off = List.len(full) - n
+		if model.ev_found and model.ev_idx >= off {
+			ex = xf(model.ev_idx - off)
 			List.for_each!(List.map_with_index(List.repeat({}, 40), |_u, k| k), |k| {
 				y0 = pad_t + U64.to_f32(k) * 12.0
 				if y0 + 6.0 <= pad_t + ph {
@@ -317,7 +338,8 @@ render! = |model, frame| {
 			e.p.draw!(frame, { pos: { x: ex2, y: yf(v) - 7.0 }, color: col, align: (Top, Left) })
 		})
 
-		# hover: nearest day gets a crosshair + dots (readout printed at top-right)
+		# hover: nearest day gets a crosshair + dots, and the day's values print
+		# top-right as immediate text (only dynamic string drawn per frame)
 		if model.mouse_in and model.mouse_x >= pad_l and model.mouse_x <= I32.to_f32(win_w) - pad_r {
 			frac = (model.mouse_x - pad_l) / pw
 			hi_idx = n - 1
@@ -330,6 +352,12 @@ render! = |model, frame| {
 					frame.circle!({ center: { x: hx, y: yf(hp.ctl) }, radius: 3.5, style: Draw.filled(ctl_c) })
 					frame.circle!({ center: { x: hx, y: yf(hp.atl) }, radius: 3.5, style: Draw.filled(atl_c) })
 					frame.circle!({ center: { x: hx, y: yf(hp.tsb) }, radius: 3.5, style: Draw.filled(tsb_c) })
+					day = match List.get(List.take_last(model.days, take), hovered) {
+						Ok(d) => d
+						Err(_) => ""
+					}
+					readout = "${day}   CTL ${fmt_f(hp.ctl)}   ATL ${fmt_f(hp.atl)}   TSB ${fmt_f(hp.tsb)}   TSS ${fmt_f(hp.tss)}"
+					Text.from(readout, model.font).size(13).draw!(frame, { pos: { x: I32.to_f32(win_w) - 34.0, y: 88.0 }, color: Color.white, align: (Top, Right) })
 				}
 				Err(_) => {}
 			}
