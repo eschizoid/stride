@@ -72,3 +72,56 @@ The engine is untouched by this ADR, and nothing builds until the precondition c
 The coach gains nothing and loses nothing: its surface was always the engine. The human
 gains a window that follows the conversation and a mouse that the coach can read. The
 price is the third platform pin and the polling tables, both bounded, both owned here.
+
+## Amendment, 2026-09-07 — what shipping it changed
+
+Four views exist now (#379, #381, #382, #383). Building them falsified one decision,
+left another unimplemented, and turned up a use for pixels this ADR argued against —
+in a narrower sense than the one it rejected.
+
+**Decision 4 is BROKEN, and knowingly.** `src/viz.roc` pins
+`nightly-2026-08-23-fb208ba` while the engine pins `nightly-2026-09-04-c125b82`. That is
+the second compiler this ADR rejects outright, and the precondition it set — work starts
+when roc-ray checks clean on the engine's pin — was never met: `just viz-check` against
+the engine pin still fails, 8 errors, the same platform classes recorded above. The work
+proceeded anyway. Either this decision is amended to allow a scoped second pin for the
+viz alone, or the viz waits for the upstream migration; what is not tenable is a decision
+the tree contradicts in silence. The practical cost is already visible: `just viz-check`
+is red out of the box for anyone whose PATH `roc` is the engine's, and its first error is
+a version mismatch that cascades into seven confusing platform errors, so it reads like
+broken code rather than a missing compiler.
+
+**Decision 2 is unimplemented.** Neither `viz_directives` nor `viz_focus` exists; every
+view answers a fixed question with a hardcoded window, sport, and session. #384 proposed a
+`~/.stride/viz.json` knobs file, which is WRONG by this ADR and the ADR is right: a
+directive should be a row, because that is what makes the protocol testable the way
+everything else here is tested. #384 is being corrected rather than the ADR.
+
+**The knobs are the load-bearing part, not a convenience.** Without them the coach can
+answer a question in prose but cannot aim the window at it — so the human reads an
+argument instead of seeing it. That is the difference between a dashboard the human opens
+and an explanation the coach can point at, and it is the whole reason `viz_directives`
+flows coach-to-window rather than the app offering its own controls. A richer agent is
+one whose reasoning can be made visible on demand; a viz with no inbound channel cannot
+serve that no matter how many views it grows.
+
+**Decision 1 stands, but Decision 6's assumption does not.** Pixels remain worthless to
+the coach for JUDGING TRAINING — every value derives from JSON it already holds
+losslessly, and nothing since has challenged that. But Decision 6 assumed the rendering
+"is judged by the eyes it exists for", meaning the human's. In practice the agent needs
+to see its own output to review it: adding a screenshot key surfaced five defects
+immediately, in code that had type-checked, had every data path diffed against the
+engine, and had been called done — a legend overprinting two other views' titles, an em
+dash rendering as `?` for a missing glyph, colliding axis labels, a count formatted as
+`3.0 bests`, and a CP asymptote described in a comment and never drawn. That last one
+made the curve view nearly pointless, since making a bad fit obvious is the entire reason
+the view exists.
+
+None of those are visible from the JSON, because none of them are ABOUT the data. This
+is a narrow claim and worth keeping narrow: rendered frames are for reviewing the
+rendering, never for reading the numbers.
+
+**Decision 5 accordingly.** A screenshot key now exists in the viz — not in the core,
+which the decision was actually about, but it returned without the argued decision the
+ADR asked for. This paragraph is that argument: capture earns its place as the agent's
+only way to review its own drawing, and it stays out of `src/app.roc`.
