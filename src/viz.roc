@@ -18,8 +18,11 @@ import rr.Draw
 import rr.Text
 import rr.Sqlite
 import rr.Cmd
+import rr.Capture
+import rr.Task
 
 CurvePt : { dur_s : I64, watts : F32 }
+Seg : { kind : Str, start_s : I64, dur_s : I64 }
 Fit : { cp : F32, w_prime : F32, r2 : F32, points : F32, ok : Bool }
 
 Point : { ctl : F32, atl : F32, tsb : F32, tss : F32 }
@@ -48,11 +51,14 @@ Model : {
 	curve_lbls : List({ p : Text.Prepared, d : I64 }),
 	fit_lbl : Text.Prepared,
 	curve_title : Text.Prepared,
-	cp_w : F32,
-	cp_ok : Bool,
-	cp_lbl : Text.Prepared,
 	curve_hint : Text.Prepared,
 	curve_empty : Text.Prepared,
+	trace : List(F32),
+	segs : List(Seg),
+	trace_title : Text.Prepared,
+	trace_dur : F32,
+	fit_cp : F32,
+	cp_lbl : Text.Prepared,
 	data : List(Point),
 	days : List(Str),
 	status : Text.Prepared,
@@ -91,6 +97,13 @@ fmt1 = |t| {
 }
 
 # F32 -> "41.9", through the same integer-tenths door as fmt1
+# A COUNT, not a magnitude: fmt_f would render 3 bests as "3.0".
+fmt_i : F32 -> Str
+fmt_i = |v| match F32.round_to_i64_try(v) {
+	Ok(n) => I64.to_str(n)
+	Err(_) => "?"
+}
+
 fmt_f : F32 -> Str
 fmt_f = |v| match F32.round_to_i64_try(v * 10.0) {
 	Ok(t) => fmt1(t)
@@ -109,7 +122,7 @@ load_series! = |db| {
 	# the decode fails into the visible error state rather than plotting 0s.
 	q = "SELECT CAST(day AS TEXT) AS day, CAST(ROUND(ctl*10) AS INTEGER) AS c10, CAST(ROUND(atl*10) AS INTEGER) AS a10, CAST(ROUND(tsb*10) AS INTEGER) AS t10, CAST(ROUND(tss*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY day DESC LIMIT 90) ORDER BY day ASC"
 	match Sqlite.query!({ db, query: q, bindings: [] }) {
-		Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "daily_load query failed — analyzed yet?" }
+		Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "daily_load query failed - analyzed yet?" }
 		Ok(rows) => {
 			decoded = List.map_try(rows, |r| {
 				d = r.str("day") ? |_| "bad day"
@@ -198,6 +211,71 @@ load_curve! = |db| {
 	}
 }
 
+# The most recent activity that HAS detected work blocks — the only kind this
+# view can say anything about. Its id anchors both loaders below.
+load_trace_id! : Sqlite.Db => I64
+load_trace_id! = |db|
+	match Sqlite.query!({ db, query: "SELECT a.id AS id FROM activity_segments s JOIN activities a ON a.id = s.activity_id WHERE s.kind = 'work' GROUP BY a.id ORDER BY a.start_local DESC LIMIT 1", bindings: [] }) {
+		Err(_) => 0
+		Ok(rows) => match List.first(rows) {
+			Err(_) => 0
+			Ok(r) => match r.i64("id") { Ok(v) => v
+				Err(_) => 0 }
+		}
+	}
+
+# The power trace, DOWNSAMPLED in SQL to ~800 points. A 45-minute ride carries
+# ~2700 samples against ~830 pixels of plot, so drawing them all costs three
+# line segments per pixel and shows nothing more. json_each reads the stored
+# stream directly — SQLite has JSON1, and this platform has no JSON decoder.
+load_trace! : Sqlite.Db, I64 => List(F32)
+load_trace! = |db, aid| {
+	# json_each's key column IS the array index for a JSON array, and for an
+	# array it is an INTEGER value (objects yield text keys), so MAX(i) and
+	# ORDER BY i are numeric — no window function, nothing left unspecified.
+	q = "WITH w AS (SELECT json_each.key AS i, CAST(json_each.value AS INTEGER) AS v FROM streams, json_each(json_extract(streams.raw_json,'$.watts.data')) WHERE streams.activity_id = :aid), n AS (SELECT MAX(i)+1 AS c FROM w) SELECT v FROM w, n WHERE i % (MAX(n.c/800,1)) = 0 ORDER BY i"
+	match Sqlite.query!({ db, query: q, bindings: [{ name: ":aid", value: Integer(aid) }] }) {
+		Err(_) => []
+		Ok(rows) => List.keep_oks(rows, |r| {
+			v = r.i64("v") ? |_| "bad v"
+			Ok(I64.to_f32(v))
+		})
+	}
+}
+
+# The detector's blocks for the same activity, in seconds from the start.
+load_segs! : Sqlite.Db, I64 => List(Seg)
+load_segs! = |db, aid| {
+	q = "SELECT CAST(kind AS TEXT) AS kind, start_s, dur_s FROM activity_segments WHERE activity_id = :aid ORDER BY ordinal"
+	match Sqlite.query!({ db, query: q, bindings: [{ name: ":aid", value: Integer(aid) }] }) {
+		Err(_) => []
+		Ok(rows) => List.keep_oks(rows, |r| {
+			k = r.str("kind") ? |_| "bad kind"
+			s = r.i64("start_s") ? |_| "bad start"
+			d = r.i64("dur_s") ? |_| "bad dur"
+			Ok({ kind: k, start_s: s, dur_s: d })
+		})
+	}
+}
+
+# The session's own duration, from the stream's last timestamp. BOTH axes in the
+# trace view divide by this: the segments are in seconds and the trace is a
+# uniform downsample of the same session, so sharing one denominator is what
+# keeps the shading aligned with the line. Deriving it from the SEGMENTS instead
+# would stretch partial coverage across the full width — on the reference
+# activity the two agree to one second in 2700, which is sub-pixel and would have
+# hidden the bug.
+load_dur! : Sqlite.Db, I64 => F32
+load_dur! = |db, aid|
+	match Sqlite.query!({ db, query: "SELECT CAST(json_extract(raw_json,'$.time.data[#-1]') AS INTEGER) AS t FROM streams WHERE activity_id = :aid", bindings: [{ name: ":aid", value: Integer(aid) }] }) {
+		Err(_) => 1.0
+		Ok(rows) => match List.first(rows) {
+			Err(_) => 1.0
+			Ok(r) => match r.i64("t") { Ok(v) => if v > 0 (I64.to_f32(v)) else 1.0
+				Err(_) => 1.0 }
+		}
+	}
+
 # CP / W' / r2 come from the ENGINE, not from a second regression here: the fit
 # is Metrics.hyperbolic_fit's job and a copy would drift from it. Each field is
 # extracted independently so JSON key ORDER cannot silently break the parse; an
@@ -235,7 +313,8 @@ init! = App.init(
 	App.default
 		.with_title("Stride Form Board")
 		.with_size({ width: win_w, height: win_h })
-		.with_frame_pacing(Capped(60)),
+		.with_frame_pacing(Capped(60))
+		.with_output_dir("captures"),
 	|_startup| {
 		font = Draw.default_font!()
 		# ~/.stride/db.sqlite, resolved at launch — the platform has no Env
@@ -246,23 +325,27 @@ init! = App.init(
 		}
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 }
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0 }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				s = load_series!(db)
 				e = load_event!(db)
 				c = load_curve!(db)
+				tid = load_trace_id!(db)
+				tr = load_trace!(db, tid)
+				sg = load_segs!(db, tid)
+				du = load_dur!(db, tid)
 				st = load_stale!(db)
-				{ s, e, c, st }
+				{ s, e, c, st, tr, sg, du }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 }
+			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0 }
 		}
 		ev = find_idx(loaded.s.days, loaded.e.day)
 		fit = load_fit!({})
 		fit_text =
 			if fit.ok
-				"CP ${fmt_f(fit.cp)} W · W' ${fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${fmt_f(fit.r2)} from ${fmt_f(fit.points)} bests"
-			else "CP fit unavailable — the engine did not answer"
+				"CP ${fmt_f(fit.cp)} W · W' ${fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${fmt_f(fit.r2)} from ${fmt_i(fit.points)} bests"
+			else "CP fit unavailable - the engine did not answer"
 		mk! = |txt, sz| Text.from(txt, font).size(sz).prepare!()
 		curve_lbls = List.map_try(loaded.c, |c| {
 			p = mk!(I64.to_str(c.dur_s), 12)?
@@ -303,7 +386,7 @@ init! = App.init(
 			ev_warn_found: loaded.e.err != "",
 			stale: mk!(
 				match List.last(loaded.s.days) {
-					Ok(ld) => "data as of ${ld} — analyze to refresh"
+					Ok(ld) => "data as of ${ld} - analyze to refresh"
 					Err(_) => ""
 				},
 				13,
@@ -314,19 +397,22 @@ init! = App.init(
 			curve: loaded.c,
 			curve_lbls: curve_lbls,
 			fit_lbl: mk!(fit_text, 14)?,
-			curve_title: mk!("power-duration curve — Ride, last 90 days", 15)?,
-			cp_w: fit.cp,
-			cp_ok: fit.ok,
-			cp_lbl: mk!("CP ${fmt_f(fit.cp)}", 13)?,
-			curve_hint: mk!("TAB  form board      ESC quit", 13)?,
-			curve_empty: mk!("no rides in the last 90 days — the curve has nothing to draw", 16)?,
+			curve_title: mk!("power-duration curve - Ride, last 90 days", 15)?,
+			curve_hint: mk!("TAB  session trace      ESC quit", 13)?,
+			curve_empty: mk!("no rides in the last 90 days - the curve has nothing to draw", 16)?,
+			trace: loaded.tr,
+			segs: loaded.sg,
+			trace_title: mk!("last structured session - detected blocks shaded behind the power trace", 15)?,
+			trace_dur: loaded.du,
+			fit_cp: if fit.ok (fit.cp) else 0.0,
+			cp_lbl: mk!("CP ${fmt_f(fit.cp)}W", 12)?,
 			data: loaded.s.data,
 			days: loaded.s.days,
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
 			font,
-			hint: mk!("1 / 2 / 3  range 30 / 60 / 90 days      TAB  form / power curve      hover to read a day      ESC quit", 13)?,
-			empty: mk!("no data yet — sync and analyze first, then reopen", 16)?,
+			hint: mk!("1 / 2 / 3  range 30 / 60 / 90 days      TAB  form / power curve / session      hover to read a day      ESC quit", 13)?,
+			empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
 			range: 90.U64,
 			mouse_x: 0.0,
 			mouse_in: Bool.False,
@@ -334,7 +420,10 @@ init! = App.init(
 	},
 )
 
-Msg : []
+# The app spawns one kind of task: a screenshot, whose result it ignores —
+# a failed shot must not take the window down, and the file's absence is the
+# report. Was `[]` while nothing spawned.
+Msg : [Shot(Try({}, Capture.ScreenshotError))]
 
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
 update! = |model, program_input| {
@@ -347,8 +436,16 @@ update! = |model, program_input| {
 			else if d.key_pressed(Key2) 60.U64
 			else if d.key_pressed(Key3) 90.U64
 			else model.range
-		view = if d.key_pressed(KeyTab) (if model.view == 0 1 else 0) else model.view
+		view = if d.key_pressed(KeyTab) (if model.view == 2 0 else model.view + 1) else model.view
 		m = d.mouse.position()
+		# S writes a PNG of the CURRENT view into ./captures — #372's "session
+		# graphic for a training log". Spawned rather than called inline: a
+		# screenshot waits for the end of a frame, and update! is not one.
+		# The name carries the view so three presses do not overwrite each other.
+		_ = if d.key_pressed(KeyS) {
+			shot_name = if view == 0 ("form-board.png") else if view == 1 ("power-curve.png") else "session-trace.png"
+			Task.spawn!(program_input, || Shot(Capture.screenshot!(shot_name)))
+		} else {}
 		Ok({ ..model, range, view, mouse_x: m.x, mouse_in: m.y > pad_t and m.y < I32.to_f32(win_h) - pad_b })
 	}
 }
@@ -378,10 +475,52 @@ render! = |model, frame| {
 	frame.rounded_rectangle!({ x: 16.0, y: 16.0, width: I32.to_f32(win_w) - 32.0, height: I32.to_f32(win_h) - 32.0, radius: 14.0, segments: 10, style: Draw.filled(Color.from_hex_rgb(0x131318)) })
 
 	model.title.draw!(frame, { pos: { x: 34.0, y: 30.0 }, color: Color.white, align: (Top, Left) })
-	model.leg_fit.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ctl_c, align: (Top, Left) })
-	model.leg_fat.draw!(frame, { pos: { x: 118.0, y: 70.0 }, color: atl_c, align: (Top, Left) })
-	model.leg_form.draw!(frame, { pos: { x: 206.0, y: 70.0 }, color: tsb_c, align: (Top, Left) })
+	# Legend and subtitle belong to the FORM BOARD only. They draw in the same
+	# row the other views put their titles in, and overprinted them.
+	if model.view == 0 {
+		model.leg_fit.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ctl_c, align: (Top, Left) })
+		model.leg_fat.draw!(frame, { pos: { x: 118.0, y: 70.0 }, color: atl_c, align: (Top, Left) })
+		model.leg_form.draw!(frame, { pos: { x: 206.0, y: 70.0 }, color: tsb_c, align: (Top, Left) })
+	} else {}
 
+	# ── session trace view (TAB) ────────────────────────────────────────────
+	# The detector's blocks shaded BEHIND the real power trace, so the two can
+	# be compared by eye — which is the whole point: a table of segments cannot
+	# show you that a "work" block started thirty seconds before the power did.
+	if model.view == 2 {
+		model.trace_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		if List.is_empty(model.trace) {
+			model.hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
+			Ok({})
+		} else {
+			pw = I32.to_f32(win_w) - pad_l - pad_r
+			ph = I32.to_f32(win_h) - pad_t - pad_b
+			w_hi = List.fold(model.trace, 1.0, |a, v| F32.max(a, v)) * 1.1
+			nlast = List.len(model.trace) - 1
+			# Segments carry SECONDS while the trace is downsampled samples, so
+			# both map through the session's own duration rather than through
+			# each other's index.
+			total_s = model.trace_dur
+			sx = |sec| pad_l + pw * sec / total_s
+			tx = |i| if nlast == 0 (pad_l) else pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
+			ty = |w| pad_t + ph * (1.0 - w / w_hi)
+			List.for_each!(model.segs, |sg| {
+				col = if sg.kind == "work" (Color.with_alpha(tsb_c, 52)) else if sg.kind == "recovery" (Color.with_alpha(ink_faint, 36)) else Color.with_alpha(ink_faint, 18)
+				x0 = sx(I64.to_f32(sg.start_s))
+				x1 = sx(I64.to_f32(sg.start_s + sg.dur_s))
+				frame.rectangle!({ x: x0, y: pad_t, width: F32.max(x1 - x0, 1.0), height: ph, style: Draw.filled(col) })
+			})
+			List.for_each!(List.map_with_index(model.trace, |v, i| { v, i }), |p| {
+				if p.i > 0 {
+					prev = match List.get(model.trace, p.i - 1) { Ok(x) => x
+						Err(_) => p.v }
+					frame.line!({ start: { x: tx(p.i - 1), y: ty(prev) }, end: { x: tx(p.i), y: ty(p.v) }, stroke: Draw.stroke(ctl_c, 1.0) })
+				} else {}
+			})
+			model.hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
+			Ok({})
+		}
+	} else {
 	# ── power-curve view (TAB) ──────────────────────────────────────────────
 	# Log-x, because the ladder spans 5s to 20min: on a linear axis the six
 	# short rungs collapse onto the left edge and the chart shows one point.
@@ -403,12 +542,16 @@ render! = |model, frame| {
 			nlast = List.len(model.curve) - 1
 			cx = |i| if nlast == 0 (pad_l + pw / 2.0) else pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
 			cy = |w| pad_t + ph * (1.0 - w / w_hi)
-			# CP as a horizontal asymptote: the curve should flatten toward it,
-			# and a fit drawn far from the long rungs is visibly wrong.
-			if model.cp_ok and model.cp_w > 0.0 and model.cp_w < w_hi {
-				cpy = cy(model.cp_w)
-				frame.line!({ start: { x: pad_l, y: cpy }, end: { x: I32.to_f32(win_w) - pad_r, y: cpy }, stroke: Draw.stroke(Color.with_alpha(tsb_c, 90), 1) })
-				model.cp_lbl.draw!(frame, { pos: { x: I32.to_f32(win_w) - pad_r + 8.0, y: cpy - 7.0 }, color: tsb_c, align: (Top, Left) })
+			# CP as a horizontal line: the curve should flatten toward it, and a fit
+			# drawn far from the long rungs is visibly wrong — which is the whole
+			# reason #372 wanted this view rather than the table.
+			if model.fit_cp > 0.0 and model.fit_cp < w_hi {
+				cpy = cy(model.fit_cp)
+				List.for_each!(List.map_with_index(List.repeat({}, 60), |_u, k| k), |k| {
+					x0 = pad_l + U64.to_f32(k) * (pw / 60.0)
+					frame.line!({ start: { x: x0, y: cpy }, end: { x: x0 + pw / 120.0, y: cpy }, stroke: Draw.stroke(Color.with_alpha(tsb_c, 120), 1.0) })
+				})
+				model.cp_lbl.draw!(frame, { pos: { x: pad_l + pw + 8.0, y: cpy }, color: tsb_c, align: (Middle, Left) })
 			} else {}
 			rungs = List.map_with_index(model.curve, |c, i| { c, i })
 			List.for_each!(rungs, |x|
@@ -420,14 +563,14 @@ render! = |model, frame| {
 				frame.circle!({ center: { x: cx(x.i), y: cy(x.c.watts) }, radius: 4.0, style: Draw.filled(ctl_c) })
 			})
 			List.for_each!(List.map_with_index(model.curve_lbls, |l, i| { l, i }), |x| {
-				x.l.p.draw!(frame, { pos: { x: cx(x.i), y: pad_t + ph + 6.0 }, color: ink_faint, align: (Top, Center) })
+				x.l.p.draw!(frame, { pos: { x: cx(x.i), y: pad_t + ph - 18.0 }, color: ink_faint, align: (Top, Center) })
 			})
 			model.curve_hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
 			Ok({})
 		}
 	} else {
 	List.for_each!(model.subs, |s|
-		if s.r == model.range {
+		if s.r == model.range and model.view == 0 {
 			s.p.draw!(frame, { pos: { x: 280.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		} else {})
 
@@ -561,6 +704,7 @@ render! = |model, frame| {
 
 		model.hint.draw!(frame, { pos: { x: 34.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
 		Ok({})
+	}
 	}
 	}
 }
