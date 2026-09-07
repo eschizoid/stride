@@ -19,6 +19,9 @@ import rr.Text
 import rr.Sqlite
 import rr.Cmd
 
+CurvePt : { dur_s : I64, watts : F32 }
+Fit : { cp : F32, w_prime : F32, r2 : F32, points : F32, ok : Bool }
+
 Point : { ctl : F32, atl : F32, tsb : F32, tss : F32 }
 YLabel : { p : Text.Prepared, v : F32 }
 EndLabel : { p : Text.Prepared, sel : U8 }
@@ -36,6 +39,11 @@ Model : {
 	ev_idx : U64,
 	ev_ahead : I64,
 	ev_far_label : Text.Prepared,
+	view : U8,
+	curve : List(CurvePt),
+	curve_lbls : List({ p : Text.Prepared, d : I64 }),
+	fit_lbl : Text.Prepared,
+	curve_title : Text.Prepared,
 	data : List(Point),
 	days : List(Str),
 	status : Text.Prepared,
@@ -142,6 +150,50 @@ load_event! = |db|
 		}
 	}
 
+
+# The power-duration curve. POINTS come from the stored per-activity bests
+# (activity_metrics.best_*_w), maxed over the window — CAST(ROUND(..)) because a
+# bare CAST truncates and would draw the whole ladder a watt low.
+load_curve! : Sqlite.Db => List(CurvePt)
+load_curve! = |db| {
+	q = "WITH w AS (SELECT m.* FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = 'Ride' AND a.start_local >= date('now','-90 days')) SELECT 5 AS d, CAST(ROUND(MAX(best_5s_w)) AS INTEGER) AS p FROM w UNION ALL SELECT 15, CAST(ROUND(MAX(best_15s_w)) AS INTEGER) FROM w UNION ALL SELECT 30, CAST(ROUND(MAX(best_30s_w)) AS INTEGER) FROM w UNION ALL SELECT 60, CAST(ROUND(MAX(best_60s_w)) AS INTEGER) FROM w UNION ALL SELECT 300, CAST(ROUND(MAX(best_300s_w)) AS INTEGER) FROM w UNION ALL SELECT 600, CAST(ROUND(MAX(best_600s_w)) AS INTEGER) FROM w UNION ALL SELECT 1200, CAST(ROUND(MAX(best_20min_w)) AS INTEGER) FROM w"
+	match Sqlite.query!({ db, query: q, bindings: [] }) {
+		Err(_) => []
+		Ok(rows) =>
+			List.keep_oks(rows, |r| {
+				d = r.i64("d") ? |_| "bad d"
+				p = r.i64("p") ? |_| "bad p"
+
+				Ok({ dur_s: d, watts: I64.to_f32(p) })
+			})
+	}
+}
+
+# CP / W' / r2 come from the ENGINE, not from a second regression here: the fit
+# is Metrics.hyperbolic_fit's job and a copy would drift from it. Each field is
+# extracted independently so JSON key ORDER cannot silently break the parse; an
+# empty field means the shell or the command failed, and the view says so rather
+# than drawing a fit of zeros.
+load_fit! : {} => Fit
+load_fit! = |{}| {
+	script = "J=$(stride power-curve 90 Ride --json 2>/dev/null); for k in cp w_prime fit_r2 fit_points; do printf '%s ' \"$(printf '%s' \"$J\" | sed -n \"s/.*\\\"$k\\\":\\([-0-9.eE]*\\).*/\\1/p\" | head -1)\"; done"
+	out = match Cmd.run_utf8!(Cmd.with_args(Cmd.new("sh"), ["-c", script])) {
+		Ok(o) => Str.trim(o.stdout)
+		Err(_) => ""
+	}
+	parts = Str.split_on(out, " ")
+	num = |i| match List.get(parts, i) {
+		Ok(s) => match F32.from_str(s) { Ok(v) => v
+			Err(_) => -1.0 }
+		Err(_) => -1.0
+	}
+	cp = num(0)
+	wp = num(1)
+	r2 = num(2)
+	fp = num(3)
+	{ cp, w_prime: wp, r2, points: fp, ok: cp >= 0.0 and wp >= 0.0 and r2 >= 0.0 and fp >= 0.0 }
+}
+
 find_idx = |days, target|
 	List.fold(
 		List.map_with_index(days, |d, i| { day: d, index: i }),
@@ -165,17 +217,27 @@ init! = App.init(
 		}
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0 } }
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0 }, c: [] }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				s = load_series!(db)
 				e = load_event!(db)
-				{ s, e }
+				c = load_curve!(db)
+				{ s, e, c }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0 } }
+			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0 }, c: [] }
 		}
 		ev = find_idx(loaded.s.days, loaded.e.day)
+		fit = load_fit!({})
+		fit_text =
+			if fit.ok
+				"CP ${fmt_f(fit.cp)} W · W' ${fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${fmt_f(fit.r2)} from ${fmt_f(fit.points)} bests"
+			else "CP fit unavailable — the engine did not answer"
 		mk! = |txt, sz| Text.from(txt, font).size(sz).prepare!()
+		curve_lbls = List.map_try(loaded.c, |c| {
+			p = mk!(I64.to_str(c.dur_s), 12)?
+			Ok({ p, d: c.dur_s })
+		})?
 		ylabels = List.map_try([-30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], |v| {
 			p = mk!(I64.to_str(v), 12)?
 			Ok({ p, v: I64.to_f32(v) })
@@ -208,12 +270,17 @@ init! = App.init(
 			ev_idx: ev.idx,
 			ev_ahead: loaded.e.ahead,
 			ev_far_label: mk!("${loaded.e.name}  ${I64.to_str(loaded.e.ahead)}d", 13)?,
+			view: 0,
+			curve: loaded.c,
+			curve_lbls: curve_lbls,
+			fit_lbl: mk!(fit_text, 14)?,
+			curve_title: mk!("power-duration curve — Ride, last 90 days", 15)?,
 			data: loaded.s.data,
 			days: loaded.s.days,
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
 			font,
-			hint: mk!("1 / 2 / 3  range 30 / 60 / 90 days      hover to read a day      ESC quit", 13)?,
+			hint: mk!("1 / 2 / 3  range 30 / 60 / 90 days      TAB  form / power curve      hover to read a day      ESC quit", 13)?,
 			empty: mk!("no data yet — sync and analyze first, then reopen", 16)?,
 			range: 90.U64,
 			mouse_x: 0.0,
@@ -235,8 +302,9 @@ update! = |model, program_input| {
 			else if d.key_pressed(Key2) 60.U64
 			else if d.key_pressed(Key3) 90.U64
 			else model.range
+		view = if d.key_pressed(KeyTab) (if model.view == 0 1 else 0) else model.view
 		m = d.mouse.position()
-		Ok({ ..model, range, mouse_x: m.x, mouse_in: m.y > pad_t and m.y < I32.to_f32(win_h) - pad_b })
+		Ok({ ..model, range, view, mouse_x: m.x, mouse_in: m.y > pad_t and m.y < I32.to_f32(win_h) - pad_b })
 	}
 }
 
@@ -268,6 +336,39 @@ render! = |model, frame| {
 	model.leg_fit.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ctl_c, align: (Top, Left) })
 	model.leg_fat.draw!(frame, { pos: { x: 118.0, y: 70.0 }, color: atl_c, align: (Top, Left) })
 	model.leg_form.draw!(frame, { pos: { x: 206.0, y: 70.0 }, color: tsb_c, align: (Top, Left) })
+
+	# ── power-curve view (TAB) ──────────────────────────────────────────────
+	# Log-x, because the ladder spans 5s to 20min: on a linear axis the six
+	# short rungs collapse onto the left edge and the chart shows one point.
+	if model.view == 1 {
+		model.curve_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		model.fit_lbl.draw!(frame, { pos: { x: 940.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
+		if List.is_empty(model.curve) {
+			model.hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
+			Ok({})
+		} else {
+			pw = I32.to_f32(win_w) - pad_l - pad_r
+			ph = I32.to_f32(win_h) - pad_t - pad_b
+			w_hi = List.fold(model.curve, 1.0, |a, c| F32.max(a, c.watts)) * 1.08
+			# Rungs are evenly spaced by INDEX, not by duration: the ladder is a
+			# fixed 5s..20min set, and a linear time axis would pile the six short
+			# rungs onto the left edge. Index spacing keeps every rung readable and
+			# its label under it.
+			nlast = List.len(model.curve) - 1
+			cx = |i| if nlast == 0 (pad_l + pw / 2.0) else pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
+			cy = |w| pad_t + ph * (1.0 - w / w_hi)
+			# CP as a horizontal asymptote: the curve should flatten toward it,
+			# and a fit drawn far from the long rungs is visibly wrong.
+			List.for_each!(List.map_with_index(model.curve, |c, i| { c, i }), |x| {
+				frame.circle!({ center: { x: cx(x.i), y: cy(x.c.watts) }, radius: 4.0, style: Draw.filled(ctl_c) })
+			})
+			List.for_each!(List.map_with_index(model.curve_lbls, |l, i| { l, i }), |x| {
+				x.l.p.draw!(frame, { pos: { x: cx(x.i), y: pad_t + ph + 6.0 }, color: ink_faint, align: (Top, Center) })
+			})
+			model.hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
+			Ok({})
+		}
+	} else {
 	List.for_each!(model.subs, |s|
 		if s.r == model.range {
 			s.p.draw!(frame, { pos: { x: 280.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
@@ -396,5 +497,6 @@ render! = |model, frame| {
 
 		model.hint.draw!(frame, { pos: { x: 34.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
 		Ok({})
+	}
 	}
 }

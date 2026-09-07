@@ -44,3 +44,22 @@ same tag.
 - No Env module on the platform; `HOME` is read by capturing `printenv` output
   through `Cmd`, at `init!` only.
 - `has` is a reserved word; uppercase identifiers are types.
+
+## Power-curve view (TAB)
+
+A second screen: the power-duration ladder for the Ride family over the last 90
+days, as points, with the CP fit summarised in the header.
+
+The **points** come from the stored per-activity bests (`activity_metrics.best_*_w`),
+maxed over the window. `CAST(ROUND(...))` matters — a bare `CAST` truncates and
+draws the whole ladder a watt low, which was caught by diffing all seven rungs
+against `stride power-curve 90 Ride --json`.
+
+**CP, W′ and r2 come from the engine**, not from a second regression here. The fit
+is `Metrics.hyperbolic_fit`'s job and a copy in the viz would drift from it, so the
+view shells out to `stride power-curve --json` and extracts each field
+independently — key ORDER cannot silently break the parse, and a missing field
+shows "CP fit unavailable" rather than a fit of zeros.
+
+Rungs are spaced by INDEX rather than by duration: the ladder is a fixed 5s..20min
+set, and a linear time axis piles the six short rungs onto the left edge.
