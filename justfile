@@ -413,7 +413,7 @@ e2e:
 # matching nightly, or leave it and hope the PATH roc is close enough.
 roc_viz := env("ROC_VIZ", "roc")
 
-# open the Form Board window (reads ~/.stride/db.sqlite live; ESC quits)
+# open the Form Board window (reads ~/.stride/db.sqlite at launch; ESC quits)
 viz:
     {{roc_viz}} src/viz.roc
 

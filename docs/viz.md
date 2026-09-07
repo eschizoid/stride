@@ -1,6 +1,6 @@
 # The Form Board — `src/viz.roc`
 
-A native window over the engine's PMC series, read live from
+A native window over the engine's PMC series, read at launch from
 `~/.stride/db.sqlite`. This is ADR 0015 made real: pixels for the human, state
 for the coach, the database as the bus. The window is a *second consumer* of
 the SQLite — no export step, no baked data, nothing the CLI has to prepare.
@@ -13,7 +13,7 @@ the SQLite — no export step, no baked data, nothing the CLI has to prepare.
 - Y-axis labels, current values at the line ends, and the next planned event:
   a dashed in-plot marker when its date is inside the plotted window, or a
   header countdown (`name  Nd`) when it is beyond it. A genuine future event
-  always takes the second form — the series ends today, so there is no column
+  usually takes the second form — the series ends on the last analyzed day, so there is no column
   to draw a marker on.
 
 ## Controls

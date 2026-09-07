@@ -1,10 +1,10 @@
-## Stride Form Board — a native window over the engine's PMC series, read LIVE
-## from ~/.stride/db.sqlite (daily_load + events). Fitness (blue, filled),
+## Stride Form Board — a native window over the engine's PMC series, read at
+## launch from ~/.stride/db.sqlite (daily_load + events), no export step. Fitness (blue, filled),
 ## fatigue (violet), form (teal — the brand accent), daily load as a bottom
 ## rug, y-axis labels, current values at the line ends, and the next planned
 ## event — as a dashed in-plot marker when its date falls inside the window, and
-## as a header countdown when it does not, which for a real future event is
-## always, since the series ends today. Keys 1/2/3 set the range (30/60/90 days),
+## as a header countdown when it does not, which for a future event is the
+## usual form, since the series ends on the last analyzed day. Keys 1/2/3 set the range (30/60/90 days),
 ## the mouse reads any day off the chart, ESC quits.
 ##
 ## NOTE the pin below: roc-ray's platform needs nightly-2026-08-23, not the
@@ -403,7 +403,8 @@ render! = |model, frame| {
 
 		# grid + y labels
 		# only the gridlines the computed range actually contains — the prepared
-		# set spans -30..100 so any real PMC window finds its ticks in it
+		# set spans -30..100, which covers the common PMC window; a value
+		# outside it plots fine but gets no gridline
 		List.for_each!(model.ylabels, |yl|
 			if yl.v >= lo and yl.v <= hi {
 				gy = yf(yl.v)
