@@ -1,0 +1,228 @@
+
+import rr.Sqlite
+import rr.Cmd
+
+CurvePt : { dur_s : I64, watts : F32 }
+Seg : { kind : Str, start_s : I64, dur_s : I64 }
+Fit : { cp : F32, w_prime : F32, r2 : F32, points : F32, ok : Bool }
+
+Point : { ctl : F32, atl : F32, tsb : F32, tss : F32 }
+# integer tenths -> "41.9" / "-8.9"
+fmt1 : I64 -> Str
+fmt1 = |t| {
+	sign = if t < 0 "-" else ""
+	a = if t < 0 0 - t else t
+	"${sign}${I64.to_str(a // 10)}.${I64.to_str(a % 10)}"
+}
+
+# F32 -> "41.9", through the same integer-tenths door as fmt1
+# A COUNT, not a magnitude: fmt_f would render 3 bests as "3.0".
+fmt_i : F32 -> Str
+fmt_i = |v| match F32.round_to_i64_try(v) {
+	Ok(n) => I64.to_str(n)
+	Err(_) => "?"
+}
+
+fmt_f : F32 -> Str
+fmt_f = |v| match F32.round_to_i64_try(v * 10.0) {
+	Ok(t) => fmt1(t)
+	Err(_) => "?"
+}
+
+Loaded : { data : List(Point), days : List(Str), last : { c : I64, a : I64, t : I64 }, err : Str }
+
+load_series! : Sqlite.Db => Loaded
+load_series! = |db| {
+	# day is the engine-written PRIMARY KEY in canonical YYYY-MM-DD; for
+	# ISO-8601 text, lexical order IS date order, and the bare column keeps
+	# the primary-key index usable — wrapping it in date() would forfeit both.
+	# The numeric columns are never NULL on the engine's write path (analyze
+	# binds all five on every INSERT OR REPLACE), so a NULL is corruption:
+	# the decode fails into the visible error state rather than plotting 0s.
+	q = "SELECT CAST(day AS TEXT) AS day, CAST(ROUND(ctl*10) AS INTEGER) AS c10, CAST(ROUND(atl*10) AS INTEGER) AS a10, CAST(ROUND(tsb*10) AS INTEGER) AS t10, CAST(ROUND(tss*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY day DESC LIMIT 90) ORDER BY day ASC"
+	match Sqlite.query!({ db, query: q, bindings: [] }) {
+		Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "daily_load query failed - analyzed yet?" }
+		Ok(rows) => {
+			decoded = List.map_try(rows, |r| {
+				d = r.str("day") ? |_| "bad day"
+				c = r.i64("c10") ? |_| "bad ctl"
+				a = r.i64("a10") ? |_| "bad atl"
+				t = r.i64("t10") ? |_| "bad tsb"
+				s = r.i64("s10") ? |_| "bad tss"
+				Ok({ d, c, a, t, s })
+			})
+			match decoded {
+				Err(why) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: why }
+				Ok(raw) => {
+					data = List.map(raw, |r| { ctl: I64.to_f32(r.c) / 10.0, atl: I64.to_f32(r.a) / 10.0, tsb: I64.to_f32(r.t) / 10.0, tss: I64.to_f32(r.s) / 10.0 })
+					days = List.map(raw, |r| r.d)
+					last = match List.last(raw) {
+						Ok(l) => { c: l.c, a: l.a, t: l.t }
+						Err(_) => { c: 0, a: 0, t: 0 }
+					}
+					{ data, days, last, err: "" }
+				}
+			}
+		}
+	}
+}
+
+Event : { day : Str, name : Str, ahead : I64, err : Str }
+
+# "today" is the series' own last day (MAX(day) rides the PK index), so the
+# marker and the plot share one clock; the wall clock only answers when
+# daily_load is empty. Stride's time-mode config can shift its current day
+# away from localtime, and daily_load is built against stride's day.
+# days the wall clock is past MAX(day) — 0 when analyze ran today or the
+# table is empty (NULL diff decodes as Err and lands on the 0 default)
+load_stale! : Sqlite.Db => I64
+load_stale! = |db|
+	match Sqlite.query!({ db, query: "SELECT CAST(julianday(date('now','localtime')) - julianday(MAX(day)) AS INTEGER) AS st FROM daily_load", bindings: [] }) {
+		Err(_) => 0
+		Ok(rows) => match List.first(rows) {
+			Err(_) => 0
+			Ok(r) => match r.i64("st") { Ok(x) => if x > 0 x else 0
+				Err(_) => 0 }
+		}
+	}
+
+load_event! : Sqlite.Db => Event
+load_event! = |db|
+	match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(event_date) - julianday(today) AS INTEGER) AS ahead FROM events, anchor WHERE event_date >= today ORDER BY event_date ASC LIMIT 1", bindings: [] }) {
+		Err(_) => { day: "", name: "", ahead: 0, err: "events query failed" }
+		Ok(rows) => match List.first(rows) {
+			# no rows is the normal no-upcoming-event state, not an error
+			Err(_) => { day: "", name: "", ahead: 0, err: "" }
+			Ok(r) => {
+				# a row that exists but does not decode is corruption, and the
+				# board's rule is that corruption surfaces — same as load_series!
+				decoded = match r.str("event_date") {
+					Ok(d) => match r.str("name") {
+						Ok(nm) => match r.i64("ahead") {
+							Ok(ah) => { day: d, name: nm, ahead: ah, err: "" }
+							Err(_) => { day: "", name: "", ahead: 0, err: "event record unreadable" }
+						}
+						Err(_) => { day: "", name: "", ahead: 0, err: "event record unreadable" }
+					}
+					Err(_) => { day: "", name: "", ahead: 0, err: "event record unreadable" }
+				}
+				decoded
+			}
+		}
+	}
+
+
+# The power-duration curve. POINTS come from the stored per-activity bests
+# (activity_metrics.best_*_w), maxed over the window — CAST(ROUND(..)) because a
+# bare CAST truncates and would draw the whole ladder a watt low.
+load_curve! : Sqlite.Db => List(CurvePt)
+load_curve! = |db| {
+	q = "WITH w AS (SELECT m.* FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = 'Ride' AND a.start_local >= date('now','-90 days')) SELECT 5 AS d, CAST(ROUND(MAX(best_5s_w)) AS INTEGER) AS p FROM w UNION ALL SELECT 15, CAST(ROUND(MAX(best_15s_w)) AS INTEGER) FROM w UNION ALL SELECT 30, CAST(ROUND(MAX(best_30s_w)) AS INTEGER) FROM w UNION ALL SELECT 60, CAST(ROUND(MAX(best_60s_w)) AS INTEGER) FROM w UNION ALL SELECT 300, CAST(ROUND(MAX(best_300s_w)) AS INTEGER) FROM w UNION ALL SELECT 600, CAST(ROUND(MAX(best_600s_w)) AS INTEGER) FROM w UNION ALL SELECT 1200, CAST(ROUND(MAX(best_20min_w)) AS INTEGER) FROM w"
+	match Sqlite.query!({ db, query: q, bindings: [] }) {
+		Err(_) => []
+		Ok(rows) =>
+			List.keep_oks(rows, |r| {
+				d = r.i64("d") ? |_| "bad d"
+				p = r.i64("p") ? |_| "bad p"
+
+				Ok({ dur_s: d, watts: I64.to_f32(p) })
+			})
+	}
+}
+
+# The most recent activity that HAS detected work blocks — the only kind this
+# view can say anything about. Its id anchors both loaders below.
+load_trace_id! : Sqlite.Db => I64
+load_trace_id! = |db|
+	match Sqlite.query!({ db, query: "SELECT a.id AS id FROM activity_segments s JOIN activities a ON a.id = s.activity_id WHERE s.kind = 'work' GROUP BY a.id ORDER BY a.start_local DESC LIMIT 1", bindings: [] }) {
+		Err(_) => 0
+		Ok(rows) => match List.first(rows) {
+			Err(_) => 0
+			Ok(r) => match r.i64("id") { Ok(v) => v
+				Err(_) => 0 }
+		}
+	}
+
+# The power trace, DOWNSAMPLED in SQL to ~800 points. A 45-minute ride carries
+# ~2700 samples against ~830 pixels of plot, so drawing them all costs three
+# line segments per pixel and shows nothing more. json_each reads the stored
+# stream directly — SQLite has JSON1, and this platform has no JSON decoder.
+load_trace! : Sqlite.Db, I64 => List(F32)
+load_trace! = |db, aid| {
+	# json_each's key column IS the array index for a JSON array, and for an
+	# array it is an INTEGER value (objects yield text keys), so MAX(i) and
+	# ORDER BY i are numeric — no window function, nothing left unspecified.
+	q = "WITH w AS (SELECT json_each.key AS i, CAST(json_each.value AS INTEGER) AS v FROM streams, json_each(json_extract(streams.raw_json,'$.watts.data')) WHERE streams.activity_id = :aid), n AS (SELECT MAX(i)+1 AS c FROM w) SELECT v FROM w, n WHERE i % (MAX(n.c/800,1)) = 0 ORDER BY i"
+	match Sqlite.query!({ db, query: q, bindings: [{ name: ":aid", value: Integer(aid) }] }) {
+		Err(_) => []
+		Ok(rows) => List.keep_oks(rows, |r| {
+			v = r.i64("v") ? |_| "bad v"
+			Ok(I64.to_f32(v))
+		})
+	}
+}
+
+# The detector's blocks for the same activity, in seconds from the start.
+load_segs! : Sqlite.Db, I64 => List(Seg)
+load_segs! = |db, aid| {
+	q = "SELECT CAST(kind AS TEXT) AS kind, start_s, dur_s FROM activity_segments WHERE activity_id = :aid ORDER BY ordinal"
+	match Sqlite.query!({ db, query: q, bindings: [{ name: ":aid", value: Integer(aid) }] }) {
+		Err(_) => []
+		Ok(rows) => List.keep_oks(rows, |r| {
+			k = r.str("kind") ? |_| "bad kind"
+			s = r.i64("start_s") ? |_| "bad start"
+			d = r.i64("dur_s") ? |_| "bad dur"
+			Ok({ kind: k, start_s: s, dur_s: d })
+		})
+	}
+}
+
+# The session's own duration, from the stream's last timestamp. BOTH axes in the
+# trace view divide by this: the segments are in seconds and the trace is a
+# uniform downsample of the same session, so sharing one denominator is what
+# keeps the shading aligned with the line. Deriving it from the SEGMENTS instead
+# would stretch partial coverage across the full width — on the reference
+# activity the two agree to one second in 2700, which is sub-pixel and would have
+# hidden the bug.
+load_dur! : Sqlite.Db, I64 => F32
+load_dur! = |db, aid|
+	match Sqlite.query!({ db, query: "SELECT CAST(json_extract(raw_json,'$.time.data[#-1]') AS INTEGER) AS t FROM streams WHERE activity_id = :aid", bindings: [{ name: ":aid", value: Integer(aid) }] }) {
+		Err(_) => 1.0
+		Ok(rows) => match List.first(rows) {
+			Err(_) => 1.0
+			Ok(r) => match r.i64("t") { Ok(v) => if v > 0 (I64.to_f32(v)) else 1.0
+				Err(_) => 1.0 }
+		}
+	}
+
+# CP / W' / r2 come from the ENGINE, not from a second regression here: the fit
+# is Metrics.hyperbolic_fit's job and a copy would drift from it. Each field is
+# extracted independently so JSON key ORDER cannot silently break the parse; an
+# empty field means the shell or the command failed, and the view says so rather
+# than drawing a fit of zeros.
+load_fit! : {} => Fit
+load_fit! = |{}| {
+	script = "J=$(stride power-curve 90 Ride --json 2>/dev/null); for k in cp w_prime fit_r2 fit_points; do printf '%s ' \"$(printf '%s' \"$J\" | sed -n \"s/.*\\\"$k\\\":\\([-0-9.eE]*\\).*/\\1/p\" | head -1)\"; done"
+	out = match Cmd.run_utf8!(Cmd.with_args(Cmd.new("sh"), ["-c", script])) {
+		Ok(o) => Str.trim(o.stdout)
+		Err(_) => ""
+	}
+	parts = Str.split_on(out, " ")
+	num = |i| match List.get(parts, i) {
+		Ok(s) => match F32.from_str(s) { Ok(v) => v
+			Err(_) => -1.0 }
+		Err(_) => -1.0
+	}
+	cp = num(0)
+	wp = num(1)
+	r2 = num(2)
+	fp = num(3)
+	{ cp, w_prime: wp, r2, points: fp, ok: cp >= 0.0 and wp >= 0.0 and r2 >= 0.0 and fp >= 0.0 }
+}
+
+find_idx = |days, target|
+	List.fold(
+		List.map_with_index(days, |d, i| { day: d, index: i }),
+		{ found: Bool.False, idx: 0.U64 },
+		|acc, x| if x.day == target ({ found: Bool.True, idx: x.index }) else acc,
+	)

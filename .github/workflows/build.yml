@@ -147,7 +147,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # The Form Board (src/viz.roc) rides a different platform (roc-ray) and a
+  # The Form Board (src/viz/main.roc) rides a different platform (roc-ray) and a
   # different nightly than the engine — its own pin lives in its app header.
   # Nothing above imports it, so without this job it would land unchecked.
   viz-check:
@@ -162,4 +162,4 @@ jobs:
           nightly-tag: nightly-2026-08-23-fb208ba
 
       - name: Type-check the Form Board
-        run: roc check src/viz.roc
+        run: roc check src/viz/main.roc
