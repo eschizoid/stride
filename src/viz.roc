@@ -82,7 +82,7 @@ load_series! : Sqlite.Db => Loaded
 load_series! = |db| {
 	q = "SELECT CAST(day AS TEXT) AS day, CAST(ROUND(COALESCE(ctl, 0.0)*10) AS INTEGER) AS c10, CAST(ROUND(COALESCE(atl, 0.0)*10) AS INTEGER) AS a10, CAST(ROUND(COALESCE(tsb, 0.0)*10) AS INTEGER) AS t10, CAST(ROUND(COALESCE(tss, 0.0)*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY day DESC LIMIT 90) ORDER BY day ASC"
 	match Sqlite.query!({ db, query: q, bindings: [] }) {
-		Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "query failed" }
+		Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "daily_load query failed — analyzed yet?" }
 		Ok(rows) => {
 			decoded = List.map_try(rows, |r| {
 				d = r.str("day") ? |_| "bad day"
@@ -148,7 +148,9 @@ init! = App.init(
 			Err(_) => ""
 		}
 		db_path = Str.concat(home, "/.stride/db.sqlite")
-		loaded = match Sqlite.Db.open!(db_path) {
+		loaded = if home == "" {
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "" } }
+		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				s = load_series!(db)
 				e = load_event!(db)
