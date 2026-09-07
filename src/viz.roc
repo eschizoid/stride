@@ -51,9 +51,6 @@ Model : {
 	curve_lbls : List({ p : Text.Prepared, d : I64 }),
 	fit_lbl : Text.Prepared,
 	curve_title : Text.Prepared,
-	cp_w : F32,
-	cp_ok : Bool,
-	cp_lbl : Text.Prepared,
 	curve_hint : Text.Prepared,
 	curve_empty : Text.Prepared,
 	trace : List(F32),
@@ -125,7 +122,7 @@ load_series! = |db| {
 	# the decode fails into the visible error state rather than plotting 0s.
 	q = "SELECT CAST(day AS TEXT) AS day, CAST(ROUND(ctl*10) AS INTEGER) AS c10, CAST(ROUND(atl*10) AS INTEGER) AS a10, CAST(ROUND(tsb*10) AS INTEGER) AS t10, CAST(ROUND(tss*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY day DESC LIMIT 90) ORDER BY day ASC"
 	match Sqlite.query!({ db, query: q, bindings: [] }) {
-		Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "daily_load query failed — analyzed yet?" }
+		Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "daily_load query failed - analyzed yet?" }
 		Ok(rows) => {
 			decoded = List.map_try(rows, |r| {
 				d = r.str("day") ? |_| "bad day"
@@ -345,7 +342,7 @@ init! = App.init(
 		fit_text =
 			if fit.ok
 				"CP ${fmt_f(fit.cp)} W · W' ${fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${fmt_f(fit.r2)} from ${fmt_i(fit.points)} bests"
-			else "CP fit unavailable — the engine did not answer"
+			else "CP fit unavailable - the engine did not answer"
 		mk! = |txt, sz| Text.from(txt, font).size(sz).prepare!()
 		curve_lbls = List.map_try(loaded.c, |c| {
 			p = mk!(I64.to_str(c.dur_s), 12)?
@@ -386,7 +383,7 @@ init! = App.init(
 			ev_warn_found: loaded.e.err != "",
 			stale: mk!(
 				match List.last(loaded.s.days) {
-					Ok(ld) => "data as of ${ld} — analyze to refresh"
+					Ok(ld) => "data as of ${ld} - analyze to refresh"
 					Err(_) => ""
 				},
 				13,
@@ -412,7 +409,7 @@ init! = App.init(
 			has_error: loaded.s.err != "",
 			font,
 			hint: mk!("1 / 2 / 3  range 30 / 60 / 90 days      TAB  form / power curve / session      hover to read a day      ESC quit", 13)?,
-			empty: mk!("no data yet — sync and analyze first, then reopen", 16)?,
+			empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
 			range: 90.U64,
 			mouse_x: 0.0,
 			mouse_in: Bool.False,
@@ -545,20 +542,13 @@ render! = |model, frame| {
 			# CP as a horizontal line: the curve should flatten toward it, and a fit
 			# drawn far from the long rungs is visibly wrong — which is the whole
 			# reason #372 wanted this view rather than the table.
-			if model.fit_cp > 0.0 {
+			if model.fit_cp > 0.0 and model.fit_cp < w_hi {
 				cpy = cy(model.fit_cp)
 				List.for_each!(List.map_with_index(List.repeat({}, 60), |_u, k| k), |k| {
 					x0 = pad_l + U64.to_f32(k) * (pw / 60.0)
 					frame.line!({ start: { x: x0, y: cpy }, end: { x: x0 + pw / 120.0, y: cpy }, stroke: Draw.stroke(Color.with_alpha(tsb_c, 120), 1.0) })
 				})
 				model.cp_lbl.draw!(frame, { pos: { x: pad_l + pw + 8.0, y: cpy }, color: tsb_c, align: (Middle, Left) })
-			} else {}
-			# CP as a horizontal asymptote: the curve should flatten toward it,
-			# and a fit drawn far from the long rungs is visibly wrong.
-			if model.cp_ok and model.cp_w > 0.0 and model.cp_w < w_hi {
-				cpy = cy(model.cp_w)
-				frame.line!({ start: { x: pad_l, y: cpy }, end: { x: I32.to_f32(win_w) - pad_r, y: cpy }, stroke: Draw.stroke(Color.with_alpha(tsb_c, 90), 1) })
-				model.cp_lbl.draw!(frame, { pos: { x: I32.to_f32(win_w) - pad_r + 8.0, y: cpy - 7.0 }, color: tsb_c, align: (Top, Left) })
 			} else {}
 			rungs = List.map_with_index(model.curve, |c, i| { c, i })
 			List.for_each!(rungs, |x|
