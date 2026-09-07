@@ -230,8 +230,9 @@ load_trace_id! = |db|
 # stream directly — SQLite has JSON1, and this platform has no JSON decoder.
 load_trace! : Sqlite.Db, I64 => List(F32)
 load_trace! = |db, aid| {
-	# json_each's key column IS the array index for a JSON array, so ordering
-	# is the array's own — no window function, nothing left unspecified.
+	# json_each's key column IS the array index for a JSON array, and for an
+	# array it is an INTEGER value (objects yield text keys), so MAX(i) and
+	# ORDER BY i are numeric — no window function, nothing left unspecified.
 	q = "WITH w AS (SELECT json_each.key AS i, CAST(json_each.value AS INTEGER) AS v FROM streams, json_each(json_extract(streams.raw_json,'$.watts.data')) WHERE streams.activity_id = :aid), n AS (SELECT MAX(i)+1 AS c FROM w) SELECT v FROM w, n WHERE i % (MAX(n.c/800,1)) = 0 ORDER BY i"
 	match Sqlite.query!({ db, query: q, bindings: [{ name: ":aid", value: Integer(aid) }] }) {
 		Err(_) => []
@@ -397,7 +398,7 @@ init! = App.init(
 			curve_lbls: curve_lbls,
 			fit_lbl: mk!(fit_text, 14)?,
 			curve_title: mk!("power-duration curve - Ride, last 90 days", 15)?,
-			curve_hint: mk!("TAB  form board      ESC quit", 13)?,
+			curve_hint: mk!("TAB  session trace      ESC quit", 13)?,
 			curve_empty: mk!("no rides in the last 90 days - the curve has nothing to draw", 16)?,
 			trace: loaded.tr,
 			segs: loaded.sg,
@@ -442,7 +443,7 @@ update! = |model, program_input| {
 		# screenshot waits for the end of a frame, and update! is not one.
 		# The name carries the view so three presses do not overwrite each other.
 		_ = if d.key_pressed(KeyS) {
-			shot_name = if model.view == 0 ("form-board.png") else if model.view == 1 ("power-curve.png") else "session-trace.png"
+			shot_name = if view == 0 ("form-board.png") else if view == 1 ("power-curve.png") else "session-trace.png"
 			Task.spawn!(program_input, || Shot(Capture.screenshot!(shot_name)))
 		} else {}
 		Ok({ ..model, range, view, mouse_x: m.x, mouse_in: m.y > pad_t and m.y < I32.to_f32(win_h) - pad_b })
