@@ -20,6 +20,7 @@ import rr.Sqlite
 import rr.Cmd
 
 CurvePt : { dur_s : I64, watts : F32 }
+Seg : { kind : Str, start_s : I64, dur_s : I64 }
 Fit : { cp : F32, w_prime : F32, r2 : F32, points : F32, ok : Bool }
 
 Point : { ctl : F32, atl : F32, tsb : F32, tss : F32 }
@@ -53,6 +54,10 @@ Model : {
 	cp_lbl : Text.Prepared,
 	curve_hint : Text.Prepared,
 	curve_empty : Text.Prepared,
+	trace : List(F32),
+	segs : List(Seg),
+	trace_title : Text.Prepared,
+	trace_dur : F32,
 	data : List(Point),
 	days : List(Str),
 	status : Text.Prepared,
@@ -198,6 +203,68 @@ load_curve! = |db| {
 	}
 }
 
+# The most recent activity that HAS detected work blocks — the only kind this
+# view can say anything about. Its id anchors both loaders below.
+load_trace_id! : Sqlite.Db => I64
+load_trace_id! = |db|
+	match Sqlite.query!({ db, query: "SELECT a.id AS id FROM activity_segments s JOIN activities a ON a.id = s.activity_id WHERE s.kind = 'work' GROUP BY a.id ORDER BY a.start_local DESC LIMIT 1", bindings: [] }) {
+		Err(_) => 0
+		Ok(rows) => match List.first(rows) {
+			Err(_) => 0
+			Ok(r) => match r.i64("id") { Ok(v) => v
+				Err(_) => 0 }
+		}
+	}
+
+# The power trace, DOWNSAMPLED in SQL to ~800 points. A 45-minute ride carries
+# ~2700 samples against ~830 pixels of plot, so drawing them all costs three
+# line segments per pixel and shows nothing more. json_each reads the stored
+# stream directly — SQLite has JSON1, and this platform has no JSON decoder.
+load_trace! : Sqlite.Db, I64 => List(F32)
+load_trace! = |db, aid| {
+	q = "WITH w AS (SELECT ROW_NUMBER() OVER () - 1 AS i, CAST(value AS INTEGER) AS v FROM streams, json_each(json_extract(streams.raw_json,'$.watts.data')) WHERE streams.activity_id = ${I64.to_str(aid)}), n AS (SELECT MAX(i)+1 AS c FROM w) SELECT v FROM w, n WHERE i % (MAX(n.c/800,1)) = 0 ORDER BY i"
+	match Sqlite.query!({ db, query: q, bindings: [] }) {
+		Err(_) => []
+		Ok(rows) => List.keep_oks(rows, |r| {
+			v = r.i64("v") ? |_| "bad v"
+			Ok(I64.to_f32(v))
+		})
+	}
+}
+
+# The detector's blocks for the same activity, in seconds from the start.
+load_segs! : Sqlite.Db, I64 => List(Seg)
+load_segs! = |db, aid| {
+	q = "SELECT CAST(kind AS TEXT) AS kind, start_s, dur_s FROM activity_segments WHERE activity_id = ${I64.to_str(aid)} ORDER BY ordinal"
+	match Sqlite.query!({ db, query: q, bindings: [] }) {
+		Err(_) => []
+		Ok(rows) => List.keep_oks(rows, |r| {
+			k = r.str("kind") ? |_| "bad kind"
+			s = r.i64("start_s") ? |_| "bad start"
+			d = r.i64("dur_s") ? |_| "bad dur"
+			Ok({ kind: k, start_s: s, dur_s: d })
+		})
+	}
+}
+
+# The session's own duration, from the stream's last timestamp. BOTH axes in the
+# trace view divide by this: the segments are in seconds and the trace is a
+# uniform downsample of the same session, so sharing one denominator is what
+# keeps the shading aligned with the line. Deriving it from the SEGMENTS instead
+# would stretch partial coverage across the full width — on the reference
+# activity the two agree to one second in 2700, which is sub-pixel and would have
+# hidden the bug.
+load_dur! : Sqlite.Db, I64 => F32
+load_dur! = |db, aid|
+	match Sqlite.query!({ db, query: "SELECT CAST(json_extract(raw_json,'$.time.data[#-1]') AS INTEGER) AS t FROM streams WHERE activity_id = ${I64.to_str(aid)}", bindings: [] }) {
+		Err(_) => 1.0
+		Ok(rows) => match List.first(rows) {
+			Err(_) => 1.0
+			Ok(r) => match r.i64("t") { Ok(v) => if v > 0 (I64.to_f32(v)) else 1.0
+				Err(_) => 1.0 }
+		}
+	}
+
 # CP / W' / r2 come from the ENGINE, not from a second regression here: the fit
 # is Metrics.hyperbolic_fit's job and a copy would drift from it. Each field is
 # extracted independently so JSON key ORDER cannot silently break the parse; an
@@ -246,16 +313,20 @@ init! = App.init(
 		}
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 }
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0 }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				s = load_series!(db)
 				e = load_event!(db)
 				c = load_curve!(db)
+				tid = load_trace_id!(db)
+				tr = load_trace!(db, tid)
+				sg = load_segs!(db, tid)
+				du = load_dur!(db, tid)
 				st = load_stale!(db)
-				{ s, e, c, st }
+				{ s, e, c, st, tr, sg, du }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 }
+			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0 }
 		}
 		ev = find_idx(loaded.s.days, loaded.e.day)
 		fit = load_fit!({})
@@ -320,12 +391,16 @@ init! = App.init(
 			cp_lbl: mk!("CP ${fmt_f(fit.cp)}", 13)?,
 			curve_hint: mk!("TAB  form board      ESC quit", 13)?,
 			curve_empty: mk!("no rides in the last 90 days — the curve has nothing to draw", 16)?,
+			trace: loaded.tr,
+			segs: loaded.sg,
+			trace_title: mk!("last structured session — detected blocks shaded behind the power trace", 15)?,
+			trace_dur: loaded.du,
 			data: loaded.s.data,
 			days: loaded.s.days,
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
 			font,
-			hint: mk!("1 / 2 / 3  range 30 / 60 / 90 days      TAB  form / power curve      hover to read a day      ESC quit", 13)?,
+			hint: mk!("1 / 2 / 3  range 30 / 60 / 90 days      TAB  form / power curve / session      hover to read a day      ESC quit", 13)?,
 			empty: mk!("no data yet — sync and analyze first, then reopen", 16)?,
 			range: 90.U64,
 			mouse_x: 0.0,
@@ -347,7 +422,7 @@ update! = |model, program_input| {
 			else if d.key_pressed(Key2) 60.U64
 			else if d.key_pressed(Key3) 90.U64
 			else model.range
-		view = if d.key_pressed(KeyTab) (if model.view == 0 1 else 0) else model.view
+		view = if d.key_pressed(KeyTab) (if model.view == 2 0 else model.view + 1) else model.view
 		m = d.mouse.position()
 		Ok({ ..model, range, view, mouse_x: m.x, mouse_in: m.y > pad_t and m.y < I32.to_f32(win_h) - pad_b })
 	}
@@ -382,6 +457,44 @@ render! = |model, frame| {
 	model.leg_fat.draw!(frame, { pos: { x: 118.0, y: 70.0 }, color: atl_c, align: (Top, Left) })
 	model.leg_form.draw!(frame, { pos: { x: 206.0, y: 70.0 }, color: tsb_c, align: (Top, Left) })
 
+	# ── session trace view (TAB) ────────────────────────────────────────────
+	# The detector's blocks shaded BEHIND the real power trace, so the two can
+	# be compared by eye — which is the whole point: a table of segments cannot
+	# show you that a "work" block started thirty seconds before the power did.
+	if model.view == 2 {
+		model.trace_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		if List.is_empty(model.trace) {
+			model.hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
+			Ok({})
+		} else {
+			pw = I32.to_f32(win_w) - pad_l - pad_r
+			ph = I32.to_f32(win_h) - pad_t - pad_b
+			w_hi = List.fold(model.trace, 1.0, |a, v| F32.max(a, v)) * 1.1
+			nlast = List.len(model.trace) - 1
+			# Segments carry SECONDS while the trace is downsampled samples, so
+			# both map through the session's own duration rather than through
+			# each other's index.
+			total_s = model.trace_dur
+			sx = |sec| pad_l + pw * sec / total_s
+			tx = |i| if nlast == 0 (pad_l) else pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
+			ty = |w| pad_t + ph * (1.0 - w / w_hi)
+			List.for_each!(model.segs, |sg| {
+				col = if sg.kind == "work" (Color.with_alpha(tsb_c, 52)) else if sg.kind == "recovery" (Color.with_alpha(ink_faint, 36)) else Color.with_alpha(ink_faint, 18)
+				x0 = sx(I64.to_f32(sg.start_s))
+				x1 = sx(I64.to_f32(sg.start_s + sg.dur_s))
+				frame.rectangle!({ x: x0, y: pad_t, width: F32.max(x1 - x0, 1.0), height: ph, style: Draw.filled(col) })
+			})
+			List.for_each!(List.map_with_index(model.trace, |v, i| { v, i }), |p| {
+				if p.i > 0 {
+					prev = match List.get(model.trace, p.i - 1) { Ok(x) => x
+						Err(_) => p.v }
+					frame.line!({ start: { x: tx(p.i - 1), y: ty(prev) }, end: { x: tx(p.i), y: ty(p.v) }, stroke: Draw.stroke(ctl_c, 1.0) })
+				} else {}
+			})
+			model.hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
+			Ok({})
+		}
+	} else {
 	# ── power-curve view (TAB) ──────────────────────────────────────────────
 	# Log-x, because the ladder spans 5s to 20min: on a linear axis the six
 	# short rungs collapse onto the left edge and the chart shows one point.
@@ -561,6 +674,7 @@ render! = |model, frame| {
 
 		model.hint.draw!(frame, { pos: { x: 34.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
 		Ok({})
+	}
 	}
 	}
 }

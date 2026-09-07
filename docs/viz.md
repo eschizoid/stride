@@ -63,3 +63,23 @@ shows "CP fit unavailable" rather than a fit of zeros.
 
 Rungs are spaced by INDEX rather than by duration: the ladder is a fixed 5s..20min
 set, and a linear time axis piles the six short rungs onto the left edge.
+
+## Session trace view (TAB)
+
+The third screen: the most recent session that has detected work blocks, drawn as
+its power trace with the detector's blocks shaded behind it — work in the accent,
+recovery and warm-up/cool-down in grey.
+
+This is the view #372 calls "auditable". A table of segments can tell you the
+detector found seven work blocks; only the overlay tells you whether a block
+started before the power did.
+
+The trace is **downsampled in SQL** to ~800 points. A 45-minute ride carries ~2700
+samples against ~830 pixels of plot, so drawing all of them costs three line
+segments per pixel and shows nothing more. `json_each` reads the stored stream
+directly — SQLite has JSON1, and this platform has no JSON decoder.
+
+Both axes divide by the SAME duration, taken from the stream's last timestamp.
+Deriving it from the segments instead would stretch partial detector coverage
+across the full width; on the reference activity the two differ by one second in
+2700, which is sub-pixel and would have hidden the bug rather than shown it.
