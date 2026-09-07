@@ -126,7 +126,7 @@ Event : { day : Str, name : Str, ahead : I64 }
 # away from localtime, and daily_load is built against stride's day.
 load_event! : Sqlite.Db => Event
 load_event! = |db|
-	match Sqlite.query!({ db, query: "SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(event_date) - julianday(date('now','localtime')) AS INTEGER) AS ahead FROM events WHERE event_date >= date('now', 'localtime') ORDER BY event_date ASC LIMIT 1", bindings: [] }) {
+	match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(event_date) - julianday(today) AS INTEGER) AS ahead FROM events, anchor WHERE event_date >= today ORDER BY event_date ASC LIMIT 1", bindings: [] }) {
 		Err(_) => { day: "", name: "", ahead: 0 }
 		Ok(rows) => match List.first(rows) {
 			Err(_) => { day: "", name: "", ahead: 0 }
