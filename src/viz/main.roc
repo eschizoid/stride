@@ -143,6 +143,7 @@ init! = App.init(
 
 # The app spawns one kind of task: a screenshot, whose result it ignores —
 # a failed shot must not take the window down, and the file's absence is the
+# report. Was `[]` while nothing spawned.
 
 Msg : [Shot(Try({}, Capture.ScreenshotError))]
 

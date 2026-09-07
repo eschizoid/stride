@@ -41,7 +41,7 @@ the human, state for the coach, SQLite as the only channel; neither side ever ad
 the other directly. A directive is a row, which is what makes the protocol testable in
 this repo's native way.
 
-**3. The app is a windowed roc-ray entry point, `src/viz.roc`, a second consumer of the
+**3. The app is a windowed roc-ray entry point, `src/viz/main.roc` (originally one file, `src/viz.roc`, split into modules by #388), a second consumer of the
 database.** It imports the same modules as the CLI, and nothing graphical enters
 `src/app.roc`. A `stride viz` subcommand is the way in — a launcher that spawns the app and exits. <!-- command-claims: quoting -->
 
@@ -79,7 +79,7 @@ Four views exist now (#379, #381, #382, #383). Building them falsified one decis
 left another unimplemented, and turned up a use for pixels this ADR argued against —
 in a narrower sense than the one it rejected.
 
-**Decision 4 is BROKEN, and knowingly.** `src/viz.roc` pins
+**Decision 4 is BROKEN, and knowingly.** The viz app header (`src/viz/main.roc`) pins
 `nightly-2026-08-23-fb208ba` while the engine pins `nightly-2026-09-04-c125b82`. That is
 the second compiler this ADR rejects outright, and the precondition it set — work starts
 when roc-ray checks clean on the engine's pin — was never met: `just viz-check` against
