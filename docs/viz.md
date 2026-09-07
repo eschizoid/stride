@@ -10,8 +10,11 @@ the SQLite — no export step, no baked data, nothing the CLI has to prepare.
 - **Fitness** (CTL, blue, filled), **fatigue** (ATL, violet), **form** (TSB,
   teal — the brand accent) over the selected range.
 - Daily load (TSS) as a rug along the bottom, on its own scale.
-- Y-axis labels, current values at the line ends, the next planned event as a
-  dashed marker.
+- Y-axis labels, current values at the line ends, and the next planned event:
+  a dashed in-plot marker when its date is inside the plotted window, or a
+  header countdown (`name  Nd`) when it is beyond it. A genuine future event
+  always takes the second form — the series ends today, so there is no column
+  to draw a marker on.
 
 ## Controls
 

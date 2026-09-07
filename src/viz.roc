@@ -2,8 +2,10 @@
 ## from ~/.stride/db.sqlite (daily_load + events). Fitness (blue, filled),
 ## fatigue (violet), form (teal — the brand accent), daily load as a bottom
 ## rug, y-axis labels, current values at the line ends, and the next planned
-## event as a dashed marker. Keys 1/2/3 set the range (30/60/90 days), the
-## mouse reads any day off the chart, ESC quits.
+## event — as a dashed in-plot marker when its date falls inside the window, and
+## as a header countdown when it does not, which for a real future event is
+## always, since the series ends today. Keys 1/2/3 set the range (30/60/90 days),
+## the mouse reads any day off the chart, ESC quits.
 ##
 ## NOTE the pin below: roc-ray's platform needs nightly-2026-08-23, not the
 ## engine's toolchain pin. The header carries its own compiler version, so
@@ -82,7 +84,10 @@ Loaded : { data : List(Point), days : List(Str), last : { c : I64, a : I64, t : 
 
 load_series! : Sqlite.Db => Loaded
 load_series! = |db| {
-	q = "SELECT CAST(day AS TEXT) AS day, CAST(ROUND(COALESCE(ctl, 0.0)*10) AS INTEGER) AS c10, CAST(ROUND(COALESCE(atl, 0.0)*10) AS INTEGER) AS a10, CAST(ROUND(COALESCE(tsb, 0.0)*10) AS INTEGER) AS t10, CAST(ROUND(COALESCE(tss, 0.0)*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY date(day) DESC LIMIT 90) ORDER BY date(day) ASC"
+	# day is the engine-written PRIMARY KEY in canonical YYYY-MM-DD; for
+	# ISO-8601 text, lexical order IS date order, and the bare column keeps
+	# the primary-key index usable — wrapping it in date() would forfeit both.
+	q = "SELECT CAST(day AS TEXT) AS day, CAST(ROUND(COALESCE(ctl, 0.0)*10) AS INTEGER) AS c10, CAST(ROUND(COALESCE(atl, 0.0)*10) AS INTEGER) AS a10, CAST(ROUND(COALESCE(tsb, 0.0)*10) AS INTEGER) AS t10, CAST(ROUND(COALESCE(tss, 0.0)*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY day DESC LIMIT 90) ORDER BY day ASC"
 	match Sqlite.query!({ db, query: q, bindings: [] }) {
 		Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "daily_load query failed — analyzed yet?" }
 		Ok(rows) => {
