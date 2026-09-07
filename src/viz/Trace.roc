@@ -42,13 +42,13 @@ Trace :: [].{
 				x1 = sx(I64.to_f32(sg.start_s + sg.dur_s))
 				frame.rectangle!({ x: x0, y: pad_t, width: F32.max(x1 - x0, 1.0), height: ph, style: Draw.filled(col) })
 			})
-			List.for_each!(List.map_with_index(model.trace, |v, i| { v, i }), |p| {
-				if p.i > 0 {
-					prev = match List.get(model.trace, p.i - 1) { Ok(x) => x
-						Err(_) => p.v }
-					frame.line!({ start: { x: tx(p.i - 1), y: ty(prev) }, end: { x: tx(p.i), y: ty(p.v) }, stroke: Draw.stroke(ctl_c, 1.0) })
-				} else {}
-			})
+			# One pass, no random access: zip each sample with its successor.
+			# (Roc lists are contiguous arrays — even the List.get form this
+			# replaces was O(1) per lookup, not a linked-list walk.)
+			tail = List.take_last(model.trace, List.len(model.trace) - 1)
+			segs2 = List.map2(model.trace, tail, |a, b| { a, b })
+			List.for_each!(List.map_with_index(segs2, |pr, i| { pr, i }), |x|
+				frame.line!({ start: { x: tx(x.i), y: ty(x.pr.a) }, end: { x: tx(x.i + 1), y: ty(x.pr.b) }, stroke: Draw.stroke(ctl_c, 1.0) }))
 			model.hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
 			Ok({})
 		}
