@@ -158,7 +158,7 @@ init! = App.init(
 		}
 		ev = find_idx(loaded.s.days, loaded.e.day)
 		mk! = |txt, sz| Text.from(txt, font).size(sz).prepare!()
-		ylabels = List.map_try([0, 10, 20, 30, 40, 50], |v| {
+		ylabels = List.map_try([-30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], |v| {
 			p = mk!(I64.to_str(v), 12)?
 			Ok({ p, v: I64.to_f32(v) })
 		})?
@@ -273,11 +273,14 @@ render! = |model, frame| {
 		yf = |v| pad_t + ph * (1.0 - (v - lo) / span)
 
 		# grid + y labels
-		List.for_each!(model.ylabels, |yl| {
-			gy = yf(yl.v)
-			frame.line!({ start: { x: pad_l, y: gy }, end: { x: I32.to_f32(win_w) - pad_r, y: gy }, stroke: Draw.stroke(Color.with_alpha(Color.white, 18), 1) })
-			yl.p.draw!(frame, { pos: { x: 30.0, y: gy - 8.0 }, color: ink_faint, align: (Top, Left) })
-		})
+		# only the gridlines the computed range actually contains — the prepared
+		# set spans -30..100 so any real PMC window finds its ticks in it
+		List.for_each!(model.ylabels, |yl|
+			if yl.v >= lo and yl.v <= hi {
+				gy = yf(yl.v)
+				frame.line!({ start: { x: pad_l, y: gy }, end: { x: I32.to_f32(win_w) - pad_r, y: gy }, stroke: Draw.stroke(Color.with_alpha(Color.white, 18), 1) })
+				yl.p.draw!(frame, { pos: { x: 30.0, y: gy - 8.0 }, color: ink_faint, align: (Top, Left) })
+			} else {})
 		frame.line!({ start: { x: pad_l, y: yf(0.0) }, end: { x: I32.to_f32(win_w) - pad_r, y: yf(0.0) }, stroke: Draw.stroke(Color.with_alpha(Color.white, 55), 1) })
 
 		# daily load (TSS) as a faint rug in its OWN scale along the bottom band,
