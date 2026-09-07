@@ -80,7 +80,7 @@ Loaded : { data : List(Point), days : List(Str), last : { c : I64, a : I64, t : 
 
 load_series! : Sqlite.Db => Loaded
 load_series! = |db| {
-	q = "SELECT CAST(day AS TEXT) AS day, CAST(ROUND(ctl*10) AS INTEGER) AS c10, CAST(ROUND(atl*10) AS INTEGER) AS a10, CAST(ROUND(tsb*10) AS INTEGER) AS t10, CAST(ROUND(tss*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY day DESC LIMIT 90) ORDER BY day ASC"
+	q = "SELECT CAST(day AS TEXT) AS day, CAST(ROUND(COALESCE(ctl, 0.0)*10) AS INTEGER) AS c10, CAST(ROUND(COALESCE(atl, 0.0)*10) AS INTEGER) AS a10, CAST(ROUND(COALESCE(tsb, 0.0)*10) AS INTEGER) AS t10, CAST(ROUND(COALESCE(tss, 0.0)*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY day DESC LIMIT 90) ORDER BY day ASC"
 	match Sqlite.query!({ db, query: q, bindings: [] }) {
 		Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "query failed" }
 		Ok(rows) => {
@@ -216,7 +216,7 @@ update! = |model, program_input| {
 			else if d.key_pressed(Key3) 90.U64
 			else model.range
 		m = d.mouse.position()
-		Ok({ ..model, range, mouse_x: m.x, mouse_in: m.y > pad_t })
+		Ok({ ..model, range, mouse_x: m.x, mouse_in: m.y > pad_t and m.y < I32.to_f32(win_h) - pad_b })
 	}
 }
 
