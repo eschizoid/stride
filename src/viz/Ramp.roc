@@ -37,7 +37,8 @@ Ramp :: [].{
 			# an all-building stretch spends the rest of the pixels on the builds
 			lo9 = List.fold(model.ramp_weeks, -0.5, |a, w| F32.min(a, I64.to_f32(w.ramp10) / 10.0 - 0.5))
 			ry = |v9| po_top + (1.0 - (v9 - lo9) / (hi9 - lo9)) * po_h
-			Text.from("ctl gained per week", model.font).size(11).draw!(frame, { pos: { x: pad, y: po_top - 16.0 }, color: ink_faint, align: (Top, Left) })
+			# right-anchored: the hover readout owns the left of this row
+			Text.from("ctl gained per week", model.font).size(11).draw!(frame, { pos: { x: win_w - pad, y: po_top - 16.0 }, color: ink_faint, align: (Top, Right) })
 			# the band above +6/wk, then the rule lines
 			frame.rectangle!({ x: pad, y: po_top, width: win_w - pad * 2.0, height: ry(danger) - po_top, style: Draw.filled(Color.with_alpha(Theme.alarm_c, 26)) })
 			frame.line!({ start: { x: pad, y: ry(danger) }, end: { x: win_w - pad, y: ry(danger) }, stroke: Draw.stroke(Color.with_alpha(Theme.alarm_c, 110), 1) })
