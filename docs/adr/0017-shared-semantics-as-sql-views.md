@@ -26,8 +26,9 @@ The first two:
 - `plan_current` — exactly one row per planned date: the newest non-skipped
   row wins; a skipped tombstone speaks only when nothing replaced it.
 - `week_bounds` — the Monday of the series' current week
-  (`date(MAX(day), '-6 days', 'weekday 1')`, verified for all seven
-  weekdays), matching `Metrics.weekly_rollup`'s alignment.
+  (`date(COALESCE(MAX(day), date('now','localtime')), '-6 days', 'weekday 1')`,
+  verified for all seven weekdays; an empty daily_load anchors on the wall
+  clock), matching `Metrics.weekly_rollup`'s alignment.
 
 ## The sharp edges, learned in #403's eleven review rounds
 
