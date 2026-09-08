@@ -69,7 +69,7 @@ Trace :: [].{
 			# shorter session honestly ends early instead of stretching to fit
 			_ = if List.len(model.ghost) > 1 {
 				gn = List.len(model.ghost) - 1
-				gx = |i| pad_l + F32.min(pw, pw * (model.ghost_dur * U64.to_f32(i) / U64.to_f32(gn)) / total_s)
+				gx = |i| cam((model.ghost_dur * U64.to_f32(i) / U64.to_f32(gn)) / total_s)
 				gtail = List.take_last(model.ghost, gn)
 				gsegs = List.map2(model.ghost, gtail, |a, b| { a, b })
 				# a ghost longer than the live session stops at the edge rather
