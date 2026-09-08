@@ -239,11 +239,14 @@ Db :: [].{
 	}
 
 	# the window's answer: what the human is looking at, one row, upserted
-	write_focus! : Sqlite.Db, { view : I64, range : I64, cursor_day : Str, trace_day : Str } => {}
+	write_focus! : Sqlite.Db, { view : I64, range : I64, cursor_day : Str, trace_day : Str } => Try({}, [WriteFailed])
 	write_focus! = |db, f| {
 		ensure_bus!(db)
-		_ = Sqlite.execute!({ db, query: "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day) VALUES (1, datetime('now'), :v, :rg, NULLIF(:cd, ''), NULLIF(:td, '')) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, view = excluded.view, range = excluded.range, cursor_day = excluded.cursor_day, trace_day = excluded.trace_day", bindings: [{ name: ":v", value: Integer(f.view) }, { name: ":rg", value: Integer(f.range) }, { name: ":cd", value: String(f.cursor_day) }, { name: ":td", value: String(f.trace_day) }] })
-		{}
+		res = Sqlite.execute!({ db, query: "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day) VALUES (1, datetime('now'), :v, :rg, NULLIF(:cd, ''), NULLIF(:td, '')) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, view = excluded.view, range = excluded.range, cursor_day = excluded.cursor_day, trace_day = excluded.trace_day", bindings: [{ name: ":v", value: Integer(f.view) }, { name: ":rg", value: Integer(f.range) }, { name: ":cd", value: String(f.cursor_day) }, { name: ":td", value: String(f.trace_day) }] })
+		match res {
+			Ok(_) => Ok({})
+			Err(_) => Err(WriteFailed)
+		}
 	}
 
 	# a day's note from load_day_notes!, or the honest default

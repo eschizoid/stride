@@ -253,7 +253,8 @@ trace_task! = |home, ids, sel|
 			}
 	}
 
-# The coach's poll: read-and-consume the newest directive, once a second,
+# The coach's poll: read-and-consume the newest directive, every 60
+# frames (~1s at the capped rate; slower if frames are),
 # from a spawned task (Sqlite parks there).
 poll_task! : Str => Msg
 poll_task! = |home|
@@ -269,12 +270,12 @@ poll_task! = |home|
 # The window's answer: upsert what the human is looking at
 focus_task! : Str, { view : I64, range : I64, cursor_day : Str, trace_day : Str } => Msg
 focus_task! = |home, f|
-	if home == "" FocusWritten
+	if home == "" FocusWriteFailed
 	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
-		Err(_) => FocusWritten
-		Ok(db) => {
-			Db.write_focus!(db, f)
-			FocusWritten
+		Err(_) => FocusWriteFailed
+		Ok(db) => match Db.write_focus!(db, f) {
+			Ok(_) => FocusWritten
+			Err(_) => FocusWriteFailed
 		}
 	}
 
@@ -290,6 +291,7 @@ Msg : [
 	Directive(Db.Directive),
 	DirectiveNone,
 	FocusWritten,
+	FocusWriteFailed,
 ]
 
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
@@ -304,6 +306,9 @@ update! = |model0, program_input| {
 			TraceSwitchFailed => acc
 			DirectiveNone => acc
 			FocusWritten => acc
+			# a dropped write must not leave the coach stale: resetting
+			# last_focus makes the next throttle tick try again
+			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "" } }
 			Directive(_) => acc
 			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus }
 			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day }
@@ -331,10 +336,10 @@ update! = |model0, program_input| {
 		# 1/2/3 answer to whichever view is showing: the form board's range, or
 		# the curve's window — never both at once
 		range =
-			# a directive's range lands on the view the directive steers to: the
-			# curve keeps its own window (want_days below), so a curve directive
-			# must not silently re-range the form board too
-			if directive.has_d and directive.view != 1 and (directive.range == 30 or directive.range == 60 or directive.range == 90) (match I64.to_u64_try(directive.range) { Ok(rr) => rr
+			# a directive's range lands on the view the directive lands on: the
+			# named view when one is named, the visible view otherwise. The curve
+			# keeps its own window (want_days below), never the form-board range.
+			if directive.has_d and (if directive.view >= 0 (directive.view != 1) else model.view != 1) and (directive.range == 30 or directive.range == 60 or directive.range == 90) (match I64.to_u64_try(directive.range) { Ok(rr) => rr
 				Err(_) => model.range }) else
 			if clicked_chip > 0 clicked_chip
 			else if model.view == 1 model.range
@@ -369,7 +374,7 @@ update! = |model0, program_input| {
 		# on the curve view "range" MEANS the curve window — a directive saying
 		# (view 1, range 30) re-windows the ladder and fit, same as the keys
 		want_days =
-			if view == 1 and directive.has_d and (directive.range == 30 or directive.range == 60 or directive.range == 90) directive.range
+			if view == 1 and directive.has_d and (directive.view == 1 or directive.view < 0) and (directive.range == 30 or directive.range == 60 or directive.range == 90) directive.range
 			else if view == 1 (if d.key_pressed(Key1) 30 else if d.key_pressed(Key2) 60 else if d.key_pressed(Key3) 90 else model.curve_days)
 			else model.curve_days
 		# on the trace view, [ and ] walk the last dozen structured sessions

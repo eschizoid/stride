@@ -80,7 +80,10 @@ CREATE TABLE IF NOT EXISTS viz_directives (
 -- consumes everything up to it. NULL fields mean "leave that alone".
 INSERT INTO viz_directives (view, range, cursor_day, trace_day)
 VALUES (0, 30, '2026-09-02', NULL);
--- view 0..3 (form/curve/trace/table), range 30|60|90,
+-- view 0..3 (form/curve/trace/table). range 30|60|90 lands on the view the
+-- directive lands on: named view if set, else the visible one — on the curve
+-- it re-windows the ladder+fit, on every other view it sets the form board's
+-- range.
 -- cursor_day parks the crosshair, trace_day picks the session
 
 -- the window creates this too; a coach may pre-create it the same way:
