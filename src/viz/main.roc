@@ -204,9 +204,9 @@ load_model! = |font, curve_days| {
 				Ok(x) => x.day
 				Err(_) => ""
 			},
-			curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
-			trace_hint: mk!("[ / ]  session      shift+[ / shift+]  ghost      TAB  data table      R  reload      S  screenshot      ESC quit", 13)?,
-			table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      ESC quit", 13)?,
+			curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+			trace_hint: mk!("[ / ]  session      shift+[ / shift+]  ghost      TAB  data table      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+			table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			table_title: mk!("data table", 15)?,
 			table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
 			kpis: [
@@ -246,14 +246,15 @@ load_model! = |font, curve_days| {
 			zone_weeks: loaded.zw,
 			ramp_weeks: loaded.rw,
 			prs: loaded.prs,
+			rec_status: Idle,
 			ramp_title: mk!("the ramp - weekly load and how fast fitness is climbing", 15)?,
-			ramp_hint: mk!("hover a week to read it      TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
+			ramp_hint: mk!("hover a week to read it      TAB  form board      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			zones_title: mk!("time in zone - twelve weeks, and the 80/20 story", 15)?,
-			zones_hint: mk!("hover a week to read it      TAB  ramp      R  reload      S  screenshot      ESC quit", 13)?,
+			zones_hint: mk!("hover a week to read it      TAB  ramp      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			heat_title: mk!("training heat - one cell per day", 15)?,
-			heat_hint: mk!("hover a cell to read the day      TAB  zones      R  reload      S  screenshot      ESC quit", 13)?,
+			heat_hint: mk!("hover a cell to read the day      TAB  zones      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			plan_title: mk!("next 7 days - plan and progress", 15)?,
-			plan_hint: mk!("TAB  heat      R  reload      S  screenshot      ESC quit", 13)?,
+			plan_hint: mk!("TAB  heat      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			nav: [
 				{ p: mk!("form", 13)?, v: 0.U8 },
 				{ p: mk!("power", 13)?, v: 1.U8 },
@@ -267,7 +268,7 @@ load_model! = |font, curve_days| {
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
 			font: mono,
-			hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   ESC quit", 13)?,
+			hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   ESC quit", 13)?,
 			empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
 			range: 90.U64,
 			mouse_x: 0.0,
@@ -374,6 +375,7 @@ Msg : [
 	GhostSwitched({ tr : List(F32), du : F32, sel : I64, day : Str }),
 	GhostSwitchFailed,
 	Shot(Try({}, Capture.ScreenshotError)),
+	RecCmd({}),
 	Reloaded(Ui.Model),
 	ReloadFailed,
 	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, sel : U64, day : Str }),
@@ -386,6 +388,12 @@ Msg : [
 	DayDetail({ day : Str, lines : List(Db.DayLine) }),
 ]
 
+# ONE view->basename map for every capture format: png and webm derive
+# from it, so the "named for the view" invariant cannot drift per-path
+view_basename : U8 -> Str
+view_basename = |v|
+	if v == 0 "form-board" else if v == 1 "power" else if v == 2 "session-trace" else if v == 3 "data-table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else "ramp"
+
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
 update! = |model0, program_input| {
 	d = program_input.devices
@@ -394,6 +402,7 @@ update! = |model0, program_input| {
 	model = List.fold(program_input.messages, model0, |acc, msg|
 		match msg {
 			Shot(_) => acc
+			RecCmd(_) => acc
 			ReloadFailed => acc
 			TraceSwitchFailed => acc
 			GhostSwitchFailed => acc
@@ -484,10 +493,28 @@ update! = |model0, program_input| {
 		# S writes a PNG of the CURRENT view into ./captures — #372's "session
 		# graphic for a training log". Spawned rather than called inline: a
 		# screenshot waits for the end of a frame, and update! is not one.
-		# The name carries the view so three presses do not overwrite each other.
+		# The name carries the VIEW'S OWN NAME (docs: "named for the view") -
+		# view 1 is the power view, so its captures are power.png/power.webm,
+		# one basename per view across both formats. img/power-curve.png in the
+		# docs is a committed illustration, not a capture.
 		_ = if d.key_pressed(KeyS) {
-			shot_name = if view == 0 ("form-board.png") else if view == 1 ("power-curve.png") else if view == 2 ("session-trace.png") else if view == 3 ("data-table.png") else if view == 4 ("plan.png") else if view == 5 ("heat.png") else if view == 6 ("zones.png") else "ramp.png"
+			shot_name = Str.concat(view_basename(view), ".png")
 			Task.spawn!(program_input, || Shot(Capture.screenshot!(shot_name)))
+		} else {}
+		# V toggles a recording of whatever is on screen: WebM, full scale,
+		# 30fps, FixedStep timing - the deterministic regenerable session
+		# graphic #372 promised. Named for the view it started on.
+		_ = if d.key_pressed(KeyV) {
+			match program_input.capture {
+				Active(_) => Task.spawn!(program_input, || RecCmd(Capture.stop!()))
+				_ => {
+					rec_name = Str.concat(view_basename(view), ".webm")
+					# max_frames 0 is the platform's "record until Capture.stop"
+					# sentinel, not a zero-frame cap - V is the stop
+					rec = Capture.default.with_format(WebM).with_path(rec_name).with_fps(30).with_max_frames(0).with_scale(Full).with_timing(FixedStep)
+					Task.spawn!(program_input, || RecCmd(Capture.start!(rec)))
+				}
+			}
 		} else {}
 		# on the curve view, 1/2/3 re-window the curve AND its CP fit — a full
 		# reload through the same path as R, keeping what the user was looking at
@@ -681,7 +708,7 @@ update! = |model0, program_input| {
 				_ = Task.spawn!(program_input, || focus_task!(homef, focus_now))
 				focus_now
 			} else model.last_focus
-		Ok({ ..model, range, view: view2, cursor: cursor3, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
@@ -694,6 +721,32 @@ render! = |model, frame| {
 	frame.rectangle_gradient_v!({ x: 16.0, y: 16.0, width: model.win.w - 32.0, height: (model.win.h - 32.0) * 0.4, color_top: Color.with_alpha(Color.from_hex_rgb(0x232332), 40), color_bottom: Color.with_alpha(Theme.panel, 0) })
 	frame.rectangle_gradient_v!({ x: 16.0, y: model.win.h - 96.0, width: model.win.w - 32.0, height: 80.0, color_top: Color.with_alpha(Theme.bg, 0), color_bottom: Color.with_alpha(Theme.bg, 90) })
 	model.title.draw!(frame, { pos: { x: 34.0, y: 30.0 }, color: Color.white, align: (Top, Left) })
+	# the recording badge lives below the pills on every view: a red dot
+	# while filming, a quiet confirmation once the file is written
+	_ = match model.rec_status {
+		Active(af) => {
+			frame.circle!({ center: { x: model.win.w - 148.0, y: 64.0 }, radius: 4.0, style: Draw.filled(Theme.alarm_c) })
+			Text.from("rec ${U64.to_str(af.frames)}f   V stops", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 138.0, y: 58.0 }, color: Theme.alarm_c, align: (Top, Left) })
+			{}
+		}
+		Finished(ff) => {
+			Text.from("recording saved to captures/ (${U64.to_str(ff.bytes / 1024)}kb)", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 40.0, y: 58.0 }, color: Theme.tsb_c, align: (Top, Right) })
+			{}
+		}
+		Failed(ff2) => {
+			why = match ff2.reason {
+				PathInvalid | PathEscapesOutputDir => "bad path"
+				AlreadyRecording => "already recording"
+				BudgetExceeded | OutOfMemory => "out of memory - try again shorter"
+				WriteFailed => "could not write captures/"
+				EncodeFailed | UnsupportedFormat => "encoder refused webm"
+				_ => "unknown"
+			}
+			Text.from("recording failed: ${why}   V retries", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 40.0, y: 58.0 }, color: Theme.alarm_c, align: (Top, Right) })
+			{}
+		}
+		Idle => {}
+	}
 	# the nav: every view, visible and clickable, active one filled - TAB
 	# stays as the keyboard accelerator
 	List.for_each!(List.map_with_index(model.nav, |nv, ni| { nv, ni }), |x| {

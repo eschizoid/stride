@@ -72,6 +72,7 @@ CTL and ramp. A directive with view 7 opens it.
 | `1` / `2` / `3` | range 30 / 60 / 90 days (form board) |
 | `←` / `→` | walk the day cursor (form board; ← older, → newer, past newest turns it off) |
 | `R` | reload everything from the database without reopening |
+| `V` | toggle a WebM recording of the screen into `./captures`, named for the view it started on; FixedStep timing, so the same data replays to the same file |
 | nav pills (top right) | click any view directly; the active one is filled |
 | `TAB` | cycle views: form board / power view / session trace / data table / plan / heat / zones / ramp |
 | `1` / `2` / `3` or the chips (power view) | re-window the blue ladder and CP fit to 30/60/90 days |
@@ -221,6 +222,6 @@ shown as `3.0 bests`, and a CP asymptote described in a comment and never drawn.
 
 ![Form Board](img/form-board.png)
 
-![Power curve](img/power-curve.png)
+![Power view](img/power-curve.png)
 
 ![Session trace](img/session-trace.png)
