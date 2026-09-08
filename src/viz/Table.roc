@@ -141,7 +141,9 @@ Table :: [].{
 						seg = bw2 * I64.to_f32(zz.z) / I64.to_f32(ztot)
 						zc = match List.get(Theme.zone_ramp, zz.zi) { Ok(c2) => c2
 							Err(_) => Theme.ink_faint }
-						if seg > 0.5 {
+						if seg > 1.5 {
+							# -1 leaves a hairline gap between segments; the guard
+							# keeps the drawn width strictly positive
 							frame.rectangle!({ x: px + 18.0 + xacc, y: ly + 56.0, width: seg - 1.0, height: 8.0, style: Draw.filled(zc) })
 						} else {}
 						xacc + seg
