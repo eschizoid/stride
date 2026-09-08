@@ -420,3 +420,7 @@ viz:
 # type-check the viz without opening a window
 viz-check:
     {{roc_viz}} check src/viz/main.roc
+
+# ADR 0016: every engine import points down the layer table; viz stays behind the DB
+layer-check:
+    bash tools/layer-check.sh

@@ -163,3 +163,6 @@ jobs:
 
       - name: Type-check the Form Board
         run: roc check src/viz/main.roc
+
+      - name: Layer check (ADR 0016 — imports point down)
+        run: bash tools/layer-check.sh

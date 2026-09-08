@@ -1,6 +1,6 @@
 # 0016. Layers before folders — the engine's module boundaries
 
-Status: Proposed
+Status: Accepted
 Date: 2026-09-07
 
 ## Context
@@ -26,9 +26,9 @@ The layer of a module is a statement about its imports, not its location:
 
 | layer | modules | may import |
 |---|---|---|
-| core | Sports, Metrics, Csv, Streams, Config, Drain, Schema | core only |
+| core | Sports, Metrics, Csv, Streams, Config, Drain, Schema, Render | core only |
 | io | Db, Strava, Output | core + io |
-| analytics | Analyze, Plan, Render, Report, ReportHealth, ReportSeason, ReportSessions | core + io + analytics |
+| analytics | Analyze, Plan, Report, ReportHealth, ReportSeason, ReportSessions | core + io + analytics |
 | app | app.roc, Command, Import | anything |
 | viz | `src/viz/` (its own app, its own pin) | its own modules + its platform |
 
@@ -53,7 +53,9 @@ Two mechanical consequences:
 
 - The dependency direction that today only lives in maintainers' heads fails CI
   when violated, starting from the first commit after the check lands.
-- One known tension is recorded rather than hidden: `Strava` (io) imports
-  `Render` (analytics) today. The check will carry an explicit, counted
-  exception for it until the formatting it uses moves into core, which is the
-  first real cleanup this table points at.
+- The draft of this ADR recorded `Strava` (io) importing `Render` (analytics)
+  as a carried exception. Measuring every module's imports before writing the
+  gate dissolved it: `Render` imports only `Metrics` and `Drain` — its
+  dependencies already made it core, and classifying it there leaves the gate
+  strict with zero exceptions. Formatting-as-core also matches what it is:
+  pure text shaping over pure math, used by every layer above.
