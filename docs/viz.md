@@ -50,8 +50,10 @@ The seventh stop answers "am I training like I claim": twelve Monday weeks
 of time-in-zone as stacked hour bars in the zone ramp, and above them each
 week's easy share plotted against the 80% rule line - green dots hold the
 line, red dots broke it. The intensity classification comes from the
-`activity_intensity` view, the same per-activity split `stride summary`
-aggregates, so the window and the CLI can never disagree on polarization.
+`activity_intensity` view, which carries the same per-activity split
+`stride summary` computes, so the two share one definition of easy and
+hard (the CLI still evaluates its copy inline; #415 tracks pointing it at
+the view).
 Hovering a week reads it back. A directive with view 6 opens it.
 
 ## Controls

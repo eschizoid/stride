@@ -76,7 +76,7 @@ Zones :: [].{
 				if itot > 0 {
 					share = I64.to_f32(x.w.easy) / I64.to_f32(itot)
 					dy = po_top + (1.0 - share) * po_h
-					dc = if share >= 0.8 (Color.from_hex_rgb(0x2dd4bf)) else Color.from_hex_rgb(0xe0645b)
+					dc = if share >= 0.8 (Theme.tsb_c) else Theme.alarm_c
 					frame.circle!({ center: { x: cx, y: dy }, radius: 3.5, style: Draw.filled(dc) })
 				} else {}
 				# hover: full-column hit target, one tooltip line under the title
