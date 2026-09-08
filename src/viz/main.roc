@@ -333,13 +333,17 @@ update! = |model0, program_input| {
 				else if m0.x >= 668.0 and m0.x <= 714.0 (90.U64)
 				else 0.U64
 			} else 0.U64
+		view_input = if d.key_pressed(KeyTab) (if model.view == 3 0 else model.view + 1) else model.view
+		view = if directive.has_d and directive.view >= 0 and directive.view <= 3 (match I64.to_u8_try(directive.view) { Ok(v8) => v8
+			Err(_) => view_input }) else view_input
 		# 1/2/3 answer to whichever view is showing: the form board's range, or
 		# the curve's window — never both at once
 		range =
-			# a directive's range lands on the view the directive lands on: the
-			# named view when one is named, the visible view otherwise. The curve
-			# keeps its own window (want_days below), never the form-board range.
-			if directive.has_d and (if directive.view >= 0 (directive.view != 1) else model.view != 1) and (directive.range == 30 or directive.range == 60 or directive.range == 90) (match I64.to_u64_try(directive.range) { Ok(rr) => rr
+			# a directive's range lands on the view the directive lands on —
+			# judged against THIS frame's visible view (post-directive, post-TAB),
+			# never the prior frame's. The curve keeps its own window (want_days
+			# below), never the form-board range.
+			if directive.has_d and view != 1 and (directive.range == 30 or directive.range == 60 or directive.range == 90) (match I64.to_u64_try(directive.range) { Ok(rr) => rr
 				Err(_) => model.range }) else
 			if clicked_chip > 0 clicked_chip
 			else if model.view == 1 model.range
@@ -347,9 +351,6 @@ update! = |model0, program_input| {
 			else if d.key_pressed(Key2) 60.U64
 			else if d.key_pressed(Key3) 90.U64
 			else model.range
-		view_input = if d.key_pressed(KeyTab) (if model.view == 3 0 else model.view + 1) else model.view
-		view = if directive.has_d and directive.view >= 0 and directive.view <= 3 (match I64.to_u8_try(directive.view) { Ok(v8) => v8
-			Err(_) => view_input }) else view_input
 		# cursor counts days back from the series' latest day — the last ANALYZED
 		# day, not necessarily today (0 = that column, -1 = off); LEFT walks
 		# older, RIGHT walks newer, and the board clamps to the window
@@ -374,7 +375,7 @@ update! = |model0, program_input| {
 		# on the curve view "range" MEANS the curve window — a directive saying
 		# (view 1, range 30) re-windows the ladder and fit, same as the keys
 		want_days =
-			if view == 1 and directive.has_d and (directive.view == 1 or directive.view < 0) and (directive.range == 30 or directive.range == 60 or directive.range == 90) directive.range
+			if view == 1 and directive.has_d and (directive.range == 30 or directive.range == 60 or directive.range == 90) directive.range
 			else if view == 1 (if d.key_pressed(Key1) 30 else if d.key_pressed(Key2) 60 else if d.key_pressed(Key3) 90 else model.curve_days)
 			else model.curve_days
 		# on the trace view, [ and ] walk the last dozen structured sessions
