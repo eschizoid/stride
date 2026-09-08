@@ -347,17 +347,18 @@ update! = |model0, program_input| {
 		# the range chips are buttons: a left click inside one selects it. Chip
 		# geometry mirrors Board's row exactly - right-anchored at
 		# win.w - 420 + i*54, y 64, each 46x22 - and must move with it.
+		view_input = if d.key_pressed(KeyTab) (if model.view == 3 0 else model.view + 1) else model.view
+		view = if directive.has_d and directive.view >= 0 and directive.view <= 3 (match I64.to_u8_try(directive.view) { Ok(v8) => v8
+			Err(_) => view_input }) else view_input
+		# chips hit-test against the frame-true view render will draw
 		clicked_chip =
-			if model.view == 0 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0 {
+			if view == 0 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0 {
 				chip0 = win.w - 420.0
 				if m0.x >= chip0 and m0.x <= chip0 + 46.0 (30.U64)
 				else if m0.x >= chip0 + 54.0 and m0.x <= chip0 + 100.0 (60.U64)
 				else if m0.x >= chip0 + 108.0 and m0.x <= chip0 + 154.0 (90.U64)
 				else 0.U64
 			} else 0.U64
-		view_input = if d.key_pressed(KeyTab) (if model.view == 3 0 else model.view + 1) else model.view
-		view = if directive.has_d and directive.view >= 0 and directive.view <= 3 (match I64.to_u8_try(directive.view) { Ok(v8) => v8
-			Err(_) => view_input }) else view_input
 		# 1/2/3 answer to whichever view is showing: the form board's range, or
 		# the curve's window — never both at once
 		range =
@@ -409,11 +410,23 @@ update! = |model0, program_input| {
 			else if d.key_pressed(KeyRightBracket) (if model.trace_sel > 0 (model.trace_sel - 1) else model.trace_sel)
 			else model.trace_sel
 		# clicking a table row jumps to that day's crosshair on the form board
+		# -2 = no directive OR day not in the series: both leave the cursor
+		# alone. A found day maps to its days-back index (>= 0).
+		cursor_dir =
+			if directive.has_d and directive.cursor_day != "" {
+				total2 = List.len(model.days)
+				List.fold(List.map_with_index(model.days, |dy, di| { dy, di }), -2, |acc, x| if x.dy == directive.cursor_day (match U64.to_i64_try(total2 - 1 - x.di) { Ok(cb2) => cb2
+					Err(_) => acc }) else acc)
+			} else -2
+		# the frame-true pre-click cursor: arrows and directives applied, row
+		# clicks not yet - THIS is the scroll state the table renders from,
+		# so click and hover hit-tests share it
+		cursor_pre = if cursor_dir >= 0 cursor_dir else cursor
 		row_hit =
 			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and (if model.detail_day != "" (m.x < win.w / 2.0) else m.x <= win.w - 40.0) and m.y >= 134.0 {
 				total = List.len(model.data)
 				max_back = if total > 14 (total - 14) else 0.U64
-				back = if model.cursor < 0 (0.U64) else match I64.to_u64_try(model.cursor) {
+				back = if cursor_pre < 0 (0.U64) else match I64.to_u64_try(cursor_pre) {
 					Ok(c) => if c > max_back max_back else c
 					Err(_) => 0.U64
 				}
@@ -458,15 +471,7 @@ update! = |model0, program_input| {
 		} else {}
 		view2 = view
 		# a directive naming a day parks the crosshair there
-		# -2 = no directive OR day not in the series: both leave the cursor
-		# alone. A found day maps to its days-back index (>= 0).
-		cursor_dir =
-			if directive.has_d and directive.cursor_day != "" {
-				total2 = List.len(model.days)
-				List.fold(List.map_with_index(model.days, |dy, di| { dy, di }), -2, |acc, x| if x.dy == directive.cursor_day (match U64.to_i64_try(total2 - 1 - x.di) { Ok(cb2) => cb2
-					Err(_) => acc }) else acc)
-			} else -2
-		cursor2 = if row_hit.hit row_hit.cb else if cursor_dir >= 0 cursor_dir else cursor
+		cursor2 = if row_hit.hit row_hit.cb else cursor_pre
 		# reloads and trace switches SPAWN — Cmd panics in update!, and the
 		# task lane is where Sqlite and text preparation park legally
 		# a directive naming a session day resolves to its picker slot
@@ -489,7 +494,7 @@ update! = |model0, program_input| {
 		over_chip = view2 == 0 and m.y >= 64.0 and m.y <= 86.0 and m.x >= win.w - 420.0 and m.x <= win.w - 266.0
 		row_total = List.len(model.data)
 		row_maxb = if row_total > 14 (row_total - 14) else 0.U64
-		row_back = if model.cursor < 0 (0.U64) else match I64.to_u64_try(model.cursor) {
+		row_back = if cursor2 < 0 (0.U64) else match I64.to_u64_try(cursor2) {
 			Ok(c) => if c > row_maxb row_maxb else c
 			Err(_) => 0.U64
 		}
