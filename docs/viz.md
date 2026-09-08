@@ -169,8 +169,8 @@ the window's power-duration ladder (blue) drawn over the all-time record
 envelope (grey), eight rungs from 5s to 60min. The gap at each rung is
 printed in watts right where it lives; a rung whose window best IS the
 record collapses to one teal dot marked "pr". Hovering a rung reads back
-the record, the day it was set, and the window's value. The CP fit stays
-in the header, its dashed line on the chart.
+the record, the day it was set, and the window's value. The CP fit
+reports from the bottom-right status corner, its dashed line on the chart.
 
 The **points** come from the stored per-activity bests (`activity_metrics.best_*_w`),
 maxed over the window. `CAST(ROUND(...))` matters — a bare `CAST` truncates and
