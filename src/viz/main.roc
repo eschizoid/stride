@@ -345,7 +345,8 @@ update! = |model0, program_input| {
 		win = { w: I32.to_f32(program_input.window.size.width), h: I32.to_f32(program_input.window.size.height) }
 		m0 = d.mouse.position()
 		# the range chips are buttons: a left click inside one selects it. Chip
-		# geometry mirrors Board's row (x 560 + i*54, y 64, 46x22).
+		# geometry mirrors Board's row exactly - right-anchored at
+		# win.w - 420 + i*54, y 64, each 46x22 - and must move with it.
 		clicked_chip =
 			if model.view == 0 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0 {
 				chip0 = win.w - 420.0
@@ -418,7 +419,9 @@ update! = |model0, program_input| {
 				}
 				kept = total - back
 				rowcount = if kept > 14 (14.U64) else kept
-				ri = match F32.round_to_u64_try((m.y - 134.0) / 24.0) {
+				# floored, not rounded: rounding flips to the NEXT row past a
+				# row's midline and made lower-half clicks select the neighbor
+				ri = match F32.round_to_u64_try(F32.div_floor_by(m.y - 134.0, 24.0) + 0.1) {
 					Ok(r) => r
 					Err(_) => 99
 				}

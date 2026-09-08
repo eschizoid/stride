@@ -68,11 +68,21 @@ Table :: [].{
 			if List.is_empty(model.detail) {
 				Text.from("loading...", model.font).size(12).draw!(frame, { pos: { x: px + 18.0, y: 148.0 }, color: ink_muted, align: (Top, Left) })
 			} else {}
-			List.for_each!(List.map_with_index(model.detail, |ln, li| { ln, li }), |x| {
+			# only the lines that fit the panel draw; the tail becomes a count
+			fit = match F32.round_to_u64_try(F32.div_floor_by(win_h - 150.0 - 48.0 - 20.0, 44.0)) {
+				Ok(f) => if f == 0 (1.U64) else f
+				Err(_) => 1.U64
+			}
+			shown = List.take_first(model.detail, fit)
+			List.for_each!(List.map_with_index(shown, |ln, li| { ln, li }), |x| {
 				ly = 148.0 + U64.to_f32(x.li) * 44.0
 				Text.from(x.ln.title, model.font).size(13).draw!(frame, { pos: { x: px + 18.0, y: ly }, color: Theme.ctl_c, align: (Top, Left) })
 				Text.from(x.ln.stats, model.font).size(12).draw!(frame, { pos: { x: px + 18.0, y: ly + 18.0 }, color: ink_muted, align: (Top, Left) })
 			})
+			hidden = List.len(model.detail) - List.len(shown)
+			if hidden > 0 {
+				Text.from("+ ${U64.to_str(hidden)} more (enlarge the window)", model.font).size(11).draw!(frame, { pos: { x: px + 18.0, y: 148.0 + U64.to_f32(List.len(shown)) * 44.0 }, color: ink_faint, align: (Top, Left) })
+			} else {}
 		} else {}
 		model.table_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 		Ok({})
