@@ -45,11 +45,16 @@ Table :: [].{
 		win_h = model.win.h
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
+		# master-detail: with the panel open, the whole table lives left of it -
+		# no element draws underneath the card
+		edge = if model.detail_day != "" (win_w - 540.0) else win_w - 40.0
 		model.table_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		List.for_each!(List.map_with_index(model.table_head, |h, i| { h, i }), |x| {
 			hx = match List.get(col_x, x.i) { Ok(v) => v
 				Err(_) => 36.0 }
-			x.h.draw!(frame, { pos: { x: hx, y: 108.0 }, color: ink_faint, align: (Top, Left) })
+			if hx < edge - 60.0 {
+				x.h.draw!(frame, { pos: { x: hx, y: 108.0 }, color: ink_faint, align: (Top, Left) })
+			} else {}
 		})
 		# the arrow cursor scrolls the window back through the whole series:
 		# cursor N shows the 14 days ending N days before the latest
@@ -67,7 +72,7 @@ Table :: [].{
 		List.for_each!(List.map_with_index(rows, |r, i| { r, i }), |x| {
 			ry = 134.0 + U64.to_f32(x.i) * 24.0
 			# the row under the mouse lifts - hover feedback to match the pointer
-			row_right = if model.detail_day != "" (win_w - 516.0) else win_w - 40.0
+			row_right = edge
 			if model.mouse_y >= ry and model.mouse_y < ry + 24.0 and model.mouse_x >= 36.0 and model.mouse_x < row_right {
 				frame.rectangle!({ x: 34.0, y: ry - 2.0, width: row_right - 34.0, height: 23.0, style: Draw.filled(Color.with_alpha(Color.white, 10)) })
 			} else {}
@@ -76,19 +81,21 @@ Table :: [].{
 			note = Db.note_for(model.day_notes, day)
 			# the session column runs to the table's right edge; ~8px per mono
 			# glyph at this size
-			budget = match F32.round_to_u64_try(F32.div_floor_by((if model.detail_day != "" (win_w - 516.0) else win_w - 40.0) - 690.0, 8.0)) {
+			budget = match F32.round_to_u64_try(F32.div_floor_by(edge - 690.0, 8.0)) {
 				Ok(b) => if b < 12 (12.U64) else b
 				Err(_) => 30.U64
 			}
 			short = if Str.count_utf8_bytes(note) > budget (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(note), budget - 2)), "..")) else note
 			cells = [day, Db.fmt_f(x.r.ctl), Db.fmt_f(x.r.atl), Db.fmt_f(x.r.tsb), Db.fmt_f(x.r.tss), short]
 			# the artifact's row separators
-			frame.line!({ start: { x: 36.0, y: ry + 19.0 }, end: { x: win_w - 40.0, y: ry + 19.0 }, stroke: Draw.stroke(Color.with_alpha(Color.white, 14), 1) })
+			frame.line!({ start: { x: 36.0, y: ry + 19.0 }, end: { x: edge, y: ry + 19.0 }, stroke: Draw.stroke(Color.with_alpha(Color.white, 14), 1) })
 			List.for_each!(List.map_with_index(cells, |c, j| { c, j }), |cell| {
 				cx = match List.get(col_x, cell.j) { Ok(v) => v
 					Err(_) => 36.0 }
 				col = if cell.j == 3 (Theme.tsb_c) else if cell.j == 5 (Theme.ink_muted) else Color.white
-				Text.from(cell.c, model.font).size(13).draw!(frame, { pos: { x: cx, y: ry }, color: col, align: (Top, Left) })
+				if cx < edge - 60.0 {
+					Text.from(cell.c, model.font).size(13).draw!(frame, { pos: { x: cx, y: ry }, color: col, align: (Top, Left) })
+				} else {}
 			})
 		})
 		# the day-detail panel: opens over the right half when a row is clicked,
@@ -96,6 +103,7 @@ Table :: [].{
 		if model.detail_day != "" {
 			pw2 = if win_w / 2.0 < 480.0 (win_w / 2.0 - 36.0) else 480.0
 			px = win_w - 36.0 - pw2
+			# (edge above = px - 24, so the table ends before the card begins)
 			ph2 = 78.0 + U64.to_f32(List.len(model.detail)) * 92.0
 			ph2c = if ph2 > win_h - 150.0 (win_h - 150.0) else ph2
 			frame.rounded_rectangle!({ x: px, y: 100.0, width: pw2, height: ph2c, radius: 10.0, segments: 8, style: Draw.filled(Theme.card) })
