@@ -204,9 +204,9 @@ load_model! = |font, curve_days| {
 				Ok(x) => x.day
 				Err(_) => ""
 			},
-			curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
-			trace_hint: mk!("[ / ]  session      shift+[ / shift+]  ghost      TAB  data table      R  reload      S  screenshot      ESC quit", 13)?,
-			table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      ESC quit", 13)?,
+			curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+			trace_hint: mk!("[ / ]  session      shift+[ / shift+]  ghost      TAB  data table      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+			table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			table_title: mk!("data table", 15)?,
 			table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
 			kpis: [
@@ -248,13 +248,13 @@ load_model! = |font, curve_days| {
 			prs: loaded.prs,
 			rec_status: Idle,
 			ramp_title: mk!("the ramp - weekly load and how fast fitness is climbing", 15)?,
-			ramp_hint: mk!("hover a week to read it      TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
+			ramp_hint: mk!("hover a week to read it      TAB  form board      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			zones_title: mk!("time in zone - twelve weeks, and the 80/20 story", 15)?,
-			zones_hint: mk!("hover a week to read it      TAB  ramp      R  reload      S  screenshot      ESC quit", 13)?,
+			zones_hint: mk!("hover a week to read it      TAB  ramp      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			heat_title: mk!("training heat - one cell per day", 15)?,
-			heat_hint: mk!("hover a cell to read the day      TAB  zones      R  reload      S  screenshot      ESC quit", 13)?,
+			heat_hint: mk!("hover a cell to read the day      TAB  zones      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			plan_title: mk!("next 7 days - plan and progress", 15)?,
-			plan_hint: mk!("TAB  heat      R  reload      S  screenshot      ESC quit", 13)?,
+			plan_hint: mk!("TAB  heat      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			nav: [
 				{ p: mk!("form", 13)?, v: 0.U8 },
 				{ p: mk!("power", 13)?, v: 1.U8 },
@@ -722,8 +722,16 @@ render! = |model, frame| {
 			Text.from("recording saved to captures/ (${U64.to_str(ff.bytes / 1024)}kb)", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 40.0, y: 58.0 }, color: Theme.tsb_c, align: (Top, Right) })
 			{}
 		}
-		Failed(_) => {
-			Text.from("recording failed", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 40.0, y: 58.0 }, color: Theme.alarm_c, align: (Top, Right) })
+		Failed(ff2) => {
+			why = match ff2.reason {
+				PathInvalid | PathEscapesOutputDir => "bad path"
+				AlreadyRecording => "already recording"
+				BudgetExceeded | OutOfMemory => "out of memory - try again shorter"
+				WriteFailed => "could not write captures/"
+				EncodeFailed | UnsupportedFormat => "encoder refused webm"
+				_ => "unknown"
+			}
+			Text.from("recording failed: ${why}   V retries", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 40.0, y: 58.0 }, color: Theme.alarm_c, align: (Top, Right) })
 			{}
 		}
 		Idle => {}
