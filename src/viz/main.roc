@@ -55,7 +55,8 @@ brand_font! : Str, Str, I32, Text.Font => Text.Font
 brand_font! = |home, name, size, fallback| {
 	bytes = match Files.read_bytes!("assets/fonts/${name}") {
 		Ok(b) => b
-		Err(_) => match Files.read_bytes!("${home}/.stride/fonts/${name}") {
+		# no HOME means no second location — never probe /.stride at the root
+		Err(_) => if home == "" [] else match Files.read_bytes!("${home}/.stride/fonts/${name}") {
 			Ok(b) => b
 			Err(_) => []
 		}
@@ -104,9 +105,12 @@ load_model! = |font, curve_days| {
 			if fit.ok
 				"CP ${Db.fmt_f(fit.cp)} W · W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${Db.fmt_f(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
 			else "CP fit unavailable - the engine did not answer"
-		# the brand: Quicksand carries words (the wordmark's rounded face),
-		# JetBrains Mono carries numbers (the tagline's voice); the platform
-		# default only ever appears when neither file can be found
+		# the brand: Quicksand (the wordmark's rounded face) carries PROSE —
+		# titles, legends, captions, hints; JetBrains Mono (the tagline's
+		# voice) carries DATA SURFACES — KPI digits, ticks, end labels, and
+		# every immediate readout/table cell, mixed words included, so a data
+		# line never switches face mid-string. The platform default appears
+		# only when neither file can be found
 		head = brand_font!(home, "Quicksand-Medium.ttf", 32, font)
 		mono_big = brand_font!(home, "JetBrainsMono-Regular.ttf", 30, font)
 		mono = brand_font!(home, "JetBrainsMono-Regular.ttf", 16, font)

@@ -55,8 +55,10 @@ same tag.
 
 ## Typography
 
-Quicksand (the wordmark's rounded face) carries words; JetBrains Mono (the
-tagline's voice) carries every number. Both ship in `assets/fonts/` (OFL) and
+Quicksand (the wordmark's rounded face) carries prose — titles, legends,
+captions, hints. JetBrains Mono (the tagline's voice) carries data surfaces —
+KPI digits, axis ticks, readouts and the table, mixed words included, so a
+data line never switches face mid-string. Both ship in `assets/fonts/` (OFL) and
 the app bundle copies them to `~/.stride/fonts`; when neither location
 answers, the platform default font appears instead of a crash.
 
