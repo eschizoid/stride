@@ -33,7 +33,8 @@ Prs :: [].{
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
 		model.prs_title.draw!(frame, { pos: { x: pad, y: 70.0 }, color: ink_muted, align: (Top, Left) })
-		if List.is_empty(model.prs) {
+		have = List.fold(model.prs, 0.I64, |a, pr| if pr.day != "" (a + 1) else a)
+		if List.is_empty(model.prs) or have == 0 {
 			Text.from("no power records yet", model.font).size(14).draw!(frame, { pos: { x: pad, y: 130.0 }, color: ink_muted, align: (Top, Left) })
 		} else {
 			n = List.len(model.prs)
@@ -42,20 +43,24 @@ Prs :: [].{
 			row_h = (bot - top) / U64.to_f32(n)
 			x_lo = pad + label_w
 			x_hi = win_w - pad - 90.0
-			d_lo = List.fold(model.prs, 9999999.0, |a, pr| F32.min(a, day_num(pr.day)))
-			d_hi = List.fold(model.prs, 0.0, |a, pr| F32.max(a, day_num(pr.day)))
+			set_prs = List.keep_if(model.prs, |pr| pr.day != "")
+			d_lo = List.fold(set_prs, 9999999.0, |a, pr| F32.min(a, day_num(pr.day)))
+			d_hi = List.fold(set_prs, 0.0, |a, pr| F32.max(a, day_num(pr.day)))
 			span = F32.max(d_hi - d_lo, 30.0)
 			# the anchor of "fresh": the newest record day in the book
 			px_of = |dy| x_lo + (day_num(dy) - d_lo) / span * (x_hi - x_lo)
 			# edge dates, so the axis means something
-			lo_day = List.fold(model.prs, "", |a, pr| if a == "" or day_num(pr.day) < day_num(a) (pr.day) else a)
-			hi_day = List.fold(model.prs, "", |a, pr| if day_num(pr.day) > day_num(a) (pr.day) else a)
+			lo_day = List.fold(set_prs, "", |a, pr| if a == "" or day_num(pr.day) < day_num(a) (pr.day) else a)
+			hi_day = List.fold(set_prs, "", |a, pr| if day_num(pr.day) > day_num(a) (pr.day) else a)
 			Text.from(lo_day, model.font).size(10).draw!(frame, { pos: { x: x_lo, y: bot + 10.0 }, color: ink_faint, align: (Top, Left) })
 			Text.from(hi_day, model.font).size(10).draw!(frame, { pos: { x: x_hi, y: bot + 10.0 }, color: ink_faint, align: (Top, Right) })
 			List.for_each!(List.map_with_index(model.prs, |pr, i| { pr, i }), |x| {
 				cy = top + (U64.to_f32(x.i) + 0.5) * row_h
 				Text.from(x.pr.rung, model.font).size(12).draw!(frame, { pos: { x: pad + label_w - 14.0, y: cy - 7.0 }, color: ink_muted, align: (Top, Right) })
 				frame.line!({ start: { x: x_lo, y: cy }, end: { x: x_hi, y: cy }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 40), 1) })
+				if x.pr.day == "" {
+					Text.from("-", model.font).size(12).draw!(frame, { pos: { x: x_hi + 14.0, y: cy - 7.0 }, color: ink_faint, align: (Top, Left) })
+				} else {
 				dx = px_of(x.pr.day)
 				# recency against the book's newest entry: within ~90d of it
 				# glows teal, within ~a year rides the brand blue, older fades
@@ -67,6 +72,7 @@ Prs :: [].{
 				if model.mouse_y >= cy - row_h / 2.0 and model.mouse_y < cy + row_h / 2.0 and model.mouse_x >= x_lo and model.mouse_x <= x_hi {
 					Text.from("set ${x.pr.day}", model.font).size(11).draw!(frame, { pos: { x: dx, y: cy - 22.0 }, color: ink_muted, align: (Top, Center) })
 				} else {}
+				}
 			})
 			{}
 		}
