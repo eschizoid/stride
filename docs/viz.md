@@ -1,4 +1,4 @@
-# The Form Board — `src/viz.roc`
+# The Form Board — `src/viz/`
 
 A native window over the engine's PMC series, read at launch from
 `~/.stride/db.sqlite`. This is ADR 0015 made real: pixels for the human, state
@@ -20,8 +20,10 @@ the SQLite — no export step, no baked data, nothing the CLI has to prepare.
 
 | key / gesture | effect |
 |---|---|
-| `1` / `2` / `3` | range 30 / 60 / 90 days |
-| mouse hover | crosshair + per-day dots on all three series |
+| `1` / `2` / `3` | range 30 / 60 / 90 days (form board) |
+| `TAB` | cycle views: form board / power curve / session trace |
+| `S` | save a PNG of the current view into `./captures` |
+| mouse hover | crosshair + per-day dots + a top-right readout (form board) |
 | `ESC` | quit |
 
 ## Running it
@@ -33,7 +35,7 @@ just viz-check    # type-check only, no window
 
 The viz pins **its own compiler** — roc-ray's platform needs
 `nightly-2026-08-23-fb208ba`, not the engine's pin. The pin lives in the app header of
-`src/viz.roc`; point `ROC_VIZ` at a matching nightly if your PATH `roc` is the
+`src/viz/main.roc`; point `ROC_VIZ` at a matching nightly if your PATH `roc` is the
 engine's. CI checks it in its own job (`viz-check` in `build.yml`) with that
 same tag.
 
