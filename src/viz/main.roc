@@ -21,6 +21,7 @@ import rr.Sqlite
 import rr.Task
 import rr.Text
 import Board
+import Plan
 import Table
 import Curve
 import Db
@@ -82,7 +83,7 @@ load_model! = |font, curve_days| {
 		}
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [] }
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, bn: "" }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				s = Db.load_series!(db)
@@ -97,11 +98,14 @@ load_model! = |font, curve_days| {
 				sg = Db.load_segs!(db, tid)
 				du = Db.load_dur!(db, tid)
 				st = Db.load_stale!(db)
+				pl = Db.load_plan!(db)
+				wk = Db.load_week_tss!(db)
+				bn = Db.load_bus_note!(db)
 				rd = Db.load_ridden!(db)
 				nts = Db.load_day_notes!(db)
-				{ s, e, c, st, tr, sg, du, rd, tids, nts }
+				{ s, e, c, st, tr, sg, du, rd, tids, nts, pl, wk, bn }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [] }
+			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, bn: "" }
 		}
 		ev = Db.find_idx(loaded.s.days, loaded.e.day)
 		fit = Db.load_fit!(curve_days)
@@ -193,7 +197,7 @@ load_model! = |font, curve_days| {
 			},
 			curve_hint: mk!("1/2/3  window 30/60/90d      TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
 			trace_hint: mk!("[ / ]  older / newer session      TAB  data table      R  reload      S  screenshot      ESC quit", 13)?,
-			table_hint: mk!("arrows  scroll days      TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
+			table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      ESC quit", 13)?,
 			table_title: mk!("data table - last 14 days", 15)?,
 			table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
 			kpis: [
@@ -220,6 +224,11 @@ load_model! = |font, curve_days| {
 			view_anim: 0,
 			last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "" },
 			day_notes: loaded.nts,
+			plan: loaded.pl,
+			week_tss: loaded.wk,
+			bus_note: loaded.bn,
+			plan_title: mk!("the week - plan and progress", 15)?,
+			plan_hint: mk!("TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
 			font: mono,
@@ -348,8 +357,8 @@ update! = |model0, program_input| {
 		# the range chips are buttons: a left click inside one selects it. Chip
 		# geometry mirrors Board's row exactly - right-anchored at
 		# win.w - 420 + i*54, y 64, each 46x22 - and must move with it.
-		view_input = if d.key_pressed(KeyTab) (if model.view == 3 0 else model.view + 1) else model.view
-		view = if directive.has_d and directive.view >= 0 and directive.view <= 3 (match I64.to_u8_try(directive.view) { Ok(v8) => v8
+		view_input = if d.key_pressed(KeyTab) (if model.view == 4 0 else model.view + 1) else model.view
+		view = if directive.has_d and directive.view >= 0 and directive.view <= 4 (match I64.to_u8_try(directive.view) { Ok(v8) => v8
 			Err(_) => view_input }) else view_input
 		# chips hit-test against the frame-true view render will draw
 		clicked_chip =
@@ -393,7 +402,7 @@ update! = |model0, program_input| {
 		# screenshot waits for the end of a frame, and update! is not one.
 		# The name carries the view so three presses do not overwrite each other.
 		_ = if d.key_pressed(KeyS) {
-			shot_name = if view == 0 ("form-board.png") else if view == 1 ("power-curve.png") else if view == 2 ("session-trace.png") else "data-table.png"
+			shot_name = if view == 0 ("form-board.png") else if view == 1 ("power-curve.png") else if view == 2 ("session-trace.png") else if view == 3 ("data-table.png") else "plan.png"
 			Task.spawn!(program_input, || Shot(Capture.screenshot!(shot_name)))
 		} else {}
 		# on the curve view, 1/2/3 re-window the curve AND its CP fit — a full
@@ -563,7 +572,9 @@ render! = |model, frame| {
 		model.leg_form.draw!(frame, { pos: { x: 246.0, y: 70.0 }, color: Theme.tsb_c, align: (Top, Left) })
 	} else {}
 	drawn =
-		if model.view == 3 {
+		if model.view == 4 {
+			Plan.draw!(model, frame)
+		} else if model.view == 3 {
 			Table.draw!(model, frame)
 		} else if model.view == 2 {
 			Trace.draw!(model, frame)

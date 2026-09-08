@@ -65,6 +65,11 @@ Ui :: [].{
 		win : { w : F32, h : F32 },
 		detail_day : Str,
 		detail : List({ title : Str, stats : Str }),
+		plan : List(Db.PlanRow),
+		week_tss : { this : I64, last : I64 },
+		bus_note : Str,
+		plan_title : Text.Prepared,
+		plan_hint : Text.Prepared,
 		mouse_in : Bool,
 		cursor : I64,
 	}

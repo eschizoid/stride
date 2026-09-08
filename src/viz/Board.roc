@@ -152,13 +152,24 @@ Board :: [].{
 				model.ev_label.draw!(frame, { pos: { x: ex - 6.0, y: pad_t + 4.0 }, color: ink_muted, align: (Top, Right) })
 			} else {}
 
+			# the draw-in: for half a second after arriving on this view, each
+			# series sweeps left to right - segments beyond the eased progress
+			# fraction simply wait their turn
+			age_in = model.tick - model.view_anim
+			sweep = if model.view_anim == 0 or age_in >= 30 (1.0) else {
+				p = U64.to_f32(age_in) / 30.0
+				1.0 - (1.0 - p) * (1.0 - p)
+			}
 			draw_line! = |sel, col| {
 				pts = List.map_with_index(data, |p, i| { i, v: sel(p) })
+				limit = sweep * U64.to_f32(n - 1)
 				List.for_each!(pts, |cur|
-					match List.get(pts, cur.i + 1) {
-						Ok(nxt) => frame.line!({ start: { x: xf(cur.i), y: yf(cur.v) }, end: { x: xf(nxt.i), y: yf(nxt.v) }, stroke: Draw.stroke(col, 2) })
-						Err(_) => {}
-					})
+					if U64.to_f32(cur.i) < limit {
+						match List.get(pts, cur.i + 1) {
+							Ok(nxt) => frame.line!({ start: { x: xf(cur.i), y: yf(cur.v) }, end: { x: xf(nxt.i), y: yf(nxt.v) }, stroke: Draw.stroke(col, 2) })
+							Err(_) => {}
+						}
+					} else {})
 			}
 			draw_line!(|p| p.tsb, tsb_c)
 			draw_line!(|p| p.atl, atl_c)
