@@ -419,7 +419,10 @@ Db :: [].{
 	# for a rung, so the record filter is > 0). Eight rows on success - a rung
 	# with no record yet comes back as w 0 / day '' so the ladder never
 	# shrinks or jumps; a failed query returns none and the view shows its
-	# empty state, the same honest floor every loader here has.
+	# empty state, the same honest floor every loader here has. Each rung
+	# scans activity_metrics once, and the whole query runs once per load
+	# (launch and R) - never per frame - so the scans stay off any hot path
+	# and no best_* index is warranted.
 	PrRung : { rung : Str, secs : I64, w : I64, day : Str }
 	load_prs! : Sqlite.Db => List(PrRung)
 	load_prs! = |db|
