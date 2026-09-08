@@ -500,6 +500,8 @@ update! = |model0, program_input| {
 				Active(_) => Task.spawn!(program_input, || RecCmd(Capture.stop!()))
 				_ => {
 					rec_name = if view == 0 ("form-board.webm") else if view == 1 ("power.webm") else if view == 2 ("session-trace.webm") else if view == 3 ("data-table.webm") else if view == 4 ("plan.webm") else if view == 5 ("heat.webm") else if view == 6 ("zones.webm") else "ramp.webm"
+					# max_frames 0 is the platform's "record until Capture.stop"
+					# sentinel, not a zero-frame cap - V is the stop
 					rec = Capture.default.with_format(WebM).with_path(rec_name).with_fps(30).with_max_frames(0).with_scale(Full).with_timing(FixedStep)
 					Task.spawn!(program_input, || RecCmd(Capture.start!(rec)))
 				}
