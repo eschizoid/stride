@@ -61,14 +61,16 @@ Board :: [].{
 	})
 	List.for_each!(model.subs, |s|
 		if s.r == model.range and model.view == 0 {
-			s.p.draw!(frame, { pos: { x: 280.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+			# x clears the legend's third label ("form" ends ~286 at this size)
+			s.p.draw!(frame, { pos: { x: 330.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		} else {})
 
 	if model.ev_warn_found {
 		model.ev_warn.draw!(frame, { pos: { x: win_w - 40.0, y: 52.0 }, color: atl_c, align: (Top, Right) })
 	} else {}
 	if model.stale_found {
-		model.stale.draw!(frame, { pos: { x: win_w - 40.0, y: 34.0 }, color: ink_faint, align: (Top, Right) })
+		# BELOW the nav pills - nine of them own the whole y30..54 band now
+		model.stale.draw!(frame, { pos: { x: win_w - 40.0, y: 58.0 }, color: ink_faint, align: (Top, Right) })
 	} else {}
 
 		if model.has_error {
