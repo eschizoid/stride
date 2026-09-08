@@ -1,5 +1,6 @@
 import rr.Color
 import rr.Draw
+import rr.Text
 import Theme
 import Ui
 
@@ -36,6 +37,17 @@ Curve :: [].{
 			nlast = List.len(model.curve) - 1
 			cx = |i| if nlast == 0 (pad_l + pw / 2.0) else pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
 			cy = |w| pad_t + ph * (1.0 - w / w_hi)
+			# the watt grid: a faint rule and label every 100w, so the dots have
+			# absolute values without hovering. Steps come from the
+			# ceiling itself, so any scale gets its rules.
+			grid_n = match F32.round_to_u64_try(F32.div_floor_by(w_hi, 100.0)) { Ok(gn) => gn
+				Err(_) => 0.U64 }
+			List.for_each!(List.map_with_index(List.repeat({}, grid_n), |_u, k| (U64.to_f32(k) + 1.0) * 100.0), |gw|
+				if gw < w_hi {
+					frame.line!({ start: { x: pad_l, y: cy(gw) }, end: { x: win_w - pad_r, y: cy(gw) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 36), 1) })
+					Text.from(match F32.round_to_u64_try(gw) { Ok(gi) => U64.to_str(gi)
+						Err(_) => "" }, model.font).size(10).draw!(frame, { pos: { x: pad_l - 8.0, y: cy(gw) - 6.0 }, color: ink_faint, align: (Top, Right) })
+				} else {})
 			# CP as a horizontal line: the curve should flatten toward it, and a fit
 			# drawn far from the long rungs is visibly wrong — which is the whole
 			# reason #372 wanted this view rather than the table.
