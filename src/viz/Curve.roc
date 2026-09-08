@@ -66,6 +66,20 @@ Curve :: [].{
 				})
 				model.cp_lbl.draw!(frame, { pos: { x: pad_l + pw + 8.0, y: cpy }, color: tsb_c, align: (Middle, Left) })
 			} else {}
+			# each line introduces itself at its first rung - the chart must be
+			# readable with no narrator
+			_ = match List.first(rungs) {
+				Ok(r0) => {
+					if r0.pr.w > 0 {
+						Text.from("best ever", model.font).size(11).draw!(frame, { pos: { x: cx(r0.i) + 14.0, y: cy(I64.to_f32(r0.pr.w)) - 8.0 }, color: ink_muted, align: (Top, Left) })
+					} else {}
+					if r0.now_w > 0 and r0.now_w < r0.pr.w {
+						Text.from("this window", model.font).size(11).draw!(frame, { pos: { x: cx(r0.i) + 14.0, y: cy(I64.to_f32(r0.now_w)) + 6.0 }, color: Theme.ctl_c, align: (Top, Left) })
+					} else {}
+					{}
+				}
+				Err(_) => {}
+			}
 			# record envelope first (it sits above), then the window curve
 			# envelope segments only between rungs that HAVE records - a 0 rung
 			# must not drag the grey line to the floor

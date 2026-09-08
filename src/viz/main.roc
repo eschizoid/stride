@@ -256,7 +256,7 @@ load_model! = |font, curve_days| {
 			plan_hint: mk!("TAB  heat      R  reload      S  screenshot      ESC quit", 13)?,
 			nav: [
 				{ p: mk!("form", 13)?, v: 0.U8 },
-				{ p: mk!("curve", 13)?, v: 1.U8 },
+				{ p: mk!("power", 13)?, v: 1.U8 },
 				{ p: mk!("trace", 13)?, v: 2.U8 },
 				{ p: mk!("table", 13)?, v: 3.U8 },
 				{ p: mk!("plan", 13)?, v: 4.U8 },
