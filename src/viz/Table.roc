@@ -77,6 +77,13 @@ Table :: [].{
 			pos_note = "days ${U64.to_str(if kept > fit (kept - fit + 1) else 1)}-${U64.to_str(kept)} of ${U64.to_str(total)}"
 			Text.from(pos_note, model.font).size(13).draw!(frame, { pos: { x: edge, y: 70.0 }, color: ink_muted, align: (Top, Right) })
 		} else {}
+		# the session column runs to the table's right edge; ~8px per mono
+		# glyph at this size - one computation per frame, not per row
+		budget = match F32.round_to_u64_try(F32.div_floor_by(edge - 690.0, 8.0)) {
+			Ok(b) => if b < 12 (12.U64) else b
+			# failure means cramped, not roomy - clamp to the floor
+			Err(_) => 12.U64
+		}
 		List.for_each!(List.map_with_index(rows, |r, i| { r, i }), |x| {
 			ry = 134.0 + U64.to_f32(x.i) * 24.0
 			# the row under the mouse lifts - hover feedback to match the pointer
@@ -87,13 +94,6 @@ Table :: [].{
 			day = match List.get(days, x.i) { Ok(d) => d
 				Err(_) => "" }
 			note = Db.note_for(model.day_notes, day)
-			# the session column runs to the table's right edge; ~8px per mono
-			# glyph at this size
-			budget = match F32.round_to_u64_try(F32.div_floor_by(edge - 690.0, 8.0)) {
-				Ok(b) => if b < 12 (12.U64) else b
-				# failure means cramped, not roomy - clamp to the floor
-				Err(_) => 12.U64
-			}
 			short = if Str.count_utf8_bytes(note) > budget (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(note), budget - 2)), "..")) else note
 			cells = [day, Db.fmt_f(x.r.ctl), Db.fmt_f(x.r.atl), Db.fmt_f(x.r.tsb), Db.fmt_f(x.r.tss), short]
 			# the artifact's row separators
@@ -110,9 +110,10 @@ Table :: [].{
 		# the day-detail panel: opens over the right half when a row is clicked,
 		# same row again closes it. Db delivers structured { title, stats } rows.
 		if model.detail_day != "" {
-			pw2 = if win_w / 2.0 < 480.0 (win_w / 2.0 - 36.0) else 480.0
-			px = win_w - 36.0 - pw2
-			# (panel_edge = px - 24, so the table ends before this card begins)
+			# derived from the SAME edge the table clamps to - px = edge + 24 by
+			# construction, so render and hit-tests cannot drift
+			px = panel_edge(win_w) + 24.0
+			pw2 = win_w - 36.0 - px
 			ph2 = 78.0 + U64.to_f32(List.len(model.detail)) * 92.0
 			ph2c = if ph2 > win_h - 150.0 (win_h - 150.0) else ph2
 			frame.rounded_rectangle!({ x: px, y: 100.0, width: pw2, height: ph2c, radius: 10.0, segments: 8, style: Draw.filled(Theme.card) })
