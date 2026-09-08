@@ -33,6 +33,9 @@ Theme :: [].{
 	atl_c = Color.from_hex_rgb(0xa66bfa)
 	tsb_c : Color.Rgba
 	tsb_c = Color.from_hex_rgb(0x2dd4bf)
+	# the ramp's hot end, reused wherever something broke a rule
+	alarm_c : Color.Rgba
+	alarm_c = Color.from_hex_rgb(0xe0645b)
 	# the intensity ramp for time-in-zone bars: easy cool to hard hot
 	zone_ramp : List(Color.Rgba)
 	zone_ramp = [Color.from_hex_rgb(0x4d5a68), Color.from_hex_rgb(0x4f8ef7), Color.from_hex_rgb(0x2dd4bf), Color.from_hex_rgb(0xd8c27a), Color.from_hex_rgb(0xe0645b)]
