@@ -59,7 +59,7 @@ Table :: [].{
 			})
 		})
 		# the day-detail panel: opens over the right half when a row is clicked,
-		# same row again closes it. Lines arrive "name [sport]|stats" from Db.
+		# same row again closes it. Db delivers structured { title, stats } rows.
 		if model.detail_day != "" {
 			px = win_w / 2.0
 			pw2 = win_w - 36.0 - px

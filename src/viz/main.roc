@@ -491,7 +491,7 @@ update! = |model0, program_input| {
 			Err(_) => 0.U64
 		}
 		row_count = if row_total - row_back > 14 (14.U64) else row_total - row_back
-		over_row = view2 == 3 and m.x >= 36.0 and (if model.detail_day != "" (m.x < win.w / 2.0) else m.x <= win.w - 40.0) and m.y >= 134.0 and m.y <= 134.0 + U64.to_f32(row_count) * 24.0
+		over_row = view2 == 3 and m.x >= 36.0 and (if detail_day2 != "" (m.x < win.w / 2.0) else m.x <= win.w - 40.0) and m.y >= 134.0 and m.y <= 134.0 + U64.to_f32(row_count) * 24.0
 		Mouse.set_cursor!(if over_chip or over_row PointingHand else Default)
 		tick = model.tick + 1
 		# no HOME means no database path means no bus — spawning would only

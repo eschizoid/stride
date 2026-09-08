@@ -271,7 +271,7 @@ Db :: [].{
 
 	load_day_detail! : Sqlite.Db, Str => List({ title : Str, stats : Str })
 	load_day_detail! = |db, day|
-		match Sqlite.query!({ db, query: "SELECT CAST(a.name AS TEXT) AS name, CAST(a.sport_type AS TEXT) AS sport, COALESCE(a.moving_time, 0) AS secs, CAST(ROUND(COALESCE(a.distance, 0) / 1000.0, 1) AS TEXT) AS km, CAST(ROUND(COALESCE(m.tss, 0)) AS INTEGER) AS tss, CAST(ROUND(COALESCE(m.normalized_power, 0)) AS INTEGER) AS np FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE substr(a.start_local, 1, 10) = :d ORDER BY a.start_local", bindings: [{ name: ":d", value: String(day) }] }) {
+		match Sqlite.query!({ db, query: "SELECT CAST(a.name AS TEXT) AS name, CAST(a.sport_type AS TEXT) AS sport, CAST(COALESCE(a.moving_time, 0) AS INTEGER) AS secs, CAST(ROUND(COALESCE(a.distance, 0) / 1000.0, 1) AS TEXT) AS km, CAST(ROUND(COALESCE(m.tss, 0)) AS INTEGER) AS tss, CAST(ROUND(COALESCE(m.normalized_power, 0)) AS INTEGER) AS np FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE substr(a.start_local, 1, 10) = :d ORDER BY a.start_local", bindings: [{ name: ":d", value: String(day) }] }) {
 			Err(_) => [{ title: "detail query failed", stats: "" }]
 			Ok(rows) =>
 				if List.is_empty(rows) [{ title: "rest day - no activities", stats: "" }]
