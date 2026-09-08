@@ -391,7 +391,9 @@ update! = |model0, program_input| {
 			ReloadFailed => acc
 			TraceSwitchFailed => acc
 			GhostSwitchFailed => acc
-			GhostSwitched(gw) => { ..acc, ghost: gw.tr, ghost_dur: gw.du, ghost_sel: gw.sel, ghost_day: gw.day }
+			# a slow load must not resurrect a dismissed ghost or overwrite a
+			# newer pick: only the result matching the current selection lands
+			GhostSwitched(gw) => if gw.sel == acc.ghost_sel ({ ..acc, ghost: gw.tr, ghost_dur: gw.du, ghost_day: gw.day }) else acc
 			DirectiveNone => acc
 			Polled(note) => { ..acc, bus_note: note }
 			FocusWritten => acc

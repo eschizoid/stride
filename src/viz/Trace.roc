@@ -63,8 +63,14 @@ Trace :: [].{
 				gx = |i| pad_l + F32.min(pw, pw * (model.ghost_dur * U64.to_f32(i) / U64.to_f32(gn)) / total_s)
 				gtail = List.take_last(model.ghost, gn)
 				gsegs = List.map2(model.ghost, gtail, |a, b| { a, b })
+				# a ghost longer than the live session stops at the edge rather
+				# than smearing its overrun into a vertical line there: segments
+				# starting past the live duration are skipped, the one straddling
+				# it keeps its clamped end
 				List.for_each!(List.map_with_index(gsegs, |pr, i| { pr, i }), |x|
-					frame.line!({ start: { x: gx(x.i), y: ty(x.pr.a) }, end: { x: gx(x.i + 1), y: ty(x.pr.b) }, stroke: Draw.stroke(Color.with_alpha(Theme.atl_c, 120), 1.0) }))
+					if model.ghost_dur * U64.to_f32(x.i) / U64.to_f32(gn) <= total_s {
+						frame.line!({ start: { x: gx(x.i), y: ty(x.pr.a) }, end: { x: gx(x.i + 1), y: ty(x.pr.b) }, stroke: Draw.stroke(Color.with_alpha(Theme.atl_c, 120), 1.0) })
+					} else {})
 				{}
 			} else {}
 			tail = List.take_last(model.trace, List.len(model.trace) - 1)
