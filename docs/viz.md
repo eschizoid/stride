@@ -75,6 +75,7 @@ CTL and ramp. A directive with view 7 opens it.
 | nav pills (top right) | click any view directly; the active one is filled |
 | `TAB` | cycle views: form board / power curve / session trace / data table / plan / heat / zones / ramp |
 | `1` / `2` / `3` (curve view) | re-window the curve and CP fit to 30/60/90 days |
+| `shift+[` / `shift+]` (trace view) | summon / walk / dismiss the ghost overlay (past newest = off) |
 | `[` / `]` (trace view) | older / newer structured session, last 12 |
 | `←` / `→` (table view) | scroll the window through the whole series (rows fill the window height) |
 | click a date (table view) | open that day's detail panel: sessions, minutes, km, TSS, NP |
@@ -117,27 +118,32 @@ CREATE TABLE IF NOT EXISTS viz_directives (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT,
+  ghost_day TEXT,
   consumed INTEGER NOT NULL DEFAULT 0);
 
 -- steer: the window polls ~1/s, applies the newest unconsumed row, and
 -- consumes everything up to it. NULL fields mean "leave that alone".
-INSERT INTO viz_directives (view, range, cursor_day, trace_day)
-VALUES (0, 30, '2026-09-02', NULL);
+INSERT INTO viz_directives (view, range, cursor_day, trace_day, ghost_day)
+VALUES (0, 30, '2026-09-02', NULL, NULL);
 -- view 0..7 (form/curve/trace/table/plan/heat/zones/ramp). range 30|60|90 lands on the view the
 -- directive lands on: named view if set, else the visible one — on the curve
 -- it re-windows the ladder+fit, on every other view it sets the form board's
 -- range.
--- cursor_day parks the crosshair, trace_day picks the session
+-- cursor_day parks the crosshair, trace_day picks the session.
+-- ghost_day overlays a second session on the trace view at reduced alpha
+-- (same watts scale, same seconds-per-pixel); the literal word 'none'
+-- dismisses the ghost. A database that predates the column gains it on
+-- the window's first poll (ALTER TABLE, failure-on-present discarded).
 
 -- the window creates this too; a coach may pre-create it the same way:
 CREATE TABLE IF NOT EXISTS viz_focus (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   updated_at TEXT NOT NULL,
   view INTEGER NOT NULL, range INTEGER NOT NULL,
-  cursor_day TEXT, trace_day TEXT);
+  cursor_day TEXT, trace_day TEXT, ghost_day TEXT);
 
 -- observe: one row, upserted when what the human sees changes (throttled ~2/s)
-SELECT view, range, cursor_day, trace_day, updated_at FROM viz_focus;
+SELECT view, range, cursor_day, trace_day, ghost_day, updated_at FROM viz_focus;
 ```
 
 A directive is consumed as read — one the window crashes on is dropped, never
