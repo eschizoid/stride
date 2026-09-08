@@ -430,4 +430,4 @@ layer-check:
 
 # build the Form Board as a macOS app in ~/Applications (Launchpad/Dock/Spotlight)
 viz-app:
-    bash tools/make-viz-app.sh
+    ROC_VIZ="{{roc_viz}}" bash tools/make-viz-app.sh
