@@ -181,6 +181,22 @@ Db :: [].{
 	# so writes can precede the window's first launch.
 	ensure_bus! : Sqlite.Db => {}
 	ensure_bus! = |db| {
+		# every-second callers take this read-only fast path; the DDL below runs
+		# only while the objects are actually missing — IF NOT EXISTS still
+		# contends for the schema write lock, a plain sqlite_master read never does
+		present = match Sqlite.query!({ db, query: "SELECT count(*) AS c FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')", bindings: [] }) {
+			Err(_) => 0
+			Ok(rows) => match List.first(rows) {
+				Err(_) => 0
+				Ok(r) => match r.i64("c") { Ok(c) => c
+					Err(_) => 0 }
+			}
+		}
+		if present == 3 {} else ensure_bus_ddl!(db)
+	}
+
+	ensure_bus_ddl! : Sqlite.Db => {}
+	ensure_bus_ddl! = |db| {
 		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_directives (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT (datetime('now')), view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT, consumed INTEGER NOT NULL DEFAULT 0)", bindings: [] })
 		# the poll runs every second forever: a partial index keeps the
 		# pending-lookup flat no matter how much consumed history accrues
