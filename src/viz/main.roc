@@ -331,7 +331,10 @@ update! = |model0, program_input| {
 		# 1/2/3 answer to whichever view is showing: the form board's range, or
 		# the curve's window — never both at once
 		range =
-			if directive.has_d and (directive.range == 30 or directive.range == 60 or directive.range == 90) (match I64.to_u64_try(directive.range) { Ok(rr) => rr
+			# a directive's range lands on the view the directive steers to: the
+			# curve keeps its own window (want_days below), so a curve directive
+			# must not silently re-range the form board too
+			if directive.has_d and directive.view != 1 and (directive.range == 30 or directive.range == 60 or directive.range == 90) (match I64.to_u64_try(directive.range) { Ok(rr) => rr
 				Err(_) => model.range }) else
 			if clicked_chip > 0 clicked_chip
 			else if model.view == 1 model.range

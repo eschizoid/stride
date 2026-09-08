@@ -83,6 +83,13 @@ VALUES (0, 30, '2026-09-02', NULL);
 -- view 0..3 (form/curve/trace/table), range 30|60|90,
 -- cursor_day parks the crosshair, trace_day picks the session
 
+-- the window creates this too; a coach may pre-create it the same way:
+CREATE TABLE IF NOT EXISTS viz_focus (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  updated_at TEXT NOT NULL,
+  view INTEGER NOT NULL, range INTEGER NOT NULL,
+  cursor_day TEXT, trace_day TEXT);
+
 -- observe: one row, upserted when what the human sees changes (throttled ~2/s)
 SELECT view, range, cursor_day, trace_day, updated_at FROM viz_focus;
 ```
