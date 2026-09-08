@@ -65,9 +65,16 @@ Heat :: [].{
 					frame.rounded_rectangle!({ x: x0 - 2.0, y: y0 - 2.0, width: cell + 4.0, height: cell + 4.0, radius: 4.0, segments: 3, style: Draw.filled(Color.with_alpha(Color.white, 160)) })
 				} else {}
 				frame.rounded_rectangle!({ x: x0, y: y0, width: cell, height: cell, radius: 3.0, segments: 3, style: sty })
-				# month tick on the first row cell of a new month (day ends -01)
-				if r == 0 and Str.ends_with(h.day, "-01") {
-					Text.from(Str.from_utf8_lossy(List.take_first(List.drop_first(Str.to_utf8(h.day), 5), 2)), model.font).size(10).draw!(frame, { pos: { x: x0, y: gy - 16.0 }, color: ink_faint, align: (Top, Left) })
+				# month tick above each month's first Monday (day-of-month 01..07:
+				# every month has exactly one Monday there, so every column band
+				# gets exactly one label)
+				db2 = Str.to_utf8(h.day)
+				d1 = match List.get(db2, 8) { Ok(b) => b
+					Err(_) => 57 }
+				d2 = match List.get(db2, 9) { Ok(b) => b
+					Err(_) => 57 }
+				if r == 0 and d1 == 48 and d2 >= 49 and d2 <= 55 {
+					Text.from(Str.from_utf8_lossy(List.take_first(List.drop_first(db2, 5), 2)), model.font).size(10).draw!(frame, { pos: { x: x0, y: gy - 16.0 }, color: ink_faint, align: (Top, Left) })
 				} else {}
 				# hover: tooltip with the day's story
 				if model.mouse_x >= x0 and model.mouse_x < x0 + cell and model.mouse_y >= y0 and model.mouse_y < y0 + cell {
