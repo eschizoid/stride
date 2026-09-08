@@ -4,6 +4,13 @@ import rr.Cmd
 Db :: [].{
 	CurvePt : { dur_s : I64, watts : F32 }
 	DayLine : { title : Str, stats : Str, extra : Str, zones : List(I64) }
+
+	# the brand atlases carry ASCII; human-authored text (plan details, session
+	# names, rationales) arrives with em-dashes, arrows and checkmarks that
+	# would render as '?'. One gate maps them to ASCII at load time.
+	ascii_safe : Str -> Str
+	ascii_safe = |s|
+		Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(s, "—", "-"), "–", "-"), "→", "->"), "←", "<-"), "✓", "ok"), "≤", "<="), "≥", ">="), "·", "-")
 	Seg : { kind : Str, start_s : I64, dur_s : I64 }
 	Fit : { cp : F32, w_prime : F32, r2 : F32, points : F32, ok : Bool }
 
@@ -171,7 +178,7 @@ Db :: [].{
 				List.keep_oks(rows, |r| {
 					dy = r.str("day") ? |_| "bad day"
 					nt = r.str("note") ? |_| "bad note"
-					Ok({ day: dy, note: nt })
+					Ok({ day: dy, note: ascii_safe(nt) })
 				})
 		}
 
@@ -255,7 +262,7 @@ Db :: [].{
 	# and cannot count done sessions meaningfully)
 	load_plan_week! : Sqlite.Db => { done : I64, total : I64 }
 	load_plan_week! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT mon FROM week_bounds) SELECT CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER) AS dn, COUNT(*) AS tot FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days')", bindings: [] }) {
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT date(date('now', 'localtime'), '-6 days', 'weekday 1') AS mon) SELECT CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER) AS dn, COUNT(*) AS tot FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days')", bindings: [] }) {
 			Err(_) => { done: 0, total: 0 }
 			Ok(rows) => match List.first(rows) {
 				Err(_) => { done: 0, total: 0 }
@@ -269,16 +276,13 @@ Db :: [].{
 			}
 		}
 
-	# the prescribed days AHEAD of the series' own today, completion included.
-	# Reads through the plan_current VIEW (defined once in the engine's
-	# Schema.roc, applied at migration) - the dedupe rule has exactly one
-	# implementation and it lives in the database both sides share. On a db
-	# the engine has never migrated, the view is absent and this returns [],
-	# which the plan view renders as its no-plan state
+	# the prescribed days ahead of the WALL-CLOCK today - prescriptions are
+	# calendar items the athlete reads on the real day, so the plan view is
+	# the one place the series clock does not rule (PMC reads keep it).
 	PlanRow : { day : Str, typ : Str, detail : Str, rationale : Str, done : Bool, skipped : Bool, today : Bool }
 	load_plan! : Sqlite.Db => List(PlanRow)
 	load_plan! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT CAST(target_date AS TEXT) AS d, CAST(COALESCE(session_type, '') AS TEXT) AS t, CAST(COALESCE(detail, '') AS TEXT) AS dt, CAST(COALESCE(rationale, '') AS TEXT) AS ra, (COALESCE(status, '') = 'done') AS dn, (COALESCE(status, '') = 'skipped') AS sk, (target_date = (SELECT today FROM anchor)) AS td FROM plan_current, anchor WHERE target_date >= (SELECT today FROM anchor) AND target_date <= date((SELECT today FROM anchor), '+6 days') ORDER BY target_date, id", bindings: [] }) {
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT date('now', 'localtime') AS today) SELECT CAST(target_date AS TEXT) AS d, CAST(COALESCE(session_type, '') AS TEXT) AS t, CAST(COALESCE(detail, '') AS TEXT) AS dt, CAST(COALESCE(rationale, '') AS TEXT) AS ra, (COALESCE(status, '') = 'done') AS dn, (COALESCE(status, '') = 'skipped') AS sk, (target_date = (SELECT today FROM anchor)) AS td FROM plan_current, anchor WHERE target_date >= (SELECT today FROM anchor) AND target_date <= date((SELECT today FROM anchor), '+6 days') ORDER BY target_date, id", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.map(rows, |r| match decode_plan_row(r) {
@@ -296,7 +300,7 @@ Db :: [].{
 		dn = r.i64("dn") ? |_| BadRow
 		sk = r.i64("sk") ? |_| BadRow
 		td = r.i64("td") ? |_| BadRow
-		Ok({ day, typ, detail, rationale, done: dn == 1, skipped: sk == 1, today: td == 1 })
+		Ok({ day, typ, detail: ascii_safe(detail), rationale: ascii_safe(rationale), done: dn == 1, skipped: sk == 1, today: td == 1 })
 	}
 
 	# this week's load beside last week's, MONDAY-ALIGNED to agree with the
@@ -321,7 +325,7 @@ Db :: [].{
 	load_bus_note! : Sqlite.Db => Str
 	load_bus_note! = |db| {
 		ensure_bus!(db)
-		match Sqlite.query!({ db, query: "SELECT CAST(created_at AS TEXT) AS at, CAST(COALESCE(view, -1) AS INTEGER) AS v, CAST(COALESCE(range, -1) AS INTEGER) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd FROM viz_directives ORDER BY id DESC LIMIT 1", bindings: [] }) {
+		match Sqlite.query!({ db, query: "SELECT CAST(strftime('%m-%d %H:%M', created_at, 'localtime') AS TEXT) AS at, CAST(COALESCE(view, -1) AS INTEGER) AS v, CAST(COALESCE(range, -1) AS INTEGER) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd FROM viz_directives ORDER BY id DESC LIMIT 1", bindings: [] }) {
 			Err(_) => "no directives yet"
 			Ok(rows) => match List.first(rows) {
 				Err(_) => "no directives yet"
@@ -334,8 +338,10 @@ Db :: [].{
 						Err(_) => -1 }
 					cd = match r.str("cd") { Ok(x) => x
 						Err(_) => "" }
-					vn = if v == 0 "form" else if v == 1 "curve" else if v == 2 "trace" else if v == 3 "table" else if v == 4 "plan" else "-"
-					parts = if rg > 0 "${vn} / ${I64.to_str(rg)}d" else vn
+					vn = if v == 0 "form" else if v == 1 "curve" else if v == 2 "trace" else if v == 3 "table" else if v == 4 "plan" else ""
+					rgp = if rg > 0 "${I64.to_str(rg)}d" else ""
+					joined = Str.join_with(List.keep_if([vn, rgp], |s2| s2 != ""), " / ")
+					parts = if joined == "" "steer" else joined
 					if cd != "" "${at}  ->  ${parts} @ ${cd}" else "${at}  ->  ${parts}"
 				}
 			}
@@ -374,7 +380,7 @@ Db :: [].{
 		p2 = if hr > 0 "${I64.to_str(hr)} bpm avg" else ""
 		p3 = if rpe != "0.0" and rpe != "0" "rpe ${rpe}" else "unrated"
 		extra = Str.join_with(List.keep_if([p1, p2, p3], |s| s != ""), "   ")
-		Ok({ title: "${nm} [${sp}]", stats, extra, zones: [z1, z2, z3, z4, z5] })
+		Ok({ title: ascii_safe("${nm} [${sp}]"), stats, extra, zones: [z1, z2, z3, z4, z5] })
 	}
 
 	load_day_detail! : Sqlite.Db, Str => List(DayLine)
