@@ -1,3 +1,4 @@
+import rr.Capture
 import rr.Text
 import Db
 
@@ -87,6 +88,7 @@ Ui :: [].{
 		ramp_title : Text.Prepared,
 		ramp_hint : Text.Prepared,
 		prs : List(Db.PrRung),
+		rec_status : Capture.Status,
 		mouse_in : Bool,
 		cursor : I64,
 	}
