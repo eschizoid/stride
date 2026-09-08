@@ -395,14 +395,15 @@ update! = |model0, program_input| {
 			} else { hit: Bool.False, cb: -1 }
 		view2 = if row_hit.hit 0 else view
 		# a directive naming a day parks the crosshair there
+		# -2 = no directive OR day not in the series: both leave the cursor
+		# alone. A found day maps to its days-back index (>= 0).
 		cursor_dir =
 			if directive.has_d and directive.cursor_day != "" {
 				total2 = List.len(model.days)
-				found = List.fold(List.map_with_index(model.days, |dy, di| { dy, di }), -1, |acc, x| if x.dy == directive.cursor_day (match U64.to_i64_try(total2 - 1 - x.di) { Ok(cb2) => cb2
+				List.fold(List.map_with_index(model.days, |dy, di| { dy, di }), -2, |acc, x| if x.dy == directive.cursor_day (match U64.to_i64_try(total2 - 1 - x.di) { Ok(cb2) => cb2
 					Err(_) => acc }) else acc)
-				found
 			} else -2
-		cursor2 = if row_hit.hit row_hit.cb else if cursor_dir >= -1 and cursor_dir != -2 cursor_dir else cursor
+		cursor2 = if row_hit.hit row_hit.cb else if cursor_dir >= 0 cursor_dir else cursor
 		# reloads and trace switches SPAWN — Cmd panics in update!, and the
 		# task lane is where Sqlite and text preparation park legally
 		# a directive naming a session day resolves to its picker slot
