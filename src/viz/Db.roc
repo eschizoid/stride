@@ -416,8 +416,10 @@ Db :: [].{
 	# every power PR: the best-ever watts per duration rung and the day each
 	# record first landed (ties break to the earliest ride - a matched record
 	# is not a new one; the ladder stores 0, not NULL, for a ride too short
-	# for a rung, so the record filter is > 0). ALWAYS eight rows: a rung with no record yet comes
-	# back as w 0 / day '' so the view's ladder never shrinks or jumps.
+	# for a rung, so the record filter is > 0). Eight rows on success - a rung
+	# with no record yet comes back as w 0 / day '' so the ladder never
+	# shrinks or jumps; a failed query returns none and the view shows its
+	# empty state, the same honest floor every loader here has.
 	PrRung : { rung : Str, secs : I64, w : I64, day : Str }
 	load_prs! : Sqlite.Db => List(PrRung)
 	load_prs! = |db|
