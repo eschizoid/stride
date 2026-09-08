@@ -9,8 +9,9 @@ set -euo pipefail
 # NOTE on set -e vs the import greps below: they feed while-loops through
 # process substitution, whose exit status set -e never sees — a module with
 # zero matching imports iterates zero times and the script continues. Verified
-# against bash directly and against this repo's zero-import modules. Module
-# files are capitalized in Roc, so the [A-Z] matcher is the complete set.
+# against bash directly and against this repo's zero-import modules. Every
+# IMPORTABLE module here is capitalized (app.roc is an entrypoint, imported
+# by nothing), so the [A-Z] matcher covers the complete import vocabulary.
 cd "$(dirname "$0")/.."
 
 layer_of() {
