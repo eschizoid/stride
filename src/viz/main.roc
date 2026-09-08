@@ -446,7 +446,9 @@ update! = |model0, program_input| {
 				}
 			} else ""
 		detail_day2 = if row_hit.hit (if clicked_day == model.detail_day "" else clicked_day) else model.detail_day
-		_ = if row_hit.hit and detail_day2 != "" and model.home != "" {
+		# spawn unconditionally: detail_task! answers "no database path" itself,
+		# so a missing HOME shows that instead of loading... forever
+		_ = if row_hit.hit and detail_day2 != "" {
 			homed = model.home
 			dayd = detail_day2
 			Task.spawn!(program_input, || detail_task!(homed, dayd))
@@ -482,7 +484,14 @@ update! = |model0, program_input| {
 			})
 		} else {}
 		over_chip = view2 == 0 and m.y >= 64.0 and m.y <= 86.0 and m.x >= win.w - 420.0 and m.x <= win.w - 266.0
-		over_row = view2 == 3 and m.x >= 36.0 and (if model.detail_day != "" (m.x < win.w / 2.0) else m.x <= win.w - 40.0) and m.y >= 134.0 and m.y <= 134.0 + 14.0 * 24.0
+		row_total = List.len(model.data)
+		row_maxb = if row_total > 14 (row_total - 14) else 0.U64
+		row_back = if model.cursor < 0 (0.U64) else match I64.to_u64_try(model.cursor) {
+			Ok(c) => if c > row_maxb row_maxb else c
+			Err(_) => 0.U64
+		}
+		row_count = if row_total - row_back > 14 (14.U64) else row_total - row_back
+		over_row = view2 == 3 and m.x >= 36.0 and (if model.detail_day != "" (m.x < win.w / 2.0) else m.x <= win.w - 40.0) and m.y >= 134.0 and m.y <= 134.0 + U64.to_f32(row_count) * 24.0
 		Mouse.set_cursor!(if over_chip or over_row PointingHand else Default)
 		tick = model.tick + 1
 		# no HOME means no database path means no bus — spawning would only
