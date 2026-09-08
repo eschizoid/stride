@@ -48,13 +48,14 @@ cat > "$C/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 
-# icon: the repo logo, rendered at every size Launchpad wants
+# icon: the SYMBOL badge only (img/stride-icon.png, cropped from the
+# banner) - the full banner squeezed wordmark and taglines into the tile
 ICONSET="$WORK/stride.iconset"
 mkdir -p "$ICONSET"
 for s in 16 32 64 128 256 512; do
-  sips -z $s $s img/stride.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+  sips -z $s $s img/stride-icon.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
   d=$((s * 2))
-  sips -z $d $d img/stride.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+  sips -z $d $d img/stride-icon.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$C/Resources/stride.icns"
 
