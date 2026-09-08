@@ -235,7 +235,7 @@ load_model! = |font, curve_days| {
 			heat_title: mk!("training heat - one cell per day", 15)?,
 			heat_hint: mk!("hover a cell to read the day      TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
 			plan_title: mk!("next 7 days - plan and progress", 15)?,
-			plan_hint: mk!("TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
+			plan_hint: mk!("TAB  heat      R  reload      S  screenshot      ESC quit", 13)?,
 			nav: [
 				{ p: mk!("form", 13)?, v: 0.U8 },
 				{ p: mk!("curve", 13)?, v: 1.U8 },
