@@ -19,7 +19,7 @@ Zones :: [].{
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
 		model.zones_title.draw!(frame, { pos: { x: pad, y: 70.0 }, color: ink_muted, align: (Top, Left) })
-		grand = List.fold(model.zone_weeks, 0, |a, w| a + w.z1 + w.z2 + w.z3 + w.z4 + w.z5)
+		grand = List.fold(model.zone_weeks, 0.I64, |a, w| a + w.z1 + w.z2 + w.z3 + w.z4 + w.z5)
 		# the loader materializes empty weeks, so 12 zero rows IS the no-history
 		# state - the emptiness test is the grand total, not the list length
 		if List.is_empty(model.zone_weeks) or grand == 0 {
