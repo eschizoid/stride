@@ -65,15 +65,13 @@ Table :: [].{
 			pw2 = win_w - 36.0 - px
 			frame.rounded_rectangle!({ x: px, y: 100.0, width: pw2, height: win_h - 150.0, radius: 10.0, segments: 8, style: Draw.filled(Theme.card) })
 			Text.from(model.detail_day, model.font).size(15).draw!(frame, { pos: { x: px + 18.0, y: 116.0 }, color: Color.white, align: (Top, Left) })
+			if List.is_empty(model.detail) {
+				Text.from("loading...", model.font).size(12).draw!(frame, { pos: { x: px + 18.0, y: 148.0 }, color: ink_muted, align: (Top, Left) })
+			} else {}
 			List.for_each!(List.map_with_index(model.detail, |ln, li| { ln, li }), |x| {
 				ly = 148.0 + U64.to_f32(x.li) * 44.0
-				parts = Str.split_on(x.ln, "|")
-				nm = match List.first(parts) { Ok(s) => s
-					Err(_) => x.ln }
-				st = match List.get(parts, 1) { Ok(s) => s
-					Err(_) => "" }
-				Text.from(nm, model.font).size(13).draw!(frame, { pos: { x: px + 18.0, y: ly }, color: Theme.ctl_c, align: (Top, Left) })
-				Text.from(st, model.font).size(12).draw!(frame, { pos: { x: px + 18.0, y: ly + 18.0 }, color: ink_muted, align: (Top, Left) })
+				Text.from(x.ln.title, model.font).size(13).draw!(frame, { pos: { x: px + 18.0, y: ly }, color: Theme.ctl_c, align: (Top, Left) })
+				Text.from(x.ln.stats, model.font).size(12).draw!(frame, { pos: { x: px + 18.0, y: ly + 18.0 }, color: ink_muted, align: (Top, Left) })
 			})
 		} else {}
 		model.table_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })

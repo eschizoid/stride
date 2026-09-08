@@ -262,9 +262,9 @@ trace_task! = |home, ids, sel|
 # One day's story, fetched when a table row is clicked
 detail_task! : Str, Str => Msg
 detail_task! = |home, day|
-	if home == "" DayDetail({ day, lines: ["no database path"] })
+	if home == "" DayDetail({ day, lines: [{ title: "no database path", stats: "" }] })
 	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
-		Err(_) => DayDetail({ day, lines: ["cannot open the database"] })
+		Err(_) => DayDetail({ day, lines: [{ title: "cannot open the database", stats: "" }] })
 		Ok(db) => DayDetail({ day, lines: Db.load_day_detail!(db, day) })
 	}
 
@@ -307,7 +307,7 @@ Msg : [
 	DirectiveNone,
 	FocusWritten,
 	FocusWriteFailed,
-	DayDetail({ day : Str, lines : List(Str) }),
+	DayDetail({ day : Str, lines : List({ title : Str, stats : Str }) }),
 ]
 
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
@@ -324,7 +324,9 @@ update! = |model0, program_input| {
 			FocusWritten => acc
 			# a dropped write must not leave the coach stale: resetting
 			# last_focus makes the next throttle tick try again
-			DayDetail(dd) => { ..acc, detail_day: dd.day, detail: dd.lines }
+			# only the answer for the day still open lands; a result for a day
+			# the user closed or switched away from is dropped
+			DayDetail(dd) => if dd.day == acc.detail_day ({ ..acc, detail: dd.lines }) else acc
 			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "" } }
 			Directive(_) => acc
 			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, detail_day: acc.detail_day, detail: acc.detail }
@@ -407,7 +409,7 @@ update! = |model0, program_input| {
 			else model.trace_sel
 		# clicking a table row jumps to that day's crosshair on the form board
 		row_hit =
-			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and m.x <= win.w - 40.0 and m.y >= 134.0 {
+			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and (if model.detail_day != "" (m.x < win.w / 2.0) else m.x <= win.w - 40.0) and m.y >= 134.0 {
 				total = List.len(model.data)
 				max_back = if total > 14 (total - 14) else 0.U64
 				back = if model.cursor < 0 (0.U64) else match I64.to_u64_try(model.cursor) {
@@ -480,7 +482,7 @@ update! = |model0, program_input| {
 			})
 		} else {}
 		over_chip = view2 == 0 and m.y >= 64.0 and m.y <= 86.0 and m.x >= win.w - 420.0 and m.x <= win.w - 266.0
-		over_row = view2 == 3 and m.x >= 36.0 and m.x <= win.w - 40.0 and m.y >= 134.0 and m.y <= 134.0 + 14.0 * 24.0
+		over_row = view2 == 3 and m.x >= 36.0 and (if model.detail_day != "" (m.x < win.w / 2.0) else m.x <= win.w - 40.0) and m.y >= 134.0 and m.y <= 134.0 + 14.0 * 24.0
 		Mouse.set_cursor!(if over_chip or over_row PointingHand else Default)
 		tick = model.tick + 1
 		# no HOME means no database path means no bus — spawning would only
@@ -524,7 +526,7 @@ update! = |model0, program_input| {
 				_ = Task.spawn!(program_input, || focus_task!(homef, focus_now))
 				focus_now
 			} else model.last_focus
-		Ok({ ..model, range, view: view2, cursor: cursor2, curve_days: want_days, trace_sel: want_sel2, tick, last_focus, win, detail_day: detail_day2, mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, range, view: view2, cursor: cursor2, curve_days: want_days, trace_sel: want_sel2, tick, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 

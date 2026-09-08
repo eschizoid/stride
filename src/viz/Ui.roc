@@ -63,7 +63,7 @@ Ui :: [].{
 		mouse_y : F32,
 		win : { w : F32, h : F32 },
 		detail_day : Str,
-		detail : List(Str),
+		detail : List({ title : Str, stats : Str }),
 		mouse_in : Bool,
 		cursor : I64,
 	}
