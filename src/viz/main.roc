@@ -334,9 +334,12 @@ render! = |model, frame| {
 	# Legend belongs to the FORM BOARD only: it draws in the same row the
 	# other views put their titles in, and overprinted them.
 	if model.view == 0 {
-		model.leg_fit.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: Theme.ctl_c, align: (Top, Left) })
-		model.leg_fat.draw!(frame, { pos: { x: 118.0, y: 70.0 }, color: Theme.atl_c, align: (Top, Left) })
-		model.leg_form.draw!(frame, { pos: { x: 206.0, y: 70.0 }, color: Theme.tsb_c, align: (Top, Left) })
+		# the artifact's legend: a 14x3 rounded swatch before each label
+		List.for_each!([{ x: 36.0, c: Theme.ctl_c }, { x: 128.0, c: Theme.atl_c }, { x: 226.0, c: Theme.tsb_c }], |sw|
+			frame.rounded_rectangle!({ x: sw.x, y: 77.0, width: 14.0, height: 3.0, radius: 1.5, segments: 4, style: Draw.filled(sw.c) }))
+		model.leg_fit.draw!(frame, { pos: { x: 56.0, y: 70.0 }, color: Theme.ctl_c, align: (Top, Left) })
+		model.leg_fat.draw!(frame, { pos: { x: 148.0, y: 70.0 }, color: Theme.atl_c, align: (Top, Left) })
+		model.leg_form.draw!(frame, { pos: { x: 246.0, y: 70.0 }, color: Theme.tsb_c, align: (Top, Left) })
 	} else {}
 	if model.view == 3 {
 		Table.draw!(model, frame)

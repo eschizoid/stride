@@ -98,7 +98,13 @@ Board :: [].{
 					frame.line!({ start: { x: pad_l, y: gy }, end: { x: I32.to_f32(win_w) - pad_r, y: gy }, stroke: Draw.stroke(Color.with_alpha(Color.white, 18), 1) })
 					yl.p.draw!(frame, { pos: { x: 30.0, y: gy - 8.0 }, color: ink_faint, align: (Top, Left) })
 				} else {})
-			frame.line!({ start: { x: pad_l, y: yf(0.0) }, end: { x: I32.to_f32(win_w) - pad_r, y: yf(0.0) }, stroke: Draw.stroke(Color.with_alpha(Color.white, 55), 1) })
+			# dotted, as the artifact draws it: 4px dash, 6px gap
+			List.for_each!(List.map_with_index(List.repeat({}, 84), |_u, k| k), |k| {
+				dx = pad_l + U64.to_f32(k) * 10.0
+				if dx + 4.0 <= I32.to_f32(win_w) - pad_r {
+					frame.line!({ start: { x: dx, y: yf(0.0) }, end: { x: dx + 4.0, y: yf(0.0) }, stroke: Draw.stroke(Color.with_alpha(Color.white, 55), 1) })
+				} else {}
+			})
 			model.zero_note.draw!(frame, { pos: { x: I32.to_f32(win_w) - pad_r - 6.0, y: yf(0.0) - 16.0 }, color: ink_faint, align: (Top, Right) })
 
 			# daily load (TSS) as a faint rug in its OWN scale along the bottom band,
@@ -187,13 +193,24 @@ Board :: [].{
 							Ok(d) => d
 							Err(_) => ""
 						}
-						# the artifact's tooltip: a small card beside the crosshair,
-						# flipped left when the cursor nears the right edge
-						readout = "${day}  CTL ${Db.fmt_f(hp.ctl)}  ATL ${Db.fmt_f(hp.atl)}  TSB ${Db.fmt_f(hp.tsb)}  TSS ${Db.fmt_f(hp.tss)}"
-						tip_w = 372.0
+						# the artifact's tooltip: date header, then a colored row per
+						# series; flipped left when the cursor nears the right edge
+						tip_w = 168.0
 						tip_x = if hx + 14.0 + tip_w > I32.to_f32(win_w) - pad_r (hx - 14.0 - tip_w) else hx + 14.0
-						frame.rounded_rectangle!({ x: tip_x, y: pad_t + 8.0, width: tip_w, height: 26.0, radius: 6.0, segments: 6, style: Draw.filled(Theme.card) })
-						Text.from(readout, model.font).size(13).draw!(frame, { pos: { x: tip_x + 10.0, y: pad_t + 14.0 }, color: Color.white, align: (Top, Left) })
+						tip_y = pad_t + 8.0
+						frame.rounded_rectangle!({ x: tip_x, y: tip_y, width: tip_w, height: 108.0, radius: 6.0, segments: 6, style: Draw.filled(Theme.card) })
+						Text.from(day, model.font).size(12).draw!(frame, { pos: { x: tip_x + 10.0, y: tip_y + 8.0 }, color: Color.white, align: (Top, Left) })
+						rows = [
+							{ lbl: "Fitness", v: Db.fmt_f(hp.ctl), c: ctl_c },
+							{ lbl: "Fatigue", v: Db.fmt_f(hp.atl), c: atl_c },
+							{ lbl: "Form", v: Db.fmt_f(hp.tsb), c: tsb_c },
+							{ lbl: "Load", v: Db.fmt_f(hp.tss), c: ink_muted },
+						]
+						List.for_each!(List.map_with_index(rows, |r, ri| { r, ri }), |x| {
+							ry = tip_y + 28.0 + U64.to_f32(x.ri) * 19.0
+							Text.from(x.r.lbl, model.font).size(12).draw!(frame, { pos: { x: tip_x + 10.0, y: ry }, color: x.r.c, align: (Top, Left) })
+							Text.from(x.r.v, model.font).size(12).draw!(frame, { pos: { x: tip_x + tip_w - 10.0, y: ry }, color: Color.white, align: (Top, Right) })
+						})
 					}
 					Err(_) => {}
 				}
