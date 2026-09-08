@@ -249,6 +249,98 @@ Db :: [].{
 		}
 	}
 
+	# the Monday-aligned CURRENT week's completion count - the progress strip's
+	# numerator and denominator (the display ladder below is forward-looking
+	# and cannot count done sessions meaningfully)
+	load_plan_week! : Sqlite.Db => { done : I64, total : I64 }
+	load_plan_week! = |db|
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT mon FROM week_bounds) SELECT CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER) AS dn, COUNT(*) AS tot FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days')", bindings: [] }) {
+			Err(_) => { done: 0, total: 0 }
+			Ok(rows) => match List.first(rows) {
+				Err(_) => { done: 0, total: 0 }
+				Ok(r) => {
+					dn = match r.i64("dn") { Ok(x) => x
+						Err(_) => 0 }
+					tot = match r.i64("tot") { Ok(x) => x
+						Err(_) => 0 }
+					{ done: dn, total: tot }
+				}
+			}
+		}
+
+	# the prescribed days AHEAD of the series' own today, completion included.
+	# Reads through the plan_current VIEW (defined once in the engine's
+	# Schema.roc, applied at migration) - the dedupe rule has exactly one
+	# implementation and it lives in the database both sides share. On a db
+	# the engine has never migrated, the view is absent and this returns [],
+	# which the plan view renders as its no-plan state
+	PlanRow : { day : Str, typ : Str, detail : Str, rationale : Str, done : Bool, skipped : Bool, today : Bool }
+	load_plan! : Sqlite.Db => List(PlanRow)
+	load_plan! = |db|
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT CAST(target_date AS TEXT) AS d, CAST(COALESCE(session_type, '') AS TEXT) AS t, CAST(COALESCE(detail, '') AS TEXT) AS dt, CAST(COALESCE(rationale, '') AS TEXT) AS ra, (COALESCE(status, '') = 'done') AS dn, (COALESCE(status, '') = 'skipped') AS sk, (target_date = (SELECT today FROM anchor)) AS td FROM plan_current, anchor WHERE target_date >= (SELECT today FROM anchor) AND target_date <= date((SELECT today FROM anchor), '+6 days') ORDER BY target_date, id", bindings: [] }) {
+			Err(_) => []
+			Ok(rows) =>
+				List.map(rows, |r| match decode_plan_row(r) {
+					Ok(row) => row
+					Err(_) => { day: "?", typ: "?", detail: "plan record unreadable", rationale: "", done: Bool.False, skipped: Bool.False, today: Bool.False }
+				})
+		}
+
+	decode_plan_row : Sqlite.Row -> Try(PlanRow, [BadRow])
+	decode_plan_row = |r| {
+		day = r.str("d") ? |_| BadRow
+		typ = r.str("t") ? |_| BadRow
+		detail = r.str("dt") ? |_| BadRow
+		rationale = r.str("ra") ? |_| BadRow
+		dn = r.i64("dn") ? |_| BadRow
+		sk = r.i64("sk") ? |_| BadRow
+		td = r.i64("td") ? |_| BadRow
+		Ok({ day, typ, detail, rationale, done: dn == 1, skipped: sk == 1, today: td == 1 })
+	}
+
+	# this week's load beside last week's, MONDAY-ALIGNED to agree with the
+	# engine's Metrics.weekly_rollup - the progress strip's two numbers
+	load_week_tss! : Sqlite.Db => { this : I64, last : I64 }
+	load_week_tss! = |db|
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT mon FROM week_bounds) SELECT CAST(ROUND(SUM(CASE WHEN day >= mon THEN tss ELSE 0 END)) AS INTEGER) AS tw, CAST(ROUND(SUM(CASE WHEN day >= date(mon, '-7 days') AND day < mon THEN tss ELSE 0 END)) AS INTEGER) AS lw FROM daily_load, anchor", bindings: [] }) {
+			Err(_) => { this: 0, last: 0 }
+			Ok(rows) => match List.first(rows) {
+				Err(_) => { this: 0, last: 0 }
+				Ok(r) => {
+					tw = match r.i64("tw") { Ok(x) => x
+						Err(_) => 0 }
+					lw = match r.i64("lw") { Ok(x) => x
+						Err(_) => 0 }
+					{ this: tw, last: lw }
+				}
+			}
+		}
+
+	# the coach corner: the newest directive (consumed or not), timestamped
+	load_bus_note! : Sqlite.Db => Str
+	load_bus_note! = |db| {
+		ensure_bus!(db)
+		match Sqlite.query!({ db, query: "SELECT CAST(created_at AS TEXT) AS at, CAST(COALESCE(view, -1) AS INTEGER) AS v, CAST(COALESCE(range, -1) AS INTEGER) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd FROM viz_directives ORDER BY id DESC LIMIT 1", bindings: [] }) {
+			Err(_) => "no directives yet"
+			Ok(rows) => match List.first(rows) {
+				Err(_) => "no directives yet"
+				Ok(r) => {
+					at = match r.str("at") { Ok(x) => x
+						Err(_) => "" }
+					v = match r.i64("v") { Ok(x) => x
+						Err(_) => -1 }
+					rg = match r.i64("rg") { Ok(x) => x
+						Err(_) => -1 }
+					cd = match r.str("cd") { Ok(x) => x
+						Err(_) => "" }
+					vn = if v == 0 "form" else if v == 1 "curve" else if v == 2 "trace" else if v == 3 "table" else if v == 4 "plan" else "-"
+					parts = if rg > 0 "${vn} / ${I64.to_str(rg)}d" else vn
+					if cd != "" "${at}  ->  ${parts} @ ${cd}" else "${at}  ->  ${parts}"
+				}
+			}
+		}
+	}
+
 	# a day's note from load_day_notes!, or the honest default
 	note_for : List({ day : Str, note : Str }), Str -> Str
 	note_for = |notes, dy|

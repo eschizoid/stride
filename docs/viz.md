@@ -25,6 +25,14 @@ when none is planned. The subtitle always carries the as-of day, and the TSB
 zero rule is captioned "fresh above". The fourth TAB view is the artifact's
 data table: the last 14 days as numbers.
 
+## The plan view
+
+The fifth TAB stop answers "what do I do today" without asking anyone: the
+prescribed session and its rationale in a card, the week's ladder with type
+chips and done/today/upcoming states, this week's load beside last week's,
+and the coach corner - the newest bus directive, on screen. Steerable like
+everything else: a directive with view 4 opens it.
+
 ## Controls
 
 | key / gesture | effect |
@@ -32,7 +40,7 @@ data table: the last 14 days as numbers.
 | `1` / `2` / `3` | range 30 / 60 / 90 days (form board) |
 | `←` / `→` | walk the day cursor (form board; ← older, → newer, past newest turns it off) |
 | `R` | reload everything from the database without reopening |
-| `TAB` | cycle views: form board / power curve / session trace / data table |
+| `TAB` | cycle views: form board / power curve / session trace / data table / plan |
 | `1` / `2` / `3` (curve view) | re-window the curve and CP fit to 30/60/90 days |
 | `[` / `]` (trace view) | older / newer structured session, last 12 |
 | `←` / `→` (table view) | scroll the 14-day window through the whole series |

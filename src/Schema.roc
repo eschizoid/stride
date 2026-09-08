@@ -103,4 +103,31 @@ Schema :: [].{
         \\  rpe          REAL NOT NULL,
         \\  rated_at     TEXT
         \\)
+
+    # ── shared semantics as SQL views (#403's lesson): the CLI and the viz
+    # window must read the plan through the SAME rule, and the only channel
+    # they share is the database — so the rule lives here, as views. The
+    # engine re-creates them on every migration run (DROP + CREATE, so an
+    # edited definition always wins); readers just SELECT.
+
+    # exactly ONE row per planned date: the newest non-skipped row wins, and
+    # a skipped tombstone speaks only when nothing replaced it
+    plan_current_drop =
+        \\DROP VIEW IF EXISTS plan_current
+    plan_current =
+        \\CREATE VIEW plan_current AS
+        \\SELECT * FROM planned_sessions
+        \\WHERE id = (SELECT p2.id FROM planned_sessions p2
+        \\            WHERE p2.target_date = planned_sessions.target_date
+        \\            ORDER BY (COALESCE(p2.status, 'open') <> 'skipped') DESC, p2.id DESC
+        \\            LIMIT 1)
+
+    # the Monday of the series' current week — the week alignment every
+    # weekly number must share (matches Metrics.weekly_rollup)
+    week_bounds_drop =
+        \\DROP VIEW IF EXISTS week_bounds
+    week_bounds =
+        \\CREATE VIEW week_bounds AS
+        \\SELECT date(COALESCE(MAX(day), date('now', 'localtime')), '-6 days', 'weekday 1') AS mon
+        \\FROM daily_load
 }
