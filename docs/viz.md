@@ -126,8 +126,10 @@ CREATE TABLE IF NOT EXISTS viz_directives (
 INSERT INTO viz_directives (view, range, cursor_day, trace_day, ghost_day)
 VALUES (0, 30, '2026-09-02', NULL, NULL);
 -- view 0..7 (form/power/trace/table/plan/heat/zones/ramp). A directive
--- naming the retired view 8 is ignored (the record book merged into the
--- power view at 1). range 30|60|90 lands on the view the
+-- naming the retired view 8 leaves the VIEW unchanged (the record book
+-- merged into the power view at 1); its other fields still land, because
+-- every directive field applies independently - NULL means leave alone,
+-- and that contract does not change when one field is out of range. range 30|60|90 lands on the view the
 -- directive lands on: named view if set, else the visible one — on the power
 -- view it re-windows the ladder+fit, on every other view it sets the form board's
 -- range.
