@@ -131,6 +131,7 @@ load_model! = |font| {
 			fit_lbl: mk!(fit_text, 14)?,
 			curve_title: mk!("power-duration curve - Ride, last 90 days", 15)?,
 			curve_hint: mk!("TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
+			trace_hint: mk!("TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
 			curve_empty: mk!("no rides in the last 90 days - the curve has nothing to draw", 16)?,
 			trace: loaded.tr,
 			segs: loaded.sg,

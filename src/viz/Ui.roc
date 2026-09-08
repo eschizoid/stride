@@ -28,6 +28,7 @@ Ui :: [].{
 		fit_lbl : Text.Prepared,
 		curve_title : Text.Prepared,
 		curve_hint : Text.Prepared,
+		trace_hint : Text.Prepared,
 		curve_empty : Text.Prepared,
 		trace : List(F32),
 		segs : List(Db.Seg),
