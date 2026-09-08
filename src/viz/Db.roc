@@ -414,8 +414,10 @@ Db :: [].{
 		}
 
 	# every RIDE power PR: the best-ever watts per duration rung and the day
-	# each record first landed (ties break to the earliest ride - a matched record
-	# is not a new one; the ladder stores 0, not NULL, for a ride too short
+	# each record first landed. Ordering is on the TRUE stored watts - the
+	# round is presentation, so two efforts that DISPLAY equal still rank by
+	# their real values; only an exact tie breaks to the earliest ride (a
+	# matched record is not a new one; the ladder stores 0, not NULL, for a ride too short
 	# for a rung, so the record filter is > 0). Eight rows on success - a rung
 	# with no record yet comes back as w 0 / day '' so the ladder never
 	# shrinks or jumps; a failed query returns none and the view shows its
