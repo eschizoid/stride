@@ -53,7 +53,9 @@ Board :: [].{
 	List.for_each!(List.map_with_index(model.subs, |s, i| { s, i }), |x| {
 		chx = win_w - 420.0 + U64.to_f32(x.i) * 54.0
 		on = x.s.r == model.range
-		style = if on (Draw.filled(Color.with_alpha(ctl_c, 60))) else Draw.filled(Theme.card)
+		# hovered chips lift a shade, matching the pointer's promise
+		hov = model.mouse_x >= chx and model.mouse_x <= chx + 46.0 and model.mouse_y >= 64.0 and model.mouse_y <= 86.0
+		style = if on (Draw.filled(Color.with_alpha(ctl_c, 60))) else if hov (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
 		frame.rounded_rectangle!({ x: chx, y: 64.0, width: 46.0, height: 22.0, radius: 6.0, segments: 6, style })
 		x.s.chip.draw!(frame, { pos: { x: chx + 23.0, y: 68.0 }, color: if on Color.white else ink_muted, align: (Top, Center) })
 	})

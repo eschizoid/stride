@@ -217,6 +217,7 @@ load_model! = |font, curve_days| {
 			days: loaded.s.days,
 			home,
 			tick: 0,
+			view_anim: 0,
 			last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "" },
 			day_notes: loaded.nts,
 			status: mk!(loaded.s.err, 16)?,
@@ -329,7 +330,7 @@ update! = |model0, program_input| {
 			DayDetail(dd) => if dd.day == acc.detail_day ({ ..acc, detail: dd.lines }) else acc
 			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "" } }
 			Directive(_) => acc
-			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, detail_day: acc.detail_day, detail: acc.detail }
+			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim }
 			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day }
 		})
 	# the coach's word arrives beside the human's input and steers only what
@@ -491,6 +492,8 @@ update! = |model0, program_input| {
 		row_count = Table.window_of(List.len(model.data), cursor2).rows
 		over_row = view2 == 3 and m.x >= 36.0 and (if detail_day2 != "" (m.x < win.w / 2.0) else m.x <= win.w - 40.0) and m.y >= 134.0 and m.y <= 134.0 + U64.to_f32(row_count) * 24.0
 		Mouse.set_cursor!(if over_chip or over_row PointingHand else Default)
+		# a view switch stamps this frame; render fades the new view in from it
+		view_anim = if view != model.view model.tick + 1 else model.view_anim
 		tick = model.tick + 1
 		# no HOME means no database path means no bus — spawning would only
 		# manufacture failing tasks every tick, forever
@@ -533,7 +536,7 @@ update! = |model0, program_input| {
 				_ = Task.spawn!(program_input, || focus_task!(homef, focus_now))
 				focus_now
 			} else model.last_focus
-		Ok({ ..model, range, view: view2, cursor: cursor2, curve_days: want_days, trace_sel: want_sel2, tick, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, range, view: view2, cursor: cursor2, curve_days: want_days, trace_sel: want_sel2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
@@ -541,6 +544,10 @@ render! : Model, Draw.Frame => Try({}, [Exit(I64), ..])
 render! = |model, frame| {
 	frame.rectangle!({ x: 0.0, y: 0.0, width: model.win.w, height: model.win.h, style: Draw.filled(Theme.bg) })
 	frame.rounded_rectangle!({ x: 16.0, y: 16.0, width: model.win.w - 32.0, height: model.win.h - 32.0, radius: 14.0, segments: 10, style: Draw.filled(Theme.panel) })
+	# depth without shaders: a whisper of vertical gradient over the panel,
+	# then edge falloff - four gradient strips standing in for a vignette
+	frame.rectangle_gradient_v!({ x: 16.0, y: 16.0, width: model.win.w - 32.0, height: (model.win.h - 32.0) * 0.4, color_top: Color.with_alpha(Color.from_hex_rgb(0x232332), 40), color_bottom: Color.with_alpha(Theme.panel, 0) })
+	frame.rectangle_gradient_v!({ x: 16.0, y: model.win.h - 96.0, width: model.win.w - 32.0, height: 80.0, color_top: Color.with_alpha(Theme.bg, 0), color_bottom: Color.with_alpha(Theme.bg, 90) })
 	model.title.draw!(frame, { pos: { x: 34.0, y: 30.0 }, color: Color.white, align: (Top, Left) })
 	# Legend belongs to the FORM BOARD only: it draws in the same row the
 	# other views put their titles in, and overprinted them.
@@ -552,13 +559,24 @@ render! = |model, frame| {
 		model.leg_fat.draw!(frame, { pos: { x: 148.0, y: 70.0 }, color: Theme.atl_c, align: (Top, Left) })
 		model.leg_form.draw!(frame, { pos: { x: 246.0, y: 70.0 }, color: Theme.tsb_c, align: (Top, Left) })
 	} else {}
-	if model.view == 3 {
-		Table.draw!(model, frame)
-	} else if model.view == 2 {
-		Trace.draw!(model, frame)
-	} else if model.view == 1 {
-		Curve.draw!(model, frame)
-	} else {
-		Board.draw!(model, frame)
-	}
+	drawn =
+		if model.view == 3 {
+			Table.draw!(model, frame)
+		} else if model.view == 2 {
+			Trace.draw!(model, frame)
+		} else if model.view == 1 {
+			Curve.draw!(model, frame)
+		} else {
+			Board.draw!(model, frame)
+		}
+	# the crossfade: for ten frames after a switch, a panel-colored veil
+	# fades off the incoming view - ease-out, cheap, and one rectangle
+	age = model.tick - model.view_anim
+	if model.view_anim > 0 and age < 10 {
+		fade = 10 - age
+		a = match U64.to_u8_try(fade * fade * 2) { Ok(v) => v
+			Err(_) => 0 }
+		frame.rectangle!({ x: 16.0, y: 16.0, width: model.win.w - 32.0, height: model.win.h - 32.0, style: Draw.filled(Color.with_alpha(Theme.panel, a)) })
+	} else {}
+	drawn
 }
