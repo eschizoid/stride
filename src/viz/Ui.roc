@@ -72,6 +72,9 @@ Ui :: [].{
 		plan_title : Text.Prepared,
 		plan_hint : Text.Prepared,
 		nav : List({ p : Text.Prepared, v : U8 }),
+		heat : List(Db.HeatDay),
+		heat_title : Text.Prepared,
+		heat_hint : Text.Prepared,
 		mouse_in : Bool,
 		cursor : I64,
 	}

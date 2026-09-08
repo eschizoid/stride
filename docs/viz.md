@@ -33,6 +33,15 @@ chips and done/today/upcoming states, this week's load beside last week's,
 and the coach corner - the newest bus directive, on screen. Steerable like
 everything else: a directive with view 4 opens it.
 
+## The heat view
+
+The sixth stop is a year of training at a glance: a contributions-style
+calendar, one cell per day, Monday-started weeks as columns, cell intensity
+scaled to the biggest TSS day in the shown window. As many weeks as the
+window width holds, newest at the right edge, month ticks along the top.
+Hovering a cell reads the day back - date, TSS, and the session note when
+there is one. A directive with view 5 opens it.
+
 ## Controls
 
 | key / gesture | effect |
@@ -41,7 +50,7 @@ everything else: a directive with view 4 opens it.
 | `←` / `→` | walk the day cursor (form board; ← older, → newer, past newest turns it off) |
 | `R` | reload everything from the database without reopening |
 | nav pills (top right) | click any view directly; the active one is filled |
-| `TAB` | cycle views: form board / power curve / session trace / data table / plan |
+| `TAB` | cycle views: form board / power curve / session trace / data table / plan / heat |
 | `1` / `2` / `3` (curve view) | re-window the curve and CP fit to 30/60/90 days |
 | `[` / `]` (trace view) | older / newer structured session, last 12 |
 | `←` / `→` (table view) | scroll the window through the whole series (rows fill the window height) |
@@ -91,7 +100,7 @@ CREATE TABLE IF NOT EXISTS viz_directives (
 -- consumes everything up to it. NULL fields mean "leave that alone".
 INSERT INTO viz_directives (view, range, cursor_day, trace_day)
 VALUES (0, 30, '2026-09-02', NULL);
--- view 0..3 (form/curve/trace/table). range 30|60|90 lands on the view the
+-- view 0..5 (form/curve/trace/table/plan/heat). range 30|60|90 lands on the view the
 -- directive lands on: named view if set, else the visible one — on the curve
 -- it re-windows the ladder+fit, on every other view it sets the form board's
 -- range.

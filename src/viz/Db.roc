@@ -172,7 +172,7 @@ Db :: [].{
 	# simply absent and reads as rest.
 	load_day_notes! : Sqlite.Db => List({ day : Str, note : Str })
 	load_day_notes! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(substr(start_local, 1, 10) AS TEXT) AS day, CAST(group_concat(name, ' + ') AS TEXT) AS note FROM activities WHERE start_local >= date('now', '-120 days') GROUP BY day", bindings: [] }) {
+		match Sqlite.query!({ db, query: "SELECT CAST(substr(start_local, 1, 10) AS TEXT) AS day, CAST(group_concat(name, ' + ') AS TEXT) AS note FROM activities WHERE start_local >= date('now', '-400 days') GROUP BY day", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -347,6 +347,22 @@ Db :: [].{
 			}
 		}
 	}
+
+	# up to a year of (day, load, weekday) for the heatmap grid, oldest first;
+	# %w is 0=Sunday..6=Saturday, the view maps it to Monday-first rows
+	HeatDay : { day : Str, tss : I64, dow : I64 }
+	load_heat! : Sqlite.Db => List(HeatDay)
+	load_heat! = |db|
+		match Sqlite.query!({ db, query: "SELECT CAST(day AS TEXT) AS d, CAST(ROUND(COALESCE(tss, 0)) AS INTEGER) AS t, CAST(strftime('%w', day) AS INTEGER) AS w FROM (SELECT day, tss FROM daily_load ORDER BY day DESC LIMIT 366) ORDER BY day ASC", bindings: [] }) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(rows, |r| {
+					dy = r.str("d") ? |_| "bad"
+					ts = r.i64("t") ? |_| "bad"
+					w = r.i64("w") ? |_| "bad"
+					Ok({ day: dy, tss: ts, dow: w })
+				})
+		}
 
 	# a day's note from load_day_notes!, or the honest default
 	note_for : List({ day : Str, note : Str }), Str -> Str
