@@ -38,6 +38,14 @@ init! = App.init(
 		.with_output_dir("captures"),
 	|_startup| {
 		font = Draw.default_font!()
+		load_model!(font)
+	},
+)
+
+# Everything the window knows, rebuilt from the database in one call — init!
+# runs it once at launch, and the R key runs it again without reopening.
+load_model! : Text.Font => Try(Ui.Model, [ResourceLimit, ..])
+load_model! = |font| {
 		# ~/.stride/db.sqlite, resolved at launch — the platform has no Env
 		# module, but Cmd captures stdout, so the shell answers for HOME.
 		home = match Cmd.run_utf8!(Cmd.with_args(Cmd.new("printenv"), ["HOME"])) {
@@ -132,14 +140,14 @@ init! = App.init(
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
 			font,
-			hint: mk!("1 / 2 / 3  range 30 / 60 / 90 days      TAB  form / power curve / session      hover to read a day      S  screenshot      ESC quit", 13)?,
+			hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   ESC quit", 13)?,
 			empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
 			range: 90.U64,
 			mouse_x: 0.0,
 			mouse_in: Bool.False,
+			cursor: -1,
 		})
-	},
-)
+}
 
 # The app spawns one kind of task: a screenshot, whose result it ignores —
 # a failed shot must not take the window down, and the file's absence is the
@@ -159,6 +167,12 @@ update! = |model, program_input| {
 			else if d.key_pressed(Key3) 90.U64
 			else model.range
 		view = if d.key_pressed(KeyTab) (if model.view == 2 0 else model.view + 1) else model.view
+		# cursor counts days back from the latest (0 = today's column, -1 = off);
+		# LEFT walks older, RIGHT walks newer, and the board clamps to the window
+		cursor =
+			if d.key_pressed(KeyLeft) (if model.cursor < 0 0 else model.cursor + 1)
+			else if d.key_pressed(KeyRight) (if model.cursor <= 0 (-1) else model.cursor - 1)
+			else model.cursor
 		m = d.mouse.position()
 		# S writes a PNG of the CURRENT view into ./captures — #372's "session
 		# graphic for a training log". Spawned rather than called inline: a
@@ -168,7 +182,16 @@ update! = |model, program_input| {
 			shot_name = if view == 0 ("form-board.png") else if view == 1 ("power-curve.png") else "session-trace.png"
 			Task.spawn!(program_input, || Shot(Capture.screenshot!(shot_name)))
 		} else {}
-		Ok({ ..model, range, view, mouse_x: m.x, mouse_in: m.y > Theme.pad_t and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
+		if d.key_pressed(KeyR) {
+			# rebuild from the database, keep what the user was looking at;
+			# a failed rebuild keeps the window it had rather than taking it down
+			match load_model!(model.font) {
+				Ok(fresh) => Ok({ ..fresh, range, view, cursor })
+				Err(_) => Ok(model)
+			}
+		} else {
+			Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: m.y > Theme.pad_t and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
+		}
 	}
 }
 

@@ -45,5 +45,6 @@ Ui :: [].{
 		range : U64,
 		mouse_x : F32,
 		mouse_in : Bool,
+		cursor : I64,
 	}
 }
