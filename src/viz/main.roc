@@ -532,7 +532,8 @@ update! = |model0, program_input| {
 			view: match view2 { 0 => 0
 				1 => 1
 				2 => 2
-				_ => 3 },
+				3 => 3
+				_ => 4 },
 			# the curve view's window IS its range; the other views report the
 			# form board's
 			range:
