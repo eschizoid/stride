@@ -253,7 +253,7 @@ Db :: [].{
 	PlanRow : { day : Str, typ : Str, detail : Str, rationale : Str, done : Bool, today : Bool }
 	load_plan! : Sqlite.Db => List(PlanRow)
 	load_plan! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT CAST(target_date AS TEXT) AS d, CAST(COALESCE(session_type, '') AS TEXT) AS t, CAST(COALESCE(detail, '') AS TEXT) AS dt, CAST(COALESCE(rationale, '') AS TEXT) AS ra, (completed_activity_id IS NOT NULL) AS dn, (target_date = (SELECT today FROM anchor)) AS td FROM planned_sessions, anchor WHERE target_date >= date((SELECT today FROM anchor), '-1 day') AND target_date <= date((SELECT today FROM anchor), '+6 days') ORDER BY target_date", bindings: [] }) {
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT CAST(target_date AS TEXT) AS d, CAST(COALESCE(session_type, '') AS TEXT) AS t, CAST(COALESCE(detail, '') AS TEXT) AS dt, CAST(COALESCE(rationale, '') AS TEXT) AS ra, (completed_activity_id IS NOT NULL) AS dn, (target_date = (SELECT today FROM anchor)) AS td FROM planned_sessions, anchor WHERE target_date >= (SELECT today FROM anchor) AND target_date <= date((SELECT today FROM anchor), '+6 days') ORDER BY target_date", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.map(rows, |r| match decode_plan_row(r) {
@@ -273,10 +273,11 @@ Db :: [].{
 		Ok({ day, typ, detail, rationale, done: dn == 1, today: td == 1 })
 	}
 
-	# this week's load beside last week's - the progress strip's two numbers
+	# this week's load beside last week's, MONDAY-ALIGNED to agree with the
+	# engine's Metrics.weekly_rollup - the progress strip's two numbers
 	load_week_tss! : Sqlite.Db => { this : I64, last : I64 }
 	load_week_tss! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT MAX(day) AS today FROM daily_load) SELECT CAST(ROUND(SUM(CASE WHEN day > date(today, '-7 days') THEN tss ELSE 0 END)) AS INTEGER) AS tw, CAST(ROUND(SUM(CASE WHEN day <= date(today, '-7 days') AND day > date(today, '-14 days') THEN tss ELSE 0 END)) AS INTEGER) AS lw FROM daily_load, anchor", bindings: [] }) {
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT date(MAX(day), '-6 days', 'weekday 1') AS mon FROM daily_load) SELECT CAST(ROUND(SUM(CASE WHEN day >= mon THEN tss ELSE 0 END)) AS INTEGER) AS tw, CAST(ROUND(SUM(CASE WHEN day >= date(mon, '-7 days') AND day < mon THEN tss ELSE 0 END)) AS INTEGER) AS lw FROM daily_load, anchor", bindings: [] }) {
 			Err(_) => { this: 0, last: 0 }
 			Ok(rows) => match List.first(rows) {
 				Err(_) => { this: 0, last: 0 }
