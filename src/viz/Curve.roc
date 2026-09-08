@@ -24,7 +24,9 @@ Curve :: [].{
 		ctl_c = Theme.ctl_c
 		tsb_c = Theme.tsb_c
 		model.curve_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
-		model.fit_lbl.draw!(frame, { pos: { x: win_w - 40.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
+		# bottom-right status corner - the chips own the y64..86 band on the
+		# right, and this caption is wider than their inset
+		model.fit_lbl.draw!(frame, { pos: { x: win_w - 40.0, y: win_h - 30.0 }, color: ink_muted, align: (Top, Right) })
 		# the same range chips the form board wears, judged on curve_days -
 		# the window switch must be visible and clickable, not a key secret
 		List.for_each!(List.map_with_index(model.subs, |s, i| { s, i }), |x| {
