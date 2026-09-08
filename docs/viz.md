@@ -67,7 +67,9 @@ CTL and ramp. A directive with view 7 opens it.
 
 ## The prs view
 
-The ninth stop is the record book: one row per duration rung (5s to 60min),
+The ninth stop is the record book, ride power only (erg watts live in the
+same columns and are a different sport): one row per duration rung (5s to
+60min),
 a dot where that best-ever landed on the calendar, the watts at the right.
 Recency does the talking - a record set within ~90 days of the newest one
 glows teal, within a year rides the brand blue, older fades to faint. The
