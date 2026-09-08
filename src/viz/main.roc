@@ -39,7 +39,7 @@ init! = App.init(
 		.with_output_dir("captures"),
 	|_startup| {
 		font = Draw.default_font!()
-		load_model!(font)
+		load_model!(font, 90)
 	},
 )
 
@@ -47,8 +47,8 @@ init! = App.init(
 # call — the database for every series, plus the engine's power-curve command
 # for the CP fit. init! runs it once at launch, and the R key runs it again
 # without reopening.
-load_model! : Text.Font => Try(Ui.Model, [ResourceLimit, ..])
-load_model! = |font| {
+load_model! : Text.Font, I64 => Try(Ui.Model, [ResourceLimit, ..])
+load_model! = |font, curve_days| {
 		# ~/.stride/db.sqlite, resolved on every load (launch and R alike) —
 		# the platform has no Env module, but Cmd captures stdout, so the
 		# shell answers for HOME.
@@ -58,24 +58,28 @@ load_model! = |font| {
 		}
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" } }
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [] }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				s = Db.load_series!(db)
 				e = Db.load_event!(db)
-				c = Db.load_curve!(db)
-				tid = Db.load_trace_id!(db)
+				c = Db.load_curve!(db, curve_days)
+				tids = Db.load_trace_ids!(db)
+				tid = match List.first(tids) {
+					Ok(x) => x.id
+					Err(_) => 0
+				}
 				tr = Db.load_trace!(db, tid)
 				sg = Db.load_segs!(db, tid)
 				du = Db.load_dur!(db, tid)
 				st = Db.load_stale!(db)
 				rd = Db.load_ridden!(db)
-				{ s, e, c, st, tr, sg, du, rd }
+				{ s, e, c, st, tr, sg, du, rd, tids }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" } }
+			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [] }
 		}
 		ev = Db.find_idx(loaded.s.days, loaded.e.day)
-		fit = Db.load_fit!({})
+		fit = Db.load_fit!(curve_days)
 		fit_text =
 			if fit.ok
 				"CP ${Db.fmt_f(fit.cp)} W · W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${Db.fmt_f(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
@@ -143,10 +147,17 @@ load_model! = |font| {
 			curve: loaded.c,
 			curve_lbls: curve_lbls,
 			fit_lbl: mk!(fit_text, 14)?,
-			curve_title: mk!("power-duration curve - Ride, last 90 days", 15)?,
-			curve_hint: mk!("TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
-			trace_hint: mk!("TAB  data table      R  reload      S  screenshot      ESC quit", 13)?,
-			table_hint: mk!("TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
+			curve_title: mk!("power-duration curve - Ride, last ${I64.to_str(curve_days)} days", 15)?,
+			curve_days,
+			trace_ids: loaded.tids,
+			trace_sel: 0.U64,
+			trace_day: match List.first(loaded.tids) {
+				Ok(x) => x.day
+				Err(_) => ""
+			},
+			curve_hint: mk!("1/2/3  window 30/60/90d      TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
+			trace_hint: mk!("[ / ]  older / newer session      TAB  data table      R  reload      S  screenshot      ESC quit", 13)?,
+			table_hint: mk!("arrows  scroll days      TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
 			table_title: mk!("data table - last 14 days", 15)?,
 			table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?],
 			kpis: [
@@ -182,6 +193,30 @@ load_model! = |font| {
 # a failed shot must not take the window down, and the file's absence is the
 # report. Was `[]` while nothing spawned.
 
+# Re-reads one session's trace/segments/duration for the picker — a bounded
+# synchronous read on an explicit keypress, same reasoning as R. Any failure
+# keeps the session the window already had.
+switch_trace! : Ui.Model, U64 => Ui.Model
+switch_trace! = |model, sel| {
+	home = match Cmd.run_utf8!(Cmd.with_args(Cmd.new("printenv"), ["HOME"])) {
+		Ok(out) => Str.trim(out.stdout)
+		Err(_) => ""
+	}
+	match List.get(model.trace_ids, sel) {
+		Err(_) => model
+		Ok(entry) =>
+			match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
+				Err(_) => model
+				Ok(db) => {
+					tr = Db.load_trace!(db, entry.id)
+					sg = Db.load_segs!(db, entry.id)
+					du = Db.load_dur!(db, entry.id)
+					{ ..model, trace: tr, segs: sg, trace_dur: du, trace_sel: sel, trace_day: entry.day }
+				}
+			}
+	}
+}
+
 Msg : [Shot(Try({}, Capture.ScreenshotError))]
 
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
@@ -199,10 +234,10 @@ update! = |model, program_input| {
 		# cursor counts days back from the series' latest day — the last ANALYZED
 		# day, not necessarily today (0 = that column, -1 = off); LEFT walks
 		# older, RIGHT walks newer, and the board clamps to the window
-		# only the form board owns the cursor — arrows on the other views leave
-		# it where the user parked it, so tabbing back shows the same day
+		# the form board and the data table share the cursor (chart crosshair,
+		# table scroll); the other views leave it parked
 		cursor =
-			if view != 0 model.cursor
+			if view != 0 and view != 3 model.cursor
 			else if d.key_pressed(KeyLeft) (if model.cursor < 0 0 else model.cursor + 1)
 			else if d.key_pressed(KeyRight) (if model.cursor <= 0 (-1) else model.cursor - 1)
 			else model.cursor
@@ -215,7 +250,24 @@ update! = |model, program_input| {
 			shot_name = if view == 0 ("form-board.png") else if view == 1 ("power-curve.png") else if view == 2 ("session-trace.png") else "data-table.png"
 			Task.spawn!(program_input, || Shot(Capture.screenshot!(shot_name)))
 		} else {}
-		if d.key_pressed(KeyR) {
+		# on the curve view, 1/2/3 re-window the curve AND its CP fit — a full
+		# reload through the same path as R, keeping what the user was looking at
+		want_days = if view == 1 (if d.key_pressed(Key1) 30 else if d.key_pressed(Key2) 60 else if d.key_pressed(Key3) 90 else model.curve_days) else model.curve_days
+		# on the trace view, [ and ] walk the last dozen structured sessions
+		want_sel =
+			if view != 2 model.trace_sel
+			else if d.key_pressed(KeyLeftBracket) (if model.trace_sel + 1 < List.len(model.trace_ids) (model.trace_sel + 1) else model.trace_sel)
+			else if d.key_pressed(KeyRightBracket) (if model.trace_sel > 0 (model.trace_sel - 1) else model.trace_sel)
+			else model.trace_sel
+		if want_sel != model.trace_sel {
+			Ok(switch_trace!(model, want_sel))
+		} else if want_days != model.curve_days {
+			mouse_now2 = m.y > (if view == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b
+			match load_model!(model.font, want_days) {
+				Ok(fresh) => Ok({ ..fresh, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now2 })
+				Err(_) => Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now2 })
+			}
+		} else if d.key_pressed(KeyR) {
 			# rebuild from the database, keep what the user was looking at;
 			# a failed rebuild keeps the window it had rather than taking it down.
 			# Deliberately SYNCHRONOUS inside update!: the stall is bounded (the
@@ -226,7 +278,7 @@ update! = |model, program_input| {
 			# a reload has no such constraint.
 			# both arms carry the frame's own input — reload swaps only the data
 			mouse_now = m.y > (if view == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b
-			match load_model!(model.font) {
+			match load_model!(model.font, model.curve_days) {
 				Ok(fresh) => Ok({ ..fresh, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now })
 				Err(_) => Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now })
 			}

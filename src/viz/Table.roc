@@ -23,8 +23,18 @@ Table :: [].{
 				Err(_) => 36.0 }
 			x.h.draw!(frame, { pos: { x: hx, y: 108.0 }, color: ink_faint, align: (Top, Left) })
 		})
-		rows = List.take_last(model.data, 14)
-		days = List.take_last(model.days, 14)
+		# the arrow cursor scrolls the window back through the whole series:
+		# cursor N shows the 14 days ending N days before the latest
+		total = List.len(model.data)
+		back = if model.cursor < 0 (0.U64) else match I64.to_u64_try(model.cursor) {
+			Ok(c) => if total > 14 and c > total - 14 (total - 14) else c
+			Err(_) => 0.U64
+		}
+		kept = total - back
+		rows = List.take_last(List.take_first(model.data, kept), 14)
+		days = List.take_last(List.take_first(model.days, kept), 14)
+		pos_note = "days ${U64.to_str(if kept > 14 (kept - 13) else 1)}-${U64.to_str(kept)} of ${U64.to_str(total)}"
+		Text.from(pos_note, model.font).size(13).draw!(frame, { pos: { x: I32.to_f32(Theme.win_w) - 34.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
 		List.for_each!(List.map_with_index(rows, |r, i| { r, i }), |x| {
 			ry = 134.0 + U64.to_f32(x.i) * 24.0
 			day = match List.get(days, x.i) { Ok(d) => d
