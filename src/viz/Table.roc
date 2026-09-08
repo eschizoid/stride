@@ -96,7 +96,7 @@ Table :: [].{
 		if model.detail_day != "" {
 			pw2 = if win_w / 2.0 < 480.0 (win_w / 2.0 - 36.0) else 480.0
 			px = win_w - 36.0 - pw2
-			ph2 = 78.0 + U64.to_f32(List.len(model.detail)) * 44.0
+			ph2 = 78.0 + U64.to_f32(List.len(model.detail)) * 92.0
 			ph2c = if ph2 > win_h - 150.0 (win_h - 150.0) else ph2
 			frame.rounded_rectangle!({ x: px, y: 100.0, width: pw2, height: ph2c, radius: 10.0, segments: 8, style: Draw.filled(Theme.card) })
 			Text.from(model.detail_day, model.font).size(15).draw!(frame, { pos: { x: px + 18.0, y: 116.0 }, color: Color.white, align: (Top, Left) })
@@ -104,15 +104,32 @@ Table :: [].{
 				Text.from("loading...", model.font).size(12).draw!(frame, { pos: { x: px + 18.0, y: 148.0 }, color: ink_muted, align: (Top, Left) })
 			} else {}
 			# only the lines that fit the panel draw; the tail becomes a count
-			line_fit = match F32.round_to_u64_try(F32.div_floor_by(win_h - 150.0 - 48.0 - 20.0, 44.0)) {
+			# each activity block: title, load line, physiology line, zone bar
+			line_fit = match F32.round_to_u64_try(F32.div_floor_by(win_h - 150.0 - 48.0 - 20.0, 92.0)) {
 				Ok(f) => if f == 0 (1.U64) else f
 				Err(_) => 1.U64
 			}
 			shown = List.take_first(model.detail, line_fit)
 			List.for_each!(List.map_with_index(shown, |ln, li| { ln, li }), |x| {
-				ly = 148.0 + U64.to_f32(x.li) * 44.0
+				ly = 148.0 + U64.to_f32(x.li) * 92.0
 				Text.from(x.ln.title, model.font).size(13).draw!(frame, { pos: { x: px + 18.0, y: ly }, color: Theme.ctl_c, align: (Top, Left) })
-				Text.from(x.ln.stats, model.font).size(12).draw!(frame, { pos: { x: px + 18.0, y: ly + 18.0 }, color: ink_muted, align: (Top, Left) })
+				Text.from(x.ln.stats, model.font).size(12).draw!(frame, { pos: { x: px + 18.0, y: ly + 19.0 }, color: Color.white, align: (Top, Left) })
+				Text.from(x.ln.extra, model.font).size(11).draw!(frame, { pos: { x: px + 18.0, y: ly + 37.0 }, color: ink_muted, align: (Top, Left) })
+				# the day's minutes by zone, as a stacked bar in the intensity ramp
+				ztot = List.fold(x.ln.zones, 0, |a2, z| a2 + z)
+				if ztot > 0 {
+					bw2 = pw2 - 36.0
+					_ = List.fold(List.map_with_index(x.ln.zones, |z, zi| { z, zi }), 0.0, |xacc, zz| {
+						seg = bw2 * I64.to_f32(zz.z) / I64.to_f32(ztot)
+						zc = match List.get(Theme.zone_ramp, zz.zi) { Ok(c2) => c2
+							Err(_) => Theme.ink_faint }
+						if seg > 0.5 {
+							frame.rectangle!({ x: px + 18.0 + xacc, y: ly + 56.0, width: seg - 1.0, height: 8.0, style: Draw.filled(zc) })
+						} else {}
+						xacc + seg
+					})
+					{}
+				} else {}
 			})
 			hidden = List.len(model.detail) - List.len(shown)
 			if hidden > 0 {

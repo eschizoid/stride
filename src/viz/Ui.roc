@@ -64,7 +64,7 @@ Ui :: [].{
 		mouse_y : F32,
 		win : { w : F32, h : F32 },
 		detail_day : Str,
-		detail : List({ title : Str, stats : Str }),
+		detail : List(Db.DayLine),
 		plan : List(Db.PlanRow),
 		week_tss : { this : I64, last : I64 },
 		plan_week : { done : I64, total : I64 },

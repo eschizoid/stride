@@ -274,9 +274,9 @@ trace_task! = |home, ids, sel|
 # One day's story, fetched when a table row is clicked
 detail_task! : Str, Str => Msg
 detail_task! = |home, day|
-	if home == "" DayDetail({ day, lines: [{ title: "no database path", stats: "" }] })
+	if home == "" DayDetail({ day, lines: [{ title: "no database path", stats: "", extra: "", zones: [] }] })
 	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
-		Err(_) => DayDetail({ day, lines: [{ title: "cannot open the database", stats: "" }] })
+		Err(_) => DayDetail({ day, lines: [{ title: "cannot open the database", stats: "", extra: "", zones: [] }] })
 		Ok(db) => DayDetail({ day, lines: Db.load_day_detail!(db, day) })
 	}
 
@@ -325,7 +325,7 @@ Msg : [
 	DirectiveNone,
 	FocusWritten,
 	FocusWriteFailed,
-	DayDetail({ day : Str, lines : List({ title : Str, stats : Str }) }),
+	DayDetail({ day : Str, lines : List(Db.DayLine) }),
 ]
 
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])

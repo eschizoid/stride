@@ -348,7 +348,7 @@ Db :: [].{
 
 	# one day's full story for the detail panel: each activity with its type,
 	# duration, distance and load - pre-formatted lines, coach-legible
-	decode_activity_row : Sqlite.Row -> Try({ title : Str, stats : Str }, [BadRow])
+	decode_activity_row : Sqlite.Row -> Try(DayLine, [BadRow])
 	decode_activity_row = |r| {
 		nm = r.str("name") ? |_| BadRow
 		sp = r.str("sport") ? |_| BadRow
@@ -356,23 +356,36 @@ Db :: [].{
 		km = r.str("km") ? |_| BadRow
 		tss = r.i64("tss") ? |_| BadRow
 		np = r.i64("np") ? |_| BadRow
+		if100 = r.i64("if100") ? |_| BadRow
+		hr = r.i64("hr") ? |_| BadRow
+		rpe = r.str("rpe") ? |_| BadRow
+		z1 = r.i64("z1") ? |_| BadRow
+		z2 = r.i64("z2") ? |_| BadRow
+		z3 = r.i64("z3") ? |_| BadRow
+		z4 = r.i64("z4") ? |_| BadRow
+		z5 = r.i64("z5") ? |_| BadRow
 		mins = secs // 60
 		stats = if np > 0 "${I64.to_str(mins)}min  ${km}km  ${I64.to_str(tss)} tss  ${I64.to_str(np)}w np" else "${I64.to_str(mins)}min  ${km}km  ${I64.to_str(tss)} tss"
-		Ok({ title: "${nm} [${sp}]", stats })
+		p1 = if if100 > 0 "IF 0.${I64.to_str(if100)}" else ""
+		p2 = if hr > 0 "${I64.to_str(hr)} bpm avg" else ""
+		p3 = if rpe != "0.0" and rpe != "0" "rpe ${rpe}" else "unrated"
+		extra = Str.join_with(List.keep_if([p1, p2, p3], |s| s != ""), "   ")
+		Ok({ title: "${nm} [${sp}]", stats, extra, zones: [z1, z2, z3, z4, z5] })
 	}
 
-	load_day_detail! : Sqlite.Db, Str => List({ title : Str, stats : Str })
+	DayLine : { title : Str, stats : Str, extra : Str, zones : List(I64) }
+	load_day_detail! : Sqlite.Db, Str => List(DayLine)
 	load_day_detail! = |db, day|
-		match Sqlite.query!({ db, query: "SELECT CAST(a.name AS TEXT) AS name, CAST(a.sport_type AS TEXT) AS sport, CAST(COALESCE(a.moving_time, 0) AS INTEGER) AS secs, CAST(ROUND(COALESCE(a.distance, 0) / 1000.0, 1) AS TEXT) AS km, CAST(ROUND(COALESCE(m.tss, 0)) AS INTEGER) AS tss, CAST(ROUND(COALESCE(m.normalized_power, 0)) AS INTEGER) AS np FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE a.start_local >= :d AND a.start_local < date(:d, '+1 day') ORDER BY a.start_local", bindings: [{ name: ":d", value: String(day) }] }) {
-			Err(_) => [{ title: "detail query failed", stats: "" }]
+		match Sqlite.query!({ db, query: "SELECT CAST(a.name AS TEXT) AS name, CAST(a.sport_type AS TEXT) AS sport, CAST(COALESCE(a.moving_time, 0) AS INTEGER) AS secs, CAST(ROUND(COALESCE(a.distance, 0) / 1000.0, 1) AS TEXT) AS km, CAST(ROUND(COALESCE(m.tss, 0)) AS INTEGER) AS tss, CAST(ROUND(COALESCE(m.normalized_power, 0)) AS INTEGER) AS np, CAST(ROUND(COALESCE(m.intensity_factor, 0) * 100) AS INTEGER) AS if100, CAST(ROUND(COALESCE(a.avg_hr, 0)) AS INTEGER) AS hr, CAST(ROUND(COALESCE(r.rpe, 0), 1) AS TEXT) AS rpe, CAST(COALESCE(m.z1_s, 0) AS INTEGER) AS z1, CAST(COALESCE(m.z2_s, 0) AS INTEGER) AS z2, CAST(COALESCE(m.z3_s, 0) AS INTEGER) AS z3, CAST(COALESCE(m.z4_s, 0) AS INTEGER) AS z4, CAST(COALESCE(m.z5_s, 0) AS INTEGER) AS z5 FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id LEFT JOIN ratings r ON r.activity_id = a.id WHERE a.start_local >= :d AND a.start_local < date(:d, '+1 day') ORDER BY a.start_local", bindings: [{ name: ":d", value: String(day) }] }) {
+			Err(_) => [{ title: "detail query failed", stats: "", extra: "", zones: [] }]
 			Ok(rows) =>
-				if List.is_empty(rows) [{ title: "rest day - no activities", stats: "" }]
+				if List.is_empty(rows) [{ title: "rest day - no activities", stats: "", extra: "", zones: [] }]
 				else
 					# corruption surfaces PER ROW: an unreadable activity renders as
 					# its own error line while its neighbors still show
 					List.map(rows, |r| match decode_activity_row(r) {
 						Ok(line) => line
-						Err(_) => { title: "activity record unreadable", stats: "" }
+						Err(_) => { title: "activity record unreadable", stats: "", extra: "", zones: [] }
 					})
 		}
 
