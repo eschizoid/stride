@@ -26,8 +26,11 @@ Table :: [].{
 		# the arrow cursor scrolls the window back through the whole series:
 		# cursor N shows the 14 days ending N days before the latest
 		total = List.len(model.data)
+		# a series of 14 days or fewer has nowhere to scroll — max_back 0 keeps
+		# total - back from ever wrapping the unsigned subtraction
+		max_back = if total > 14 (total - 14) else 0.U64
 		back = if model.cursor < 0 (0.U64) else match I64.to_u64_try(model.cursor) {
-			Ok(c) => if total > 14 and c > total - 14 (total - 14) else c
+			Ok(c) => if c > max_back max_back else c
 			Err(_) => 0.U64
 		}
 		kept = total - back
