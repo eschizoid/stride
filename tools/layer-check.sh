@@ -6,6 +6,11 @@
 # below it; core sits at the bottom. Renaming or adding a module without a
 # row here fails the run — silence is never a pass.
 set -euo pipefail
+# NOTE on set -e vs the import greps below: they feed while-loops through
+# process substitution, whose exit status set -e never sees — a module with
+# zero matching imports iterates zero times and the script continues. Verified
+# against bash directly and against this repo's zero-import modules. Module
+# files are capitalized in Roc, so the [A-Z] matcher is the complete set.
 cd "$(dirname "$0")/.."
 
 layer_of() {
