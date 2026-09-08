@@ -214,6 +214,8 @@ load_model! = |font, curve_days| {
 			data: loaded.s.data,
 			days: loaded.s.days,
 			home,
+			tick: 0,
+			last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "" },
 			day_notes: loaded.nts,
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
@@ -251,6 +253,32 @@ trace_task! = |home, ids, sel|
 			}
 	}
 
+# The coach's poll: read-and-consume the newest directive, every 60
+# frames (~1s at the capped rate; slower if frames are),
+# from a spawned task (Sqlite parks there).
+poll_task! : Str => Msg
+poll_task! = |home|
+	if home == "" DirectiveNone
+	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
+		Err(_) => DirectiveNone
+		Ok(db) => match Db.poll_directive!(db) {
+			Some(dv) => Directive(dv)
+			None => DirectiveNone
+		}
+	}
+
+# The window's answer: upsert what the human is looking at
+focus_task! : Str, { view : I64, range : I64, cursor_day : Str, trace_day : Str } => Msg
+focus_task! = |home, f|
+	if home == "" FocusWriteFailed
+	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
+		Err(_) => FocusWriteFailed
+		Ok(db) => match Db.write_focus!(db, f) {
+			Ok(_) => FocusWritten
+			Err(_) => FocusWriteFailed
+		}
+	}
+
 # Reload work is Cmd + Sqlite + text preparation — all of it task-legal and
 # none of it update!-legal (the platform panics on Cmd there, by design).
 # update! only ever spawns; results come back through these messages.
@@ -260,6 +288,10 @@ Msg : [
 	ReloadFailed,
 	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, sel : U64, day : Str }),
 	TraceSwitchFailed,
+	Directive(Db.Directive),
+	DirectiveNone,
+	FocusWritten,
+	FocusWriteFailed,
 ]
 
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
@@ -272,8 +304,21 @@ update! = |model0, program_input| {
 			Shot(_) => acc
 			ReloadFailed => acc
 			TraceSwitchFailed => acc
-			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_in: acc.mouse_in }
+			DirectiveNone => acc
+			FocusWritten => acc
+			# a dropped write must not leave the coach stale: resetting
+			# last_focus makes the next throttle tick try again
+			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "" } }
+			Directive(_) => acc
+			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus }
 			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day }
+		})
+	# the coach's word arrives beside the human's input and steers only what
+	# it names: view, range, a day for the crosshair, a session for the trace
+	directive = List.fold(program_input.messages, { has_d: Bool.False, view: -1, range: -1, cursor_day: "", trace_day: "" }, |acc, msg|
+		match msg {
+			Directive(dv) => { has_d: Bool.True, view: dv.view, range: dv.range, cursor_day: dv.cursor_day, trace_day: dv.trace_day }
+			_ => acc
 		})
 	if d.key_pressed(KeyEscape) {
 		Err(Exit(0))
@@ -288,16 +333,26 @@ update! = |model0, program_input| {
 				else if m0.x >= 668.0 and m0.x <= 714.0 (90.U64)
 				else 0.U64
 			} else 0.U64
+		view_input = if d.key_pressed(KeyTab) (if model.view == 3 0 else model.view + 1) else model.view
+		view = if directive.has_d and directive.view >= 0 and directive.view <= 3 (match I64.to_u8_try(directive.view) { Ok(v8) => v8
+			Err(_) => view_input }) else view_input
 		# 1/2/3 answer to whichever view is showing: the form board's range, or
 		# the curve's window — never both at once
 		range =
+			# a directive's range lands on the view the directive lands on —
+			# judged against THIS frame's visible view (post-directive, post-TAB),
+			# never the prior frame's. The curve keeps its own window (want_days
+			# below), never the form-board range.
+			if directive.has_d and view != 1 and (directive.range == 30 or directive.range == 60 or directive.range == 90) (match I64.to_u64_try(directive.range) { Ok(rr) => rr
+				Err(_) => model.range }) else
 			if clicked_chip > 0 clicked_chip
-			else if model.view == 1 model.range
+			# keys judge the same frame-true view the directive rule does — a
+			# TAB and a range key in one frame land the range where TAB went
+			else if view == 1 model.range
 			else if d.key_pressed(Key1) 30.U64
 			else if d.key_pressed(Key2) 60.U64
 			else if d.key_pressed(Key3) 90.U64
 			else model.range
-		view = if d.key_pressed(KeyTab) (if model.view == 3 0 else model.view + 1) else model.view
 		# cursor counts days back from the series' latest day — the last ANALYZED
 		# day, not necessarily today (0 = that column, -1 = off); LEFT walks
 		# older, RIGHT walks newer, and the board clamps to the window
@@ -319,7 +374,12 @@ update! = |model0, program_input| {
 		} else {}
 		# on the curve view, 1/2/3 re-window the curve AND its CP fit — a full
 		# reload through the same path as R, keeping what the user was looking at
-		want_days = if view == 1 (if d.key_pressed(Key1) 30 else if d.key_pressed(Key2) 60 else if d.key_pressed(Key3) 90 else model.curve_days) else model.curve_days
+		# on the curve view "range" MEANS the curve window — a directive saying
+		# (view 1, range 30) re-windows the ladder and fit, same as the keys
+		want_days =
+			if view == 1 and directive.has_d and (directive.range == 30 or directive.range == 60 or directive.range == 90) directive.range
+			else if view == 1 (if d.key_pressed(Key1) 30 else if d.key_pressed(Key2) 60 else if d.key_pressed(Key3) 90 else model.curve_days)
+			else model.curve_days
 		# on the trace view, [ and ] walk the last dozen structured sessions
 		want_sel =
 			if view != 2 model.trace_sel
@@ -350,13 +410,27 @@ update! = |model0, program_input| {
 				} else { hit: Bool.False, cb: -1 }
 			} else { hit: Bool.False, cb: -1 }
 		view2 = if row_hit.hit 0 else view
-		cursor2 = if row_hit.hit row_hit.cb else cursor
+		# a directive naming a day parks the crosshair there
+		# -2 = no directive OR day not in the series: both leave the cursor
+		# alone. A found day maps to its days-back index (>= 0).
+		cursor_dir =
+			if directive.has_d and directive.cursor_day != "" {
+				total2 = List.len(model.days)
+				List.fold(List.map_with_index(model.days, |dy, di| { dy, di }), -2, |acc, x| if x.dy == directive.cursor_day (match U64.to_i64_try(total2 - 1 - x.di) { Ok(cb2) => cb2
+					Err(_) => acc }) else acc)
+			} else -2
+		cursor2 = if row_hit.hit row_hit.cb else if cursor_dir >= 0 cursor_dir else cursor
 		# reloads and trace switches SPAWN — Cmd panics in update!, and the
 		# task lane is where Sqlite and text preparation park legally
-		_ = if want_sel != model.trace_sel {
+		# a directive naming a session day resolves to its picker slot
+		want_sel2 =
+			if directive.has_d and directive.trace_day != "" {
+				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_sel, |acc, x| if x.e.day == directive.trace_day x.ei else acc)
+			} else want_sel
+		_ = if want_sel2 != model.trace_sel {
 			home2 = model.home
 			ids2 = model.trace_ids
-			Task.spawn!(program_input, || trace_task!(home2, ids2, want_sel))
+			Task.spawn!(program_input, || trace_task!(home2, ids2, want_sel2))
 		} else {}
 		_ = if want_days != model.curve_days or d.key_pressed(KeyR) {
 			f2 = model.font
@@ -365,7 +439,49 @@ update! = |model0, program_input| {
 				Err(_) => ReloadFailed
 			})
 		} else {}
-		Ok({ ..model, range, view: view2, cursor: cursor2, curve_days: want_days, trace_sel: want_sel, mouse_x: m.x, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
+		tick = model.tick + 1
+		# no HOME means no database path means no bus — spawning would only
+		# manufacture failing tasks every tick, forever
+		_ = if tick % 60 == 0 and model.home != "" {
+			homep = model.home
+			Task.spawn!(program_input, || poll_task!(homep))
+		} else {}
+		# focus mirrors the screen: view, range, the crosshair day, the session
+		cur_day =
+			if cursor2 < 0 ""
+			else {
+				total3 = List.len(model.days)
+				match I64.to_u64_try(cursor2) {
+					Err(_) => ""
+					Ok(cb3) =>
+						if cb3 >= total3 ""
+						else match List.get(model.days, total3 - 1 - cb3) {
+							Ok(dy) => dy
+							Err(_) => ""
+						}
+				}
+			}
+		focus_now = {
+			view: match view2 { 0 => 0
+				1 => 1
+				2 => 2
+				_ => 3 },
+			# the curve view's window IS its range; the other views report the
+			# form board's
+			range:
+				if view2 == 1 want_days
+				else match U64.to_i64_try(range) { Ok(ri) => ri
+					Err(_) => 90 },
+			cursor_day: cur_day,
+			trace_day: model.trace_day,
+		}
+		last_focus =
+			if focus_now != model.last_focus and tick % 30 == 0 and model.home != "" {
+				homef = model.home
+				_ = Task.spawn!(program_input, || focus_task!(homef, focus_now))
+				focus_now
+			} else model.last_focus
+		Ok({ ..model, range, view: view2, cursor: cursor2, curve_days: want_days, trace_sel: want_sel2, tick, last_focus, mouse_x: m.x, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
 	}
 }
 

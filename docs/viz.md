@@ -62,6 +62,45 @@ data line never switches face mid-string. Both ship in `assets/fonts/` (OFL) and
 the app bundle copies them to `~/.stride/fonts`; when neither location
 answers, the platform default font appears instead of a crash.
 
+## The coach's seat (ADR 0015's bus)
+
+The window is steerable and observable through two tables it maintains in the
+same database — no sockets, no protocol, just SQL:
+
+```sql
+-- a coach writing before the window's first launch creates the table too
+-- (the window runs the same DDL; IF NOT EXISTS makes the race harmless):
+CREATE TABLE IF NOT EXISTS viz_directives (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT,
+  consumed INTEGER NOT NULL DEFAULT 0);
+
+-- steer: the window polls ~1/s, applies the newest unconsumed row, and
+-- consumes everything up to it. NULL fields mean "leave that alone".
+INSERT INTO viz_directives (view, range, cursor_day, trace_day)
+VALUES (0, 30, '2026-09-02', NULL);
+-- view 0..3 (form/curve/trace/table). range 30|60|90 lands on the view the
+-- directive lands on: named view if set, else the visible one — on the curve
+-- it re-windows the ladder+fit, on every other view it sets the form board's
+-- range.
+-- cursor_day parks the crosshair, trace_day picks the session
+
+-- the window creates this too; a coach may pre-create it the same way:
+CREATE TABLE IF NOT EXISTS viz_focus (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  updated_at TEXT NOT NULL,
+  view INTEGER NOT NULL, range INTEGER NOT NULL,
+  cursor_day TEXT, trace_day TEXT);
+
+-- observe: one row, upserted when what the human sees changes (throttled ~2/s)
+SELECT view, range, cursor_day, trace_day, updated_at FROM viz_focus;
+```
+
+A directive is consumed as read — one the window crashes on is dropped, never
+replayed against a stale model. Focus writes are throttled (~2/s at most) and
+only fire when what the human sees actually changed.
+
 ## Boundaries this nightly imposes
 
 - No F64→F32 narrowing exists, so the SQL query CASTs to integer tenths and
