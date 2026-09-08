@@ -187,10 +187,11 @@ update! = |model, program_input| {
 		if d.key_pressed(KeyR) {
 			# rebuild from the database, keep what the user was looking at;
 			# a failed rebuild keeps the window it had rather than taking it down
+			# both arms carry the frame's own input — reload swaps only the data
+			min = m.y > Theme.pad_t and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b
 			match load_model!(model.font) {
-				Ok(fresh) => Ok({ ..fresh, range, view, cursor })
-				# the frame's own input still applies — only the reload is dropped
-				Err(_) => Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: m.y > Theme.pad_t and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
+				Ok(fresh) => Ok({ ..fresh, range, view, cursor, mouse_x: m.x, mouse_in: min })
+				Err(_) => Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: min })
 			}
 		} else {
 			Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: m.y > Theme.pad_t and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
