@@ -225,13 +225,13 @@ update! = |model, program_input| {
 			# to survive. Screenshots spawn because they must wait for frame end;
 			# a reload has no such constraint.
 			# both arms carry the frame's own input — reload swaps only the data
-			mouse_now = m.y > Theme.pad_t and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b
+			mouse_now = m.y > (if view == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b
 			match load_model!(model.font) {
 				Ok(fresh) => Ok({ ..fresh, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now })
 				Err(_) => Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now })
 			}
 		} else {
-			Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: m.y > Theme.pad_t and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
+			Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: m.y > (if view == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
 		}
 	}
 }

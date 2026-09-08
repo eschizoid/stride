@@ -11,10 +11,10 @@ the SQLite — no export step, no baked data, nothing the CLI has to prepare.
   teal — the brand accent) over the selected range.
 - Daily load (TSS) as a rug along the bottom, on its own scale.
 - Y-axis labels, current values at the line ends, and the next planned event:
-  a dashed in-plot marker when its date is inside the plotted window, or a
-  header countdown (`name  Nd`) when it is beyond it. A genuine future event
-  usually takes the second form — the series ends on the last analyzed day, so there is no column
-  to draw a marker on.
+  a dashed in-plot marker when its date is inside the plotted window, or the
+  event tile's countdown (in the KPI row) when it is beyond it. A future event
+  usually takes the tile form — the series ends on the last analyzed day, so
+  there is rarely a column to mark.
 
 ## What the form board shows
 
