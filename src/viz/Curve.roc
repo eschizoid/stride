@@ -25,7 +25,10 @@ Curve :: [].{
 		tsb_c = Theme.tsb_c
 		model.curve_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		model.fit_lbl.draw!(frame, { pos: { x: win_w - 40.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
-		if List.is_empty(model.prs) {
+		# eight zero rungs IS the no-records state - the loader materializes
+		# every rung, so emptiness is the summed watts, not the list length
+		have = List.fold(model.prs, 0.I64, |a, pr| a + pr.w)
+		if List.is_empty(model.prs) or have == 0 {
 			Text.from("no ride power yet", model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 130.0 }, color: ink_muted, align: (Top, Left) })
 		} else {
 			pw = win_w - pad_l - pad_r
@@ -64,9 +67,11 @@ Curve :: [].{
 				model.cp_lbl.draw!(frame, { pos: { x: pad_l + pw + 8.0, y: cpy }, color: tsb_c, align: (Middle, Left) })
 			} else {}
 			# record envelope first (it sits above), then the window curve
+			# envelope segments only between rungs that HAVE records - a 0 rung
+			# must not drag the grey line to the floor
 			List.for_each!(rungs, |r|
 				match List.get(rungs, r.i + 1) {
-					Ok(nxt) => frame.line!({ start: { x: cx(r.i), y: cy(I64.to_f32(r.pr.w)) }, end: { x: cx(nxt.i), y: cy(I64.to_f32(nxt.pr.w)) }, stroke: Draw.stroke(Color.with_alpha(ink_muted, 90), 1) })
+					Ok(nxt) => if r.pr.w > 0 and nxt.pr.w > 0 (frame.line!({ start: { x: cx(r.i), y: cy(I64.to_f32(r.pr.w)) }, end: { x: cx(nxt.i), y: cy(I64.to_f32(nxt.pr.w)) }, stroke: Draw.stroke(Color.with_alpha(ink_muted, 90), 1) })) else {}
 					Err(_) => {}
 				})
 			List.for_each!(rungs, |r|
@@ -76,7 +81,10 @@ Curve :: [].{
 				})
 			List.for_each!(rungs, |r| {
 				rec_y = cy(I64.to_f32(r.pr.w))
-				if r.now_w >= r.pr.w and r.now_w > 0 {
+				if r.pr.w == 0 {
+					# a rung never ridden keeps its label and rail, nothing else
+					{}
+				} else if r.now_w >= r.pr.w and r.now_w > 0 {
 					# the window best IS the record: one teal dot, the good news
 					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 5.0, style: Draw.filled(tsb_c) })
 					Text.from("pr", model.font).size(10).draw!(frame, { pos: { x: cx(r.i), y: rec_y - 20.0 }, color: tsb_c, align: (Top, Center) })
@@ -89,6 +97,7 @@ Curve :: [].{
 						Text.from("-${I64.to_str(r.pr.w - r.now_w)}", model.font).size(10).draw!(frame, { pos: { x: cx(r.i) + 10.0, y: (rec_y + now_y) / 2.0 - 6.0 }, color: Theme.alarm_c, align: (Top, Left) })
 					} else {}
 				}
+				{}
 				Text.from(r.pr.rung, model.font).size(12).draw!(frame, { pos: { x: cx(r.i), y: pad_t + ph - 18.0 }, color: ink_faint, align: (Top, Center) })
 				# hover the rung's column: the full story under the title
 				half = if nlast == 0 (pw / 2.0) else pw / U64.to_f32(nlast) / 2.0
