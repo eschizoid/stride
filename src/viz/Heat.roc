@@ -59,7 +59,7 @@ Heat :: [].{
 				}
 				sty = if a == 0 (Draw.filled(Theme.card)) else Draw.filled(Color.with_alpha(Theme.ctl_c, (match I64.to_u8_try(a) { Ok(v) => v
 					Err(_) => 255 })))
-				# event days ringed: a white halo under the cell reads as an outline
+				# past event days ringed: a white halo under the cell reads as an outline
 				if List.contains(model.heat_events, h.day) {
 					frame.rounded_rectangle!({ x: x0 - 2.0, y: y0 - 2.0, width: cell + 4.0, height: cell + 4.0, radius: 4.0, segments: 3, style: Draw.filled(Color.with_alpha(Color.white, 160)) })
 				} else {}

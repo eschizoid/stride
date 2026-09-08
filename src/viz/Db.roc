@@ -364,10 +364,11 @@ Db :: [].{
 				})
 		}
 
-	# every event day, ridden or coming - the heat grid rings them
+	# every event day - the grid rings the ones inside its historical window
+	# (the series ends at MAX(day), so future dates simply never match a cell)
 	load_event_days! : Sqlite.Db => List(Str)
 	load_event_days! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(event_date AS TEXT) AS d FROM events", bindings: [] }) {
+		match Sqlite.query!({ db, query: "SELECT DISTINCT CAST(event_date AS TEXT) AS d FROM events", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
