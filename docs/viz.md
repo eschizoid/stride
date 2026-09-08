@@ -46,24 +46,28 @@ with view 5 opens it.
 
 ## The zones view
 
-The seventh stop answers "am I training like I claim": twelve Monday weeks
-of time-in-zone as stacked hour bars in the zone ramp, and above them each
-week's easy share plotted against the 80% rule line - green dots hold the
-line, red dots broke it. The intensity classification comes from the
+Twelve Monday weeks of time in zone as stacked bars, each capped with that
+week's easy share - teal when it holds the 80/20 line, alarm red when it
+does not. One chart, one scale: the share reads across the row of caps, so
+no second panel is needed to plot it. The card names the latest week that
+carried training. The intensity classification comes from the
 `activity_intensity` view, which carries the same per-activity split
-`stride summary` computes, so the two share one definition of easy and
-hard (the CLI still evaluates its copy inline; #415 tracks pointing it at
-the view).
-Hovering a week reads it back. A directive with view 6 opens it.
+`stride summary` computes, so the window and the CLI share one definition
+of easy and hard.
+
+![The zones view](img/zones.png)
 
 ## The ramp view
 
-The eighth stop is the overtraining early warning: twelve Monday weeks of
-TSS as bars below, and above them the ramp rate - CTL gained per week -
-with everything past +6/wk shaded in the alarm color. A dot in the band
-means fitness is climbing faster than most bodies absorb; teal is a sane
-build, faint is coasting. Hovering a week reads back its TSS, end-of-week
-CTL and ramp. A directive with view 7 opens it.
+The overtraining early warning, also one chart: weekly TSS as gradient
+bars, each wearing a chip with the CTL that week gained. The ramp is
+encoded as the chip's COLOR on the bars' own axis - teal builds, red past
++6/wk, grey sheds - rather than as a second y-axis, because two scales
+sharing a plot is a lie no legend repairs. The card carries where fitness
+stands and how fast it is moving; a week with no load keeps a base stub, so
+the current partial week never vanishes from the row.
+
+![The ramp view](img/ramp.png)
 
 ## Controls
 
@@ -79,7 +83,7 @@ CTL and ramp. A directive with view 7 opens it.
 | `1` / `2` / `3` or the chips (power view) | re-window the blue ladder and CP fit to 30/60/90 days |
 | `shift+[` / `shift+]` (trace view) | summon / walk / dismiss the ghost overlay (past newest = off) |
 | wheel / drag / `0` (trace view) | zoom anchored at the cursor's moment, pan while held, reset - the window is [pan, pan+1/zoom] of the session |
-| `[` / `]` (trace view) | older / newer structured session, last 12 |
+| `[` / `]` (trace view) | older / newer structured session, last 12 - every one is cached at load, so a switch is a memory read, not a query |
 | `←` / `→` (table view) | scroll the window through the whole series (rows fill the window height) |
 | click a date (table view) | open that day's detail panel: sessions, minutes, km, TSS, NP |
 | window edges | drag to resize; every view reflows live (980x600 floor) |
