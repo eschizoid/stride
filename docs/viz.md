@@ -16,6 +16,15 @@ the SQLite — no export step, no baked data, nothing the CLI has to prepare.
   usually takes the second form — the series ends on the last analyzed day, so there is no column
   to draw a marker on.
 
+## What the form board shows
+
+Big-number tiles carry the artifact's reading aids: fitness, fatigue and form
+with their one-line meanings, plus an event slot that counts down to the next
+event, says "ridden" for up to a week after one, and names the add command
+when none is planned. The subtitle always carries the as-of day, and the TSB
+zero rule is captioned "fresh above". The fourth TAB view is the artifact's
+data table: the last 14 days as numbers.
+
 ## Controls
 
 | key / gesture | effect |
@@ -23,7 +32,7 @@ the SQLite — no export step, no baked data, nothing the CLI has to prepare.
 | `1` / `2` / `3` | range 30 / 60 / 90 days (form board) |
 | `←` / `→` | walk the day cursor (form board; ← older, → newer, past newest turns it off) |
 | `R` | reload everything from the database without reopening |
-| `TAB` | cycle views: form board / power curve / session trace |
+| `TAB` | cycle views: form board / power curve / session trace / data table |
 | `S` | save a PNG of the current view into `./captures` |
 | mouse hover | crosshair + per-day dots + a top-right readout (form board) |
 | `ESC` | quit |

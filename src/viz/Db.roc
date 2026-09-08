@@ -86,6 +86,26 @@ Db :: [].{
 			}
 		}
 
+	# the most recent PAST event, for the "ridden" tile — same series clock
+	Ridden : { day : Str, name : Str, ago : I64 }
+	load_ridden! : Sqlite.Db => Ridden
+	load_ridden! = |db|
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(today) - julianday(event_date) AS INTEGER) AS ago FROM events, anchor WHERE event_date < today ORDER BY event_date DESC LIMIT 1", bindings: [] }) {
+			Err(_) => { day: "", name: "", ago: -1 }
+			Ok(rows) => match List.first(rows) {
+				Err(_) => { day: "", name: "", ago: -1 }
+				Ok(r) => {
+					d = match r.str("event_date") { Ok(x) => x
+						Err(_) => "" }
+					nm = match r.str("name") { Ok(x) => x
+						Err(_) => "" }
+					ag = match r.i64("ago") { Ok(x) => x
+						Err(_) => -1 }
+					{ day: d, name: nm, ago: ag }
+				}
+			}
+		}
+
 	load_event! : Sqlite.Db => Event
 	load_event! = |db|
 		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(event_date) - julianday(today) AS INTEGER) AS ahead FROM events, anchor WHERE event_date >= today ORDER BY event_date ASC LIMIT 1", bindings: [] }) {

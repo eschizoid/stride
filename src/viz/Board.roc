@@ -25,25 +25,27 @@ Board :: [].{
 		win_h = Theme.win_h
 		pad_l = Theme.pad_l
 		pad_r = Theme.pad_r
-		pad_t = Theme.pad_t
+		# +56 makes room for the KPI tile row this view alone carries
+		pad_t = Theme.pad_t + 56.0
 		pad_b = Theme.pad_b
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
 		ctl_c = Theme.ctl_c
 		atl_c = Theme.atl_c
 		tsb_c = Theme.tsb_c
+	List.for_each!(List.map_with_index(model.kpis, |k, i| { k, i }), |x| {
+		tx0 = 36.0 + U64.to_f32(x.i) * 234.0
+		col = if x.k.sel == 0 ctl_c else if x.k.sel == 1 atl_c else tsb_c
+		x.k.v.draw!(frame, { pos: { x: tx0, y: 96.0 }, color: col, align: (Top, Left) })
+		x.k.cap.draw!(frame, { pos: { x: tx0, y: 128.0 }, color: ink_faint, align: (Top, Left) })
+	})
+	model.ev_tile_top.draw!(frame, { pos: { x: 738.0, y: 98.0 }, color: ink_muted, align: (Top, Left) })
+	model.ev_tile_sub.draw!(frame, { pos: { x: 738.0, y: 128.0 }, color: ink_faint, align: (Top, Left) })
 	List.for_each!(model.subs, |s|
 		if s.r == model.range and model.view == 0 {
 			s.p.draw!(frame, { pos: { x: 280.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		} else {})
 
-	# The next planned event, when it lies BEYOND the plotted window. The dashed
-	# in-plot marker below can only fire for a date the series contains, and the
-	# series ends on the last analyzed day — so for a future event it does not
-	# draw. This is the header countdown that does.
-	if !(model.ev_found) and model.ev_ahead > 0 {
-		model.ev_far_label.draw!(frame, { pos: { x: 940.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
-	} else {}
 	if model.ev_warn_found {
 		model.ev_warn.draw!(frame, { pos: { x: 940.0, y: 52.0 }, color: atl_c, align: (Top, Right) })
 	} else {}
@@ -81,6 +83,7 @@ Board :: [].{
 					yl.p.draw!(frame, { pos: { x: 30.0, y: gy - 8.0 }, color: ink_faint, align: (Top, Left) })
 				} else {})
 			frame.line!({ start: { x: pad_l, y: yf(0.0) }, end: { x: I32.to_f32(win_w) - pad_r, y: yf(0.0) }, stroke: Draw.stroke(Color.with_alpha(Color.white, 55), 1) })
+			model.zero_note.draw!(frame, { pos: { x: I32.to_f32(win_w) - pad_r - 6.0, y: yf(0.0) - 16.0 }, color: ink_faint, align: (Top, Right) })
 
 			# daily load (TSS) as a faint rug in its OWN scale along the bottom band,
 			# never on the fitness/form axis: load peaks well above 50 and would
