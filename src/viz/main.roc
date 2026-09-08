@@ -46,8 +46,9 @@ init! = App.init(
 # runs it once at launch, and the R key runs it again without reopening.
 load_model! : Text.Font => Try(Ui.Model, [ResourceLimit, ..])
 load_model! = |font| {
-		# ~/.stride/db.sqlite, resolved at launch — the platform has no Env
-		# module, but Cmd captures stdout, so the shell answers for HOME.
+		# ~/.stride/db.sqlite, resolved on every load (launch and R alike) —
+		# the platform has no Env module, but Cmd captures stdout, so the
+		# shell answers for HOME.
 		home = match Cmd.run_utf8!(Cmd.with_args(Cmd.new("printenv"), ["HOME"])) {
 			Ok(out) => Str.trim(out.stdout)
 			Err(_) => ""
