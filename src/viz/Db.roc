@@ -344,7 +344,7 @@ Db :: [].{
 						Err(_) => -1 }
 					cd = match r.str("cd") { Ok(x) => x
 						Err(_) => "" }
-					vn = if v == 0 "form" else if v == 1 "curve" else if v == 2 "trace" else if v == 3 "table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else if v == 7 "ramp" else ""
+					vn = if v == 0 "form" else if v == 1 "curve" else if v == 2 "trace" else if v == 3 "table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else if v == 7 "ramp" else if v == 8 "prs" else ""
 					rgp = if rg > 0 "${I64.to_str(rg)}d" else ""
 					joined = Str.join_with(List.keep_if([vn, rgp], |s2| s2 != ""), " / ")
 					parts = if joined == "" "steer" else joined
@@ -410,6 +410,33 @@ Db :: [].{
 					c10 = r.i64("ctl10") ? |_| "bad"
 					r10 = r.i64("ramp10") ? |_| "bad"
 					Ok({ wk, tss: ts, ctl10: c10, ramp10: r10 })
+				})
+		}
+
+	# every RIDE power PR: the best-ever watts per duration rung and the day
+	# each record first landed. Ordering is on the TRUE stored watts - the
+	# round is presentation, so two efforts that DISPLAY equal still rank by
+	# their real values; only an exact tie breaks to the earliest ride (a
+	# matched record is not a new one; the ladder stores 0, not NULL, for a ride too short
+	# for a rung, so the record filter is > 0). Eight rows on success - a rung
+	# with no record yet comes back as w 0 / day '' so the ladder never
+	# shrinks or jumps; a failed query returns none and the view shows its
+	# empty state, the same honest floor every loader here has. Each rung
+	# scans activity_metrics once, and the whole query runs once per load
+	# (launch and R) - never per frame - so the scans stay off any hot path
+	# and no best_* index is warranted.
+	PrRung : { rung : Str, secs : I64, w : I64, day : Str }
+	load_prs! : Sqlite.Db => List(PrRung)
+	load_prs! = |db|
+		match Sqlite.query!({ db, query: "SELECT CAST('5s' AS TEXT) AS rung, 5 AS secs, CAST(COALESCE(b.w, 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM (SELECT 1) LEFT JOIN (SELECT ROUND(m.best_5s_w) AS w, substr(a.start_local, 1, 10) AS day FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE a.sport_family = 'Ride' AND m.best_5s_w > 0 ORDER BY m.best_5s_w DESC, a.start_local ASC LIMIT 1) b UNION ALL SELECT CAST('15s' AS TEXT) AS rung, 15 AS secs, CAST(COALESCE(b.w, 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM (SELECT 1) LEFT JOIN (SELECT ROUND(m.best_15s_w) AS w, substr(a.start_local, 1, 10) AS day FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE a.sport_family = 'Ride' AND m.best_15s_w > 0 ORDER BY m.best_15s_w DESC, a.start_local ASC LIMIT 1) b UNION ALL SELECT CAST('30s' AS TEXT) AS rung, 30 AS secs, CAST(COALESCE(b.w, 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM (SELECT 1) LEFT JOIN (SELECT ROUND(m.best_30s_w) AS w, substr(a.start_local, 1, 10) AS day FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE a.sport_family = 'Ride' AND m.best_30s_w > 0 ORDER BY m.best_30s_w DESC, a.start_local ASC LIMIT 1) b UNION ALL SELECT CAST('1min' AS TEXT) AS rung, 60 AS secs, CAST(COALESCE(b.w, 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM (SELECT 1) LEFT JOIN (SELECT ROUND(m.best_60s_w) AS w, substr(a.start_local, 1, 10) AS day FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE a.sport_family = 'Ride' AND m.best_60s_w > 0 ORDER BY m.best_60s_w DESC, a.start_local ASC LIMIT 1) b UNION ALL SELECT CAST('5min' AS TEXT) AS rung, 300 AS secs, CAST(COALESCE(b.w, 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM (SELECT 1) LEFT JOIN (SELECT ROUND(m.best_300s_w) AS w, substr(a.start_local, 1, 10) AS day FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE a.sport_family = 'Ride' AND m.best_300s_w > 0 ORDER BY m.best_300s_w DESC, a.start_local ASC LIMIT 1) b UNION ALL SELECT CAST('10min' AS TEXT) AS rung, 600 AS secs, CAST(COALESCE(b.w, 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM (SELECT 1) LEFT JOIN (SELECT ROUND(m.best_600s_w) AS w, substr(a.start_local, 1, 10) AS day FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE a.sport_family = 'Ride' AND m.best_600s_w > 0 ORDER BY m.best_600s_w DESC, a.start_local ASC LIMIT 1) b UNION ALL SELECT CAST('20min' AS TEXT) AS rung, 1200 AS secs, CAST(COALESCE(b.w, 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM (SELECT 1) LEFT JOIN (SELECT ROUND(m.best_20min_w) AS w, substr(a.start_local, 1, 10) AS day FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE a.sport_family = 'Ride' AND m.best_20min_w > 0 ORDER BY m.best_20min_w DESC, a.start_local ASC LIMIT 1) b UNION ALL SELECT CAST('60min' AS TEXT) AS rung, 3600 AS secs, CAST(COALESCE(b.w, 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM (SELECT 1) LEFT JOIN (SELECT ROUND(m.best_3600s_w) AS w, substr(a.start_local, 1, 10) AS day FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE a.sport_family = 'Ride' AND m.best_3600s_w > 0 ORDER BY m.best_3600s_w DESC, a.start_local ASC LIMIT 1) b", bindings: [] }) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(rows, |r| {
+					rg = r.str("rung") ? |_| "bad"
+					sc = r.i64("secs") ? |_| "bad"
+					w9 = r.i64("w") ? |_| "bad"
+					dy = r.str("day") ? |_| "bad"
+					Ok({ rung: rg, secs: sc, w: w9, day: dy })
 				})
 		}
 
