@@ -33,14 +33,30 @@ Board :: [].{
 		ctl_c = Theme.ctl_c
 		atl_c = Theme.atl_c
 		tsb_c = Theme.tsb_c
-	List.for_each!(List.map_with_index(model.kpis, |k, i| { k, i }), |x| {
-		tx0 = 36.0 + U64.to_f32(x.i) * 234.0
-		col = if x.k.sel == 0 ctl_c else if x.k.sel == 1 atl_c else tsb_c
-		x.k.v.draw!(frame, { pos: { x: tx0, y: 96.0 }, color: col, align: (Top, Left) })
-		x.k.cap.draw!(frame, { pos: { x: tx0, y: 128.0 }, color: ink_faint, align: (Top, Left) })
+	# the artifact's tile cards: a lifted rounded panel behind each number
+	List.for_each!([0.U64, 1, 2, 3], |i| {
+		cx0 = 30.0 + U64.to_f32(i) * 234.0
+		frame.rounded_rectangle!({ x: cx0, y: 88.0, width: 222.0, height: 62.0, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
 	})
-	model.ev_tile_top.draw!(frame, { pos: { x: 738.0, y: 98.0 }, color: ink_muted, align: (Top, Left) })
-	model.ev_tile_sub.draw!(frame, { pos: { x: 738.0, y: 128.0 }, color: ink_faint, align: (Top, Left) })
+	List.for_each!(List.map_with_index(model.kpis, |k, i| { k, i }), |x| {
+		tx0 = 42.0 + U64.to_f32(x.i) * 234.0
+		col = if x.k.sel == 0 ctl_c else if x.k.sel == 1 atl_c else tsb_c
+		x.k.v.draw!(frame, { pos: { x: tx0, y: 94.0 }, color: col, align: (Top, Left) })
+		x.k.cap.draw!(frame, { pos: { x: tx0, y: 127.0 }, color: ink_faint, align: (Top, Left) })
+	})
+	model.ev_tile_top.draw!(frame, { pos: { x: 744.0, y: 96.0 }, color: ink_muted, align: (Top, Left) })
+	model.ev_tile_sub.draw!(frame, { pos: { x: 744.0, y: 122.0 }, color: ink_faint, align: (Top, Left) })
+	if model.ridden_found {
+		model.ridden_note.draw!(frame, { pos: { x: 744.0, y: 136.0 }, color: ink_faint, align: (Top, Left) })
+	} else {}
+	# which range is live: three chips, the active one filled
+	List.for_each!(List.map_with_index(model.subs, |s, i| { s, i }), |x| {
+		chx = 560.0 + U64.to_f32(x.i) * 54.0
+		on = x.s.r == model.range
+		style = if on (Draw.filled(Color.with_alpha(ctl_c, 60))) else Draw.filled(Theme.card)
+		frame.rounded_rectangle!({ x: chx, y: 64.0, width: 46.0, height: 22.0, radius: 6.0, segments: 6, style })
+		x.s.chip.draw!(frame, { pos: { x: chx + 23.0, y: 68.0 }, color: if on Color.white else ink_muted, align: (Top, Center) })
+	})
 	List.for_each!(model.subs, |s|
 		if s.r == model.range and model.view == 0 {
 			s.p.draw!(frame, { pos: { x: 280.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
@@ -82,7 +98,22 @@ Board :: [].{
 					frame.line!({ start: { x: pad_l, y: gy }, end: { x: I32.to_f32(win_w) - pad_r, y: gy }, stroke: Draw.stroke(Color.with_alpha(Color.white, 18), 1) })
 					yl.p.draw!(frame, { pos: { x: 30.0, y: gy - 8.0 }, color: ink_faint, align: (Top, Left) })
 				} else {})
-			frame.line!({ start: { x: pad_l, y: yf(0.0) }, end: { x: I32.to_f32(win_w) - pad_r, y: yf(0.0) }, stroke: Draw.stroke(Color.with_alpha(Color.white, 55), 1) })
+			# the artifact's x-axis: ~6 date labels under the plot
+			List.for_each!([0.U64, 1, 2, 3, 4, 5], |k| {
+				di = k * (n - 1) / 5
+				match List.get(List.take_last(model.days, take), di) {
+					Ok(dstr) => Text.from(match Str.drop_first_bytes(dstr, 5) { Ok(s2) => s2
+						Err(_) => dstr }, model.font).size(11).draw!(frame, { pos: { x: xf(di), y: pad_t + ph + 8.0 }, color: ink_faint, align: (Top, Center) })
+					Err(_) => {}
+				}
+			})
+			# dotted, as the artifact draws it: 4px dash, 6px gap
+			List.for_each!(List.map_with_index(List.repeat({}, 84), |_u, k| k), |k| {
+				dx = pad_l + U64.to_f32(k) * 10.0
+				if dx + 4.0 <= I32.to_f32(win_w) - pad_r {
+					frame.line!({ start: { x: dx, y: yf(0.0) }, end: { x: dx + 4.0, y: yf(0.0) }, stroke: Draw.stroke(Color.with_alpha(Color.white, 55), 1) })
+				} else {}
+			})
 			model.zero_note.draw!(frame, { pos: { x: I32.to_f32(win_w) - pad_r - 6.0, y: yf(0.0) - 16.0 }, color: ink_faint, align: (Top, Right) })
 
 			# daily load (TSS) as a faint rug in its OWN scale along the bottom band,
@@ -171,8 +202,28 @@ Board :: [].{
 							Ok(d) => d
 							Err(_) => ""
 						}
-						readout = "${day}   CTL ${Db.fmt_f(hp.ctl)}   ATL ${Db.fmt_f(hp.atl)}   TSB ${Db.fmt_f(hp.tsb)}   TSS ${Db.fmt_f(hp.tss)}"
-						Text.from(readout, model.font).size(13).draw!(frame, { pos: { x: I32.to_f32(win_w) - 34.0, y: 148.0 }, color: Color.white, align: (Top, Right) })
+						# the artifact's tooltip: date header, then a colored row per
+						# series; flipped left when the cursor nears the right edge
+						tip_w = 168.0
+						tip_x = if hx + 14.0 + tip_w > I32.to_f32(win_w) - pad_r (hx - 14.0 - tip_w) else hx + 14.0
+						tip_y = pad_t + 8.0
+						frame.rounded_rectangle!({ x: tip_x, y: tip_y, width: tip_w, height: 130.0, radius: 6.0, segments: 6, style: Draw.filled(Theme.card) })
+						Text.from(day, model.font).size(12).draw!(frame, { pos: { x: tip_x + 10.0, y: tip_y + 8.0 }, color: Color.white, align: (Top, Left) })
+						rows = [
+							{ lbl: "Fitness", v: Db.fmt_f(hp.ctl), c: ctl_c },
+							{ lbl: "Fatigue", v: Db.fmt_f(hp.atl), c: atl_c },
+							{ lbl: "Form", v: Db.fmt_f(hp.tsb), c: tsb_c },
+							{ lbl: "Load", v: Db.fmt_f(hp.tss), c: ink_muted },
+						]
+						List.for_each!(List.map_with_index(rows, |r, ri| { r, ri }), |x| {
+							ry = tip_y + 28.0 + U64.to_f32(x.ri) * 19.0
+							Text.from(x.r.lbl, model.font).size(12).draw!(frame, { pos: { x: tip_x + 10.0, y: ry }, color: x.r.c, align: (Top, Left) })
+							Text.from(x.r.v, model.font).size(12).draw!(frame, { pos: { x: tip_x + tip_w - 10.0, y: ry }, color: Color.white, align: (Top, Right) })
+						})
+						# what was actually done that day — truncated to the card
+						note = Db.note_for(model.day_notes, day)
+						short = if Str.count_utf8_bytes(note) > 24 (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(note), 22)), "..")) else note
+						Text.from(short, model.font).size(11).draw!(frame, { pos: { x: tip_x + 10.0, y: tip_y + 107.0 }, color: ink_faint, align: (Top, Left) })
 					}
 					Err(_) => {}
 				}

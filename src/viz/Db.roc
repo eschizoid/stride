@@ -159,6 +159,26 @@ Db :: [].{
 
 	# The most recent activity that HAS detected work blocks — the only kind this
 	# view can say anything about. Its id anchors both loaders below.
+	# one line per day: what was actually done, for tooltips and the table.
+	# Joined against the series by DAY STRING, so a day with no activity is
+	# simply absent and reads as rest.
+	load_day_notes! : Sqlite.Db => List({ day : Str, note : Str })
+	load_day_notes! = |db|
+		match Sqlite.query!({ db, query: "SELECT CAST(substr(start_local, 1, 10) AS TEXT) AS day, CAST(group_concat(name, ' + ') AS TEXT) AS note FROM activities WHERE start_local >= date('now', '-120 days') GROUP BY day", bindings: [] }) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(rows, |r| {
+					dy = r.str("day") ? |_| "bad day"
+					nt = r.str("note") ? |_| "bad note"
+					Ok({ day: dy, note: nt })
+				})
+		}
+
+	# a day's note from load_day_notes!, or the honest default
+	note_for : List({ day : Str, note : Str }), Str -> Str
+	note_for = |notes, dy|
+		List.fold(notes, "rest day", |acc, x| if x.day == dy x.note else acc)
+
 	# the last dozen structured sessions, newest first — the trace picker's menu
 	load_trace_ids! : Sqlite.Db => List({ id : I64, day : Str })
 	load_trace_ids! = |db|

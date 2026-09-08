@@ -15,6 +15,8 @@ import rr.Capture
 import rr.Cmd
 import rr.Color
 import rr.Draw
+import rr.Files
+import rr.Mouse
 import rr.Sqlite
 import rr.Task
 import rr.Text
@@ -47,6 +49,26 @@ init! = App.init(
 # call — the database for every series, plus the engine's power-curve command
 # for the CP fit. init! runs it once at launch, and the R key runs it again
 # without reopening.
+# One brand face at one size, from wherever it lives: the repo's assets/ in a
+# dev checkout, ~/.stride/fonts when launched as the app bundle, and the
+# platform default font when neither answers — the board must open regardless.
+brand_font! : Str, Str, I32, Text.Font => Text.Font
+brand_font! = |home, name, size, fallback| {
+	bytes = match Files.read_bytes!("assets/fonts/${name}") {
+		Ok(b) => b
+		# no HOME means no second location — never probe /.stride at the root
+		Err(_) => if home == "" [] else match Files.read_bytes!("${home}/.stride/fonts/${name}") {
+			Ok(b) => b
+			Err(_) => []
+		}
+	}
+	if List.is_empty(bytes) fallback
+	else match Draw.font_from_bytes!({ format: Ttf, bytes, size }) {
+		Ok(f) => f
+		Err(_) => fallback
+	}
+}
+
 load_model! : Text.Font, I64 => Try(Ui.Model, [ResourceLimit, ..])
 load_model! = |font, curve_days| {
 		# ~/.stride/db.sqlite, resolved on every load (launch and R alike) —
@@ -58,7 +80,7 @@ load_model! = |font, curve_days| {
 		}
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [] }
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [] }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				s = Db.load_series!(db)
@@ -74,9 +96,10 @@ load_model! = |font, curve_days| {
 				du = Db.load_dur!(db, tid)
 				st = Db.load_stale!(db)
 				rd = Db.load_ridden!(db)
-				{ s, e, c, st, tr, sg, du, rd, tids }
+				nts = Db.load_day_notes!(db)
+				{ s, e, c, st, tr, sg, du, rd, tids, nts }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [] }
+			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [] }
 		}
 		ev = Db.find_idx(loaded.s.days, loaded.e.day)
 		fit = Db.load_fit!(curve_days)
@@ -84,13 +107,24 @@ load_model! = |font, curve_days| {
 			if fit.ok
 				"CP ${Db.fmt_f(fit.cp)} W · W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${Db.fmt_f(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
 			else "CP fit unavailable - the engine did not answer"
-		mk! = |txt, sz| Text.from(txt, font).size(sz).prepare!()
+		# the brand: Quicksand (the wordmark's rounded face) carries PROSE —
+		# titles, legends, captions, hints; JetBrains Mono (the tagline's
+		# voice) carries DATA SURFACES — KPI digits, ticks, end labels, and
+		# every immediate readout/table cell, mixed words included, so a data
+		# line never switches face mid-string. The platform default appears
+		# only when neither file can be found
+		head = brand_font!(home, "Quicksand-Medium.ttf", 32, font)
+		mono_big = brand_font!(home, "JetBrainsMono-Regular.ttf", 30, font)
+		mono = brand_font!(home, "JetBrainsMono-Regular.ttf", 16, font)
+		mk! = |txt, sz| Text.from(txt, head).size(sz).prepare!()
+		mkm! = |txt, sz| Text.from(txt, mono).size(sz).prepare!()
+		mkb! = |txt, sz| Text.from(txt, mono_big).size(sz).prepare!()
 		curve_lbls = List.map_try(loaded.c, |c| {
-			p = mk!(I64.to_str(c.dur_s), 12)?
+			p = mkm!(I64.to_str(c.dur_s), 12)?
 			Ok({ p, d: c.dur_s })
 		})?
 		ylabels = List.map_try([-30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], |v| {
-			p = mk!(I64.to_str(v), 12)?
+			p = mkm!(I64.to_str(v), 12)?
 			Ok({ p, v: I64.to_f32(v) })
 		})?
 		ends = List.map_try(
@@ -100,7 +134,7 @@ load_model! = |font, curve_days| {
 				{ s: "TSB ${Db.fmt1(loaded.s.last.t)}", k: 2.U8 },
 			],
 			|e| {
-				p = mk!(e.s, 13)?
+				p = mkm!(e.s, 13)?
 				Ok({ p, sel: e.k })
 			},
 		)?
@@ -121,9 +155,9 @@ load_model! = |font, curve_days| {
 		Ok({
 			title: mk!("Stride Form Board", 30)?,
 			subs: [
-				{ p: mk!("last 30 days, as of ${as_of}", 15)?, r: 30.U64 },
-				{ p: mk!("last 60 days, as of ${as_of}", 15)?, r: 60.U64 },
-				{ p: mk!("last 90 days, as of ${as_of}", 15)?, r: 90.U64 },
+				{ p: mk!("last 30 days, as of ${as_of}", 15)?, r: 30.U64, chip: mkm!("30d", 12)? },
+				{ p: mk!("last 60 days, as of ${as_of}", 15)?, r: 60.U64, chip: mkm!("60d", 12)? },
+				{ p: mk!("last 90 days, as of ${as_of}", 15)?, r: 90.U64, chip: mkm!("90d", 12)? },
 			],
 			leg_fit: mk!("Fitness", 15)?,
 			leg_fat: mk!("Fatigue", 15)?,
@@ -159,27 +193,31 @@ load_model! = |font, curve_days| {
 			trace_hint: mk!("[ / ]  older / newer session      TAB  data table      R  reload      S  screenshot      ESC quit", 13)?,
 			table_hint: mk!("arrows  scroll days      TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
 			table_title: mk!("data table - last 14 days", 15)?,
-			table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?],
+			table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
 			kpis: [
-				{ v: mk!(Db.fmt1(loaded.s.last.c), 27)?, cap: mk!("fitness - 42-day load avg", 11)?, sel: 0.U8 },
-				{ v: mk!(Db.fmt1(loaded.s.last.a), 27)?, cap: mk!("fatigue - 7-day load avg", 11)?, sel: 1.U8 },
-				{ v: mk!(Db.fmt1(loaded.s.last.t), 27)?, cap: mk!("form - fitness minus fatigue", 11)?, sel: 2.U8 },
+				{ v: mkb!(Db.fmt1(loaded.s.last.c), 27)?, cap: mk!("fitness - 42-day load avg", 11)?, sel: 0.U8 },
+				{ v: mkb!(Db.fmt1(loaded.s.last.a), 27)?, cap: mk!("fatigue - 7-day load avg", 11)?, sel: 1.U8 },
+				{ v: mkb!(Db.fmt1(loaded.s.last.t), 27)?, cap: mk!("form - fitness minus fatigue", 11)?, sel: 2.U8 },
 			],
 			ev_tile_top: mk!(ev_tile.top, 14)?,
 			ev_tile_sub: mk!(ev_tile.sub, 11)?,
 			zero_note: mk!("fresh above", 11)?,
+			ridden_found: loaded.rd.ago >= 0 and loaded.rd.ago <= 7 and loaded.e.day != "",
+			ridden_note: mk!("${loaded.rd.name} ridden, ${I64.to_str(loaded.rd.ago)}d ago", 10)?,
 			curve_empty: mk!("no rides in the selected window - the curve has nothing to draw", 16)?,
 			trace: loaded.tr,
 			segs: loaded.sg,
 			trace_title: mk!("last structured session - detected blocks shaded behind the power trace", 15)?,
 			trace_dur: loaded.du,
 			fit_cp: if fit.ok (fit.cp) else 0.0,
-			cp_lbl: mk!("CP ${Db.fmt_f(fit.cp)}W", 12)?,
+			cp_lbl: mkm!("CP ${Db.fmt_f(fit.cp)}W", 12)?,
 			data: loaded.s.data,
 			days: loaded.s.days,
+			home,
+			day_notes: loaded.nts,
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
-			font,
+			font: mono,
 			hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   ESC quit", 13)?,
 			empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
 			range: 90.U64,
@@ -193,43 +231,68 @@ load_model! = |font, curve_days| {
 # a failed shot must not take the window down, and the file's absence is the
 # report. Was `[]` while nothing spawned.
 
-# Re-reads one session's trace/segments/duration for the picker — a bounded
-# synchronous read on an explicit keypress, same reasoning as R. Any failure
-# keeps the session the window already had.
-switch_trace! : Ui.Model, U64 => Ui.Model
-switch_trace! = |model, sel| {
-	home = match Cmd.run_utf8!(Cmd.with_args(Cmd.new("printenv"), ["HOME"])) {
-		Ok(out) => Str.trim(out.stdout)
-		Err(_) => ""
-	}
-	if home == "" model
-	else match List.get(model.trace_ids, sel) {
-		Err(_) => model
+# Runs INSIDE a spawned task (Sqlite parks there legally): re-reads one
+# session's trace/segments/duration and reports back as a message. Any
+# failure keeps the session the window already had.
+trace_task! : Str, List({ id : I64, day : Str }), U64 => Msg
+trace_task! = |home, ids, sel|
+	if home == "" TraceSwitchFailed
+	else match List.get(ids, sel) {
+		Err(_) => TraceSwitchFailed
 		Ok(entry) =>
 			match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
-				Err(_) => model
+				Err(_) => TraceSwitchFailed
 				Ok(db) => {
 					tr = Db.load_trace!(db, entry.id)
 					sg = Db.load_segs!(db, entry.id)
 					du = Db.load_dur!(db, entry.id)
-					{ ..model, trace: tr, segs: sg, trace_dur: du, trace_sel: sel, trace_day: entry.day }
+					TraceSwitched({ tr, sg, du, sel, day: entry.day })
 				}
 			}
 	}
-}
 
-Msg : [Shot(Try({}, Capture.ScreenshotError))]
+# Reload work is Cmd + Sqlite + text preparation — all of it task-legal and
+# none of it update!-legal (the platform panics on Cmd there, by design).
+# update! only ever spawns; results come back through these messages.
+Msg : [
+	Shot(Try({}, Capture.ScreenshotError)),
+	Reloaded(Ui.Model),
+	ReloadFailed,
+	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, sel : U64, day : Str }),
+	TraceSwitchFailed,
+]
 
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
-update! = |model, program_input| {
+update! = |model0, program_input| {
 	d = program_input.devices
+	# task answers land as messages; fold them in before this frame's input.
+	# A finished reload keeps the UI state the user has moved since spawning.
+	model = List.fold(program_input.messages, model0, |acc, msg|
+		match msg {
+			Shot(_) => acc
+			ReloadFailed => acc
+			TraceSwitchFailed => acc
+			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_in: acc.mouse_in }
+			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day }
+		})
 	if d.key_pressed(KeyEscape) {
 		Err(Exit(0))
 	} else {
+		m0 = d.mouse.position()
+		# the range chips are buttons: a left click inside one selects it. Chip
+		# geometry mirrors Board's row (x 560 + i*54, y 64, 46x22).
+		clicked_chip =
+			if model.view == 0 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0 {
+				if m0.x >= 560.0 and m0.x <= 606.0 (30.U64)
+				else if m0.x >= 614.0 and m0.x <= 660.0 (60.U64)
+				else if m0.x >= 668.0 and m0.x <= 714.0 (90.U64)
+				else 0.U64
+			} else 0.U64
 		# 1/2/3 answer to whichever view is showing: the form board's range, or
 		# the curve's window — never both at once
 		range =
-			if model.view == 1 model.range
+			if clicked_chip > 0 clicked_chip
+			else if model.view == 1 model.range
 			else if d.key_pressed(Key1) 30.U64
 			else if d.key_pressed(Key2) 60.U64
 			else if d.key_pressed(Key3) 90.U64
@@ -245,7 +308,7 @@ update! = |model, program_input| {
 			else if d.key_pressed(KeyLeft) (if model.cursor < 0 0 else model.cursor + 1)
 			else if d.key_pressed(KeyRight) (if model.cursor <= 0 (-1) else model.cursor - 1)
 			else model.cursor
-		m = d.mouse.position()
+		m = m0
 		# S writes a PNG of the CURRENT view into ./captures — #372's "session
 		# graphic for a training log". Spawned rather than called inline: a
 		# screenshot waits for the end of a frame, and update! is not one.
@@ -263,32 +326,46 @@ update! = |model, program_input| {
 			else if d.key_pressed(KeyLeftBracket) (if model.trace_sel + 1 < List.len(model.trace_ids) (model.trace_sel + 1) else model.trace_sel)
 			else if d.key_pressed(KeyRightBracket) (if model.trace_sel > 0 (model.trace_sel - 1) else model.trace_sel)
 			else model.trace_sel
-		if want_sel != model.trace_sel {
-			Ok(switch_trace!(model, want_sel))
-		} else if want_days != model.curve_days {
-			mouse_now2 = m.y > (if view == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b
-			match load_model!(model.font, want_days) {
-				Ok(fresh) => Ok({ ..fresh, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now2 })
-				Err(_) => Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now2 })
-			}
-		} else if d.key_pressed(KeyR) {
-			# rebuild from the database, keep what the user was looking at;
-			# a failed rebuild keeps the window it had rather than taking it down.
-			# Deliberately SYNCHRONOUS inside update!: the stall is bounded (the
-			# queries are ms-scale, the fit shell-out the long pole) and follows
-			# an explicit keypress — while a spawned rebuild would create Text
-			# resources off the frame path, which this platform does not promise
-			# to survive. Screenshots spawn because they must wait for frame end;
-			# a reload has no such constraint.
-			# both arms carry the frame's own input — reload swaps only the data
-			mouse_now = m.y > (if view == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b
-			match load_model!(model.font, model.curve_days) {
-				Ok(fresh) => Ok({ ..fresh, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now })
-				Err(_) => Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now })
-			}
-		} else {
-			Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: m.y > (if view == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
-		}
+		# clicking a table row jumps to that day's crosshair on the form board
+		row_hit =
+			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and m.x <= 940.0 and m.y >= 134.0 {
+				total = List.len(model.data)
+				max_back = if total > 14 (total - 14) else 0.U64
+				back = if model.cursor < 0 (0.U64) else match I64.to_u64_try(model.cursor) {
+					Ok(c) => if c > max_back max_back else c
+					Err(_) => 0.U64
+				}
+				kept = total - back
+				rowcount = if kept > 14 (14.U64) else kept
+				ri = match F32.round_to_u64_try((m.y - 134.0) / 24.0) {
+					Ok(r) => r
+					Err(_) => 99
+				}
+				if ri < rowcount and total > 0 {
+					dayidx = kept - rowcount + ri
+					match U64.to_i64_try(total - 1 - dayidx) {
+						Ok(cb) => { hit: Bool.True, cb }
+						Err(_) => { hit: Bool.False, cb: -1 }
+					}
+				} else { hit: Bool.False, cb: -1 }
+			} else { hit: Bool.False, cb: -1 }
+		view2 = if row_hit.hit 0 else view
+		cursor2 = if row_hit.hit row_hit.cb else cursor
+		# reloads and trace switches SPAWN — Cmd panics in update!, and the
+		# task lane is where Sqlite and text preparation park legally
+		_ = if want_sel != model.trace_sel {
+			home2 = model.home
+			ids2 = model.trace_ids
+			Task.spawn!(program_input, || trace_task!(home2, ids2, want_sel))
+		} else {}
+		_ = if want_days != model.curve_days or d.key_pressed(KeyR) {
+			f2 = model.font
+			Task.spawn!(program_input, || match load_model!(f2, want_days) {
+				Ok(m2) => Reloaded(m2)
+				Err(_) => ReloadFailed
+			})
+		} else {}
+		Ok({ ..model, range, view: view2, cursor: cursor2, curve_days: want_days, trace_sel: want_sel, mouse_x: m.x, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
 	}
 }
 
@@ -300,9 +377,12 @@ render! = |model, frame| {
 	# Legend belongs to the FORM BOARD only: it draws in the same row the
 	# other views put their titles in, and overprinted them.
 	if model.view == 0 {
-		model.leg_fit.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: Theme.ctl_c, align: (Top, Left) })
-		model.leg_fat.draw!(frame, { pos: { x: 118.0, y: 70.0 }, color: Theme.atl_c, align: (Top, Left) })
-		model.leg_form.draw!(frame, { pos: { x: 206.0, y: 70.0 }, color: Theme.tsb_c, align: (Top, Left) })
+		# the artifact's legend: a 14x3 rounded swatch before each label
+		List.for_each!([{ x: 36.0, c: Theme.ctl_c }, { x: 128.0, c: Theme.atl_c }, { x: 226.0, c: Theme.tsb_c }], |sw|
+			frame.rounded_rectangle!({ x: sw.x, y: 77.0, width: 14.0, height: 3.0, radius: 1.5, segments: 4, style: Draw.filled(sw.c) }))
+		model.leg_fit.draw!(frame, { pos: { x: 56.0, y: 70.0 }, color: Theme.ctl_c, align: (Top, Left) })
+		model.leg_fat.draw!(frame, { pos: { x: 148.0, y: 70.0 }, color: Theme.atl_c, align: (Top, Left) })
+		model.leg_form.draw!(frame, { pos: { x: 246.0, y: 70.0 }, color: Theme.tsb_c, align: (Top, Left) })
 	} else {}
 	if model.view == 3 {
 		Table.draw!(model, frame)

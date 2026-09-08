@@ -42,7 +42,7 @@ cat > "$C/Info.plist" <<'PLIST'
   <key>CFBundleIdentifier</key><string>com.eschizoid.stride.formboard</string>
   <key>CFBundleVersion</key><string>1.0</string>
   <key>CFBundleExecutable</key><string>launcher</string>
-  <key>CFBundleIconFile</key><string>stride.icns</string>
+  <key>CFBundleIconFile</key><string>stride</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
@@ -59,6 +59,11 @@ done
 iconutil -c icns "$ICONSET" -o "$C/Resources/stride.icns"
 
 # a fresh bundle can be quarantined or stale-cached; clear both
+# the brand fonts live in ~/.stride/fonts for a bundle launch (cwd=$HOME,
+# no repo checkout in sight); missing files just mean the default font
+mkdir -p "$HOME/.stride/fonts"
+cp assets/fonts/*.ttf "$HOME/.stride/fonts/" 2>/dev/null || true
+
 xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 touch "$APP"
 echo "installed: $APP"

@@ -21,6 +21,8 @@ Theme :: [].{
 	bg = Color.from_hex_rgb(0x0b0b0e)
 	panel : Color.Rgba
 	panel = Color.from_hex_rgb(0x131318)
+	card : Color.Rgba
+	card = Color.from_hex_rgb(0x1b1b22)
 	ink_muted : Color.Rgba
 	ink_muted = Color.from_hex_rgb(0x8593a2)
 	ink_faint : Color.Rgba

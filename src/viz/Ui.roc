@@ -7,7 +7,7 @@ Ui :: [].{
 
 	Model : {
 		title : Text.Prepared,
-		subs : List({ p : Text.Prepared, r : U64 }),
+		subs : List({ p : Text.Prepared, r : U64, chip : Text.Prepared }),
 		leg_fit : Text.Prepared,
 		leg_fat : Text.Prepared,
 		leg_form : Text.Prepared,
@@ -34,6 +34,8 @@ Ui :: [].{
 		ev_tile_top : Text.Prepared,
 		ev_tile_sub : Text.Prepared,
 		zero_note : Text.Prepared,
+		ridden_found : Bool,
+		ridden_note : Text.Prepared,
 		curve_empty : Text.Prepared,
 		trace : List(F32),
 		segs : List(Db.Seg),
@@ -47,6 +49,8 @@ Ui :: [].{
 		cp_lbl : Text.Prepared,
 		data : List(Db.Point),
 		days : List(Str),
+		day_notes : List({ day : Str, note : Str }),
+		home : Str,
 		status : Text.Prepared,
 		has_error : Bool,
 		font : Text.Font,
