@@ -50,7 +50,7 @@ jobs:
 
       # One check covers the whole codebase: `roc check` follows every import, so
       # this type-checks main.roc plus all 16 modules against basic-cli 0.22 + http.
-      - name: Type-check (app + all modules)
+      - name: Type-check (main + all modules)
         shell: bash
         run: roc check src/main.roc
 
