@@ -365,11 +365,11 @@ Db :: [].{
 				})
 		}
 
-	# every event day - the grid rings the ones inside its historical window
-	# (the series ends at MAX(day), so future dates simply never match a cell)
+	# event days inside the heat window only - the grid spans at most 372 days
+	# back from MAX(day), so anything outside that range could never ring a cell
 	load_event_days! : Sqlite.Db => List(Str)
 	load_event_days! = |db|
-		match Sqlite.query!({ db, query: "SELECT DISTINCT CAST(event_date AS TEXT) AS d FROM events", bindings: [] }) {
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT DISTINCT CAST(event_date AS TEXT) AS d FROM events, anchor WHERE event_date >= date(today, '-372 days') AND event_date <= today", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
