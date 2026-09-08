@@ -3,6 +3,7 @@ import rr.Cmd
 
 Db :: [].{
 	CurvePt : { dur_s : I64, watts : F32 }
+	DayLine : { title : Str, stats : Str, extra : Str, zones : List(I64) }
 	Seg : { kind : Str, start_s : I64, dur_s : I64 }
 	Fit : { cp : F32, w_prime : F32, r2 : F32, points : F32, ok : Bool }
 
@@ -376,7 +377,6 @@ Db :: [].{
 		Ok({ title: "${nm} [${sp}]", stats, extra, zones: [z1, z2, z3, z4, z5] })
 	}
 
-	DayLine : { title : Str, stats : Str, extra : Str, zones : List(I64) }
 	load_day_detail! : Sqlite.Db, Str => List(DayLine)
 	load_day_detail! = |db, day|
 		match Sqlite.query!({ db, query: "SELECT CAST(a.name AS TEXT) AS name, CAST(a.sport_type AS TEXT) AS sport, CAST(COALESCE(a.moving_time, 0) AS INTEGER) AS secs, CAST(ROUND(COALESCE(a.distance, 0) / 1000.0, 1) AS TEXT) AS km, CAST(ROUND(COALESCE(m.tss, 0)) AS INTEGER) AS tss, CAST(ROUND(COALESCE(m.normalized_power, 0)) AS INTEGER) AS np, CAST(ROUND(COALESCE(m.intensity_factor, 0) * 100) AS INTEGER) AS if100, CAST(ROUND(COALESCE(a.avg_hr, 0)) AS INTEGER) AS hr, CAST(ROUND(COALESCE(r.rpe, 0), 1) AS TEXT) AS rpe, CAST(COALESCE(m.z1_s, 0) AS INTEGER) AS z1, CAST(COALESCE(m.z2_s, 0) AS INTEGER) AS z2, CAST(COALESCE(m.z3_s, 0) AS INTEGER) AS z3, CAST(COALESCE(m.z4_s, 0) AS INTEGER) AS z4, CAST(COALESCE(m.z5_s, 0) AS INTEGER) AS z5 FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id LEFT JOIN ratings r ON r.activity_id = a.id WHERE a.start_local >= :d AND a.start_local < date(:d, '+1 day') ORDER BY a.start_local", bindings: [{ name: ":d", value: String(day) }] }) {

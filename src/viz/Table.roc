@@ -69,7 +69,7 @@ Table :: [].{
 			} else {}
 		})
 		# the arrow cursor scrolls the window back through the whole series:
-		# cursor N shows the 14 days ending N days before the latest
+		# cursor N shows the fitted rows ending N days before the latest
 		total = List.len(model.data)
 		fit = rows_fit(win_h)
 		w = window_of(total, model.cursor, fit)

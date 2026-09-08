@@ -531,7 +531,11 @@ update! = |model0, program_input| {
 		over_chip = view2 == 0 and m.y >= 64.0 and m.y <= 86.0 and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0))
 		row_count = Table.window_of(List.len(model.data), cursor2, Table.rows_fit(win.h)).rows
 		over_row = view2 == 3 and m.x >= 36.0 and (if detail_day2 != "" (m.x < Table.panel_edge(win.w)) else m.x < win.w - 40.0) and m.y >= 134.0 and m.y < 134.0 + U64.to_f32(row_count) * 24.0
-		Mouse.set_cursor!(if over_chip or over_row PointingHand else Default)
+		over_nav = m.y >= 30.0 and m.y <= 54.0 and (List.fold(List.map_with_index(model.nav, |nv3, vi3| { nv3, vi3 }), Bool.False, |acc, x| {
+			nx3 = win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.vi3) * 76.0
+			if m.x >= nx3 and m.x <= nx3 + 68.0 Bool.True else acc
+		}))
+		Mouse.set_cursor!(if over_chip or over_row or over_nav PointingHand else Default)
 		# a view switch stamps this frame; render fades the new view in from it
 		view_anim = if view != model.view model.tick + 1 else model.view_anim
 		tick = model.tick + 1
