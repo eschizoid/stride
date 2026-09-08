@@ -199,7 +199,7 @@ load_model! = |font, curve_days| {
 			curve_hint: mk!("1/2/3  window 30/60/90d      TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
 			trace_hint: mk!("[ / ]  older / newer session      TAB  data table      R  reload      S  screenshot      ESC quit", 13)?,
 			table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      ESC quit", 13)?,
-			table_title: mk!("data table - last 14 days", 15)?,
+			table_title: mk!("data table", 15)?,
 			table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
 			kpis: [
 				{ v: mkb!(Db.fmt1(loaded.s.last.c), 27)?, cap: mk!("fitness - 42-day load avg", 11)?, sel: 0.U8 },
@@ -231,6 +231,13 @@ load_model! = |font, curve_days| {
 			bus_note: loaded.bn,
 			plan_title: mk!("next 7 days - plan and progress", 15)?,
 			plan_hint: mk!("TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
+			nav: [
+				{ p: mk!("form", 13)?, v: 0.U8 },
+				{ p: mk!("curve", 13)?, v: 1.U8 },
+				{ p: mk!("trace", 13)?, v: 2.U8 },
+				{ p: mk!("table", 13)?, v: 3.U8 },
+				{ p: mk!("plan", 13)?, v: 4.U8 },
+			],
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
 			font: mono,
@@ -274,9 +281,9 @@ trace_task! = |home, ids, sel|
 # One day's story, fetched when a table row is clicked
 detail_task! : Str, Str => Msg
 detail_task! = |home, day|
-	if home == "" DayDetail({ day, lines: [{ title: "no database path", stats: "" }] })
+	if home == "" DayDetail({ day, lines: [{ title: "no database path", stats: "", extra: "", zones: [] }] })
 	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
-		Err(_) => DayDetail({ day, lines: [{ title: "cannot open the database", stats: "" }] })
+		Err(_) => DayDetail({ day, lines: [{ title: "cannot open the database", stats: "", extra: "", zones: [] }] })
 		Ok(db) => DayDetail({ day, lines: Db.load_day_detail!(db, day) })
 	}
 
@@ -325,7 +332,7 @@ Msg : [
 	DirectiveNone,
 	FocusWritten,
 	FocusWriteFailed,
-	DayDetail({ day : Str, lines : List({ title : Str, stats : Str }) }),
+	DayDetail({ day : Str, lines : List(Db.DayLine) }),
 ]
 
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
@@ -366,7 +373,19 @@ update! = |model0, program_input| {
 		# the range chips are buttons: a left click inside one selects it. Chip
 		# geometry mirrors Board's row exactly - right-anchored at
 		# win.w - 420 + i*54, y 64, each 46x22 - and must move with it.
-		view_input = if d.key_pressed(KeyTab) (if model.view == 4 0 else model.view + 1) else model.view
+		# nav clicks mirror the render geometry exactly (right-anchored pills)
+		nav_click =
+			if Mouse.button_pressed(d.mouse, Left) and m0.y >= 30.0 and m0.y <= 54.0 {
+				nav_n = List.len(model.nav)
+				List.fold(List.map_with_index(model.nav, |nv2, vi| { nv2, vi }), -1, |acc, x| {
+					nx2 = win.w - 36.0 - U64.to_f32(nav_n - x.vi) * 76.0
+					if m0.x >= nx2 and m0.x <= nx2 + 68.0 (U8.to_i64(x.nv2.v)) else acc
+				})
+			} else -1
+		view_input =
+			if nav_click >= 0 (match I64.to_u8_try(nav_click) { Ok(v9) => v9
+				Err(_) => model.view })
+			else if d.key_pressed(KeyTab) (if model.view == 4 0 else model.view + 1) else model.view
 		view = if directive.has_d and directive.view >= 0 and directive.view <= 4 (match I64.to_u8_try(directive.view) { Ok(v8) => v8
 			Err(_) => view_input }) else view_input
 		# chips hit-test against the frame-true view render will draw
@@ -442,9 +461,9 @@ update! = |model0, program_input| {
 		# so click and hover hit-tests share it
 		cursor_pre = if cursor_dir >= 0 cursor_dir else cursor
 		row_hit =
-			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and (if model.detail_day != "" (m.x < win.w / 2.0) else m.x < win.w - 40.0) and m.y >= 134.0 {
+			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and (if model.detail_day != "" (m.x < Table.panel_edge(win.w)) else m.x < win.w - 40.0) and m.y >= 134.0 {
 				total = List.len(model.data)
-				w = Table.window_of(total, cursor_pre)
+				w = Table.window_of(total, cursor_pre, Table.rows_fit(win.h))
 				kept = w.kept
 				rowcount = w.rows
 				# floored, not rounded: rounding flips to the NEXT row past a
@@ -510,9 +529,13 @@ update! = |model0, program_input| {
 		# per-chip, not one wide band: the 8px gaps between chips are not
 		# clickable and must not claim the pointer
 		over_chip = view2 == 0 and m.y >= 64.0 and m.y <= 86.0 and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0))
-		row_count = Table.window_of(List.len(model.data), cursor2).rows
-		over_row = view2 == 3 and m.x >= 36.0 and (if detail_day2 != "" (m.x < win.w / 2.0) else m.x < win.w - 40.0) and m.y >= 134.0 and m.y < 134.0 + U64.to_f32(row_count) * 24.0
-		Mouse.set_cursor!(if over_chip or over_row PointingHand else Default)
+		row_count = Table.window_of(List.len(model.data), cursor2, Table.rows_fit(win.h)).rows
+		over_row = view2 == 3 and m.x >= 36.0 and (if detail_day2 != "" (m.x < Table.panel_edge(win.w)) else m.x < win.w - 40.0) and m.y >= 134.0 and m.y < 134.0 + U64.to_f32(row_count) * 24.0
+		over_nav = m.y >= 30.0 and m.y <= 54.0 and (List.fold(List.map_with_index(model.nav, |nv3, vi3| { nv3, vi3 }), Bool.False, |acc, x| {
+			nx3 = win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.vi3) * 76.0
+			if m.x >= nx3 and m.x <= nx3 + 68.0 Bool.True else acc
+		}))
+		Mouse.set_cursor!(if over_chip or over_row or over_nav PointingHand else Default)
 		# a view switch stamps this frame; render fades the new view in from it
 		view_anim = if view != model.view model.tick + 1 else model.view_anim
 		tick = model.tick + 1
@@ -571,6 +594,16 @@ render! = |model, frame| {
 	frame.rectangle_gradient_v!({ x: 16.0, y: 16.0, width: model.win.w - 32.0, height: (model.win.h - 32.0) * 0.4, color_top: Color.with_alpha(Color.from_hex_rgb(0x232332), 40), color_bottom: Color.with_alpha(Theme.panel, 0) })
 	frame.rectangle_gradient_v!({ x: 16.0, y: model.win.h - 96.0, width: model.win.w - 32.0, height: 80.0, color_top: Color.with_alpha(Theme.bg, 0), color_bottom: Color.with_alpha(Theme.bg, 90) })
 	model.title.draw!(frame, { pos: { x: 34.0, y: 30.0 }, color: Color.white, align: (Top, Left) })
+	# the nav: every view, visible and clickable, active one filled - TAB
+	# stays as the keyboard accelerator
+	List.for_each!(List.map_with_index(model.nav, |nv, ni| { nv, ni }), |x| {
+		nx = model.win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.ni) * 76.0
+		on2 = x.nv.v == model.view
+		hov2 = model.mouse_x >= nx and model.mouse_x <= nx + 68.0 and model.mouse_y >= 30.0 and model.mouse_y <= 54.0
+		style2 = if on2 (Draw.filled(Color.with_alpha(Theme.ctl_c, 60))) else if hov2 (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
+		frame.rounded_rectangle!({ x: nx, y: 30.0, width: 68.0, height: 24.0, radius: 7.0, segments: 6, style: style2 })
+		x.nv.p.draw!(frame, { pos: { x: nx + 34.0, y: 35.0 }, color: if on2 Color.white else Theme.ink_muted, align: (Top, Center) })
+	})
 	# Legend belongs to the FORM BOARD only: it draws in the same row the
 	# other views put their titles in, and overprinted them.
 	if model.view == 0 {

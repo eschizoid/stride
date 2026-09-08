@@ -23,7 +23,7 @@ with their one-line meanings, plus an event slot that counts down to the next
 event, says "ridden" for up to a week after one, and names the add command
 when none is planned. The subtitle always carries the as-of day, and the TSB
 zero rule is captioned "fresh above". The fourth TAB view is the artifact's
-data table: the last 14 days as numbers.
+data table, with as many rows as the window height holds.
 
 ## The plan view
 
@@ -40,10 +40,11 @@ everything else: a directive with view 4 opens it.
 | `1` / `2` / `3` | range 30 / 60 / 90 days (form board) |
 | `←` / `→` | walk the day cursor (form board; ← older, → newer, past newest turns it off) |
 | `R` | reload everything from the database without reopening |
+| nav pills (top right) | click any view directly; the active one is filled |
 | `TAB` | cycle views: form board / power curve / session trace / data table / plan |
 | `1` / `2` / `3` (curve view) | re-window the curve and CP fit to 30/60/90 days |
 | `[` / `]` (trace view) | older / newer structured session, last 12 |
-| `←` / `→` (table view) | scroll the 14-day window through the whole series |
+| `←` / `→` (table view) | scroll the window through the whole series (rows fill the window height) |
 | click a date (table view) | open that day's detail panel: sessions, minutes, km, TSS, NP |
 | window edges | drag to resize; every view reflows live (980x600 floor) |
 | `S` | save a PNG of the current view into `./captures` |
