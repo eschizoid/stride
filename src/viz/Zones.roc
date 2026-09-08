@@ -52,7 +52,7 @@ Zones :: [].{
 				lx + 44.0
 			})
 			# one pass: bar stack, easy-share dot, hover
-			_ = List.fold(List.map_with_index(model.zone_weeks, |w, i| { w, i }), {}, |_acc, x| {
+			List.for_each!(List.map_with_index(model.zone_weeks, |w, i| { w, i }), |x| {
 				cx = pad + (U64.to_f32(x.i) + 0.5) * slot
 				x0 = cx - bw / 2.0
 				tot = x.w.z1 + x.w.z2 + x.w.z3 + x.w.z4 + x.w.z5
@@ -87,7 +87,6 @@ Zones :: [].{
 					Text.from(tip, model.font).size(12).draw!(frame, { pos: { x: pad, y: 88.0 }, color: Color.white, align: (Top, Left) })
 					frame.rectangle!({ x: x0 - 3.0, y: bars_top, width: bw + 6.0, height: bars_h, style: Draw.filled(Color.with_alpha(Color.white, 14)) })
 				} else {}
-				{}
 			})
 			{}
 		}
