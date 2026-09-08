@@ -204,7 +204,7 @@ load_model! = |font, curve_days| {
 				Ok(x) => x.day
 				Err(_) => ""
 			},
-			curve_hint: mk!("1/2/3  window 30/60/90d      hover a rung for its story      TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
+			curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
 			trace_hint: mk!("[ / ]  session      shift+[ / shift+]  ghost      TAB  data table      R  reload      S  screenshot      ESC quit", 13)?,
 			table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      ESC quit", 13)?,
 			table_title: mk!("data table", 15)?,
