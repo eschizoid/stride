@@ -115,9 +115,9 @@ load_model! = |font, curve_days| {
 		# every immediate readout/table cell, mixed words included, so a data
 		# line never switches face mid-string. The platform default appears
 		# only when neither file can be found
-		head = brand_font!(home, "Quicksand-Medium.ttf", 32, font)
-		mono_big = brand_font!(home, "JetBrainsMono-Regular.ttf", 30, font)
-		mono = brand_font!(home, "JetBrainsMono-Regular.ttf", 16, font)
+		head = brand_font!(home, "Quicksand-Medium.ttf", 64, font)
+		mono_big = brand_font!(home, "JetBrainsMono-Regular.ttf", 60, font)
+		mono = brand_font!(home, "JetBrainsMono-Regular.ttf", 32, font)
 		mk! = |txt, sz| Text.from(txt, head).size(sz).prepare!()
 		mkm! = |txt, sz| Text.from(txt, mono).size(sz).prepare!()
 		mkb! = |txt, sz| Text.from(txt, mono_big).size(sz).prepare!()
@@ -445,6 +445,9 @@ update! = |model0, program_input| {
 				Err(_) => ReloadFailed
 			})
 		} else {}
+		over_chip = view2 == 0 and m.y >= 64.0 and m.y <= 86.0 and m.x >= win.w - 420.0 and m.x <= win.w - 266.0
+		over_row = view2 == 3 and m.x >= 36.0 and m.x <= win.w - 40.0 and m.y >= 134.0 and m.y <= 134.0 + 14.0 * 24.0
+		Mouse.set_cursor!(if over_chip or over_row PointingHand else Default)
 		tick = model.tick + 1
 		# no HOME means no database path means no bus — spawning would only
 		# manufacture failing tasks every tick, forever
