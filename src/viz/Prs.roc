@@ -52,7 +52,7 @@ Prs :: [].{
 			# day-ascending, so its last row carries MAX(day).
 			d_now = match List.last(model.heat) { Ok(hd) => day_num(hd.day)
 				Err(_) => d_hi }
-			# the anchor of "fresh": the newest record day in the book
+
 			px_of = |dy| x_lo + (day_num(dy) - d_lo) / span * (x_hi - x_lo)
 			# edge dates, so the axis means something
 			lo_day = List.fold(set_prs, "", |a, pr| if a == "" or day_num(pr.day) < day_num(a) (pr.day) else a)
@@ -67,7 +67,7 @@ Prs :: [].{
 					Text.from("-", model.font).size(12).draw!(frame, { pos: { x: x_hi + 14.0, y: cy - 7.0 }, color: ink_faint, align: (Top, Left) })
 				} else {
 					dx = px_of(x.pr.day)
-					# recency against the book's newest entry: within ~90d of it
+					# recency against the series clock (d_now): within ~90 days
 					# glows teal, within ~a year rides the brand blue, older fades
 					age = d_now - day_num(x.pr.day)
 					dc = if age <= 90.0 (Theme.tsb_c) else if age <= 365.0 (Theme.ctl_c) else ink_faint

@@ -81,7 +81,7 @@ Zones :: [].{
 					dy = po_top + (1.0 - share) * po_h
 					dc = if share >= 0.8 (Theme.tsb_c) else Theme.alarm_c
 					# the white halo marks these as MARKERS - the alarm red is the
-					# same hex as the z5 ramp step, and a bare dot read as z5 data
+					# same hex as the z5 ramp step, so a bare dot reads as z5 data
 					frame.circle!({ center: { x: cx, y: dy }, radius: 5.0, style: Draw.filled(Color.with_alpha(Color.white, 200)) })
 					frame.circle!({ center: { x: cx, y: dy }, radius: 3.5, style: Draw.filled(dc) })
 				} else {}
