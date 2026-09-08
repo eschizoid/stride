@@ -46,7 +46,7 @@ same tag.
 - No F64→F32 narrowing exists, so the SQL query CASTs to integer tenths and
   the app divides by 10 — the numeric boundary belongs to SQL.
 - No Env module on the platform; `HOME` is read by capturing `printenv` output
-  through `Cmd`, at `init!` only.
+  through `Cmd` — on every load, which means at launch and again on each `R`.
 - `has` is a reserved word; uppercase identifiers are types.
 
 ## Power-curve view (TAB)
