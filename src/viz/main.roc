@@ -487,7 +487,10 @@ update! = |model0, program_input| {
 		# S writes a PNG of the CURRENT view into ./captures — #372's "session
 		# graphic for a training log". Spawned rather than called inline: a
 		# screenshot waits for the end of a frame, and update! is not one.
-		# The name carries the view so three presses do not overwrite each other.
+		# The name carries the VIEW\'S OWN NAME (docs: "named for the view") -
+		# view 1 is the power view, so its captures are power.png/power.webm,
+		# one basename per view across both formats. img/power-curve.png in the
+		# docs is a committed illustration, not a capture.
 		_ = if d.key_pressed(KeyS) {
 			shot_name = if view == 0 ("form-board.png") else if view == 1 ("power.png") else if view == 2 ("session-trace.png") else if view == 3 ("data-table.png") else if view == 4 ("plan.png") else if view == 5 ("heat.png") else if view == 6 ("zones.png") else "ramp.png"
 			Task.spawn!(program_input, || Shot(Capture.screenshot!(shot_name)))

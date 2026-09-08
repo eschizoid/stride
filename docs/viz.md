@@ -222,6 +222,6 @@ shown as `3.0 bests`, and a CP asymptote described in a comment and never drawn.
 
 ![Form Board](img/form-board.png)
 
-![Power curve](img/power-curve.png)
+![Power view](img/power-curve.png)
 
 ![Session trace](img/session-trace.png)
