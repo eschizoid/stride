@@ -40,7 +40,9 @@ Curve :: [].{
 			# the watt grid: a faint rule and label every 100w, so the dots have
 			# absolute values without hovering. Steps come from the
 			# ceiling itself, so any scale gets its rules.
-			List.for_each!(List.map_with_index(List.repeat({}, 30), |_u, k| (U64.to_f32(k) + 1.0) * 100.0), |gw|
+			grid_n = match F32.round_to_u64_try(F32.div_floor_by(w_hi, 100.0)) { Ok(gn) => gn
+				Err(_) => 0.U64 }
+			List.for_each!(List.map_with_index(List.repeat({}, grid_n), |_u, k| (U64.to_f32(k) + 1.0) * 100.0), |gw|
 				if gw < w_hi {
 					frame.line!({ start: { x: pad_l, y: cy(gw) }, end: { x: win_w - pad_r, y: cy(gw) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 36), 1) })
 					Text.from(match F32.round_to_u64_try(gw) { Ok(gi) => U64.to_str(gi)
