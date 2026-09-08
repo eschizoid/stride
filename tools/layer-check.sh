@@ -46,6 +46,19 @@ rank_of() { case "$1" in core) echo 0 ;; io) echo 1 ;; analytics) echo 2 ;; app)
 
 fail=0
 
+# ── the gate scans two homes: src/*.roc and src/viz/*.roc. A module anywhere
+# else means the layout changed under the gate — fail loudly rather than let
+# an unscanned file ride along (subdir imports do not even compile on the
+# pinned nightlies, so such a file is at best dead and at worst the first
+# sign the foldering ticket has come due and this script must be taught).
+stray=$(find src -mindepth 2 -name '*.roc' -not -path 'src/viz/*')
+if [ -n "$stray" ]; then
+  echo "layer-check: .roc files outside the scanned homes:" >&2
+  printf '%s
+' "$stray" >&2
+  fail=1
+fi
+
 # ── engine: src/*.roc, dependency direction only ever points down ──
 for f in src/*.roc; do
   m=$(basename "$f" .roc)
