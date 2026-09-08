@@ -51,7 +51,9 @@ fail=0
 # an unscanned file ride along (subdir imports do not even compile on the
 # pinned nightlies, so such a file is at best dead and at worst the first
 # sign the foldering ticket has come due and this script must be taught).
-stray=$(find src -mindepth 2 -name '*.roc' -not -path 'src/viz/*')
+# exclude only DIRECT children of src/viz/ — a nested src/viz/sub/X.roc is
+# outside the scan too and must trip like any other stray
+stray=$(find src -mindepth 2 -name '*.roc' ! \( -path 'src/viz/*' ! -path 'src/viz/*/*' \))
 if [ -n "$stray" ]; then
   echo "layer-check: .roc files outside the scanned homes:" >&2
   echo "$stray" >&2
