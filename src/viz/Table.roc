@@ -9,6 +9,20 @@ Table :: [].{
 	# The artifact's accessibility table, native: the last 14 days as numbers.
 	# Cells draw as immediate text — 70 short strings a frame is nothing to
 	# raylib, and preparing them would double the Model for a static view.
+	# THE table-window math: one implementation, used by render, row clicks
+	# and hover alike, so hit-tests can never drift from what draws. cursor
+	# counts days back from the newest; a short series clamps to no scroll.
+	window_of : U64, I64 -> { back : U64, kept : U64, rows : U64 }
+	window_of = |total, cursor| {
+		max_back = if total > 14 (total - 14) else 0.U64
+		back = if cursor < 0 (0.U64) else match I64.to_u64_try(cursor) {
+			Ok(c) => if c > max_back max_back else c
+			Err(_) => 0.U64
+		}
+		kept = total - back
+		{ back, kept, rows: if kept > 14 (14.U64) else kept }
+	}
+
 	col_x : List(F32)
 	col_x = [36.0, 260.0, 380.0, 490.0, 590.0, 680.0]
 
@@ -27,14 +41,8 @@ Table :: [].{
 		# the arrow cursor scrolls the window back through the whole series:
 		# cursor N shows the 14 days ending N days before the latest
 		total = List.len(model.data)
-		# a series of 14 days or fewer has nowhere to scroll — max_back 0 keeps
-		# total - back from ever wrapping the unsigned subtraction
-		max_back = if total > 14 (total - 14) else 0.U64
-		back = if model.cursor < 0 (0.U64) else match I64.to_u64_try(model.cursor) {
-			Ok(c) => if c > max_back max_back else c
-			Err(_) => 0.U64
-		}
-		kept = total - back
+		w = window_of(total, model.cursor)
+		kept = w.kept
 		rows = List.take_last(List.take_first(model.data, kept), 14)
 		days = List.take_last(List.take_first(model.days, kept), 14)
 		# no rows, no arithmetic on them — the indicator only speaks over data

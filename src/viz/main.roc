@@ -425,13 +425,9 @@ update! = |model0, program_input| {
 		row_hit =
 			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and (if model.detail_day != "" (m.x < win.w / 2.0) else m.x <= win.w - 40.0) and m.y >= 134.0 {
 				total = List.len(model.data)
-				max_back = if total > 14 (total - 14) else 0.U64
-				back = if cursor_pre < 0 (0.U64) else match I64.to_u64_try(cursor_pre) {
-					Ok(c) => if c > max_back max_back else c
-					Err(_) => 0.U64
-				}
-				kept = total - back
-				rowcount = if kept > 14 (14.U64) else kept
+				w = Table.window_of(total, cursor_pre)
+				kept = w.kept
+				rowcount = w.rows
 				# floored, not rounded: rounding flips to the NEXT row past a
 				# row's midline and made lower-half clicks select the neighbor
 				ri = match F32.round_to_u64_try(F32.div_floor_by(m.y - 134.0, 24.0) + 0.1) {
@@ -492,13 +488,7 @@ update! = |model0, program_input| {
 			})
 		} else {}
 		over_chip = view2 == 0 and m.y >= 64.0 and m.y <= 86.0 and m.x >= win.w - 420.0 and m.x <= win.w - 266.0
-		row_total = List.len(model.data)
-		row_maxb = if row_total > 14 (row_total - 14) else 0.U64
-		row_back = if cursor2 < 0 (0.U64) else match I64.to_u64_try(cursor2) {
-			Ok(c) => if c > row_maxb row_maxb else c
-			Err(_) => 0.U64
-		}
-		row_count = if row_total - row_back > 14 (14.U64) else row_total - row_back
+		row_count = Table.window_of(List.len(model.data), cursor2).rows
 		over_row = view2 == 3 and m.x >= 36.0 and (if detail_day2 != "" (m.x < win.w / 2.0) else m.x <= win.w - 40.0) and m.y >= 134.0 and m.y <= 134.0 + U64.to_f32(row_count) * 24.0
 		Mouse.set_cursor!(if over_chip or over_row PointingHand else Default)
 		tick = model.tick + 1
