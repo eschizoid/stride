@@ -319,25 +319,32 @@ glow_frag = Str.join_with(
 
 build_glow! : { w : F32, h : F32 } => [Unbuilt, Unavailable({ gw : F32, gh : F32 }), Ready({ rt : Draw.RenderTexture, shader : Draw.Shader, rx : Draw.F32Uniform, ry : Draw.F32Uniform, gw : F32, gh : F32 })]
 build_glow! = |win|
-	match Draw.RenderTexture.load!({ width: (match F32.round_to_u64_try(win.w) { Ok(wu) => (match U64.to_i32_try(wu) { Ok(wi) => wi
-		Err(_) => 1280 })
-		Err(_) => 1280 }), height: (match F32.round_to_u64_try(win.h) { Ok(hu) => (match U64.to_i32_try(hu) { Ok(hi) => hi
-		Err(_) => 720 })
-		Err(_) => 720 }) }) {
-		Err(_) => Unavailable({ gw: win.w, gh: win.h })
-		Ok(rt) =>
-			match Draw.Shader.from_source!({ vertex_source: "", fragment_source: glow_frag }) {
-				Err(_) => Unavailable({ gw: win.w, gh: win.h })
-				Ok(shader) =>
-					match Draw.Shader.uniform_f32!(shader, "res_x") {
+	# a size that will not convert cleanly is a size we refuse to guess at -
+	# the pass exists only window-sized, so failure here degrades like any
+	# other refusal instead of allocating a wrong-sized target
+	match (F32.round_to_u64_try(win.w), F32.round_to_u64_try(win.h)) {
+		(Ok(wu), Ok(hu)) =>
+			match (U64.to_i32_try(wu), U64.to_i32_try(hu)) {
+				(Ok(wi), Ok(hi)) =>
+					match Draw.RenderTexture.load!({ width: wi, height: hi }) {
 						Err(_) => Unavailable({ gw: win.w, gh: win.h })
-						Ok(rx) =>
-							match Draw.Shader.uniform_f32!(shader, "res_y") {
+						Ok(rt) =>
+							match Draw.Shader.from_source!({ vertex_source: "", fragment_source: glow_frag }) {
 								Err(_) => Unavailable({ gw: win.w, gh: win.h })
-								Ok(ry) => Ready({ rt, shader, rx, ry, gw: win.w, gh: win.h })
+								Ok(shader) =>
+									match Draw.Shader.uniform_f32!(shader, "res_x") {
+										Err(_) => Unavailable({ gw: win.w, gh: win.h })
+										Ok(rx) =>
+											match Draw.Shader.uniform_f32!(shader, "res_y") {
+												Err(_) => Unavailable({ gw: win.w, gh: win.h })
+												Ok(ry) => Ready({ rt, shader, rx, ry, gw: win.w, gh: win.h })
+											}
+									}
 							}
 					}
+				_ => Unavailable({ gw: win.w, gh: win.h })
 			}
+		_ => Unavailable({ gw: win.w, gh: win.h })
 	}
 
 # Runs INSIDE a spawned task (Sqlite parks there legally): loads the ghost
