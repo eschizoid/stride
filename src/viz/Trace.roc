@@ -53,6 +53,15 @@ Trace :: [].{
 			ty = |w| pad_t + ph * (1.0 - w / w_hi)
 			x_min = pad_l
 			x_max = pad_l + pw
+			# clip a segment to the plot: fully outside skips, a straddler keeps
+			# its interpolated portion - ends clamp instead of vanishing
+			clip_seg! = |x0, y0, x1, y1, stk| {
+				if x1 <= x_min or x0 >= x_max or x1 <= x0 {} else {
+					t0 = if x0 < x_min ((x_min - x0) / (x1 - x0)) else 0.0
+					t1 = if x1 > x_max ((x_max - x0) / (x1 - x0)) else 1.0
+					frame.line!({ start: { x: x0 + (x1 - x0) * t0, y: y0 + (y1 - y0) * t0 }, end: { x: x0 + (x1 - x0) * t1, y: y0 + (y1 - y0) * t1 }, stroke: stk })
+				}
+			}
 			List.for_each!(model.segs, |sg| {
 				col = if sg.kind == "work" (Color.with_alpha(tsb_c, 52)) else if sg.kind == "recovery" (Color.with_alpha(ink_faint, 36)) else Color.with_alpha(ink_faint, 18)
 				# blocks clamp to the plot edges; one fully outside draws nothing
@@ -77,17 +86,13 @@ Trace :: [].{
 				# starting past the live duration are skipped, the one straddling
 				# it keeps its clamped end
 				List.for_each!(List.map_with_index(gsegs, |pr, i| { pr, i }), |x|
-					if model.ghost_dur * U64.to_f32(x.i) / U64.to_f32(gn) <= total_s and gx(x.i) >= x_min and gx(x.i + 1) <= x_max {
-						frame.line!({ start: { x: gx(x.i), y: ty(x.pr.a) }, end: { x: gx(x.i + 1), y: ty(x.pr.b) }, stroke: Draw.stroke(Color.with_alpha(Theme.atl_c, 120), 1.0) })
-					} else {})
+					clip_seg!(gx(x.i), ty(x.pr.a), gx(x.i + 1), ty(x.pr.b), Draw.stroke(Color.with_alpha(Theme.atl_c, 120), 1.0)))
 				{}
 			} else {}
 			tail = List.take_last(model.trace, List.len(model.trace) - 1)
 			segs2 = List.map2(model.trace, tail, |a, b| { a, b })
 			List.for_each!(List.map_with_index(segs2, |pr, i| { pr, i }), |x|
-				if tx(x.i) >= x_min and tx(x.i + 1) <= x_max {
-					frame.line!({ start: { x: tx(x.i), y: ty(x.pr.a) }, end: { x: tx(x.i + 1), y: ty(x.pr.b) }, stroke: Draw.stroke(ctl_c, 1.0) })
-				} else {})
+				clip_seg!(tx(x.i), ty(x.pr.a), tx(x.i + 1), ty(x.pr.b), Draw.stroke(ctl_c, 1.0)))
 			# the camera says where it is when it is anywhere but home
 			if model.trace_zoom > 1.01 {
 				zoom10 = match F32.round_to_u64_try(model.trace_zoom * 10.0) { Ok(z9) => z9
