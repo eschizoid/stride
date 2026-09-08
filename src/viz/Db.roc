@@ -366,7 +366,10 @@ Db :: [].{
 		z5 = r.i64("z5") ? |_| BadRow
 		mins = secs // 60
 		stats = if np > 0 "${I64.to_str(mins)}min  ${km}km  ${I64.to_str(tss)} tss  ${I64.to_str(np)}w np" else "${I64.to_str(mins)}min  ${km}km  ${I64.to_str(tss)} tss"
-		p1 = if if100 > 0 "IF 0.${I64.to_str(if100)}" else ""
+		# if100 is intensity_factor * 100 rounded: 98 -> "IF 0.98", 105 -> "IF 1.05"
+		if_frac = if100 % 100
+		if_pad = if if_frac < 10 "0${I64.to_str(if_frac)}" else I64.to_str(if_frac)
+		p1 = if if100 > 0 "IF ${I64.to_str(if100 // 100)}.${if_pad}" else ""
 		p2 = if hr > 0 "${I64.to_str(hr)} bpm avg" else ""
 		p3 = if rpe != "0.0" and rpe != "0" "rpe ${rpe}" else "unrated"
 		extra = Str.join_with(List.keep_if([p1, p2, p3], |s| s != ""), "   ")

@@ -12,6 +12,14 @@ Table :: [].{
 	# how many rows this window height holds: header at 134, 24px rows, and
 	# 70px reserved for the hint. Never fewer than 5, so a tiny window still
 	# shows something scrollable.
+	# where the open detail panel begins, minus breathing room - THE boundary
+	# every table element and every hit-test shares, at any window width
+	panel_edge : F32 -> F32
+	panel_edge = |win_w| {
+		pw2 = if win_w / 2.0 < 480.0 (win_w / 2.0 - 36.0) else 480.0
+		win_w - 36.0 - pw2 - 24.0
+	}
+
 	rows_fit : F32 -> U64
 	rows_fit = |win_h| {
 		avail = win_h - 134.0 - 70.0
@@ -47,7 +55,7 @@ Table :: [].{
 		ink_faint = Theme.ink_faint
 		# master-detail: with the panel open, the whole table lives left of it -
 		# no element draws underneath the card
-		edge = if model.detail_day != "" (win_w - 540.0) else win_w - 40.0
+		edge = if model.detail_day != "" (panel_edge(win_w)) else win_w - 40.0
 		model.table_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		List.for_each!(List.map_with_index(model.table_head, |h, i| { h, i }), |x| {
 			hx = match List.get(col_x, x.i) { Ok(v) => v
@@ -103,7 +111,7 @@ Table :: [].{
 		if model.detail_day != "" {
 			pw2 = if win_w / 2.0 < 480.0 (win_w / 2.0 - 36.0) else 480.0
 			px = win_w - 36.0 - pw2
-			# (edge above = px - 24, so the table ends before the card begins)
+			# (panel_edge = px - 24, so the table ends before this card begins)
 			ph2 = 78.0 + U64.to_f32(List.len(model.detail)) * 92.0
 			ph2c = if ph2 > win_h - 150.0 (win_h - 150.0) else ph2
 			frame.rounded_rectangle!({ x: px, y: 100.0, width: pw2, height: ph2c, radius: 10.0, segments: 8, style: Draw.filled(Theme.card) })
@@ -141,7 +149,7 @@ Table :: [].{
 			})
 			hidden = List.len(model.detail) - List.len(shown)
 			if hidden > 0 {
-				Text.from("+ ${U64.to_str(hidden)} more (enlarge the window)", model.font).size(11).draw!(frame, { pos: { x: px + 18.0, y: 148.0 + U64.to_f32(List.len(shown)) * 44.0 }, color: ink_faint, align: (Top, Left) })
+				Text.from("+ ${U64.to_str(hidden)} more (enlarge the window)", model.font).size(11).draw!(frame, { pos: { x: px + 18.0, y: 148.0 + U64.to_f32(List.len(shown)) * 92.0 }, color: ink_faint, align: (Top, Left) })
 			} else {}
 		} else {}
 		model.table_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
