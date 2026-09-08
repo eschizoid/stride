@@ -282,9 +282,10 @@ load_model! = |font, curve_days| {
 # a failed shot must not take the window down, and the file's absence is the
 # report. Was `[]` while nothing spawned.
 
-# Runs INSIDE a spawned task (Sqlite parks there legally): re-reads one
-# session's trace/segments/duration and reports back as a message. Any
-# failure keeps the session the window already had.
+# Runs INSIDE a spawned task (Sqlite parks there legally): loads the ghost
+# session's trace and duration (no segments - the ghost is a line, not a
+# block chart). The caller already cleared the drawn overlay when the
+# selection moved, so a failure leaves no ghost, never a stale one.
 ghost_task! : Str, List({ id : I64, day : Str }), I64 => Msg
 ghost_task! = |home, ids, gsel|
 	if home == "" GhostSwitchFailed
@@ -304,6 +305,9 @@ ghost_task! = |home, ids, gsel|
 		}
 	}
 
+# Same task lane, the live session: re-reads one session's trace, segments
+# and duration and reports back as a message. Any failure keeps the session
+# the window already had.
 trace_task! : Str, List({ id : I64, day : Str }), U64 => Msg
 trace_task! = |home, ids, sel|
 	if home == "" TraceSwitchFailed
