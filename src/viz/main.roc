@@ -16,6 +16,7 @@ import rr.Cmd
 import rr.Color
 import rr.Draw
 import rr.Files
+import rr.Mouse
 import rr.Sqlite
 import rr.Task
 import rr.Text
@@ -262,10 +263,21 @@ update! = |model, program_input| {
 	if d.key_pressed(KeyEscape) {
 		Err(Exit(0))
 	} else {
+		m0 = d.mouse.position()
+		# the range chips are buttons: a left click inside one selects it. Chip
+		# geometry mirrors Board's row (x 560 + i*54, y 64, 46x22).
+		clicked_chip =
+			if model.view == 0 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0 {
+				if m0.x >= 560.0 and m0.x <= 606.0 (30.U64)
+				else if m0.x >= 614.0 and m0.x <= 660.0 (60.U64)
+				else if m0.x >= 668.0 and m0.x <= 714.0 (90.U64)
+				else 0.U64
+			} else 0.U64
 		# 1/2/3 answer to whichever view is showing: the form board's range, or
 		# the curve's window — never both at once
 		range =
-			if model.view == 1 model.range
+			if clicked_chip > 0 clicked_chip
+			else if model.view == 1 model.range
 			else if d.key_pressed(Key1) 30.U64
 			else if d.key_pressed(Key2) 60.U64
 			else if d.key_pressed(Key3) 90.U64
@@ -281,7 +293,7 @@ update! = |model, program_input| {
 			else if d.key_pressed(KeyLeft) (if model.cursor < 0 0 else model.cursor + 1)
 			else if d.key_pressed(KeyRight) (if model.cursor <= 0 (-1) else model.cursor - 1)
 			else model.cursor
-		m = d.mouse.position()
+		m = m0
 		# S writes a PNG of the CURRENT view into ./captures — #372's "session
 		# graphic for a training log". Spawned rather than called inline: a
 		# screenshot waits for the end of a frame, and update! is not one.
