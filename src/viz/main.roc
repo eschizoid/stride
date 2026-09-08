@@ -167,8 +167,9 @@ update! = |model, program_input| {
 			else if d.key_pressed(Key3) 90.U64
 			else model.range
 		view = if d.key_pressed(KeyTab) (if model.view == 2 0 else model.view + 1) else model.view
-		# cursor counts days back from the latest (0 = today's column, -1 = off);
-		# LEFT walks older, RIGHT walks newer, and the board clamps to the window
+		# cursor counts days back from the series' latest day — the last ANALYZED
+		# day, not necessarily today (0 = that column, -1 = off); LEFT walks
+		# older, RIGHT walks newer, and the board clamps to the window
 		cursor =
 			if d.key_pressed(KeyLeft) (if model.cursor < 0 0 else model.cursor + 1)
 			else if d.key_pressed(KeyRight) (if model.cursor <= 0 (-1) else model.cursor - 1)
@@ -187,7 +188,8 @@ update! = |model, program_input| {
 			# a failed rebuild keeps the window it had rather than taking it down
 			match load_model!(model.font) {
 				Ok(fresh) => Ok({ ..fresh, range, view, cursor })
-				Err(_) => Ok(model)
+				# the frame's own input still applies — only the reload is dropped
+				Err(_) => Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: m.y > Theme.pad_t and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
 			}
 		} else {
 			Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: m.y > Theme.pad_t and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
