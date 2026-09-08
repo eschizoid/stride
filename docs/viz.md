@@ -68,6 +68,14 @@ The window is steerable and observable through two tables it maintains in the
 same database — no sockets, no protocol, just SQL:
 
 ```sql
+-- a coach writing before the window's first launch creates the table too
+-- (the window runs the same DDL; IF NOT EXISTS makes the race harmless):
+CREATE TABLE IF NOT EXISTS viz_directives (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT,
+  consumed INTEGER NOT NULL DEFAULT 0);
+
 -- steer: the window polls ~1/s, applies the newest unconsumed row, and
 -- consumes everything up to it. NULL fields mean "leave that alone".
 INSERT INTO viz_directives (view, range, cursor_day, trace_day)
@@ -75,7 +83,7 @@ VALUES (0, 30, '2026-09-02', NULL);
 -- view 0..3 (form/curve/trace/table), range 30|60|90,
 -- cursor_day parks the crosshair, trace_day picks the session
 
--- observe: one row, upserted after every input the human makes
+-- observe: one row, upserted when what the human sees changes (throttled ~2/s)
 SELECT view, range, cursor_day, trace_day, updated_at FROM viz_focus;
 ```
 

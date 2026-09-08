@@ -182,6 +182,9 @@ Db :: [].{
 	ensure_bus! : Sqlite.Db => {}
 	ensure_bus! = |db| {
 		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_directives (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT (datetime('now')), view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT, consumed INTEGER NOT NULL DEFAULT 0)", bindings: [] })
+		# the poll runs every second forever: a partial index keeps the
+		# pending-lookup flat no matter how much consumed history accrues
+		_ = Sqlite.execute!({ db, query: "CREATE INDEX IF NOT EXISTS viz_directives_pending ON viz_directives (id) WHERE consumed = 0", bindings: [] })
 		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_focus (id INTEGER PRIMARY KEY CHECK (id = 1), updated_at TEXT NOT NULL, view INTEGER NOT NULL, range INTEGER NOT NULL, cursor_day TEXT, trace_day TEXT)", bindings: [] })
 		{}
 	}
@@ -211,7 +214,7 @@ Db :: [].{
 						Err(_) => "" }
 					if id < 0 None
 					else {
-						_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET consumed = 1 WHERE id <= :id", bindings: [{ name: ":id", value: Integer(id) }] })
+						_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET consumed = 1 WHERE id <= :id AND consumed = 0", bindings: [{ name: ":id", value: Integer(id) }] })
 						Some({ id, view: v, range: rg, cursor_day: cd, trace_day: td })
 					}
 				}
