@@ -487,7 +487,7 @@ update! = |model0, program_input| {
 		# S writes a PNG of the CURRENT view into ./captures — #372's "session
 		# graphic for a training log". Spawned rather than called inline: a
 		# screenshot waits for the end of a frame, and update! is not one.
-		# The name carries the VIEW\'S OWN NAME (docs: "named for the view") -
+		# The name carries the VIEW'S OWN NAME (docs: "named for the view") -
 		# view 1 is the power view, so its captures are power.png/power.webm,
 		# one basename per view across both formats. img/power-curve.png in the
 		# docs is a committed illustration, not a capture.
