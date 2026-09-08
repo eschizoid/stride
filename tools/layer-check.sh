@@ -6,12 +6,22 @@
 # below it; core sits at the bottom. Renaming or adding a module without a
 # row here fails the run — silence is never a pass.
 set -euo pipefail
-# NOTE on set -e vs the import greps below: they feed while-loops through
-# process substitution, whose exit status set -e never sees — a module with
-# zero matching imports iterates zero times and the script continues. Verified
-# against bash directly and against this repo's zero-import modules. Every
-# IMPORTABLE module here is capitalized (app.roc is an entrypoint, imported
-# by nothing), so the [A-Z] matcher covers the complete import vocabulary.
+# Import scanning captures the pipeline status explicitly: grep exit 1 is the
+# normal no-imports state, anything above it is a scan that FAILED — and a
+# gate that could not read must not be green. Every IMPORTABLE module here is
+# capitalized (app.roc is an entrypoint, imported by nothing), so the [A-Z]
+# matcher covers the complete import vocabulary.
+
+# prints a file's local imports; dies if the scan itself breaks
+scan() {
+  local st=0 out
+  out=$(grep -oE '^import [A-Z][A-Za-z]*' "$1" | sed 's/import //') || st=$?
+  if [ "$st" -gt 1 ]; then
+    echo "layer-check: scanning $1 failed (exit $st) — refusing to pass blind" >&2
+    exit 1
+  fi
+  printf '%s\n' "$out"
+}
 cd "$(dirname "$0")/.."
 
 layer_of() {
@@ -43,7 +53,7 @@ for f in src/*.roc; do
     echo "layer-check: $m has no layer — add it to the table in tools/layer-check.sh (and ADR 0016 if it starts a new layer)" >&2
     fail=1; continue
   fi
-  while IFS= read -r dep; do
+  for dep in $(scan "$f"); do
     dl=$(layer_of "$dep")
     if [ "$dl" = UNKNOWN ]; then
       echo "layer-check: $m imports $dep, which has no layer row" >&2; fail=1; continue
@@ -52,19 +62,19 @@ for f in src/*.roc; do
       echo "layer-check: $m ($ml) imports $dep ($dl) — dependencies must point down the layers" >&2
       fail=1
     fi
-  done < <(grep -oE '^import [A-Z][A-Za-z]*' "$f" | sed 's/import //')
+  done
 done
 
 # ── viz: its own app, its own world — modules import only their siblings ──
 viz_members=$(ls src/viz/*.roc | xargs -n1 basename | sed 's/.roc$//')
 for f in src/viz/*.roc; do
   m=$(basename "$f" .roc)
-  while IFS= read -r dep; do
+  for dep in $(scan "$f"); do
     echo "$viz_members" | grep -qx "$dep" || {
       echo "layer-check: viz/$m imports $dep, which is not a viz module — the viz app reaches the engine through the database, never through imports (ADR 0015)" >&2
       fail=1
     }
-  done < <(grep -oE '^import [A-Z][A-Za-z]*' "$f" | sed 's/import //')
+  done
 done
 
 [ "$fail" = 0 ] && echo "layer-check: every import points down; viz stays behind the database"
