@@ -66,7 +66,7 @@ for f in src/*.roc; do
 done
 
 # ── viz: its own app, its own world — modules import only their siblings ──
-viz_members=$(ls src/viz/*.roc | xargs -n1 basename | sed 's/.roc$//')
+viz_members=$(ls src/viz/*.roc | xargs -n1 basename | sed 's/\.roc$//')
 for f in src/viz/*.roc; do
   m=$(basename "$f" .roc)
   for dep in $(scan "$f"); do
