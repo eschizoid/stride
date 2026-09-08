@@ -1,8 +1,8 @@
-## Stride Form Board — the viz suite's window: three TAB views (form board,
-## power-duration curve, session trace) over ~/.stride/db.sqlite, read at
+## Stride Form Board — the viz suite's window: four TAB views (form board,
+## power-duration curve, session trace, data table) over ~/.stride/db.sqlite, read at
 ## launch. The modules beside this file carry the parts: Theme (geometry +
 ## palette), Db (every loader and its types), Ui (the Model), and one module
-## per view (Board, Curve, Trace). This file owns the app contract: the
+## per view (Board, Curve, Trace, Table). This file owns the app contract: the
 ## platform pin, Model/Msg, init!, update!, and the view dispatch.
 ##
 ## NOTE the pin below: roc-ray's platform needs nightly-2026-08-23, not the
@@ -19,6 +19,7 @@ import rr.Sqlite
 import rr.Task
 import rr.Text
 import Board
+import Table
 import Curve
 import Db
 import Theme
@@ -57,7 +58,7 @@ load_model! = |font| {
 		}
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0 }
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" } }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				s = Db.load_series!(db)
@@ -68,9 +69,10 @@ load_model! = |font| {
 				sg = Db.load_segs!(db, tid)
 				du = Db.load_dur!(db, tid)
 				st = Db.load_stale!(db)
-				{ s, e, c, st, tr, sg, du }
+				rd = Db.load_ridden!(db)
+				{ s, e, c, st, tr, sg, du, rd }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0 }
+			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" } }
 		}
 		ev = Db.find_idx(loaded.s.days, loaded.e.day)
 		fit = Db.load_fit!({})
@@ -98,12 +100,26 @@ load_model! = |font| {
 				Ok({ p, sel: e.k })
 			},
 		)?
+		as_of = match List.last(loaded.s.days) {
+			Ok(ld) => ld
+			Err(_) => "no data"
+		}
+		# the event tile prefers the future; a race inside the last week still
+		# deserves its "ridden" moment; otherwise the slot says so
+		ev_tile =
+			if loaded.e.day != "" {
+				{ top: loaded.e.name, sub: if loaded.e.ahead == 0 ("today, ${loaded.e.day}") else "in ${I64.to_str(loaded.e.ahead)}d, ${loaded.e.day}" }
+			} else if loaded.rd.ago >= 0 and loaded.rd.ago <= 7 {
+				{ top: loaded.rd.name, sub: "ridden, ${I64.to_str(loaded.rd.ago)}d ago" }
+			} else {
+				{ top: "no event planned", sub: "stride event add <date> <name>" }
+			}
 		Ok({
 			title: mk!("Stride Form Board", 30)?,
 			subs: [
-				{ p: mk!("last 30 days, live from stride", 15)?, r: 30.U64 },
-				{ p: mk!("last 60 days, live from stride", 15)?, r: 60.U64 },
-				{ p: mk!("last 90 days, live from stride", 15)?, r: 90.U64 },
+				{ p: mk!("last 30 days, as of ${as_of}", 15)?, r: 30.U64 },
+				{ p: mk!("last 60 days, as of ${as_of}", 15)?, r: 60.U64 },
+				{ p: mk!("last 90 days, as of ${as_of}", 15)?, r: 90.U64 },
 			],
 			leg_fit: mk!("Fitness", 15)?,
 			leg_fat: mk!("Fatigue", 15)?,
@@ -113,9 +129,8 @@ load_model! = |font| {
 			ev_label: mk!(loaded.e.name, 13)?,
 			ev_found: ev.found,
 			ev_idx: ev.idx,
-			ev_ahead: loaded.e.ahead,
-			ev_warn: mk!(loaded.e.err, 13)?,
-			ev_warn_found: loaded.e.err != "",
+			ev_warn: mk!(if loaded.e.err != "" loaded.e.err else loaded.rd.err, 13)?,
+			ev_warn_found: loaded.e.err != "" or loaded.rd.err != "",
 			stale: mk!(
 				match List.last(loaded.s.days) {
 					Ok(ld) => "data as of ${ld} - analyze to refresh"
@@ -124,14 +139,24 @@ load_model! = |font| {
 				13,
 			)?,
 			stale_found: loaded.st > 0,
-			ev_far_label: mk!("${loaded.e.name}  ${I64.to_str(loaded.e.ahead)}d", 13)?,
 			view: 0,
 			curve: loaded.c,
 			curve_lbls: curve_lbls,
 			fit_lbl: mk!(fit_text, 14)?,
 			curve_title: mk!("power-duration curve - Ride, last 90 days", 15)?,
 			curve_hint: mk!("TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
-			trace_hint: mk!("TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
+			trace_hint: mk!("TAB  data table      R  reload      S  screenshot      ESC quit", 13)?,
+			table_hint: mk!("TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
+			table_title: mk!("data table - last 14 days", 15)?,
+			table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?],
+			kpis: [
+				{ v: mk!(Db.fmt1(loaded.s.last.c), 27)?, cap: mk!("fitness - 42-day load avg", 11)?, sel: 0.U8 },
+				{ v: mk!(Db.fmt1(loaded.s.last.a), 27)?, cap: mk!("fatigue - 7-day load avg", 11)?, sel: 1.U8 },
+				{ v: mk!(Db.fmt1(loaded.s.last.t), 27)?, cap: mk!("form - fitness minus fatigue", 11)?, sel: 2.U8 },
+			],
+			ev_tile_top: mk!(ev_tile.top, 14)?,
+			ev_tile_sub: mk!(ev_tile.sub, 11)?,
+			zero_note: mk!("fresh above", 11)?,
 			curve_empty: mk!("no rides in the last 90 days - the curve has nothing to draw", 16)?,
 			trace: loaded.tr,
 			segs: loaded.sg,
@@ -170,7 +195,7 @@ update! = |model, program_input| {
 			else if d.key_pressed(Key2) 60.U64
 			else if d.key_pressed(Key3) 90.U64
 			else model.range
-		view = if d.key_pressed(KeyTab) (if model.view == 2 0 else model.view + 1) else model.view
+		view = if d.key_pressed(KeyTab) (if model.view == 3 0 else model.view + 1) else model.view
 		# cursor counts days back from the series' latest day — the last ANALYZED
 		# day, not necessarily today (0 = that column, -1 = off); LEFT walks
 		# older, RIGHT walks newer, and the board clamps to the window
@@ -187,7 +212,7 @@ update! = |model, program_input| {
 		# screenshot waits for the end of a frame, and update! is not one.
 		# The name carries the view so three presses do not overwrite each other.
 		_ = if d.key_pressed(KeyS) {
-			shot_name = if view == 0 ("form-board.png") else if view == 1 ("power-curve.png") else "session-trace.png"
+			shot_name = if view == 0 ("form-board.png") else if view == 1 ("power-curve.png") else if view == 2 ("session-trace.png") else "data-table.png"
 			Task.spawn!(program_input, || Shot(Capture.screenshot!(shot_name)))
 		} else {}
 		if d.key_pressed(KeyR) {
@@ -200,13 +225,13 @@ update! = |model, program_input| {
 			# to survive. Screenshots spawn because they must wait for frame end;
 			# a reload has no such constraint.
 			# both arms carry the frame's own input — reload swaps only the data
-			mouse_now = m.y > Theme.pad_t and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b
+			mouse_now = m.y > (if view == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b
 			match load_model!(model.font) {
 				Ok(fresh) => Ok({ ..fresh, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now })
 				Err(_) => Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now })
 			}
 		} else {
-			Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: m.y > Theme.pad_t and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
+			Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: m.y > (if view == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
 		}
 	}
 }
@@ -223,7 +248,9 @@ render! = |model, frame| {
 		model.leg_fat.draw!(frame, { pos: { x: 118.0, y: 70.0 }, color: Theme.atl_c, align: (Top, Left) })
 		model.leg_form.draw!(frame, { pos: { x: 206.0, y: 70.0 }, color: Theme.tsb_c, align: (Top, Left) })
 	} else {}
-	if model.view == 2 {
+	if model.view == 3 {
+		Table.draw!(model, frame)
+	} else if model.view == 2 {
 		Trace.draw!(model, frame)
 	} else if model.view == 1 {
 		Curve.draw!(model, frame)
