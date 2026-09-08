@@ -65,17 +65,6 @@ means fitness is climbing faster than most bodies absorb; teal is a sane
 build, faint is coasting. Hovering a week reads back its TSS, end-of-week
 CTL and ramp. A directive with view 7 opens it.
 
-## The prs view
-
-The ninth stop is the record book, ride power only (erg watts live in the
-same columns and are a different sport): one row per duration rung (5s to
-60min),
-a dot where that best-ever landed on the calendar, the watts at the right.
-Recency does the talking - a record set within ~90 days of the newest one
-glows teal, within a year rides the brand blue, older fades to faint. The
-question it answers is "when did I last get faster". Hover a row for the
-date spelled out. A directive with view 8 opens it.
-
 ## Controls
 
 | key / gesture | effect |
@@ -84,7 +73,7 @@ date spelled out. A directive with view 8 opens it.
 | `←` / `→` | walk the day cursor (form board; ← older, → newer, past newest turns it off) |
 | `R` | reload everything from the database without reopening |
 | nav pills (top right) | click any view directly; the active one is filled |
-| `TAB` | cycle views: form board / power curve / session trace / data table / plan / heat / zones / ramp / prs |
+| `TAB` | cycle views: form board / power curve / session trace / data table / plan / heat / zones / ramp |
 | `1` / `2` / `3` (curve view) | re-window the curve and CP fit to 30/60/90 days |
 | `shift+[` / `shift+]` (trace view) | summon / walk / dismiss the ghost overlay (past newest = off) |
 | `[` / `]` (trace view) | older / newer structured session, last 12 |
@@ -136,7 +125,9 @@ CREATE TABLE IF NOT EXISTS viz_directives (
 -- consumes everything up to it. NULL fields mean "leave that alone".
 INSERT INTO viz_directives (view, range, cursor_day, trace_day, ghost_day)
 VALUES (0, 30, '2026-09-02', NULL, NULL);
--- view 0..8 (form/curve/trace/table/plan/heat/zones/ramp/prs). range 30|60|90 lands on the view the
+-- view 0..7 (form/power/trace/table/plan/heat/zones/ramp). A directive
+-- naming the retired view 8 is ignored (the record book merged into the
+-- power view at 1). range 30|60|90 lands on the view the
 -- directive lands on: named view if set, else the visible one — on the curve
 -- it re-windows the ladder+fit, on every other view it sets the form board's
 -- range.
@@ -169,10 +160,15 @@ only fire when what the human sees actually changed.
   through `Cmd` — on every load, which means at launch and again on each `R`.
 - `has` is a reserved word; uppercase identifiers are types.
 
-## Power-curve view (TAB)
+## The power view (TAB)
 
-A second screen: the power-duration ladder for the Ride family over the last 90
-days, as points, with the CP fit summarised in the header.
+A second screen, and the one that answers "where am I against my best":
+the window's power-duration ladder (blue) drawn over the all-time record
+envelope (grey), eight rungs from 5s to 60min. The gap at each rung is
+printed in watts right where it lives; a rung whose window best IS the
+record collapses to one teal dot marked "pr". Hovering a rung reads back
+the record, the day it was set, and the window's value. The CP fit stays
+in the header, its dashed line on the chart.
 
 The **points** come from the stored per-activity bests (`activity_metrics.best_*_w`),
 maxed over the window. `CAST(ROUND(...))` matters — a bare `CAST` truncates and

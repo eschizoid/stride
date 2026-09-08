@@ -23,7 +23,6 @@ import rr.Text
 import Board
 import Heat
 import Plan
-import Prs
 import Ramp
 import Zones
 import Table
@@ -197,7 +196,7 @@ load_model! = |font, curve_days| {
 			curve: loaded.c,
 			curve_lbls: curve_lbls,
 			fit_lbl: mk!(Db.ascii_safe(fit_text), 14)?,
-			curve_title: mk!("power-duration curve - Ride, last ${I64.to_str(curve_days)} days", 15)?,
+			curve_title: mk!("power - last ${I64.to_str(curve_days)} days against the record book", 15)?,
 			curve_days,
 			trace_ids: loaded.tids,
 			trace_sel: 0.U64,
@@ -205,7 +204,7 @@ load_model! = |font, curve_days| {
 				Ok(x) => x.day
 				Err(_) => ""
 			},
-			curve_hint: mk!("1/2/3  window 30/60/90d      TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
+			curve_hint: mk!("1/2/3  window 30/60/90d      hover a rung for its story      TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
 			trace_hint: mk!("[ / ]  session      shift+[ / shift+]  ghost      TAB  data table      R  reload      S  screenshot      ESC quit", 13)?,
 			table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      ESC quit", 13)?,
 			table_title: mk!("data table", 15)?,
@@ -247,10 +246,8 @@ load_model! = |font, curve_days| {
 			zone_weeks: loaded.zw,
 			ramp_weeks: loaded.rw,
 			prs: loaded.prs,
-			prs_title: mk!("the record book - when each best-ever landed", 15)?,
-			prs_hint: mk!("hover a row for the date      TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
 			ramp_title: mk!("the ramp - weekly load and how fast fitness is climbing", 15)?,
-			ramp_hint: mk!("hover a week to read it      TAB  prs      R  reload      S  screenshot      ESC quit", 13)?,
+			ramp_hint: mk!("hover a week to read it      TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
 			zones_title: mk!("time in zone - twelve weeks, and the 80/20 story", 15)?,
 			zones_hint: mk!("hover a week to read it      TAB  ramp      R  reload      S  screenshot      ESC quit", 13)?,
 			heat_title: mk!("training heat - one cell per day", 15)?,
@@ -266,7 +263,6 @@ load_model! = |font, curve_days| {
 				{ p: mk!("heat", 13)?, v: 5.U8 },
 				{ p: mk!("zones", 13)?, v: 6.U8 },
 				{ p: mk!("ramp", 13)?, v: 7.U8 },
-				{ p: mk!("prs", 13)?, v: 8.U8 },
 			],
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
@@ -444,8 +440,8 @@ update! = |model0, program_input| {
 		view_input =
 			if nav_click >= 0 (match I64.to_u8_try(nav_click) { Ok(v9) => v9
 				Err(_) => model.view })
-			else if d.key_pressed(KeyTab) (if model.view == 8 0 else model.view + 1) else model.view
-		view = if directive.has_d and directive.view >= 0 and directive.view <= 8 (match I64.to_u8_try(directive.view) { Ok(v8) => v8
+			else if d.key_pressed(KeyTab) (if model.view == 7 0 else model.view + 1) else model.view
+		view = if directive.has_d and directive.view >= 0 and directive.view <= 7 (match I64.to_u8_try(directive.view) { Ok(v8) => v8
 			Err(_) => view_input }) else view_input
 		# chips hit-test against the frame-true view render will draw
 		clicked_chip =
@@ -489,7 +485,7 @@ update! = |model0, program_input| {
 		# screenshot waits for the end of a frame, and update! is not one.
 		# The name carries the view so three presses do not overwrite each other.
 		_ = if d.key_pressed(KeyS) {
-			shot_name = if view == 0 ("form-board.png") else if view == 1 ("power-curve.png") else if view == 2 ("session-trace.png") else if view == 3 ("data-table.png") else if view == 4 ("plan.png") else if view == 5 ("heat.png") else if view == 6 ("zones.png") else if view == 7 ("ramp.png") else "prs.png"
+			shot_name = if view == 0 ("form-board.png") else if view == 1 ("power-curve.png") else if view == 2 ("session-trace.png") else if view == 3 ("data-table.png") else if view == 4 ("plan.png") else if view == 5 ("heat.png") else if view == 6 ("zones.png") else "ramp.png"
 			Task.spawn!(program_input, || Shot(Capture.screenshot!(shot_name)))
 		} else {}
 		# on the curve view, 1/2/3 re-window the curve AND its CP fit — a full
@@ -657,8 +653,7 @@ update! = |model0, program_input| {
 				4 => 4
 				5 => 5
 				6 => 6
-				7 => 7
-				_ => 8 },
+				_ => 7 },
 			# the curve view's window IS its range; the other views report the
 			# form board's
 			range:
@@ -709,9 +704,7 @@ render! = |model, frame| {
 		model.leg_form.draw!(frame, { pos: { x: 246.0, y: 70.0 }, color: Theme.tsb_c, align: (Top, Left) })
 	} else {}
 	drawn =
-		if model.view == 8 {
-			Prs.draw!(model, frame)
-		} else if model.view == 7 {
+		if model.view == 7 {
 			Ramp.draw!(model, frame)
 		} else if model.view == 6 {
 			Zones.draw!(model, frame)

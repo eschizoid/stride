@@ -152,7 +152,7 @@ Db :: [].{
 	# bare CAST truncates and would draw the whole ladder a watt low.
 	load_curve! : Sqlite.Db, I64 => List(CurvePt)
 	load_curve! = |db, days| {
-		q = "WITH w AS (SELECT m.* FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = 'Ride' AND a.start_local >= date('now', '-' || :d || ' days')) SELECT 5 AS d, CAST(ROUND(MAX(best_5s_w)) AS INTEGER) AS p FROM w UNION ALL SELECT 15, CAST(ROUND(MAX(best_15s_w)) AS INTEGER) FROM w UNION ALL SELECT 30, CAST(ROUND(MAX(best_30s_w)) AS INTEGER) FROM w UNION ALL SELECT 60, CAST(ROUND(MAX(best_60s_w)) AS INTEGER) FROM w UNION ALL SELECT 300, CAST(ROUND(MAX(best_300s_w)) AS INTEGER) FROM w UNION ALL SELECT 600, CAST(ROUND(MAX(best_600s_w)) AS INTEGER) FROM w UNION ALL SELECT 1200, CAST(ROUND(MAX(best_20min_w)) AS INTEGER) FROM w"
+		q = "WITH w AS (SELECT m.* FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = 'Ride' AND a.start_local >= date('now', '-' || :d || ' days')) SELECT 5 AS d, CAST(ROUND(MAX(best_5s_w)) AS INTEGER) AS p FROM w UNION ALL SELECT 15, CAST(ROUND(MAX(best_15s_w)) AS INTEGER) FROM w UNION ALL SELECT 30, CAST(ROUND(MAX(best_30s_w)) AS INTEGER) FROM w UNION ALL SELECT 60, CAST(ROUND(MAX(best_60s_w)) AS INTEGER) FROM w UNION ALL SELECT 300, CAST(ROUND(MAX(best_300s_w)) AS INTEGER) FROM w UNION ALL SELECT 600, CAST(ROUND(MAX(best_600s_w)) AS INTEGER) FROM w UNION ALL SELECT 1200, CAST(ROUND(MAX(best_20min_w)) AS INTEGER) FROM w UNION ALL SELECT 3600, CAST(ROUND(MAX(best_3600s_w)) AS INTEGER) FROM w"
 		match Sqlite.query!({ db, query: q, bindings: [{ name: ":d", value: Integer(days) }] }) {
 			Err(_) => []
 			Ok(rows) =>
@@ -344,7 +344,7 @@ Db :: [].{
 						Err(_) => -1 }
 					cd = match r.str("cd") { Ok(x) => x
 						Err(_) => "" }
-					vn = if v == 0 "form" else if v == 1 "curve" else if v == 2 "trace" else if v == 3 "table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else if v == 7 "ramp" else if v == 8 "prs" else ""
+					vn = if v == 0 "form" else if v == 1 "curve" else if v == 2 "trace" else if v == 3 "table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else if v == 7 "ramp" else ""
 					rgp = if rg > 0 "${I64.to_str(rg)}d" else ""
 					joined = Str.join_with(List.keep_if([vn, rgp], |s2| s2 != ""), " / ")
 					parts = if joined == "" "steer" else joined

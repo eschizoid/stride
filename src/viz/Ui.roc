@@ -87,8 +87,6 @@ Ui :: [].{
 		ramp_title : Text.Prepared,
 		ramp_hint : Text.Prepared,
 		prs : List(Db.PrRung),
-		prs_title : Text.Prepared,
-		prs_hint : Text.Prepared,
 		mouse_in : Bool,
 		cursor : I64,
 	}

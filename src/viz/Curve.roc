@@ -5,9 +5,12 @@ import Theme
 import Ui
 
 Curve :: [].{
-	# ── power-curve view (TAB) ──────────────────────────────────────────────
-	# Log-x, because the ladder spans 5s to 20min: on a linear axis the six
-	# short rungs collapse onto the left edge and the chart shows one point.
+	# ── the power view (TAB) ────────────────────────────────────────────────
+	# The window's curve drawn against the all-time record envelope, one
+	# chart: grey dots are the best EVER at each rung, blue dots are the best
+	# inside the chosen window, and the number between them is the gap. A
+	# rung whose window best IS the record collapses to one teal dot - a PR
+	# set recently enough to still be in the window.
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
 	draw! = |model, frame| {
 		win_w = model.win.w
@@ -22,24 +25,26 @@ Curve :: [].{
 		tsb_c = Theme.tsb_c
 		model.curve_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		model.fit_lbl.draw!(frame, { pos: { x: win_w - 40.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
-		if List.is_empty(model.curve) {
-			model.curve_empty.draw!(frame, { pos: { x: 36.0, y: 120.0 }, color: ink_muted, align: (Top, Left) })
-			model.curve_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
-			Ok({})
+		if List.is_empty(model.prs) {
+			Text.from("no ride power yet", model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 130.0 }, color: ink_muted, align: (Top, Left) })
 		} else {
 			pw = win_w - pad_l - pad_r
 			ph = win_h - pad_t - pad_b
-			w_hi = List.fold(model.curve, 1.0, |a, c| F32.max(a, c.watts)) * 1.08
-			# Rungs are evenly spaced by INDEX, not by duration: the ladder is a
-			# fixed 5s..20min set, and a linear time axis would pile the six short
-			# rungs onto the left edge. Index spacing keeps every rung readable and
-			# its label under it.
-			nlast = List.len(model.curve) - 1
+			# the record ladder is the master axis; the window's value joins by
+			# duration. Index spacing, not time: a linear axis piles the short
+			# rungs onto the left edge.
+			rungs = List.map_with_index(model.prs, |pr, i| {
+				now_w = List.fold(model.curve, 0.I64, |a, c| if c.dur_s == pr.secs (match F32.round_to_u64_try(c.watts) { Ok(cw) => (match U64.to_i64_try(cw) { Ok(ci) => ci
+					Err(_) => a })
+					Err(_) => a }) else a)
+				{ pr, now_w, i }
+			})
+			w_hi = List.fold(rungs, 1.0, |a, r| F32.max(a, F32.max(I64.to_f32(r.pr.w), I64.to_f32(r.now_w)))) * 1.08
+			nlast = List.len(rungs) - 1
 			cx = |i| if nlast == 0 (pad_l + pw / 2.0) else pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
 			cy = |w| pad_t + ph * (1.0 - w / w_hi)
-			# the watt grid: a faint rule and label every 100w, so the dots have
-			# absolute values without hovering. Steps come from the
-			# ceiling itself, so any scale gets its rules.
+			# the watt grid: a faint rule and label every 100w; steps come from
+			# the ceiling itself, so any scale gets its rules
 			grid_n = match F32.round_to_u64_try(F32.div_floor_by(w_hi, 100.0)) { Ok(gn) => gn
 				Err(_) => 0.U64 }
 			List.for_each!(List.map_with_index(List.repeat({}, grid_n), |_u, k| (U64.to_f32(k) + 1.0) * 100.0), |gw|
@@ -48,31 +53,53 @@ Curve :: [].{
 					Text.from(match F32.round_to_u64_try(gw) { Ok(gi) => U64.to_str(gi)
 						Err(_) => "" }, model.font).size(10).draw!(frame, { pos: { x: pad_l - 8.0, y: cy(gw) - 6.0 }, color: ink_faint, align: (Top, Right) })
 				} else {})
-			# CP as a horizontal line: the curve should flatten toward it, and a fit
-			# drawn far from the long rungs is visibly wrong — which is the whole
-			# reason #372 wanted this view rather than the table.
+			# CP from the window's fit, dashed - the blue curve should flatten
+			# toward it, and a fit far from the long rungs is visibly wrong
 			if model.fit_cp > 0.0 and model.fit_cp < w_hi {
 				cpy = cy(model.fit_cp)
 				List.for_each!(List.map_with_index(List.repeat({}, 60), |_u, k| k), |k| {
 					x0 = pad_l + U64.to_f32(k) * (pw / 60.0)
-					frame.line!({ start: { x: x0, y: cpy }, end: { x: x0 + pw / 120.0, y: cpy }, stroke: Draw.stroke(Color.with_alpha(tsb_c, 120), 1.0) })
+					frame.line!({ start: { x: x0, y: cpy }, end: { x: x0 + pw / 120.0, y: cpy }, stroke: Draw.stroke(Color.with_alpha(tsb_c, 120), 1) })
 				})
 				model.cp_lbl.draw!(frame, { pos: { x: pad_l + pw + 8.0, y: cpy }, color: tsb_c, align: (Middle, Left) })
 			} else {}
-			rungs = List.map_with_index(model.curve, |c, i| { c, i })
-			List.for_each!(rungs, |x|
-				match List.get(rungs, x.i + 1) {
-					Ok(nxt) => frame.line!({ start: { x: cx(x.i), y: cy(x.c.watts) }, end: { x: cx(nxt.i), y: cy(nxt.c.watts) }, stroke: Draw.stroke(Color.with_alpha(ctl_c, 150), 2) })
+			# record envelope first (it sits above), then the window curve
+			List.for_each!(rungs, |r|
+				match List.get(rungs, r.i + 1) {
+					Ok(nxt) => frame.line!({ start: { x: cx(r.i), y: cy(I64.to_f32(r.pr.w)) }, end: { x: cx(nxt.i), y: cy(I64.to_f32(nxt.pr.w)) }, stroke: Draw.stroke(Color.with_alpha(ink_muted, 90), 1) })
 					Err(_) => {}
 				})
-			List.for_each!(rungs, |x| {
-				frame.circle!({ center: { x: cx(x.i), y: cy(x.c.watts) }, radius: 4.0, style: Draw.filled(ctl_c) })
+			List.for_each!(rungs, |r|
+				match List.get(rungs, r.i + 1) {
+					Ok(nxt) => if r.now_w > 0 and nxt.now_w > 0 (frame.line!({ start: { x: cx(r.i), y: cy(I64.to_f32(r.now_w)) }, end: { x: cx(nxt.i), y: cy(I64.to_f32(nxt.now_w)) }, stroke: Draw.stroke(Color.with_alpha(ctl_c, 150), 2) })) else {}
+					Err(_) => {}
+				})
+			List.for_each!(rungs, |r| {
+				rec_y = cy(I64.to_f32(r.pr.w))
+				if r.now_w >= r.pr.w and r.now_w > 0 {
+					# the window best IS the record: one teal dot, the good news
+					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 5.0, style: Draw.filled(tsb_c) })
+					Text.from("pr", model.font).size(10).draw!(frame, { pos: { x: cx(r.i), y: rec_y - 20.0 }, color: tsb_c, align: (Top, Center) })
+				} else {
+					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 4.0, style: Draw.filled(Color.with_alpha(ink_muted, 160)) })
+					if r.now_w > 0 {
+						now_y = cy(I64.to_f32(r.now_w))
+						frame.circle!({ center: { x: cx(r.i), y: now_y }, radius: 4.0, style: Draw.filled(ctl_c) })
+						# the gap, said in watts right where it lives
+						Text.from("-${I64.to_str(r.pr.w - r.now_w)}", model.font).size(10).draw!(frame, { pos: { x: cx(r.i) + 10.0, y: (rec_y + now_y) / 2.0 - 6.0 }, color: Theme.alarm_c, align: (Top, Left) })
+					} else {}
+				}
+				Text.from(r.pr.rung, model.font).size(12).draw!(frame, { pos: { x: cx(r.i), y: pad_t + ph - 18.0 }, color: ink_faint, align: (Top, Center) })
+				# hover the rung's column: the full story under the title
+				half = if nlast == 0 (pw / 2.0) else pw / U64.to_f32(nlast) / 2.0
+				if model.mouse_x >= cx(r.i) - half and model.mouse_x < cx(r.i) + half and model.mouse_y >= pad_t and model.mouse_y <= pad_t + ph {
+					now_txt = if r.now_w > 0 ("   now ${I64.to_str(r.now_w)}w") else "   not ridden this window"
+					Text.from("${r.pr.rung}   best ${I64.to_str(r.pr.w)}w set ${r.pr.day}${now_txt}", model.font).size(12).draw!(frame, { pos: { x: 36.0, y: 92.0 }, color: Color.white, align: (Top, Left) })
+				} else {}
 			})
-			List.for_each!(List.map_with_index(model.curve_lbls, |l, i| { l, i }), |x| {
-				x.l.p.draw!(frame, { pos: { x: cx(x.i), y: pad_t + ph - 18.0 }, color: ink_faint, align: (Top, Center) })
-			})
-			model.curve_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
-			Ok({})
+			{}
 		}
+		model.curve_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
+		Ok({})
 	}
 }
