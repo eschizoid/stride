@@ -169,7 +169,7 @@ Plan :: [].{
                 \\       COALESCE(substitute_activity_id,0) AS substitute_activity_id,
                 \\       COALESCE(CAST((SELECT substr(a.start_local,1,10) FROM activities a WHERE a.id = planned_sessions.completed_activity_id) AS TEXT), '') AS done_date
                 \\FROM planned_sessions
-                \\WHERE (:all = 1 OR (COALESCE(target_date,'') >= :mon AND COALESCE(target_date,'') <= :sun AND id IN (SELECT id FROM plan_current)))
+                \\WHERE (:all = 1 OR (target_date >= :mon AND target_date <= :sun AND id IN (SELECT id FROM plan_current)))
                 \\ORDER BY target_date DESC, id DESC LIMIT :lim
             ,
             bindings: [{ name: ":all", value: Integer(scope_all) }, { name: ":lim", value: Integer(row_limit) }, { name: ":mon", value: String(Metrics.days_to_date_str(mon)) }, { name: ":sun", value: String(Metrics.days_to_date_str(mon + 6)) }],
