@@ -14,7 +14,8 @@ Table :: [].{
 
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
 	draw! = |model, frame| {
-		win_h = Theme.win_h
+		win_w = model.win.w
+		win_h = model.win.h
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
 		model.table_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
@@ -39,7 +40,7 @@ Table :: [].{
 		# no rows, no arithmetic on them — the indicator only speaks over data
 		if total > 0 {
 			pos_note = "days ${U64.to_str(if kept > 14 (kept - 13) else 1)}-${U64.to_str(kept)} of ${U64.to_str(total)}"
-			Text.from(pos_note, model.font).size(13).draw!(frame, { pos: { x: I32.to_f32(Theme.win_w) - 34.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
+			Text.from(pos_note, model.font).size(13).draw!(frame, { pos: { x: model.win.w - 34.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
 		} else {}
 		List.for_each!(List.map_with_index(rows, |r, i| { r, i }), |x| {
 			ry = 134.0 + U64.to_f32(x.i) * 24.0
@@ -49,7 +50,7 @@ Table :: [].{
 			short = if Str.count_utf8_bytes(note) > 30 (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(note), 28)), "..")) else note
 			cells = [day, Db.fmt_f(x.r.ctl), Db.fmt_f(x.r.atl), Db.fmt_f(x.r.tsb), Db.fmt_f(x.r.tss), short]
 			# the artifact's row separators
-			frame.line!({ start: { x: 36.0, y: ry + 19.0 }, end: { x: 940.0, y: ry + 19.0 }, stroke: Draw.stroke(Color.with_alpha(Color.white, 14), 1) })
+			frame.line!({ start: { x: 36.0, y: ry + 19.0 }, end: { x: win_w - 40.0, y: ry + 19.0 }, stroke: Draw.stroke(Color.with_alpha(Color.white, 14), 1) })
 			List.for_each!(List.map_with_index(cells, |c, j| { c, j }), |cell| {
 				cx = match List.get(col_x, cell.j) { Ok(v) => v
 					Err(_) => 36.0 }
@@ -57,7 +58,7 @@ Table :: [].{
 				Text.from(cell.c, model.font).size(13).draw!(frame, { pos: { x: cx, y: ry }, color: col, align: (Top, Left) })
 			})
 		})
-		model.table_hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
+		model.table_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 		Ok({})
 	}
 }

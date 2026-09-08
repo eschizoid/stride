@@ -11,8 +11,8 @@ Trace :: [].{
 	# show you that a "work" block started thirty seconds before the power did.
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
 	draw! = |model, frame| {
-		win_w = Theme.win_w
-		win_h = Theme.win_h
+		win_w = model.win.w
+		win_h = model.win.h
 		pad_l = Theme.pad_l
 		pad_r = Theme.pad_r
 		pad_t = Theme.pad_t
@@ -25,14 +25,14 @@ Trace :: [].{
 		# which session, and where in the picker it sits
 		if List.is_empty(model.trace_ids) {} else {
 			sel_note = "${model.trace_day}   (${U64.to_str(model.trace_sel + 1)} of ${U64.to_str(List.len(model.trace_ids))})"
-			Text.from(sel_note, model.font).size(13).draw!(frame, { pos: { x: I32.to_f32(Theme.win_w) - 34.0, y: 70.0 }, color: Color.white, align: (Top, Right) })
+			Text.from(sel_note, model.font).size(13).draw!(frame, { pos: { x: model.win.w - 34.0, y: 70.0 }, color: Color.white, align: (Top, Right) })
 		}
 		if List.is_empty(model.trace) {
-			model.trace_hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
+			model.trace_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 			Ok({})
 		} else {
-			pw = I32.to_f32(win_w) - pad_l - pad_r
-			ph = I32.to_f32(win_h) - pad_t - pad_b
+			pw = win_w - pad_l - pad_r
+			ph = win_h - pad_t - pad_b
 			w_hi = List.fold(model.trace, 1.0, |a, v| F32.max(a, v)) * 1.1
 			nlast = List.len(model.trace) - 1
 			# Segments carry SECONDS while the trace is downsampled samples, so
@@ -55,7 +55,7 @@ Trace :: [].{
 			segs2 = List.map2(model.trace, tail, |a, b| { a, b })
 			List.for_each!(List.map_with_index(segs2, |pr, i| { pr, i }), |x|
 				frame.line!({ start: { x: tx(x.i), y: ty(x.pr.a) }, end: { x: tx(x.i + 1), y: ty(x.pr.b) }, stroke: Draw.stroke(ctl_c, 1.0) }))
-			model.trace_hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
+			model.trace_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 			Ok({})
 		}
 	}

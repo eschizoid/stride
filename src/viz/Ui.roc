@@ -60,6 +60,8 @@ Ui :: [].{
 		empty : Text.Prepared,
 		range : U64,
 		mouse_x : F32,
+		mouse_y : F32,
+		win : { w : F32, h : F32 },
 		mouse_in : Bool,
 		cursor : I64,
 	}
