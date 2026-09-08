@@ -10,7 +10,7 @@ Table :: [].{
 	# Cells draw as immediate text — 70 short strings a frame is nothing to
 	# raylib, and preparing them would double the Model for a static view.
 	col_x : List(F32)
-	col_x = [36.0, 300.0, 430.0, 560.0, 690.0]
+	col_x = [36.0, 260.0, 380.0, 490.0, 590.0, 680.0]
 
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
 	draw! = |model, frame| {
@@ -45,11 +45,15 @@ Table :: [].{
 			ry = 134.0 + U64.to_f32(x.i) * 24.0
 			day = match List.get(days, x.i) { Ok(d) => d
 				Err(_) => "" }
-			cells = [day, Db.fmt_f(x.r.ctl), Db.fmt_f(x.r.atl), Db.fmt_f(x.r.tsb), Db.fmt_f(x.r.tss)]
+			note = Db.note_for(model.day_notes, day)
+			short = if Str.count_utf8_bytes(note) > 30 (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(note), 28)), "..")) else note
+			cells = [day, Db.fmt_f(x.r.ctl), Db.fmt_f(x.r.atl), Db.fmt_f(x.r.tsb), Db.fmt_f(x.r.tss), short]
+			# the artifact's row separators
+			frame.line!({ start: { x: 36.0, y: ry + 19.0 }, end: { x: 940.0, y: ry + 19.0 }, stroke: Draw.stroke(Color.with_alpha(Color.white, 14), 1) })
 			List.for_each!(List.map_with_index(cells, |c, j| { c, j }), |cell| {
 				cx = match List.get(col_x, cell.j) { Ok(v) => v
 					Err(_) => 36.0 }
-				col = if cell.j == 3 (Theme.tsb_c) else Color.white
+				col = if cell.j == 3 (Theme.tsb_c) else if cell.j == 5 (Theme.ink_muted) else Color.white
 				Text.from(cell.c, model.font).size(13).draw!(frame, { pos: { x: cx, y: ry }, color: col, align: (Top, Left) })
 			})
 		})

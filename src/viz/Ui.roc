@@ -49,6 +49,7 @@ Ui :: [].{
 		cp_lbl : Text.Prepared,
 		data : List(Db.Point),
 		days : List(Str),
+		day_notes : List({ day : Str, note : Str }),
 		status : Text.Prepared,
 		has_error : Bool,
 		font : Text.Font,

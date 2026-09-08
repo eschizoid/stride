@@ -98,6 +98,15 @@ Board :: [].{
 					frame.line!({ start: { x: pad_l, y: gy }, end: { x: I32.to_f32(win_w) - pad_r, y: gy }, stroke: Draw.stroke(Color.with_alpha(Color.white, 18), 1) })
 					yl.p.draw!(frame, { pos: { x: 30.0, y: gy - 8.0 }, color: ink_faint, align: (Top, Left) })
 				} else {})
+			# the artifact's x-axis: ~6 date labels under the plot
+			List.for_each!([0.U64, 1, 2, 3, 4, 5], |k| {
+				di = k * (n - 1) / 5
+				match List.get(List.take_last(model.days, take), di) {
+					Ok(dstr) => Text.from(match Str.drop_first_bytes(dstr, 5) { Ok(s2) => s2
+						Err(_) => dstr }, model.font).size(11).draw!(frame, { pos: { x: xf(di), y: pad_t + ph + 8.0 }, color: ink_faint, align: (Top, Center) })
+					Err(_) => {}
+				}
+			})
 			# dotted, as the artifact draws it: 4px dash, 6px gap
 			List.for_each!(List.map_with_index(List.repeat({}, 84), |_u, k| k), |k| {
 				dx = pad_l + U64.to_f32(k) * 10.0
@@ -198,7 +207,7 @@ Board :: [].{
 						tip_w = 168.0
 						tip_x = if hx + 14.0 + tip_w > I32.to_f32(win_w) - pad_r (hx - 14.0 - tip_w) else hx + 14.0
 						tip_y = pad_t + 8.0
-						frame.rounded_rectangle!({ x: tip_x, y: tip_y, width: tip_w, height: 108.0, radius: 6.0, segments: 6, style: Draw.filled(Theme.card) })
+						frame.rounded_rectangle!({ x: tip_x, y: tip_y, width: tip_w, height: 130.0, radius: 6.0, segments: 6, style: Draw.filled(Theme.card) })
 						Text.from(day, model.font).size(12).draw!(frame, { pos: { x: tip_x + 10.0, y: tip_y + 8.0 }, color: Color.white, align: (Top, Left) })
 						rows = [
 							{ lbl: "Fitness", v: Db.fmt_f(hp.ctl), c: ctl_c },
@@ -211,6 +220,10 @@ Board :: [].{
 							Text.from(x.r.lbl, model.font).size(12).draw!(frame, { pos: { x: tip_x + 10.0, y: ry }, color: x.r.c, align: (Top, Left) })
 							Text.from(x.r.v, model.font).size(12).draw!(frame, { pos: { x: tip_x + tip_w - 10.0, y: ry }, color: Color.white, align: (Top, Right) })
 						})
+						# what was actually done that day — truncated to the card
+						note = Db.note_for(model.day_notes, day)
+						short = if Str.count_utf8_bytes(note) > 24 (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(note), 22)), "..")) else note
+						Text.from(short, model.font).size(11).draw!(frame, { pos: { x: tip_x + 10.0, y: tip_y + 107.0 }, color: ink_faint, align: (Top, Left) })
 					}
 					Err(_) => {}
 				}
