@@ -652,7 +652,7 @@ update! = |model0, program_input| {
 					Err(_) => 90 },
 			cursor_day: cur_day,
 			trace_day: model.trace_day,
-			ghost_day: model.ghost_day,
+			ghost_day: ghost_day2,
 		}
 		last_focus =
 			if focus_now != model.last_focus and tick % 30 == 0 and model.home != "" {
