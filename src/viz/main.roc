@@ -83,7 +83,7 @@ load_model! = |font, curve_days| {
 		}
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, bn: "" }
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "" }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				s = Db.load_series!(db)
@@ -100,12 +100,13 @@ load_model! = |font, curve_days| {
 				st = Db.load_stale!(db)
 				pl = Db.load_plan!(db)
 				wk = Db.load_week_tss!(db)
+				pw = Db.load_plan_week!(db)
 				bn = Db.load_bus_note!(db)
 				rd = Db.load_ridden!(db)
 				nts = Db.load_day_notes!(db)
-				{ s, e, c, st, tr, sg, du, rd, tids, nts, pl, wk, bn }
+				{ s, e, c, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, bn: "" }
+			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "" }
 		}
 		ev = Db.find_idx(loaded.s.days, loaded.e.day)
 		fit = Db.load_fit!(curve_days)
@@ -226,8 +227,9 @@ load_model! = |font, curve_days| {
 			day_notes: loaded.nts,
 			plan: loaded.pl,
 			week_tss: loaded.wk,
+			plan_week: loaded.pw,
 			bus_note: loaded.bn,
-			plan_title: mk!("the week - plan and progress", 15)?,
+			plan_title: mk!("next 7 days - plan and progress", 15)?,
 			plan_hint: mk!("TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",

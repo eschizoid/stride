@@ -249,7 +249,26 @@ Db :: [].{
 		}
 	}
 
-	# the prescribed week around the series' own today, completion included
+	# the Monday-aligned CURRENT week's completion count - the progress strip's
+	# numerator and denominator (the display ladder below is forward-looking
+	# and cannot count done sessions meaningfully)
+	load_plan_week! : Sqlite.Db => { done : I64, total : I64 }
+	load_plan_week! = |db|
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT date(COALESCE(MAX(day), date('now','localtime')), '-6 days', 'weekday 1') AS mon FROM daily_load) SELECT CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER) AS dn, COUNT(*) AS tot FROM planned_sessions, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days')", bindings: [] }) {
+			Err(_) => { done: 0, total: 0 }
+			Ok(rows) => match List.first(rows) {
+				Err(_) => { done: 0, total: 0 }
+				Ok(r) => {
+					dn = match r.i64("dn") { Ok(x) => x
+						Err(_) => 0 }
+					tot = match r.i64("tot") { Ok(x) => x
+						Err(_) => 0 }
+					{ done: dn, total: tot }
+				}
+			}
+		}
+
+	# the prescribed days AHEAD of the series' own today, completion included
 	PlanRow : { day : Str, typ : Str, detail : Str, rationale : Str, done : Bool, skipped : Bool, today : Bool }
 	load_plan! : Sqlite.Db => List(PlanRow)
 	load_plan! = |db|
@@ -292,7 +311,7 @@ Db :: [].{
 			}
 		}
 
-	# the coach corner: the newest directive (consumed or not) and its age
+	# the coach corner: the newest directive (consumed or not), timestamped
 	load_bus_note! : Sqlite.Db => Str
 	load_bus_note! = |db| {
 		ensure_bus!(db)

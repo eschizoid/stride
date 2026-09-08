@@ -54,8 +54,9 @@ Plan :: [].{
 		})
 
 		# progress strip + coach corner
-		done_n = List.fold(model.plan, 0.U64, |acc, p| if p.done acc + 1 else acc)
-		strip = "${U64.to_str(done_n)} of ${U64.to_str(List.len(model.plan))} done      week ${I64.to_str(model.week_tss.this)} tss (last ${I64.to_str(model.week_tss.last)})"
+		# the strip speaks Monday-aligned week terms on BOTH sides - the ladder
+		# above is forward-looking and cannot count done sessions
+		strip = "week: ${I64.to_str(model.plan_week.done)} of ${I64.to_str(model.plan_week.total)} done      ${I64.to_str(model.week_tss.this)} tss (last ${I64.to_str(model.week_tss.last)})"
 		Text.from(strip, model.font).size(13).draw!(frame, { pos: { x: 36.0, y: win_h - 84.0 }, color: ink_muted, align: (Top, Left) })
 		Text.from("coach: ${model.bus_note}", model.font).size(11).draw!(frame, { pos: { x: 36.0, y: win_h - 60.0 }, color: ink_faint, align: (Top, Left) })
 		model.plan_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
