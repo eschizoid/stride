@@ -445,7 +445,7 @@ update! = |model0, program_input| {
 			Err(_) => view_input }) else view_input
 		# chips hit-test against the frame-true view render will draw
 		clicked_chip =
-			if view == 0 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0 {
+			if (view == 0 or view == 1) and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0 {
 				chip0 = win.w - 420.0
 				if m0.x >= chip0 and m0.x <= chip0 + 46.0 (30.U64)
 				else if m0.x >= chip0 + 54.0 and m0.x <= chip0 + 100.0 (60.U64)
@@ -461,7 +461,8 @@ update! = |model0, program_input| {
 			# below), never the form-board range.
 			if directive.has_d and view != 1 and (directive.range == 30 or directive.range == 60 or directive.range == 90) (match I64.to_u64_try(directive.range) { Ok(rr) => rr
 				Err(_) => model.range }) else
-			if clicked_chip > 0 clicked_chip
+			# chips clicked on the power view re-window the curve (below), not this
+			if view != 1 and clicked_chip > 0 clicked_chip
 			# keys judge the same frame-true view the directive rule does — a
 			# TAB and a range key in one frame land the range where TAB went
 			else if view == 1 model.range
@@ -494,6 +495,8 @@ update! = |model0, program_input| {
 		# (view 1, range 30) re-windows the ladder and fit, same as the keys
 		want_days =
 			if view == 1 and directive.has_d and (directive.range == 30 or directive.range == 60 or directive.range == 90) directive.range
+			else if view == 1 and clicked_chip > 0 (match U64.to_i64_try(clicked_chip) { Ok(cd9) => cd9
+				Err(_) => model.curve_days })
 			else if view == 1 (if d.key_pressed(Key1) 30 else if d.key_pressed(Key2) 60 else if d.key_pressed(Key3) 90 else model.curve_days)
 			else model.curve_days
 		# on the trace view, [ and ] walk the last dozen structured sessions
@@ -613,7 +616,7 @@ update! = |model0, program_input| {
 		chip0h = win.w - 420.0
 		# per-chip, not one wide band: the 8px gaps between chips are not
 		# clickable and must not claim the pointer
-		over_chip = view2 == 0 and m.y >= 64.0 and m.y <= 86.0 and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0))
+		over_chip = (view2 == 0 or view2 == 1) and m.y >= 64.0 and m.y <= 86.0 and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0))
 		row_count = Table.window_of(List.len(model.data), cursor2, Table.rows_fit(win.h)).rows
 		over_row = view2 == 3 and m.x >= 36.0 and (if detail_day2 != "" (m.x < Table.panel_edge(win.w)) else m.x < win.w - 40.0) and m.y >= 134.0 and m.y < 134.0 + U64.to_f32(row_count) * 24.0
 		over_nav = m.y >= 30.0 and m.y <= 54.0 and (List.fold(List.map_with_index(model.nav, |nv3, vi3| { nv3, vi3 }), Bool.False, |acc, x| {

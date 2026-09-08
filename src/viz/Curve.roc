@@ -25,6 +25,17 @@ Curve :: [].{
 		tsb_c = Theme.tsb_c
 		model.curve_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		model.fit_lbl.draw!(frame, { pos: { x: win_w - 40.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
+		# the same range chips the form board wears, judged on curve_days -
+		# the window switch must be visible and clickable, not a key secret
+		List.for_each!(List.map_with_index(model.subs, |s, i| { s, i }), |x| {
+			chx = win_w - 420.0 + U64.to_f32(x.i) * 54.0
+			on = (match U64.to_i64_try(x.s.r) { Ok(ri) => ri
+				Err(_) => -1 }) == model.curve_days
+			hov = model.mouse_x >= chx and model.mouse_x <= chx + 46.0 and model.mouse_y >= 64.0 and model.mouse_y <= 86.0
+			style = if on (Draw.filled(Color.with_alpha(ctl_c, 60))) else if hov (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
+			frame.rounded_rectangle!({ x: chx, y: 64.0, width: 46.0, height: 22.0, radius: 6.0, segments: 6, style })
+			x.s.chip.draw!(frame, { pos: { x: chx + 23.0, y: 68.0 }, color: if on Color.white else ink_muted, align: (Top, Center) })
+		})
 		# eight zero rungs IS the no-records state - the loader materializes
 		# every rung, so emptiness is the summed watts, not the list length
 		have = List.fold(model.prs, 0.I64, |a, pr| a + pr.w)
