@@ -17,7 +17,9 @@ layer_of() {
     *) echo UNKNOWN ;;
   esac
 }
-rank_of() { case "$1" in core) echo 0 ;; io) echo 1 ;; analytics) echo 2 ;; app) echo 3 ;; esac; }
+# A layer name unknown to rank_of means the two tables drifted apart — say so
+# instead of letting -gt choke on an empty string under set -e.
+rank_of() { case "$1" in core) echo 0 ;; io) echo 1 ;; analytics) echo 2 ;; app) echo 3 ;; *) echo "layer-check: rank_of has no row for layer '$1' — layer_of and rank_of drifted apart" >&2; exit 1 ;; esac; }
 
 # ── self-test: the table resolves its own vocabulary and flags a stranger ──
 [ "$(layer_of Metrics)" = core ] && [ "$(layer_of Strava)" = io ] \

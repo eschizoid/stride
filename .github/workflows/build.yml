@@ -164,5 +164,13 @@ jobs:
       - name: Type-check the Form Board
         run: roc check src/viz/main.roc
 
+  # ADR 0016's gate is pure shell over source text — no toolchain, no OS
+  # variance to cover, so one dedicated job states exactly what it enforces.
+  layer-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Layer check (ADR 0016 — imports point down)
         run: bash tools/layer-check.sh
