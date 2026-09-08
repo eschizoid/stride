@@ -231,6 +231,13 @@ load_model! = |font, curve_days| {
 			bus_note: loaded.bn,
 			plan_title: mk!("next 7 days - plan and progress", 15)?,
 			plan_hint: mk!("TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
+			nav: [
+				{ p: mk!("form", 13)?, v: 0.U8 },
+				{ p: mk!("curve", 13)?, v: 1.U8 },
+				{ p: mk!("trace", 13)?, v: 2.U8 },
+				{ p: mk!("table", 13)?, v: 3.U8 },
+				{ p: mk!("plan", 13)?, v: 4.U8 },
+			],
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
 			font: mono,
@@ -366,7 +373,16 @@ update! = |model0, program_input| {
 		# the range chips are buttons: a left click inside one selects it. Chip
 		# geometry mirrors Board's row exactly - right-anchored at
 		# win.w - 420 + i*54, y 64, each 46x22 - and must move with it.
-		view_input = if d.key_pressed(KeyTab) (if model.view == 4 0 else model.view + 1) else model.view
+		# nav clicks mirror the render geometry exactly (right-anchored pills)
+		nav_click =
+			if Mouse.button_pressed(d.mouse, Left) and m0.y >= 30.0 and m0.y <= 54.0 {
+				List.fold(List.map_with_index([0.U8, 1, 2, 3, 4], |vv, vi| { vv, vi }), -1, |acc, x|
+					if m0.x >= win.w - 36.0 - U64.to_f32(5 - x.vi) * 76.0 and m0.x <= win.w - 36.0 - U64.to_f32(5 - x.vi) * 76.0 + 68.0 (U8.to_i64(x.vv)) else acc)
+			} else -1
+		view_input =
+			if nav_click >= 0 (match I64.to_u8_try(nav_click) { Ok(v9) => v9
+				Err(_) => model.view })
+			else if d.key_pressed(KeyTab) (if model.view == 4 0 else model.view + 1) else model.view
 		view = if directive.has_d and directive.view >= 0 and directive.view <= 4 (match I64.to_u8_try(directive.view) { Ok(v8) => v8
 			Err(_) => view_input }) else view_input
 		# chips hit-test against the frame-true view render will draw
@@ -571,6 +587,16 @@ render! = |model, frame| {
 	frame.rectangle_gradient_v!({ x: 16.0, y: 16.0, width: model.win.w - 32.0, height: (model.win.h - 32.0) * 0.4, color_top: Color.with_alpha(Color.from_hex_rgb(0x232332), 40), color_bottom: Color.with_alpha(Theme.panel, 0) })
 	frame.rectangle_gradient_v!({ x: 16.0, y: model.win.h - 96.0, width: model.win.w - 32.0, height: 80.0, color_top: Color.with_alpha(Theme.bg, 0), color_bottom: Color.with_alpha(Theme.bg, 90) })
 	model.title.draw!(frame, { pos: { x: 34.0, y: 30.0 }, color: Color.white, align: (Top, Left) })
+	# the nav: every view, visible and clickable, active one filled - TAB
+	# stays as the keyboard accelerator
+	List.for_each!(List.map_with_index(model.nav, |nv, ni| { nv, ni }), |x| {
+		nx = model.win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.ni) * 76.0
+		on2 = x.nv.v == model.view
+		hov2 = model.mouse_x >= nx and model.mouse_x <= nx + 68.0 and model.mouse_y >= 30.0 and model.mouse_y <= 54.0
+		style2 = if on2 (Draw.filled(Color.with_alpha(Theme.ctl_c, 60))) else if hov2 (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
+		frame.rounded_rectangle!({ x: nx, y: 30.0, width: 68.0, height: 24.0, radius: 7.0, segments: 6, style: style2 })
+		x.nv.p.draw!(frame, { pos: { x: nx + 34.0, y: 35.0 }, color: if on2 Color.white else Theme.ink_muted, align: (Top, Center) })
+	})
 	# Legend belongs to the FORM BOARD only: it draws in the same row the
 	# other views put their titles in, and overprinted them.
 	if model.view == 0 {

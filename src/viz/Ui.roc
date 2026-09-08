@@ -71,6 +71,7 @@ Ui :: [].{
 		bus_note : Str,
 		plan_title : Text.Prepared,
 		plan_hint : Text.Prepared,
+		nav : List({ p : Text.Prepared, v : U8 }),
 		mouse_in : Bool,
 		cursor : I64,
 	}

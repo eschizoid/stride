@@ -40,6 +40,7 @@ everything else: a directive with view 4 opens it.
 | `1` / `2` / `3` | range 30 / 60 / 90 days (form board) |
 | `←` / `→` | walk the day cursor (form board; ← older, → newer, past newest turns it off) |
 | `R` | reload everything from the database without reopening |
+| nav pills (top right) | click any view directly; the active one is filled |
 | `TAB` | cycle views: form board / power curve / session trace / data table / plan |
 | `1` / `2` / `3` (curve view) | re-window the curve and CP fit to 30/60/90 days |
 | `[` / `]` (trace view) | older / newer structured session, last 12 |
