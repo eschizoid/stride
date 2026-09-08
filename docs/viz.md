@@ -39,8 +39,9 @@ The sixth stop is a year of training at a glance: a contributions-style
 calendar, one cell per day, Monday-started weeks as columns, cell intensity
 scaled to the biggest TSS day in the shown window. As many weeks as the
 window width holds, newest at the right edge, month ticks along the top.
-Hovering a cell reads the day back - date, TSS, and the session note when
-there is one. A directive with view 5 opens it.
+Event days wear a white ring, ridden or coming. Hovering a cell reads the
+day back - date, TSS, and the session note when there is one. A directive
+with view 5 opens it.
 
 ## Controls
 

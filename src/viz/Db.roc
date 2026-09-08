@@ -364,6 +364,18 @@ Db :: [].{
 				})
 		}
 
+	# every event day, ridden or coming - the heat grid rings them
+	load_event_days! : Sqlite.Db => List(Str)
+	load_event_days! = |db|
+		match Sqlite.query!({ db, query: "SELECT CAST(event_date AS TEXT) AS d FROM events", bindings: [] }) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(rows, |r| {
+					d = r.str("d") ? |_| "bad"
+					Ok(d)
+				})
+		}
+
 	# a day's note from load_day_notes!, or the honest default
 	note_for : List({ day : Str, note : Str }), Str -> Str
 	note_for = |notes, dy|
