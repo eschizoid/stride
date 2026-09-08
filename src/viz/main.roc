@@ -213,6 +213,7 @@ load_model! = |font, curve_days| {
 			cp_lbl: mkm!("CP ${Db.fmt_f(fit.cp)}W", 12)?,
 			data: loaded.s.data,
 			days: loaded.s.days,
+			home,
 			day_notes: loaded.nts,
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
@@ -230,36 +231,50 @@ load_model! = |font, curve_days| {
 # a failed shot must not take the window down, and the file's absence is the
 # report. Was `[]` while nothing spawned.
 
-# Re-reads one session's trace/segments/duration for the picker — a bounded
-# synchronous read on an explicit keypress, same reasoning as R. Any failure
-# keeps the session the window already had.
-switch_trace! : Ui.Model, U64 => Ui.Model
-switch_trace! = |model, sel| {
-	home = match Cmd.run_utf8!(Cmd.with_args(Cmd.new("printenv"), ["HOME"])) {
-		Ok(out) => Str.trim(out.stdout)
-		Err(_) => ""
-	}
-	if home == "" model
-	else match List.get(model.trace_ids, sel) {
-		Err(_) => model
+# Runs INSIDE a spawned task (Sqlite parks there legally): re-reads one
+# session's trace/segments/duration and reports back as a message. Any
+# failure keeps the session the window already had.
+trace_task! : Str, List({ id : I64, day : Str }), U64 => Msg
+trace_task! = |home, ids, sel|
+	if home == "" TraceSwitchFailed
+	else match List.get(ids, sel) {
+		Err(_) => TraceSwitchFailed
 		Ok(entry) =>
 			match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
-				Err(_) => model
+				Err(_) => TraceSwitchFailed
 				Ok(db) => {
 					tr = Db.load_trace!(db, entry.id)
 					sg = Db.load_segs!(db, entry.id)
 					du = Db.load_dur!(db, entry.id)
-					{ ..model, trace: tr, segs: sg, trace_dur: du, trace_sel: sel, trace_day: entry.day }
+					TraceSwitched({ tr, sg, du, sel, day: entry.day })
 				}
 			}
 	}
-}
 
-Msg : [Shot(Try({}, Capture.ScreenshotError))]
+# Reload work is Cmd + Sqlite + text preparation — all of it task-legal and
+# none of it update!-legal (the platform panics on Cmd there, by design).
+# update! only ever spawns; results come back through these messages.
+Msg : [
+	Shot(Try({}, Capture.ScreenshotError)),
+	Reloaded(Ui.Model),
+	ReloadFailed,
+	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, sel : U64, day : Str }),
+	TraceSwitchFailed,
+]
 
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
-update! = |model, program_input| {
+update! = |model0, program_input| {
 	d = program_input.devices
+	# task answers land as messages; fold them in before this frame's input.
+	# A finished reload keeps the UI state the user has moved since spawning.
+	model = List.fold(program_input.messages, model0, |acc, msg|
+		match msg {
+			Shot(_) => acc
+			ReloadFailed => acc
+			TraceSwitchFailed => acc
+			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_in: acc.mouse_in }
+			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day }
+		})
 	if d.key_pressed(KeyEscape) {
 		Err(Exit(0))
 	} else {
@@ -311,32 +326,46 @@ update! = |model, program_input| {
 			else if d.key_pressed(KeyLeftBracket) (if model.trace_sel + 1 < List.len(model.trace_ids) (model.trace_sel + 1) else model.trace_sel)
 			else if d.key_pressed(KeyRightBracket) (if model.trace_sel > 0 (model.trace_sel - 1) else model.trace_sel)
 			else model.trace_sel
-		if want_sel != model.trace_sel {
-			Ok(switch_trace!(model, want_sel))
-		} else if want_days != model.curve_days {
-			mouse_now2 = m.y > (if view == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b
-			match load_model!(model.font, want_days) {
-				Ok(fresh) => Ok({ ..fresh, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now2 })
-				Err(_) => Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now2 })
-			}
-		} else if d.key_pressed(KeyR) {
-			# rebuild from the database, keep what the user was looking at;
-			# a failed rebuild keeps the window it had rather than taking it down.
-			# Deliberately SYNCHRONOUS inside update!: the stall is bounded (the
-			# queries are ms-scale, the fit shell-out the long pole) and follows
-			# an explicit keypress — while a spawned rebuild would create Text
-			# resources off the frame path, which this platform does not promise
-			# to survive. Screenshots spawn because they must wait for frame end;
-			# a reload has no such constraint.
-			# both arms carry the frame's own input — reload swaps only the data
-			mouse_now = m.y > (if view == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b
-			match load_model!(model.font, model.curve_days) {
-				Ok(fresh) => Ok({ ..fresh, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now })
-				Err(_) => Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now })
-			}
-		} else {
-			Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: m.y > (if view == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
-		}
+		# clicking a table row jumps to that day's crosshair on the form board
+		row_hit =
+			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and m.x <= 940.0 and m.y >= 134.0 {
+				total = List.len(model.data)
+				max_back = if total > 14 (total - 14) else 0.U64
+				back = if model.cursor < 0 (0.U64) else match I64.to_u64_try(model.cursor) {
+					Ok(c) => if c > max_back max_back else c
+					Err(_) => 0.U64
+				}
+				kept = total - back
+				rowcount = if kept > 14 (14.U64) else kept
+				ri = match F32.round_to_u64_try((m.y - 134.0) / 24.0) {
+					Ok(r) => r
+					Err(_) => 99
+				}
+				if ri < rowcount and total > 0 {
+					dayidx = kept - rowcount + ri
+					match U64.to_i64_try(total - 1 - dayidx) {
+						Ok(cb) => { hit: Bool.True, cb }
+						Err(_) => { hit: Bool.False, cb: -1 }
+					}
+				} else { hit: Bool.False, cb: -1 }
+			} else { hit: Bool.False, cb: -1 }
+		view2 = if row_hit.hit 0 else view
+		cursor2 = if row_hit.hit row_hit.cb else cursor
+		# reloads and trace switches SPAWN — Cmd panics in update!, and the
+		# task lane is where Sqlite and text preparation park legally
+		_ = if want_sel != model.trace_sel {
+			home2 = model.home
+			ids2 = model.trace_ids
+			Task.spawn!(program_input, || trace_task!(home2, ids2, want_sel))
+		} else {}
+		_ = if want_days != model.curve_days or d.key_pressed(KeyR) {
+			f2 = model.font
+			Task.spawn!(program_input, || match load_model!(f2, want_days) {
+				Ok(m2) => Reloaded(m2)
+				Err(_) => ReloadFailed
+			})
+		} else {}
+		Ok({ ..model, range, view: view2, cursor: cursor2, curve_days: want_days, trace_sel: want_sel, mouse_x: m.x, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
 	}
 }
 

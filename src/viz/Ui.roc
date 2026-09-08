@@ -50,6 +50,7 @@ Ui :: [].{
 		data : List(Db.Point),
 		days : List(Str),
 		day_notes : List({ day : Str, note : Str }),
+		home : Str,
 		status : Text.Prepared,
 		has_error : Bool,
 		font : Text.Font,

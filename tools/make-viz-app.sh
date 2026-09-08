@@ -42,7 +42,7 @@ cat > "$C/Info.plist" <<'PLIST'
   <key>CFBundleIdentifier</key><string>com.eschizoid.stride.formboard</string>
   <key>CFBundleVersion</key><string>1.0</string>
   <key>CFBundleExecutable</key><string>launcher</string>
-  <key>CFBundleIconFile</key><string>stride.icns</string>
+  <key>CFBundleIconFile</key><string>stride</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
