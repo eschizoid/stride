@@ -38,8 +38,19 @@ init! = App.init(
 		.with_output_dir("captures"),
 	|_startup| {
 		font = Draw.default_font!()
-		# ~/.stride/db.sqlite, resolved at launch — the platform has no Env
-		# module, but Cmd captures stdout, so the shell answers for HOME.
+		load_model!(font)
+	},
+)
+
+# Everything the window knows, rebuilt from the local stride sources in one
+# call — the database for every series, plus the engine's power-curve command
+# for the CP fit. init! runs it once at launch, and the R key runs it again
+# without reopening.
+load_model! : Text.Font => Try(Ui.Model, [ResourceLimit, ..])
+load_model! = |font| {
+		# ~/.stride/db.sqlite, resolved on every load (launch and R alike) —
+		# the platform has no Env module, but Cmd captures stdout, so the
+		# shell answers for HOME.
 		home = match Cmd.run_utf8!(Cmd.with_args(Cmd.new("printenv"), ["HOME"])) {
 			Ok(out) => Str.trim(out.stdout)
 			Err(_) => ""
@@ -119,7 +130,8 @@ init! = App.init(
 			curve_lbls: curve_lbls,
 			fit_lbl: mk!(fit_text, 14)?,
 			curve_title: mk!("power-duration curve - Ride, last 90 days", 15)?,
-			curve_hint: mk!("TAB  session trace      S  screenshot      ESC quit", 13)?,
+			curve_hint: mk!("TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
+			trace_hint: mk!("TAB  form board      R  reload      S  screenshot      ESC quit", 13)?,
 			curve_empty: mk!("no rides in the last 90 days - the curve has nothing to draw", 16)?,
 			trace: loaded.tr,
 			segs: loaded.sg,
@@ -132,14 +144,14 @@ init! = App.init(
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
 			font,
-			hint: mk!("1 / 2 / 3  range 30 / 60 / 90 days      TAB  form / power curve / session      hover to read a day      S  screenshot      ESC quit", 13)?,
+			hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   ESC quit", 13)?,
 			empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
 			range: 90.U64,
 			mouse_x: 0.0,
 			mouse_in: Bool.False,
+			cursor: -1,
 		})
-	},
-)
+}
 
 # The app spawns one kind of task: a screenshot, whose result it ignores —
 # a failed shot must not take the window down, and the file's absence is the
@@ -159,6 +171,16 @@ update! = |model, program_input| {
 			else if d.key_pressed(Key3) 90.U64
 			else model.range
 		view = if d.key_pressed(KeyTab) (if model.view == 2 0 else model.view + 1) else model.view
+		# cursor counts days back from the series' latest day — the last ANALYZED
+		# day, not necessarily today (0 = that column, -1 = off); LEFT walks
+		# older, RIGHT walks newer, and the board clamps to the window
+		# only the form board owns the cursor — arrows on the other views leave
+		# it where the user parked it, so tabbing back shows the same day
+		cursor =
+			if view != 0 model.cursor
+			else if d.key_pressed(KeyLeft) (if model.cursor < 0 0 else model.cursor + 1)
+			else if d.key_pressed(KeyRight) (if model.cursor <= 0 (-1) else model.cursor - 1)
+			else model.cursor
 		m = d.mouse.position()
 		# S writes a PNG of the CURRENT view into ./captures — #372's "session
 		# graphic for a training log". Spawned rather than called inline: a
@@ -168,7 +190,24 @@ update! = |model, program_input| {
 			shot_name = if view == 0 ("form-board.png") else if view == 1 ("power-curve.png") else "session-trace.png"
 			Task.spawn!(program_input, || Shot(Capture.screenshot!(shot_name)))
 		} else {}
-		Ok({ ..model, range, view, mouse_x: m.x, mouse_in: m.y > Theme.pad_t and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
+		if d.key_pressed(KeyR) {
+			# rebuild from the database, keep what the user was looking at;
+			# a failed rebuild keeps the window it had rather than taking it down.
+			# Deliberately SYNCHRONOUS inside update!: the stall is bounded (the
+			# queries are ms-scale, the fit shell-out the long pole) and follows
+			# an explicit keypress — while a spawned rebuild would create Text
+			# resources off the frame path, which this platform does not promise
+			# to survive. Screenshots spawn because they must wait for frame end;
+			# a reload has no such constraint.
+			# both arms carry the frame's own input — reload swaps only the data
+			mouse_now = m.y > Theme.pad_t and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b
+			match load_model!(model.font) {
+				Ok(fresh) => Ok({ ..fresh, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now })
+				Err(_) => Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: mouse_now })
+			}
+		} else {
+			Ok({ ..model, range, view, cursor, mouse_x: m.x, mouse_in: m.y > Theme.pad_t and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
+		}
 	}
 }
 

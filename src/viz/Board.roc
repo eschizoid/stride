@@ -140,13 +140,23 @@ Board :: [].{
 				e.p.draw!(frame, { pos: { x: ex2, y: yf(v) - 7.0 }, color: col, align: (Top, Left) })
 			})
 
-			# hover: nearest day gets a crosshair + dots, and the day's values print
-			# top-right as immediate text (only dynamic string drawn per frame)
-			if model.mouse_in and model.mouse_x >= pad_l and model.mouse_x <= I32.to_f32(win_w) - pad_r {
-				frac = (model.mouse_x - pad_l) / pw
-				hi_idx = n - 1
-				raw = frac * U64.to_f32(hi_idx)
-				hovered = clamp_idx(raw, hi_idx)
+			# hover OR arrow-cursor: the selected day gets a crosshair + dots, and
+			# its values print top-right as immediate text (the only dynamic string
+			# drawn per frame). Mouse wins while it is inside the plot; the arrow
+			# cursor counts days back from the latest.
+			hi_idx = n - 1
+			mouse_sel = model.mouse_in and model.mouse_x >= pad_l and model.mouse_x <= I32.to_f32(win_w) - pad_r
+			cur_back = if model.cursor < 0 (0.U64) else match I64.to_u64_try(model.cursor) {
+				Ok(c) => if c > hi_idx (hi_idx) else c
+				Err(_) => 0.U64
+			}
+			if mouse_sel or model.cursor >= 0 {
+				hovered =
+					if mouse_sel {
+						frac = (model.mouse_x - pad_l) / pw
+						raw = frac * U64.to_f32(hi_idx)
+						clamp_idx(raw, hi_idx)
+					} else hi_idx - cur_back
 				hx = xf(hovered)
 				frame.line!({ start: { x: hx, y: pad_t }, end: { x: hx, y: pad_t + ph }, stroke: Draw.stroke(Color.with_alpha(Color.white, 60), 1) })
 				match List.get(data, hovered) {

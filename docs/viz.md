@@ -21,6 +21,8 @@ the SQLite — no export step, no baked data, nothing the CLI has to prepare.
 | key / gesture | effect |
 |---|---|
 | `1` / `2` / `3` | range 30 / 60 / 90 days (form board) |
+| `←` / `→` | walk the day cursor (form board; ← older, → newer, past newest turns it off) |
+| `R` | reload everything from the database without reopening |
 | `TAB` | cycle views: form board / power curve / session trace |
 | `S` | save a PNG of the current view into `./captures` |
 | mouse hover | crosshair + per-day dots + a top-right readout (form board) |
@@ -44,7 +46,7 @@ same tag.
 - No F64→F32 narrowing exists, so the SQL query CASTs to integer tenths and
   the app divides by 10 — the numeric boundary belongs to SQL.
 - No Env module on the platform; `HOME` is read by capturing `printenv` output
-  through `Cmd`, at `init!` only.
+  through `Cmd` — on every load, which means at launch and again on each `R`.
 - `has` is a reserved word; uppercase identifiers are types.
 
 ## Power-curve view (TAB)
