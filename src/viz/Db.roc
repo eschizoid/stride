@@ -172,7 +172,7 @@ Db :: [].{
 	# simply absent and reads as rest.
 	load_day_notes! : Sqlite.Db => List({ day : Str, note : Str })
 	load_day_notes! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(substr(start_local, 1, 10) AS TEXT) AS day, CAST(group_concat(name, ' + ') AS TEXT) AS note FROM activities WHERE start_local >= date('now', '-400 days') GROUP BY day", bindings: [] }) {
+		match Sqlite.query!({ db, query: "SELECT CAST(substr(start_local, 1, 10) AS TEXT) AS day, CAST(group_concat(name, ' + ') AS TEXT) AS note FROM activities WHERE start_local >= date(COALESCE((SELECT MAX(day) FROM daily_load), date('now', 'localtime')), '-400 days') GROUP BY day", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -338,7 +338,7 @@ Db :: [].{
 						Err(_) => -1 }
 					cd = match r.str("cd") { Ok(x) => x
 						Err(_) => "" }
-					vn = if v == 0 "form" else if v == 1 "curve" else if v == 2 "trace" else if v == 3 "table" else if v == 4 "plan" else ""
+					vn = if v == 0 "form" else if v == 1 "curve" else if v == 2 "trace" else if v == 3 "table" else if v == 4 "plan" else if v == 5 "heat" else ""
 					rgp = if rg > 0 "${I64.to_str(rg)}d" else ""
 					joined = Str.join_with(List.keep_if([vn, rgp], |s2| s2 != ""), " / ")
 					parts = if joined == "" "steer" else joined
