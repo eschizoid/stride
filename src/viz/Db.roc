@@ -338,7 +338,7 @@ Db :: [].{
 						Err(_) => -1 }
 					cd = match r.str("cd") { Ok(x) => x
 						Err(_) => "" }
-					vn = if v == 0 "form" else if v == 1 "curve" else if v == 2 "trace" else if v == 3 "table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else ""
+					vn = if v == 0 "form" else if v == 1 "curve" else if v == 2 "trace" else if v == 3 "table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else if v == 7 "ramp" else ""
 					rgp = if rg > 0 "${I64.to_str(rg)}d" else ""
 					joined = Str.join_with(List.keep_if([vn, rgp], |s2| s2 != ""), " / ")
 					parts = if joined == "" "steer" else joined
@@ -386,6 +386,24 @@ Db :: [].{
 					mo = r.i64("moderate") ? |_| "bad"
 					hd = r.i64("hard") ? |_| "bad"
 					Ok({ wk, z1, z2, z3, z4, z5, easy: ez, moderate: mo, hard: hd })
+				})
+		}
+
+	# twelve Monday weeks of load and CTL slope, oldest first: the week's TSS,
+	# its end-of-week CTL, and the ramp - CTL change vs the prior week's end -
+	# all in tenths (F64 has no narrowing; SQL rounds into integer tenths)
+	RampWeek : { wk : Str, tss : I64, ctl10 : I64, ramp10 : I64 }
+	load_ramp_weeks! : Sqlite.Db => List(RampWeek)
+	load_ramp_weeks! = |db|
+		match Sqlite.query!({ db, query: "WITH mondays(wk) AS (SELECT date(mon, '-77 days') FROM week_bounds UNION ALL SELECT date(wk, '+7 days') FROM mondays WHERE wk < (SELECT mon FROM week_bounds)), wtss AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, SUM(COALESCE(tss, 0)) AS tss FROM daily_load WHERE day >= (SELECT date(mon, '-77 days') FROM week_bounds) GROUP BY awk), wctl AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, MAX(day) AS last_day FROM daily_load WHERE day >= (SELECT date(mon, '-84 days') FROM week_bounds) GROUP BY awk) SELECT CAST(m.wk AS TEXT) AS wk, CAST(ROUND(COALESCE(t.tss, 0)) AS INTEGER) AS tss, CAST(ROUND(COALESCE(dl.ctl, 0) * 10) AS INTEGER) AS ctl10, CAST(ROUND((COALESCE(dl.ctl, 0) - COALESCE(prev.ctl, COALESCE(dl.ctl, 0))) * 10) AS INTEGER) AS ramp10 FROM mondays m LEFT JOIN wtss t ON t.awk = m.wk LEFT JOIN wctl wc ON wc.awk = m.wk LEFT JOIN daily_load dl ON dl.day = wc.last_day LEFT JOIN wctl pwc ON pwc.awk = date(m.wk, '-7 days') LEFT JOIN daily_load prev ON prev.day = pwc.last_day ORDER BY m.wk ASC", bindings: [] }) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(rows, |r| {
+					wk = r.str("wk") ? |_| "bad"
+					ts = r.i64("tss") ? |_| "bad"
+					c10 = r.i64("ctl10") ? |_| "bad"
+					r10 = r.i64("ramp10") ? |_| "bad"
+					Ok({ wk, tss: ts, ctl10: c10, ramp10: r10 })
 				})
 		}
 

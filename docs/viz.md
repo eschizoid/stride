@@ -56,6 +56,15 @@ hard (the CLI still evaluates its copy inline; #415 tracks pointing it at
 the view).
 Hovering a week reads it back. A directive with view 6 opens it.
 
+## The ramp view
+
+The eighth stop is the overtraining early warning: twelve Monday weeks of
+TSS as bars below, and above them the ramp rate - CTL gained per week -
+with everything past +6/wk shaded in the alarm color. A dot in the band
+means fitness is climbing faster than most bodies absorb; teal is a sane
+build, faint is coasting. Hovering a week reads back its TSS, end-of-week
+CTL and ramp. A directive with view 7 opens it.
+
 ## Controls
 
 | key / gesture | effect |
@@ -64,7 +73,7 @@ Hovering a week reads it back. A directive with view 6 opens it.
 | `←` / `→` | walk the day cursor (form board; ← older, → newer, past newest turns it off) |
 | `R` | reload everything from the database without reopening |
 | nav pills (top right) | click any view directly; the active one is filled |
-| `TAB` | cycle views: form board / power curve / session trace / data table / plan / heat / zones |
+| `TAB` | cycle views: form board / power curve / session trace / data table / plan / heat / zones / ramp |
 | `1` / `2` / `3` (curve view) | re-window the curve and CP fit to 30/60/90 days |
 | `[` / `]` (trace view) | older / newer structured session, last 12 |
 | `←` / `→` (table view) | scroll the window through the whole series (rows fill the window height) |
@@ -114,7 +123,7 @@ CREATE TABLE IF NOT EXISTS viz_directives (
 -- consumes everything up to it. NULL fields mean "leave that alone".
 INSERT INTO viz_directives (view, range, cursor_day, trace_day)
 VALUES (0, 30, '2026-09-02', NULL);
--- view 0..6 (form/curve/trace/table/plan/heat/zones). range 30|60|90 lands on the view the
+-- view 0..7 (form/curve/trace/table/plan/heat/zones/ramp). range 30|60|90 lands on the view the
 -- directive lands on: named view if set, else the visible one — on the curve
 -- it re-windows the ladder+fit, on every other view it sets the form board's
 -- range.

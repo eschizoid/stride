@@ -79,6 +79,9 @@ Ui :: [].{
 		zone_weeks : List(Db.ZoneWeek),
 		zones_title : Text.Prepared,
 		zones_hint : Text.Prepared,
+		ramp_weeks : List(Db.RampWeek),
+		ramp_title : Text.Prepared,
+		ramp_hint : Text.Prepared,
 		mouse_in : Bool,
 		cursor : I64,
 	}
