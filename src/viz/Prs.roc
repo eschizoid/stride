@@ -67,9 +67,12 @@ Prs :: [].{
 					age = d_hi - day_num(x.pr.day)
 					dc = if age <= 90.0 (Theme.tsb_c) else if age <= 365.0 (Theme.ctl_c) else ink_faint
 					frame.circle!({ center: { x: dx, y: cy }, radius: 5.0, style: Draw.filled(dc) })
+					# lowercase w is this window's unit style throughout (the day
+					# panel writes "282w np"); uppercase would be the odd one out
 					Text.from("${I64.to_str(x.pr.w)}w", model.font).size(12).draw!(frame, { pos: { x: x_hi + 14.0, y: cy - 7.0 }, color: Color.white, align: (Top, Left) })
-					# hover the row: the record's day, spelled out
-					if model.mouse_y >= cy - row_h / 2.0 and model.mouse_y < cy + row_h / 2.0 and model.mouse_x >= x_lo and model.mouse_x <= x_hi {
+					# hover the ROW - label and watts included, the y-band is the
+					# whole hit target
+					if model.mouse_y >= cy - row_h / 2.0 and model.mouse_y < cy + row_h / 2.0 and model.mouse_x >= pad and model.mouse_x <= win_w - pad {
 						Text.from("set ${x.pr.day}", model.font).size(11).draw!(frame, { pos: { x: dx, y: cy - 22.0 }, color: ink_muted, align: (Top, Center) })
 					} else {}
 				}
