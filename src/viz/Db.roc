@@ -192,7 +192,7 @@ Db :: [].{
 		# every-second callers take this read-only fast path; the DDL below runs
 		# only while the objects are actually missing — IF NOT EXISTS still
 		# contends for the schema write lock, a plain sqlite_master read never does
-		present = match Sqlite.query!({ db, query: "SELECT count(*) + SUM(CASE WHEN sql LIKE '%ghost_day%' THEN 1 ELSE 0 END) AS c FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')", bindings: [] }) {
+		present = match Sqlite.query!({ db, query: "SELECT count(*) + SUM(CASE WHEN instr(COALESCE(sql, ''), 'ghost_day') > 0 THEN 1 ELSE 0 END) AS c FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')", bindings: [] }) {
 			Err(_) => 0
 			Ok(rows) => match List.first(rows) {
 				Err(_) => 0

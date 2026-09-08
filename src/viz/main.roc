@@ -204,7 +204,7 @@ load_model! = |font, curve_days| {
 				Err(_) => ""
 			},
 			curve_hint: mk!("1/2/3  window 30/60/90d      TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
-			trace_hint: mk!("[ / ]  session      shift+[ / ]  ghost overlay      TAB  data table      R  reload      S  screenshot      ESC quit", 13)?,
+			trace_hint: mk!("[ / ]  session      shift+[ / shift+]  ghost      TAB  data table      R  reload      S  screenshot      ESC quit", 13)?,
 			table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      ESC quit", 13)?,
 			table_title: mk!("data table", 15)?,
 			table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
