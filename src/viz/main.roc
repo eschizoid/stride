@@ -376,8 +376,11 @@ update! = |model0, program_input| {
 		# nav clicks mirror the render geometry exactly (right-anchored pills)
 		nav_click =
 			if Mouse.button_pressed(d.mouse, Left) and m0.y >= 30.0 and m0.y <= 54.0 {
-				List.fold(List.map_with_index([0.U8, 1, 2, 3, 4], |vv, vi| { vv, vi }), -1, |acc, x|
-					if m0.x >= win.w - 36.0 - U64.to_f32(5 - x.vi) * 76.0 and m0.x <= win.w - 36.0 - U64.to_f32(5 - x.vi) * 76.0 + 68.0 (U8.to_i64(x.vv)) else acc)
+				nav_n = List.len(model.nav)
+				List.fold(List.map_with_index(model.nav, |nv2, vi| { nv2, vi }), -1, |acc, x| {
+					nx2 = win.w - 36.0 - U64.to_f32(nav_n - x.vi) * 76.0
+					if m0.x >= nx2 and m0.x <= nx2 + 68.0 (U8.to_i64(x.nv2.v)) else acc
+				})
 			} else -1
 		view_input =
 			if nav_click >= 0 (match I64.to_u8_try(nav_click) { Ok(v9) => v9

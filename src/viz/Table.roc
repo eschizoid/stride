@@ -75,7 +75,7 @@ Table :: [].{
 		# no rows, no arithmetic on them — the indicator only speaks over data
 		if total > 0 {
 			pos_note = "days ${U64.to_str(if kept > fit (kept - fit + 1) else 1)}-${U64.to_str(kept)} of ${U64.to_str(total)}"
-			Text.from(pos_note, model.font).size(13).draw!(frame, { pos: { x: model.win.w - 34.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
+			Text.from(pos_note, model.font).size(13).draw!(frame, { pos: { x: edge, y: 70.0 }, color: ink_muted, align: (Top, Right) })
 		} else {}
 		List.for_each!(List.map_with_index(rows, |r, i| { r, i }), |x| {
 			ry = 134.0 + U64.to_f32(x.i) * 24.0
@@ -91,7 +91,8 @@ Table :: [].{
 			# glyph at this size
 			budget = match F32.round_to_u64_try(F32.div_floor_by(edge - 690.0, 8.0)) {
 				Ok(b) => if b < 12 (12.U64) else b
-				Err(_) => 30.U64
+				# failure means cramped, not roomy - clamp to the floor
+				Err(_) => 12.U64
 			}
 			short = if Str.count_utf8_bytes(note) > budget (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(note), budget - 2)), "..")) else note
 			cells = [day, Db.fmt_f(x.r.ctl), Db.fmt_f(x.r.atl), Db.fmt_f(x.r.tsb), Db.fmt_f(x.r.tss), short]
