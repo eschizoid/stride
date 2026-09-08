@@ -590,9 +590,11 @@ update! = |model0, program_input| {
 			ids3 = model.trace_ids
 			Task.spawn!(program_input, || ghost_task!(home3, ids3, want_ghost2))
 		} else {}
-		# dismissal is pure state - no data to fetch
-		ghost2 = if want_ghost2 < 0 ([]) else model.ghost
-		ghost_day2 = if want_ghost2 < 0 ("") else model.ghost_day
+		# any ghost change clears the drawn overlay THIS frame: a dismissal has
+		# nothing to fetch, and a switch must not keep showing the old session
+		# under the new selection - if the load fails, empty is the clean state
+		ghost2 = if want_ghost2 != model.ghost_sel ([]) else model.ghost
+		ghost_day2 = if want_ghost2 != model.ghost_sel ("") else model.ghost_day
 		_ = if want_days != model.curve_days or d.key_pressed(KeyR) {
 			f2 = model.font
 			Task.spawn!(program_input, || match load_model!(f2, want_days) {
