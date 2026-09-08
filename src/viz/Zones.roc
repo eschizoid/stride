@@ -19,7 +19,10 @@ Zones :: [].{
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
 		model.zones_title.draw!(frame, { pos: { x: pad, y: 70.0 }, color: ink_muted, align: (Top, Left) })
-		if List.is_empty(model.zone_weeks) {
+		grand = List.fold(model.zone_weeks, 0, |a, w| a + w.z1 + w.z2 + w.z3 + w.z4 + w.z5)
+		# the loader materializes empty weeks, so 12 zero rows IS the no-history
+		# state - the emptiness test is the grand total, not the list length
+		if List.is_empty(model.zone_weeks) or grand == 0 {
 			Text.from("no zone history yet", model.font).size(14).draw!(frame, { pos: { x: pad, y: 130.0 }, color: ink_muted, align: (Top, Left) })
 		} else {
 			n = List.len(model.zone_weeks)
@@ -82,8 +85,8 @@ Zones :: [].{
 				# hover: full-column hit target, one tooltip line under the title
 				if model.mouse_x >= cx - slot / 2.0 and model.mouse_x < cx + slot / 2.0 and model.mouse_y >= po_top and model.mouse_y <= bars_bot {
 					h10 = tot * 10 // 3600
-					shr = if itot > 0 (I64.to_str(x.w.easy * 100 // itot)) else "-"
-					tip = "wk of ${x.w.wk}   ${I64.to_str(h10 // 10)}.${I64.to_str(h10 % 10)}h in zones   easy ${shr}%"
+					shr = if itot > 0 ("easy ${I64.to_str(x.w.easy * 100 // itot)}%") else "no classified time"
+					tip = "wk of ${x.w.wk}   ${I64.to_str(h10 // 10)}.${I64.to_str(h10 % 10)}h in zones   ${shr}"
 					Text.from(tip, model.font).size(12).draw!(frame, { pos: { x: pad, y: 88.0 }, color: Color.white, align: (Top, Left) })
 					frame.rectangle!({ x: x0 - 3.0, y: bars_top, width: bw + 6.0, height: bars_h, style: Draw.filled(Color.with_alpha(Color.white, 14)) })
 				} else {}

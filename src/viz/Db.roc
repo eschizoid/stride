@@ -366,7 +366,8 @@ Db :: [].{
 		}
 
 	# twelve Monday weeks of zone seconds and intensity classes, oldest first,
-	# off the activity_intensity view - the CLI's own classification - with the
+	# off the activity_intensity view - the shared per-activity intensity
+	# classification (pi_* split when present, HR zones otherwise) - with the
 	# week anchor from week_bounds and empty weeks materialized as zero rows
 	ZoneWeek : { wk : Str, z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, easy : I64, moderate : I64, hard : I64 }
 	load_zone_weeks! : Sqlite.Db => List(ZoneWeek)
