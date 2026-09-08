@@ -33,7 +33,7 @@ Ramp :: [].{
 			po_h = 110.0
 			lim = List.fold(model.ramp_weeks, danger + 2.0, |a, w| {
 				m = F32.abs(I64.to_f32(w.ramp10) / 10.0)
-				if m + 1.0 > a m + 1.0 else a
+				if m + 1.0 > a (m + 1.0) else a
 			})
 			ry = |v9| po_top + (1.0 - (v9 + lim) / (2.0 * lim)) * po_h
 			# the band above +6/wk, then the rule lines
@@ -46,7 +46,7 @@ Ramp :: [].{
 			bars_top = po_top + po_h + 46.0
 			bars_bot = win_h - 96.0
 			bars_h = bars_bot - bars_top
-			peak = List.fold(model.ramp_weeks, 1.I64, |a, w| if w.tss > a w.tss else a)
+			peak = List.fold(model.ramp_weeks, 1.I64, |a, w| if w.tss > a (w.tss) else a)
 			Text.from(I64.to_str(peak), model.font).size(10).draw!(frame, { pos: { x: pad - 6.0, y: bars_top - 4.0 }, color: ink_faint, align: (Top, Right) })
 			Text.from("0", model.font).size(10).draw!(frame, { pos: { x: pad - 6.0, y: bars_bot - 10.0 }, color: ink_faint, align: (Top, Right) })
 			Text.from("weekly tss", model.font).size(10).draw!(frame, { pos: { x: win_w - pad, y: bars_top - 24.0 }, color: ink_faint, align: (Top, Right) })
