@@ -276,13 +276,6 @@ Db :: [].{
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.ratings, bindings: [] })?
         # v27 (#138): event targets
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.events, bindings: [] })?
-        # v29: shared-semantics views (plan dedupe, week alignment) — DROP +
-        # CREATE so an edited definition always wins; the viz reads these too
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.plan_current_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.plan_current, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.week_bounds_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.week_bounds, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_planned_sessions_date_id ON planned_sessions (target_date, id)", bindings: [] })?
         alter_add_column!(path, "ALTER TABLE activities ADD COLUMN weighted_avg_watts REAL")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_20min_w REAL")?
         # v21: which signal produced decoupling_pct — provenance stored at analyze
@@ -454,7 +447,17 @@ Db :: [].{
             path: Path.utf8(path),
             query: "CREATE TRIGGER activities_family_au AFTER UPDATE OF sport_type ON activities BEGIN UPDATE activities SET sport_family = ${Sports.sql_canonical_case("NEW.sport_type")} WHERE id = NEW.id; END",
             bindings: [],
-        })
+        })?
+        # v29: shared-semantics views (plan dedupe, week alignment) — DROP +
+        # CREATE so an edited definition always wins; the viz reads these too.
+        # LAST in the migration, deliberately: plan_current references the
+        # status column, which the ALTERs above add on databases that predate
+        # it — a fresh or old db must gain the column before the view names it.
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.plan_current_drop, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.plan_current, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.week_bounds_drop, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.week_bounds, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_planned_sessions_date_id ON planned_sessions (target_date, id)", bindings: [] })
     }
 
     # rename old => new when old exists and new doesn't (idempotent, data-preserving)
