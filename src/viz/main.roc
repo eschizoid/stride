@@ -437,7 +437,9 @@ update! = |model0, program_input| {
 			})
 		} else {}
 		tick = model.tick + 1
-		_ = if tick % 60 == 0 {
+		# no HOME means no database path means no bus — spawning would only
+		# manufacture failing tasks every tick, forever
+		_ = if tick % 60 == 0 and model.home != "" {
 			homep = model.home
 			Task.spawn!(program_input, || poll_task!(homep))
 		} else {}
@@ -471,7 +473,7 @@ update! = |model0, program_input| {
 			trace_day: model.trace_day,
 		}
 		last_focus =
-			if focus_now != model.last_focus and tick % 30 == 0 {
+			if focus_now != model.last_focus and tick % 30 == 0 and model.home != "" {
 				homef = model.home
 				_ = Task.spawn!(program_input, || focus_task!(homef, focus_now))
 				focus_now
