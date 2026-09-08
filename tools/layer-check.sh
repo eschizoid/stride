@@ -54,8 +54,7 @@ fail=0
 stray=$(find src -mindepth 2 -name '*.roc' -not -path 'src/viz/*')
 if [ -n "$stray" ]; then
   echo "layer-check: .roc files outside the scanned homes:" >&2
-  printf '%s
-' "$stray" >&2
+  echo "$stray" >&2
   fail=1
 fi
 
