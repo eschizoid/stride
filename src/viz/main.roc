@@ -2,7 +2,7 @@
 ## power-duration curve, session trace, data table) over ~/.stride/db.sqlite, read at
 ## launch. The modules beside this file carry the parts: Theme (geometry +
 ## palette), Db (every loader and its types), Ui (the Model), and one module
-## per view (Board, Curve, Trace). This file owns the app contract: the
+## per view (Board, Curve, Trace, Table). This file owns the app contract: the
 ## platform pin, Model/Msg, init!, update!, and the view dispatch.
 ##
 ## NOTE the pin below: roc-ray's platform needs nightly-2026-08-23, not the
@@ -58,7 +58,7 @@ load_model! = |font| {
 		}
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1 } }
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" } }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				s = Db.load_series!(db)
@@ -72,7 +72,7 @@ load_model! = |font| {
 				rd = Db.load_ridden!(db)
 				{ s, e, c, st, tr, sg, du, rd }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1 } }
+			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" } }
 		}
 		ev = Db.find_idx(loaded.s.days, loaded.e.day)
 		fit = Db.load_fit!({})
@@ -129,9 +129,8 @@ load_model! = |font| {
 			ev_label: mk!(loaded.e.name, 13)?,
 			ev_found: ev.found,
 			ev_idx: ev.idx,
-			ev_ahead: loaded.e.ahead,
-			ev_warn: mk!(loaded.e.err, 13)?,
-			ev_warn_found: loaded.e.err != "",
+			ev_warn: mk!(if loaded.e.err != "" loaded.e.err else loaded.rd.err, 13)?,
+			ev_warn_found: loaded.e.err != "" or loaded.rd.err != "",
 			stale: mk!(
 				match List.last(loaded.s.days) {
 					Ok(ld) => "data as of ${ld} - analyze to refresh"
@@ -140,7 +139,6 @@ load_model! = |font| {
 				13,
 			)?,
 			stale_found: loaded.st > 0,
-			ev_far_label: mk!("${loaded.e.name}  ${I64.to_str(loaded.e.ahead)}d", 13)?,
 			view: 0,
 			curve: loaded.c,
 			curve_lbls: curve_lbls,

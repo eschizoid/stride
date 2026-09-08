@@ -172,7 +172,7 @@ Board :: [].{
 							Err(_) => ""
 						}
 						readout = "${day}   CTL ${Db.fmt_f(hp.ctl)}   ATL ${Db.fmt_f(hp.atl)}   TSB ${Db.fmt_f(hp.tsb)}   TSS ${Db.fmt_f(hp.tss)}"
-						Text.from(readout, model.font).size(13).draw!(frame, { pos: { x: I32.to_f32(win_w) - 34.0, y: 88.0 }, color: Color.white, align: (Top, Right) })
+						Text.from(readout, model.font).size(13).draw!(frame, { pos: { x: I32.to_f32(win_w) - 34.0, y: 148.0 }, color: Color.white, align: (Top, Right) })
 					}
 					Err(_) => {}
 				}

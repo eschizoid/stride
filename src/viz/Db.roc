@@ -87,13 +87,14 @@ Db :: [].{
 		}
 
 	# the most recent PAST event, for the "ridden" tile — same series clock
-	Ridden : { day : Str, name : Str, ago : I64 }
+	Ridden : { day : Str, name : Str, ago : I64, err : Str }
 	load_ridden! : Sqlite.Db => Ridden
 	load_ridden! = |db|
 		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(today) - julianday(event_date) AS INTEGER) AS ago FROM events, anchor WHERE event_date < today ORDER BY event_date DESC LIMIT 1", bindings: [] }) {
-			Err(_) => { day: "", name: "", ago: -1 }
+			Err(_) => { day: "", name: "", ago: -1, err: "events query failed" }
 			Ok(rows) => match List.first(rows) {
-				Err(_) => { day: "", name: "", ago: -1 }
+				# no past event is a normal state, not an error
+				Err(_) => { day: "", name: "", ago: -1, err: "" }
 				Ok(r) => {
 					d = match r.str("event_date") { Ok(x) => x
 						Err(_) => "" }
@@ -101,7 +102,13 @@ Db :: [].{
 						Err(_) => "" }
 					ag = match r.i64("ago") { Ok(x) => x
 						Err(_) => -1 }
-					{ day: d, name: nm, ago: ag }
+					# a row that exists but will not decode is corruption — surface it,
+					# same rule as load_event!
+					if d == "" or nm == "" or ag < 0 {
+						{ day: "", name: "", ago: -1, err: "event record unreadable" }
+					} else {
+						{ day: d, name: nm, ago: ag, err: "" }
+					}
 				}
 			}
 		}

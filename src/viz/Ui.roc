@@ -16,8 +16,6 @@ Ui :: [].{
 		ev_label : Text.Prepared,
 		ev_found : Bool,
 		ev_idx : U64,
-		ev_ahead : I64,
-		ev_far_label : Text.Prepared,
 		ev_warn : Text.Prepared,
 		ev_warn_found : Bool,
 		stale : Text.Prepared,
