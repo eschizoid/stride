@@ -34,7 +34,8 @@ Zones :: [].{
 			po_top = 104.0
 			po_h = 120.0
 			sy = |sh9| po_top + (1.0 - (F32.max(sh9, 0.3) - 0.3) / 0.7) * po_h
-			Text.from("easy share, week by week", model.font).size(11).draw!(frame, { pos: { x: pad, y: po_top - 16.0 }, color: ink_faint, align: (Top, Left) })
+			# right-anchored: the hover readout owns the left of this row
+			Text.from("easy share, week by week", model.font).size(11).draw!(frame, { pos: { x: win_w - pad, y: po_top - 16.0 }, color: ink_faint, align: (Top, Right) })
 			List.for_each!([{ v: 1.0, lb: "100%" }, { v: 0.5, lb: "50%" }, { v: 0.3, lb: "30%" }], |tk| {
 				frame.line!({ start: { x: pad, y: sy(tk.v) }, end: { x: win_w - pad, y: sy(tk.v) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 30), 1) })
 				Text.from(tk.lb, model.font).size(10).draw!(frame, { pos: { x: pad - 6.0, y: sy(tk.v) - 6.0 }, color: ink_faint, align: (Top, Right) })

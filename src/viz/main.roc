@@ -578,6 +578,14 @@ update! = |model0, program_input| {
 		view2 = view
 		# a directive naming a day parks the crosshair there
 		cursor2 = if row_hit.hit row_hit.cb else cursor_pre
+		# moving the mouse over the form board's plot un-parks the crosshair:
+		# the hover takes over while inside, and nothing lingers on the way
+		# out. Only a cursor NOT re-parked this same frame (arrow, directive,
+		# row click) clears - deliberate parks always win over drift.
+		cursor3 =
+			if view2 == 0 and cursor2 == model.cursor and cursor2 >= 0 and (m.x != model.mouse_x or m.y != model.mouse_y) and m.y > Theme.pad_t + 56.0 and m.y < win.h - Theme.pad_b and m.x >= Theme.pad_l and m.x <= win.w - Theme.pad_r {
+				-1
+			} else cursor2
 		# reloads and trace switches SPAWN — Cmd panics in update!, and the
 		# task lane is where Sqlite and text preparation park legally
 		# a directive naming a session day resolves to its picker slot
@@ -635,10 +643,10 @@ update! = |model0, program_input| {
 		} else {}
 		# focus mirrors the screen: view, range, the crosshair day, the session
 		cur_day =
-			if cursor2 < 0 ""
+			if cursor3 < 0 ""
 			else {
 				total3 = List.len(model.days)
-				match I64.to_u64_try(cursor2) {
+				match I64.to_u64_try(cursor3) {
 					Err(_) => ""
 					Ok(cb3) =>
 						if cb3 >= total3 ""
@@ -673,7 +681,7 @@ update! = |model0, program_input| {
 				_ = Task.spawn!(program_input, || focus_task!(homef, focus_now))
 				focus_now
 			} else model.last_focus
-		Ok({ ..model, range, view: view2, cursor: cursor2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, range, view: view2, cursor: cursor3, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
