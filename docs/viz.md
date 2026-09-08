@@ -74,7 +74,7 @@ CTL and ramp. A directive with view 7 opens it.
 | `R` | reload everything from the database without reopening |
 | nav pills (top right) | click any view directly; the active one is filled |
 | `TAB` | cycle views: form board / power view / session trace / data table / plan / heat / zones / ramp |
-| `1` / `2` / `3` (power view) | re-window the curve and CP fit to 30/60/90 days |
+| `1` / `2` / `3` or the chips (power view) | re-window the blue ladder and CP fit to 30/60/90 days |
 | `shift+[` / `shift+]` (trace view) | summon / walk / dismiss the ghost overlay (past newest = off) |
 | `[` / `]` (trace view) | older / newer structured session, last 12 |
 | `←` / `→` (table view) | scroll the window through the whole series (rows fill the window height) |
@@ -128,8 +128,8 @@ VALUES (0, 30, '2026-09-02', NULL, NULL);
 -- view 0..7 (form/power/trace/table/plan/heat/zones/ramp). A directive
 -- naming the retired view 8 is ignored (the record book merged into the
 -- power view at 1). range 30|60|90 lands on the view the
--- directive lands on: named view if set, else the visible one — on the curve
--- it re-windows the ladder+fit, on every other view it sets the form board's
+-- directive lands on: named view if set, else the visible one — on the power
+-- view it re-windows the ladder+fit, on every other view it sets the form board's
 -- range.
 -- cursor_day parks the crosshair, trace_day picks the session.
 -- ghost_day overlays a second session on the trace view at reduced alpha
