@@ -17,7 +17,7 @@ jobs:
       - name: Build with the release workflow's exact target flag
         run: |
           set -euo pipefail
-          roc build src/app.roc --output=stride-linux-arm64 --opt=dev --target=arm64musl
+          roc build src/main.roc --output=stride-linux-arm64 --opt=dev --target=arm64musl
           test -f stride-linux-arm64
       - name: Run the binary
         run: |

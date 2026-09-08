@@ -332,7 +332,7 @@ Command := [
 		## "no power data in the window" (specific to this form and this data).
 		##
 		## Two tiers rather than one list per form because most of the codes raised in
-		## app.roc are boundary codes that ANY form can hit — a copy on every form of
+		## main.roc are boundary codes that ANY form can hit — a copy on every form of
 		## `no_database` would be a drift surface with no information in it, which is the
 		## trap #219 named when it left this bullet undone.
 		##
@@ -346,7 +346,7 @@ Command := [
 	}
 
 	## Codes any form can return, so no form declares them. The database ones are raised
-	## at app.roc's boundary and reachable from every command that opens the db; `usage` is
+	## at main.roc's boundary and reachable from every command that opens the db; `usage` is
 	## reachable from every form, including argument-less ones, by passing an extra word.
 	##
 	## `unknown_command` is deliberately NOT here and NOT on any form: it is what you get

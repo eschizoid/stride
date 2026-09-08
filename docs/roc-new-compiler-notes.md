@@ -159,7 +159,7 @@ old compiler before trusting a bump.
 
 ## CLI flags: `=`, never a space
 
-`--output=stride`, `--main=src/app.roc`, `--opt=dev`, `--target=x64musl`. A
+`--output=stride`, `--main=src/main.roc`, `--opt=dev`, `--target=x64musl`. A
 space-separated `--output stride` fails with a confusing error — it broke a release
 build once and a `roc test --main` invocation another time.
 

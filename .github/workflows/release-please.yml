@@ -1,7 +1,7 @@
 name: release-please
 
 # Automated releases. release-please watches Conventional Commits on main
-# (feat:/fix:/…), maintains CHANGELOG.md and the version in app.roc, and opens a
+# (feat:/fix:/…), maintains CHANGELOG.md and the version in main.roc, and opens a
 # "release PR". Merging that PR tags vX.Y.Z + creates the GitHub release.
 #
 # NOTE: binary build/upload jobs are ENABLED on the new (Zig) compiler, pinned nightly,
@@ -80,7 +80,7 @@ jobs:
           # only linux-arm64 sets roc_target; everywhere else the native default is right
           target_flag=""
           if [ -n "${{ matrix.roc_target }}" ]; then target_flag="--target=${{ matrix.roc_target }}"; fi
-          roc build src/app.roc --output="stride-${{ matrix.target }}" --opt=dev $target_flag
+          roc build src/main.roc --output="stride-${{ matrix.target }}" --opt=dev $target_flag
           ls -la stride-${{ matrix.target }}* || true
           test -f "stride-${{ matrix.target }}" || test -f "stride-${{ matrix.target }}.exe"
 

@@ -433,7 +433,7 @@ run_sync! = || {
     check!("...and the client creds beside them, whose loss surfaces a day later as a bug report", Str.trim(sql!(adb, "SELECT value FROM config WHERE key='strava_client_id';")) == "e2e-id")?
     check!("...both, since either one missing breaks the refresh", Str.trim(sql!(adb, "SELECT value FROM config WHERE key='strava_client_secret';")) == "e2e-secret")?
     # ...and the form the bug report actually names. Every check above uses
-    # STRIDE_FORMAT=json, which never reaches `--json`'s re-exec in app.roc — a different
+    # STRIDE_FORMAT=json, which never reaches `--json`'s re-exec in main.roc — a different
     # mechanism that has to preserve stdin (the paste), stdout (the envelope) and the exit
     # code. A regression there breaks `stride auth --json | tail -1 | jq` verbatim while
     # this driver reports its exact count.
@@ -1334,7 +1334,7 @@ b_init_config! = |ctx| {
     _ = sh!("rm -rf '${verbs_dir}'")
 
     # ...and the HUMAN help names every command the table declares. `help_text` is a
-    # hand-maintained string literal in app.roc while the JSON help is generated from
+    # hand-maintained string literal in main.roc while the JSON help is generated from
     # `Command.specs`, so nothing structural keeps them together: `config unset` shipped
     # in the parser and the JSON help while the human help omitted it, which is how a
     # doc came to document a command its own stated oracle did not mention. Matched on
@@ -2778,7 +2778,7 @@ b_seed_analyze! = |ctx| {
     check!("skill documents the derived-key refusal", Str.contains(skill_text, "derived_key"))?
     # The Codex plugin manifest carries its OWN version, which is a second place the
     # released number can rot. Compared against `.release-please-manifest.json` rather
-    # than against `src/app.roc`'s string: the manifest is what release-please actually
+    # than against `src/main.roc`'s string: the manifest is what release-please actually
     # writes, so this fails on the release PR itself if the bump did not reach the plugin,
     # rather than one release later when someone reads the plugin card and sees 0.9.0.
     # jq, not sed: a sed pattern returns "" on a minified file, a prerelease suffix, or

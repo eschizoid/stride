@@ -1,5 +1,5 @@
 # GitHub Actions only. Dependabot has no Roc ecosystem, so it cannot see the platform and
-# package tarballs in src/app.roc (their version AND content hash are baked into the URL),
+# package tarballs in src/main.roc (their version AND content hash are baked into the URL),
 # and it cannot see the compiler pin either — `nightly-tag:` is an INPUT to setup-roc, not
 # an action version. Bumping the nightly stays a manual, tested decision; see
 # docs/roc-new-compiler-notes.md for why that matters right now.

@@ -25,14 +25,14 @@ default: test
 
 # type-check without building
 check:
-    {{roc}} check src/app.roc
+    {{roc}} check src/main.roc
 
 # build the binary. --opt=dev on purpose, but for BUILD TIME (~14s against ~2min), not
 # correctness: the optimized backend's miscompile (#32) was fixed by the 2026-08-17 pin.
 # CI and the release workflow both pin dev, so match them here or `just test` tests a
 # binary nobody ships.
 build:
-    {{roc}} build src/app.roc --output=stride --opt=dev {{linker}}
+    {{roc}} build src/main.roc --output=stride --opt=dev {{linker}}
 
 # full suite: pure expects -> fresh build (must succeed!) -> effectful e2e
 test:
@@ -43,7 +43,7 @@ test:
     {{roc}} test src/Csv.roc
     {{roc}} test src/Command.roc
     {{roc}} test src/Config.roc
-    {{roc}} test --main=src/app.roc src/Streams.roc
+    {{roc}} test --main=src/main.roc src/Streams.roc
     just build
     just e2e
 
