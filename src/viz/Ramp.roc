@@ -59,7 +59,7 @@ Ramp :: [].{
 				} else {}
 				# ramp dot: alarm past the band, teal on a sane build, faint idle
 				rv = I64.to_f32(x.w.ramp10) / 10.0
-				dc = if rv >= danger (Theme.alarm_c) else if rv > 0.0 (Theme.tsb_c) else ink_faint
+				dc = if rv > danger (Theme.alarm_c) else if rv > 0.0 (Theme.tsb_c) else ink_faint
 				frame.circle!({ center: { x: cx, y: ry(rv) }, radius: 3.5, style: Draw.filled(dc) })
 				if x.i % 2 == 0 {
 					Text.from(Str.from_utf8_lossy(List.drop_first(Str.to_utf8(x.w.wk), 5)), model.font).size(10).draw!(frame, { pos: { x: cx, y: bars_bot + 8.0 }, color: ink_faint, align: (Top, Center) })
