@@ -173,8 +173,11 @@ update! = |model, program_input| {
 		# cursor counts days back from the series' latest day — the last ANALYZED
 		# day, not necessarily today (0 = that column, -1 = off); LEFT walks
 		# older, RIGHT walks newer, and the board clamps to the window
+		# only the form board owns the cursor — arrows on the other views leave
+		# it where the user parked it, so tabbing back shows the same day
 		cursor =
-			if d.key_pressed(KeyLeft) (if model.cursor < 0 0 else model.cursor + 1)
+			if view != 0 model.cursor
+			else if d.key_pressed(KeyLeft) (if model.cursor < 0 0 else model.cursor + 1)
 			else if d.key_pressed(KeyRight) (if model.cursor <= 0 (-1) else model.cursor - 1)
 			else model.cursor
 		m = d.mouse.position()
