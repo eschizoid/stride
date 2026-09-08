@@ -142,10 +142,10 @@ Db :: [].{
 	# The power-duration curve. POINTS come from the stored per-activity bests
 	# (activity_metrics.best_*_w), maxed over the window — CAST(ROUND(..)) because a
 	# bare CAST truncates and would draw the whole ladder a watt low.
-	load_curve! : Sqlite.Db => List(CurvePt)
-	load_curve! = |db| {
-		q = "WITH w AS (SELECT m.* FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = 'Ride' AND a.start_local >= date('now','-90 days')) SELECT 5 AS d, CAST(ROUND(MAX(best_5s_w)) AS INTEGER) AS p FROM w UNION ALL SELECT 15, CAST(ROUND(MAX(best_15s_w)) AS INTEGER) FROM w UNION ALL SELECT 30, CAST(ROUND(MAX(best_30s_w)) AS INTEGER) FROM w UNION ALL SELECT 60, CAST(ROUND(MAX(best_60s_w)) AS INTEGER) FROM w UNION ALL SELECT 300, CAST(ROUND(MAX(best_300s_w)) AS INTEGER) FROM w UNION ALL SELECT 600, CAST(ROUND(MAX(best_600s_w)) AS INTEGER) FROM w UNION ALL SELECT 1200, CAST(ROUND(MAX(best_20min_w)) AS INTEGER) FROM w"
-		match Sqlite.query!({ db, query: q, bindings: [] }) {
+	load_curve! : Sqlite.Db, I64 => List(CurvePt)
+	load_curve! = |db, days| {
+		q = "WITH w AS (SELECT m.* FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = 'Ride' AND a.start_local >= date('now', '-' || :d || ' days')) SELECT 5 AS d, CAST(ROUND(MAX(best_5s_w)) AS INTEGER) AS p FROM w UNION ALL SELECT 15, CAST(ROUND(MAX(best_15s_w)) AS INTEGER) FROM w UNION ALL SELECT 30, CAST(ROUND(MAX(best_30s_w)) AS INTEGER) FROM w UNION ALL SELECT 60, CAST(ROUND(MAX(best_60s_w)) AS INTEGER) FROM w UNION ALL SELECT 300, CAST(ROUND(MAX(best_300s_w)) AS INTEGER) FROM w UNION ALL SELECT 600, CAST(ROUND(MAX(best_600s_w)) AS INTEGER) FROM w UNION ALL SELECT 1200, CAST(ROUND(MAX(best_20min_w)) AS INTEGER) FROM w"
+		match Sqlite.query!({ db, query: q, bindings: [{ name: ":d", value: Integer(days) }] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -159,6 +159,19 @@ Db :: [].{
 
 	# The most recent activity that HAS detected work blocks — the only kind this
 	# view can say anything about. Its id anchors both loaders below.
+	# the last dozen structured sessions, newest first — the trace picker's menu
+	load_trace_ids! : Sqlite.Db => List({ id : I64, day : Str })
+	load_trace_ids! = |db|
+		match Sqlite.query!({ db, query: "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day FROM activity_segments s JOIN activities a ON a.id = s.activity_id WHERE s.kind = 'work' GROUP BY a.id ORDER BY a.start_local DESC LIMIT 12", bindings: [] }) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(rows, |r| {
+					i = r.i64("id") ? |_| "bad id"
+					d = r.str("day") ? |_| "bad day"
+					Ok({ id: i, day: d })
+				})
+		}
+
 	load_trace_id! : Sqlite.Db => I64
 	load_trace_id! = |db|
 		match Sqlite.query!({ db, query: "SELECT a.id AS id FROM activity_segments s JOIN activities a ON a.id = s.activity_id WHERE s.kind = 'work' GROUP BY a.id ORDER BY a.start_local DESC LIMIT 1", bindings: [] }) {
@@ -227,9 +240,9 @@ Db :: [].{
 	# extracted independently so JSON key ORDER cannot silently break the parse; an
 	# empty field means the shell or the command failed, and the view says so rather
 	# than drawing a fit of zeros.
-	load_fit! : {} => Fit
-	load_fit! = |{}| {
-		script = "J=$(stride power-curve 90 Ride --json 2>/dev/null); for k in cp w_prime fit_r2 fit_points; do printf '%s ' \"$(printf '%s' \"$J\" | sed -n \"s/.*\\\"$k\\\":\\([-0-9.eE]*\\).*/\\1/p\" | head -1)\"; done"
+	load_fit! : I64 => Fit
+	load_fit! = |days| {
+		script = "J=$(stride power-curve ${I64.to_str(days)} Ride --json 2>/dev/null); for k in cp w_prime fit_r2 fit_points; do printf '%s ' \"$(printf '%s' \"$J\" | sed -n \"s/.*\\\"$k\\\":\\([-0-9.eE]*\\).*/\\1/p\" | head -1)\"; done"
 		out = match Cmd.run_utf8!(Cmd.with_args(Cmd.new("sh"), ["-c", script])) {
 			Ok(o) => Str.trim(o.stdout)
 			Err(_) => ""
