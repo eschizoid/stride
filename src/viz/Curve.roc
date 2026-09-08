@@ -9,8 +9,8 @@ Curve :: [].{
 	# short rungs collapse onto the left edge and the chart shows one point.
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
 	draw! = |model, frame| {
-		win_w = Theme.win_w
-		win_h = Theme.win_h
+		win_w = model.win.w
+		win_h = model.win.h
 		pad_l = Theme.pad_l
 		pad_r = Theme.pad_r
 		pad_t = Theme.pad_t
@@ -20,14 +20,14 @@ Curve :: [].{
 		ctl_c = Theme.ctl_c
 		tsb_c = Theme.tsb_c
 		model.curve_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
-		model.fit_lbl.draw!(frame, { pos: { x: 940.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
+		model.fit_lbl.draw!(frame, { pos: { x: win_w - 40.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
 		if List.is_empty(model.curve) {
 			model.curve_empty.draw!(frame, { pos: { x: 36.0, y: 120.0 }, color: ink_muted, align: (Top, Left) })
-			model.curve_hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
+			model.curve_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 			Ok({})
 		} else {
-			pw = I32.to_f32(win_w) - pad_l - pad_r
-			ph = I32.to_f32(win_h) - pad_t - pad_b
+			pw = win_w - pad_l - pad_r
+			ph = win_h - pad_t - pad_b
 			w_hi = List.fold(model.curve, 1.0, |a, c| F32.max(a, c.watts)) * 1.08
 			# Rungs are evenly spaced by INDEX, not by duration: the ladder is a
 			# fixed 5s..20min set, and a linear time axis would pile the six short
@@ -59,7 +59,7 @@ Curve :: [].{
 			List.for_each!(List.map_with_index(model.curve_lbls, |l, i| { l, i }), |x| {
 				x.l.p.draw!(frame, { pos: { x: cx(x.i), y: pad_t + ph - 18.0 }, color: ink_faint, align: (Top, Center) })
 			})
-			model.curve_hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
+			model.curve_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 			Ok({})
 		}
 	}

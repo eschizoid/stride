@@ -21,8 +21,8 @@ Board :: [].{
 
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
 	draw! = |model, frame| {
-		win_w = Theme.win_w
-		win_h = Theme.win_h
+		win_w = model.win.w
+		win_h = model.win.h
 		pad_l = Theme.pad_l
 		pad_r = Theme.pad_r
 		# +56 makes room for the KPI tile row this view alone carries
@@ -44,14 +44,14 @@ Board :: [].{
 		x.k.v.draw!(frame, { pos: { x: tx0, y: 94.0 }, color: col, align: (Top, Left) })
 		x.k.cap.draw!(frame, { pos: { x: tx0, y: 127.0 }, color: ink_faint, align: (Top, Left) })
 	})
-	model.ev_tile_top.draw!(frame, { pos: { x: 744.0, y: 96.0 }, color: ink_muted, align: (Top, Left) })
-	model.ev_tile_sub.draw!(frame, { pos: { x: 744.0, y: 122.0 }, color: ink_faint, align: (Top, Left) })
+	model.ev_tile_top.draw!(frame, { pos: { x: win_w - 236.0, y: 96.0 }, color: ink_muted, align: (Top, Left) })
+	model.ev_tile_sub.draw!(frame, { pos: { x: win_w - 236.0, y: 122.0 }, color: ink_faint, align: (Top, Left) })
 	if model.ridden_found {
-		model.ridden_note.draw!(frame, { pos: { x: 744.0, y: 136.0 }, color: ink_faint, align: (Top, Left) })
+		model.ridden_note.draw!(frame, { pos: { x: win_w - 236.0, y: 136.0 }, color: ink_faint, align: (Top, Left) })
 	} else {}
 	# which range is live: three chips, the active one filled
 	List.for_each!(List.map_with_index(model.subs, |s, i| { s, i }), |x| {
-		chx = 560.0 + U64.to_f32(x.i) * 54.0
+		chx = win_w - 420.0 + U64.to_f32(x.i) * 54.0
 		on = x.s.r == model.range
 		style = if on (Draw.filled(Color.with_alpha(ctl_c, 60))) else Draw.filled(Theme.card)
 		frame.rounded_rectangle!({ x: chx, y: 64.0, width: 46.0, height: 22.0, radius: 6.0, segments: 6, style })
@@ -63,10 +63,10 @@ Board :: [].{
 		} else {})
 
 	if model.ev_warn_found {
-		model.ev_warn.draw!(frame, { pos: { x: 940.0, y: 52.0 }, color: atl_c, align: (Top, Right) })
+		model.ev_warn.draw!(frame, { pos: { x: win_w - 40.0, y: 52.0 }, color: atl_c, align: (Top, Right) })
 	} else {}
 	if model.stale_found {
-		model.stale.draw!(frame, { pos: { x: 940.0, y: 34.0 }, color: ink_faint, align: (Top, Right) })
+		model.stale.draw!(frame, { pos: { x: win_w - 40.0, y: 34.0 }, color: ink_faint, align: (Top, Right) })
 	} else {}
 
 		if model.has_error {
@@ -83,8 +83,8 @@ Board :: [].{
 			hi = hi_of(data)
 			n = List.len(data)
 			span = hi - lo
-			pw = I32.to_f32(win_w) - pad_l - pad_r
-			ph = I32.to_f32(win_h) - pad_t - pad_b
+			pw = win_w - pad_l - pad_r
+			ph = win_h - pad_t - pad_b
 			xf = |i| pad_l + pw * U64.to_f32(i) / U64.to_f32(n - 1)
 			yf = |v| pad_t + ph * (1.0 - (v - lo) / span)
 
@@ -95,7 +95,7 @@ Board :: [].{
 			List.for_each!(model.ylabels, |yl|
 				if yl.v >= lo and yl.v <= hi {
 					gy = yf(yl.v)
-					frame.line!({ start: { x: pad_l, y: gy }, end: { x: I32.to_f32(win_w) - pad_r, y: gy }, stroke: Draw.stroke(Color.with_alpha(Color.white, 18), 1) })
+					frame.line!({ start: { x: pad_l, y: gy }, end: { x: win_w - pad_r, y: gy }, stroke: Draw.stroke(Color.with_alpha(Color.white, 18), 1) })
 					yl.p.draw!(frame, { pos: { x: 30.0, y: gy - 8.0 }, color: ink_faint, align: (Top, Left) })
 				} else {})
 			# the artifact's x-axis: ~6 date labels under the plot
@@ -110,11 +110,11 @@ Board :: [].{
 			# dotted, as the artifact draws it: 4px dash, 6px gap
 			List.for_each!(List.map_with_index(List.repeat({}, 84), |_u, k| k), |k| {
 				dx = pad_l + U64.to_f32(k) * 10.0
-				if dx + 4.0 <= I32.to_f32(win_w) - pad_r {
+				if dx + 4.0 <= win_w - pad_r {
 					frame.line!({ start: { x: dx, y: yf(0.0) }, end: { x: dx + 4.0, y: yf(0.0) }, stroke: Draw.stroke(Color.with_alpha(Color.white, 55), 1) })
 				} else {}
 			})
-			model.zero_note.draw!(frame, { pos: { x: I32.to_f32(win_w) - pad_r - 6.0, y: yf(0.0) - 16.0 }, color: ink_faint, align: (Top, Right) })
+			model.zero_note.draw!(frame, { pos: { x: win_w - pad_r - 6.0, y: yf(0.0) - 16.0 }, color: ink_faint, align: (Top, Right) })
 
 			# daily load (TSS) as a faint rug in its OWN scale along the bottom band,
 			# never on the fitness/form axis: load peaks well above 50 and would
@@ -167,7 +167,7 @@ Board :: [].{
 				Ok(l) => l
 				Err(_) => { ctl: 0.0, atl: 0.0, tsb: 0.0, tss: 0.0 }
 			}
-			ex2 = I32.to_f32(win_w) - pad_r + 8.0
+			ex2 = win_w - pad_r + 8.0
 			List.for_each!(model.ends, |e| {
 				v = if e.sel == 0 last.ctl else if e.sel == 1 last.atl else last.tsb
 				col = if e.sel == 0 ctl_c else if e.sel == 1 atl_c else tsb_c
@@ -179,7 +179,7 @@ Board :: [].{
 			# drawn per frame). Mouse wins while it is inside the plot; the arrow
 			# cursor counts days back from the latest.
 			hi_idx = n - 1
-			mouse_sel = model.mouse_in and model.mouse_x >= pad_l and model.mouse_x <= I32.to_f32(win_w) - pad_r
+			mouse_sel = model.mouse_in and model.mouse_x >= pad_l and model.mouse_x <= win_w - pad_r
 			cur_back = if model.cursor < 0 (0.U64) else match I64.to_u64_try(model.cursor) {
 				Ok(c) => if c > hi_idx (hi_idx) else c
 				Err(_) => 0.U64
@@ -205,7 +205,7 @@ Board :: [].{
 						# the artifact's tooltip: date header, then a colored row per
 						# series; flipped left when the cursor nears the right edge
 						tip_w = 168.0
-						tip_x = if hx + 14.0 + tip_w > I32.to_f32(win_w) - pad_r (hx - 14.0 - tip_w) else hx + 14.0
+						tip_x = if hx + 14.0 + tip_w > win_w - pad_r (hx - 14.0 - tip_w) else hx + 14.0
 						tip_y = pad_t + 8.0
 						frame.rounded_rectangle!({ x: tip_x, y: tip_y, width: tip_w, height: 130.0, radius: 6.0, segments: 6, style: Draw.filled(Theme.card) })
 						Text.from(day, model.font).size(12).draw!(frame, { pos: { x: tip_x + 10.0, y: tip_y + 8.0 }, color: Color.white, align: (Top, Left) })
@@ -229,7 +229,7 @@ Board :: [].{
 				}
 			} else {}
 
-			model.hint.draw!(frame, { pos: { x: 34.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
+			model.hint.draw!(frame, { pos: { x: 34.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 			Ok({})
 		}
 	}

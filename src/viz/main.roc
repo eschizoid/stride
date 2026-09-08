@@ -38,6 +38,8 @@ init! = App.init(
 		.with_title("Stride Form Board")
 		.with_size({ width: Theme.win_w, height: Theme.win_h })
 		.with_frame_pacing(Capped(60))
+		.with_resizable(Bool.True)
+		.with_min_size({ width: 980, height: 600 })
 		.with_output_dir("captures"),
 	|_startup| {
 		font = Draw.default_font!()
@@ -113,9 +115,9 @@ load_model! = |font, curve_days| {
 		# every immediate readout/table cell, mixed words included, so a data
 		# line never switches face mid-string. The platform default appears
 		# only when neither file can be found
-		head = brand_font!(home, "Quicksand-Medium.ttf", 32, font)
-		mono_big = brand_font!(home, "JetBrainsMono-Regular.ttf", 30, font)
-		mono = brand_font!(home, "JetBrainsMono-Regular.ttf", 16, font)
+		head = brand_font!(home, "Quicksand-Medium.ttf", 64, font)
+		mono_big = brand_font!(home, "JetBrainsMono-Regular.ttf", 60, font)
+		mono = brand_font!(home, "JetBrainsMono-Regular.ttf", 32, font)
 		mk! = |txt, sz| Text.from(txt, head).size(sz).prepare!()
 		mkm! = |txt, sz| Text.from(txt, mono).size(sz).prepare!()
 		mkb! = |txt, sz| Text.from(txt, mono_big).size(sz).prepare!()
@@ -224,6 +226,10 @@ load_model! = |font, curve_days| {
 			empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
 			range: 90.U64,
 			mouse_x: 0.0,
+			mouse_y: 0.0,
+			win: { w: I32.to_f32(Theme.win_w), h: I32.to_f32(Theme.win_h) },
+			detail_day: "",
+			detail: [],
 			mouse_in: Bool.False,
 			cursor: -1,
 		})
@@ -251,6 +257,15 @@ trace_task! = |home, ids, sel|
 					TraceSwitched({ tr, sg, du, sel, day: entry.day })
 				}
 			}
+	}
+
+# One day's story, fetched when a table row is clicked
+detail_task! : Str, Str => Msg
+detail_task! = |home, day|
+	if home == "" DayDetail({ day, lines: [{ title: "no database path", stats: "" }] })
+	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
+		Err(_) => DayDetail({ day, lines: [{ title: "cannot open the database", stats: "" }] })
+		Ok(db) => DayDetail({ day, lines: Db.load_day_detail!(db, day) })
 	}
 
 # The coach's poll: read-and-consume the newest directive, every 60
@@ -292,6 +307,7 @@ Msg : [
 	DirectiveNone,
 	FocusWritten,
 	FocusWriteFailed,
+	DayDetail({ day : Str, lines : List({ title : Str, stats : Str }) }),
 ]
 
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
@@ -308,9 +324,12 @@ update! = |model0, program_input| {
 			FocusWritten => acc
 			# a dropped write must not leave the coach stale: resetting
 			# last_focus makes the next throttle tick try again
+			# only the answer for the day still open lands; a result for a day
+			# the user closed or switched away from is dropped
+			DayDetail(dd) => if dd.day == acc.detail_day ({ ..acc, detail: dd.lines }) else acc
 			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "" } }
 			Directive(_) => acc
-			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus }
+			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, detail_day: acc.detail_day, detail: acc.detail }
 			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day }
 		})
 	# the coach's word arrives beside the human's input and steers only what
@@ -323,19 +342,23 @@ update! = |model0, program_input| {
 	if d.key_pressed(KeyEscape) {
 		Err(Exit(0))
 	} else {
+		win = { w: I32.to_f32(program_input.window.size.width), h: I32.to_f32(program_input.window.size.height) }
 		m0 = d.mouse.position()
 		# the range chips are buttons: a left click inside one selects it. Chip
-		# geometry mirrors Board's row (x 560 + i*54, y 64, 46x22).
-		clicked_chip =
-			if model.view == 0 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0 {
-				if m0.x >= 560.0 and m0.x <= 606.0 (30.U64)
-				else if m0.x >= 614.0 and m0.x <= 660.0 (60.U64)
-				else if m0.x >= 668.0 and m0.x <= 714.0 (90.U64)
-				else 0.U64
-			} else 0.U64
+		# geometry mirrors Board's row exactly - right-anchored at
+		# win.w - 420 + i*54, y 64, each 46x22 - and must move with it.
 		view_input = if d.key_pressed(KeyTab) (if model.view == 3 0 else model.view + 1) else model.view
 		view = if directive.has_d and directive.view >= 0 and directive.view <= 3 (match I64.to_u8_try(directive.view) { Ok(v8) => v8
 			Err(_) => view_input }) else view_input
+		# chips hit-test against the frame-true view render will draw
+		clicked_chip =
+			if view == 0 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0 {
+				chip0 = win.w - 420.0
+				if m0.x >= chip0 and m0.x <= chip0 + 46.0 (30.U64)
+				else if m0.x >= chip0 + 54.0 and m0.x <= chip0 + 100.0 (60.U64)
+				else if m0.x >= chip0 + 108.0 and m0.x <= chip0 + 154.0 (90.U64)
+				else 0.U64
+			} else 0.U64
 		# 1/2/3 answer to whichever view is showing: the form board's range, or
 		# the curve's window — never both at once
 		range =
@@ -387,17 +410,27 @@ update! = |model0, program_input| {
 			else if d.key_pressed(KeyRightBracket) (if model.trace_sel > 0 (model.trace_sel - 1) else model.trace_sel)
 			else model.trace_sel
 		# clicking a table row jumps to that day's crosshair on the form board
+		# -2 = no directive OR day not in the series: both leave the cursor
+		# alone. A found day maps to its days-back index (>= 0).
+		cursor_dir =
+			if directive.has_d and directive.cursor_day != "" {
+				total2 = List.len(model.days)
+				List.fold(List.map_with_index(model.days, |dy, di| { dy, di }), -2, |acc, x| if x.dy == directive.cursor_day (match U64.to_i64_try(total2 - 1 - x.di) { Ok(cb2) => cb2
+					Err(_) => acc }) else acc)
+			} else -2
+		# the frame-true pre-click cursor: arrows and directives applied, row
+		# clicks not yet - THIS is the scroll state the table renders from,
+		# so click and hover hit-tests share it
+		cursor_pre = if cursor_dir >= 0 cursor_dir else cursor
 		row_hit =
-			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and m.x <= 940.0 and m.y >= 134.0 {
+			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and (if model.detail_day != "" (m.x < win.w / 2.0) else m.x <= win.w - 40.0) and m.y >= 134.0 {
 				total = List.len(model.data)
-				max_back = if total > 14 (total - 14) else 0.U64
-				back = if model.cursor < 0 (0.U64) else match I64.to_u64_try(model.cursor) {
-					Ok(c) => if c > max_back max_back else c
-					Err(_) => 0.U64
-				}
-				kept = total - back
-				rowcount = if kept > 14 (14.U64) else kept
-				ri = match F32.round_to_u64_try((m.y - 134.0) / 24.0) {
+				w = Table.window_of(total, cursor_pre)
+				kept = w.kept
+				rowcount = w.rows
+				# floored, not rounded: rounding flips to the NEXT row past a
+				# row's midline and made lower-half clicks select the neighbor
+				ri = match F32.round_to_u64_try(F32.div_floor_by(m.y - 134.0, 24.0) + 0.1) {
 					Ok(r) => r
 					Err(_) => 99
 				}
@@ -409,17 +442,32 @@ update! = |model0, program_input| {
 					}
 				} else { hit: Bool.False, cb: -1 }
 			} else { hit: Bool.False, cb: -1 }
-		view2 = if row_hit.hit 0 else view
+		# a clicked row opens the day's detail panel in place (same row again
+		# closes it); the crosshair follows so tabbing to the board lines up
+		clicked_day =
+			if row_hit.hit {
+				total4 = List.len(model.days)
+				match I64.to_u64_try(row_hit.cb) {
+					Err(_) => ""
+					Ok(cb4) =>
+						if cb4 >= total4 ""
+						else match List.get(model.days, total4 - 1 - cb4) {
+							Ok(dy) => dy
+							Err(_) => ""
+						}
+				}
+			} else ""
+		detail_day2 = if row_hit.hit (if clicked_day == model.detail_day "" else clicked_day) else model.detail_day
+		# spawn unconditionally: detail_task! answers "no database path" itself,
+		# so a missing HOME shows that instead of loading... forever
+		_ = if row_hit.hit and detail_day2 != "" {
+			homed = model.home
+			dayd = detail_day2
+			Task.spawn!(program_input, || detail_task!(homed, dayd))
+		} else {}
+		view2 = view
 		# a directive naming a day parks the crosshair there
-		# -2 = no directive OR day not in the series: both leave the cursor
-		# alone. A found day maps to its days-back index (>= 0).
-		cursor_dir =
-			if directive.has_d and directive.cursor_day != "" {
-				total2 = List.len(model.days)
-				List.fold(List.map_with_index(model.days, |dy, di| { dy, di }), -2, |acc, x| if x.dy == directive.cursor_day (match U64.to_i64_try(total2 - 1 - x.di) { Ok(cb2) => cb2
-					Err(_) => acc }) else acc)
-			} else -2
-		cursor2 = if row_hit.hit row_hit.cb else if cursor_dir >= 0 cursor_dir else cursor
+		cursor2 = if row_hit.hit row_hit.cb else cursor_pre
 		# reloads and trace switches SPAWN — Cmd panics in update!, and the
 		# task lane is where Sqlite and text preparation park legally
 		# a directive naming a session day resolves to its picker slot
@@ -439,6 +487,10 @@ update! = |model0, program_input| {
 				Err(_) => ReloadFailed
 			})
 		} else {}
+		over_chip = view2 == 0 and m.y >= 64.0 and m.y <= 86.0 and m.x >= win.w - 420.0 and m.x <= win.w - 266.0
+		row_count = Table.window_of(List.len(model.data), cursor2).rows
+		over_row = view2 == 3 and m.x >= 36.0 and (if detail_day2 != "" (m.x < win.w / 2.0) else m.x <= win.w - 40.0) and m.y >= 134.0 and m.y <= 134.0 + U64.to_f32(row_count) * 24.0
+		Mouse.set_cursor!(if over_chip or over_row PointingHand else Default)
 		tick = model.tick + 1
 		# no HOME means no database path means no bus — spawning would only
 		# manufacture failing tasks every tick, forever
@@ -481,14 +533,14 @@ update! = |model0, program_input| {
 				_ = Task.spawn!(program_input, || focus_task!(homef, focus_now))
 				focus_now
 			} else model.last_focus
-		Ok({ ..model, range, view: view2, cursor: cursor2, curve_days: want_days, trace_sel: want_sel2, tick, last_focus, mouse_x: m.x, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b })
+		Ok({ ..model, range, view: view2, cursor: cursor2, curve_days: want_days, trace_sel: want_sel2, tick, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
 render! : Model, Draw.Frame => Try({}, [Exit(I64), ..])
 render! = |model, frame| {
-	frame.rectangle!({ x: 0.0, y: 0.0, width: I32.to_f32(Theme.win_w), height: I32.to_f32(Theme.win_h), style: Draw.filled(Theme.bg) })
-	frame.rounded_rectangle!({ x: 16.0, y: 16.0, width: I32.to_f32(Theme.win_w) - 32.0, height: I32.to_f32(Theme.win_h) - 32.0, radius: 14.0, segments: 10, style: Draw.filled(Theme.panel) })
+	frame.rectangle!({ x: 0.0, y: 0.0, width: model.win.w, height: model.win.h, style: Draw.filled(Theme.bg) })
+	frame.rounded_rectangle!({ x: 16.0, y: 16.0, width: model.win.w - 32.0, height: model.win.h - 32.0, radius: 14.0, segments: 10, style: Draw.filled(Theme.panel) })
 	model.title.draw!(frame, { pos: { x: 34.0, y: 30.0 }, color: Color.white, align: (Top, Left) })
 	# Legend belongs to the FORM BOARD only: it draws in the same row the
 	# other views put their titles in, and overprinted them.

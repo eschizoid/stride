@@ -36,6 +36,8 @@ data table: the last 14 days as numbers.
 | `1` / `2` / `3` (curve view) | re-window the curve and CP fit to 30/60/90 days |
 | `[` / `]` (trace view) | older / newer structured session, last 12 |
 | `←` / `→` (table view) | scroll the 14-day window through the whole series |
+| click a date (table view) | open that day's detail panel: sessions, minutes, km, TSS, NP |
+| window edges | drag to resize; every view reflows live (980x600 floor) |
 | `S` | save a PNG of the current view into `./captures` |
 | mouse hover | crosshair + per-day dots + a top-right readout (form board) |
 | `ESC` | quit |
