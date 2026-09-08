@@ -192,7 +192,13 @@ update! = |model, program_input| {
 		} else {}
 		if d.key_pressed(KeyR) {
 			# rebuild from the database, keep what the user was looking at;
-			# a failed rebuild keeps the window it had rather than taking it down
+			# a failed rebuild keeps the window it had rather than taking it down.
+			# Deliberately SYNCHRONOUS inside update!: the stall is bounded (the
+			# queries are ms-scale, the fit shell-out the long pole) and follows
+			# an explicit keypress — while a spawned rebuild would create Text
+			# resources off the frame path, which this platform does not promise
+			# to survive. Screenshots spawn because they must wait for frame end;
+			# a reload has no such constraint.
 			# both arms carry the frame's own input — reload swaps only the data
 			mouse_now = m.y > Theme.pad_t and m.y < I32.to_f32(Theme.win_h) - Theme.pad_b
 			match load_model!(model.font) {
