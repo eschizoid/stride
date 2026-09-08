@@ -45,14 +45,22 @@ Trace :: [].{
 			# both map through the session's own duration rather than through
 			# each other's index.
 			total_s = model.trace_dur
-			sx = |sec| pad_l + pw * sec / total_s
-			tx = |i| if nlast == 0 (pad_l) else pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
+			# every x runs through the camera: the visible window is
+			# [pan, pan + 1/zoom] of the session, in session-fraction space
+			cam = |frac| pad_l + pw * (frac - model.trace_pan) * model.trace_zoom
+			sx = |sec| cam(sec / total_s)
+			tx = |i| if nlast == 0 (pad_l) else cam(U64.to_f32(i) / U64.to_f32(nlast))
 			ty = |w| pad_t + ph * (1.0 - w / w_hi)
+			x_min = pad_l
+			x_max = pad_l + pw
 			List.for_each!(model.segs, |sg| {
 				col = if sg.kind == "work" (Color.with_alpha(tsb_c, 52)) else if sg.kind == "recovery" (Color.with_alpha(ink_faint, 36)) else Color.with_alpha(ink_faint, 18)
-				x0 = sx(I64.to_f32(sg.start_s))
-				x1 = sx(I64.to_f32(sg.start_s + sg.dur_s))
-				frame.rectangle!({ x: x0, y: pad_t, width: F32.max(x1 - x0, 1.0), height: ph, style: Draw.filled(col) })
+				# blocks clamp to the plot edges; one fully outside draws nothing
+				x0 = F32.max(x_min, sx(I64.to_f32(sg.start_s)))
+				x1 = F32.min(x_max, sx(I64.to_f32(sg.start_s + sg.dur_s)))
+				if x1 > x0 {
+					frame.rectangle!({ x: x0, y: pad_t, width: F32.max(x1 - x0, 1.0), height: ph, style: Draw.filled(col) })
+				} else {}
 			})
 			# One pass, no random access: zip each sample with its successor.
 			# (Roc lists are contiguous arrays — even the List.get form this
@@ -69,7 +77,7 @@ Trace :: [].{
 				# starting past the live duration are skipped, the one straddling
 				# it keeps its clamped end
 				List.for_each!(List.map_with_index(gsegs, |pr, i| { pr, i }), |x|
-					if model.ghost_dur * U64.to_f32(x.i) / U64.to_f32(gn) <= total_s {
+					if model.ghost_dur * U64.to_f32(x.i) / U64.to_f32(gn) <= total_s and gx(x.i) >= x_min and gx(x.i + 1) <= x_max {
 						frame.line!({ start: { x: gx(x.i), y: ty(x.pr.a) }, end: { x: gx(x.i + 1), y: ty(x.pr.b) }, stroke: Draw.stroke(Color.with_alpha(Theme.atl_c, 120), 1.0) })
 					} else {})
 				{}
@@ -77,7 +85,15 @@ Trace :: [].{
 			tail = List.take_last(model.trace, List.len(model.trace) - 1)
 			segs2 = List.map2(model.trace, tail, |a, b| { a, b })
 			List.for_each!(List.map_with_index(segs2, |pr, i| { pr, i }), |x|
-				frame.line!({ start: { x: tx(x.i), y: ty(x.pr.a) }, end: { x: tx(x.i + 1), y: ty(x.pr.b) }, stroke: Draw.stroke(ctl_c, 1.0) }))
+				if tx(x.i) >= x_min and tx(x.i + 1) <= x_max {
+					frame.line!({ start: { x: tx(x.i), y: ty(x.pr.a) }, end: { x: tx(x.i + 1), y: ty(x.pr.b) }, stroke: Draw.stroke(ctl_c, 1.0) })
+				} else {})
+			# the camera says where it is when it is anywhere but home
+			if model.trace_zoom > 1.01 {
+				zoom10 = match F32.round_to_u64_try(model.trace_zoom * 10.0) { Ok(z9) => z9
+					Err(_) => 10 }
+				Text.from("zoom ${U64.to_str(zoom10 // 10)}.${U64.to_str(zoom10 % 10)}x   0 resets", model.font).size(11).draw!(frame, { pos: { x: win_w - 34.0, y: 110.0 }, color: ink_muted, align: (Top, Right) })
+			} else {}
 			model.trace_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 			Ok({})
 		}

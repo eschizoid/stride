@@ -205,7 +205,7 @@ load_model! = |font, curve_days| {
 				Err(_) => ""
 			},
 			curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-			trace_hint: mk!("[ / ]  session      shift+[ / shift+]  ghost      TAB  data table      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+			trace_hint: mk!("[ / ]  session      shift+[ / shift+]  ghost      wheel zoom  drag pan  0 reset      TAB  data table      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			table_title: mk!("data table", 15)?,
 			table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
@@ -225,6 +225,8 @@ load_model! = |font, curve_days| {
 			ghost_dur: 1.0,
 			ghost_sel: -1,
 			ghost_day: "",
+			trace_zoom: 1.0,
+			trace_pan: 0.0,
 			segs: loaded.sg,
 			trace_title: mk!("last structured session - detected blocks shaded behind the power trace", 15)?,
 			trace_dur: loaded.du,
@@ -504,8 +506,8 @@ update! = |model0, program_input| {
 			if Mouse.button_pressed(d.mouse, Left) and m0.y >= 30.0 and m0.y <= 54.0 {
 				nav_n = List.len(model.nav)
 				List.fold(List.map_with_index(model.nav, |nv2, vi| { nv2, vi }), -1, |acc, x| {
-					nx2 = win.w - 36.0 - U64.to_f32(nav_n - x.vi) * 76.0
-					if m0.x >= nx2 and m0.x <= nx2 + 68.0 (U8.to_i64(x.nv2.v)) else acc
+					nx2 = win.w - 36.0 - U64.to_f32(nav_n - x.vi) * 88.0
+					if m0.x >= nx2 and m0.x <= nx2 + 80.0 (U8.to_i64(x.nv2.v)) else acc
 				})
 			} else -1
 		view_input =
@@ -687,6 +689,32 @@ update! = |model0, program_input| {
 			ids2 = model.trace_ids
 			Task.spawn!(program_input, || trace_task!(home2, ids2, want_sel2))
 		} else {}
+		# the trace camera: wheel zooms anchored at the cursor's moment, a held
+		# left drag pans, 0 resets - and a session switch resets (the window
+		# belonged to the old ride)
+		wheel = Mouse.wheel_delta(d.mouse)
+		zoom_raw =
+			if view != 2 model.trace_zoom
+			else if d.key_pressed(Key0) 1.0
+			else if wheel.y > 0.1 (model.trace_zoom * 1.15)
+			else if wheel.y < -0.1 (model.trace_zoom / 1.15)
+			else model.trace_zoom
+		trace_zoom2 = if want_sel2 != model.trace_sel (1.0) else F32.min(20.0, F32.max(1.0, zoom_raw))
+		pan_raw =
+			if view != 2 model.trace_pan
+			else if d.key_pressed(Key0) or want_sel2 != model.trace_sel 0.0
+			else {
+				pw9 = win.w - Theme.pad_l - Theme.pad_r
+				u9 = F32.min(1.0, F32.max(0.0, (m.x - Theme.pad_l) / pw9))
+				if trace_zoom2 != model.trace_zoom {
+					# hold the moment under the cursor still through the zoom
+					t9 = model.trace_pan + u9 / model.trace_zoom
+					t9 - u9 / trace_zoom2
+				} else if Mouse.button_down(d.mouse, Left) and m.y > Theme.pad_t and m.y < win.h - Theme.pad_b {
+					model.trace_pan - (m.x - model.mouse_x) / pw9 / trace_zoom2
+				} else model.trace_pan
+			}
+		trace_pan2 = F32.min(1.0 - 1.0 / trace_zoom2, F32.max(0.0, pan_raw))
 		want_ghost2 =
 			if directive.has_d and directive.ghost_day == "none" (-1)
 			else if directive.has_d and directive.ghost_day != "" {
@@ -717,8 +745,8 @@ update! = |model0, program_input| {
 		row_count = Table.window_of(List.len(model.data), cursor2, Table.rows_fit(win.h)).rows
 		over_row = view2 == 3 and m.x >= 36.0 and (if detail_day2 != "" (m.x < Table.panel_edge(win.w)) else m.x < win.w - 40.0) and m.y >= 134.0 and m.y < 134.0 + U64.to_f32(row_count) * 24.0
 		over_nav = m.y >= 30.0 and m.y <= 54.0 and (List.fold(List.map_with_index(model.nav, |nv3, vi3| { nv3, vi3 }), Bool.False, |acc, x| {
-			nx3 = win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.vi3) * 76.0
-			if m.x >= nx3 and m.x <= nx3 + 68.0 Bool.True else acc
+			nx3 = win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.vi3) * 88.0
+			if m.x >= nx3 and m.x <= nx3 + 80.0 Bool.True else acc
 		}))
 		Mouse.set_cursor!(if over_chip or over_row or over_nav PointingHand else Default)
 		# a view switch stamps this frame; render fades the new view in from it
@@ -778,8 +806,57 @@ update! = |model0, program_input| {
 				Unavailable(u9) => if u9.gw == win.w and u9.gh == win.h (model.glow) else build_glow!(win)
 			}
 		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
-		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
+}
+
+# 12x12 vector marks, one per view: iconography drawn from primitives -
+# no sprite sheet to ship, crisp at any DPI, colored with its label
+nav_icon! : Draw.Frame, U8, F32, F32, Color.Rgba => {}
+nav_icon! = |frame, v, x, y, c| {
+	if v == 0 {
+		# form: a spark line
+		frame.line!({ start: { x: x, y: y + 9.0 }, end: { x: x + 4.0, y: y + 3.0 }, stroke: Draw.stroke(c, 1.5) })
+		frame.line!({ start: { x: x + 4.0, y: y + 3.0 }, end: { x: x + 8.0, y: y + 7.0 }, stroke: Draw.stroke(c, 1.5) })
+		frame.line!({ start: { x: x + 8.0, y: y + 7.0 }, end: { x: x + 12.0, y: y + 1.0 }, stroke: Draw.stroke(c, 1.5) })
+	} else if v == 1 {
+		# power: a bolt
+		frame.line!({ start: { x: x + 8.0, y: y }, end: { x: x + 3.0, y: y + 7.0 }, stroke: Draw.stroke(c, 1.5) })
+		frame.line!({ start: { x: x + 3.0, y: y + 7.0 }, end: { x: x + 8.0, y: y + 7.0 }, stroke: Draw.stroke(c, 1.5) })
+		frame.line!({ start: { x: x + 8.0, y: y + 7.0 }, end: { x: x + 4.0, y: y + 12.0 }, stroke: Draw.stroke(c, 1.5) })
+	} else if v == 2 {
+		# trace: a square pulse
+		frame.line!({ start: { x: x, y: y + 9.0 }, end: { x: x + 4.0, y: y + 9.0 }, stroke: Draw.stroke(c, 1.5) })
+		frame.line!({ start: { x: x + 4.0, y: y + 9.0 }, end: { x: x + 4.0, y: y + 2.0 }, stroke: Draw.stroke(c, 1.5) })
+		frame.line!({ start: { x: x + 4.0, y: y + 2.0 }, end: { x: x + 8.0, y: y + 2.0 }, stroke: Draw.stroke(c, 1.5) })
+		frame.line!({ start: { x: x + 8.0, y: y + 2.0 }, end: { x: x + 8.0, y: y + 9.0 }, stroke: Draw.stroke(c, 1.5) })
+		frame.line!({ start: { x: x + 8.0, y: y + 9.0 }, end: { x: x + 12.0, y: y + 9.0 }, stroke: Draw.stroke(c, 1.5) })
+	} else if v == 3 {
+		# table: three rows
+		frame.rectangle!({ x: x, y: y + 1.0, width: 12.0, height: 2.0, style: Draw.filled(c) })
+		frame.rectangle!({ x: x, y: y + 5.0, width: 12.0, height: 2.0, style: Draw.filled(c) })
+		frame.rectangle!({ x: x, y: y + 9.0, width: 12.0, height: 2.0, style: Draw.filled(c) })
+	} else if v == 4 {
+		# plan: a calendar - a faint page under a solid header bar
+		frame.rounded_rectangle!({ x: x, y: y + 1.0, width: 12.0, height: 11.0, radius: 2.0, segments: 3, style: Draw.filled(Color.with_alpha(c, 70)) })
+		frame.rectangle!({ x: x, y: y + 1.0, width: 12.0, height: 3.0, style: Draw.filled(c) })
+	} else if v == 5 {
+		# heat: four cells
+		frame.rectangle!({ x: x + 1.0, y: y + 1.0, width: 4.5, height: 4.5, style: Draw.filled(c) })
+		frame.rectangle!({ x: x + 6.5, y: y + 1.0, width: 4.5, height: 4.5, style: Draw.filled(Color.with_alpha(c, 120)) })
+		frame.rectangle!({ x: x + 1.0, y: y + 6.5, width: 4.5, height: 4.5, style: Draw.filled(Color.with_alpha(c, 120)) })
+		frame.rectangle!({ x: x + 6.5, y: y + 6.5, width: 4.5, height: 4.5, style: Draw.filled(c) })
+	} else if v == 6 {
+		# zones: three stacked bars
+		frame.rectangle!({ x: x + 1.0, y: y + 7.0, width: 3.0, height: 5.0, style: Draw.filled(c) })
+		frame.rectangle!({ x: x + 5.0, y: y + 3.0, width: 3.0, height: 9.0, style: Draw.filled(Color.with_alpha(c, 150)) })
+		frame.rectangle!({ x: x + 9.0, y: y + 5.0, width: 3.0, height: 7.0, style: Draw.filled(c) })
+	} else {
+		# ramp: the climb and its rider
+		frame.line!({ start: { x: x, y: y + 11.0 }, end: { x: x + 12.0, y: y + 2.0 }, stroke: Draw.stroke(c, 1.5) })
+		frame.circle!({ center: { x: x + 9.0, y: y + 4.0 }, radius: 2.0, style: Draw.filled(c) })
+	}
+	{}
 }
 
 scene! : Model, Draw.Frame => Try({}, [Exit(I64), ..])
@@ -820,12 +897,14 @@ scene! = |model, frame| {
 	# the nav: every view, visible and clickable, active one filled - TAB
 	# stays as the keyboard accelerator
 	List.for_each!(List.map_with_index(model.nav, |nv, ni| { nv, ni }), |x| {
-		nx = model.win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.ni) * 76.0
+		nx = model.win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.ni) * 88.0
 		on2 = x.nv.v == model.view
-		hov2 = model.mouse_x >= nx and model.mouse_x <= nx + 68.0 and model.mouse_y >= 30.0 and model.mouse_y <= 54.0
+		hov2 = model.mouse_x >= nx and model.mouse_x <= nx + 80.0 and model.mouse_y >= 30.0 and model.mouse_y <= 54.0
 		style2 = if on2 (Draw.filled(Color.with_alpha(Theme.ctl_c, 60))) else if hov2 (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
-		frame.rounded_rectangle!({ x: nx, y: 30.0, width: 68.0, height: 24.0, radius: 7.0, segments: 6, style: style2 })
-		x.nv.p.draw!(frame, { pos: { x: nx + 34.0, y: 35.0 }, color: if on2 Color.white else Theme.ink_muted, align: (Top, Center) })
+		frame.rounded_rectangle!({ x: nx, y: 30.0, width: 80.0, height: 24.0, radius: 7.0, segments: 6, style: style2 })
+		ic = if on2 Color.white else Theme.ink_muted
+		nav_icon!(frame, x.nv.v, nx + 8.0, 36.0, ic)
+		x.nv.p.draw!(frame, { pos: { x: nx + 46.0, y: 35.0 }, color: ic, align: (Top, Center) })
 	})
 	# Legend belongs to the FORM BOARD only: it draws in the same row the
 	# other views put their titles in, and overprinted them.

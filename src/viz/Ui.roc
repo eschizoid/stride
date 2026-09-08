@@ -50,6 +50,9 @@ Ui :: [].{
 		ghost_dur : F32,
 		ghost_sel : I64,
 		ghost_day : Str,
+		# the trace camera: zoom >= 1 windows [pan, pan + 1/zoom] of the session
+		trace_zoom : F32,
+		trace_pan : F32,
 		curve_days : I64,
 		fit_cp : F32,
 		cp_lbl : Text.Prepared,
