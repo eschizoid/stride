@@ -262,8 +262,10 @@ Db :: [].{
 			Err(_) => [{ title: "detail query failed", stats: "" }]
 			Ok(rows) =>
 				if List.is_empty(rows) [{ title: "rest day - no activities", stats: "" }]
-				else
-					List.keep_oks(rows, |r| {
+				else {
+					# corruption surfaces here like everywhere else in this module:
+					# one unreadable row turns into one visible line, not a silent gap
+					decoded = List.map_try(rows, |r| {
 						nm = r.str("name") ? |_| "bad"
 						sp = r.str("sport") ? |_| "bad"
 						secs = r.i64("secs") ? |_| "bad"
@@ -274,6 +276,11 @@ Db :: [].{
 						stats = if np > 0 "${I64.to_str(mins)}min  ${km}km  ${I64.to_str(tss)} tss  ${I64.to_str(np)}w np" else "${I64.to_str(mins)}min  ${km}km  ${I64.to_str(tss)} tss"
 						Ok({ title: "${nm} [${sp}]", stats })
 					})
+					match decoded {
+						Ok(lines) => lines
+						Err(why) => [{ title: "activity record unreadable", stats: why }]
+					}
+				}
 		}
 
 	# the last dozen structured sessions, newest first — the trace picker's menu
