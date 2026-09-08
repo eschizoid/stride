@@ -33,7 +33,9 @@ Ramp :: [].{
 			po_top = 104.0
 			po_h = 130.0
 			hi9 = List.fold(model.ramp_weeks, danger + 1.0, |a, w| F32.max(a, I64.to_f32(w.ramp10) / 10.0 + 0.5))
-			lo9 = List.fold(model.ramp_weeks, -1.0, |a, w| F32.min(a, I64.to_f32(w.ramp10) / 10.0 - 0.5))
+			# the floor keeps the zero line on screen with half a unit of margin;
+			# an all-building stretch spends the rest of the pixels on the builds
+			lo9 = List.fold(model.ramp_weeks, -0.5, |a, w| F32.min(a, I64.to_f32(w.ramp10) / 10.0 - 0.5))
 			ry = |v9| po_top + (1.0 - (v9 - lo9) / (hi9 - lo9)) * po_h
 			Text.from("ctl gained per week", model.font).size(11).draw!(frame, { pos: { x: pad, y: po_top - 16.0 }, color: ink_faint, align: (Top, Left) })
 			# the band above +6/wk, then the rule lines
