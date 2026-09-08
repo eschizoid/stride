@@ -283,14 +283,19 @@ detail_task! = |home, day|
 # The coach's poll: read-and-consume the newest directive, every 60
 # frames (~1s at the capped rate; slower if frames are),
 # from a spawned task (Sqlite parks there).
+# every poll also refreshes the coach corner's note, so the plan view
+# shows the directive that actually arrived last, not launch-time state
 poll_task! : Str => Msg
 poll_task! = |home|
 	if home == "" DirectiveNone
 	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
 		Err(_) => DirectiveNone
-		Ok(db) => match Db.poll_directive!(db) {
-			Some(dv) => Directive(dv)
-			None => DirectiveNone
+		Ok(db) => {
+			note = Db.load_bus_note!(db)
+			match Db.poll_directive!(db) {
+				Some(dv) => Directive({ dv, note })
+				None => Polled(note)
+			}
 		}
 	}
 
@@ -315,7 +320,8 @@ Msg : [
 	ReloadFailed,
 	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, sel : U64, day : Str }),
 	TraceSwitchFailed,
-	Directive(Db.Directive),
+	Directive({ dv : Db.Directive, note : Str }),
+	Polled(Str),
 	DirectiveNone,
 	FocusWritten,
 	FocusWriteFailed,
@@ -333,6 +339,7 @@ update! = |model0, program_input| {
 			ReloadFailed => acc
 			TraceSwitchFailed => acc
 			DirectiveNone => acc
+			Polled(note) => { ..acc, bus_note: note }
 			FocusWritten => acc
 			# a dropped write must not leave the coach stale: resetting
 			# last_focus makes the next throttle tick try again
@@ -340,7 +347,7 @@ update! = |model0, program_input| {
 			# the user closed or switched away from is dropped
 			DayDetail(dd) => if dd.day == acc.detail_day ({ ..acc, detail: dd.lines }) else acc
 			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "" } }
-			Directive(_) => acc
+			Directive(d2) => { ..acc, bus_note: d2.note }
 			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim }
 			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day }
 		})
@@ -348,7 +355,7 @@ update! = |model0, program_input| {
 	# it names: view, range, a day for the crosshair, a session for the trace
 	directive = List.fold(program_input.messages, { has_d: Bool.False, view: -1, range: -1, cursor_day: "", trace_day: "" }, |acc, msg|
 		match msg {
-			Directive(dv) => { has_d: Bool.True, view: dv.view, range: dv.range, cursor_day: dv.cursor_day, trace_day: dv.trace_day }
+			Directive(d2) => { has_d: Bool.True, view: d2.dv.view, range: d2.dv.range, cursor_day: d2.dv.cursor_day, trace_day: d2.dv.trace_day }
 			_ => acc
 		})
 	if d.key_pressed(KeyEscape) {
