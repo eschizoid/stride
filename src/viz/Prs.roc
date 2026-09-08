@@ -47,6 +47,11 @@ Prs :: [].{
 			d_lo = List.fold(set_prs, 9999999.0, |a, pr| F32.min(a, day_num(pr.day)))
 			d_hi = List.fold(set_prs, 0.0, |a, pr| F32.max(a, day_num(pr.day)))
 			span = F32.max(d_hi - d_lo, 30.0)
+			# "fresh" means fresh against the SERIES clock, not the newest record
+			# - a May record must not glow teal in September. The heat series is
+			# day-ascending, so its last row carries MAX(day).
+			d_now = match List.last(model.heat) { Ok(hd) => day_num(hd.day)
+				Err(_) => d_hi }
 			# the anchor of "fresh": the newest record day in the book
 			px_of = |dy| x_lo + (day_num(dy) - d_lo) / span * (x_hi - x_lo)
 			# edge dates, so the axis means something
@@ -64,7 +69,7 @@ Prs :: [].{
 					dx = px_of(x.pr.day)
 					# recency against the book's newest entry: within ~90d of it
 					# glows teal, within ~a year rides the brand blue, older fades
-					age = d_hi - day_num(x.pr.day)
+					age = d_now - day_num(x.pr.day)
 					dc = if age <= 90.0 (Theme.tsb_c) else if age <= 365.0 (Theme.ctl_c) else ink_faint
 					frame.circle!({ center: { x: dx, y: cy }, radius: 5.0, style: Draw.filled(dc) })
 					# lowercase w is this window's unit style throughout (the day

@@ -196,7 +196,7 @@ load_model! = |font, curve_days| {
 			view: 0,
 			curve: loaded.c,
 			curve_lbls: curve_lbls,
-			fit_lbl: mk!(fit_text, 14)?,
+			fit_lbl: mk!(Db.ascii_safe(fit_text), 14)?,
 			curve_title: mk!("power-duration curve - Ride, last ${I64.to_str(curve_days)} days", 15)?,
 			curve_days,
 			trace_ids: loaded.tids,
