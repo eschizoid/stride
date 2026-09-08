@@ -1,4 +1,5 @@
 import rr.Capture
+import rr.Draw
 import rr.Text
 import Db
 
@@ -89,6 +90,11 @@ Ui :: [].{
 		ramp_hint : Text.Prepared,
 		prs : List(Db.PrRung),
 		rec_status : Capture.Status,
+		# the post-process pipeline: Unbuilt until update! allocates it (and
+		# after every resize, sized to the window), Unavailable when the GPU
+		# refused - the app then renders exactly as before the feature existed
+		glow : [Unbuilt, Unavailable, Ready({ rt : Draw.RenderTexture, shader : Draw.Shader, rx : Draw.F32Uniform, ry : Draw.F32Uniform, gw : F32, gh : F32 })],
+		glow_on : Bool,
 		mouse_in : Bool,
 		cursor : I64,
 	}
