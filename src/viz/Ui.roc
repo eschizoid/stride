@@ -51,6 +51,8 @@ Ui :: [].{
 		days : List(Str),
 		day_notes : List({ day : Str, note : Str }),
 		home : Str,
+		tick : U64,
+		last_focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str },
 		status : Text.Prepared,
 		has_error : Bool,
 		font : Text.Font,

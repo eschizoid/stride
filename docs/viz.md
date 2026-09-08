@@ -62,6 +62,27 @@ data line never switches face mid-string. Both ship in `assets/fonts/` (OFL) and
 the app bundle copies them to `~/.stride/fonts`; when neither location
 answers, the platform default font appears instead of a crash.
 
+## The coach's seat (ADR 0015's bus)
+
+The window is steerable and observable through two tables it maintains in the
+same database — no sockets, no protocol, just SQL:
+
+```sql
+-- steer: the window polls ~1/s, applies the newest unconsumed row, and
+-- consumes everything up to it. NULL fields mean "leave that alone".
+INSERT INTO viz_directives (view, range, cursor_day, trace_day)
+VALUES (0, 30, '2026-09-02', NULL);
+-- view 0..3 (form/curve/trace/table), range 30|60|90,
+-- cursor_day parks the crosshair, trace_day picks the session
+
+-- observe: one row, upserted after every input the human makes
+SELECT view, range, cursor_day, trace_day, updated_at FROM viz_focus;
+```
+
+A directive is consumed as read — one the window crashes on is dropped, never
+replayed against a stale model. Focus writes are throttled (~2/s at most) and
+only fire when what the human sees actually changed.
+
 ## Boundaries this nightly imposes
 
 - No F64→F32 narrowing exists, so the SQL query CASTs to integer tenths and

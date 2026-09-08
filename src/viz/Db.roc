@@ -174,6 +174,59 @@ Db :: [].{
 				})
 		}
 
+	# ── the coach-window bus (ADR 0015: pixels for the human, state for the
+	# coach, the database as the bus). The window owns these two tables:
+	# directives flow coach → window and are consumed on read; focus flows
+	# window → coach as a single upserted row. Either side creates the tables,
+	# so writes can precede the window's first launch.
+	ensure_bus! : Sqlite.Db => {}
+	ensure_bus! = |db| {
+		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_directives (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT (datetime('now')), view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT, consumed INTEGER NOT NULL DEFAULT 0)", bindings: [] })
+		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_focus (id INTEGER PRIMARY KEY CHECK (id = 1), updated_at TEXT NOT NULL, view INTEGER NOT NULL, range INTEGER NOT NULL, cursor_day TEXT, trace_day TEXT)", bindings: [] })
+		{}
+	}
+
+	Directive : { id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str }
+
+	# newest unconsumed directive, consumed AS READ — a directive the window
+	# crashes on is dropped, never replayed against a stale model. -1/"" mean
+	# "field not set" (SQL NULL): the coach steers only what it names.
+	poll_directive! : Sqlite.Db => [Some(Directive), None]
+	poll_directive! = |db| {
+		ensure_bus!(db)
+		match Sqlite.query!({ db, query: "SELECT id, COALESCE(view, -1) AS v, COALESCE(range, -1) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td FROM viz_directives WHERE consumed = 0 ORDER BY id DESC LIMIT 1", bindings: [] }) {
+			Err(_) => None
+			Ok(rows) => match List.first(rows) {
+				Err(_) => None
+				Ok(r) => {
+					id = match r.i64("id") { Ok(x) => x
+						Err(_) => -1 }
+					v = match r.i64("v") { Ok(x) => x
+						Err(_) => -1 }
+					rg = match r.i64("rg") { Ok(x) => x
+						Err(_) => -1 }
+					cd = match r.str("cd") { Ok(x) => x
+						Err(_) => "" }
+					td = match r.str("td") { Ok(x) => x
+						Err(_) => "" }
+					if id < 0 None
+					else {
+						_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET consumed = 1 WHERE id <= :id", bindings: [{ name: ":id", value: Integer(id) }] })
+						Some({ id, view: v, range: rg, cursor_day: cd, trace_day: td })
+					}
+				}
+			}
+		}
+	}
+
+	# the window's answer: what the human is looking at, one row, upserted
+	write_focus! : Sqlite.Db, { view : I64, range : I64, cursor_day : Str, trace_day : Str } => {}
+	write_focus! = |db, f| {
+		ensure_bus!(db)
+		_ = Sqlite.execute!({ db, query: "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day) VALUES (1, datetime('now'), :v, :rg, NULLIF(:cd, ''), NULLIF(:td, '')) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, view = excluded.view, range = excluded.range, cursor_day = excluded.cursor_day, trace_day = excluded.trace_day", bindings: [{ name: ":v", value: Integer(f.view) }, { name: ":rg", value: Integer(f.range) }, { name: ":cd", value: String(f.cursor_day) }, { name: ":td", value: String(f.trace_day) }] })
+		{}
+	}
+
 	# a day's note from load_day_notes!, or the honest default
 	note_for : List({ day : Str, note : Str }), Str -> Str
 	note_for = |notes, dy|
