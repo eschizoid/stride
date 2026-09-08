@@ -28,14 +28,23 @@ Zones :: [].{
 			n = List.len(model.zone_weeks)
 			slot = (win_w - pad * 2.0) / U64.to_f32(n)
 			bw = slot * 0.62
-			# the 80/20 panel
+			# the 80/20 panel, scaled to where easy shares actually live
+			# (30%..100% - an athlete under 30% easy has bigger problems than
+			# this panel's resolution)
 			po_top = 104.0
-			po_h = 96.0
-			rule_y = po_top + po_h * 0.2
-			frame.line!({ start: { x: pad, y: rule_y }, end: { x: win_w - pad, y: rule_y }, stroke: Draw.stroke(Color.with_alpha(Theme.ctl_c, 90), 1) })
-			Text.from("80% easy", model.font).size(10).draw!(frame, { pos: { x: win_w - pad, y: rule_y - 14.0 }, color: ink_faint, align: (Top, Right) })
+			po_h = 120.0
+			sy = |sh9| po_top + (1.0 - (F32.max(sh9, 0.3) - 0.3) / 0.7) * po_h
+			Text.from("easy share, week by week", model.font).size(11).draw!(frame, { pos: { x: pad, y: po_top - 16.0 }, color: ink_faint, align: (Top, Left) })
+			List.for_each!([{ v: 1.0, lb: "100%" }, { v: 0.5, lb: "50%" }, { v: 0.3, lb: "30%" }], |tk| {
+				frame.line!({ start: { x: pad, y: sy(tk.v) }, end: { x: win_w - pad, y: sy(tk.v) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 30), 1) })
+				Text.from(tk.lb, model.font).size(10).draw!(frame, { pos: { x: pad - 6.0, y: sy(tk.v) - 6.0 }, color: ink_faint, align: (Top, Right) })
+			})
+			rule_y = sy(0.8)
+			frame.line!({ start: { x: pad, y: rule_y }, end: { x: win_w - pad, y: rule_y }, stroke: Draw.stroke(Color.with_alpha(Theme.tsb_c, 110), 1) })
+			Text.from("80%", model.font).size(10).draw!(frame, { pos: { x: pad - 6.0, y: rule_y - 6.0 }, color: Theme.tsb_c, align: (Top, Right) })
+			Text.from("the 80/20 line", model.font).size(10).draw!(frame, { pos: { x: win_w - pad, y: rule_y - 14.0 }, color: Theme.tsb_c, align: (Top, Right) })
 			# the bars panel
-			bars_top = po_top + po_h + 46.0
+			bars_top = po_top + po_h + 42.0
 			bars_bot = win_h - 96.0
 			bars_h = bars_bot - bars_top
 			peak = List.fold(model.zone_weeks, 1, |a, w| {
@@ -53,6 +62,21 @@ Zones :: [].{
 				frame.rectangle!({ x: bx, y: bars_top - 24.0, width: 8.0, height: 8.0, style: Draw.filled(zc) })
 				Text.from("z${U64.to_str(zi9 + 1)}", model.font).size(10).draw!(frame, { pos: { x: bx + 12.0, y: bars_top - 26.0 }, color: ink_faint, align: (Top, Left) })
 				lx + 44.0
+			})
+			# the share trend as a connected line first, dots ride on top of it
+			# segments join only ADJACENT weeks that both have a share - a week
+			# with no classified time breaks the line rather than being bridged,
+			# so a gap in the timeline looks like one
+			_ = List.fold(List.map_with_index(model.zone_weeks, |w9, i9| { w9, i9 }), { px: 0.0, py: 0.0, live: Bool.False }, |acc9, x9| {
+				it9 = x9.w9.easy + x9.w9.moderate + x9.w9.hard
+				if it9 > 0 {
+					nx9 = pad + (U64.to_f32(x9.i9) + 0.5) * slot
+					ny9 = sy(I64.to_f32(x9.w9.easy) / I64.to_f32(it9))
+					if acc9.live {
+						frame.line!({ start: { x: acc9.px, y: acc9.py }, end: { x: nx9, y: ny9 }, stroke: Draw.stroke(Color.with_alpha(Theme.ctl_c, 80), 1) })
+					} else {}
+					{ px: nx9, py: ny9, live: Bool.True }
+				} else { px: 0.0, py: 0.0, live: Bool.False }
 			})
 			# one pass: bar stack, easy-share dot, hover
 			List.for_each!(List.map_with_index(model.zone_weeks, |w, i| { w, i }), |x| {
@@ -78,7 +102,7 @@ Zones :: [].{
 				# seconds has no share to plot
 				if itot > 0 {
 					share = I64.to_f32(x.w.easy) / I64.to_f32(itot)
-					dy = po_top + (1.0 - share) * po_h
+					dy = sy(share)
 					dc = if share >= 0.8 (Theme.tsb_c) else Theme.alarm_c
 					# the white halo marks these as MARKERS - the alarm red is the
 					# same hex as the z5 ramp step, so a bare dot reads as z5 data
