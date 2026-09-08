@@ -33,14 +33,30 @@ Board :: [].{
 		ctl_c = Theme.ctl_c
 		atl_c = Theme.atl_c
 		tsb_c = Theme.tsb_c
-	List.for_each!(List.map_with_index(model.kpis, |k, i| { k, i }), |x| {
-		tx0 = 36.0 + U64.to_f32(x.i) * 234.0
-		col = if x.k.sel == 0 ctl_c else if x.k.sel == 1 atl_c else tsb_c
-		x.k.v.draw!(frame, { pos: { x: tx0, y: 96.0 }, color: col, align: (Top, Left) })
-		x.k.cap.draw!(frame, { pos: { x: tx0, y: 128.0 }, color: ink_faint, align: (Top, Left) })
+	# the artifact's tile cards: a lifted rounded panel behind each number
+	List.for_each!([0.U64, 1, 2, 3], |i| {
+		cx0 = 30.0 + U64.to_f32(i) * 234.0
+		frame.rounded_rectangle!({ x: cx0, y: 88.0, width: 222.0, height: 62.0, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
 	})
-	model.ev_tile_top.draw!(frame, { pos: { x: 738.0, y: 98.0 }, color: ink_muted, align: (Top, Left) })
-	model.ev_tile_sub.draw!(frame, { pos: { x: 738.0, y: 128.0 }, color: ink_faint, align: (Top, Left) })
+	List.for_each!(List.map_with_index(model.kpis, |k, i| { k, i }), |x| {
+		tx0 = 42.0 + U64.to_f32(x.i) * 234.0
+		col = if x.k.sel == 0 ctl_c else if x.k.sel == 1 atl_c else tsb_c
+		x.k.v.draw!(frame, { pos: { x: tx0, y: 94.0 }, color: col, align: (Top, Left) })
+		x.k.cap.draw!(frame, { pos: { x: tx0, y: 127.0 }, color: ink_faint, align: (Top, Left) })
+	})
+	model.ev_tile_top.draw!(frame, { pos: { x: 744.0, y: 96.0 }, color: ink_muted, align: (Top, Left) })
+	model.ev_tile_sub.draw!(frame, { pos: { x: 744.0, y: 122.0 }, color: ink_faint, align: (Top, Left) })
+	if model.ridden_found {
+		model.ridden_note.draw!(frame, { pos: { x: 744.0, y: 136.0 }, color: ink_faint, align: (Top, Left) })
+	} else {}
+	# which range is live: three chips, the active one filled
+	List.for_each!(List.map_with_index(model.subs, |s, i| { s, i }), |x| {
+		chx = 560.0 + U64.to_f32(x.i) * 54.0
+		on = x.s.r == model.range
+		style = if on (Draw.filled(Color.with_alpha(ctl_c, 60))) else Draw.filled(Theme.card)
+		frame.rounded_rectangle!({ x: chx, y: 64.0, width: 46.0, height: 22.0, radius: 6.0, segments: 6, style })
+		x.s.chip.draw!(frame, { pos: { x: chx + 23.0, y: 68.0 }, color: if on Color.white else ink_muted, align: (Top, Center) })
+	})
 	List.for_each!(model.subs, |s|
 		if s.r == model.range and model.view == 0 {
 			s.p.draw!(frame, { pos: { x: 280.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
@@ -171,8 +187,13 @@ Board :: [].{
 							Ok(d) => d
 							Err(_) => ""
 						}
-						readout = "${day}   CTL ${Db.fmt_f(hp.ctl)}   ATL ${Db.fmt_f(hp.atl)}   TSB ${Db.fmt_f(hp.tsb)}   TSS ${Db.fmt_f(hp.tss)}"
-						Text.from(readout, model.font).size(13).draw!(frame, { pos: { x: I32.to_f32(win_w) - 34.0, y: 148.0 }, color: Color.white, align: (Top, Right) })
+						# the artifact's tooltip: a small card beside the crosshair,
+						# flipped left when the cursor nears the right edge
+						readout = "${day}  CTL ${Db.fmt_f(hp.ctl)}  ATL ${Db.fmt_f(hp.atl)}  TSB ${Db.fmt_f(hp.tsb)}  TSS ${Db.fmt_f(hp.tss)}"
+						tip_w = 372.0
+						tip_x = if hx + 14.0 + tip_w > I32.to_f32(win_w) - pad_r (hx - 14.0 - tip_w) else hx + 14.0
+						frame.rounded_rectangle!({ x: tip_x, y: pad_t + 8.0, width: tip_w, height: 26.0, radius: 6.0, segments: 6, style: Draw.filled(Theme.card) })
+						Text.from(readout, model.font).size(13).draw!(frame, { pos: { x: tip_x + 10.0, y: pad_t + 14.0 }, color: Color.white, align: (Top, Left) })
 					}
 					Err(_) => {}
 				}

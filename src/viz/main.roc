@@ -153,9 +153,9 @@ load_model! = |font, curve_days| {
 		Ok({
 			title: mk!("Stride Form Board", 30)?,
 			subs: [
-				{ p: mk!("last 30 days, as of ${as_of}", 15)?, r: 30.U64 },
-				{ p: mk!("last 60 days, as of ${as_of}", 15)?, r: 60.U64 },
-				{ p: mk!("last 90 days, as of ${as_of}", 15)?, r: 90.U64 },
+				{ p: mk!("last 30 days, as of ${as_of}", 15)?, r: 30.U64, chip: mkm!("30d", 12)? },
+				{ p: mk!("last 60 days, as of ${as_of}", 15)?, r: 60.U64, chip: mkm!("60d", 12)? },
+				{ p: mk!("last 90 days, as of ${as_of}", 15)?, r: 90.U64, chip: mkm!("90d", 12)? },
 			],
 			leg_fit: mk!("Fitness", 15)?,
 			leg_fat: mk!("Fatigue", 15)?,
@@ -200,6 +200,8 @@ load_model! = |font, curve_days| {
 			ev_tile_top: mk!(ev_tile.top, 14)?,
 			ev_tile_sub: mk!(ev_tile.sub, 11)?,
 			zero_note: mk!("fresh above", 11)?,
+			ridden_found: loaded.rd.ago >= 0 and loaded.rd.ago <= 7 and loaded.e.day != "",
+			ridden_note: mk!("${loaded.rd.name} ridden, ${I64.to_str(loaded.rd.ago)}d ago", 10)?,
 			curve_empty: mk!("no rides in the selected window - the curve has nothing to draw", 16)?,
 			trace: loaded.tr,
 			segs: loaded.sg,
