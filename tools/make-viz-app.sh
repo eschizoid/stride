@@ -8,15 +8,22 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# sips, iconutil and .app bundles are macOS-only — say so instead of failing
+# three commands deep with a cryptic missing-tool error
+[ "$(uname)" = Darwin ] || { echo "make-viz-app: macOS only (needs sips/iconutil and an .app bundle target)" >&2; exit 1; }
+
+WORK=$(mktemp -d /tmp/stride-viz-app.XXXXXX)
+trap 'rm -rf "$WORK"' EXIT
+
 ROC_VIZ="${ROC_VIZ:-roc}"
 APP="$HOME/Applications/Stride Form Board.app"
 C="$APP/Contents"
 
 echo "building the viz binary ($ROC_VIZ)..."
-"$ROC_VIZ" build src/viz/main.roc --output=/tmp/stride-viz --opt=dev
+"$ROC_VIZ" build src/viz/main.roc --output="$WORK/stride-viz" --opt=dev
 
 mkdir -p "$C/MacOS" "$C/Resources"
-cp /tmp/stride-viz "$C/MacOS/stride-viz"
+cp "$WORK/stride-viz" "$C/MacOS/stride-viz"
 
 cat > "$C/MacOS/launcher" <<'SH'
 #!/bin/bash
@@ -42,8 +49,8 @@ cat > "$C/Info.plist" <<'PLIST'
 PLIST
 
 # icon: the repo logo, rendered at every size Launchpad wants
-ICONSET=/tmp/stride.iconset
-rm -rf "$ICONSET" && mkdir -p "$ICONSET"
+ICONSET="$WORK/stride.iconset"
+mkdir -p "$ICONSET"
 for s in 16 32 64 128 256 512; do
   sips -z $s $s img/stride.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
   d=$((s * 2))
