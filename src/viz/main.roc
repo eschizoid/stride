@@ -247,6 +247,8 @@ load_model! = |font, curve_days| {
 			ramp_weeks: loaded.rw,
 			prs: loaded.prs,
 			rec_status: Idle,
+			glow: Unbuilt,
+			glow_on: Bool.True,
 			ramp_title: mk!("the ramp - weekly load and how fast fitness is climbing", 15)?,
 			ramp_hint: mk!("hover a week to read it      TAB  form board      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			zones_title: mk!("time in zone - twelve weeks, and the 80/20 story", 15)?,
@@ -268,7 +270,7 @@ load_model! = |font, curve_days| {
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
 			font: mono,
-			hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   ESC quit", 13)?,
+			hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   G glow   ESC quit", 13)?,
 			empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
 			range: 90.U64,
 			mouse_x: 0.0,
@@ -284,6 +286,59 @@ load_model! = |font, curve_days| {
 # The app spawns one kind of task: a screenshot, whose result it ignores —
 # a failed shot must not take the window down, and the file's absence is the
 # report. Was `[]` while nothing spawned.
+
+# The offscreen pipeline for the glow pass: a window-sized framebuffer, a
+# 25-tap bloom shader compiled from source (no asset to ship), and its two
+# resolution uniforms. Any refusal degrades to Unavailable - the app then
+# draws exactly as it did before the feature existed.
+glow_frag : Str
+glow_frag = Str.join_with(
+	[
+		"#version 330",
+		"in vec2 fragTexCoord;",
+		"in vec4 fragColor;",
+		"uniform sampler2D texture0;",
+		"uniform float res_x;",
+		"uniform float res_y;",
+		"out vec4 finalColor;",
+		"void main() {",
+		"    vec2 px = vec2(2.0 / res_x, 2.0 / res_y);",
+		"    vec3 sum = vec3(0.0);",
+		"    for (int i = -2; i <= 2; i++) {",
+		"        for (int j = -2; j <= 2; j++) {",
+		"            vec3 c = texture(texture0, fragTexCoord + vec2(float(i), float(j)) * px).rgb;",
+		"            float l = dot(c, vec3(0.299, 0.587, 0.114));",
+		"            sum += c * step(0.30, l);",
+		"        }",
+		"    }",
+		"    finalColor = vec4(sum / 25.0 * 0.55, 1.0);",
+		"}",
+	],
+	"\n",
+)
+
+build_glow! : { w : F32, h : F32 } => [Unbuilt, Unavailable, Ready({ rt : Draw.RenderTexture, shader : Draw.Shader, rx : Draw.F32Uniform, ry : Draw.F32Uniform, gw : F32, gh : F32 })]
+build_glow! = |win|
+	match Draw.RenderTexture.load!({ width: (match F32.round_to_u64_try(win.w) { Ok(wu) => (match U64.to_i32_try(wu) { Ok(wi) => wi
+		Err(_) => 1280 })
+		Err(_) => 1280 }), height: (match F32.round_to_u64_try(win.h) { Ok(hu) => (match U64.to_i32_try(hu) { Ok(hi) => hi
+		Err(_) => 720 })
+		Err(_) => 720 }) }) {
+		Err(_) => Unavailable
+		Ok(rt) =>
+			match Draw.Shader.from_source!({ vertex_source: "", fragment_source: glow_frag }) {
+				Err(_) => Unavailable
+				Ok(shader) =>
+					match Draw.Shader.uniform_f32!(shader, "res_x") {
+						Err(_) => Unavailable
+						Ok(rx) =>
+							match Draw.Shader.uniform_f32!(shader, "res_y") {
+								Err(_) => Unavailable
+								Ok(ry) => Ready({ rt, shader, rx, ry, gw: win.w, gh: win.h })
+							}
+					}
+			}
+	}
 
 # Runs INSIDE a spawned task (Sqlite parks there legally): loads the ghost
 # session's trace and duration (no segments - the ghost is a line, not a
@@ -697,12 +752,19 @@ update! = |model0, program_input| {
 				_ = Task.spawn!(program_input, || focus_task!(homef, focus_now))
 				focus_now
 			} else model.last_focus
-		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		glow2 =
+			match model.glow {
+				Ready(g9) => if g9.gw == win.w and g9.gh == win.h (model.glow) else build_glow!(win)
+				Unbuilt => build_glow!(win)
+				Unavailable => model.glow
+			}
+		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
+		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
-render! : Model, Draw.Frame => Try({}, [Exit(I64), ..])
-render! = |model, frame| {
+scene! : Model, Draw.Frame => Try({}, [Exit(I64), ..])
+scene! = |model, frame| {
 	frame.rectangle!({ x: 0.0, y: 0.0, width: model.win.w, height: model.win.h, style: Draw.filled(Theme.bg) })
 	frame.rounded_rectangle!({ x: 16.0, y: 16.0, width: model.win.w - 32.0, height: model.win.h - 32.0, radius: 14.0, segments: 10, style: Draw.filled(Theme.panel) })
 	# depth without shaders: a whisper of vertical gradient over the panel,
@@ -784,4 +846,37 @@ render! = |model, frame| {
 		frame.rectangle!({ x: 16.0, y: 16.0, width: model.win.w - 32.0, height: model.win.h - 32.0, style: Draw.filled(Color.with_alpha(Theme.panel, a)) })
 	} else {}
 	drawn
+}
+
+# The frame's last word: with a working pipeline and the glow on, the scene
+# renders into the offscreen target and comes back twice - the base image,
+# then the bright parts blurred and added on top. Any other state draws the
+# scene directly, exactly as the app rendered before shaders existed.
+render! : Model, Draw.Frame => Try({}, [Exit(I64), ..])
+render! = |model, frame| {
+	match model.glow {
+		Ready(g) =>
+			if model.glow_on {
+				# a refused scope means nothing was drawn - fall back to the
+				# direct path; scene errors (Exit) pass through untouched
+				match frame.with_render_texture!(g.rt, |f| scene!(model, f)) {
+					Err(_) => scene!(model, frame)
+					Ok(_) => {
+						td = { texture: g.rt.texture(), source: g.rt.source(), dest: { x: 0.0, y: 0.0, width: model.win.w, height: model.win.h }, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.white }
+						frame.texture!(td)
+						g.rx.set!(model.win.w)
+						g.ry.set!(model.win.h)
+						# the glow blits over the base; if either scope refuses,
+						# the base image already stands and the discard is safe
+						_ = frame.with_blend_mode!(Additive, |f2|
+							f2.with_shader!(g.shader, |f3| {
+								f3.texture!(td)
+								Ok({})
+							}))
+						Ok({})
+					}
+				}
+			} else scene!(model, frame)
+		_ => scene!(model, frame)
+	}
 }
