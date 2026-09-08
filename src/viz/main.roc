@@ -42,8 +42,10 @@ init! = App.init(
 	},
 )
 
-# Everything the window knows, rebuilt from the database in one call — init!
-# runs it once at launch, and the R key runs it again without reopening.
+# Everything the window knows, rebuilt from the local stride sources in one
+# call — the database for every series, plus the engine's power-curve command
+# for the CP fit. init! runs it once at launch, and the R key runs it again
+# without reopening.
 load_model! : Text.Font => Try(Ui.Model, [ResourceLimit, ..])
 load_model! = |font| {
 		# ~/.stride/db.sqlite, resolved on every load (launch and R alike) —
@@ -128,7 +130,7 @@ load_model! = |font| {
 			curve_lbls: curve_lbls,
 			fit_lbl: mk!(fit_text, 14)?,
 			curve_title: mk!("power-duration curve - Ride, last 90 days", 15)?,
-			curve_hint: mk!("TAB  session trace      S  screenshot      ESC quit", 13)?,
+			curve_hint: mk!("TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
 			curve_empty: mk!("no rides in the last 90 days - the curve has nothing to draw", 16)?,
 			trace: loaded.tr,
 			segs: loaded.sg,
