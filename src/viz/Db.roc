@@ -254,7 +254,7 @@ Db :: [].{
 	# and cannot count done sessions meaningfully)
 	load_plan_week! : Sqlite.Db => { done : I64, total : I64 }
 	load_plan_week! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT date(COALESCE(MAX(day), date('now','localtime')), '-6 days', 'weekday 1') AS mon FROM daily_load) SELECT CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER) AS dn, COUNT(*) AS tot FROM planned_sessions, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days') AND (COALESCE(status, 'open') <> 'skipped' OR NOT EXISTS (SELECT 1 FROM planned_sessions p2 WHERE p2.target_date = planned_sessions.target_date AND (COALESCE(p2.status, 'open') <> 'skipped' OR p2.id > planned_sessions.id)))", bindings: [] }) {
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT mon FROM week_bounds) SELECT CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER) AS dn, COUNT(*) AS tot FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days')", bindings: [] }) {
 			Err(_) => { done: 0, total: 0 }
 			Ok(rows) => match List.first(rows) {
 				Err(_) => { done: 0, total: 0 }
@@ -269,13 +269,15 @@ Db :: [].{
 		}
 
 	# the prescribed days AHEAD of the series' own today, completion included.
-	# The skipped-tombstone dedupe clause is COPIED VERBATIM from the CLI's
-	# planned_sessions query in src/Plan.roc, so the ladder always agrees with
-	# what `stride plan` shows - one implementation of the rule, quoted twice
+	# Reads through the plan_current VIEW (defined once in the engine's
+	# Schema.roc, applied at migration) - the dedupe rule has exactly one
+	# implementation and it lives in the database both sides share. On a db
+	# the engine has never migrated, the view is absent and this returns [],
+	# which the plan view renders as its no-plan state
 	PlanRow : { day : Str, typ : Str, detail : Str, rationale : Str, done : Bool, skipped : Bool, today : Bool }
 	load_plan! : Sqlite.Db => List(PlanRow)
 	load_plan! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT CAST(target_date AS TEXT) AS d, CAST(COALESCE(session_type, '') AS TEXT) AS t, CAST(COALESCE(detail, '') AS TEXT) AS dt, CAST(COALESCE(rationale, '') AS TEXT) AS ra, (COALESCE(status, '') = 'done') AS dn, (COALESCE(status, '') = 'skipped') AS sk, (target_date = (SELECT today FROM anchor)) AS td FROM planned_sessions, anchor WHERE target_date >= (SELECT today FROM anchor) AND target_date <= date((SELECT today FROM anchor), '+6 days') AND (COALESCE(status, 'open') <> 'skipped' OR NOT EXISTS (SELECT 1 FROM planned_sessions p2 WHERE p2.target_date = planned_sessions.target_date AND (COALESCE(p2.status, 'open') <> 'skipped' OR p2.id > planned_sessions.id))) ORDER BY target_date, id", bindings: [] }) {
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT CAST(target_date AS TEXT) AS d, CAST(COALESCE(session_type, '') AS TEXT) AS t, CAST(COALESCE(detail, '') AS TEXT) AS dt, CAST(COALESCE(rationale, '') AS TEXT) AS ra, (COALESCE(status, '') = 'done') AS dn, (COALESCE(status, '') = 'skipped') AS sk, (target_date = (SELECT today FROM anchor)) AS td FROM plan_current, anchor WHERE target_date >= (SELECT today FROM anchor) AND target_date <= date((SELECT today FROM anchor), '+6 days') ORDER BY target_date, id", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.map(rows, |r| match decode_plan_row(r) {
@@ -300,7 +302,7 @@ Db :: [].{
 	# engine's Metrics.weekly_rollup - the progress strip's two numbers
 	load_week_tss! : Sqlite.Db => { this : I64, last : I64 }
 	load_week_tss! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT date(MAX(day), '-6 days', 'weekday 1') AS mon FROM daily_load) SELECT CAST(ROUND(SUM(CASE WHEN day >= mon THEN tss ELSE 0 END)) AS INTEGER) AS tw, CAST(ROUND(SUM(CASE WHEN day >= date(mon, '-7 days') AND day < mon THEN tss ELSE 0 END)) AS INTEGER) AS lw FROM daily_load, anchor", bindings: [] }) {
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT mon FROM week_bounds) SELECT CAST(ROUND(SUM(CASE WHEN day >= mon THEN tss ELSE 0 END)) AS INTEGER) AS tw, CAST(ROUND(SUM(CASE WHEN day >= date(mon, '-7 days') AND day < mon THEN tss ELSE 0 END)) AS INTEGER) AS lw FROM daily_load, anchor", bindings: [] }) {
 			Err(_) => { this: 0, last: 0 }
 			Ok(rows) => match List.first(rows) {
 				Err(_) => { this: 0, last: 0 }
