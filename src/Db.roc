@@ -258,7 +258,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 29
+    schema_version = 30
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -457,6 +457,9 @@ Db :: [].{
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.plan_current, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.week_bounds_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.week_bounds, bindings: [] })?
+        # v30: the per-activity intensity classification, shared with the viz
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_intensity_drop, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_intensity, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_planned_sessions_date_id ON planned_sessions (target_date, id)", bindings: [] })
     }
 

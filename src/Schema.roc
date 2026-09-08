@@ -130,4 +130,27 @@ Schema :: [].{
         \\CREATE VIEW week_bounds AS
         \\SELECT date(COALESCE(MAX(day), date('now', 'localtime')), '-6 days', 'weekday 1') AS mon
         \\FROM daily_load
+
+    # one row per activity: its day, seconds by zone, and seconds by intensity
+    # class. easy/moderate/hard prefer the pi_* split (power-derived with
+    # watts, pace-derived for a distance sport without) and fall back to HR
+    # zones (z1+z2 / z3 / z4+z5) when no split exists -- the same per-activity
+    # CASE `stride summary` aggregates, so viz and CLI polarization agree.
+    activity_intensity_drop =
+        \\DROP VIEW IF EXISTS activity_intensity
+    activity_intensity =
+        \\CREATE VIEW activity_intensity AS
+        \\SELECT a.id AS activity_id,
+        \\       substr(a.start_local, 1, 10) AS day,
+        \\       COALESCE(m.z1_s, 0) AS z1_s, COALESCE(m.z2_s, 0) AS z2_s,
+        \\       COALESCE(m.z3_s, 0) AS z3_s, COALESCE(m.z4_s, 0) AS z4_s,
+        \\       COALESCE(m.z5_s, 0) AS z5_s,
+        \\       CASE WHEN COALESCE(m.pi_easy_s, 0) + COALESCE(m.pi_moderate_s, 0) + COALESCE(m.pi_hard_s, 0) > 0
+        \\            THEN COALESCE(m.pi_easy_s, 0) ELSE COALESCE(m.z1_s, 0) + COALESCE(m.z2_s, 0) END AS easy_s,
+        \\       CASE WHEN COALESCE(m.pi_easy_s, 0) + COALESCE(m.pi_moderate_s, 0) + COALESCE(m.pi_hard_s, 0) > 0
+        \\            THEN COALESCE(m.pi_moderate_s, 0) ELSE COALESCE(m.z3_s, 0) END AS moderate_s,
+        \\       CASE WHEN COALESCE(m.pi_easy_s, 0) + COALESCE(m.pi_moderate_s, 0) + COALESCE(m.pi_hard_s, 0) > 0
+        \\            THEN COALESCE(m.pi_hard_s, 0) ELSE COALESCE(m.z4_s, 0) + COALESCE(m.z5_s, 0) END AS hard_s
+        \\FROM activities a
+        \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
 }

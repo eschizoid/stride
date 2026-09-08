@@ -76,6 +76,9 @@ Ui :: [].{
 		heat_events : List(Str),
 		heat_title : Text.Prepared,
 		heat_hint : Text.Prepared,
+		zone_weeks : List(Db.ZoneWeek),
+		zones_title : Text.Prepared,
+		zones_hint : Text.Prepared,
 		mouse_in : Bool,
 		cursor : I64,
 	}

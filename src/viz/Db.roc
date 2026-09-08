@@ -365,6 +365,29 @@ Db :: [].{
 				})
 		}
 
+	# twelve Monday weeks of zone seconds and intensity classes, oldest first,
+	# off the activity_intensity view - the CLI's own classification - with the
+	# week anchor from week_bounds and empty weeks materialized as zero rows
+	ZoneWeek : { wk : Str, z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, easy : I64, moderate : I64, hard : I64 }
+	load_zone_weeks! : Sqlite.Db => List(ZoneWeek)
+	load_zone_weeks! = |db|
+		match Sqlite.query!({ db, query: "WITH mondays(wk) AS (SELECT date(mon, '-77 days') FROM week_bounds UNION ALL SELECT date(wk, '+7 days') FROM mondays WHERE wk < (SELECT mon FROM week_bounds)), agg AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, SUM(z1_s) AS z1, SUM(z2_s) AS z2, SUM(z3_s) AS z3, SUM(z4_s) AS z4, SUM(z5_s) AS z5, SUM(easy_s) AS easy, SUM(moderate_s) AS moderate, SUM(hard_s) AS hard FROM activity_intensity WHERE day >= (SELECT date(mon, '-77 days') FROM week_bounds) GROUP BY awk) SELECT CAST(m.wk AS TEXT) AS wk, CAST(COALESCE(a.z1, 0) AS INTEGER) AS z1, CAST(COALESCE(a.z2, 0) AS INTEGER) AS z2, CAST(COALESCE(a.z3, 0) AS INTEGER) AS z3, CAST(COALESCE(a.z4, 0) AS INTEGER) AS z4, CAST(COALESCE(a.z5, 0) AS INTEGER) AS z5, CAST(COALESCE(a.easy, 0) AS INTEGER) AS easy, CAST(COALESCE(a.moderate, 0) AS INTEGER) AS moderate, CAST(COALESCE(a.hard, 0) AS INTEGER) AS hard FROM mondays m LEFT JOIN agg a ON a.awk = m.wk ORDER BY m.wk ASC", bindings: [] }) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(rows, |r| {
+					wk = r.str("wk") ? |_| "bad"
+					z1 = r.i64("z1") ? |_| "bad"
+					z2 = r.i64("z2") ? |_| "bad"
+					z3 = r.i64("z3") ? |_| "bad"
+					z4 = r.i64("z4") ? |_| "bad"
+					z5 = r.i64("z5") ? |_| "bad"
+					ez = r.i64("easy") ? |_| "bad"
+					mo = r.i64("moderate") ? |_| "bad"
+					hd = r.i64("hard") ? |_| "bad"
+					Ok({ wk, z1, z2, z3, z4, z5, easy: ez, moderate: mo, hard: hd })
+				})
+		}
+
 	# event days inside the heat window only - the grid spans at most 372 days
 	# back from MAX(day), so anything outside that range could never ring a cell
 	load_event_days! : Sqlite.Db => List(Str)
