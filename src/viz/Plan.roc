@@ -31,7 +31,7 @@ Plan :: [].{
 
 		# today's card: the one answer that matters most
 		frame.rounded_rectangle!({ x: 36.0, y: 100.0, width: win_w - 72.0, height: 84.0, radius: 10.0, segments: 8, style: Draw.filled(Theme.card) })
-		today = List.fold(model.plan, { day: "", typ: "", detail: "no plan for today - ask the coach", rationale: "", done: Bool.False, today: Bool.False }, |acc, p| if p.today p else acc)
+		today = List.fold(model.plan, { day: "", typ: "", detail: "no plan for today - ask the coach", rationale: "", done: Bool.False, skipped: Bool.False, today: Bool.False }, |acc, p| if p.today p else acc)
 		frame.rounded_rectangle!({ x: 52.0, y: 116.0, width: 10.0, height: 52.0, radius: 4.0, segments: 4, style: Draw.filled(type_color(today.typ)) })
 		Text.from("today - ${today.typ}", model.font).size(14).draw!(frame, { pos: { x: 76.0, y: 112.0 }, color: type_color(today.typ), align: (Top, Left) })
 		Text.from(trunc(today.detail, 96), model.font).size(13).draw!(frame, { pos: { x: 76.0, y: 134.0 }, color: Color.white, align: (Top, Left) })
@@ -48,8 +48,9 @@ Plan :: [].{
 			frame.rounded_rectangle!({ x: 150.0, y: ly + 2.0, width: 92.0, height: 16.0, radius: 5.0, segments: 4, style: Draw.filled(Color.with_alpha(type_color(x.p.typ), 45)) })
 			Text.from(x.p.typ, model.font).size(11).draw!(frame, { pos: { x: 196.0, y: ly + 3.0 }, color: type_color(x.p.typ), align: (Top, Center) })
 			Text.from(trunc(x.p.detail, 64), model.font).size(12).draw!(frame, { pos: { x: 260.0, y: ly }, color: if x.p.today Color.white else ink_muted, align: (Top, Left) })
-			status = if x.p.done "done" else if x.p.today ">>" else ""
-			Text.from(status, model.font).size(12).draw!(frame, { pos: { x: win_w - 44.0, y: ly }, color: if x.p.done Theme.tsb_c else Theme.ctl_c, align: (Top, Right) })
+			status = if x.p.done "done" else if x.p.skipped "skip" else if x.p.today ">>" else ""
+			scol = if x.p.done Theme.tsb_c else if x.p.skipped Theme.ink_faint else Theme.ctl_c
+			Text.from(status, model.font).size(12).draw!(frame, { pos: { x: win_w - 44.0, y: ly }, color: scol, align: (Top, Right) })
 		})
 
 		# progress strip + coach corner

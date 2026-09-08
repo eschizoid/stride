@@ -250,15 +250,15 @@ Db :: [].{
 	}
 
 	# the prescribed week around the series' own today, completion included
-	PlanRow : { day : Str, typ : Str, detail : Str, rationale : Str, done : Bool, today : Bool }
+	PlanRow : { day : Str, typ : Str, detail : Str, rationale : Str, done : Bool, skipped : Bool, today : Bool }
 	load_plan! : Sqlite.Db => List(PlanRow)
 	load_plan! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT CAST(target_date AS TEXT) AS d, CAST(COALESCE(session_type, '') AS TEXT) AS t, CAST(COALESCE(detail, '') AS TEXT) AS dt, CAST(COALESCE(rationale, '') AS TEXT) AS ra, (completed_activity_id IS NOT NULL) AS dn, (target_date = (SELECT today FROM anchor)) AS td FROM planned_sessions, anchor WHERE target_date >= (SELECT today FROM anchor) AND target_date <= date((SELECT today FROM anchor), '+6 days') ORDER BY target_date", bindings: [] }) {
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT CAST(target_date AS TEXT) AS d, CAST(COALESCE(session_type, '') AS TEXT) AS t, CAST(COALESCE(detail, '') AS TEXT) AS dt, CAST(COALESCE(rationale, '') AS TEXT) AS ra, (COALESCE(status, '') = 'done') AS dn, (COALESCE(status, '') = 'skipped') AS sk, (target_date = (SELECT today FROM anchor)) AS td FROM planned_sessions, anchor WHERE target_date >= (SELECT today FROM anchor) AND target_date <= date((SELECT today FROM anchor), '+6 days') ORDER BY target_date", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.map(rows, |r| match decode_plan_row(r) {
 					Ok(row) => row
-					Err(_) => { day: "?", typ: "?", detail: "plan record unreadable", rationale: "", done: Bool.False, today: Bool.False }
+					Err(_) => { day: "?", typ: "?", detail: "plan record unreadable", rationale: "", done: Bool.False, skipped: Bool.False, today: Bool.False }
 				})
 		}
 
@@ -269,8 +269,9 @@ Db :: [].{
 		detail = r.str("dt") ? |_| BadRow
 		rationale = r.str("ra") ? |_| BadRow
 		dn = r.i64("dn") ? |_| BadRow
+		sk = r.i64("sk") ? |_| BadRow
 		td = r.i64("td") ? |_| BadRow
-		Ok({ day, typ, detail, rationale, done: dn == 1, today: td == 1 })
+		Ok({ day, typ, detail, rationale, done: dn == 1, skipped: sk == 1, today: td == 1 })
 	}
 
 	# this week's load beside last week's, MONDAY-ALIGNED to agree with the
@@ -293,8 +294,9 @@ Db :: [].{
 
 	# the coach corner: the newest directive (consumed or not) and its age
 	load_bus_note! : Sqlite.Db => Str
-	load_bus_note! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(created_at AS TEXT) AS at, COALESCE(view, -1) AS v, COALESCE(range, -1) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd FROM viz_directives ORDER BY id DESC LIMIT 1", bindings: [] }) {
+	load_bus_note! = |db| {
+		ensure_bus!(db)
+		match Sqlite.query!({ db, query: "SELECT CAST(created_at AS TEXT) AS at, CAST(COALESCE(view, -1) AS INTEGER) AS v, CAST(COALESCE(range, -1) AS INTEGER) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd FROM viz_directives ORDER BY id DESC LIMIT 1", bindings: [] }) {
 			Err(_) => "no directives yet"
 			Ok(rows) => match List.first(rows) {
 				Err(_) => "no directives yet"
@@ -313,6 +315,7 @@ Db :: [].{
 				}
 			}
 		}
+	}
 
 	# a day's note from load_day_notes!, or the honest default
 	note_for : List({ day : Str, note : Str }), Str -> Str
