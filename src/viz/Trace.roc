@@ -26,6 +26,9 @@ Trace :: [].{
 		if List.is_empty(model.trace_ids) {} else {
 			sel_note = "${model.trace_day}   (${U64.to_str(model.trace_sel + 1)} of ${U64.to_str(List.len(model.trace_ids))})"
 			Text.from(sel_note, model.font).size(13).draw!(frame, { pos: { x: model.win.w - 34.0, y: 70.0 }, color: Color.white, align: (Top, Right) })
+			if model.ghost_day != "" {
+				Text.from("ghost: ${model.ghost_day}", model.font).size(13).draw!(frame, { pos: { x: model.win.w - 34.0, y: 90.0 }, color: Theme.atl_c, align: (Top, Right) })
+			} else {}
 		}
 		if List.is_empty(model.trace) {
 			model.trace_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
@@ -33,7 +36,9 @@ Trace :: [].{
 		} else {
 			pw = win_w - pad_l - pad_r
 			ph = win_h - pad_t - pad_b
-			w_hi = List.fold(model.trace, 1.0, |a, v| F32.max(a, v)) * 1.1
+			# the shared watts scale: both traces judged against one ceiling,
+			# or the comparison lies
+			w_hi = F32.max(List.fold(model.trace, 1.0, |a, v| F32.max(a, v)), List.fold(model.ghost, 1.0, |a, v| F32.max(a, v))) * 1.1
 			nlast = List.len(model.trace) - 1
 			# Segments carry SECONDS while the trace is downsampled samples, so
 			# both map through the session's own duration rather than through
@@ -51,6 +56,23 @@ Trace :: [].{
 			# One pass, no random access: zip each sample with its successor.
 			# (Roc lists are contiguous arrays — even the List.get form this
 			# replaces was O(1) per lookup, not a linked-list walk.)
+			# the ghost rides the SAME seconds-per-pixel as the live trace, so a
+			# shorter session honestly ends early instead of stretching to fit
+			_ = if List.len(model.ghost) > 1 {
+				gn = List.len(model.ghost) - 1
+				gx = |i| pad_l + F32.min(pw, pw * (model.ghost_dur * U64.to_f32(i) / U64.to_f32(gn)) / total_s)
+				gtail = List.take_last(model.ghost, gn)
+				gsegs = List.map2(model.ghost, gtail, |a, b| { a, b })
+				# a ghost longer than the live session stops at the edge rather
+				# than smearing its overrun into a vertical line there: segments
+				# starting past the live duration are skipped, the one straddling
+				# it keeps its clamped end
+				List.for_each!(List.map_with_index(gsegs, |pr, i| { pr, i }), |x|
+					if model.ghost_dur * U64.to_f32(x.i) / U64.to_f32(gn) <= total_s {
+						frame.line!({ start: { x: gx(x.i), y: ty(x.pr.a) }, end: { x: gx(x.i + 1), y: ty(x.pr.b) }, stroke: Draw.stroke(Color.with_alpha(Theme.atl_c, 120), 1.0) })
+					} else {})
+				{}
+			} else {}
 			tail = List.take_last(model.trace, List.len(model.trace) - 1)
 			segs2 = List.map2(model.trace, tail, |a, b| { a, b })
 			List.for_each!(List.map_with_index(segs2, |pr, i| { pr, i }), |x|

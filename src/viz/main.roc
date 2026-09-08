@@ -204,7 +204,7 @@ load_model! = |font, curve_days| {
 				Err(_) => ""
 			},
 			curve_hint: mk!("1/2/3  window 30/60/90d      TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
-			trace_hint: mk!("[ / ]  older / newer session      TAB  data table      R  reload      S  screenshot      ESC quit", 13)?,
+			trace_hint: mk!("[ / ]  session      shift+[ / shift+]  ghost      TAB  data table      R  reload      S  screenshot      ESC quit", 13)?,
 			table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      ESC quit", 13)?,
 			table_title: mk!("data table", 15)?,
 			table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
@@ -220,6 +220,10 @@ load_model! = |font, curve_days| {
 			ridden_note: mk!("${loaded.rd.name} ridden, ${I64.to_str(loaded.rd.ago)}d ago", 10)?,
 			curve_empty: mk!("no rides in the selected window - the curve has nothing to draw", 16)?,
 			trace: loaded.tr,
+			ghost: [],
+			ghost_dur: 1.0,
+			ghost_sel: -1,
+			ghost_day: "",
 			segs: loaded.sg,
 			trace_title: mk!("last structured session - detected blocks shaded behind the power trace", 15)?,
 			trace_dur: loaded.du,
@@ -230,7 +234,7 @@ load_model! = |font, curve_days| {
 			home,
 			tick: 0,
 			view_anim: 0,
-			last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "" },
+			last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" },
 			day_notes: loaded.nts,
 			plan: loaded.pl,
 			week_tss: loaded.wk,
@@ -278,9 +282,32 @@ load_model! = |font, curve_days| {
 # a failed shot must not take the window down, and the file's absence is the
 # report. Was `[]` while nothing spawned.
 
-# Runs INSIDE a spawned task (Sqlite parks there legally): re-reads one
-# session's trace/segments/duration and reports back as a message. Any
-# failure keeps the session the window already had.
+# Runs INSIDE a spawned task (Sqlite parks there legally): loads the ghost
+# session's trace and duration (no segments - the ghost is a line, not a
+# block chart). The caller already cleared the drawn overlay when the
+# selection moved, so a failure leaves no ghost, never a stale one.
+ghost_task! : Str, List({ id : I64, day : Str }), I64 => Msg
+ghost_task! = |home, ids, gsel|
+	if home == "" GhostSwitchFailed
+	else match I64.to_u64_try(gsel) {
+		Err(_) => GhostSwitchFailed
+		Ok(gu) => match List.get(ids, gu) {
+			Err(_) => GhostSwitchFailed
+			Ok(entry) =>
+				match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
+					Err(_) => GhostSwitchFailed
+					Ok(db) => {
+						tr = Db.load_trace!(db, entry.id)
+						du = Db.load_dur!(db, entry.id)
+						GhostSwitched({ tr, du, sel: gsel, day: entry.day })
+					}
+				}
+		}
+	}
+
+# Same task lane, the live session: re-reads one session's trace, segments
+# and duration and reports back as a message. Any failure keeps the session
+# the window already had.
 trace_task! : Str, List({ id : I64, day : Str }), U64 => Msg
 trace_task! = |home, ids, sel|
 	if home == "" TraceSwitchFailed
@@ -327,7 +354,7 @@ poll_task! = |home|
 	}
 
 # The window's answer: upsert what the human is looking at
-focus_task! : Str, { view : I64, range : I64, cursor_day : Str, trace_day : Str } => Msg
+focus_task! : Str, { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str } => Msg
 focus_task! = |home, f|
 	if home == "" FocusWriteFailed
 	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
@@ -342,6 +369,8 @@ focus_task! = |home, f|
 # none of it update!-legal (the platform panics on Cmd there, by design).
 # update! only ever spawns; results come back through these messages.
 Msg : [
+	GhostSwitched({ tr : List(F32), du : F32, sel : I64, day : Str }),
+	GhostSwitchFailed,
 	Shot(Try({}, Capture.ScreenshotError)),
 	Reloaded(Ui.Model),
 	ReloadFailed,
@@ -365,6 +394,10 @@ update! = |model0, program_input| {
 			Shot(_) => acc
 			ReloadFailed => acc
 			TraceSwitchFailed => acc
+			GhostSwitchFailed => acc
+			# a slow load must not resurrect a dismissed ghost or overwrite a
+			# newer pick: only the result matching the current selection lands
+			GhostSwitched(gw) => if gw.sel == acc.ghost_sel ({ ..acc, ghost: gw.tr, ghost_dur: gw.du, ghost_day: gw.day }) else acc
 			DirectiveNone => acc
 			Polled(note) => { ..acc, bus_note: note }
 			FocusWritten => acc
@@ -373,16 +406,16 @@ update! = |model0, program_input| {
 			# only the answer for the day still open lands; a result for a day
 			# the user closed or switched away from is dropped
 			DayDetail(dd) => if dd.day == acc.detail_day ({ ..acc, detail: dd.lines }) else acc
-			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "" } }
+			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" } }
 			Directive(d2) => { ..acc, bus_note: d2.note }
 			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim }
 			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day }
 		})
 	# the coach's word arrives beside the human's input and steers only what
 	# it names: view, range, a day for the crosshair, a session for the trace
-	directive = List.fold(program_input.messages, { has_d: Bool.False, view: -1, range: -1, cursor_day: "", trace_day: "" }, |acc, msg|
+	directive = List.fold(program_input.messages, { has_d: Bool.False, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" }, |acc, msg|
 		match msg {
-			Directive(d2) => { has_d: Bool.True, view: d2.dv.view, range: d2.dv.range, cursor_day: d2.dv.cursor_day, trace_day: d2.dv.trace_day }
+			Directive(d2) => { has_d: Bool.True, view: d2.dv.view, range: d2.dv.range, cursor_day: d2.dv.cursor_day, trace_day: d2.dv.trace_day, ghost_day: d2.dv.ghost_day }
 			_ => acc
 		})
 	if d.key_pressed(KeyEscape) {
@@ -462,11 +495,25 @@ update! = |model0, program_input| {
 			else if view == 1 (if d.key_pressed(Key1) 30 else if d.key_pressed(Key2) 60 else if d.key_pressed(Key3) 90 else model.curve_days)
 			else model.curve_days
 		# on the trace view, [ and ] walk the last dozen structured sessions
+		shifted = d.key_down(KeyLeftShift) or d.key_down(KeyRightShift)
 		want_sel =
-			if view != 2 model.trace_sel
+			if view != 2 or shifted model.trace_sel
 			else if d.key_pressed(KeyLeftBracket) (if model.trace_sel + 1 < List.len(model.trace_ids) (model.trace_sel + 1) else model.trace_sel)
 			else if d.key_pressed(KeyRightBracket) (if model.trace_sel > 0 (model.trace_sel - 1) else model.trace_sel)
 			else model.trace_sel
+		# shift+[ summons/ages the ghost; shift+] youngs it and clears it when
+		# it would pass the newest session. -1 is no ghost.
+		n_ids = match U64.to_i64_try(List.len(model.trace_ids)) { Ok(ni) => ni
+			Err(_) => 0 }
+		want_ghost =
+			if view != 2 or !shifted model.ghost_sel
+			else if d.key_pressed(KeyLeftBracket) {
+				start = if model.ghost_sel < 0 (match U64.to_i64_try(model.trace_sel) { Ok(ts9) => ts9 + 1
+					Err(_) => 0 }) else model.ghost_sel + 1
+				if start < n_ids start else model.ghost_sel
+			}
+			else if d.key_pressed(KeyRightBracket) (if model.ghost_sel >= 0 (model.ghost_sel - 1) else -1)
+			else model.ghost_sel
 		# clicking a table row jumps to that day's crosshair on the form board
 		# -2 = no directive OR day not in the series: both leave the cursor
 		# alone. A found day maps to its days-back index (>= 0).
@@ -538,6 +585,22 @@ update! = |model0, program_input| {
 			ids2 = model.trace_ids
 			Task.spawn!(program_input, || trace_task!(home2, ids2, want_sel2))
 		} else {}
+		want_ghost2 =
+			if directive.has_d and directive.ghost_day == "none" (-1)
+			else if directive.has_d and directive.ghost_day != "" {
+				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_ghost, |acc, x| if x.e.day == directive.ghost_day (match U64.to_i64_try(x.ei) { Ok(gi) => gi
+					Err(_) => acc }) else acc)
+			} else want_ghost
+		_ = if want_ghost2 != model.ghost_sel and want_ghost2 >= 0 {
+			home3 = model.home
+			ids3 = model.trace_ids
+			Task.spawn!(program_input, || ghost_task!(home3, ids3, want_ghost2))
+		} else {}
+		# any ghost change clears the drawn overlay THIS frame: a dismissal has
+		# nothing to fetch, and a switch must not keep showing the old session
+		# under the new selection - if the load fails, empty is the clean state
+		ghost2 = if want_ghost2 != model.ghost_sel ([]) else model.ghost
+		ghost_day2 = if want_ghost2 != model.ghost_sel ("") else model.ghost_day
 		_ = if want_days != model.curve_days or d.key_pressed(KeyR) {
 			f2 = model.font
 			Task.spawn!(program_input, || match load_model!(f2, want_days) {
@@ -597,6 +660,7 @@ update! = |model0, program_input| {
 					Err(_) => 90 },
 			cursor_day: cur_day,
 			trace_day: model.trace_day,
+			ghost_day: ghost_day2,
 		}
 		last_focus =
 			if focus_now != model.last_focus and tick % 30 == 0 and model.home != "" {
@@ -604,7 +668,7 @@ update! = |model0, program_input| {
 				_ = Task.spawn!(program_input, || focus_task!(homef, focus_now))
 				focus_now
 			} else model.last_focus
-		Ok({ ..model, range, view: view2, cursor: cursor2, curve_days: want_days, trace_sel: want_sel2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, range, view: view2, cursor: cursor2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
