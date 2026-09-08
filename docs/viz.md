@@ -74,7 +74,7 @@ CTL and ramp. A directive with view 7 opens it.
 | `R` | reload everything from the database without reopening |
 | nav pills (top right) | click any view directly; the active one is filled |
 | `TAB` | cycle views: form board / power view / session trace / data table / plan / heat / zones / ramp |
-| `1` / `2` / `3` (curve view) | re-window the curve and CP fit to 30/60/90 days |
+| `1` / `2` / `3` (power view) | re-window the curve and CP fit to 30/60/90 days |
 | `shift+[` / `shift+]` (trace view) | summon / walk / dismiss the ghost overlay (past newest = off) |
 | `[` / `]` (trace view) | older / newer structured session, last 12 |
 | `←` / `→` (table view) | scroll the window through the whole series (rows fill the window height) |

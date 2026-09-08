@@ -119,7 +119,7 @@ Curve :: [].{
 						now_y = cy(I64.to_f32(r.now_w))
 						frame.circle!({ center: { x: cx(r.i), y: now_y }, radius: 4.0, style: Draw.filled(ctl_c) })
 						# the gap, said in watts right where it lives
-						Text.from("-${I64.to_str(r.pr.w - r.now_w)}", model.font).size(10).draw!(frame, { pos: { x: cx(r.i) + 10.0, y: (rec_y + now_y) / 2.0 - 6.0 }, color: Theme.alarm_c, align: (Top, Left) })
+						Text.from("-${I64.to_str(r.pr.w - r.now_w)}w", model.font).size(10).draw!(frame, { pos: { x: cx(r.i) + 10.0, y: (rec_y + now_y) / 2.0 - 6.0 }, color: Theme.alarm_c, align: (Top, Left) })
 					} else {}
 				}
 				{}
