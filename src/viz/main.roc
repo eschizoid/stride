@@ -388,6 +388,12 @@ Msg : [
 	DayDetail({ day : Str, lines : List(Db.DayLine) }),
 ]
 
+# ONE view->basename map for every capture format: png and webm derive
+# from it, so the "named for the view" invariant cannot drift per-path
+view_basename : U8 -> Str
+view_basename = |v|
+	if v == 0 "form-board" else if v == 1 "power" else if v == 2 "session-trace" else if v == 3 "data-table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else "ramp"
+
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
 update! = |model0, program_input| {
 	d = program_input.devices
@@ -492,7 +498,7 @@ update! = |model0, program_input| {
 		# one basename per view across both formats. img/power-curve.png in the
 		# docs is a committed illustration, not a capture.
 		_ = if d.key_pressed(KeyS) {
-			shot_name = if view == 0 ("form-board.png") else if view == 1 ("power.png") else if view == 2 ("session-trace.png") else if view == 3 ("data-table.png") else if view == 4 ("plan.png") else if view == 5 ("heat.png") else if view == 6 ("zones.png") else "ramp.png"
+			shot_name = Str.concat(view_basename(view), ".png")
 			Task.spawn!(program_input, || Shot(Capture.screenshot!(shot_name)))
 		} else {}
 		# V toggles a recording of whatever is on screen: WebM, full scale,
@@ -502,7 +508,7 @@ update! = |model0, program_input| {
 			match program_input.capture {
 				Active(_) => Task.spawn!(program_input, || RecCmd(Capture.stop!()))
 				_ => {
-					rec_name = if view == 0 ("form-board.webm") else if view == 1 ("power.webm") else if view == 2 ("session-trace.webm") else if view == 3 ("data-table.webm") else if view == 4 ("plan.webm") else if view == 5 ("heat.webm") else if view == 6 ("zones.webm") else "ramp.webm"
+					rec_name = Str.concat(view_basename(view), ".webm")
 					# max_frames 0 is the platform's "record until Capture.stop"
 					# sentinel, not a zero-frame cap - V is the stop
 					rec = Capture.default.with_format(WebM).with_path(rec_name).with_fps(30).with_max_frames(0).with_scale(Full).with_timing(FixedStep)
