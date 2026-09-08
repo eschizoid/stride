@@ -282,6 +282,7 @@ Db :: [].{
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.plan_current, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.week_bounds_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.week_bounds, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_planned_sessions_date_id ON planned_sessions (target_date, id)", bindings: [] })?
         alter_add_column!(path, "ALTER TABLE activities ADD COLUMN weighted_avg_watts REAL")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_20min_w REAL")?
         # v21: which signal produced decoupling_pct — provenance stored at analyze

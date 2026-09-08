@@ -19,7 +19,9 @@ Plan :: [].{
 
 	trunc : Str, U64 -> Str
 	trunc = |s, n|
-		if Str.count_utf8_bytes(s) > n (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(s), n - 2)), "..")) else s
+		# n < 3 would wrap the unsigned n - 2; nothing meaningful fits anyway
+		if n < 3 s
+		else if Str.count_utf8_bytes(s) > n (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(s), n - 2)), "..")) else s
 
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
 	draw! = |model, frame| {

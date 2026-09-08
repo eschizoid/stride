@@ -110,17 +110,17 @@ Schema :: [].{
     # engine re-creates them on every migration run (DROP + CREATE, so an
     # edited definition always wins); readers just SELECT.
 
-    # one row per planned date: skipped tombstones yield to any non-skipped
-    # or newer sibling on the same date
+    # exactly ONE row per planned date: the newest non-skipped row wins, and
+    # a skipped tombstone speaks only when nothing replaced it
     plan_current_drop =
         \\DROP VIEW IF EXISTS plan_current
     plan_current =
         \\CREATE VIEW plan_current AS
         \\SELECT * FROM planned_sessions
-        \\WHERE (COALESCE(status, 'open') <> 'skipped'
-        \\  OR NOT EXISTS (SELECT 1 FROM planned_sessions p2
-        \\       WHERE p2.target_date = planned_sessions.target_date
-        \\         AND (COALESCE(p2.status, 'open') <> 'skipped' OR p2.id > planned_sessions.id)))
+        \\WHERE id = (SELECT p2.id FROM planned_sessions p2
+        \\            WHERE p2.target_date = planned_sessions.target_date
+        \\            ORDER BY (COALESCE(p2.status, 'open') <> 'skipped') DESC, p2.id DESC
+        \\            LIMIT 1)
 
     # the Monday of the series' current week — the week alignment every
     # weekly number must share (matches Metrics.weekly_rollup)
