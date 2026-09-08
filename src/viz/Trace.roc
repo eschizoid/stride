@@ -23,8 +23,10 @@ Trace :: [].{
 		tsb_c = Theme.tsb_c
 		model.trace_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		# which session, and where in the picker it sits
-		sel_note = "${model.trace_day}   (${U64.to_str(model.trace_sel + 1)} of ${U64.to_str(List.len(model.trace_ids))})"
-		Text.from(sel_note, model.font).size(13).draw!(frame, { pos: { x: I32.to_f32(Theme.win_w) - 34.0, y: 70.0 }, color: Color.white, align: (Top, Right) })
+		if List.is_empty(model.trace_ids) {} else {
+			sel_note = "${model.trace_day}   (${U64.to_str(model.trace_sel + 1)} of ${U64.to_str(List.len(model.trace_ids))})"
+			Text.from(sel_note, model.font).size(13).draw!(frame, { pos: { x: I32.to_f32(Theme.win_w) - 34.0, y: 70.0 }, color: Color.white, align: (Top, Right) })
+		}
 		if List.is_empty(model.trace) {
 			model.trace_hint.draw!(frame, { pos: { x: 36.0, y: I32.to_f32(win_h) - 30.0 }, color: ink_faint, align: (Top, Left) })
 			Ok({})

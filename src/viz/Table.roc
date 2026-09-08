@@ -33,8 +33,11 @@ Table :: [].{
 		kept = total - back
 		rows = List.take_last(List.take_first(model.data, kept), 14)
 		days = List.take_last(List.take_first(model.days, kept), 14)
-		pos_note = "days ${U64.to_str(if kept > 14 (kept - 13) else 1)}-${U64.to_str(kept)} of ${U64.to_str(total)}"
-		Text.from(pos_note, model.font).size(13).draw!(frame, { pos: { x: I32.to_f32(Theme.win_w) - 34.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
+		# no rows, no arithmetic on them — the indicator only speaks over data
+		if total > 0 {
+			pos_note = "days ${U64.to_str(if kept > 14 (kept - 13) else 1)}-${U64.to_str(kept)} of ${U64.to_str(total)}"
+			Text.from(pos_note, model.font).size(13).draw!(frame, { pos: { x: I32.to_f32(Theme.win_w) - 34.0, y: 70.0 }, color: ink_muted, align: (Top, Right) })
+		} else {}
 		List.for_each!(List.map_with_index(rows, |r, i| { r, i }), |x| {
 			ry = 134.0 + U64.to_f32(x.i) * 24.0
 			day = match List.get(days, x.i) { Ok(d) => d

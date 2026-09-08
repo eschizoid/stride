@@ -168,7 +168,7 @@ load_model! = |font, curve_days| {
 			ev_tile_top: mk!(ev_tile.top, 14)?,
 			ev_tile_sub: mk!(ev_tile.sub, 11)?,
 			zero_note: mk!("fresh above", 11)?,
-			curve_empty: mk!("no rides in the last 90 days - the curve has nothing to draw", 16)?,
+			curve_empty: mk!("no rides in the selected window - the curve has nothing to draw", 16)?,
 			trace: loaded.tr,
 			segs: loaded.sg,
 			trace_title: mk!("last structured session - detected blocks shaded behind the power trace", 15)?,
@@ -202,7 +202,8 @@ switch_trace! = |model, sel| {
 		Ok(out) => Str.trim(out.stdout)
 		Err(_) => ""
 	}
-	match List.get(model.trace_ids, sel) {
+	if home == "" model
+	else match List.get(model.trace_ids, sel) {
 		Err(_) => model
 		Ok(entry) =>
 			match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
@@ -225,8 +226,11 @@ update! = |model, program_input| {
 	if d.key_pressed(KeyEscape) {
 		Err(Exit(0))
 	} else {
+		# 1/2/3 answer to whichever view is showing: the form board's range, or
+		# the curve's window — never both at once
 		range =
-			if d.key_pressed(Key1) 30.U64
+			if model.view == 1 model.range
+			else if d.key_pressed(Key1) 30.U64
 			else if d.key_pressed(Key2) 60.U64
 			else if d.key_pressed(Key3) 90.U64
 			else model.range
