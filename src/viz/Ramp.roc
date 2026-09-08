@@ -27,15 +27,15 @@ Ramp :: [].{
 			n = List.len(model.ramp_weeks)
 			slot = (win_w - pad * 2.0) / U64.to_f32(n)
 			bw = slot * 0.62
-			# ramp panel: y spans [-lim, +lim] CTL/wk, lim wide enough to show
-			# the danger line plus whatever actually happened
+			# ramp panel: an asymmetric y - from just under the deepest shed to
+			# just over the danger line or the steepest build, so the dots use
+			# the room instead of huddling at a symmetric axis's waist
 			po_top = 104.0
-			po_h = 110.0
-			lim = List.fold(model.ramp_weeks, danger + 2.0, |a, w| {
-				m = F32.abs(I64.to_f32(w.ramp10) / 10.0)
-				if m + 1.0 > a (m + 1.0) else a
-			})
-			ry = |v9| po_top + (1.0 - (v9 + lim) / (2.0 * lim)) * po_h
+			po_h = 130.0
+			hi9 = List.fold(model.ramp_weeks, danger + 1.0, |a, w| F32.max(a, I64.to_f32(w.ramp10) / 10.0 + 0.5))
+			lo9 = List.fold(model.ramp_weeks, -1.0, |a, w| F32.min(a, I64.to_f32(w.ramp10) / 10.0 - 0.5))
+			ry = |v9| po_top + (1.0 - (v9 - lo9) / (hi9 - lo9)) * po_h
+			Text.from("ctl gained per week", model.font).size(11).draw!(frame, { pos: { x: pad, y: po_top - 16.0 }, color: ink_faint, align: (Top, Left) })
 			# the band above +6/wk, then the rule lines
 			frame.rectangle!({ x: pad, y: po_top, width: win_w - pad * 2.0, height: ry(danger) - po_top, style: Draw.filled(Color.with_alpha(Theme.alarm_c, 26)) })
 			frame.line!({ start: { x: pad, y: ry(danger) }, end: { x: win_w - pad, y: ry(danger) }, stroke: Draw.stroke(Color.with_alpha(Theme.alarm_c, 110), 1) })
@@ -43,13 +43,31 @@ Ramp :: [].{
 			Text.from("+6 ctl/wk", model.font).size(10).draw!(frame, { pos: { x: win_w - pad, y: ry(danger) - 14.0 }, color: Theme.alarm_c, align: (Top, Right) })
 			Text.from("0", model.font).size(10).draw!(frame, { pos: { x: pad - 6.0, y: ry(0.0) - 6.0 }, color: ink_faint, align: (Top, Right) })
 			# bars panel
-			bars_top = po_top + po_h + 46.0
+			bars_top = po_top + po_h + 42.0
 			bars_bot = win_h - 96.0
 			bars_h = bars_bot - bars_top
 			peak = List.fold(model.ramp_weeks, 1.I64, |a, w| if w.tss > a (w.tss) else a)
 			Text.from(I64.to_str(peak), model.font).size(10).draw!(frame, { pos: { x: pad - 6.0, y: bars_top - 4.0 }, color: ink_faint, align: (Top, Right) })
 			Text.from("0", model.font).size(10).draw!(frame, { pos: { x: pad - 6.0, y: bars_bot - 10.0 }, color: ink_faint, align: (Top, Right) })
 			Text.from("weekly tss", model.font).size(10).draw!(frame, { pos: { x: win_w - pad, y: bars_top - 24.0 }, color: ink_faint, align: (Top, Right) })
+			# the ramp trend as a connected line under the dots
+			_ = List.fold(List.map_with_index(model.ramp_weeks, |w8, i8| { w8, i8 }), { px: 0.0, py: 0.0, first: Bool.True }, |acc8, x8| {
+				x9 = pad + (U64.to_f32(x8.i8) + 0.5) * slot
+				y9 = ry(I64.to_f32(x8.w8.ramp10) / 10.0)
+				if acc8.first {} else {
+					frame.line!({ start: { x: acc8.px, y: acc8.py }, end: { x: x9, y: y9 }, stroke: Draw.stroke(Color.with_alpha(Theme.ctl_c, 70), 1) })
+				}
+				{ px: x9, py: y9, first: Bool.False }
+			})
+			# where fitness stands after all of it: the last week's CTL, said
+			_ = match List.last(model.ramp_weeks) {
+				Ok(lw) => {
+					lx9 = pad + (U64.to_f32(List.len(model.ramp_weeks) - 1) + 0.5) * slot
+					Text.from("ctl ${I64.to_str(lw.ctl10 // 10)}.${I64.to_str(I64.abs(lw.ctl10) % 10)}", model.font).size(11).draw!(frame, { pos: { x: lx9, y: ry(I64.to_f32(lw.ramp10) / 10.0) + 12.0 }, color: Color.white, align: (Top, Center) })
+					{}
+				}
+				Err(_) => {}
+			}
 			List.for_each!(List.map_with_index(model.ramp_weeks, |w, i| { w, i }), |x| {
 				cx = pad + (U64.to_f32(x.i) + 0.5) * slot
 				x0 = cx - bw / 2.0
