@@ -6,7 +6,8 @@ import Theme
 import Ui
 
 Table :: [].{
-	# The artifact's accessibility table, native: the last 14 days as numbers.
+	# The artifact's accessibility table, native: as many recent days as the
+	# window height holds (rows_fit), as numbers.
 	# Cells draw as immediate text — 70 short strings a frame is nothing to
 	# raylib, and preparing them would double the Model for a static view.
 	# how many rows this window height holds: header at 134, 24px rows, and
@@ -16,7 +17,7 @@ Table :: [].{
 	# every table element and every hit-test shares, at any window width
 	panel_edge : F32 -> F32
 	panel_edge = |win_w| {
-		pw2 = if win_w / 2.0 < 480.0 (win_w / 2.0 - 36.0) else 480.0
+		pw2 = F32.min(480.0, win_w / 2.0 - 36.0)
 		win_w - 36.0 - pw2 - 24.0
 	}
 
@@ -44,8 +45,11 @@ Table :: [].{
 		{ back, kept, rows: if kept > fit fit else kept }
 	}
 
+	session_x : F32
+	session_x = 680.0
+
 	col_x : List(F32)
-	col_x = [36.0, 260.0, 380.0, 490.0, 590.0, 680.0]
+	col_x = [36.0, 260.0, 380.0, 490.0, 590.0, session_x]
 
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
 	draw! = |model, frame| {
@@ -79,7 +83,7 @@ Table :: [].{
 		} else {}
 		# the session column runs to the table's right edge; ~8px per mono
 		# glyph at this size - one computation per frame, not per row
-		budget = match F32.round_to_u64_try(F32.div_floor_by(edge - 690.0, 8.0)) {
+		budget = match F32.round_to_u64_try(F32.div_floor_by(edge - session_x - 10.0, 8.0)) {
 			Ok(b) => if b < 12 (12.U64) else b
 			# failure means cramped, not roomy - clamp to the floor
 			Err(_) => 12.U64
@@ -133,7 +137,8 @@ Table :: [].{
 				Text.from(x.ln.title, model.font).size(13).draw!(frame, { pos: { x: px + 18.0, y: ly }, color: Theme.ctl_c, align: (Top, Left) })
 				Text.from(x.ln.stats, model.font).size(12).draw!(frame, { pos: { x: px + 18.0, y: ly + 19.0 }, color: Color.white, align: (Top, Left) })
 				Text.from(x.ln.extra, model.font).size(11).draw!(frame, { pos: { x: px + 18.0, y: ly + 37.0 }, color: ink_muted, align: (Top, Left) })
-				# the day's minutes by zone, as a stacked bar in the intensity ramp
+				# the session's TIME by zone (seconds in, proportions out), as a
+				# stacked bar in the intensity ramp
 				ztot = List.fold(x.ln.zones, 0, |a2, z| a2 + z)
 				if ztot > 0 {
 					bw2 = pw2 - 36.0
