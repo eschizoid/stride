@@ -348,12 +348,13 @@ Db :: [].{
 		}
 	}
 
-	# up to a year of (day, load, weekday) for the heatmap grid, oldest first;
+	# a year of (day, load, weekday) for the heatmap grid, oldest first, plus
+	# up to six spare days the view may shed aligning its first column to Monday;
 	# %w is 0=Sunday..6=Saturday, the view maps it to Monday-first rows
 	HeatDay : { day : Str, tss : I64, dow : I64 }
 	load_heat! : Sqlite.Db => List(HeatDay)
 	load_heat! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(day AS TEXT) AS d, CAST(ROUND(COALESCE(tss, 0)) AS INTEGER) AS t, CAST(strftime('%w', day) AS INTEGER) AS w FROM (SELECT day, tss FROM daily_load ORDER BY day DESC LIMIT 366) ORDER BY day ASC", bindings: [] }) {
+		match Sqlite.query!({ db, query: "SELECT CAST(day AS TEXT) AS d, CAST(ROUND(COALESCE(tss, 0)) AS INTEGER) AS t, CAST(strftime('%w', day) AS INTEGER) AS w FROM (SELECT day, tss FROM daily_load ORDER BY day DESC LIMIT 372) ORDER BY day ASC", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {

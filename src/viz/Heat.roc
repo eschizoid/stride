@@ -31,7 +31,8 @@ Heat :: [].{
 			step = cell + gap
 			weeks_fit = match F32.round_to_u64_try(F32.div_floor_by(win_w - 120.0, step)) {
 				Ok(wk) => if wk < 4 (4.U64) else if wk > 53 (53.U64) else wk
-				Err(_) => 13.U64
+				# sizing failure clamps to the same floor a cramped window gets
+				Err(_) => 4.U64
 			}
 			# the newest `weeks_fit` weeks: drop leading days until the first
 			# Monday inside the kept span, so columns align
