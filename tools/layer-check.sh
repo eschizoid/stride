@@ -8,9 +8,10 @@
 set -euo pipefail
 # Import scanning captures the pipeline status explicitly: grep exit 1 is the
 # normal no-imports state, anything above it is a scan that FAILED — and a
-# gate that could not read must not be green. Every IMPORTABLE module here is
-# capitalized (app.roc is an entrypoint, imported by nothing), so the [A-Z]
-# matcher covers the complete import vocabulary.
+# gate that could not read must not be green. The matcher reads LOCAL imports
+# only — qualified package imports (pf.Sqlite, rr.App) are platform edges the
+# layer table does not govern. Every importable local module is capitalized
+# (app.roc is an entrypoint, imported by nothing), so [A-Z] covers them all.
 
 # prints a file's local imports; dies if the scan itself breaks
 scan() {
