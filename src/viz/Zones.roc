@@ -64,15 +64,19 @@ Zones :: [].{
 				lx + 44.0
 			})
 			# the share trend as a connected line first, dots ride on top of it
-			shares = List.keep_oks(List.map_with_index(model.zone_weeks, |w9, i9| { w9, i9 }), |x9| {
+			# segments join only ADJACENT weeks that both have a share - a week
+			# with no classified time breaks the line rather than being bridged,
+			# so a gap in the timeline looks like one
+			_ = List.fold(List.map_with_index(model.zone_weeks, |w9, i9| { w9, i9 }), { px: 0.0, py: 0.0, live: Bool.False }, |acc9, x9| {
 				it9 = x9.w9.easy + x9.w9.moderate + x9.w9.hard
-				if it9 > 0 (Ok({ x: pad + (U64.to_f32(x9.i9) + 0.5) * slot, y: sy(I64.to_f32(x9.w9.easy) / I64.to_f32(it9)) })) else Err({})
-			})
-			_ = List.fold(shares, { px: 0.0, py: 0.0, first: Bool.True }, |acc9, pt9| {
-				if acc9.first {} else {
-					frame.line!({ start: { x: acc9.px, y: acc9.py }, end: { x: pt9.x, y: pt9.y }, stroke: Draw.stroke(Color.with_alpha(Theme.ctl_c, 80), 1) })
-				}
-				{ px: pt9.x, py: pt9.y, first: Bool.False }
+				if it9 > 0 {
+					nx9 = pad + (U64.to_f32(x9.i9) + 0.5) * slot
+					ny9 = sy(I64.to_f32(x9.w9.easy) / I64.to_f32(it9))
+					if acc9.live {
+						frame.line!({ start: { x: acc9.px, y: acc9.py }, end: { x: nx9, y: ny9 }, stroke: Draw.stroke(Color.with_alpha(Theme.ctl_c, 80), 1) })
+					} else {}
+					{ px: nx9, py: ny9, live: Bool.True }
+				} else { px: 0.0, py: 0.0, live: Bool.False }
 			})
 			# one pass: bar stack, easy-share dot, hover
 			List.for_each!(List.map_with_index(model.zone_weeks, |w, i| { w, i }), |x| {
