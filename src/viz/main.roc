@@ -583,8 +583,9 @@ update! = |model0, program_input| {
 		# out. Only a cursor NOT re-parked this same frame (arrow, directive,
 		# row click) clears - deliberate parks always win over drift.
 		cursor3 =
-			if view2 == 0 and cursor2 == model.cursor and cursor2 >= 0 and (m.x != model.mouse_x or m.y != model.mouse_y) and m.y > Theme.pad_t + 56.0 and m.y < win.h - Theme.pad_b and m.x >= Theme.pad_l and m.x <= win.w - Theme.pad_r (-1)
-			else cursor2
+			if view2 == 0 and cursor2 == model.cursor and cursor2 >= 0 and (m.x != model.mouse_x or m.y != model.mouse_y) and m.y > Theme.pad_t + 56.0 and m.y < win.h - Theme.pad_b and m.x >= Theme.pad_l and m.x <= win.w - Theme.pad_r {
+				-1
+			} else cursor2
 		# reloads and trace switches SPAWN — Cmd panics in update!, and the
 		# task lane is where Sqlite and text preparation park legally
 		# a directive naming a session day resolves to its picker slot
