@@ -199,7 +199,7 @@ load_model! = |font, curve_days| {
 			curve_hint: mk!("1/2/3  window 30/60/90d      TAB  session trace      R  reload      S  screenshot      ESC quit", 13)?,
 			trace_hint: mk!("[ / ]  older / newer session      TAB  data table      R  reload      S  screenshot      ESC quit", 13)?,
 			table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      ESC quit", 13)?,
-			table_title: mk!("data table - last 14 days", 15)?,
+			table_title: mk!("data table", 15)?,
 			table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
 			kpis: [
 				{ v: mkb!(Db.fmt1(loaded.s.last.c), 27)?, cap: mk!("fitness - 42-day load avg", 11)?, sel: 0.U8 },
@@ -442,9 +442,9 @@ update! = |model0, program_input| {
 		# so click and hover hit-tests share it
 		cursor_pre = if cursor_dir >= 0 cursor_dir else cursor
 		row_hit =
-			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and (if model.detail_day != "" (m.x < win.w / 2.0) else m.x < win.w - 40.0) and m.y >= 134.0 {
+			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and (if model.detail_day != "" (m.x < win.w - 516.0) else m.x < win.w - 40.0) and m.y >= 134.0 {
 				total = List.len(model.data)
-				w = Table.window_of(total, cursor_pre)
+				w = Table.window_of(total, cursor_pre, Table.rows_fit(win.h))
 				kept = w.kept
 				rowcount = w.rows
 				# floored, not rounded: rounding flips to the NEXT row past a
@@ -510,8 +510,8 @@ update! = |model0, program_input| {
 		# per-chip, not one wide band: the 8px gaps between chips are not
 		# clickable and must not claim the pointer
 		over_chip = view2 == 0 and m.y >= 64.0 and m.y <= 86.0 and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0))
-		row_count = Table.window_of(List.len(model.data), cursor2).rows
-		over_row = view2 == 3 and m.x >= 36.0 and (if detail_day2 != "" (m.x < win.w / 2.0) else m.x < win.w - 40.0) and m.y >= 134.0 and m.y < 134.0 + U64.to_f32(row_count) * 24.0
+		row_count = Table.window_of(List.len(model.data), cursor2, Table.rows_fit(win.h)).rows
+		over_row = view2 == 3 and m.x >= 36.0 and (if detail_day2 != "" (m.x < win.w - 516.0) else m.x < win.w - 40.0) and m.y >= 134.0 and m.y < 134.0 + U64.to_f32(row_count) * 24.0
 		Mouse.set_cursor!(if over_chip or over_row PointingHand else Default)
 		# a view switch stamps this frame; render fades the new view in from it
 		view_anim = if view != model.view model.tick + 1 else model.view_anim
