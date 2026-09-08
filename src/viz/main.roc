@@ -363,7 +363,12 @@ update! = |model0, program_input| {
 		} else {}
 		# on the curve view, 1/2/3 re-window the curve AND its CP fit — a full
 		# reload through the same path as R, keeping what the user was looking at
-		want_days = if view == 1 (if d.key_pressed(Key1) 30 else if d.key_pressed(Key2) 60 else if d.key_pressed(Key3) 90 else model.curve_days) else model.curve_days
+		# on the curve view "range" MEANS the curve window — a directive saying
+		# (view 1, range 30) re-windows the ladder and fit, same as the keys
+		want_days =
+			if view == 1 and directive.has_d and (directive.range == 30 or directive.range == 60 or directive.range == 90) directive.range
+			else if view == 1 (if d.key_pressed(Key1) 30 else if d.key_pressed(Key2) 60 else if d.key_pressed(Key3) 90 else model.curve_days)
+			else model.curve_days
 		# on the trace view, [ and ] walk the last dozen structured sessions
 		want_sel =
 			if view != 2 model.trace_sel
@@ -448,8 +453,12 @@ update! = |model0, program_input| {
 				1 => 1
 				2 => 2
 				_ => 3 },
-			range: match U64.to_i64_try(range) { Ok(ri) => ri
-				Err(_) => 90 },
+			# the curve view's window IS its range; the other views report the
+			# form board's
+			range:
+				if view2 == 1 want_days
+				else match U64.to_i64_try(range) { Ok(ri) => ri
+					Err(_) => 90 },
 			cursor_day: cur_day,
 			trace_day: model.trace_day,
 		}
