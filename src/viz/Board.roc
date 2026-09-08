@@ -69,8 +69,9 @@ Board :: [].{
 		model.ev_warn.draw!(frame, { pos: { x: win_w - 40.0, y: 52.0 }, color: atl_c, align: (Top, Right) })
 	} else {}
 	if model.stale_found {
-		# BELOW the nav pills - nine of them own the whole y30..54 band now
-		model.stale.draw!(frame, { pos: { x: win_w - 40.0, y: 58.0 }, color: ink_faint, align: (Top, Right) })
+		# bottom-right status corner, mirroring the hint line: the header has
+		# no free band (pills y30..54, chips y64..86, legend and subtitle y70)
+		model.stale.draw!(frame, { pos: { x: win_w - 40.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Right) })
 	} else {}
 
 		if model.has_error {
