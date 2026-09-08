@@ -66,7 +66,8 @@ for f in src/*.roc; do
     echo "layer-check: $m has no layer — add it to the table in tools/layer-check.sh (and ADR 0016 if it starts a new layer)" >&2
     fail=1; continue
   fi
-  for dep in $(scan "$f"); do
+  deps=$(scan "$f") || exit 1
+  for dep in $deps; do
     dl=$(layer_of "$dep")
     if [ "$dl" = UNKNOWN ]; then
       echo "layer-check: $m imports $dep, which has no layer row" >&2; fail=1; continue
@@ -82,7 +83,8 @@ done
 viz_members=$(ls src/viz/*.roc | xargs -n1 basename | sed 's/\.roc$//')
 for f in src/viz/*.roc; do
   m=$(basename "$f" .roc)
-  for dep in $(scan "$f"); do
+  deps=$(scan "$f") || exit 1
+  for dep in $deps; do
     echo "$viz_members" | grep -qx "$dep" || {
       echo "layer-check: viz/$m imports $dep, which is not a viz module — the viz app reaches the engine through the database, never through imports (ADR 0015)" >&2
       fail=1
