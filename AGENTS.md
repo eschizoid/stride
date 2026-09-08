@@ -52,7 +52,7 @@ rest of it, all runnable locally — run them before pushing. Every one is netwo
 except `issue-claims`, which reads the tracker:
 
 ```bash
-roc check src/app.roc      # CI runs this on three OSes before anything else
+roc check src/main.roc      # CI runs this on three OSes before anything else
 just e2e-sync              # mock-backed sync/skips/stops drivers; no network
 sh tools/skill-shapes.sh   # the coach skill's payload keys vs schemas/v3
 sh tools/blob-safety.sh    # every TEXT decode is projected through CAST(... AS TEXT)
@@ -87,14 +87,14 @@ pinned in `.github/workflows/build.yml`.
 ## Code conventions
 
 - **Effects live in modules, by concern** — the new compiler lifted the alpha4
-  monomorphic-module-param wall, so I/O is split out of app.roc: `Db.roc` (SQLite +
+  monomorphic-module-param wall, so I/O is split out of main.roc: `Db.roc` (SQLite +
   schema/migrations), `Strava.roc` (OAuth + sync HTTP), `Analyze/Plan/Import` and the
   report family — `Report.roc` (summary/load/compare + the helpers the others share),
   `ReportSessions.roc`, `ReportHealth.roc`, `ReportSeason.roc` — each owning its commands;
-  `app.roc` is a thin argv → dispatch shell. The report modules depend INWARD on
+  `main.roc` is a thin argv → dispatch shell. The report modules depend INWARD on
   `Report.roc` and it imports none of them (#196, ADR 0001). (History: under alpha4
   a decoder wider than 2 columns failed to type-check once effects were injected, so
-  everything effectful had to sit in app.roc — that wall is gone.)
+  everything effectful had to sit in main.roc — that wall is gone.)
   Pure logic goes in `Metrics.roc` / `Sports.roc` (sport vocabulary: the four sport-varying policies — family filters, load-model class, pace routing, the pace-TSS exponent — gathered in one module rather than scattered through others; only the family filter is a table of rows, the class reads a list literal inside its own function, and the last two are name-substring predicates) / `Render.roc` / `Command.roc` (argv → typed
   `Command` union, `parse` is pure + unit-tested; `main!` is thin parse-then-dispatch)
   / `Config.roc` (`is_secret` secret-key policy) / `Csv.roc` / `Streams.roc` /
@@ -119,7 +119,7 @@ pinned in `.github/workflows/build.yml`.
   inside the subset `tools/validate.jq` actually reads — `title` included, since the
   validator uses it as the violation path's prefix — plus `description` for humans).
   Platform failures are converted to envelopes at ONE boundary (`run_command!`
-  in app.roc) rather than at each call site, so a caller never meets a raw
+  in main.roc) rather than at each call site, so a caller never meets a raw
   runtime banner; a new failure shape means a new arm there, not a new habit.
   Errors are in-band on stdout AND exit 1 (#163: the
   envelope is the payload, the status is the signal; a bare invocation is not a
@@ -230,7 +230,7 @@ Every item here cost a debugging session at least once — they are not style op
 - **`roc test`'s summary line can lie about the outcome.** When an expect fails to
   COMPILE, it prints `All (N) tests passed` with a silently smaller N and exits **1**. The
   exit code is the truth; the text is not. Read the code, and watch the count.
-- **`roc test --main=src/app.roc <module>` runs every expect reachable from the app**, not
+- **`roc test --main=src/main.roc <module>` runs every expect reachable from the app**, not
   just that module's — so the number it prints is not that file's test count.
 - **The e2e harness aborts at the first failing `check!`.** A negative control that
   reverts two fixes at once only ever proves the first one. Revert one at a time.
@@ -359,7 +359,7 @@ Every item here cost a debugging session at least once — they are not style op
 - Schema changes: bump `schema_version` (in `Db.roc`, alongside `run_migrations!`) and
   add the migration there; `ensure_schema!` (via open_db!) applies it on next command.
   (Constant locations: `schema_version` → Db.roc · `metrics_rev` → Analyze.roc ·
-  `json_schema_version` → Output.roc · release `version` → app.roc.)
+  `json_schema_version` → Output.roc · release `version` → main.roc.)
   **Pre-1.0 the schema is NOT a stable contract** — break it freely (retype columns,
   DROP+recreate the mirror/computed tables, or reset the db) when that's simpler than
   a careful migration. Don't harden migrations against versions no real db is on. The
@@ -388,7 +388,7 @@ tests on linux/macOS/Windows, then build + e2e on macOS), `release-please.yml`
 Releases are automated by **release-please**, driven by **Conventional Commit** messages
 on `main`. You never tag or edit the version by hand.
 
-- **Version lives in `src/app.roc`** (`version = "stride X.Y.Z" # x-release-please-version`)
+- **Version lives in `src/main.roc`** (`version = "stride X.Y.Z" # x-release-please-version`)
   and `.release-please-manifest.json`. release-please bumps both — **do not hand-edit the
   version for a release.**
 - **Commit types → version bump** (config sets `bump-minor-pre-major` only — the

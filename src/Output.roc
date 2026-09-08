@@ -109,7 +109,7 @@ Output :: [].{
     emit_err! = |code, msg|
         Stdout.line!(Json.to_str({ schema_version: json_schema_version, error: { code, message: msg } }))
     # Output mode: humans get tables, machines ask for JSON — by `--json` on the
-    # command (which re-execs with STRIDE_FORMAT set for the child, see app.roc)
+    # command (which re-execs with STRIDE_FORMAT set for the child, see main.roc)
     # or by STRIDE_FORMAT=json for a whole session.
     #
     # STRIDE_FORMAT is the ONLY environment input to this decision (#181). Stride
@@ -192,7 +192,7 @@ Output :: [].{
     }
 
     # The setup remedy for a client credential neither in the environment nor stored.
-    # ONE definition, two call sites (`auth!` and the app.roc boundary arm) — two
+    # ONE definition, two call sites (`auth!` and the main.roc boundary arm) — two
     # spellings of one remedy is how they drift. NOT split into a `_msg` half: only
     # `unreadable_config_msg`'s split is load-bearing, because `ReportHealth` embeds it in a
     # PAYLOAD; the other three exist for symmetry and have a single caller each.

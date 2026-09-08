@@ -29,7 +29,7 @@ The layer of a module is a statement about its imports, not its location:
 | core | Sports, Metrics, Csv, Streams, Config, Drain, Schema, Render | core only |
 | io | Db, Strava, Output | core + io |
 | analytics | Analyze, Plan, Report, ReportHealth, ReportSeason, ReportSessions | core + io + analytics |
-| app | app.roc, Command, Import | anything |
+| app | main.roc, Command, Import | anything |
 | viz | `src/viz/` (its own app, its own pin) | its own modules + its platform |
 
 Two mechanical consequences:

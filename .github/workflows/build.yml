@@ -49,10 +49,10 @@ jobs:
         uses: ./.github/actions/setup-roc
 
       # One check covers the whole codebase: `roc check` follows every import, so
-      # this type-checks app.roc plus all 16 modules against basic-cli 0.22 + http.
-      - name: Type-check (app + all modules)
+      # this type-checks main.roc plus all 16 modules against basic-cli 0.22 + http.
+      - name: Type-check (main + all modules)
         shell: bash
-        run: roc check src/app.roc
+        run: roc check src/main.roc
 
       # Here rather than in the `e2e` job, and rather than only in the justfile.
       #
@@ -76,7 +76,7 @@ jobs:
         shell: bash
         run: sh tools/blob-safety.sh
 
-      # The pure modules carry the logic and the tests. app.roc
+      # The pure modules carry the logic and the tests. main.roc
       # has no expects (its effectful ones can't run under the test runner), so it
       # is validated by `check` above.
       - name: Run pure-module tests
@@ -113,7 +113,7 @@ jobs:
       - name: Install just
         run: brew install just
       - name: Build stride (dev backend — chosen for build time, not correctness)
-        run: roc build src/app.roc --output=stride --opt=dev   # new compiler uses --output=
+        run: roc build src/main.roc --output=stride --opt=dev   # new compiler uses --output=
       - name: Run offline e2e suite
         run: ROC=roc just e2e
       # Runs in CI despite the "sync" name: it needs no network and no credential.

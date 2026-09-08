@@ -34,7 +34,7 @@ Plan :: [].{
                         # class because it WRITES into `ratings`, one of the two tables prune refuses to
                         # touch (human judgment, unrecoverable), and the printed remedy — delete the
                         # malformed row — would destroy the rating meant for a different session.
-                        # Not covered by summary's sweep: `rate!` dispatches straight from app.roc.
+                        # Not covered by summary's sweep: `rate!` dispatches straight from main.roc.
                         #
                         # TWO steps, and the split is the point: Roc GUARDS, SQL RANKS. The guard
                         # validates substr(start_local, 1, 19) and the ranker compares the SAME slice —

@@ -4,7 +4,7 @@
     ".": {
       "release-type": "simple",
       "extra-files": [
-        "src/app.roc",
+        "src/main.roc",
         { "type": "json", "path": ".codex-plugin/plugin.json", "jsonpath": "$.version" }
       ],
       "bump-minor-pre-major": true

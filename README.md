@@ -517,7 +517,7 @@ check`, `roc test` and a full `roc build` all work. Install the pinned compiler 
   for build and test conventions**; this section is a summary and defers to it.
 - **Layout:** effects live in modules by concern — `Db.roc` (SQLite + migrations),
   `Strava.roc` (OAuth + sync), and the `Analyze.roc` / report family / `Plan.roc` /
-  `Import.roc` command modules; `app.roc` is a thin argv → dispatch shell. Pure, tested
+  `Import.roc` command modules; `main.roc` is a thin argv → dispatch shell. Pure, tested
   modules: `Metrics.roc` (math), `Render.roc` (tables/formatting), `Command.roc` (argv →
   typed command parser), `Config.roc` (secret-key policy), `Sports.roc` (the sport
   vocabulary — families, class, pace routing and the pace-TSS exponent, gathered in one

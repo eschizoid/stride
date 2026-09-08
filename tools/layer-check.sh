@@ -11,7 +11,7 @@ set -euo pipefail
 # gate that could not read must not be green. The matcher reads LOCAL imports
 # only — qualified package imports (pf.Sqlite, rr.App) are platform edges the
 # layer table does not govern. Every importable local module is capitalized
-# (app.roc is an entrypoint, imported by nothing), so [A-Z] covers them all.
+# (main.roc is an entrypoint, imported by nothing), so [A-Z] covers them all.
 
 # prints a file's local imports; dies if the scan itself breaks
 scan() {
@@ -30,7 +30,7 @@ layer_of() {
     Sports|Metrics|Csv|Streams|Config|Drain|Schema|Render) echo core ;;
     Db|Strava|Output)                                      echo io ;;
     Analyze|Plan|Report|ReportHealth|ReportSeason|ReportSessions) echo analytics ;;
-    app|Command|Import)                                    echo app ;;
+    main|Command|Import)                                   echo app ;;
     *) echo UNKNOWN ;;
   esac
 }
@@ -40,7 +40,7 @@ rank_of() { case "$1" in core) echo 0 ;; io) echo 1 ;; analytics) echo 2 ;; app)
 
 # ── self-test: the table resolves its own vocabulary and flags a stranger ──
 [ "$(layer_of Metrics)" = core ] && [ "$(layer_of Strava)" = io ] \
-  && [ "$(layer_of Plan)" = analytics ] && [ "$(layer_of app)" = app ] \
+  && [ "$(layer_of Plan)" = analytics ] && [ "$(layer_of main)" = app ] \
   && [ "$(layer_of Nonesuch)" = UNKNOWN ] \
   || { echo "layer-check: SELF-TEST FAILED — the table no longer resolves its own rows" >&2; exit 1; }
 

@@ -1,7 +1,7 @@
 name: manual-release
 
 # Manual, dispatch-only release cut — independent of release-please (which drives
-# 0.1.1+ automatically). Reads the version from app.roc, tags it, builds the five
+# 0.1.1+ automatically). Reads the version from main.roc, tags it, builds the five
 # binaries, and publishes with notes from CHANGELOG.md. Use to (re-)cut a baseline
 # like v0.1.0. Do NOT dispatch while release-please has a pending release PR.
 on:
@@ -20,8 +20,8 @@ jobs:
       - id: resolve
         run: |
           set -euo pipefail
-          have=$(grep -oE 'version = "stride [0-9]+\.[0-9]+\.[0-9]+"' src/app.roc | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-          [ -n "$have" ] || { echo "::error::no version in src/app.roc"; exit 1; }
+          have=$(grep -oE 'version = "stride [0-9]+\.[0-9]+\.[0-9]+"' src/main.roc | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          [ -n "$have" ] || { echo "::error::no version in src/main.roc"; exit 1; }
           echo "tag=v$have" >> "$GITHUB_OUTPUT"
       - name: Create + push tag
         env:
@@ -40,7 +40,7 @@ jobs:
     needs: prepare
     # ENABLED on the new (Zig) compiler, pinned nightly, --opt=dev — mirrors
     # release-please.yml's build job. Use this to (re)build the five binaries for the current
-    # app.roc version on demand (e.g. attach binaries to an already-cut release).
+    # main.roc version on demand (e.g. attach binaries to an already-cut release).
     runs-on: ${{ matrix.runs-on }}
     defaults:
       run:
@@ -77,7 +77,7 @@ jobs:
           # only linux-arm64 sets roc_target; everywhere else the native default is right
           target_flag=""
           if [ -n "${{ matrix.roc_target }}" ]; then target_flag="--target=${{ matrix.roc_target }}"; fi
-          roc build src/app.roc --output="stride-${{ matrix.target }}" --opt=dev $target_flag
+          roc build src/main.roc --output="stride-${{ matrix.target }}" --opt=dev $target_flag
           ls -la stride-${{ matrix.target }}* || true
           test -f "stride-${{ matrix.target }}" || test -f "stride-${{ matrix.target }}.exe"
       - name: Verify binary version
