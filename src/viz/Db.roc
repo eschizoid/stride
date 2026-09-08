@@ -344,7 +344,7 @@ Db :: [].{
 						Err(_) => -1 }
 					cd = match r.str("cd") { Ok(x) => x
 						Err(_) => "" }
-					vn = if v == 0 "form" else if v == 1 "curve" else if v == 2 "trace" else if v == 3 "table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else if v == 7 "ramp" else ""
+					vn = if v == 0 "form" else if v == 1 "power" else if v == 2 "trace" else if v == 3 "table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else if v == 7 "ramp" else ""
 					rgp = if rg > 0 "${I64.to_str(rg)}d" else ""
 					joined = Str.join_with(List.keep_if([vn, rgp], |s2| s2 != ""), " / ")
 					parts = if joined == "" "steer" else joined
