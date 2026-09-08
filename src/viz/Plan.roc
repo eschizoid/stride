@@ -1,7 +1,6 @@
 import rr.Color
 import rr.Draw
 import rr.Text
-import Db
 import Theme
 import Ui
 
