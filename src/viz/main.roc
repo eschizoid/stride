@@ -108,7 +108,7 @@ load_model! = |font| {
 		# deserves its "ridden" moment; otherwise the slot says so
 		ev_tile =
 			if loaded.e.day != "" {
-				{ top: loaded.e.name, sub: "in ${I64.to_str(loaded.e.ahead)}d, ${loaded.e.day}" }
+				{ top: loaded.e.name, sub: if loaded.e.ahead == 0 ("today, ${loaded.e.day}") else "in ${I64.to_str(loaded.e.ahead)}d, ${loaded.e.day}" }
 			} else if loaded.rd.ago >= 0 and loaded.rd.ago <= 7 {
 				{ top: loaded.rd.name, sub: "ridden, ${I64.to_str(loaded.rd.ago)}d ago" }
 			} else {

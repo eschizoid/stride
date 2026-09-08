@@ -54,10 +54,10 @@ Board :: [].{
 	} else {}
 
 		if model.has_error {
-			model.status.draw!(frame, { pos: { x: 36.0, y: 120.0 }, color: atl_c, align: (Top, Left) })
+			model.status.draw!(frame, { pos: { x: 36.0, y: pad_t + 20.0 }, color: atl_c, align: (Top, Left) })
 			Ok({})
 		} else if List.len(model.data) < 2 {
-			model.empty.draw!(frame, { pos: { x: 36.0, y: 120.0 }, color: ink_muted, align: (Top, Left) })
+			model.empty.draw!(frame, { pos: { x: 36.0, y: pad_t + 20.0 }, color: ink_muted, align: (Top, Left) })
 			Ok({})
 		} else {
 			full = model.data
