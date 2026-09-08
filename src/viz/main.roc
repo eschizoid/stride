@@ -346,7 +346,9 @@ update! = |model0, program_input| {
 			if directive.has_d and view != 1 and (directive.range == 30 or directive.range == 60 or directive.range == 90) (match I64.to_u64_try(directive.range) { Ok(rr) => rr
 				Err(_) => model.range }) else
 			if clicked_chip > 0 clicked_chip
-			else if model.view == 1 model.range
+			# keys judge the same frame-true view the directive rule does — a
+			# TAB and a range key in one frame land the range where TAB went
+			else if view == 1 model.range
 			else if d.key_pressed(Key1) 30.U64
 			else if d.key_pressed(Key2) 60.U64
 			else if d.key_pressed(Key3) 90.U64
