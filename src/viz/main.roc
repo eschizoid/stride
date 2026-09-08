@@ -228,6 +228,8 @@ load_model! = |font, curve_days| {
 			mouse_x: 0.0,
 			mouse_y: 0.0,
 			win: { w: I32.to_f32(Theme.win_w), h: I32.to_f32(Theme.win_h) },
+			detail_day: "",
+			detail: [],
 			mouse_in: Bool.False,
 			cursor: -1,
 		})
@@ -255,6 +257,15 @@ trace_task! = |home, ids, sel|
 					TraceSwitched({ tr, sg, du, sel, day: entry.day })
 				}
 			}
+	}
+
+# One day's story, fetched when a table row is clicked
+detail_task! : Str, Str => Msg
+detail_task! = |home, day|
+	if home == "" DayDetail({ day, lines: ["no database path"] })
+	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
+		Err(_) => DayDetail({ day, lines: ["cannot open the database"] })
+		Ok(db) => DayDetail({ day, lines: Db.load_day_detail!(db, day) })
 	}
 
 # The coach's poll: read-and-consume the newest directive, every 60
@@ -296,6 +307,7 @@ Msg : [
 	DirectiveNone,
 	FocusWritten,
 	FocusWriteFailed,
+	DayDetail({ day : Str, lines : List(Str) }),
 ]
 
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
@@ -312,9 +324,10 @@ update! = |model0, program_input| {
 			FocusWritten => acc
 			# a dropped write must not leave the coach stale: resetting
 			# last_focus makes the next throttle tick try again
+			DayDetail(dd) => { ..acc, detail_day: dd.day, detail: dd.lines }
 			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "" } }
 			Directive(_) => acc
-			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win }
+			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, detail_day: acc.detail_day, detail: acc.detail }
 			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day }
 		})
 	# the coach's word arrives beside the human's input and steers only what
@@ -415,7 +428,28 @@ update! = |model0, program_input| {
 					}
 				} else { hit: Bool.False, cb: -1 }
 			} else { hit: Bool.False, cb: -1 }
-		view2 = if row_hit.hit 0 else view
+		# a clicked row opens the day's detail panel in place (same row again
+		# closes it); the crosshair follows so tabbing to the board lines up
+		clicked_day =
+			if row_hit.hit {
+				total4 = List.len(model.days)
+				match I64.to_u64_try(row_hit.cb) {
+					Err(_) => ""
+					Ok(cb4) =>
+						if cb4 >= total4 ""
+						else match List.get(model.days, total4 - 1 - cb4) {
+							Ok(dy) => dy
+							Err(_) => ""
+						}
+				}
+			} else ""
+		detail_day2 = if row_hit.hit (if clicked_day == model.detail_day "" else clicked_day) else model.detail_day
+		_ = if row_hit.hit and detail_day2 != "" and model.home != "" {
+			homed = model.home
+			dayd = detail_day2
+			Task.spawn!(program_input, || detail_task!(homed, dayd))
+		} else {}
+		view2 = view
 		# a directive naming a day parks the crosshair there
 		# -2 = no directive OR day not in the series: both leave the cursor
 		# alone. A found day maps to its days-back index (>= 0).
@@ -490,7 +524,7 @@ update! = |model0, program_input| {
 				_ = Task.spawn!(program_input, || focus_task!(homef, focus_now))
 				focus_now
 			} else model.last_focus
-		Ok({ ..model, range, view: view2, cursor: cursor2, curve_days: want_days, trace_sel: want_sel2, tick, last_focus, win, mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, range, view: view2, cursor: cursor2, curve_days: want_days, trace_sel: want_sel2, tick, last_focus, win, detail_day: detail_day2, mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 

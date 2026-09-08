@@ -254,6 +254,28 @@ Db :: [].{
 	note_for = |notes, dy|
 		List.fold(notes, "rest day", |acc, x| if x.day == dy x.note else acc)
 
+	# one day's full story for the detail panel: each activity with its type,
+	# duration, distance and load - pre-formatted lines, coach-legible
+	load_day_detail! : Sqlite.Db, Str => List(Str)
+	load_day_detail! = |db, day|
+		match Sqlite.query!({ db, query: "SELECT CAST(a.name AS TEXT) AS name, CAST(a.sport_type AS TEXT) AS sport, COALESCE(a.moving_time, 0) AS secs, CAST(ROUND(COALESCE(a.distance, 0) / 1000.0, 1) AS TEXT) AS km, CAST(ROUND(COALESCE(m.tss, 0)) AS INTEGER) AS tss, CAST(ROUND(COALESCE(m.normalized_power, 0)) AS INTEGER) AS np FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE substr(a.start_local, 1, 10) = :d ORDER BY a.start_local", bindings: [{ name: ":d", value: String(day) }] }) {
+			Err(_) => ["detail query failed"]
+			Ok(rows) =>
+				if List.is_empty(rows) ["rest day - no activities"]
+				else
+					List.keep_oks(rows, |r| {
+						nm = r.str("name") ? |_| "bad"
+						sp = r.str("sport") ? |_| "bad"
+						secs = r.i64("secs") ? |_| "bad"
+						km = r.str("km") ? |_| "bad"
+						tss = r.i64("tss") ? |_| "bad"
+						np = r.i64("np") ? |_| "bad"
+						mins = secs // 60
+						stats = if np > 0 "${I64.to_str(mins)}min  ${km}km  ${I64.to_str(tss)} tss  ${I64.to_str(np)}w np" else "${I64.to_str(mins)}min  ${km}km  ${I64.to_str(tss)} tss"
+						Ok("${nm} [${sp}]|${stats}")
+					})
+		}
+
 	# the last dozen structured sessions, newest first — the trace picker's menu
 	load_trace_ids! : Sqlite.Db => List({ id : I64, day : Str })
 	load_trace_ids! = |db|
