@@ -24,10 +24,11 @@ Trace :: [].{
 		model.trace_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		# which session, and where in the picker it sits
 		if List.is_empty(model.trace_ids) {} else {
-			sel_note = "${model.trace_day}   session ${U64.to_str(model.trace_sel + 1)} of last ${U64.to_str(List.len(model.trace_ids))}"
+			n_ids = List.len(model.trace_ids)
+			sel_note = if n_ids == 1 ("${model.trace_day}   the only structured session") else "${model.trace_day}   session ${U64.to_str(model.trace_sel + 1)} of the last ${U64.to_str(n_ids)}"
 			Text.from(sel_note, model.font).size(13).draw!(frame, { pos: { x: model.win.w - 34.0, y: 70.0 }, color: Color.white, align: (Top, Right) })
 			if model.ghost_day != "" {
-				Text.from("ghost: ${model.ghost_day}", model.font).size(13).draw!(frame, { pos: { x: model.win.w - 34.0, y: 90.0 }, color: Theme.atl_c, align: (Top, Right) })
+				Text.from("vs ${model.ghost_day} (purple)   shift+] dismisses", model.font).size(13).draw!(frame, { pos: { x: model.win.w - 34.0, y: 90.0 }, color: Theme.atl_c, align: (Top, Right) })
 			} else {}
 		}
 		if List.is_empty(model.trace) {
