@@ -424,3 +424,7 @@ viz-check:
 # ADR 0016: every engine import points down the layer table; viz stays behind the DB
 layer-check:
     bash tools/layer-check.sh
+
+# build the Form Board as a macOS app in ~/Applications (Launchpad/Dock/Spotlight)
+viz-app:
+    bash tools/make-viz-app.sh
