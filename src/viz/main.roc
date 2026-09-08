@@ -424,7 +424,7 @@ update! = |model0, program_input| {
 		# so click and hover hit-tests share it
 		cursor_pre = if cursor_dir >= 0 cursor_dir else cursor
 		row_hit =
-			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and (if model.detail_day != "" (m.x < win.w / 2.0) else m.x <= win.w - 40.0) and m.y >= 134.0 {
+			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and (if model.detail_day != "" (m.x < win.w / 2.0) else m.x < win.w - 40.0) and m.y >= 134.0 {
 				total = List.len(model.data)
 				w = Table.window_of(total, cursor_pre)
 				kept = w.kept
@@ -488,9 +488,12 @@ update! = |model0, program_input| {
 				Err(_) => ReloadFailed
 			})
 		} else {}
-		over_chip = view2 == 0 and m.y >= 64.0 and m.y <= 86.0 and m.x >= win.w - 420.0 and m.x <= win.w - 266.0
+		chip0h = win.w - 420.0
+		# per-chip, not one wide band: the 8px gaps between chips are not
+		# clickable and must not claim the pointer
+		over_chip = view2 == 0 and m.y >= 64.0 and m.y <= 86.0 and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0))
 		row_count = Table.window_of(List.len(model.data), cursor2).rows
-		over_row = view2 == 3 and m.x >= 36.0 and (if detail_day2 != "" (m.x < win.w / 2.0) else m.x <= win.w - 40.0) and m.y >= 134.0 and m.y < 134.0 + U64.to_f32(row_count) * 24.0
+		over_row = view2 == 3 and m.x >= 36.0 and (if detail_day2 != "" (m.x < win.w / 2.0) else m.x < win.w - 40.0) and m.y >= 134.0 and m.y < 134.0 + U64.to_f32(row_count) * 24.0
 		Mouse.set_cursor!(if over_chip or over_row PointingHand else Default)
 		# a view switch stamps this frame; render fades the new view in from it
 		view_anim = if view != model.view model.tick + 1 else model.view_anim
