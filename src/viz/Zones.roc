@@ -29,7 +29,7 @@ Zones :: [].{
 			slot = (win_w - pad * 2.0) / U64.to_f32(n)
 			bw = slot * 0.62
 			# the 80/20 panel, scaled to where easy shares actually live
-			# (30%..100% - a athlete under 30% easy has bigger problems than
+			# (30%..100% - an athlete under 30% easy has bigger problems than
 			# this panel's resolution)
 			po_top = 104.0
 			po_h = 120.0
