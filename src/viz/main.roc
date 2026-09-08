@@ -15,6 +15,7 @@ import rr.Capture
 import rr.Cmd
 import rr.Color
 import rr.Draw
+import rr.Files
 import rr.Sqlite
 import rr.Task
 import rr.Text
@@ -47,6 +48,25 @@ init! = App.init(
 # call — the database for every series, plus the engine's power-curve command
 # for the CP fit. init! runs it once at launch, and the R key runs it again
 # without reopening.
+# One brand face at one size, from wherever it lives: the repo's assets/ in a
+# dev checkout, ~/.stride/fonts when launched as the app bundle, and the
+# platform default font when neither answers — the board must open regardless.
+brand_font! : Str, Str, I32, Text.Font => Text.Font
+brand_font! = |home, name, size, fallback| {
+	bytes = match Files.read_bytes!("assets/fonts/${name}") {
+		Ok(b) => b
+		Err(_) => match Files.read_bytes!("${home}/.stride/fonts/${name}") {
+			Ok(b) => b
+			Err(_) => []
+		}
+	}
+	if List.is_empty(bytes) fallback
+	else match Draw.font_from_bytes!({ format: Ttf, bytes, size }) {
+		Ok(f) => f
+		Err(_) => fallback
+	}
+}
+
 load_model! : Text.Font, I64 => Try(Ui.Model, [ResourceLimit, ..])
 load_model! = |font, curve_days| {
 		# ~/.stride/db.sqlite, resolved on every load (launch and R alike) —
@@ -84,13 +104,21 @@ load_model! = |font, curve_days| {
 			if fit.ok
 				"CP ${Db.fmt_f(fit.cp)} W · W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${Db.fmt_f(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
 			else "CP fit unavailable - the engine did not answer"
-		mk! = |txt, sz| Text.from(txt, font).size(sz).prepare!()
+		# the brand: Quicksand carries words (the wordmark's rounded face),
+		# JetBrains Mono carries numbers (the tagline's voice); the platform
+		# default only ever appears when neither file can be found
+		head = brand_font!(home, "Quicksand-Medium.ttf", 32, font)
+		mono_big = brand_font!(home, "JetBrainsMono-Regular.ttf", 30, font)
+		mono = brand_font!(home, "JetBrainsMono-Regular.ttf", 16, font)
+		mk! = |txt, sz| Text.from(txt, head).size(sz).prepare!()
+		mkm! = |txt, sz| Text.from(txt, mono).size(sz).prepare!()
+		mkb! = |txt, sz| Text.from(txt, mono_big).size(sz).prepare!()
 		curve_lbls = List.map_try(loaded.c, |c| {
-			p = mk!(I64.to_str(c.dur_s), 12)?
+			p = mkm!(I64.to_str(c.dur_s), 12)?
 			Ok({ p, d: c.dur_s })
 		})?
 		ylabels = List.map_try([-30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], |v| {
-			p = mk!(I64.to_str(v), 12)?
+			p = mkm!(I64.to_str(v), 12)?
 			Ok({ p, v: I64.to_f32(v) })
 		})?
 		ends = List.map_try(
@@ -100,7 +128,7 @@ load_model! = |font, curve_days| {
 				{ s: "TSB ${Db.fmt1(loaded.s.last.t)}", k: 2.U8 },
 			],
 			|e| {
-				p = mk!(e.s, 13)?
+				p = mkm!(e.s, 13)?
 				Ok({ p, sel: e.k })
 			},
 		)?
@@ -161,9 +189,9 @@ load_model! = |font, curve_days| {
 			table_title: mk!("data table - last 14 days", 15)?,
 			table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?],
 			kpis: [
-				{ v: mk!(Db.fmt1(loaded.s.last.c), 27)?, cap: mk!("fitness - 42-day load avg", 11)?, sel: 0.U8 },
-				{ v: mk!(Db.fmt1(loaded.s.last.a), 27)?, cap: mk!("fatigue - 7-day load avg", 11)?, sel: 1.U8 },
-				{ v: mk!(Db.fmt1(loaded.s.last.t), 27)?, cap: mk!("form - fitness minus fatigue", 11)?, sel: 2.U8 },
+				{ v: mkb!(Db.fmt1(loaded.s.last.c), 27)?, cap: mk!("fitness - 42-day load avg", 11)?, sel: 0.U8 },
+				{ v: mkb!(Db.fmt1(loaded.s.last.a), 27)?, cap: mk!("fatigue - 7-day load avg", 11)?, sel: 1.U8 },
+				{ v: mkb!(Db.fmt1(loaded.s.last.t), 27)?, cap: mk!("form - fitness minus fatigue", 11)?, sel: 2.U8 },
 			],
 			ev_tile_top: mk!(ev_tile.top, 14)?,
 			ev_tile_sub: mk!(ev_tile.sub, 11)?,
@@ -174,12 +202,12 @@ load_model! = |font, curve_days| {
 			trace_title: mk!("last structured session - detected blocks shaded behind the power trace", 15)?,
 			trace_dur: loaded.du,
 			fit_cp: if fit.ok (fit.cp) else 0.0,
-			cp_lbl: mk!("CP ${Db.fmt_f(fit.cp)}W", 12)?,
+			cp_lbl: mkm!("CP ${Db.fmt_f(fit.cp)}W", 12)?,
 			data: loaded.s.data,
 			days: loaded.s.days,
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
-			font,
+			font: mono,
 			hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   ESC quit", 13)?,
 			empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
 			range: 90.U64,

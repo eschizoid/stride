@@ -53,6 +53,13 @@ The viz pins **its own compiler** — roc-ray's platform needs
 engine's. CI checks it in its own job (`viz-check` in `build.yml`) with that
 same tag.
 
+## Typography
+
+Quicksand (the wordmark's rounded face) carries words; JetBrains Mono (the
+tagline's voice) carries every number. Both ship in `assets/fonts/` (OFL) and
+the app bundle copies them to `~/.stride/fonts`; when neither location
+answers, the platform default font appears instead of a crash.
+
 ## Boundaries this nightly imposes
 
 - No F64→F32 narrowing exists, so the SQL query CASTs to integer tenths and
