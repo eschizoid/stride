@@ -90,10 +90,11 @@ Ui :: [].{
 		ramp_hint : Text.Prepared,
 		prs : List(Db.PrRung),
 		rec_status : Capture.Status,
-		# the post-process pipeline: Unbuilt until update! allocates it (and
-		# after every resize, sized to the window), Unavailable when the GPU
-		# refused - the app then renders exactly as before the feature existed
-		glow : [Unbuilt, Unavailable, Ready({ rt : Draw.RenderTexture, shader : Draw.Shader, rx : Draw.F32Uniform, ry : Draw.F32Uniform, gw : F32, gh : F32 })],
+		# the post-process pipeline: Unbuilt until update! allocates it, sized
+		# to the window. Unavailable remembers the size the GPU refused at, so
+		# a resize earns one fresh attempt; between refusals the app renders
+		# exactly as before the feature existed
+		glow : [Unbuilt, Unavailable({ gw : F32, gh : F32 }), Ready({ rt : Draw.RenderTexture, shader : Draw.Shader, rx : Draw.F32Uniform, ry : Draw.F32Uniform, gw : F32, gh : F32 })],
 		glow_on : Bool,
 		mouse_in : Bool,
 		cursor : I64,

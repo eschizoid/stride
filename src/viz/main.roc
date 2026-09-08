@@ -317,23 +317,23 @@ glow_frag = Str.join_with(
 	"\n",
 )
 
-build_glow! : { w : F32, h : F32 } => [Unbuilt, Unavailable, Ready({ rt : Draw.RenderTexture, shader : Draw.Shader, rx : Draw.F32Uniform, ry : Draw.F32Uniform, gw : F32, gh : F32 })]
+build_glow! : { w : F32, h : F32 } => [Unbuilt, Unavailable({ gw : F32, gh : F32 }), Ready({ rt : Draw.RenderTexture, shader : Draw.Shader, rx : Draw.F32Uniform, ry : Draw.F32Uniform, gw : F32, gh : F32 })]
 build_glow! = |win|
 	match Draw.RenderTexture.load!({ width: (match F32.round_to_u64_try(win.w) { Ok(wu) => (match U64.to_i32_try(wu) { Ok(wi) => wi
 		Err(_) => 1280 })
 		Err(_) => 1280 }), height: (match F32.round_to_u64_try(win.h) { Ok(hu) => (match U64.to_i32_try(hu) { Ok(hi) => hi
 		Err(_) => 720 })
 		Err(_) => 720 }) }) {
-		Err(_) => Unavailable
+		Err(_) => Unavailable({ gw: win.w, gh: win.h })
 		Ok(rt) =>
 			match Draw.Shader.from_source!({ vertex_source: "", fragment_source: glow_frag }) {
-				Err(_) => Unavailable
+				Err(_) => Unavailable({ gw: win.w, gh: win.h })
 				Ok(shader) =>
 					match Draw.Shader.uniform_f32!(shader, "res_x") {
-						Err(_) => Unavailable
+						Err(_) => Unavailable({ gw: win.w, gh: win.h })
 						Ok(rx) =>
 							match Draw.Shader.uniform_f32!(shader, "res_y") {
-								Err(_) => Unavailable
+								Err(_) => Unavailable({ gw: win.w, gh: win.h })
 								Ok(ry) => Ready({ rt, shader, rx, ry, gw: win.w, gh: win.h })
 							}
 					}
@@ -767,7 +767,8 @@ update! = |model0, program_input| {
 			match model.glow {
 				Ready(g9) => if g9.gw == win.w and g9.gh == win.h (model.glow) else build_glow!(win)
 				Unbuilt => build_glow!(win)
-				Unavailable => model.glow
+				# a refusal is sticky at the size it happened; a resize retries
+				Unavailable(u9) => if u9.gw == win.w and u9.gh == win.h (model.glow) else build_glow!(win)
 			}
 		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
 		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
