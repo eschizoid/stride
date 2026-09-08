@@ -52,6 +52,11 @@ Table :: [].{
 		} else {}
 		List.for_each!(List.map_with_index(rows, |r, i| { r, i }), |x| {
 			ry = 134.0 + U64.to_f32(x.i) * 24.0
+			# the row under the mouse lifts - hover feedback to match the pointer
+			row_right = if model.detail_day != "" (win_w / 2.0) else win_w - 40.0
+			if model.mouse_y >= ry and model.mouse_y < ry + 24.0 and model.mouse_x >= 36.0 and model.mouse_x < row_right {
+				frame.rectangle!({ x: 34.0, y: ry - 2.0, width: row_right - 34.0, height: 23.0, style: Draw.filled(Color.with_alpha(Color.white, 10)) })
+			} else {}
 			day = match List.get(days, x.i) { Ok(d) => d
 				Err(_) => "" }
 			note = Db.note_for(model.day_notes, day)
