@@ -254,6 +254,7 @@ load_model! = |font, curve_days| {
 			prs: loaded.prs,
 			rec_status: Idle,
 			glow: Unbuilt,
+			last_directive: { id: -1.I64, refused: "" },
 			glow_on: Bool.False,
 			ramp_title: mk!("the ramp - weekly load and how fast fitness is climbing", 15)?,
 			ramp_hint: mk!("hover a week to read it      TAB  form board      R  reload      S  screenshot      V  record      ESC quit", 13)?,
@@ -424,6 +425,23 @@ poll_task! = |home|
 		}
 	}
 
+# Every refusable field of a directive, named - a pure function rather than
+# an inline block: this nightly miscompiles a large conditional binding
+# captured by a task closure to its empty default (the #371 family), and a
+# call is the shape that survives.
+refusals_for : { has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str }, I64, U64, U64, List({ id : I64, day : Str }) -> Str
+refusals_for = |dv, cdir, wsel, cur_sel, ids| {
+	segs = List.keep_if([
+		(if dv.view > 7 or dv.view < -1 ("view ${I64.to_str(dv.view)} unknown") else ""),
+		(if dv.range != -1 and dv.range != 30 and dv.range != 60 and dv.range != 90 ("range ${I64.to_str(dv.range)} not 30/60/90") else ""),
+		(if dv.cursor_day != "" and cdir == -2 ("cursor_day ${dv.cursor_day} not in the series") else ""),
+		(if dv.trace_day != "" and wsel == cur_sel and (match List.get(ids, wsel) { Ok(te9) => te9.day != dv.trace_day
+			Err(_) => Bool.True }) ("trace_day ${dv.trace_day} not in the picker") else ""),
+		(if dv.ghost_day != "" and dv.ghost_day != "none" and !(List.any(ids, |ge9| ge9.day == dv.ghost_day)) ("ghost_day ${dv.ghost_day} not in the picker") else ""),
+	], |s9| s9 != "")
+	Str.join_with(segs, "; ")
+}
+
 # Reports a directive's terminal outcome from the task lane.
 mark_task! : Str, I64, Str => {}
 mark_task! = |home, did, refused|
@@ -531,11 +549,23 @@ update! = |model0, program_input| {
 		})
 	# the coach's word arrives beside the human's input and steers only what
 	# it names: view, range, a day for the crosshair, a session for the trace
-	directive = List.fold(program_input.messages, { has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" }, |acc, msg|
+	directive0 = List.fold(program_input.messages, { has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" }, |acc, msg|
 		match msg {
 			Directive(d2) => { has_d: Bool.True, id: d2.dv.id, view: d2.dv.view, range: d2.dv.range, cursor_day: d2.dv.cursor_day, trace_day: d2.dv.trace_day, ghost_day: d2.dv.ghost_day }
 			_ => acc
 		})
+	# a re-delivered id means the mark was lost to a busy database (the row
+	# stayed pending and was re-polled): re-report the recorded outcome and
+	# apply NOTHING - re-applying fought the user's own input every second
+	# for as long as a CLI write transaction held the lock
+	is_redelivery = directive0.has_d and directive0.id == model.last_directive.id
+	_ = if is_redelivery and model.home != "" {
+		homer = model.home
+		rid = model.last_directive.id
+		rref = model.last_directive.refused
+		Task.spawn!(program_input, || MarkDone(mark_task!(homer, rid, rref)))
+	} else {}
+	directive = if is_redelivery ({ has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" }) else directive0
 	if d.key_pressed(KeyEscape) {
 		Err(Exit(0))
 	} else {
@@ -874,18 +904,16 @@ update! = |model0, program_input| {
 				focus_now
 			} else model.last_focus
 		# the directive's outcome, reported by THIS frame - the one that
-		# applied it. A refused field is named; a fully honoured directive
-		# closes with none. Runs once per directive: has_d is true only on
-		# the frame the message arrived.
+		# applied it. Every refusable field is named on refusal; a fully
+		# honoured directive closes with none. "applied" means the frame
+		# accepted and acted; async completions it started (a reload, a
+		# cache-miss fetch) may still fail and recover by their own rules.
+		refused9 = if directive.has_d and directive.id >= 0 (refusals_for(directive, cursor_dir, want_sel2, model.trace_sel, model.trace_ids)) else ""
 		_ = if directive.has_d and directive.id >= 0 and model.home != "" {
-			refused_view = if directive.view > 7 ("view ${I64.to_str(directive.view)} unknown; ") else ""
-			refused_cursor = if directive.cursor_day != "" and cursor_dir == -2 ("cursor_day ${directive.cursor_day} not in the series; ") else ""
-			refused_trace = if directive.trace_day != "" and want_sel2 == model.trace_sel and (match List.get(model.trace_ids, want_sel2) { Ok(te9) => te9.day != directive.trace_day
-				Err(_) => Bool.True }) ("trace_day ${directive.trace_day} not in the picker; ") else ""
-			refused = Str.trim(Str.concat(Str.concat(refused_view, refused_cursor), refused_trace))
 			homem = model.home
 			did = directive.id
-			Task.spawn!(program_input, || MarkDone(mark_task!(homem, did, refused)))
+			refm = refused9
+			Task.spawn!(program_input, || MarkDone(mark_task!(homem, did, refm)))
 		} else {}
 		glow2 =
 			match model.glow {
@@ -895,7 +923,7 @@ update! = |model0, program_input| {
 				Unavailable(u9) => if u9.gw == win.w and u9.gh == win.h (model.glow) else build_glow!(win)
 			}
 		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
-		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 

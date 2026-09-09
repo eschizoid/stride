@@ -214,7 +214,12 @@ Every directive reaches a terminal state, readable back by id:
 
 The winning row stays `pending` until the frame that applied it reports
 back, so a window that crashes between reading and applying leaves the
-directive retryable rather than silently lost. Focus writes are throttled
+directive retryable rather than silently lost — within the same 10-minute
+freshness window; a crash retried tomorrow goes `stale`, by design. Rows
+consumed before the lifecycle existed read `unknown`: their outcome was
+never recorded. "applied" means the frame accepted and acted; async work
+it started (a reload, a session fetch) may still fail and recover by the
+window's own rules. Focus writes are throttled
 (~2/s at most) and only fire when what the human sees actually changed.
 
 ## Boundaries this nightly imposes

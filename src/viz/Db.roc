@@ -214,7 +214,13 @@ Db :: [].{
 		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_directives ADD COLUMN ghost_day TEXT", bindings: [] })
 		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_directives ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'", bindings: [] })
 		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_directives ADD COLUMN error TEXT", bindings: [] })
+		# applied_at stays the LAST alter: the fast path counts it as proof the
+		# whole trio ran, so a crash mid-DDL re-enters here instead of locking
+		# in a partial schema
 		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_directives ADD COLUMN applied_at TEXT", bindings: [] })
+		# rows consumed before the lifecycle existed default to 'pending', which
+		# contradicts consumed=1 on read-back; their true outcome is unknowable
+		_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET status = 'unknown' WHERE consumed = 1 AND status = 'pending'", bindings: [] })
 		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_focus (id INTEGER PRIMARY KEY CHECK (id = 1), updated_at TEXT NOT NULL, view INTEGER NOT NULL, range INTEGER NOT NULL, cursor_day TEXT, trace_day TEXT, ghost_day TEXT)", bindings: [] })
 		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_focus ADD COLUMN ghost_day TEXT", bindings: [] })
 		{}
@@ -228,11 +234,25 @@ Db :: [].{
 	poll_directive! : Sqlite.Db => [Some(Directive), None]
 	poll_directive! = |db| {
 		ensure_bus!(db)
+		# a read gates the writes below: a zero-row UPDATE still takes the
+		# write lock, and this path runs every second forever
+		has_pending = match Sqlite.query!({ db, query: "SELECT EXISTS(SELECT 1 FROM viz_directives WHERE consumed = 0) AS e", bindings: [] }) {
+			Err(_) => Bool.False
+			Ok(prows) => match List.first(prows) {
+				Err(_) => Bool.False
+				Ok(pr) => (match pr.i64("e") { Ok(e9) => e9
+					Err(_) => 0 }) == 1
+			}
+		}
+		if !has_pending None
+		else {
 		# a directive written while no window was open must not seize the one
 		# that eventually launches: anything past the freshness window closes
-		# as stale on sight, applied by nobody
+		# as stale, applied by nobody. The SELECT below refuses stale rows
+		# independently, so one slipping past this sweep is labeled late but
+		# never applied.
 		_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET consumed = 1, status = 'stale', error = 'older than 10 minutes when read' WHERE consumed = 0 AND created_at < datetime('now', '-10 minutes')", bindings: [] })
-		match Sqlite.query!({ db, query: "SELECT id, COALESCE(view, -1) AS v, COALESCE(range, -1) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd FROM viz_directives WHERE consumed = 0 ORDER BY id DESC LIMIT 1", bindings: [] }) {
+		match Sqlite.query!({ db, query: "SELECT id, COALESCE(view, -1) AS v, COALESCE(range, -1) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd FROM viz_directives WHERE consumed = 0 AND created_at >= datetime('now', '-10 minutes') ORDER BY id DESC LIMIT 1", bindings: [] }) {
 			Err(_) => None
 			Ok(rows) => match List.first(rows) {
 				Err(_) => None
@@ -261,6 +281,7 @@ Db :: [].{
 				}
 			}
 		}
+		}
 	}
 
 	# the directive's terminal outcome, written by the frame that applied it.
@@ -268,7 +289,7 @@ Db :: [].{
 	mark_directive! : Sqlite.Db, I64, Str => {}
 	mark_directive! = |db, id, refused| {
 		st = if refused == "" "applied" else "applied_partial"
-		_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET consumed = 1, status = :st, error = NULLIF(:e, ''), applied_at = datetime('now') WHERE id = :id", bindings: [{ name: ":st", value: String(st) }, { name: ":e", value: String(refused) }, { name: ":id", value: Integer(id) }] })
+		_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET consumed = 1, status = :st, error = NULLIF(:e, ''), applied_at = datetime('now') WHERE id = :id AND consumed = 0", bindings: [{ name: ":st", value: String(st) }, { name: ":e", value: String(refused) }, { name: ":id", value: Integer(id) }] })
 		{}
 	}
 

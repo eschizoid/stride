@@ -96,6 +96,9 @@ Ui :: [].{
 		ramp_hint : Text.Prepared,
 		prs : List(Db.PrRung),
 		rec_status : Capture.Status,
+		# the last directive this window applied, and what it refused - a
+		# re-delivered id re-reports this outcome instead of re-applying
+		last_directive : { id : I64, refused : Str },
 		# the post-process pipeline: Unbuilt until update! allocates it, sized
 		# to the window. Unavailable remembers the size the GPU refused at, so
 		# a resize earns one fresh attempt; between refusals the app renders
