@@ -182,7 +182,11 @@ jobs:
       - name: raylib's link dependencies
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
+          # apt-get update fails if ANY configured source serves bad metadata,
+          # and the runner image ships third-party repos (Chrome et al) that
+          # do exactly that intermittently - drop them, we need only Ubuntu's
+          sudo rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
+          sudo apt-get update -qq || sudo apt-get update -qq
           sudo apt-get install -y -qq libgl1-mesa-dev libx11-dev libxrandr-dev \
             libxinerama-dev libxi-dev libxcursor-dev libasound2-dev
 
