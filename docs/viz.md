@@ -53,7 +53,7 @@ no second panel is needed to plot it. The card names the latest week that
 carried training. The intensity classification comes from the
 `activity_intensity` view, which carries the same per-activity split
 `stride summary` computes, so the window and the CLI share one definition
-of easy and hard.
+of easy and hard. A directive with view 6 opens it.
 
 ![The zones view](img/zones.png)
 
@@ -65,7 +65,8 @@ encoded as the chip's COLOR on the bars' own axis - teal builds, red past
 +6/wk, grey sheds - rather than as a second y-axis, because two scales
 sharing a plot is a lie no legend repairs. The card carries where fitness
 stands and how fast it is moving; a week with no load keeps a base stub, so
-the current partial week never vanishes from the row.
+the current partial week never vanishes from the row. A directive with view
+7 opens it.
 
 ![The ramp view](img/ramp.png)
 
