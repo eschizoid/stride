@@ -71,9 +71,7 @@ Trace :: [].{
 					frame.rectangle!({ x: x0, y: pad_t, width: F32.max(x1 - x0, 1.0), height: ph, style: Draw.filled(col) })
 				} else {}
 			})
-			# One pass, no random access: zip each sample with its successor.
-			# (Roc lists are contiguous arrays — even the List.get form this
-			# replaces was O(1) per lookup, not a linked-list walk.)
+			# one pass, no random access: zip each sample with its successor
 			# the ghost rides the SAME seconds-per-pixel as the live trace, so a
 			# shorter session honestly ends early instead of stretching to fit
 			_ = if List.len(model.ghost) > 1 {

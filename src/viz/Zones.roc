@@ -5,11 +5,10 @@ import Theme
 import Ui
 
 Zones :: [].{
-	# One chart. Twelve Monday weeks of time in zone as stacked bars, each
-	# capped with the week's easy share - teal when it holds the 80/20 line,
-	# alarm when it does not. The share reads across the row of numbers, so
-	# the separate dot panel this replaces was spending a third of the window
-	# to say what a label says in place.
+	# Twelve Monday weeks of time in zone as stacked bars, each capped with
+	# the week's easy share - teal when it holds the 80/20 line, alarm when
+	# it does not. The share reads across the row of caps, so it needs no
+	# panel of its own.
 	pad : F32
 	pad = 36.0
 

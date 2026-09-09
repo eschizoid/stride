@@ -102,16 +102,12 @@ jobs:
   build-viz:
     name: build the Form Board (${{ matrix.target }})
     needs: release-please
-    # The desktop app ships beside the CLI. macOS ONLY for now, deliberately:
-    # the bundle IS the deliverable there (Launchpad, Dock icon, fonts inside),
-    # and a linux roc-ray binary needs a verified recipe for raylib's X11/GL
-    # link deps that nobody has run on these runners yet - a job that might
-    # break a release run buys nothing until someone proves it out.
-    # The viz pins its OWN roc nightly: roc-ray needs 08-23, the engine 09-04.
+    # macOS only: linux needs a verified recipe for raylib's X11/GL link deps.
+    # roc-ray pins its own nightly (08-23), not the engine's.
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ${{ matrix.runs-on }}
-    # macOS runners are the slow, flaky class and `upload` now waits on them;
-    # without a cap a hung linker holds the release's assets for six hours
+    # upload waits on these; the 360-minute default would hold a release's
+    # assets for six hours
     timeout-minutes: 25
     strategy:
       fail-fast: false # one arch failing shouldn't cost the other, or the CLI
@@ -141,12 +137,10 @@ jobs:
           set -euo pipefail
           app="stage/Stride Form Board.app"
           bin="$app/Contents/MacOS/stride-viz"
-          # the launcher IS CFBundleExecutable; asserting only the binary
-          # leaves the entry point unchecked
+          # launcher is CFBundleExecutable
           test -x "$app/Contents/MacOS/launcher"
           test -s "$bin" && test -x "$bin"
-          # the runner label is the ONLY thing distinguishing these two
-          # artifacts; without this the zip's name is an unverified claim
+          # the runner label is the only other claim about the arch
           case "${{ matrix.target }}" in
             macos-arm64)  want=arm64 ;;
             macos-x86_64) want=x86_64 ;;
@@ -155,7 +149,7 @@ jobs:
           [ "$got" = "$want" ] || { echo "::error::${{ matrix.target }} bundle is $got, not $want"; exit 1; }
           # Apple Silicon refuses an unsigned arm64 Mach-O outright
           codesign -dv "$bin" 2>&1 | head -2
-          # every face the window loads, non-empty, and none silently dropped
+          # every face the window loads, non-empty, and none dropped
           for f in Quicksand-Medium.ttf JetBrainsMono-Regular.ttf; do
             test -s "$app/Contents/Resources/fonts/$f"
           done
@@ -166,10 +160,9 @@ jobs:
       - name: Prove the launcher seeds a fresh machine
         run: |
           set -euo pipefail
-          # the fonts inside the bundle reach the window through exactly one
-          # bridge - the launcher's seeding - and nothing else in CI or in a
-          # dev build ever runs it, because a dev's ~/.stride/fonts is already
-          # populated by the build itself. This is that path's only test.
+          # The window reads ~/.stride/fonts, never the bundle: the launcher's
+          # seeding is the only path between them, and a dev machine's copy is
+          # already populated, so this is where it gets exercised.
           fake="$(mktemp -d)"
           HOME="$fake" "stage/Stride Form Board.app/Contents/MacOS/launcher" >/dev/null 2>&1 &
           pid=$!
@@ -207,9 +200,8 @@ jobs:
     needs: [release-please, build, build-viz]
     # ENABLED with `build` above. `always()` so it still attaches whatever DID build even if some
     # target failed (fail-fast is off) — a partial binary set beats none.
-    # !cancelled() rather than always(): a partial binary set still beats none
-    # when a target FAILS, but cancelling a release run should actually stop
-    # the assets from attaching - always() fires on cancellation too
+    # always() fires on cancellation too; !cancelled() keeps a partial set
+    # attaching on FAILURE without attaching one to a cancelled run
     if: ${{ !cancelled() && needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
@@ -226,8 +218,8 @@ jobs:
           set -euo pipefail
           cd dist
           ls stride-* >/dev/null 2>&1 || { echo "::error::no binaries built — nothing to attach"; exit 1; }
-          # the CLI binaries satisfy `stride-*` on their own, so a release
-          # missing the app would pass silently - name the gap out loud
+          # the CLI binaries satisfy stride-* alone, so a missing app zip
+          # would pass unnoticed
           for z in stride-form-board-macos-arm64.zip stride-form-board-macos-x86_64.zip; do
             [ -f "$z" ] || echo "::warning::$z is missing from this release - its build job failed"
           done

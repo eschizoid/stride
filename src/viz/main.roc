@@ -479,9 +479,8 @@ load_tcache! = |db, ids|
 			tr9 = Db.load_trace!(db, te.id)
 			sg9 = Db.load_segs!(db, te.id)
 			du9 = Db.load_dur!(db, te.id)
-			# prepend onto the tail's result rather than appending onto an
-			# accumulator: one cons per session instead of a rebuilt list,
-			# and picker order survives without a reverse (this stdlib has none)
+			# prepend onto the tail's result: one cons per session, and order
+			# survives without List.reverse, which this stdlib lacks
 			List.prepend(load_tcache!(db, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9 })
 		}
 	}
@@ -718,9 +717,7 @@ update! = |model0, program_input| {
 			if directive.has_d and directive.trace_day != "" {
 				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_sel, |acc, x| if x.e.day == directive.trace_day x.ei else acc)
 			} else want_sel
-		# NoSwitch joins List.get's OutOfBounds in one inferred error union -
-		# both branches are only ever matched as Err, and the compiler unifies
-		# them without an annotation
+		# NoSwitch joins List.get's OutOfBounds in one inferred error union
 		switched = if want_sel2 != model.trace_sel (List.get(model.trace_cache, want_sel2)) else Err(NoSwitch)
 		_ = if want_sel2 != model.trace_sel and (match switched { Ok(_) => Bool.False
 			Err(_) => Bool.True }) {
@@ -772,9 +769,8 @@ update! = |model0, program_input| {
 			ids3 = model.trace_ids
 			Task.spawn!(program_input, || ghost_task!(home3, ids3, want_ghost2))
 		} else {}
-		# any ghost change clears the drawn overlay THIS frame: a dismissal has
-		# nothing to fetch, and a switch must not keep showing the old session
-		# under the new selection - if the load fails, empty is the clean state
+		# any ghost change clears the overlay this frame: a failed load leaves
+		# no ghost rather than the previous one
 		ghost2 = match ghost_hit { Ok(gc) => gc.tr
 			Err(_) => if want_ghost2 != model.ghost_sel ([]) else model.ghost }
 		ghost_day2 = match ghost_hit {
@@ -784,9 +780,8 @@ update! = |model0, program_input| {
 			Err(_) => if want_ghost2 != model.ghost_sel ("") else model.ghost_day }
 		ghost_dur2 = match ghost_hit { Ok(gc) => gc.du
 			Err(_) => model.ghost_dur }
-		# a cache-hit session switch lands its data in the same frame. A miss
-		# (a task is flying) clears instead of keeping the old ride's trace
-		# under the new day - the ghost's contract, applied to the live one.
+		# a cache hit lands its data this frame; a miss clears rather than
+		# drawing the previous ride under the new day
 		switching = want_sel2 != model.trace_sel
 		trace2 = match switched { Ok(sc) => sc.tr
 			Err(_) => if switching ([]) else model.trace }

@@ -30,9 +30,8 @@ cp "$WORK/stride-viz" "$C/MacOS/stride-viz"
 cat > "$C/MacOS/launcher" <<'SH'
 #!/bin/bash
 export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
-# the window reads brand fonts from ~/.stride/fonts; a bundle that was
-# downloaded rather than built carries them and seeds that directory once,
-# so the first launch on a fresh machine is not the default-font one
+# the window reads ~/.stride/fonts; a downloaded bundle carries its own
+# copies and seeds them here, or the window falls back to its default font
 res="$(cd "$(dirname "$0")/../Resources" && pwd)"
 log="$HOME/.stride/fonts-seed.log"
 if [ -d "$res/fonts" ]; then
@@ -40,9 +39,8 @@ if [ -d "$res/fonts" ]; then
     for f in "$res"/fonts/*.ttf; do
       [ -e "$f" ] || continue
       dst="$HOME/.stride/fonts/$(basename "$f")"
-      # SIZE, not existence: an interrupted first copy leaves a short file
-      # that exists forever, and existence-guarded seeding would never
-      # replace it - the board would stay in the fallback font for good
+      # size, not existence: a short file from an interrupted copy would
+      # otherwise be skipped forever
       if [ ! -e "$dst" ] || [ "$(wc -c < "$f")" != "$(wc -c < "$dst")" ]; then
         cp "$f" "$dst" 2>>"$log" || echo "$(date): could not write $dst" >> "$log"
       fi
@@ -56,8 +54,7 @@ exec "$(dirname "$0")/stride-viz"
 SH
 chmod +x "$C/MacOS/launcher" "$C/MacOS/stride-viz"
 
-# the engine's version marker is the one release-please maintains, so the
-# bundle inherits it rather than carrying a second number that can drift
+# release-please maintains this marker; a second number would drift
 VERSION=$(sed -n 's/^version = "stride \(.*\)".*/\1/p' src/main.roc | head -1)
 [ -n "$VERSION" ] || VERSION="0.0.0-dev"
 
@@ -78,8 +75,7 @@ cat > "$C/Info.plist" <<PLIST
 PLIST
 sed -i '' "s/__VERSION__/$VERSION/g" "$C/Info.plist"
 
-# icon: the SYMBOL badge only (img/stride-icon.png, cropped from the
-# banner) - the full banner squeezed wordmark and taglines into the tile
+# icon: the symbol badge, not the banner - a wordmark does not survive 16px
 ICONSET="$WORK/stride.iconset"
 mkdir -p "$ICONSET"
 for s in 16 32 64 128 256 512; do
@@ -89,19 +85,17 @@ for s in 16 32 64 128 256 512; do
 done
 iconutil -c icns "$ICONSET" -o "$C/Resources/stride.icns"
 
-# the window reads brand fonts from the cwd's assets/ or ~/.stride/fonts, so
-# the bundle carries its own copy (the launcher seeds ~/.stride/fonts from it)
-# AND this machine gets them for a repo-less launch; missing files just mean
-# the default font
+# the window reads assets/fonts (cwd) or ~/.stride/fonts; the bundle carries
+# copies for the launcher to seed, and this machine gets them for a repo-less
+# launch. Missing files mean the default font.
 mkdir -p "$C/Resources/fonts"
 cp assets/fonts/*.ttf "$C/Resources/fonts/" 2>/dev/null || true
 mkdir -p "$HOME/.stride/fonts"
 cp assets/fonts/*.ttf "$HOME/.stride/fonts/" 2>/dev/null || true
 
-# Ad-hoc sign the Mach-O. Apple Silicon refuses to exec an unsigned arm64
-# binary at all - quarantine cleared or not - and the linker's own signature
-# is not something to assume from an x86_64 build. Costs nothing on Intel and
-# needs no Developer ID. The launcher beside it is a script and needs none.
+# Apple Silicon refuses to exec an unsigned arm64 Mach-O, quarantine cleared
+# or not. Ad-hoc needs no Developer ID; the launcher is a script and needs
+# no signature.
 if command -v codesign >/dev/null 2>&1; then
   codesign --force --sign - "$C/MacOS/stride-viz" 2>/dev/null || echo "warning: could not ad-hoc sign the binary"
 fi

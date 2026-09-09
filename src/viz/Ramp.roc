@@ -5,11 +5,9 @@ import Theme
 import Ui
 
 Ramp :: [].{
-	# One chart, one scale. Twelve Monday weeks of load as gradient bars, each
-	# wearing a chip with the CTL it gained. The ramp is encoded as COLOR on
-	# the bars' own axis rather than as a second y: two scales sharing a plot
-	# is a lie no legend repairs, and the split panel it replaces spent a
-	# third of the window on air.
+	# Twelve Monday weeks of load as gradient bars, each wearing a chip with
+	# the CTL it gained. Ramp is encoded as chip COLOR on the bars' own axis:
+	# two scales on one plot cannot both be read honestly.
 	pad : F32
 	pad = 36.0
 	danger : F32
