@@ -784,17 +784,21 @@ update! = |model0, program_input| {
 			Err(_) => if want_ghost2 != model.ghost_sel ("") else model.ghost_day }
 		ghost_dur2 = match ghost_hit { Ok(gc) => gc.du
 			Err(_) => model.ghost_dur }
-		# a cache-hit session switch lands its data in the same frame too
+		# a cache-hit session switch lands its data in the same frame. A miss
+		# (a task is flying) clears instead of keeping the old ride's trace
+		# under the new day - the ghost's contract, applied to the live one.
+		switching = want_sel2 != model.trace_sel
 		trace2 = match switched { Ok(sc) => sc.tr
-			Err(_) => model.trace }
+			Err(_) => if switching ([]) else model.trace }
 		segs2m = match switched { Ok(sc) => sc.sg
-			Err(_) => model.segs }
+			Err(_) => if switching ([]) else model.segs }
 		trace_dur2 = match switched { Ok(sc) => sc.du
-			Err(_) => model.trace_dur }
-		trace_day2 = match switched {
-			Ok(_) => match List.get(model.trace_ids, want_sel2) { Ok(se) => se.day
-				Err(_) => model.trace_day }
-			Err(_) => model.trace_day }
+			Err(_) => if switching (1.0) else model.trace_dur }
+		trace_day2 =
+			if switching {
+				match List.get(model.trace_ids, want_sel2) { Ok(se) => se.day
+					Err(_) => model.trace_day }
+			} else model.trace_day
 		_ = if want_days != model.curve_days or d.key_pressed(KeyR) {
 			f2 = model.font
 			Task.spawn!(program_input, || match load_model!(f2, want_days) {
