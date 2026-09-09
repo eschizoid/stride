@@ -80,23 +80,23 @@ jobs:
           # only linux-arm64 sets roc_target; everywhere else the native default is right
           target_flag=""
           if [ -n "${{ matrix.roc_target }}" ]; then target_flag="--target=${{ matrix.roc_target }}"; fi
-          roc build src/main.roc --output="stride-${{ matrix.target }}" --opt=dev $target_flag
-          ls -la stride-${{ matrix.target }}* || true
-          test -f "stride-${{ matrix.target }}" || test -f "stride-${{ matrix.target }}.exe"
+          roc build src/main.roc --output="stride-cli-${{ matrix.target }}" --opt=dev $target_flag
+          ls -la stride-cli-${{ matrix.target }}* || true
+          test -f "stride-cli-${{ matrix.target }}" || test -f "stride-cli-${{ matrix.target }}.exe"
 
       - name: Verify binary version
         env:
           TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
           set -euo pipefail
-          bin="stride-${{ matrix.target }}"; [ -f "$bin" ] || bin="${bin}.exe"
+          bin="stride-cli-${{ matrix.target }}"; [ -f "$bin" ] || bin="${bin}.exe"
           out=$(./"$bin" --version)
           [ "$out" = "stride ${TAG#v}" ] || { echo "::error::binary says '$out', tag is $TAG"; exit 1; }
 
       - uses: actions/upload-artifact@v7
         with:
-          name: stride-${{ matrix.target }}
-          path: stride-${{ matrix.target }}*
+          name: stride-cli-${{ matrix.target }}
+          path: stride-cli-${{ matrix.target }}*
           if-no-files-found: error
 
   build-viz:
@@ -223,8 +223,7 @@ jobs:
           set -euo pipefail
           cd dist
           ls stride-* >/dev/null 2>&1 || { echo "::error::nothing built — nothing to attach"; exit 1; }
-          # the app zips match stride-* too, so they cannot stand in for a CLI
-          ls stride-* | grep -qv '^stride-app-' || { echo "::error::no CLI binaries built"; exit 1; }
+          ls stride-cli-* >/dev/null 2>&1 || { echo "::error::no CLI binaries built"; exit 1; }
           # the CLI binaries satisfy stride-* alone, so a missing app zip
           # would pass unnoticed
           for z in stride-app-macos-arm64.zip stride-app-macos-x86_64.zip; do

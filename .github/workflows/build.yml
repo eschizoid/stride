@@ -164,6 +164,35 @@ jobs:
       - name: Type-check the app window
         run: roc check src/viz/main.roc
 
+  # roc-ray ships an x64glibc host, so the window can LINK on linux - which is
+  # a different question from type-checking it. This job answers it on every
+  # PR, because the release job that packages a linux app must not be the
+  # place that discovers raylib's link deps are missing.
+  viz-link-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Roc (the viz pin, not the engine pin)
+        uses: ./.github/actions/setup-roc
+        with:
+          nightly-tag: nightly-2026-08-23-fb208ba
+
+      - name: raylib's link dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libgl1-mesa-dev libx11-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxcursor-dev libasound2-dev
+
+      - name: Link the window
+        run: |
+          set -euo pipefail
+          roc build src/viz/main.roc --output=stride-viz-linux --opt=dev
+          test -s stride-viz-linux
+          file stride-viz-linux
+
   # ADR 0016's gate is pure shell over source text — no toolchain, no OS
   # variance to cover, so one dedicated job states exactly what it enforces.
   layer-check:

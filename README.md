@@ -162,15 +162,18 @@ and put it on your `PATH`. Pick one:
 
 | Platform | Asset |
 | --- | --- |
-| Linux · x86_64 | `stride-linux-x86_64` |
-| macOS · Apple Silicon | `stride-macos-arm64` |
-| macOS · Intel | `stride-macos-x86_64` |
-| Linux · arm64 | `stride-linux-arm64` |
-| Windows · x86_64 | `stride-windows-x86_64` |
+| Linux · x86_64 | `stride-cli-linux-x86_64` |
+| macOS · Apple Silicon | `stride-cli-macos-arm64` |
+| macOS · Intel | `stride-cli-macos-x86_64` |
+| Linux · arm64 | `stride-cli-linux-arm64` |
+| Windows · x86_64 | `stride-cli-windows-x86_64` |
+
+Releases from v0.12.0 and earlier named these `stride-<platform>`, without the
+`cli-`; the desktop app ships beside them as `stride-app-<platform>`.
 
 ```bash
 # example: macOS Apple Silicon — adjust the asset for your platform
-curl -fsSL -o stride https://github.com/eschizoid/stride/releases/latest/download/stride-macos-arm64
+curl -fsSL -o stride https://github.com/eschizoid/stride/releases/latest/download/stride-cli-macos-arm64
 chmod +x stride
 sudo mv stride /usr/local/bin/          # or anywhere on your PATH (e.g. ~/.local/bin)
 stride --version
