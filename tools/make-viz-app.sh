@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds the Form Board as a real macOS app: ~/Applications/Stride Form Board.app,
+# Builds the Form Board as a real macOS app under $VIZ_APP_DIR (default
+# ~/Applications),
 # launchable from Launchpad/Spotlight/Dock like anything else. The bundle carries
 # its own binary (no roc needed at launch); the stride logo becomes the icon.
 #
@@ -100,7 +101,8 @@ if command -v codesign >/dev/null 2>&1; then
   codesign --force --sign - "$C/MacOS/stride-viz" 2>/dev/null || echo "warning: could not ad-hoc sign the binary"
 fi
 
-# a fresh bundle can be quarantined or stale-cached; clear both
+# clear any quarantine flag (absent on a local build, harmless either way)
+# and bump mtime so Launch Services re-reads the bundle
 xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 touch "$APP"
 echo "installed: $APP"

@@ -1,9 +1,9 @@
-## Stride Form Board — the viz suite's window: four TAB views (form board,
-## power-duration curve, session trace, data table) over ~/.stride/db.sqlite, read at
-## launch. The modules beside this file carry the parts: Theme (geometry +
+## Stride Form Board — the viz suite's window over ~/.stride/db.sqlite, read
+## at launch. The modules beside this file carry the parts: Theme (geometry +
 ## palette), Db (every loader and its types), Ui (the Model), and one module
-## per view (Board, Curve, Trace, Table). This file owns the app contract: the
-## platform pin, Model/Msg, init!, update!, and the view dispatch.
+## per view. This file owns the app contract: the platform pin, Model/Msg,
+## init!, update!, and the view dispatch — view_basename enumerates the views
+## and the nav list is their order.
 ##
 ## NOTE the pin below: roc-ray's platform needs nightly-2026-08-23, not the
 ## engine's toolchain pin. The header carries its own compiler version, so
@@ -479,8 +479,8 @@ load_tcache! = |db, ids|
 			tr9 = Db.load_trace!(db, te.id)
 			sg9 = Db.load_segs!(db, te.id)
 			du9 = Db.load_dur!(db, te.id)
-			# prepend onto the tail's result: one cons per session, and order
-			# survives without List.reverse, which this stdlib lacks
+			# prepend so picker order survives without List.reverse, which
+			# this stdlib lacks
 			List.prepend(load_tcache!(db, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9 })
 		}
 	}

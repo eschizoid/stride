@@ -102,15 +102,14 @@ jobs:
   build-viz:
     name: build the Form Board (${{ matrix.target }})
     needs: release-please
-    # macOS only: linux needs a verified recipe for raylib's X11/GL link deps.
-    # roc-ray pins its own nightly (08-23), not the engine's.
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ${{ matrix.runs-on }}
     # upload waits on these; the 360-minute default would hold a release's
     # assets for six hours
     timeout-minutes: 25
+    # macOS only: linux needs a verified recipe for raylib's X11/GL link deps
     strategy:
-      fail-fast: false # one arch failing shouldn't cost the other, or the CLI
+      fail-fast: false # one arch failing shouldn't cost the other
       matrix:
         include:
           - target: macos-arm64
@@ -140,7 +139,7 @@ jobs:
           # launcher is CFBundleExecutable
           test -x "$app/Contents/MacOS/launcher"
           test -s "$bin" && test -x "$bin"
-          # the runner label is the only other claim about the arch
+          # the zip's name is all a downloader has to go on
           case "${{ matrix.target }}" in
             macos-arm64)  want=arm64 ;;
             macos-x86_64) want=x86_64 ;;
@@ -160,9 +159,8 @@ jobs:
       - name: Prove the launcher seeds a fresh machine
         run: |
           set -euo pipefail
-          # The window reads ~/.stride/fonts, never the bundle: the launcher's
-          # seeding is the only path between them, and a dev machine's copy is
-          # already populated, so this is where it gets exercised.
+          # the launcher cds to $HOME, so seeding ~/.stride/fonts is the
+          # bundle's only route to the window
           fake="$(mktemp -d)"
           HOME="$fake" "stage/Stride Form Board.app/Contents/MacOS/launcher" >/dev/null 2>&1 &
           pid=$!
@@ -184,8 +182,8 @@ jobs:
         run: |
           set -euo pipefail
           cd stage
-          # ditto, not zip: it preserves the bundle's resource forks and
-          # execute bits, which a plain zip drops and Finder then refuses
+          # ditto is Apple's archiver: the bundle round-trips exactly as
+          # Finder's own Compress would produce it
           ditto -c -k --sequesterRsrc --keepParent "Stride Form Board.app" \
             "../stride-form-board-${{ matrix.target }}.zip"
 

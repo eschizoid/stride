@@ -109,20 +109,19 @@ and fonts before it is packaged. A zip missing from a release means its
 build job failed; `just viz-app` builds the same bundle locally. Unzip
 anywhere and launch.
 
-The bundle is ad-hoc signed but carries no Developer ID, so macOS
-quarantines a downloaded copy and refuses the first launch. Clear the flag
-once, pointing at wherever you put it:
+A downloaded copy carries macOS's quarantine flag, and the bundle is only
+ad-hoc signed — no Developer ID, no notarization — so Gatekeeper refuses
+the first launch. Clear the flag once, pointing at wherever you put it:
 
 ```
 xattr -dr com.apple.quarantine "/Applications/Stride Form Board.app"
 ```
 
-On first launch the bundle copies its fonts to `~/.stride/fonts`; if that
-cannot be written it says so in `~/.stride/fonts-seed.log` and the window
-falls back to its default font.
+A bundle built locally was never downloaded, so it carries no such flag.
 
-`just viz-app` builds the same bundle locally and never needs that, because
-a bundle you built yourself was never quarantined.
+On first launch the bundle copies its fonts to `~/.stride/fonts`. Failed
+copies are logged to `~/.stride/fonts-seed.log`; if the directory itself
+cannot be created, the window falls back to its default font.
 
 The viz pins **its own compiler** — roc-ray's platform needs
 `nightly-2026-08-23-fb208ba`, not the engine's pin. The pin lives in the app header of
