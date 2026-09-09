@@ -53,6 +53,9 @@ Ui :: [].{
 		# the trace camera: zoom >= 1 windows [pan, pan + 1/zoom] of the session
 		trace_zoom : F32,
 		trace_pan : F32,
+		# every pickable session, loaded once - switching and ghosts read this
+		# instead of a task round-trip per keypress
+		trace_cache : List({ tr : List(F32), sg : List(Db.Seg), du : F32 }),
 		curve_days : I64,
 		fit_cp : F32,
 		cp_lbl : Text.Prepared,

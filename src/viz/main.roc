@@ -86,20 +86,23 @@ load_model! = |font, curve_days| {
 		}
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], prs: [] }
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], prs: [], tcache: [] }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				s = Db.load_series!(db)
 				e = Db.load_event!(db)
 				c = Db.load_curve!(db, curve_days)
 				tids = Db.load_trace_ids!(db)
-				tid = match List.first(tids) {
-					Ok(x) => x.id
-					Err(_) => 0
-				}
-				tr = Db.load_trace!(db, tid)
-				sg = Db.load_segs!(db, tid)
-				du = Db.load_dur!(db, tid)
+				# the whole picker loads up front (~3ms of SQL per session), so
+				# every later switch and ghost summon is a memory read, not a
+				# task round-trip - the trace view answers keys instantly
+				tcache = load_tcache!(db, tids)
+				tr = match List.first(tcache) { Ok(t0) => t0.tr
+					Err(_) => [] }
+				sg = match List.first(tcache) { Ok(t0) => t0.sg
+					Err(_) => [] }
+				du = match List.first(tcache) { Ok(t0) => t0.du
+					Err(_) => 1.0 }
 				st = Db.load_stale!(db)
 				pl = Db.load_plan!(db)
 				wk = Db.load_week_tss!(db)
@@ -112,9 +115,9 @@ load_model! = |font, curve_days| {
 				rw = Db.load_ramp_weeks!(db)
 				prs = Db.load_prs!(db)
 				nts = Db.load_day_notes!(db)
-				{ s, e, c, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, rw, prs }
+				{ s, e, c, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, rw, prs, tcache }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], prs: [] }
+			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], prs: [], tcache: [] }
 		}
 		ev = Db.find_idx(loaded.s.days, loaded.e.day)
 		fit = Db.load_fit!(curve_days)
@@ -227,6 +230,7 @@ load_model! = |font, curve_days| {
 			ghost_day: "",
 			trace_zoom: 1.0,
 			trace_pan: 0.0,
+			trace_cache: loaded.tcache,
 			segs: loaded.sg,
 			trace_title: mk!("last structured session - detected blocks shaded behind the power trace", 15)?,
 			trace_dur: loaded.du,
@@ -464,6 +468,24 @@ nav_pitch = |w, n| if nav_iconic(w, n) 88.0 else 76.0
 nav_width : F32, U64 -> F32
 nav_width = |w, n| if nav_iconic(w, n) 80.0 else 68.0
 
+# One entry per pickable session, loaded eagerly: switching and ghost
+# summons read this list instead of a task round-trip per keypress.
+# Recursion because an effectful body cannot reassign an outer var.
+load_tcache! : Sqlite.Db, List({ id : I64, day : Str }) => List({ tr : List(F32), sg : List(Db.Seg), du : F32 })
+load_tcache! = |db, ids|
+	match List.first(ids) {
+		Err(_) => []
+		Ok(te) => {
+			tr9 = Db.load_trace!(db, te.id)
+			sg9 = Db.load_segs!(db, te.id)
+			du9 = Db.load_dur!(db, te.id)
+			# prepend onto the tail's result rather than appending onto an
+			# accumulator: one cons per session instead of a rebuilt list,
+			# and picker order survives without a reverse (this stdlib has none)
+			List.prepend(load_tcache!(db, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9 })
+		}
+	}
+
 # ONE view->basename map for every capture format: png and webm derive
 # from it, so the "named for the view" invariant cannot drift per-path
 view_basename : U8 -> Str
@@ -696,7 +718,13 @@ update! = |model0, program_input| {
 			if directive.has_d and directive.trace_day != "" {
 				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_sel, |acc, x| if x.e.day == directive.trace_day x.ei else acc)
 			} else want_sel
-		_ = if want_sel2 != model.trace_sel {
+		# NoSwitch joins List.get's OutOfBounds in one inferred error union -
+		# both branches are only ever matched as Err, and the compiler unifies
+		# them without an annotation
+		switched = if want_sel2 != model.trace_sel (List.get(model.trace_cache, want_sel2)) else Err(NoSwitch)
+		_ = if want_sel2 != model.trace_sel and (match switched { Ok(_) => Bool.False
+			Err(_) => Bool.True }) {
+			# cache miss only - the normal path answers from memory this frame
 			home2 = model.home
 			ids2 = model.trace_ids
 			Task.spawn!(program_input, || trace_task!(home2, ids2, want_sel2))
@@ -733,7 +761,13 @@ update! = |model0, program_input| {
 				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_ghost, |acc, x| if x.e.day == directive.ghost_day (match U64.to_i64_try(x.ei) { Ok(gi) => gi
 					Err(_) => acc }) else acc)
 			} else want_ghost
-		_ = if want_ghost2 != model.ghost_sel and want_ghost2 >= 0 {
+		ghost_hit =
+			if want_ghost2 != model.ghost_sel and want_ghost2 >= 0 {
+				match I64.to_u64_try(want_ghost2) { Ok(gu9) => List.get(model.trace_cache, gu9)
+					Err(_) => Err(OutOfBounds) }
+			} else Err(NoSwitch)
+		_ = if want_ghost2 != model.ghost_sel and want_ghost2 >= 0 and (match ghost_hit { Ok(_) => Bool.False
+			Err(_) => Bool.True }) {
 			home3 = model.home
 			ids3 = model.trace_ids
 			Task.spawn!(program_input, || ghost_task!(home3, ids3, want_ghost2))
@@ -741,8 +775,30 @@ update! = |model0, program_input| {
 		# any ghost change clears the drawn overlay THIS frame: a dismissal has
 		# nothing to fetch, and a switch must not keep showing the old session
 		# under the new selection - if the load fails, empty is the clean state
-		ghost2 = if want_ghost2 != model.ghost_sel ([]) else model.ghost
-		ghost_day2 = if want_ghost2 != model.ghost_sel ("") else model.ghost_day
+		ghost2 = match ghost_hit { Ok(gc) => gc.tr
+			Err(_) => if want_ghost2 != model.ghost_sel ([]) else model.ghost }
+		ghost_day2 = match ghost_hit {
+			Ok(_) => match I64.to_u64_try(want_ghost2) { Ok(gu8) => (match List.get(model.trace_ids, gu8) { Ok(ge) => ge.day
+				Err(_) => "" })
+				Err(_) => "" }
+			Err(_) => if want_ghost2 != model.ghost_sel ("") else model.ghost_day }
+		ghost_dur2 = match ghost_hit { Ok(gc) => gc.du
+			Err(_) => model.ghost_dur }
+		# a cache-hit session switch lands its data in the same frame. A miss
+		# (a task is flying) clears instead of keeping the old ride's trace
+		# under the new day - the ghost's contract, applied to the live one.
+		switching = want_sel2 != model.trace_sel
+		trace2 = match switched { Ok(sc) => sc.tr
+			Err(_) => if switching ([]) else model.trace }
+		segs2m = match switched { Ok(sc) => sc.sg
+			Err(_) => if switching ([]) else model.segs }
+		trace_dur2 = match switched { Ok(sc) => sc.du
+			Err(_) => if switching (1.0) else model.trace_dur }
+		trace_day2 =
+			if switching {
+				match List.get(model.trace_ids, want_sel2) { Ok(se) => se.day
+					Err(_) => model.trace_day }
+			} else model.trace_day
 		_ = if want_days != model.curve_days or d.key_pressed(KeyR) {
 			f2 = model.font
 			Task.spawn!(program_input, || match load_model!(f2, want_days) {
@@ -801,7 +857,9 @@ update! = |model0, program_input| {
 				else match U64.to_i64_try(range) { Ok(ri) => ri
 					Err(_) => 90 },
 			cursor_day: cur_day,
-			trace_day: model.trace_day,
+			# both frame-true: a cached switch or summon lands this frame, and
+			# the coach's readout must not trail it by one write
+			trace_day: trace_day2,
 			ghost_day: ghost_day2,
 		}
 		last_focus =
@@ -818,7 +876,7 @@ update! = |model0, program_input| {
 				Unavailable(u9) => if u9.gw == win.w and u9.gh == win.h (model.glow) else build_glow!(win)
 			}
 		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
-		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
