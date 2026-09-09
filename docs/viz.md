@@ -120,10 +120,18 @@ xattr -dr com.apple.quarantine "/Applications/Stride.app"
 
 A bundle built locally was never downloaded, so it carries no such flag.
 
-The linux tarball has no bundle format to carry: it holds the binary, the
-fonts and a `stride-app` launcher that seeds them the same way. roc-ray
-ships an x64glibc host only, so there is no linux-arm64 app. Windows has no
-app yet for a reason that is not packaging - see #442.
+The linux tarball has no bundle format to carry: it holds `stride-viz`, the
+fonts and a `stride-app` launcher that widens PATH and seeds the fonts the
+same way.
+
+```
+tar xzf stride-app-linux-x86_64.tar.gz
+./stride-app/stride-app
+```
+
+It is built on the current ubuntu runner, so it needs that runner's glibc or
+newer. roc-ray ships an x64glibc host only, so there is no linux-arm64 app,
+and Windows has no app yet for a reason that is not packaging - see #442.
 
 On first launch the bundle copies its fonts to `~/.stride/fonts`. Failed
 copies are logged to `~/.stride/fonts-seed.log`; if the directory itself

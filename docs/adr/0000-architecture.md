@@ -208,11 +208,11 @@ gives 0 per 1400 with output byte-identical to `--opt=dev`. Builds still pin `--
 now purely for build time. `roc build` on the old alpha4 toolchain is gone with the
 migration.
 
-**Windows ships** (`stride-windows-x86_64`, since v0.3.0): the new compiler plus
+**Windows ships** (`stride-cli-windows-x86_64`, since v0.3.0): the new compiler plus
 basic-cli's x64win host target it, and `OsStr.display` decodes the `WindowsU16s` argv arm.
 All five release targets ship, linux-arm64 included — `release-please.yml` passes it an
 explicit `roc_target: arm64musl`, `verify-arm64.yml` re-checks it on dispatch, and every
-release from v0.4.0 onward carries `stride-linux-arm64`.
+release from v0.4.0 onward carries the linux-arm64 CLI (`stride-cli-linux-arm64`; `stride-linux-arm64` before v0.13.0).
 
 **CORRECTION kept for the record (2026-08-01; issue-claims: quoting):** the earlier "hard-blocked on
 roc-json" conclusion was wrong — it assumed all JSON had to go through a roc-json

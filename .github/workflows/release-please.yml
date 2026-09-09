@@ -230,28 +230,36 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p stage/stride-app/fonts
-          roc build src/viz/main.roc --output=stage/stride-app/stride --opt=dev
-          cp assets/fonts/*.ttf stage/stride-app/fonts/
+          roc build src/viz/main.roc --output=stage/stride-app/stride-viz --opt=dev
+          cp assets/fonts/*.ttf assets/fonts/OFL-*.txt stage/stride-app/fonts/
           cat > stage/stride-app/stride-app <<'SH'
           #!/bin/sh
+          # a desktop launch inherits a minimal PATH, and the window shells out
+          # to `stride` for the CP fit
+          PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+          export PATH
           # the window reads ~/.stride/fonts; seed it from the copies shipped
           # beside this script, replacing any that differ in size
           here="$(cd "$(dirname "$0")" && pwd)"
+          log="$HOME/.stride/fonts-seed.log"
           if [ -d "$here/fonts" ]; then
-            mkdir -p "$HOME/.stride/fonts" 2>/dev/null || true
-            for f in "$here"/fonts/*.ttf; do
-              [ -e "$f" ] || continue
-              dst="$HOME/.stride/fonts/$(basename "$f")"
-              if [ ! -e "$dst" ] || [ "$(wc -c < "$f")" != "$(wc -c < "$dst")" ]; then
-                cp "$f" "$dst" 2>/dev/null || echo "could not write $dst" >&2
-              fi
-            done
+            if mkdir -p "$HOME/.stride/fonts" 2>/dev/null; then
+              for f in "$here"/fonts/*.ttf; do
+                [ -e "$f" ] || continue
+                dst="$HOME/.stride/fonts/$(basename "$f")"
+                if [ ! -e "$dst" ] || [ "$(wc -c < "$f")" != "$(wc -c < "$dst")" ]; then
+                  cp "$f" "$dst" 2>>"$log" || echo "$(date): could not write $dst" >> "$log"
+                fi
+              done
+            else
+              echo "$(date): could not create $HOME/.stride/fonts - the window will use its fallback font" >> "$log" 2>/dev/null || true
+            fi
           fi
           cd "$HOME"
-          exec "$here/stride"
+          exec "$here/stride-viz"
           SH
-          chmod +x stage/stride-app/stride-app stage/stride-app/stride
-          test -s stage/stride-app/stride
+          chmod +x stage/stride-app/stride-app stage/stride-app/stride-viz
+          test -s stage/stride-app/stride-viz
           for f in Quicksand-Medium.ttf JetBrainsMono-Regular.ttf; do
             test -s "stage/stride-app/fonts/$f"
           done
@@ -268,6 +276,12 @@ jobs:
           for f in Quicksand-Medium.ttf JetBrainsMono-Regular.ttf; do
             test -s "$fake/.stride/fonts/$f" || { echo "::error::launcher did not seed $f"; exit 1; }
           done
+          printf 'x' > "$fake/.stride/fonts/Quicksand-Medium.ttf"
+          HOME="$fake" ./stage/stride-app/stride-app >/dev/null 2>&1 &
+          pid=$!
+          sleep 3
+          kill $pid 2>/dev/null || true
+          [ "$(wc -c < "$fake/.stride/fonts/Quicksand-Medium.ttf")" -gt 1000 ] || { echo "::error::a corrupt font was not repaired"; exit 1; }
           rm -rf "$fake"
 
       - uses: actions/upload-artifact@v7
@@ -302,7 +316,7 @@ jobs:
           ls stride-cli-* >/dev/null 2>&1 || { echo "::error::no CLI binaries built"; exit 1; }
           # the CLI binaries satisfy stride-* alone, so a missing app zip
           # would pass unnoticed
-          for z in stride-app-macos-arm64.zip stride-app-macos-x86_64.zip; do
+          for z in stride-app-macos-arm64.zip stride-app-macos-x86_64.zip stride-app-linux-x86_64.tar.gz; do
             [ -f "$z" ] || echo "::warning::$z is missing from this release - its build job failed"
           done
           sha256sum stride-* > SHA256SUMS.txt

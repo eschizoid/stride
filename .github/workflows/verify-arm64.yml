@@ -1,6 +1,6 @@
 # Dispatch-only verification for the linux-arm64 release target (#141).
 # The release workflow's arm64 entry (roc_target: arm64musl) DOES produce an asset --
-# v0.4.0 onward ship stride-linux-arm64. This is dispatch-only and
+# v0.4.0 onward ship stride-cli-linux-arm64. This is dispatch-only and
 # gates nothing automatically; it proves the exact same build command yields a RUNNING
 # binary on the same runner class, without cutting a release. Keep it — it is the cheap
 # re-verification tool for any future toolchain/platform bump.
@@ -17,10 +17,10 @@ jobs:
       - name: Build with the release workflow's exact target flag
         run: |
           set -euo pipefail
-          roc build src/main.roc --output=stride-linux-arm64 --opt=dev --target=arm64musl
-          test -f stride-linux-arm64
+          roc build src/main.roc --output=stride-cli-linux-arm64 --opt=dev --target=arm64musl
+          test -f stride-cli-linux-arm64
       - name: Run the binary
         run: |
           set -euo pipefail
-          ./stride-linux-arm64 --version
-          HOME=$(mktemp -d) ./stride-linux-arm64 init
+          ./stride-cli-linux-arm64 --version
+          HOME=$(mktemp -d) ./stride-cli-linux-arm64 init
