@@ -853,7 +853,9 @@ update! = |model0, program_input| {
 				else match U64.to_i64_try(range) { Ok(ri) => ri
 					Err(_) => 90 },
 			cursor_day: cur_day,
-			trace_day: model.trace_day,
+			# both frame-true: a cached switch or summon lands this frame, and
+			# the coach's readout must not trail it by one write
+			trace_day: trace_day2,
 			ghost_day: ghost_day2,
 		}
 		last_focus =
