@@ -165,7 +165,9 @@ CREATE TABLE IF NOT EXISTS viz_directives (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT,
   ghost_day TEXT,
-  consumed INTEGER NOT NULL DEFAULT 0);
+  consumed INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',  -- applied | applied_partial | superseded | stale
+  error TEXT, applied_at TEXT);
 
 -- steer: the window polls ~1/s, applies the newest unconsumed row, and
 -- consumes everything up to it. NULL fields mean "leave that alone".
@@ -200,9 +202,25 @@ Run ONE window per database. Directives are consumed by whichever window
 polls first and `viz_focus` carries whichever wrote last, so a second window
 silently takes half the directives and half the answers.
 
-A directive is consumed as read — one the window crashes on is dropped, never
-replayed against a stale model. Focus writes are throttled (~2/s at most) and
-only fire when what the human sees actually changed.
+Every directive reaches a terminal state, readable back by id:
+
+- `applied` — every field honoured; `applied_at` says when.
+- `applied_partial` — the window took what it could; `error` names each
+  refused field ("cursor_day 1999-01-01 not in the series").
+- `superseded` — a newer directive arrived before this one was applied;
+  newest wins.
+- `stale` — older than 10 minutes when read. A directive written while no
+  window was open must not seize the one that eventually launches.
+
+The winning row stays `pending` until the frame that applied it reports
+back, so a window that crashes between reading and applying leaves the
+directive retryable rather than silently lost — within the same 10-minute
+freshness window; a crash retried tomorrow goes `stale`, by design. Rows
+consumed before the lifecycle existed read `unknown`: their outcome was
+never recorded. "applied" means the frame accepted and acted; async work
+it started (a reload, a session fetch) may still fail and recover by the
+window's own rules. Focus writes are throttled
+(~2/s at most) and only fire when what the human sees actually changed.
 
 ## Boundaries this nightly imposes
 
