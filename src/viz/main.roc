@@ -718,6 +718,9 @@ update! = |model0, program_input| {
 			if directive.has_d and directive.trace_day != "" {
 				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_sel, |acc, x| if x.e.day == directive.trace_day x.ei else acc)
 			} else want_sel
+		# NoSwitch joins List.get's OutOfBounds in one inferred error union -
+		# both branches are only ever matched as Err, and the compiler unifies
+		# them without an annotation
 		switched = if want_sel2 != model.trace_sel (List.get(model.trace_cache, want_sel2)) else Err(NoSwitch)
 		_ = if want_sel2 != model.trace_sel and (match switched { Ok(_) => Bool.False
 			Err(_) => Bool.True }) {

@@ -15,7 +15,9 @@ Ramp :: [].{
 	danger : F32
 	danger = 6.0
 
-	# the verdict a week's ramp earns, and the color that says it
+	# the verdict a week's ramp earns, and the color that says it. Zero is
+	# grey with the sheds: a flat week is not a build, and the legend says
+	# "holds or sheds" for exactly that reason
 	verdict : F32 -> Color.Rgba
 	verdict = |rv| if rv > danger (Theme.alarm_c) else if rv > 0.0 (Theme.tsb_c) else Theme.ink_faint
 
@@ -65,7 +67,7 @@ Ramp :: [].{
 				if model.mouse_x >= cx9 - slot / 2.0 and model.mouse_x < cx9 + slot / 2.0 and model.mouse_y >= bars_top - 44.0 and model.mouse_y <= bars_bot (Bool.True) else acc
 			})
 			if hover_any {} else {
-				Text.from("chips: the ctl each week gained     teal builds     red past +6/wk     grey sheds", model.font).size(11).draw!(frame, { pos: { x: pad, y: 96.0 }, color: ink_faint, align: (Top, Left) })
+				Text.from("chips: the ctl each week gained     teal builds     red past +6/wk     grey holds or sheds", model.font).size(11).draw!(frame, { pos: { x: pad, y: 96.0 }, color: ink_faint, align: (Top, Left) })
 			}
 			List.for_each!(List.map_with_index(model.ramp_weeks, |w, i| { w, i }), |x| {
 				cx = pad + (U64.to_f32(x.i) + 0.5) * slot
