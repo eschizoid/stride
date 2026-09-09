@@ -64,6 +64,41 @@ history, which needs an active Strava subscription to hold API credentials. Eith
 this is a command-line tool you run yourself, not a hosted service or a phone app.
 First-time setup takes about ten minutes.
 
+## The desktop app
+
+`Stride.app` is the same engine's data, read from the same SQLite file, in a window.
+It ships with every release (`stride-app-macos-arm64.zip` / `stride-app-macos-x86_64.zip`)
+and `just viz-app` builds it locally. Eight views, each answering one question.
+
+**Form board** — fitness, fatigue and form over 90 days, with each day's load underneath.
+Hover any day, or walk them with the arrow keys.
+
+![The form board](docs/img/form-board.png)
+
+**Zones** — twelve weeks of time in zone, each week capped with its easy share: teal
+holds the 80/20 line, alarm red breaks it.
+
+![The zones view](docs/img/zones.png)
+
+**Ramp** — weekly load with the CTL each week gained riding above it as a chip. Colour is
+the verdict: teal builds, red past +6/wk, grey holds or sheds.
+
+![The ramp view](docs/img/ramp.png)
+
+**Session trace** — one ride's power with the interval detector's work blocks shaded
+behind it, so "did it place the boundaries right" is a question you can answer by eye.
+`shift+[` overlays a second session as a ghost on the same scale; the wheel zooms.
+
+![The session trace](docs/img/session-trace.png)
+
+The rest: **power** (the window's curve against the all-time record book), **table**
+(every day with a detail panel), **plan** (today's session and the week's ladder),
+**heat** (a year of load, one cell per day). `TAB` cycles them, or click a pill.
+
+A coach can drive the window over the same database — `viz_directives` in, `viz_focus`
+out, no sockets — which is what makes it scriptable rather than only clickable. See
+[docs/viz.md](docs/viz.md).
+
 ## Why stride, if I already have Strava?
 
 Strava is the system of record; stride is the analysis layer on top of it. Where they

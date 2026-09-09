@@ -13,7 +13,9 @@ Theme :: [].{
 	pad_t : F32
 	pad_t = 110
 	pad_b : F32
-	pad_b = 44
+	# the hint line owns the last 30px of the window; the plot floor leaves
+	# room for the x-axis labels above it
+	pad_b = 56
 
 	# the stride brand palette: near-black ground, blue fitness, violet fatigue,
 	# teal form (the logo triad's accent)
