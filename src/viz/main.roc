@@ -424,6 +424,14 @@ poll_task! = |home|
 		}
 	}
 
+# Reports a directive's terminal outcome from the task lane.
+mark_task! : Str, I64, Str => {}
+mark_task! = |home, did, refused|
+	match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
+		Err(_) => {}
+		Ok(db) => Db.mark_directive!(db, did, refused)
+	}
+
 # The window's answer: upsert what the human is looking at
 focus_task! : Str, { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str } => Msg
 focus_task! = |home, f|
@@ -444,6 +452,7 @@ Msg : [
 	GhostSwitchFailed,
 	Shot(Try({}, Capture.ScreenshotError)),
 	RecCmd({}),
+	MarkDone({}),
 	Reloaded(Ui.Model),
 	ReloadFailed,
 	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, sel : U64, day : Str }),
@@ -500,6 +509,7 @@ update! = |model0, program_input| {
 		match msg {
 			Shot(_) => acc
 			RecCmd(_) => acc
+			MarkDone(_) => acc
 			ReloadFailed => acc
 			TraceSwitchFailed => acc
 			GhostSwitchFailed => acc
@@ -521,9 +531,9 @@ update! = |model0, program_input| {
 		})
 	# the coach's word arrives beside the human's input and steers only what
 	# it names: view, range, a day for the crosshair, a session for the trace
-	directive = List.fold(program_input.messages, { has_d: Bool.False, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" }, |acc, msg|
+	directive = List.fold(program_input.messages, { has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" }, |acc, msg|
 		match msg {
-			Directive(d2) => { has_d: Bool.True, view: d2.dv.view, range: d2.dv.range, cursor_day: d2.dv.cursor_day, trace_day: d2.dv.trace_day, ghost_day: d2.dv.ghost_day }
+			Directive(d2) => { has_d: Bool.True, id: d2.dv.id, view: d2.dv.view, range: d2.dv.range, cursor_day: d2.dv.cursor_day, trace_day: d2.dv.trace_day, ghost_day: d2.dv.ghost_day }
 			_ => acc
 		})
 	if d.key_pressed(KeyEscape) {
@@ -863,6 +873,20 @@ update! = |model0, program_input| {
 				_ = Task.spawn!(program_input, || focus_task!(homef, focus_now))
 				focus_now
 			} else model.last_focus
+		# the directive's outcome, reported by THIS frame - the one that
+		# applied it. A refused field is named; a fully honoured directive
+		# closes with none. Runs once per directive: has_d is true only on
+		# the frame the message arrived.
+		_ = if directive.has_d and directive.id >= 0 and model.home != "" {
+			refused_view = if directive.view > 7 ("view ${I64.to_str(directive.view)} unknown; ") else ""
+			refused_cursor = if directive.cursor_day != "" and cursor_dir == -2 ("cursor_day ${directive.cursor_day} not in the series; ") else ""
+			refused_trace = if directive.trace_day != "" and want_sel2 == model.trace_sel and (match List.get(model.trace_ids, want_sel2) { Ok(te9) => te9.day != directive.trace_day
+				Err(_) => Bool.True }) ("trace_day ${directive.trace_day} not in the picker; ") else ""
+			refused = Str.trim(Str.concat(Str.concat(refused_view, refused_cursor), refused_trace))
+			homem = model.home
+			did = directive.id
+			Task.spawn!(program_input, || MarkDone(mark_task!(homem, did, refused)))
+		} else {}
 		glow2 =
 			match model.glow {
 				Ready(g9) => if g9.gw == win.w and g9.gh == win.h (model.glow) else build_glow!(win)

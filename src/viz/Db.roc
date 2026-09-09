@@ -192,7 +192,7 @@ Db :: [].{
 		# every-second callers take this read-only fast path; the DDL below runs
 		# only while the objects are actually missing — IF NOT EXISTS still
 		# contends for the schema write lock, a plain sqlite_master read never does
-		present = match Sqlite.query!({ db, query: "SELECT count(*) + SUM(CASE WHEN instr(COALESCE(sql, ''), 'ghost_day') > 0 THEN 1 ELSE 0 END) AS c FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')", bindings: [] }) {
+		present = match Sqlite.query!({ db, query: "SELECT count(*) + SUM(CASE WHEN instr(COALESCE(sql, ''), 'ghost_day') > 0 THEN 1 ELSE 0 END) + SUM(CASE WHEN instr(COALESCE(sql, ''), 'applied_at') > 0 THEN 1 ELSE 0 END) AS c FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')", bindings: [] }) {
 			Err(_) => 0
 			Ok(rows) => match List.first(rows) {
 				Err(_) => 0
@@ -200,18 +200,21 @@ Db :: [].{
 					Err(_) => 0 }
 			}
 		}
-		if present == 5 {} else ensure_bus_ddl!(db)
+		if present == 6 {} else ensure_bus_ddl!(db)
 	}
 
 	ensure_bus_ddl! : Sqlite.Db => {}
 	ensure_bus_ddl! = |db| {
-		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_directives (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT (datetime('now')), view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT, ghost_day TEXT, consumed INTEGER NOT NULL DEFAULT 0)", bindings: [] })
+		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_directives (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT (datetime('now')), view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT, ghost_day TEXT, consumed INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', error TEXT, applied_at TEXT)", bindings: [] })
 		# the poll runs every second forever: a partial index keeps the
 		# pending-lookup flat no matter how much consumed history accrues
 		_ = Sqlite.execute!({ db, query: "CREATE INDEX IF NOT EXISTS viz_directives_pending ON viz_directives (id) WHERE consumed = 0", bindings: [] })
 		# databases that predate the ghost gain the column here; on ones that
 		# already have it the ALTER fails and the _ discards that, by design
 		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_directives ADD COLUMN ghost_day TEXT", bindings: [] })
+		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_directives ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'", bindings: [] })
+		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_directives ADD COLUMN error TEXT", bindings: [] })
+		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_directives ADD COLUMN applied_at TEXT", bindings: [] })
 		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_focus (id INTEGER PRIMARY KEY CHECK (id = 1), updated_at TEXT NOT NULL, view INTEGER NOT NULL, range INTEGER NOT NULL, cursor_day TEXT, trace_day TEXT, ghost_day TEXT)", bindings: [] })
 		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_focus ADD COLUMN ghost_day TEXT", bindings: [] })
 		{}
@@ -225,6 +228,10 @@ Db :: [].{
 	poll_directive! : Sqlite.Db => [Some(Directive), None]
 	poll_directive! = |db| {
 		ensure_bus!(db)
+		# a directive written while no window was open must not seize the one
+		# that eventually launches: anything past the freshness window closes
+		# as stale on sight, applied by nobody
+		_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET consumed = 1, status = 'stale', error = 'older than 10 minutes when read' WHERE consumed = 0 AND created_at < datetime('now', '-10 minutes')", bindings: [] })
 		match Sqlite.query!({ db, query: "SELECT id, COALESCE(view, -1) AS v, COALESCE(range, -1) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd FROM viz_directives WHERE consumed = 0 ORDER BY id DESC LIMIT 1", bindings: [] }) {
 			Err(_) => None
 			Ok(rows) => match List.first(rows) {
@@ -244,12 +251,25 @@ Db :: [].{
 						Err(_) => "" }
 					if id < 0 None
 					else {
-						_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET consumed = 1 WHERE id <= :id AND consumed = 0", bindings: [{ name: ":id", value: Integer(id) }] })
+						# older unconsumed rows are closed as superseded; the
+						# winning row stays PENDING until the frame that applies
+						# it reports back - a crash between read and apply
+						# leaves it retryable instead of silently lost
+						_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET consumed = 1, status = 'superseded' WHERE id < :id AND consumed = 0", bindings: [{ name: ":id", value: Integer(id) }] })
 						Some({ id, view: v, range: rg, cursor_day: cd, trace_day: td, ghost_day: gd })
 					}
 				}
 			}
 		}
+	}
+
+	# the directive's terminal outcome, written by the frame that applied it.
+	# error carries which fields were refused ('' = all honoured).
+	mark_directive! : Sqlite.Db, I64, Str => {}
+	mark_directive! = |db, id, refused| {
+		st = if refused == "" "applied" else "applied_partial"
+		_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET consumed = 1, status = :st, error = NULLIF(:e, ''), applied_at = datetime('now') WHERE id = :id", bindings: [{ name: ":st", value: String(st) }, { name: ":e", value: String(refused) }, { name: ":id", value: Integer(id) }] })
+		{}
 	}
 
 	# the window's answer: what the human is looking at, one row, upserted
