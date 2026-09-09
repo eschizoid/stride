@@ -102,17 +102,24 @@ just viz-app      # installs ~/Applications/Stride Form Board.app
 
 ## Installing the released app
 
-Every release attaches `stride-form-board-macos-arm64.zip` and
+Releases attach `stride-form-board-macos-arm64.zip` and
 `stride-form-board-macos-x86_64.zip` — the whole `.app`, brand fonts inside
-it, built from the tagged commit by the release workflow. Unzip into
-`/Applications` (or anywhere) and launch.
+it, built from the tagged commit and verified for architecture, signature
+and fonts before it is packaged. A zip missing from a release means its
+build job failed; `just viz-app` builds the same bundle locally. Unzip
+anywhere and launch.
 
-The bundle is NOT code-signed, so macOS quarantines a downloaded copy and
-refuses the first launch. Clear the flag once:
+The bundle is ad-hoc signed but carries no Developer ID, so macOS
+quarantines a downloaded copy and refuses the first launch. Clear the flag
+once, pointing at wherever you put it:
 
 ```
 xattr -dr com.apple.quarantine "/Applications/Stride Form Board.app"
 ```
+
+On first launch the bundle copies its fonts to `~/.stride/fonts`; if that
+cannot be written it says so in `~/.stride/fonts-seed.log` and the window
+falls back to its default font.
 
 `just viz-app` builds the same bundle locally and never needs that, because
 a bundle you built yourself was never quarantined.

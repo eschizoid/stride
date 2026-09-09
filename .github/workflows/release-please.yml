@@ -110,6 +110,9 @@ jobs:
     # The viz pins its OWN roc nightly: roc-ray needs 08-23, the engine 09-04.
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ${{ matrix.runs-on }}
+    # macOS runners are the slow, flaky class and `upload` now waits on them;
+    # without a cap a hung linker holds the release's assets for six hours
+    timeout-minutes: 25
     strategy:
       fail-fast: false # one arch failing shouldn't cost the other, or the CLI
       matrix:
@@ -132,8 +135,57 @@ jobs:
         run: |
           set -euo pipefail
           VIZ_APP_DIR="$PWD/stage" bash tools/make-viz-app.sh
-          test -x "stage/Stride Form Board.app/Contents/MacOS/stride-viz"
-          test -f "stage/Stride Form Board.app/Contents/Resources/fonts/Quicksand-Medium.ttf"
+
+      - name: Verify the bundle before it ships
+        run: |
+          set -euo pipefail
+          app="stage/Stride Form Board.app"
+          bin="$app/Contents/MacOS/stride-viz"
+          # the launcher IS CFBundleExecutable; asserting only the binary
+          # leaves the entry point unchecked
+          test -x "$app/Contents/MacOS/launcher"
+          test -s "$bin" && test -x "$bin"
+          # the runner label is the ONLY thing distinguishing these two
+          # artifacts; without this the zip's name is an unverified claim
+          case "${{ matrix.target }}" in
+            macos-arm64)  want=arm64 ;;
+            macos-x86_64) want=x86_64 ;;
+          esac
+          got=$(lipo -archs "$bin")
+          [ "$got" = "$want" ] || { echo "::error::${{ matrix.target }} bundle is $got, not $want"; exit 1; }
+          # Apple Silicon refuses an unsigned arm64 Mach-O outright
+          codesign -dv "$bin" 2>&1 | head -2
+          # every face the window loads, non-empty, and none silently dropped
+          for f in Quicksand-Medium.ttf JetBrainsMono-Regular.ttf; do
+            test -s "$app/Contents/Resources/fonts/$f"
+          done
+          have=$(ls "$app/Contents/Resources/fonts/"*.ttf | wc -l | tr -d ' ')
+          want_n=$(ls assets/fonts/*.ttf | wc -l | tr -d ' ')
+          [ "$have" = "$want_n" ] || { echo "::error::bundled $have fonts, assets/fonts has $want_n"; exit 1; }
+
+      - name: Prove the launcher seeds a fresh machine
+        run: |
+          set -euo pipefail
+          # the fonts inside the bundle reach the window through exactly one
+          # bridge - the launcher's seeding - and nothing else in CI or in a
+          # dev build ever runs it, because a dev's ~/.stride/fonts is already
+          # populated by the build itself. This is that path's only test.
+          fake="$(mktemp -d)"
+          HOME="$fake" "stage/Stride Form Board.app/Contents/MacOS/launcher" >/dev/null 2>&1 &
+          pid=$!
+          sleep 6
+          kill $pid 2>/dev/null || true
+          for f in Quicksand-Medium.ttf JetBrainsMono-Regular.ttf; do
+            test -s "$fake/.stride/fonts/$f" || { echo "::error::launcher did not seed $f"; exit 1; }
+          done
+          # a short/corrupt copy must be repaired, not skipped forever
+          printf 'x' > "$fake/.stride/fonts/Quicksand-Medium.ttf"
+          HOME="$fake" "stage/Stride Form Board.app/Contents/MacOS/launcher" >/dev/null 2>&1 &
+          pid=$!
+          sleep 6
+          kill $pid 2>/dev/null || true
+          [ "$(wc -c < "$fake/.stride/fonts/Quicksand-Medium.ttf")" -gt 1000 ] || { echo "::error::a corrupt font was not repaired"; exit 1; }
+          rm -rf "$fake"
 
       - name: Zip it
         run: |
@@ -155,7 +207,10 @@ jobs:
     needs: [release-please, build, build-viz]
     # ENABLED with `build` above. `always()` so it still attaches whatever DID build even if some
     # target failed (fail-fast is off) — a partial binary set beats none.
-    if: ${{ always() && needs.release-please.outputs.release_created == 'true' }}
+    # !cancelled() rather than always(): a partial binary set still beats none
+    # when a target FAILS, but cancelling a release run should actually stop
+    # the assets from attaching - always() fires on cancellation too
+    if: ${{ !cancelled() && needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -171,6 +226,11 @@ jobs:
           set -euo pipefail
           cd dist
           ls stride-* >/dev/null 2>&1 || { echo "::error::no binaries built — nothing to attach"; exit 1; }
+          # the CLI binaries satisfy `stride-*` on their own, so a release
+          # missing the app would pass silently - name the gap out loud
+          for z in stride-form-board-macos-arm64.zip stride-form-board-macos-x86_64.zip; do
+            [ -f "$z" ] || echo "::warning::$z is missing from this release - its build job failed"
+          done
           sha256sum stride-* > SHA256SUMS.txt
           gh release upload "$TAG" stride-* SHA256SUMS.txt \
             --repo "${{ github.repository }}" --clobber
