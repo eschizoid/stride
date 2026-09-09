@@ -138,6 +138,8 @@ help_text =
         \\
         \\REFERENCE
         \\    zones                       power-zone watt ranges (7) from your FTP (alias: pz)
+        \\    viz                         the window's published bus capabilities — views,
+        \\                                directive fields, staleness (launch the app once first)
         \\
         \\FLAGS
         \\    --json                      machine output (beats STRIDE_FORMAT)
@@ -385,6 +387,7 @@ dispatch! = |cmd|
         Command.Plan => Plan.plan_bundle!({})
         Command.Doctor => ReportHealth.doctor!({})
         Command.Zones => ReportHealth.pz!({})
+        Command.VizCaps => ReportHealth.viz_caps!({})
         # a machine calls this alongside schema_version to negotiate, so it
         # answers in the envelope like every other query (#182)
         Command.Version => Output.out!({ version: version }, |p| p.version)

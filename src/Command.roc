@@ -18,6 +18,9 @@ Command := [
 	Doctor,
 	Zones,
 	Version,
+	## the window's self-published bus capabilities (#439): views, directive
+	## fields, staleness - served from the database the window wrote them to
+	VizCaps,
 	Compare(Str),
 	Activities(U64, Str),
 	Top(Str, U64, Str),
@@ -133,6 +136,7 @@ Command := [
 					Err(Usage("reps [YYYY-MM-DD] — '${date}' is not a date"))
 				}
 			[_, "zones"] => Ok(Zones)
+			[_, "viz"] => Ok(VizCaps)
 			[_, "pz"] => Ok(Zones)
 			# a bare asc/desc is a sort on the latest anchor, not a date named "desc"
 			[_, "progress"] => Ok(Progress("", Asc))
@@ -441,6 +445,9 @@ Command := [
 		## an ALL TIME total silently short. It refuses now.
 		errs(reads("stats", [], "stats.json"), ["unreadable_activity_date"]),
 		reads("doctor", [], "doctor.json"),
+		## the payload is the WINDOW's claim about itself, relayed: absence of the
+		## capability tables is the window never having run, an answer with a code
+		errs(reads("viz", [], "viz.json"), ["no_viz_capabilities"]),
 		errs(reads("zones", [], "zones.json"), ["no_power_data"]),
 		errs(reads("pz", [], "zones.json"), ["no_power_data"]),
 		errs(reads("compare", [opt("<week|month>")], "compare.json"), ["bad_period", "no_data", "unreadable_activity_date", "unreadable_daily_load_day"]),
@@ -845,6 +852,8 @@ expect match Command.parse(["stride", "import", "x.zip"]) { Ok(Import("x.zip")) 
 expect match Command.parse(["stride", "rate", "1", "5"]) { Ok(Rate("1", "5")) => True  _ => False }
 expect match Command.parse(["stride", "activity", "7"]) { Ok(Activity("7")) => True  _ => False }
 expect match Command.parse(["stride", "zones"]) { Ok(Zones) => True  _ => False }
+expect match Command.parse(["stride", "viz"]) { Ok(VizCaps) => True  _ => False }
+expect match Command.parse(["stride", "viz", "extra"]) { Err(_) => True  _ => False }
 expect match Command.parse(["stride", "pz"]) { Ok(Zones) => True  _ => False }
 expect match Command.parse(["stride", "compare"]) { Ok(Compare("week")) => True  _ => False }
 expect match Command.parse(["stride", "activities"]) { Ok(Activities(30, "")) => True  _ => False }

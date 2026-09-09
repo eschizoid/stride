@@ -1,0 +1,66 @@
+{
+  "title": "viz",
+  "description": "Payload of `stride viz` — the window's self-published bus capabilities.",
+  "type": "object",
+  "required": [
+    "fields",
+    "protocol",
+    "published_at",
+    "staleness_seconds",
+    "views"
+  ],
+  "additionalKeys": false,
+  "properties": {
+    "protocol": {
+      "type": "integer"
+    },
+    "published_at": {
+      "type": "string"
+    },
+    "staleness_seconds": {
+      "type": "integer"
+    },
+    "views": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "fields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "accepts",
+          "kind",
+          "name"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "accepts": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

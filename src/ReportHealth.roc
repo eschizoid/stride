@@ -488,6 +488,72 @@ ReportHealth :: [].{
             )
         })
     }
+    # the window's self-published bus capabilities, relayed (#439). The window
+    # rewrites viz_capabilities/viz_views/viz_fields at every launch, so what
+    # this serves is a claim by the BINARY that last ran — never a doc's copy.
+    # Absent or empty tables mean the window has never run against this
+    # database, which is an answer with a code, not a crash.
+    viz_caps! : {} => Try({}, _)
+    viz_caps! = |{}| {
+        path = Db.open_db!({})?
+        scalars = Sqlite.query!({
+            path: Path.utf8(path),
+            # COALESCE to 0/'' so a half-written publish decodes and lands in
+            # the same refusal as a missing table, instead of a decode error
+            query: "SELECT CAST(COALESCE((SELECT CAST(value AS INTEGER) FROM viz_capabilities WHERE key = 'protocol'), 0) AS INTEGER) AS protocol, CAST(COALESCE((SELECT CAST(value AS INTEGER) FROM viz_capabilities WHERE key = 'staleness_seconds'), 0) AS INTEGER) AS staleness, CAST(COALESCE((SELECT value FROM viz_capabilities WHERE key = 'published_at'), '') AS TEXT) AS published",
+            bindings: [],
+            row: |cols| |stmt| {
+                protocol = Sqlite.i64("protocol")(cols)(stmt)?
+                staleness = Sqlite.i64("staleness")(cols)(stmt)?
+                published = Sqlite.str("published")(cols)(stmt)?
+                Ok({ protocol, staleness, published })
+            },
+        })
+        s = match scalars {
+            Err(_) => { protocol: 0, staleness: 0, published: "" }
+            Ok(s0) => s0
+        }
+        if s.protocol == 0
+            Output.err_out!("no_viz_capabilities", "the window has not published capabilities to this database — launch the Stride app once, then ask again")
+        else {
+            views = Sqlite.query_many!({
+                path: Path.utf8(path),
+                query: "SELECT id, CAST(name AS TEXT) AS name FROM viz_views ORDER BY id",
+                bindings: [],
+                rows: |cols| |stmt| {
+                    id = Sqlite.i64("id")(cols)(stmt)?
+                    name = Sqlite.str("name")(cols)(stmt)?
+                    Ok({ id, name })
+                },
+            })?
+            fields = Sqlite.query_many!({
+                path: Path.utf8(path),
+                query: "SELECT CAST(field AS TEXT) AS name, CAST(kind AS TEXT) AS kind, CAST(accepts AS TEXT) AS accepts FROM viz_fields ORDER BY field",
+                bindings: [],
+                rows: |cols| |stmt| {
+                    name = Sqlite.str("name")(cols)(stmt)?
+                    kind = Sqlite.str("kind")(cols)(stmt)?
+                    accepts = Sqlite.str("accepts")(cols)(stmt)?
+                    Ok({ name, kind, accepts })
+                },
+            })?
+            if Output.json_mode!({})
+                Output.emit_ok!({ protocol: s.protocol, published_at: s.published, staleness_seconds: s.staleness, views, fields })
+            else {
+                Stdout.line!("bus protocol ${(s.protocol).to_str()}, published ${s.published}, directives stale after ${(s.staleness).to_str()}s")?
+                Stdout.line!(Render.render_table(
+                    ["view", "name"],
+                    List.map(views, |v| [(v.id).to_str(), v.name]),
+                ))?
+                Stdout.line!(Render.render_table(
+                    ["field", "kind", "accepts"],
+                    List.map(fields, |f| [f.name, f.kind, f.accepts]),
+                ))?
+                Ok({})
+            }
+        }
+    }
+
     # power-zone reference chart: the 7 Coggan/Peloton zones as watt ranges from your
     # cycling FTP — derived from recent ride power, not configured (targets for a PZ ride).
     pz! : {} => Try({}, _)

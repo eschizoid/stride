@@ -199,6 +199,13 @@ CREATE TABLE IF NOT EXISTS viz_focus (
 SELECT view, range, cursor_day, trace_day, ghost_day, updated_at FROM viz_focus;
 ```
 
+Everything the two paragraphs above hand-list — the view numbers, the
+directive fields, the staleness window — is also self-published by the
+window at every launch, and `stride viz --json` serves it. When this
+prose and the binary disagree, the binary is the one telling the truth:
+discovery for a tool goes through the command, not this file.
+
+
 Run ONE window per database. Directives are consumed by whichever window
 polls first and `viz_focus` carries whichever wrote last, so a second window
 silently takes half the directives and half the answers.
