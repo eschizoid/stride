@@ -5,11 +5,9 @@ import Theme
 import Ui
 
 Zones :: [].{
-	# One chart. Twelve Monday weeks of time in zone as stacked bars, each
-	# capped with the week's easy share - teal when it holds the 80/20 line,
-	# alarm when it does not. The share reads across the row of numbers, so
-	# the separate dot panel this replaces was spending a third of the window
-	# to say what a label says in place.
+	# Twelve Monday weeks of time in zone as stacked bars. Every week with
+	# classified time wears a cap holding its easy share: teal at or above
+	# the 80/20 line, alarm below. The share reads across the row of caps.
 	pad : F32
 	pad = 36.0
 
@@ -64,7 +62,6 @@ Zones :: [].{
 			Text.from(hours(peak), model.font).size(10).draw!(frame, { pos: { x: pad, y: bars_top - 14.0 }, color: ink_faint, align: (Top, Left) })
 			Text.from("0", model.font).size(10).draw!(frame, { pos: { x: pad, y: bars_bot - 12.0 }, color: ink_faint, align: (Top, Left) })
 			frame.line!({ start: { x: pad, y: bars_bot }, end: { x: win_w - pad, y: bars_bot }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 70), 1) })
-			# the zone key, right where the eye lands before the bars
 			hover_any = List.fold(List.map_with_index(model.zone_weeks, |w, i| { w, i }), Bool.False, |acc, x| {
 				cx9 = pad + (U64.to_f32(x.i) + 0.5) * slot
 				if model.mouse_x >= cx9 - slot / 2.0 and model.mouse_x < cx9 + slot / 2.0 and model.mouse_y >= bars_top - 44.0 and model.mouse_y <= bars_bot (Bool.True) else acc

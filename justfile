@@ -407,7 +407,7 @@ e2e:
     test -x ./stride || {  echo "e2e needs a ./stride binary — run \`just build\` first"; exit 1; }
     ./e2e
 
-# ── Form Board (src/viz/main.roc — the roc-ray window, ADR 0015) ─────────────────
+# ── the app (src/viz/main.roc — the roc-ray window, ADR 0015) ─────────────────
 # The viz pins ITS OWN compiler (see the header of src/viz/main.roc): roc-ray's
 # platform needs nightly-2026-08-23, not the engine's pin. Point ROC_VIZ at a
 # matching nightly, or leave it and hope the PATH roc is close enough.
@@ -416,7 +416,7 @@ e2e:
 viz_pin := `sh -c 'P="$HOME/.local/share/roc/nightly-2026-08-23-fb208ba/roc"; [ -x "$P" ] && echo "$P" || echo roc'`
 roc_viz := env("ROC_VIZ", viz_pin)
 
-# open the Form Board window (reads ~/.stride/db.sqlite at launch; ESC quits)
+# open the app window (reads ~/.stride/db.sqlite at launch; ESC quits)
 viz:
     {{roc_viz}} src/viz/main.roc
 
@@ -428,6 +428,6 @@ viz-check:
 layer-check:
     bash tools/layer-check.sh
 
-# build the Form Board as a macOS app in ~/Applications (Launchpad/Dock/Spotlight)
+# build the viz window as a macOS app in ~/Applications (Launchpad/Dock/Spotlight)
 viz-app:
     ROC_VIZ="{{roc_viz}}" bash tools/make-viz-app.sh

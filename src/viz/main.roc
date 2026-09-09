@@ -1,9 +1,9 @@
-## Stride Form Board — the viz suite's window: four TAB views (form board,
-## power-duration curve, session trace, data table) over ~/.stride/db.sqlite, read at
-## launch. The modules beside this file carry the parts: Theme (geometry +
+## Stride — the viz suite's window over ~/.stride/db.sqlite, read
+## at launch. The modules beside this file carry the parts: Theme (geometry +
 ## palette), Db (every loader and its types), Ui (the Model), and one module
-## per view (Board, Curve, Trace, Table). This file owns the app contract: the
-## platform pin, Model/Msg, init!, update!, and the view dispatch.
+## per view. This file owns the app contract: the platform pin, Model/Msg,
+## init!, update!, and the view dispatch — view_basename enumerates the views
+## and the nav list is their order.
 ##
 ## NOTE the pin below: roc-ray's platform needs nightly-2026-08-23, not the
 ## engine's toolchain pin. The header carries its own compiler version, so
@@ -39,7 +39,7 @@ program = { init!, update!, render! }
 init! : App.Init(Model, [AssetPathInvalid, AssetNotFound, AssetReadFailed, FontLoadFailed, ResourceLimit])
 init! = App.init(
 	App.default
-		.with_title("Stride Form Board")
+		.with_title("Stride")
 		.with_size({ width: Theme.win_w, height: Theme.win_h })
 		.with_frame_pacing(Capped(60))
 		.with_resizable(Bool.True)
@@ -171,7 +171,7 @@ load_model! = |font, curve_days| {
 				{ top: "no event planned", sub: "stride event add <date> <name>" }
 			}
 		Ok({
-			title: mk!("Stride Form Board", 30)?,
+			title: mk!("Stride", 30)?,
 			subs: [
 				{ p: mk!("last 30 days, as of ${as_of}", 15)?, r: 30.U64, chip: mkm!("30d", 12)? },
 				{ p: mk!("last 60 days, as of ${as_of}", 15)?, r: 60.U64, chip: mkm!("60d", 12)? },
@@ -479,9 +479,8 @@ load_tcache! = |db, ids|
 			tr9 = Db.load_trace!(db, te.id)
 			sg9 = Db.load_segs!(db, te.id)
 			du9 = Db.load_dur!(db, te.id)
-			# prepend onto the tail's result rather than appending onto an
-			# accumulator: one cons per session instead of a rebuilt list,
-			# and picker order survives without a reverse (this stdlib has none)
+			# prepend so picker order survives without List.reverse, which
+			# this stdlib lacks
 			List.prepend(load_tcache!(db, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9 })
 		}
 	}
@@ -718,9 +717,7 @@ update! = |model0, program_input| {
 			if directive.has_d and directive.trace_day != "" {
 				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_sel, |acc, x| if x.e.day == directive.trace_day x.ei else acc)
 			} else want_sel
-		# NoSwitch joins List.get's OutOfBounds in one inferred error union -
-		# both branches are only ever matched as Err, and the compiler unifies
-		# them without an annotation
+		# NoSwitch joins List.get's OutOfBounds in one inferred error union
 		switched = if want_sel2 != model.trace_sel (List.get(model.trace_cache, want_sel2)) else Err(NoSwitch)
 		_ = if want_sel2 != model.trace_sel and (match switched { Ok(_) => Bool.False
 			Err(_) => Bool.True }) {
@@ -772,9 +769,8 @@ update! = |model0, program_input| {
 			ids3 = model.trace_ids
 			Task.spawn!(program_input, || ghost_task!(home3, ids3, want_ghost2))
 		} else {}
-		# any ghost change clears the drawn overlay THIS frame: a dismissal has
-		# nothing to fetch, and a switch must not keep showing the old session
-		# under the new selection - if the load fails, empty is the clean state
+		# any ghost change clears the overlay this frame: a failed load leaves
+		# no ghost rather than the previous one
 		ghost2 = match ghost_hit { Ok(gc) => gc.tr
 			Err(_) => if want_ghost2 != model.ghost_sel ([]) else model.ghost }
 		ghost_day2 = match ghost_hit {
@@ -784,9 +780,8 @@ update! = |model0, program_input| {
 			Err(_) => if want_ghost2 != model.ghost_sel ("") else model.ghost_day }
 		ghost_dur2 = match ghost_hit { Ok(gc) => gc.du
 			Err(_) => model.ghost_dur }
-		# a cache-hit session switch lands its data in the same frame. A miss
-		# (a task is flying) clears instead of keeping the old ride's trace
-		# under the new day - the ghost's contract, applied to the live one.
+		# a cache hit lands its data this frame; a miss clears rather than
+		# drawing the previous ride under the new day
 		switching = want_sel2 != model.trace_sel
 		trace2 = match switched { Ok(sc) => sc.tr
 			Err(_) => if switching ([]) else model.trace }

@@ -147,7 +147,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # The Form Board (src/viz/main.roc) rides a different platform (roc-ray) and a
+  # The app window (src/viz/main.roc) rides a different platform (roc-ray) and a
   # different nightly than the engine — its own pin lives in its app header.
   # Nothing above imports it, so without this job it would land unchecked.
   viz-check:
@@ -161,7 +161,7 @@ jobs:
         with:
           nightly-tag: nightly-2026-08-23-fb208ba
 
-      - name: Type-check the Form Board
+      - name: Type-check the app window
         run: roc check src/viz/main.roc
 
   # ADR 0016's gate is pure shell over source text — no toolchain, no OS

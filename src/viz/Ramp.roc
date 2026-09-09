@@ -5,19 +5,16 @@ import Theme
 import Ui
 
 Ramp :: [].{
-	# One chart, one scale. Twelve Monday weeks of load as gradient bars, each
-	# wearing a chip with the CTL it gained. The ramp is encoded as COLOR on
-	# the bars' own axis rather than as a second y: two scales sharing a plot
-	# is a lie no legend repairs, and the split panel it replaces spent a
-	# third of the window on air.
+	# Twelve Monday weeks of load as gradient bars, each wearing a chip with
+	# the CTL it gained: value as text, verdict as color, so the plot keeps
+	# one y-scale. Two scales on one plot cannot both be read honestly.
 	pad : F32
 	pad = 36.0
 	danger : F32
 	danger = 6.0
 
 	# the verdict a week's ramp earns, and the color that says it. Zero is
-	# grey with the sheds: a flat week is not a build, and the legend says
-	# "holds or sheds" for exactly that reason
+	# grey with the sheds: a flat week is not a build.
 	verdict : F32 -> Color.Rgba
 	verdict = |rv| if rv > danger (Theme.alarm_c) else if rv > 0.0 (Theme.tsb_c) else Theme.ink_faint
 
@@ -54,7 +51,6 @@ Ramp :: [].{
 			Text.from("ctl now", model.font).size(11).draw!(frame, { pos: { x: card_x + 16.0, y: 102.0 }, color: ink_faint, align: (Top, Left) })
 			Text.from(tenths(last.ramp10), model.font).size(28).draw!(frame, { pos: { x: win_w - pad - 16.0, y: 68.0 }, color: lc, align: (Top, Right) })
 			Text.from("ctl per week", model.font).size(11).draw!(frame, { pos: { x: win_w - pad - 16.0, y: 102.0 }, color: ink_faint, align: (Top, Right) })
-			# the chips explain themselves once, here
 			bars_top = 168.0
 			bars_bot = win_h - 96.0
 			bars_h = bars_bot - bars_top

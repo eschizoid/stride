@@ -1,4 +1,4 @@
-# The Form Board — `src/viz/`
+# The app window — `src/viz/`
 
 A native window over the engine's PMC series, read at launch from
 `~/.stride/db.sqlite`. This is ADR 0015 made real: pixels for the human, state
@@ -97,7 +97,31 @@ the current partial week never vanishes from the row. A directive with view
 ```
 just viz          # opens the window
 just viz-check    # type-check only, no window
+just viz-app      # installs ~/Applications/Stride.app
 ```
+
+## Installing the released app
+
+Releases attach `stride-app-macos-arm64.zip` and
+`stride-app-macos-x86_64.zip` — the whole `.app`, brand fonts inside
+it, built from the tagged commit and verified for architecture, signature
+and fonts before it is packaged. A zip missing from a release means its
+build job failed; `just viz-app` builds the same bundle locally. Unzip
+anywhere and launch.
+
+A downloaded copy carries macOS's quarantine flag, and only its binary is ad-hoc
+signed — no Developer ID, no notarization — so Gatekeeper refuses the
+first launch. Clear the flag once, pointing at wherever you put it:
+
+```
+xattr -dr com.apple.quarantine "/Applications/Stride.app"
+```
+
+A bundle built locally was never downloaded, so it carries no such flag.
+
+On first launch the bundle copies its fonts to `~/.stride/fonts`. Failed
+copies are logged to `~/.stride/fonts-seed.log`; if the directory itself
+cannot be created, the window falls back to its default font.
 
 The viz pins **its own compiler** — roc-ray's platform needs
 `nightly-2026-08-23-fb208ba`, not the engine's pin. The pin lives in the app header of
@@ -227,7 +251,7 @@ and had every data path diffed against the engine: a legend overprinting two
 other views' titles, an em dash rendering as `?`, colliding axis labels, a count
 shown as `3.0 bests`, and a CP asymptote described in a comment and never drawn.
 
-![Form Board](img/form-board.png)
+![app window](img/form-board.png)
 
 ![Power view](img/power-curve.png)
 
