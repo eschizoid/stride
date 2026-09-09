@@ -156,7 +156,7 @@ Schema :: [].{
 
     # one row per activity per recorded ladder rung: WHICH columns are the
     # power ladder and which family words they carry live here and nowhere
-    # else. A raw best_* column that is 0 or NULL both mean unrecorded, and
+    # else. 0 and NULL in a raw best_* column both mean unrecorded, and
     # the view emits no row for either. Windowed bests, all-time PRs and
     # health reports aggregate this differently, but they unpivot identically.
     activity_power_ladder_drop =
