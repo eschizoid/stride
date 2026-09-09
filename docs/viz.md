@@ -182,6 +182,10 @@ CREATE TABLE IF NOT EXISTS viz_focus (
 SELECT view, range, cursor_day, trace_day, ghost_day, updated_at FROM viz_focus;
 ```
 
+Run ONE window per database. Directives are consumed by whichever window
+polls first and `viz_focus` carries whichever wrote last, so a second window
+silently takes half the directives and half the answers.
+
 A directive is consumed as read — one the window crashes on is dropped, never
 replayed against a stale model. Focus writes are throttled (~2/s at most) and
 only fire when what the human sees actually changed.
