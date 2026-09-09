@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.12.0](https://github.com/eschizoid/stride/compare/v0.11.0...v0.12.0) (2026-09-09)
+
+
+### Features
+
+* layer-check gate — ADR 0016 enforced, zero exceptions ([#392](https://github.com/eschizoid/stride/issues/392)) ([341d830](https://github.com/eschizoid/stride/commit/341d8303179eb2791cbe25367cc0fc68d32f2191))
+* **release:** publish the Stride app with every release ([#430](https://github.com/eschizoid/stride/issues/430)) ([bfe3a2f](https://github.com/eschizoid/stride/commit/bfe3a2f7b4ac345f461d8cf53c0c28fdc9816f97))
+* Stride Form Board as a macOS app (Launchpad launchable) ([#397](https://github.com/eschizoid/stride/issues/397)) ([02b6944](https://github.com/eschizoid/stride/commit/02b69447f0e722f142303cf583a0442e9a7809b7))
+* the viz suite — Form Board + power-duration curve, out of spikes/ into src/viz.roc ([#381](https://github.com/eschizoid/stride/issues/381)) ([1ab50c6](https://github.com/eschizoid/stride/commit/1ab50c60a984ae668f5213c614f2bfab3580099e))
+* **viz:** adaptive density — rows fill the height, panel fits its content ([#411](https://github.com/eschizoid/stride/issues/411)) ([b80df5e](https://github.com/eschizoid/stride/commit/b80df5e5354647ba75a6790e84dcccc5ed57ebd7))
+* **viz:** artifact parity — KPI tiles, event slot, data table view ([#393](https://github.com/eschizoid/stride/issues/393)) ([c171207](https://github.com/eschizoid/stride/commit/c171207c019cb8f2bddd8fded5605d291374390a))
+* **viz:** brand typography + the artifact's visual furniture ([#398](https://github.com/eschizoid/stride/issues/398)) ([32751a8](https://github.com/eschizoid/stride/commit/32751a822de5800b9d060c8f54838644511e651c))
+* **viz:** motion and depth — crossfade, gradients, hover states ([#402](https://github.com/eschizoid/stride/issues/402)) ([4ba275e](https://github.com/eschizoid/stride/commit/4ba275e61e11b25b0cb20c1f5b9cc07fa431701f))
+* **viz:** R reloads from the database, arrows walk the days ([#391](https://github.com/eschizoid/stride/issues/391)) ([430e933](https://github.com/eschizoid/stride/commit/430e933a7999ac35a5f60fb16f8cc5bf5da62f61))
+* **viz:** session picker, curve window keys, table scroll ([#396](https://github.com/eschizoid/stride/issues/396)) ([c8c06ab](https://github.com/eschizoid/stride/commit/c8c06abf0cf59896daf861ca4185dfb85ce78769))
+* **viz:** session trace with detected blocks shaded, rebased onto main ([#387](https://github.com/eschizoid/stride/issues/387)) ([b36de4d](https://github.com/eschizoid/stride/commit/b36de4dea98df64a06dc625b9b3e5e24fee329be))
+* **viz:** the agentic bus — viz_directives in, viz_focus out ([#400](https://github.com/eschizoid/stride/issues/400)) ([7e299df](https://github.com/eschizoid/stride/commit/7e299df57ddc9c535772a0aad50091df0bf7a9f4))
+* **viz:** the calendar heatmap — a year of load at a glance ([#412](https://github.com/eschizoid/stride/issues/412)) ([b295eb4](https://github.com/eschizoid/stride/commit/b295eb49690558f3f5ce69e661057af08017e143))
+* **viz:** the ghost overlay — compare any two sessions on the trace view ([#417](https://github.com/eschizoid/stride/issues/417)) ([1b12ea6](https://github.com/eschizoid/stride/commit/1b12ea6be6c8185dea81b58394170a70e330fb9f))
+* **viz:** the glow pass — post-process bloom with total degradation ([#427](https://github.com/eschizoid/stride/issues/427)) ([809f2a2](https://github.com/eschizoid/stride/commit/809f2a2565cb89f4b07b511947edccb5da2f5865))
+* **viz:** the plan view — today's session, the week's ladder, the coach corner ([#403](https://github.com/eschizoid/stride/issues/403)) ([dd3abd9](https://github.com/eschizoid/stride/commit/dd3abd9612e93ed43632f562e892921948ce2c78))
+* **viz:** the power view — curve and prs merge into one answer ([#421](https://github.com/eschizoid/stride/issues/421)) ([f1a267a](https://github.com/eschizoid/stride/commit/f1a267ac6cc7ca1abc01c853247394552b28081a))
+* **viz:** the prs view — the record book closes the view fleet ([#418](https://github.com/eschizoid/stride/issues/418)) ([a3261e9](https://github.com/eschizoid/stride/commit/a3261e9711a564a1f2f14f9b846a5c1cec96c8a7))
+* **viz:** the ramp view — weekly load and CTL slope with the danger band ([#416](https://github.com/eschizoid/stride/issues/416)) ([93db1b8](https://github.com/eschizoid/stride/commit/93db1b85070449406bf00cb43206da66233cb3d9))
+* **viz:** the zones view — time in zone vs the 80/20 rule ([#414](https://github.com/eschizoid/stride/issues/414)) ([de3f56e](https://github.com/eschizoid/stride/commit/de3f56e6920f90bbe0efb23f1e4f575956daa9c7))
+* **viz:** trace camera and vector iconography close [#399](https://github.com/eschizoid/stride/issues/399) ([#428](https://github.com/eschizoid/stride/issues/428)) ([f36a29d](https://github.com/eschizoid/stride/commit/f36a29d43fdfda0f04bc9999798afef298144b10))
+* **viz:** UX leap 1 — resizable, day-detail panel, pointer, retina text ([#401](https://github.com/eschizoid/stride/issues/401)) ([814f538](https://github.com/eschizoid/stride/commit/814f538a3cc0d8f93ed56c18ae366f640b2aa3e1))
+* **viz:** V records the screen — deterministic session recordings close [#372](https://github.com/eschizoid/stride/issues/372) ([#425](https://github.com/eschizoid/stride/issues/425)) ([ae53206](https://github.com/eschizoid/stride/commit/ae53206e62a0e111ae0f702b0f04922cff8739b4))
+* **viz:** zones and ramp become one chart each, and the trace answers instantly ([#429](https://github.com/eschizoid/stride/issues/429)) ([e344cb8](https://github.com/eschizoid/stride/commit/e344cb847c38550a12a75aa26c962294de153ca0))
+
+
+### Bug Fixes
+
+* **build:** viz-app uses the pinned viz compiler ([#413](https://github.com/eschizoid/stride/issues/413)) ([325ffd5](https://github.com/eschizoid/stride/commit/325ffd511acf0a5f9a831d20e621a630422ffc0b))
+* **viz:** panel titles yield the hover row ([#423](https://github.com/eschizoid/stride/issues/423)) ([ab5cab5](https://github.com/eschizoid/stride/commit/ab5cab5da3756a7bd1abf6488e58ccce9d0da63b))
+* **viz:** the graph audit — caption glyphs, prs recency, zone dots, watt grid ([#420](https://github.com/eschizoid/stride/issues/420)) ([55c76e9](https://github.com/eschizoid/stride/commit/55c76e9d68fd13b7b66bc80d7e6e1b38923eb199))
+* **viz:** the trace picker label says what it counts ([#424](https://github.com/eschizoid/stride/issues/424)) ([6f594c9](https://github.com/eschizoid/stride/commit/6f594c921d079771e9ccc1658121dd2757fcc0d5))
+* **viz:** un-collide the nine-pill header, icon becomes the symbol ([#419](https://github.com/eschizoid/stride/issues/419)) ([e0dbd61](https://github.com/eschizoid/stride/commit/e0dbd6136d24e19259848144266e7b36d24bfa88))
+* **viz:** zones and ramp panels earn their pixels ([#422](https://github.com/eschizoid/stride/issues/422)) ([cfdc6e6](https://github.com/eschizoid/stride/commit/cfdc6e66fbebea6b86e6cef690e28a9176162166))
+
 ## [0.11.0](https://github.com/eschizoid/stride/compare/v0.10.0...v0.11.0) (2026-09-07)
 
 
