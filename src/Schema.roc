@@ -153,4 +153,56 @@ Schema :: [].{
         \\            THEN COALESCE(m.pi_hard_s, 0) ELSE COALESCE(m.z4_s, 0) + COALESCE(m.z5_s, 0) END AS hard_s
         \\FROM activities a
         \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
+
+    # one row per activity per recorded ladder rung: WHICH columns are the
+    # power ladder and which family words they carry live here and nowhere
+    # else. 0 and NULL in a raw best_* column both mean unrecorded, and
+    # the view emits no row for either. Windowed bests, all-time PRs and
+    # health reports aggregate this differently, but they unpivot identically.
+    activity_power_ladder_drop =
+        \\DROP VIEW IF EXISTS activity_power_ladder
+    activity_power_ladder =
+        \\CREATE VIEW activity_power_ladder AS
+        \\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '5s' AS rung, 5 AS secs, m.best_5s_w AS watts
+        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_5s_w, 0) > 0
+        \\UNION ALL
+        \\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '15s' AS rung, 15 AS secs, m.best_15s_w AS watts
+        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_15s_w, 0) > 0
+        \\UNION ALL
+        \\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '30s' AS rung, 30 AS secs, m.best_30s_w AS watts
+        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_30s_w, 0) > 0
+        \\UNION ALL
+        \\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '1min' AS rung, 60 AS secs, m.best_60s_w AS watts
+        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_60s_w, 0) > 0
+        \\UNION ALL
+        \\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '5min' AS rung, 300 AS secs, m.best_300s_w AS watts
+        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_300s_w, 0) > 0
+        \\UNION ALL
+        \\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '10min' AS rung, 600 AS secs, m.best_600s_w AS watts
+        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_600s_w, 0) > 0
+        \\UNION ALL
+        \\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '20min' AS rung, 1200 AS secs, m.best_20min_w AS watts
+        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_20min_w, 0) > 0
+        \\UNION ALL
+        \\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '60min' AS rung, 3600 AS secs, m.best_3600s_w AS watts
+        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_3600s_w, 0) > 0
+
+    # twelve Monday weeks of load and CTL slope: the week's TSS, its
+    # end-of-week CTL, and the ramp (CTL change vs the prior week's end).
+    # Anchored on week_bounds; empty weeks materialize as zero rows.
+    weekly_ramp_drop =
+        \\DROP VIEW IF EXISTS weekly_ramp
+    weekly_ramp =
+        \\CREATE VIEW weekly_ramp AS
+        \\WITH mondays(wk) AS (SELECT date(mon, '-77 days') FROM week_bounds UNION ALL SELECT date(wk, '+7 days') FROM mondays WHERE wk < (SELECT mon FROM week_bounds)),
+        \\wtss AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, SUM(COALESCE(tss, 0)) AS tss FROM daily_load WHERE day >= (SELECT date(mon, '-77 days') FROM week_bounds) GROUP BY awk),
+        \\wctl AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, MAX(day) AS last_day FROM daily_load WHERE day >= (SELECT date(mon, '-84 days') FROM week_bounds) GROUP BY awk)
+        \\SELECT m.wk AS wk, COALESCE(t.tss, 0) AS tss, COALESCE(dl.ctl, 0) AS ctl_end,
+        \\       COALESCE(dl.ctl, 0) - COALESCE(prev.ctl, COALESCE(dl.ctl, 0)) AS ramp
+        \\FROM mondays m
+        \\LEFT JOIN wtss t ON t.awk = m.wk
+        \\LEFT JOIN wctl wc ON wc.awk = m.wk
+        \\LEFT JOIN daily_load dl ON dl.day = wc.last_day
+        \\LEFT JOIN wctl pwc ON pwc.awk = date(m.wk, '-7 days')
+        \\LEFT JOIN daily_load prev ON prev.day = pwc.last_day
 }

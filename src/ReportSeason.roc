@@ -109,15 +109,12 @@ ReportSeason :: [].{
                     \\SELECT COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date,
                     \\       COALESCE(CAST(a.sport_family AS TEXT), CAST(a.sport_type AS TEXT), '') AS fam,
                     \\       COUNT(*) AS n,
-                    \\       -- the house fallback (see zone_sum!): the pi_* split when the activity
-                    \\       -- has one -- power-derived with watts, pace-derived for a distance
-                    \\       -- sport without them -- else the HR zones. Summing the pi_ columns
-                    \\       -- raw drops every session without a split -- a small minority here, most of which
-                    \\       -- DO have zone seconds, and overwhelmingly easy ones, so the raw sum
-                    \\       -- understates easy time and disagrees with what `summary` publishes.
-                    \\       CAST(COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_easy_s ELSE m.z1_s + m.z2_s END), 0) AS REAL) AS easy_s,
-                    \\       CAST(COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_moderate_s ELSE m.z3_s END), 0) AS REAL) AS mod_s,
-                    \\       CAST(COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END), 0) AS REAL) AS hard_s,
+                    \\       -- the per-activity intensity split is the activity_intensity
+                    \\       -- view's definition (pi_* when present, else HR zones), shared
+                    \\       -- with `summary` and the viz so no surface can disagree
+                    \\       CAST(COALESCE(SUM(ai.easy_s), 0) AS REAL) AS easy_s,
+                    \\       CAST(COALESCE(SUM(ai.moderate_s), 0) AS REAL) AS mod_s,
+                    \\       CAST(COALESCE(SUM(ai.hard_s), 0) AS REAL) AS hard_s,
                     \\       CAST(COALESCE(MIN(NULLIF(m.ftp_used, 0)), 0) AS REAL) AS ftp_lo,
                     \\       CAST(COALESCE(MAX(m.ftp_used), 0) AS REAL) AS ftp_hi,
                     \\       -- an id from the group, carried ONLY so a refused date can name a row
@@ -135,6 +132,7 @@ ReportSeason :: [].{
                     \\       -- smallest, and two bad rows still take two repairs.
                     \\       MIN(a.id) AS example_id
                     \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
+                    \\LEFT JOIN activity_intensity ai ON ai.activity_id = a.id
                     \\GROUP BY date, fam ORDER BY date, fam
                 ,
                 bindings: [],

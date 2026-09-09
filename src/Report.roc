@@ -82,19 +82,19 @@ Report :: [].{
                 \\       -- load from a MEASURED source — a power meter or distance-measured pace
                 \\       -- (high-confidence rungs) — vs estimated from HR/RPE/relative-effort
                 \\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN (${high_models_sql}) THEN m.tss ELSE 0 END),0) AS REAL) AS measured,
-                \\       -- polarization intensity per activity: the pi_* split when the activity
-                \\       -- has one (power-derived with watts, pace-derived for a distance sport
-                \\       -- without), else the HR zones. So a power ride's threshold work counts
-                \\       -- as hard even when HR sat on a zone boundary.
-                \\       COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_easy_s ELSE m.z1_s + m.z2_s END),0) AS easy,
-                \\       COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_moderate_s ELSE m.z3_s END),0) AS moderate,
-                \\       COALESCE(SUM(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END),0) AS hard,
+                \\       -- the per-activity intensity split (pi_* when present, HR zones
+                \\       -- otherwise) is the activity_intensity view's definition - the
+                \\       -- same one the viz reads, so the two surfaces cannot disagree
+                \\       COALESCE(SUM(ai.easy_s),0) AS easy,
+                \\       COALESCE(SUM(ai.moderate_s),0) AS moderate,
+                \\       COALESCE(SUM(ai.hard_s),0) AS hard,
                 \\       COUNT(*) AS sessions, COALESCE(SUM(a.moving_time),0) AS moving_time,
                 \\       CAST(COALESCE(SUM(a.distance),0) AS REAL) AS distance_m,
                 \\       COALESCE(SUM(CASE WHEN s.raw_json LIKE '%"heartrate"%' THEN 1 ELSE 0 END),0) AS hr_streams,
                 \\       COALESCE(SUM(CASE WHEN s.raw_json LIKE '%"heartrate"%' OR s.raw_json LIKE '%"watts"%' OR s.raw_json LIKE '%"distance"%' THEN 1 ELSE 0 END),0) AS intensity_streams
                 \\FROM activities a
                 \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
+                \\LEFT JOIN activity_intensity ai ON ai.activity_id = a.id
                 \\LEFT JOIN streams s ON s.activity_id = a.id
                 \\WHERE a.start_local >= :cutoff
             ,
@@ -318,12 +318,13 @@ Report :: [].{
         # MAX(substr(...)) is a STRING max reaching the payload with no Roc-side parse,
         # so a malformed start_local shipped verbatim into a date field — covered by the
         # all-time sweep below, NOT by anything in this query (this one has no cutoff).
-        hard_expr = "COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) >= 300"
+        hard_expr = "COALESCE(ai.hard_s, 0) >= 300"
         last_hard = Sqlite.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(MAX(substr(CAST(a.start_local AS TEXT), 1, 10)), '') AS d
                 \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                \\JOIN activity_intensity ai ON ai.activity_id = a.id
                 \\WHERE ${hard_expr}
             ,
             bindings: [],
@@ -348,6 +349,7 @@ Report :: [].{
                 \\       -- ORDER BY makes "first" a stated property rather than SQLite's.
                 \\       MIN(a.id) AS example_id
                 \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                \\JOIN activity_intensity ai ON ai.activity_id = a.id
                 \\WHERE ${hard_expr} AND a.start_local >= :cutoff
                 \\GROUP BY d ORDER BY d, example_id
             ,
