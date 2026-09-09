@@ -1,4 +1,4 @@
-## Stride Form Board — the viz suite's window over ~/.stride/db.sqlite, read
+## Stride — the viz suite's window over ~/.stride/db.sqlite, read
 ## at launch. The modules beside this file carry the parts: Theme (geometry +
 ## palette), Db (every loader and its types), Ui (the Model), and one module
 ## per view. This file owns the app contract: the platform pin, Model/Msg,
@@ -39,7 +39,7 @@ program = { init!, update!, render! }
 init! : App.Init(Model, [AssetPathInvalid, AssetNotFound, AssetReadFailed, FontLoadFailed, ResourceLimit])
 init! = App.init(
 	App.default
-		.with_title("Stride Form Board")
+		.with_title("Stride")
 		.with_size({ width: Theme.win_w, height: Theme.win_h })
 		.with_frame_pacing(Capped(60))
 		.with_resizable(Bool.True)
@@ -171,7 +171,7 @@ load_model! = |font, curve_days| {
 				{ top: "no event planned", sub: "stride event add <date> <name>" }
 			}
 		Ok({
-			title: mk!("Stride Form Board", 30)?,
+			title: mk!("Stride", 30)?,
 			subs: [
 				{ p: mk!("last 30 days, as of ${as_of}", 15)?, r: 30.U64, chip: mkm!("30d", 12)? },
 				{ p: mk!("last 60 days, as of ${as_of}", 15)?, r: 60.U64, chip: mkm!("60d", 12)? },

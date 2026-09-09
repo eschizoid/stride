@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the Form Board as a real macOS app under $VIZ_APP_DIR (default
+# Builds the viz window as a real macOS app under $VIZ_APP_DIR (default
 # ~/Applications),
 # launchable from Launchpad/Spotlight/Dock like anything else. The bundle carries
 # its own binary (no roc needed at launch); the stride logo becomes the icon.
@@ -19,7 +19,7 @@ trap 'rm -rf "$WORK"' EXIT
 ROC_VIZ="${ROC_VIZ:-roc}"
 APP_DIR="${VIZ_APP_DIR:-$HOME/Applications}"
 mkdir -p "$APP_DIR"
-APP="$APP_DIR/Stride Form Board.app"
+APP="$APP_DIR/Stride.app"
 C="$APP/Contents"
 
 echo "building the viz binary ($ROC_VIZ)..."
@@ -33,7 +33,8 @@ cat > "$C/MacOS/launcher" <<'SH'
 export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 # the window reads ~/.stride/fonts; a downloaded bundle carries its own
 # copies and seeds them here, or the window falls back to its default font
-res="$(cd "$(dirname "$0")/../Resources" && pwd)"
+here="$(cd "$(dirname "$0")" && pwd)"
+res="$here/../Resources"
 log="$HOME/.stride/fonts-seed.log"
 if [ -d "$res/fonts" ]; then
   if mkdir -p "$HOME/.stride/fonts" 2>/dev/null; then
@@ -51,7 +52,7 @@ if [ -d "$res/fonts" ]; then
   fi
 fi
 cd "$HOME"
-exec "$(dirname "$0")/stride-viz"
+exec "$here/stride-viz"
 SH
 chmod +x "$C/MacOS/launcher" "$C/MacOS/stride-viz"
 
@@ -63,9 +64,9 @@ cat > "$C/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleName</key><string>Stride Form Board</string>
-  <key>CFBundleDisplayName</key><string>Stride Form Board</string>
-  <key>CFBundleIdentifier</key><string>com.eschizoid.stride.formboard</string>
+  <key>CFBundleName</key><string>Stride</string>
+  <key>CFBundleDisplayName</key><string>Stride</string>
+  <key>CFBundleIdentifier</key><string>com.eschizoid.stride.app</string>
   <key>CFBundleVersion</key><string>__VERSION__</string>
   <key>CFBundleShortVersionString</key><string>__VERSION__</string>
   <key>CFBundleExecutable</key><string>launcher</string>
@@ -106,4 +107,7 @@ fi
 xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 touch "$APP"
 echo "installed: $APP"
-echo "launch it from Launchpad/Spotlight as 'Stride Form Board'"
+echo "launch it from Launchpad/Spotlight as 'Stride'"
+if [ -d "$APP_DIR/Stride Form Board.app" ]; then
+  echo "note: the old 'Stride Form Board.app' is still in $APP_DIR - delete it to keep one entry in Launchpad"
+fi

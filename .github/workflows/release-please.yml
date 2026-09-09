@@ -100,7 +100,7 @@ jobs:
           if-no-files-found: error
 
   build-viz:
-    name: build the Form Board (${{ matrix.target }})
+    name: build the app (${{ matrix.target }})
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ${{ matrix.runs-on }}
@@ -132,9 +132,11 @@ jobs:
           VIZ_APP_DIR="$PWD/stage" bash tools/make-viz-app.sh
 
       - name: Verify the bundle before it ships
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
           set -euo pipefail
-          app="stage/Stride Form Board.app"
+          app="stage/Stride.app"
           bin="$app/Contents/MacOS/stride-viz"
           # launcher is CFBundleExecutable
           test -x "$app/Contents/MacOS/launcher"
@@ -146,8 +148,9 @@ jobs:
           esac
           got=$(lipo -archs "$bin")
           [ "$got" = "$want" ] || { echo "::error::${{ matrix.target }} bundle is $got, not $want"; exit 1; }
-          # Apple Silicon refuses an unsigned arm64 Mach-O outright
-          codesign -dv "$bin" 2>&1 | head -2
+          # --verify, not -dv: -dv only displays, and exits 0 on a signature
+          # that has been modified - the case Apple Silicon kills at launch
+          codesign --verify --strict "$bin" || { echo "::error::${{ matrix.target }} signature is missing or invalid"; exit 1; }
           # every face the window loads, non-empty, and none dropped
           for f in Quicksand-Medium.ttf JetBrainsMono-Regular.ttf; do
             test -s "$app/Contents/Resources/fonts/$f"
@@ -155,6 +158,10 @@ jobs:
           have=$(ls "$app/Contents/Resources/fonts/"*.ttf | wc -l | tr -d ' ')
           want_n=$(ls assets/fonts/*.ttf | wc -l | tr -d ' ')
           [ "$have" = "$want_n" ] || { echo "::error::bundled $have fonts, assets/fonts has $want_n"; exit 1; }
+          # the script falls back to 0.0.0-dev if the version marker moves;
+          # the CLI gates its --version against the tag, so the app gates too
+          got_v=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app/Contents/Info.plist")
+          [ "$got_v" = "${TAG#v}" ] || { echo "::error::bundle says $got_v, tag is $TAG"; exit 1; }
 
       - name: Prove the launcher seeds a fresh machine
         run: |
@@ -162,18 +169,18 @@ jobs:
           # the launcher cds to $HOME, so seeding ~/.stride/fonts is the
           # bundle's only route to the window
           fake="$(mktemp -d)"
-          HOME="$fake" "stage/Stride Form Board.app/Contents/MacOS/launcher" >/dev/null 2>&1 &
+          HOME="$fake" "stage/Stride.app/Contents/MacOS/launcher" >/dev/null 2>&1 &
           pid=$!
-          sleep 6
+          sleep 3
           kill $pid 2>/dev/null || true
           for f in Quicksand-Medium.ttf JetBrainsMono-Regular.ttf; do
             test -s "$fake/.stride/fonts/$f" || { echo "::error::launcher did not seed $f"; exit 1; }
           done
           # a short/corrupt copy must be repaired, not skipped forever
           printf 'x' > "$fake/.stride/fonts/Quicksand-Medium.ttf"
-          HOME="$fake" "stage/Stride Form Board.app/Contents/MacOS/launcher" >/dev/null 2>&1 &
+          HOME="$fake" "stage/Stride.app/Contents/MacOS/launcher" >/dev/null 2>&1 &
           pid=$!
-          sleep 6
+          sleep 3
           kill $pid 2>/dev/null || true
           [ "$(wc -c < "$fake/.stride/fonts/Quicksand-Medium.ttf")" -gt 1000 ] || { echo "::error::a corrupt font was not repaired"; exit 1; }
           rm -rf "$fake"
@@ -184,13 +191,13 @@ jobs:
           cd stage
           # ditto is Apple's archiver: the bundle round-trips exactly as
           # Finder's own Compress would produce it
-          ditto -c -k --sequesterRsrc --keepParent "Stride Form Board.app" \
-            "../stride-form-board-${{ matrix.target }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "Stride.app" \
+            "../stride-app-${{ matrix.target }}.zip"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: stride-form-board-${{ matrix.target }}
-          path: stride-form-board-${{ matrix.target }}.zip
+          name: stride-app-${{ matrix.target }}
+          path: stride-app-${{ matrix.target }}.zip
           if-no-files-found: error
 
   upload:
@@ -215,10 +222,12 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          ls stride-* >/dev/null 2>&1 || { echo "::error::no binaries built — nothing to attach"; exit 1; }
+          ls stride-* >/dev/null 2>&1 || { echo "::error::nothing built — nothing to attach"; exit 1; }
+          # the app zips match stride-* too, so they cannot stand in for a CLI
+          ls stride-* | grep -qv '^stride-app-' || { echo "::error::no CLI binaries built"; exit 1; }
           # the CLI binaries satisfy stride-* alone, so a missing app zip
           # would pass unnoticed
-          for z in stride-form-board-macos-arm64.zip stride-form-board-macos-x86_64.zip; do
+          for z in stride-app-macos-arm64.zip stride-app-macos-x86_64.zip; do
             [ -f "$z" ] || echo "::warning::$z is missing from this release - its build job failed"
           done
           sha256sum stride-* > SHA256SUMS.txt
