@@ -102,8 +102,9 @@ just viz-app      # installs ~/Applications/Stride.app
 
 ## Installing the released app
 
-Releases attach `stride-app-macos-arm64.zip` and
-`stride-app-macos-x86_64.zip` — the whole `.app`, brand fonts inside
+Releases attach `stride-app-macos-arm64.zip`,
+`stride-app-macos-x86_64.zip` and `stride-app-linux-x86_64.tar.gz` — on
+macOS the whole `.app`, brand fonts inside
 it, built from the tagged commit and verified for architecture, signature
 and fonts before it is packaged. A zip missing from a release means its
 build job failed; `just viz-app` builds the same bundle locally. Unzip
@@ -118,6 +119,11 @@ xattr -dr com.apple.quarantine "/Applications/Stride.app"
 ```
 
 A bundle built locally was never downloaded, so it carries no such flag.
+
+The linux tarball has no bundle format to carry: it holds the binary, the
+fonts and a `stride-app` launcher that seeds them the same way. roc-ray
+ships an x64glibc host only, so there is no linux-arm64 app. Windows has no
+app yet for a reason that is not packaging - see #442.
 
 On first launch the bundle copies its fonts to `~/.stride/fonts`. Failed
 copies are logged to `~/.stride/fonts-seed.log`; if the directory itself

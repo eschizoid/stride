@@ -200,9 +200,85 @@ jobs:
           path: stride-app-${{ matrix.target }}.zip
           if-no-files-found: error
 
+  build-viz-linux:
+    name: build the app (linux-x86_64)
+    needs: release-please
+    # roc-ray ships an x64glibc host only, so linux-arm64 has no app. There is
+    # no bundle format here: the tarball carries the binary, the brand fonts
+    # and a launcher that seeds ~/.stride/fonts, which is what the window reads.
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - name: Set up Roc (the viz pin, not the engine pin)
+        uses: ./.github/actions/setup-roc
+        with:
+          nightly-tag: nightly-2026-08-23-fb208ba
+
+      - name: raylib's link dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libgl1-mesa-dev libx11-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxcursor-dev libasound2-dev
+
+      - name: Build and package
+        run: |
+          set -euo pipefail
+          mkdir -p stage/stride-app/fonts
+          roc build src/viz/main.roc --output=stage/stride-app/stride --opt=dev
+          cp assets/fonts/*.ttf stage/stride-app/fonts/
+          cat > stage/stride-app/stride-app <<'SH'
+          #!/bin/sh
+          # the window reads ~/.stride/fonts; seed it from the copies shipped
+          # beside this script, replacing any that differ in size
+          here="$(cd "$(dirname "$0")" && pwd)"
+          if [ -d "$here/fonts" ]; then
+            mkdir -p "$HOME/.stride/fonts" 2>/dev/null || true
+            for f in "$here"/fonts/*.ttf; do
+              [ -e "$f" ] || continue
+              dst="$HOME/.stride/fonts/$(basename "$f")"
+              if [ ! -e "$dst" ] || [ "$(wc -c < "$f")" != "$(wc -c < "$dst")" ]; then
+                cp "$f" "$dst" 2>/dev/null || echo "could not write $dst" >&2
+              fi
+            done
+          fi
+          cd "$HOME"
+          exec "$here/stride"
+          SH
+          chmod +x stage/stride-app/stride-app stage/stride-app/stride
+          test -s stage/stride-app/stride
+          for f in Quicksand-Medium.ttf JetBrainsMono-Regular.ttf; do
+            test -s "stage/stride-app/fonts/$f"
+          done
+          tar -C stage -czf "stride-app-linux-x86_64.tar.gz" stride-app
+
+      - name: Prove the launcher seeds a fresh home
+        run: |
+          set -euo pipefail
+          fake="$(mktemp -d)"
+          HOME="$fake" ./stage/stride-app/stride-app >/dev/null 2>&1 &
+          pid=$!
+          sleep 3
+          kill $pid 2>/dev/null || true
+          for f in Quicksand-Medium.ttf JetBrainsMono-Regular.ttf; do
+            test -s "$fake/.stride/fonts/$f" || { echo "::error::launcher did not seed $f"; exit 1; }
+          done
+          rm -rf "$fake"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stride-app-linux-x86_64
+          path: stride-app-linux-x86_64.tar.gz
+          if-no-files-found: error
+
   upload:
     name: attach binaries to the release
-    needs: [release-please, build, build-viz]
+    needs: [release-please, build, build-viz, build-viz-linux]
     # ENABLED with `build` above. `always()` so it still attaches whatever DID build even if some
     # target failed (fail-fast is off) — a partial binary set beats none.
     # always() fires on cancellation too; !cancelled() keeps a partial set

@@ -67,8 +67,9 @@ First-time setup takes about ten minutes.
 ## The desktop app
 
 `Stride.app` is the same engine's data, read from the same SQLite file, in a window.
-It ships with every release (`stride-app-macos-arm64.zip` / `stride-app-macos-x86_64.zip`)
-and `just viz-app` builds it locally. Eight views, each answering one question.
+It ships with every release — `stride-app-macos-arm64.zip`,
+`stride-app-macos-x86_64.zip`, `stride-app-linux-x86_64.tar.gz` — and
+`just viz-app` builds it locally on macOS. Eight views, each answering one question.
 
 **Form board** — fitness, fatigue and form over 90 days, with each day's load underneath.
 Hover any day, or walk them with the arrow keys.
