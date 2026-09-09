@@ -13,8 +13,13 @@ Zones :: [].{
 	pad : F32
 	pad = 36.0
 
+	# absence is not a failed verdict: a week with no classified time reads
+	# muted, never in the color that means "you broke the rule"
 	verdict : I64, I64 -> Color.Rgba
-	verdict = |easy, itot| if itot > 0 and easy * 100 // itot >= 80 (Theme.tsb_c) else Theme.alarm_c
+	verdict = |easy, itot|
+		if itot <= 0 (Theme.ink_muted)
+		else if easy * 100 // itot >= 80 (Theme.tsb_c)
+		else Theme.alarm_c
 
 	hours : I64 -> Str
 	hours = |secs| {

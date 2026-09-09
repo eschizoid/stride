@@ -96,7 +96,7 @@ load_model! = |font, curve_days| {
 				# the whole picker loads up front (~3ms of SQL per session), so
 				# every later switch and ghost summon is a memory read, not a
 				# task round-trip - the trace view answers keys instantly
-				tcache = load_tcache!(db, tids, [])
+				tcache = load_tcache!(db, tids)
 				tr = match List.first(tcache) { Ok(t0) => t0.tr
 					Err(_) => [] }
 				sg = match List.first(tcache) { Ok(t0) => t0.sg
@@ -471,15 +471,18 @@ nav_width = |w, n| if nav_iconic(w, n) 80.0 else 68.0
 # One entry per pickable session, loaded eagerly: switching and ghost
 # summons read this list instead of a task round-trip per keypress.
 # Recursion because an effectful body cannot reassign an outer var.
-load_tcache! : Sqlite.Db, List({ id : I64, day : Str }), List({ tr : List(F32), sg : List(Db.Seg), du : F32 }) => List({ tr : List(F32), sg : List(Db.Seg), du : F32 })
-load_tcache! = |db, ids, acc|
+load_tcache! : Sqlite.Db, List({ id : I64, day : Str }) => List({ tr : List(F32), sg : List(Db.Seg), du : F32 })
+load_tcache! = |db, ids|
 	match List.first(ids) {
-		Err(_) => acc
+		Err(_) => []
 		Ok(te) => {
 			tr9 = Db.load_trace!(db, te.id)
 			sg9 = Db.load_segs!(db, te.id)
 			du9 = Db.load_dur!(db, te.id)
-			load_tcache!(db, List.drop_first(ids, 1), List.append(acc, { tr: tr9, sg: sg9, du: du9 }))
+			# prepend onto the tail's result rather than appending onto an
+			# accumulator: one cons per session instead of a rebuilt list,
+			# and picker order survives without a reverse (this stdlib has none)
+			List.prepend(load_tcache!(db, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9 })
 		}
 	}
 
