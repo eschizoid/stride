@@ -406,7 +406,7 @@ on `main`. You never tag or edit the version by hand.
 - **The flow:** commit conventionally → release-please keeps an open "release PR" with the
   pending version + notes → **merge that PR** → it tags `vX.Y.Z`, creates the GitHub
   release, and the build/upload jobs attach the platform binaries. **Windows IS built and
-  shipped** (`stride-windows-x86_64`, since v0.3.0) — basic-cli ships an x64win host
+  shipped** (`stride-cli-windows-x86_64`, `stride-windows-x86_64` before v0.13.0; since v0.3.0) — basic-cli ships an x64win host
   and `OsStr.display` decodes the `WindowsU16s` argv arm. Targets: linux-x86_64,
   macOS arm64 + Intel (macos-15-intel), windows-x86_64, **and linux-arm64** — that last
   one needs the explicit `roc_target: arm64musl` the release workflow passes (left to

@@ -53,7 +53,7 @@ jobs:
             runs-on: ubuntu-latest
           - target: linux-arm64
             runs-on: ubuntu-24.04-arm
-            # VERIFIED — v0.4.0 onward ship stride-linux-arm64. (verify-arm64.yml is a
+            # VERIFIED — v0.4.0 onward ship the linux-arm64 CLI. (verify-arm64.yml is a
             # dispatch-only re-check, not an automatic gate.)
             # Left to itself the compiler auto-detects arm64v1musl on ubuntu-24.04-arm,
             # which does not resolve to a usable host; naming the target explicitly is the
@@ -77,21 +77,21 @@ jobs:
           # only linux-arm64 sets roc_target; everywhere else the native default is right
           target_flag=""
           if [ -n "${{ matrix.roc_target }}" ]; then target_flag="--target=${{ matrix.roc_target }}"; fi
-          roc build src/main.roc --output="stride-${{ matrix.target }}" --opt=dev $target_flag
-          ls -la stride-${{ matrix.target }}* || true
-          test -f "stride-${{ matrix.target }}" || test -f "stride-${{ matrix.target }}.exe"
+          roc build src/main.roc --output="stride-cli-${{ matrix.target }}" --opt=dev $target_flag
+          ls -la stride-cli-${{ matrix.target }}* || true
+          test -f "stride-cli-${{ matrix.target }}" || test -f "stride-cli-${{ matrix.target }}.exe"
       - name: Verify binary version
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
-          bin="stride-${{ matrix.target }}"; [ -f "$bin" ] || bin="${bin}.exe"
+          bin="stride-cli-${{ matrix.target }}"; [ -f "$bin" ] || bin="${bin}.exe"
           out=$(./"$bin" --version)
           [ "$out" = "stride ${TAG#v}" ] || { echo "::error::binary says '$out', tag is $TAG"; exit 1; }
       - uses: actions/upload-artifact@v7
         with:
-          name: stride-${{ matrix.target }}
-          path: stride-${{ matrix.target }}*
+          name: stride-cli-${{ matrix.target }}
+          path: stride-cli-${{ matrix.target }}*
           if-no-files-found: error
 
   publish:
@@ -111,7 +111,7 @@ jobs:
         working-directory: dist
         run: |
           set -euo pipefail
-          ls stride-* >/dev/null 2>&1 || { echo "::error::no binaries built"; exit 1; }
+          ls stride-cli-* >/dev/null 2>&1 || { echo "::error::no binaries built"; exit 1; }
           sha256sum stride-* > SHA256SUMS.txt
       - uses: taiki-e/install-action@v2
         with:

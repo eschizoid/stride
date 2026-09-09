@@ -67,8 +67,10 @@ First-time setup takes about ten minutes.
 ## The desktop app
 
 `Stride.app` is the same engine's data, read from the same SQLite file, in a window.
-It ships with every release (`stride-app-macos-arm64.zip` / `stride-app-macos-x86_64.zip`)
-and `just viz-app` builds it locally. Eight views, each answering one question.
+It ships with every release — `stride-app-macos-arm64.zip`,
+`stride-app-macos-x86_64.zip`, `stride-app-linux-x86_64.tar.gz` (unpack and
+run `./stride-app/stride-app`) — and `just viz-app` builds it locally on
+macOS. Eight views, each answering one question.
 
 **Form board** — fitness, fatigue and form over 90 days, with each day's load underneath.
 Hover any day, or walk them with the arrow keys.
@@ -162,15 +164,18 @@ and put it on your `PATH`. Pick one:
 
 | Platform | Asset |
 | --- | --- |
-| Linux · x86_64 | `stride-linux-x86_64` |
-| macOS · Apple Silicon | `stride-macos-arm64` |
-| macOS · Intel | `stride-macos-x86_64` |
-| Linux · arm64 | `stride-linux-arm64` |
-| Windows · x86_64 | `stride-windows-x86_64` |
+| Linux · x86_64 | `stride-cli-linux-x86_64` |
+| macOS · Apple Silicon | `stride-cli-macos-arm64` |
+| macOS · Intel | `stride-cli-macos-x86_64` |
+| Linux · arm64 | `stride-cli-linux-arm64` |
+| Windows · x86_64 | `stride-cli-windows-x86_64` |
+
+Releases from v0.12.0 and earlier named these `stride-<platform>`, without the
+`cli-`; the desktop app ships beside them as `stride-app-<platform>`.
 
 ```bash
 # example: macOS Apple Silicon — adjust the asset for your platform
-curl -fsSL -o stride https://github.com/eschizoid/stride/releases/latest/download/stride-macos-arm64
+curl -fsSL -o stride https://github.com/eschizoid/stride/releases/latest/download/stride-cli-macos-arm64
 chmod +x stride
 sudo mv stride /usr/local/bin/          # or anywhere on your PATH (e.g. ~/.local/bin)
 stride --version

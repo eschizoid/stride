@@ -91,7 +91,7 @@ iconutil -c icns "$ICONSET" -o "$C/Resources/stride.icns"
 # copies for the launcher to seed, and this machine gets them for a repo-less
 # launch. Missing files mean the default font.
 mkdir -p "$C/Resources/fonts"
-cp assets/fonts/*.ttf "$C/Resources/fonts/" 2>/dev/null || true
+cp assets/fonts/*.ttf assets/fonts/OFL-*.txt "$C/Resources/fonts/" 2>/dev/null || true
 mkdir -p "$HOME/.stride/fonts"
 cp assets/fonts/*.ttf "$HOME/.stride/fonts/" 2>/dev/null || true
 
