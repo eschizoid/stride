@@ -65,7 +65,8 @@ encoded as the chip's COLOR on the bars' own axis - teal builds, red past
 +6/wk, grey sheds - rather than as a second y-axis, because two scales
 sharing a plot is a lie no legend repairs. The card carries where fitness
 stands and how fast it is moving; a week with no load keeps a base stub, so
-the current partial week never vanishes from the row. A directive with view
+the current partial week never vanishes from the row. The weeks come from
+the `weekly_ramp` view - the one definition of weekly ramp. A directive with view
 7 opens it.
 
 ![The ramp view](img/ramp.png)
@@ -239,6 +240,9 @@ printed in watts right where it lives; a rung whose window best IS the
 record collapses to one teal dot marked "pr". Hovering a rung reads back
 the record, the day it was set, and the window's value. The CP fit
 reports from the bottom-right status corner, its dashed line on the chart.
+The ladder itself - which columns, which family, 0-means-unrecorded - is
+the `activity_power_ladder` view's, shared with the record book and the
+CLI's health report.
 
 The **points** come from the stored per-activity bests (`activity_metrics.best_*_w`),
 maxed over the window. `CAST(ROUND(...))` matters — a bare `CAST` truncates and

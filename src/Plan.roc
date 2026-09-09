@@ -1341,7 +1341,7 @@ Plan :: [].{
                         \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
                         \\       COALESCE(m.z1_s,0) AS z1_s, COALESCE(m.z2_s,0) AS z2_s, COALESCE(m.z3_s,0) AS z3_s,
                         \\       COALESCE(m.z4_s,0) AS z4_s, COALESCE(m.z5_s,0) AS z5_s,
-                        \\       COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) AS hard_s,
+                        \\       COALESCE(ai.hard_s, 0) AS hard_s,
                         \\       CAST(COALESCE(a.distance,0) AS REAL) AS distance_m,
                         \\       CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                         \\       CAST(COALESCE(a.relative_effort,0) AS REAL) AS relative_effort,
@@ -1352,6 +1352,7 @@ Plan :: [].{
                         \\       CASE WHEN COALESCE(m.hr_samples_total, 0) > 0 THEN 1 ELSE 0 END AS zones_known,
                         \\       COALESCE(CAST(m.load_model AS TEXT), '') AS load_model
                         \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
+                        \\LEFT JOIN activity_intensity ai ON ai.activity_id = a.id
                         \\WHERE a.start_local >= :cutoff
                         \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC
                     ,

@@ -48,3 +48,23 @@ The first two:
   the CLI can adopt the same view whenever it grows the matching feature.
 - The schema version bumps when a view definition changes, like any
   migration.
+
+## Amendment (2026-09-10): the full set, and why not a shared package
+
+Five views now carry every cross-surface definition: `plan_current`,
+`week_bounds`, `activity_intensity` (the intensity split — both report
+surfaces and the viz read it; no inline copy remains), `activity_power_ladder`
+(the power-ladder unpivot: which columns, which family words, and that 0
+means unrecorded — windowed bests, all-time PRs and health reports aggregate
+it differently but unpivot identically), and `weekly_ramp` (Monday-week TSS,
+end-of-week CTL, week-over-week ramp). `Metrics.roc`'s `ramp_7d`/`ramp_28d_avg`
+are rolling daily rates — a different quantity that keeps its own name.
+
+The views are a workaround elevated to a decision, and the constraint behind
+them is worth recording: Roc apps bind to exactly one platform, the engine
+(basic-cli) and the window (roc-ray) pin different compiler nightlies, and so
+no Roc module can be imported by both binaries today. A platform-independent
+`stride-core` package is the eventual fix; until the two pins converge on a
+compiler where that works, the database is the only module system the two
+binaries share, and this ADR is deferred-until-the-toolchain-allows, not
+chosen forever.

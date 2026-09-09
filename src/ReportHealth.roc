@@ -600,16 +600,20 @@ ReportHealth :: [].{
         r = Sqlite.query!({
             path: Path.utf8(path),
             query:
+                \\-- the ladder unpivot (columns, family, 0-means-unrecorded) is the
+                \\-- activity_power_ladder view's; this only re-pivots per window.
+                \\-- MAX over the view's >0 rows equals MAX over raw columns, since a
+                \\-- positive max ignores zeros and an all-zero window COALESCEs to 0.
                 \\SELECT
-                \\  CAST(COALESCE(MAX(m.best_5s_w), 0) AS REAL) AS d5,
-                \\  CAST(COALESCE(MAX(m.best_15s_w), 0) AS REAL) AS d15,
-                \\  CAST(COALESCE(MAX(m.best_30s_w), 0) AS REAL) AS d30,
-                \\  CAST(COALESCE(MAX(m.best_60s_w), 0) AS REAL) AS d60,
-                \\  CAST(COALESCE(MAX(m.best_300s_w), 0) AS REAL) AS d300,
-                \\  CAST(COALESCE(MAX(m.best_600s_w), 0) AS REAL) AS d600,
-                \\  CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS d1200,
-                \\  CAST(COALESCE(MAX(m.best_3600s_w), 0) AS REAL) AS d3600
-                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+                \\  CAST(COALESCE(MAX(CASE WHEN a.rung = '5s' THEN a.watts END), 0) AS REAL) AS d5,
+                \\  CAST(COALESCE(MAX(CASE WHEN a.rung = '15s' THEN a.watts END), 0) AS REAL) AS d15,
+                \\  CAST(COALESCE(MAX(CASE WHEN a.rung = '30s' THEN a.watts END), 0) AS REAL) AS d30,
+                \\  CAST(COALESCE(MAX(CASE WHEN a.rung = '1min' THEN a.watts END), 0) AS REAL) AS d60,
+                \\  CAST(COALESCE(MAX(CASE WHEN a.rung = '5min' THEN a.watts END), 0) AS REAL) AS d300,
+                \\  CAST(COALESCE(MAX(CASE WHEN a.rung = '10min' THEN a.watts END), 0) AS REAL) AS d600,
+                \\  CAST(COALESCE(MAX(CASE WHEN a.rung = '20min' THEN a.watts END), 0) AS REAL) AS d1200,
+                \\  CAST(COALESCE(MAX(CASE WHEN a.rung = '60min' THEN a.watts END), 0) AS REAL) AS d3600
+                \\FROM activity_power_ladder a
                 \\WHERE a.start_local >= :cutoff${sf.frag}
             ,
             bindings: List.concat([{ name: ":cutoff", value: String(cutoff) }], sf.binds),

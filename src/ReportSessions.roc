@@ -502,7 +502,7 @@ ReportSessions :: [].{
                 \\       -- POWER-derived where there are watts, PACE-derived for a distance sport
                 \\       -- without them -- else HR Z4+Z5. So a power ride's threshold work counts,
                 \\       -- and so does a run's.
-                \\       COALESCE(CASE WHEN COALESCE(m.pi_easy_s,0)+COALESCE(m.pi_moderate_s,0)+COALESCE(m.pi_hard_s,0) > 0 THEN m.pi_hard_s ELSE m.z4_s + m.z5_s END, 0) AS hard_s,
+                \\       COALESCE(ai.hard_s, 0) AS hard_s,
                 \\       CAST(COALESCE(a.relative_effort,0) AS REAL) AS relative_effort,
                 \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
                 \\       CAST(COALESCE(m.avg_hr_stream, a.avg_hr, 0) AS REAL) AS avg_hr_scored,
@@ -512,6 +512,7 @@ ReportSessions :: [].{
                 \\       CASE WHEN COALESCE(m.hr_samples_total, 0) > 0 THEN 1 ELSE 0 END AS zones_known,
                 \\       COALESCE(CAST(m.load_model AS TEXT), '') AS load_model
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
+                \\LEFT JOIN activity_intensity ai ON ai.activity_id = a.id
                 \\WHERE (1=1${sf.frag})
                 \\-- undateable rows FIRST, and that is the whole reason `activities` is
                 \\-- allowed to report an unreadable date instead of refusing like the
