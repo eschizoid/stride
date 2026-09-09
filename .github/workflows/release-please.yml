@@ -99,9 +99,60 @@ jobs:
           path: stride-${{ matrix.target }}*
           if-no-files-found: error
 
+  build-viz:
+    name: build the Form Board (${{ matrix.target }})
+    needs: release-please
+    # The desktop app ships beside the CLI. macOS ONLY for now, deliberately:
+    # the bundle IS the deliverable there (Launchpad, Dock icon, fonts inside),
+    # and a linux roc-ray binary needs a verified recipe for raylib's X11/GL
+    # link deps that nobody has run on these runners yet - a job that might
+    # break a release run buys nothing until someone proves it out.
+    # The viz pins its OWN roc nightly: roc-ray needs 08-23, the engine 09-04.
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false # one arch failing shouldn't cost the other, or the CLI
+      matrix:
+        include:
+          - target: macos-arm64
+            runs-on: macos-latest
+          - target: macos-x86_64
+            runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - name: Set up Roc (the viz pin, not the engine pin)
+        uses: ./.github/actions/setup-roc
+        with:
+          nightly-tag: nightly-2026-08-23-fb208ba
+
+      - name: Build the .app bundle
+        run: |
+          set -euo pipefail
+          VIZ_APP_DIR="$PWD/stage" bash tools/make-viz-app.sh
+          test -x "stage/Stride Form Board.app/Contents/MacOS/stride-viz"
+          test -f "stage/Stride Form Board.app/Contents/Resources/fonts/Quicksand-Medium.ttf"
+
+      - name: Zip it
+        run: |
+          set -euo pipefail
+          cd stage
+          # ditto, not zip: it preserves the bundle's resource forks and
+          # execute bits, which a plain zip drops and Finder then refuses
+          ditto -c -k --sequesterRsrc --keepParent "Stride Form Board.app" \
+            "../stride-form-board-${{ matrix.target }}.zip"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stride-form-board-${{ matrix.target }}
+          path: stride-form-board-${{ matrix.target }}.zip
+          if-no-files-found: error
+
   upload:
     name: attach binaries to the release
-    needs: [release-please, build]
+    needs: [release-please, build, build-viz]
     # ENABLED with `build` above. `always()` so it still attaches whatever DID build even if some
     # target failed (fail-fast is off) — a partial binary set beats none.
     if: ${{ always() && needs.release-please.outputs.release_created == 'true' }}

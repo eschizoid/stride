@@ -97,7 +97,25 @@ the current partial week never vanishes from the row. A directive with view
 ```
 just viz          # opens the window
 just viz-check    # type-check only, no window
+just viz-app      # installs ~/Applications/Stride Form Board.app
 ```
+
+## Installing the released app
+
+Every release attaches `stride-form-board-macos-arm64.zip` and
+`stride-form-board-macos-x86_64.zip` — the whole `.app`, brand fonts inside
+it, built from the tagged commit by the release workflow. Unzip into
+`/Applications` (or anywhere) and launch.
+
+The bundle is NOT code-signed, so macOS quarantines a downloaded copy and
+refuses the first launch. Clear the flag once:
+
+```
+xattr -dr com.apple.quarantine "/Applications/Stride Form Board.app"
+```
+
+`just viz-app` builds the same bundle locally and never needs that, because
+a bundle you built yourself was never quarantined.
 
 The viz pins **its own compiler** — roc-ray's platform needs
 `nightly-2026-08-23-fb208ba`, not the engine's pin. The pin lives in the app header of

@@ -16,7 +16,9 @@ WORK=$(mktemp -d /tmp/stride-viz-app.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 
 ROC_VIZ="${ROC_VIZ:-roc}"
-APP="$HOME/Applications/Stride Form Board.app"
+APP_DIR="${VIZ_APP_DIR:-$HOME/Applications}"
+mkdir -p "$APP_DIR"
+APP="$APP_DIR/Stride Form Board.app"
 C="$APP/Contents"
 
 echo "building the viz binary ($ROC_VIZ)..."
@@ -28,6 +30,16 @@ cp "$WORK/stride-viz" "$C/MacOS/stride-viz"
 cat > "$C/MacOS/launcher" <<'SH'
 #!/bin/bash
 export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+# the window reads brand fonts from ~/.stride/fonts; a bundle that was
+# downloaded rather than built carries them and seeds that directory once,
+# so the first launch on a fresh machine is not the default-font one
+res="$(cd "$(dirname "$0")/../Resources" && pwd)"
+if [ -d "$res/fonts" ]; then
+  mkdir -p "$HOME/.stride/fonts"
+  for f in "$res"/fonts/*.ttf; do
+    [ -e "$f" ] && [ ! -e "$HOME/.stride/fonts/$(basename "$f")" ] && cp "$f" "$HOME/.stride/fonts/"
+  done
+fi
 cd "$HOME"
 exec "$(dirname "$0")/stride-viz"
 SH
@@ -62,6 +74,8 @@ iconutil -c icns "$ICONSET" -o "$C/Resources/stride.icns"
 # a fresh bundle can be quarantined or stale-cached; clear both
 # the brand fonts live in ~/.stride/fonts for a bundle launch (cwd=$HOME,
 # no repo checkout in sight); missing files just mean the default font
+mkdir -p "$C/Resources/fonts"
+cp assets/fonts/*.ttf "$C/Resources/fonts/" 2>/dev/null || true
 mkdir -p "$HOME/.stride/fonts"
 cp assets/fonts/*.ttf "$HOME/.stride/fonts/" 2>/dev/null || true
 
