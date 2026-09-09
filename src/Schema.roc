@@ -155,10 +155,10 @@ Schema :: [].{
         \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
 
     # one row per activity per recorded ladder rung: WHICH columns are the
-    # power ladder, which family words they carry, and that 0 means
-    # not-recorded (a ride too short for a rung stores 0, never NULL) live
-    # here and nowhere else. Windowed bests, all-time PRs and health reports
-    # aggregate this differently, but they unpivot identically.
+    # power ladder and which family words they carry live here and nowhere
+    # else. A raw best_* column that is 0 or NULL both mean unrecorded, and
+    # the view emits no row for either. Windowed bests, all-time PRs and
+    # health reports aggregate this differently, but they unpivot identically.
     activity_power_ladder_drop =
         \\DROP VIEW IF EXISTS activity_power_ladder
     activity_power_ladder =

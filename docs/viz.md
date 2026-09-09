@@ -240,7 +240,7 @@ printed in watts right where it lives; a rung whose window best IS the
 record collapses to one teal dot marked "pr". Hovering a rung reads back
 the record, the day it was set, and the window's value. The CP fit
 reports from the bottom-right status corner, its dashed line on the chart.
-The ladder itself - which columns, which family, 0-means-unrecorded - is
+The ladder itself - which columns, which family, that zero and NULL both mean unrecorded - is
 the `activity_power_ladder` view's, shared with the record book and the
 CLI's health report.
 

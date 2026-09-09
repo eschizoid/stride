@@ -49,7 +49,7 @@ The first two:
 - The schema version bumps when a view definition changes, like any
   migration.
 
-## Amendment (2026-09-10): the full set, and why not a shared package
+## Amendment (2026-09-09): the full set, and why not a shared package
 
 Five views now carry every cross-surface definition: `plan_current`,
 `week_bounds`, `activity_intensity` (the intensity split — both report

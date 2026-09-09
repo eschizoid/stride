@@ -149,8 +149,10 @@ Db :: [].{
 
 	# The power-duration curve: the window's max per rung off the shared
 	# activity_power_ladder view. CAST(ROUND(..)) because a bare CAST
-	# truncates and would draw the whole ladder a watt low. A rung with no
-	# recorded effort in the window is simply absent, as before.
+	# truncates and would draw the whole ladder a watt low. A rung nobody
+	# rode in the window emits no row; the renderer keys the curve off the
+	# PR ladder's rungs and guards every now_w path with > 0, so a missing
+	# rung and a zero-watt rung draw identically.
 	load_curve! : Sqlite.Db, I64 => List(CurvePt)
 	load_curve! = |db, days| {
 		q = "SELECT secs AS d, CAST(ROUND(MAX(watts)) AS INTEGER) AS p FROM activity_power_ladder WHERE sport_family = 'Ride' AND start_local >= date('now', '-' || :d || ' days') GROUP BY rung, secs ORDER BY secs"
@@ -421,7 +423,7 @@ Db :: [].{
 	ZoneWeek : { wk : Str, z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, easy : I64, moderate : I64, hard : I64 }
 	load_zone_weeks! : Sqlite.Db => List(ZoneWeek)
 	load_zone_weeks! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(wk AS TEXT) AS wk, CAST(ROUND(tss) AS INTEGER) AS tss, CAST(ROUND(ctl_end * 10) AS INTEGER) AS ctl10, CAST(ROUND(ramp * 10) AS INTEGER) AS ramp10 FROM weekly_ramp ORDER BY wk ASC", bindings: [] }) {
+		match Sqlite.query!({ db, query: "WITH mondays(wk) AS (SELECT date(mon, '-77 days') FROM week_bounds UNION ALL SELECT date(wk, '+7 days') FROM mondays WHERE wk < (SELECT mon FROM week_bounds)), agg AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, SUM(z1_s) AS z1, SUM(z2_s) AS z2, SUM(z3_s) AS z3, SUM(z4_s) AS z4, SUM(z5_s) AS z5, SUM(easy_s) AS easy, SUM(moderate_s) AS moderate, SUM(hard_s) AS hard FROM activity_intensity WHERE day >= (SELECT date(mon, '-77 days') FROM week_bounds) GROUP BY awk) SELECT CAST(m.wk AS TEXT) AS wk, CAST(COALESCE(a.z1, 0) AS INTEGER) AS z1, CAST(COALESCE(a.z2, 0) AS INTEGER) AS z2, CAST(COALESCE(a.z3, 0) AS INTEGER) AS z3, CAST(COALESCE(a.z4, 0) AS INTEGER) AS z4, CAST(COALESCE(a.z5, 0) AS INTEGER) AS z5, CAST(COALESCE(a.easy, 0) AS INTEGER) AS easy, CAST(COALESCE(a.moderate, 0) AS INTEGER) AS moderate, CAST(COALESCE(a.hard, 0) AS INTEGER) AS hard FROM mondays m LEFT JOIN agg a ON a.awk = m.wk ORDER BY m.wk ASC", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -443,7 +445,7 @@ Db :: [].{
 	RampWeek : { wk : Str, tss : I64, ctl10 : I64, ramp10 : I64 }
 	load_ramp_weeks! : Sqlite.Db => List(RampWeek)
 	load_ramp_weeks! = |db|
-		match Sqlite.query!({ db, query: "WITH mondays(wk) AS (SELECT date(mon, '-77 days') FROM week_bounds UNION ALL SELECT date(wk, '+7 days') FROM mondays WHERE wk < (SELECT mon FROM week_bounds)), wtss AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, SUM(COALESCE(tss, 0)) AS tss FROM daily_load WHERE day >= (SELECT date(mon, '-77 days') FROM week_bounds) GROUP BY awk), wctl AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, MAX(day) AS last_day FROM daily_load WHERE day >= (SELECT date(mon, '-84 days') FROM week_bounds) GROUP BY awk) SELECT CAST(m.wk AS TEXT) AS wk, CAST(ROUND(COALESCE(t.tss, 0)) AS INTEGER) AS tss, CAST(ROUND(COALESCE(dl.ctl, 0) * 10) AS INTEGER) AS ctl10, CAST(ROUND((COALESCE(dl.ctl, 0) - COALESCE(prev.ctl, COALESCE(dl.ctl, 0))) * 10) AS INTEGER) AS ramp10 FROM mondays m LEFT JOIN wtss t ON t.awk = m.wk LEFT JOIN wctl wc ON wc.awk = m.wk LEFT JOIN daily_load dl ON dl.day = wc.last_day LEFT JOIN wctl pwc ON pwc.awk = date(m.wk, '-7 days') LEFT JOIN daily_load prev ON prev.day = pwc.last_day ORDER BY m.wk ASC", bindings: [] }) {
+		match Sqlite.query!({ db, query: "SELECT CAST(wk AS TEXT) AS wk, CAST(ROUND(tss) AS INTEGER) AS tss, CAST(ROUND(ctl_end * 10) AS INTEGER) AS ctl10, CAST(ROUND(ramp * 10) AS INTEGER) AS ramp10 FROM weekly_ramp ORDER BY wk ASC", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -459,12 +461,12 @@ Db :: [].{
 	# each record first landed. Ordering is on the TRUE stored watts - the
 	# round is presentation, so two efforts that DISPLAY equal still rank by
 	# their real values; only an exact tie breaks to the earliest ride (a
-	# matched record is not a new one; the ladder stores 0, not NULL, for a ride too short
-	# for a rung, so the record filter is > 0). Eight rows on success - a rung
-	# with no record yet comes back as w 0 / day '' so the ladder never
-	# shrinks or jumps; a failed query returns none and the view shows its
-	# empty state, the same honest floor every loader here has. Each rung
-	# scans activity_metrics once, and the whole query runs once per load
+	# matched record is not a new one). The ladder view has no row for an
+	# unrecorded rung, so each rung's best comes off a LEFT JOIN whose empty
+	# side COALESCEs to w 0 / day '' - eight rows on success, and the ladder
+	# never shrinks or jumps; a failed query returns none and the view shows
+	# its empty state, the same honest floor every loader here has. Each rung
+	# scans the ladder view once, and the whole query runs once per load
 	# (launch and R) - never per frame - so the scans stay off any hot path
 	# and no best_* index is warranted.
 	PrRung : { rung : Str, secs : I64, w : I64, day : Str }
