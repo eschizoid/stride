@@ -76,27 +76,36 @@ run `./stride-app/stride-app`), `stride-app-windows-x86_64.zip` (unzip and run
 **Form board** — fitness, fatigue and form over 90 days, with each day's load underneath.
 Hover any day, or walk them with the arrow keys.
 
-![The form board](docs/img/form-board.png)
-
 **Zones** — twelve weeks of time in zone, each week capped with its easy share: teal
 holds the 80/20 line, alarm red breaks it.
 
-![The zones view](docs/img/zones.png)
-
 **Ramp** — weekly load with the CTL each week gained riding above it as a chip. Colour is
 the verdict: teal builds, red past +6/wk, grey holds or sheds.
-
-![The ramp view](docs/img/ramp.png)
 
 **Session trace** — one ride's power with the interval detector's work blocks shaded
 behind it, so "did it place the boundaries right" is a question you can answer by eye.
 `shift+[` overlays a second session as a ghost on the same scale; the wheel zooms.
 
-![The session trace](docs/img/session-trace.png)
+**Power** — the window's power-duration curve against the all-time record book, with a
+per-rung gap readout and a CP fit in the corner.
 
-The rest: **power** (the window's curve against the all-time record book), **table**
-(every day with a detail panel), **plan** (today's session and the week's ladder),
-**heat** (a year of load, one cell per day). `TAB` cycles them, or click a pill.
+The rest: **table** (every day with a detail panel), **plan** (today's session and the
+week's ladder), **heat** (a year of load, one cell per day). `TAB` cycles them, or
+click a pill.
+
+<table>
+  <tr>
+    <td colspan="2"><img src="docs/img/form-board.png" alt="The form board" /></td>
+  </tr>
+  <tr>
+    <td><img src="docs/img/zones.png" alt="The zones view" /></td>
+    <td><img src="docs/img/ramp.png" alt="The ramp view" /></td>
+  </tr>
+  <tr>
+    <td><img src="docs/img/session-trace.png" alt="The session trace" /></td>
+    <td><img src="docs/img/power-curve.png" alt="The power view" /></td>
+  </tr>
+</table>
 
 A coach can drive the window over the same database — `viz_directives` in, `viz_focus`
 out, no sockets — and every directive reaches a terminal status it can read back,
@@ -433,11 +442,13 @@ flowchart TD
         mirror["mirror tier<br>activities, streams<br>re-pullable"]
         computed["computed tier<br>activity_metrics, daily_load, activity_segments<br>rebuilt by analyze"]
         judgment["judgment tier<br>planned_sessions, ratings, config<br>exists only here"]
+        bus["agent bus<br>viz_directives, viz_focus, capabilities"]
     end
 
     analyze["analyze — pure Roc math"]
     queries["queries — JSON or tables"]
     coach(["LLM coach"])
+    window(["desktop window — roc-ray"])
 
     strava -->|"oauth token exchange"| auth
     auth -.->|"writes tokens to config"| judgment
@@ -446,13 +457,17 @@ flowchart TD
     mirror --> analyze --> computed
     judgment ~~~ queries
     db --> queries
-    queries -->|"summary, week, progress"| coach
+    db -->|"shared SQL views, one definition each"| window
+    queries -->|"summary, week, progress, viz"| coach
     coach -->|"week add, complete, skip, rate"| judgment
+    coach -->|"steer, viz_directives"| bus
+    bus --> window
+    window -.->|"focus, statuses, capabilities"| bus
 
     classDef tier fill:#f6f8fa,stroke:#57606a,color:#24292f
     classDef actor fill:#ddf4ff,stroke:#0969da,color:#0a3069
-    class mirror,computed,judgment tier
-    class coach actor
+    class mirror,computed,judgment,bus tier
+    class coach,window actor
 ```
 
 The three tiers exist because they have three different recovery stories. Mirror is
