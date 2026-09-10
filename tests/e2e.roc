@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1130)?
+    checks_ran_exactly!(1131)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2797,6 +2797,13 @@ b_seed_analyze! = |ctx| {
     # skills/ directory, same release-written version, same rot risk
     claude_plugin_version = Str.trim(sh!("jq -r '.version // empty' .claude-plugin/plugin.json"))
     check!("...and the Claude plugin manifest names it too", claude_plugin_version == rp_version)?
+    # the three manifest descriptions (claude plugin, marketplace entry, codex
+    # plugin) are marketing copy, not routing - but they are the one ungated
+    # triple-copy left, so equality is pinned in the shim-pin spirit
+    desc_a = Str.trim(sh!("jq -r '.description // empty' .claude-plugin/plugin.json"))
+    desc_b = Str.trim(sh!("jq -r '.plugins[0].description // empty' .claude-plugin/marketplace.json"))
+    desc_c = Str.trim(sh!("jq -r '.description // empty' .codex-plugin/plugin.json"))
+    check!("the three plugin-manifest descriptions are one string", !(Str.is_empty(desc_a)) and desc_a == desc_b and desc_a == desc_c)?
     # The repo-local Claude shim is a REAL file (a tracked symlink silently became a text
     # file on default Windows checkouts), so its routing `description` is a second copy of
     # the one string skill discovery reads — the exact drift the maintainer's own

@@ -540,7 +540,7 @@ Db :: [].{
         # should report the gap, not refuse to run because of it.
         Ok(Str.with_ascii_lowercased(List.first(modes).ok_or("unknown")))
     }
-        configure_concurrency! = |path| {
+    configure_concurrency! = |path| {
         # busy_timeout FIRST, and not as a style preference: switching journal mode takes a
         # write lock, so with the default timeout of 0 the very statement meant to enable
         # WAL is itself the one that fails instantly against a busy database — leaving the

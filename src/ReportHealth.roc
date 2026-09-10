@@ -609,7 +609,7 @@ ReportHealth :: [].{
                     # tte fits the RIDE family: the CP model needs a power meter
                     # and this athlete's other families have none. Named in the
                     # payload so a caller never has to guess whose model it is.
-                    fit = Report.cp_fit_as_of!(path, Sports.canonical("Ride"), today, 90)?
+                    fit = Report.cp_fit_as_of!(path, Sports.canonical("Ride"), today, 90.U64)?
                     if fit.cp <= 0.0 {
                         # Two different causes, one branch: too few bests, or
                         # bests that are inconsistent (a longer one above a
