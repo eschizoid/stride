@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.13.0](https://github.com/eschizoid/stride/compare/v0.12.0...v0.13.0) (2026-09-10)
+
+
+### Features
+
+* bump both apps' compilers - engine to 09-09, viz to roc-ray rc5 on 09-07 ([#456](https://github.com/eschizoid/stride/issues/456)) ([4330473](https://github.com/eschizoid/stride/commit/43304735cabce2989d6b9a33e8f4ab71ddd242d4))
+* Claude plugin manifest mirroring the Codex one ([#455](https://github.com/eschizoid/stride/issues/455)) ([7b3d093](https://github.com/eschizoid/stride/commit/7b3d09346a4536dcf470f5008ae418b5e7d548e0))
+* one definition each for power ladder and weekly ramp (v31) ([#448](https://github.com/eschizoid/stride/issues/448)) ([f0f29ea](https://github.com/eschizoid/stride/commit/f0f29ea7488bc092ecef781ff0339fb369d62dce))
+* **release:** CLI artifacts take the cli- prefix; prove the linux window links ([#441](https://github.com/eschizoid/stride/issues/441)) ([31fbefe](https://github.com/eschizoid/stride/commit/31fbefe5dbe36cd09f1399a7e871823c10f6bf7e))
+* ship a Windows desktop app artifact ([#454](https://github.com/eschizoid/stride/issues/454)) ([426cbf3](https://github.com/eschizoid/stride/commit/426cbf36fe4a236427fe4f2098ecf903c525bc55))
+* the window publishes its bus capabilities; stride viz serves them ([#449](https://github.com/eschizoid/stride/issues/449)) ([a54b35b](https://github.com/eschizoid/stride/commit/a54b35bfbe6192c55a570bacefd8d67c52ab7ed4))
+* **viz:** directives get terminal outcomes, and staleness ([#446](https://github.com/eschizoid/stride/issues/446)) ([d80cb0d](https://github.com/eschizoid/stride/commit/d80cb0dc3672fe3b2a47099c43bcf80d33270455))
+
+
+### Bug Fixes
+
+* **ci:** the linux viz jobs drop third-party apt sources first ([#447](https://github.com/eschizoid/stride/issues/447)) ([a5e47fe](https://github.com/eschizoid/stride/commit/a5e47fe1a2281b203f45086ecee4737e440068bf))
+* manual release merges SHA256SUMS instead of clobbering app rows ([#451](https://github.com/eschizoid/stride/issues/451)) ([f1232f8](https://github.com/eschizoid/stride/commit/f1232f82e38c0a13f95a4c24f3653822f7dcabb5))
+* resolve the home directory on Windows (USERPROFILE fallback) ([#453](https://github.com/eschizoid/stride/issues/453)) ([59e20af](https://github.com/eschizoid/stride/commit/59e20afd501c6a26c60cda4c221cc3f48278b786))
+
 ## [0.12.0](https://github.com/eschizoid/stride/compare/v0.11.0...v0.12.0) (2026-09-09)
 
 
