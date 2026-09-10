@@ -89,6 +89,7 @@ load_model! = |font, curve_days| {
 			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], prs: [], tcache: [] }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
+				Db.publish_caps!(db, caps_views, caps_fields)
 				s = Db.load_series!(db)
 				e = Db.load_event!(db)
 				c = Db.load_curve!(db, curve_days)
@@ -517,6 +518,22 @@ load_tcache! = |db, ids|
 view_basename : U8 -> Str
 view_basename = |v|
 	if v == 0 "form-board" else if v == 1 "power" else if v == 2 "session-trace" else if v == 3 "data-table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else "ramp"
+
+# what the bus accepts, as data (#439). caps_views derives from view_basename
+# so the published list can never drift from the dispatch; caps_fields must
+# move together with refusals_for - the accepts column states the same rules
+# that function enforces, and both live in this file so an edit sees both.
+caps_views : List({ id : I64, name : Str })
+caps_views = List.map([0.U8, 1, 2, 3, 4, 5, 6, 7], |v| { id: U8.to_i64(v), name: view_basename(v) })
+
+caps_fields : List({ name : Str, kind : Str, accepts : Str })
+caps_fields = [
+	{ name: "view", kind: "integer", accepts: "0..7" },
+	{ name: "range", kind: "integer", accepts: "30|60|90 (days; omitted leaves the range unchanged)" },
+	{ name: "cursor_day", kind: "date", accepts: "YYYY-MM-DD present in the form-board series" },
+	{ name: "trace_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions" },
+	{ name: "ghost_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions, or 'none' to dismiss" },
+]
 
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
 update! = |model0, program_input| {

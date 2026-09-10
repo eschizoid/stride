@@ -199,6 +199,13 @@ CREATE TABLE IF NOT EXISTS viz_focus (
 SELECT view, range, cursor_day, trace_day, ghost_day, updated_at FROM viz_focus;
 ```
 
+Everything the two paragraphs above hand-list — the view numbers, the
+directive fields, the staleness window — is also self-published by the
+window at every launch, and `stride viz --json` serves it. When this
+prose and the binary disagree, the binary is the one telling the truth:
+discovery for a tool goes through the command, not this file.
+
+
 Run ONE window per database. Directives are consumed by whichever window
 polls first and `viz_focus` carries whichever wrote last, so a second window
 silently takes half the directives and half the answers.
@@ -210,7 +217,7 @@ Every directive reaches a terminal state, readable back by id:
   refused field ("cursor_day 1999-01-01 not in the series").
 - `superseded` — a newer directive arrived before this one was applied;
   newest wins.
-- `stale` — older than 10 minutes when read. A directive written while no
+- `stale` — older than 600 seconds when read. A directive written while no
   window was open must not seize the one that eventually launches.
 
 The winning row stays `pending` until the frame that applied it reports

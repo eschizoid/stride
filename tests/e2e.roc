@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1113)?
+    checks_ran_exactly!(1121)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -352,6 +352,7 @@ run_scenarios! = |ctx| {
     # Reversed, that check silently stopped covering the avg_watts rung.
     b_device_watts!(ctx)?
     b_doctor!(ctx)?
+    b_viz_caps!(ctx)?
     b_human!(ctx)?
     b_command_schemas!(ctx)?
     # LAST of the substantive scenarios: the loop needs a rich, analyzed fixture — real
@@ -1330,7 +1331,7 @@ b_init_config! = |ctx| {
     # here is the deliberate-bump discipline: adding a properly described command still
     # has to change a number a reader sees.
     overlap = Str.trim(sh!("LC_ALL=C comm -12 '${verbs_dir}/parser' '${verbs_dir}/spec' | wc -l | tr -d ' '"))
-    check!("...and the two lists genuinely overlap on all 33 verbs (got ${overlap})", overlap == "33")?
+    check!("...and the two lists genuinely overlap on all 34 verbs (got ${overlap})", overlap == "34")?
     _ = sh!("rm -rf '${verbs_dir}'")
 
     # ...and the HUMAN help names every command the table declares. `help_text` is a
@@ -1348,7 +1349,7 @@ b_init_config! = |ctx| {
     _ = sh!("rm -rf '${help_dir}' && mkdir -p '${help_dir}' && ${spec_names} > '${help_dir}/spec' && ${human_help} > '${help_dir}/human'")
     # Fail-closed: an empty extraction on either side would make the loop below vacuous.
     help_sizes = Str.trim(sh!("wc -l < '${help_dir}/spec' | tr -d ' '"))
-    check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "38")?
+    check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "39")?
     missing_from_help = Str.trim(sh!("while IFS= read -r c; do grep -qw -- \"\$c\" '${help_dir}/human' || printf '%s ' \"\$c\"; done < '${help_dir}/spec'"))
     check!("every command in the table is named in `stride --help` (missing: ${missing_from_help})", missing_from_help == "")?
     _ = sh!("rm -rf '${help_dir}'")
@@ -4419,12 +4420,13 @@ b_command_schemas! = |ctx| {
     check!("every form's payload conforms to the schema the TABLE names for it (bad: ${schema_mismatch})", schema_mismatch == "")?
     # ...and that loop validated a real number of forms rather than skipping them
     # all: `validated != "0"` cannot see 15 selected vs 13 validated, and the
-    # `|| continue` drops any erroring form, so its schema goes unverified. TWO
-    # legitimate skips, pinned by NAME rather than absorbed into a count: `reps`
-    # (no detected intervals here) and `tte 300` (no CP fit) — the second appeared
-    # when #257 widened the sweep to forms WITH required arguments.
+    # `|| continue` drops any erroring form, so its schema goes unverified. THREE
+    # legitimate skips, pinned by NAME rather than absorbed into a count: `viz`
+    # (its payload exists only after a window publish, and b_viz_caps! drops its
+    # seeded tables so this driver stays in the window-never-ran state), `reps`
+    # (no detected intervals here) and `tte 300` (no CP fit).
     schema_skipped = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | ([.name] + [.args[] | select(.required) | .example] | join(\" \"))' | while read -r n; do HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null | jq -e '.data' >/dev/null 2>&1 || printf '%s ' \"$n\"; done"))
-    check!("...and the only forms with no payload to validate are the two that legitimately have none (got: ${schema_skipped})", schema_skipped == "tte 300 reps")?
+    check!("...and the only forms with no payload to validate are the three that legitimately have none (got: ${schema_skipped})", schema_skipped == "viz tte 300 reps")?
 
     # ── args arity, both bounds (#219) — the only dimension of the six with no
     # derivation check, and the one with the defect history. Both probes run
@@ -6645,6 +6647,44 @@ b_compare! = |ctx| {
 }
 
 # ── doctor: coverage + provenance + honest gaps + time mode ─────────
+# ── #439: bus capability discovery is served from the DATABASE, never a doc.
+# The window cannot run headless here, so this pass plays the window's part:
+# it writes a small publish in publish_caps!'s exact shape and spellings (a
+# 2-view/1-field subset, not the full eight-and-five) and asserts the CLI
+# relays it — and that every absence shape gets the refusal, not a crash.
+b_viz_caps! : Ctx => Try({}, _)
+b_viz_caps! = |ctx| {
+    check!("viz before any window publish answers no_viz_capabilities", strjq!(ctx, ["viz"], ".error.code") == "no_viz_capabilities")?
+    # the payload's flagship guarantee is published == enforced, and the range
+    # row once claimed a "-1 clears" the binary never performed. Both spellings
+    # live in src/viz/main.roc (caps_fields and refusals_for); this compares the
+    # number sets across all three spellings — published (caps_fields), refused
+    # (refusals_for) and applied (the two directive.range arms) — so widening
+    # or narrowing any one alone fails here by name.
+    range_parity = Str.trim(sh!("caps=$(grep 'name: \"range\"' src/viz/main.roc | grep -oE '[0-9]+' | LC_ALL=C sort -n | tr '\\n' ' '); enf=$(grep 'not 30/60/90' src/viz/main.roc | grep -oE 'dv.range != [0-9]+' | grep -oE '[0-9]+$' | LC_ALL=C sort -nu | tr '\\n' ' '); app=$(grep -oE 'directive.range == [0-9]+' src/viz/main.roc | grep -oE '[0-9]+$' | LC_ALL=C sort -nu | tr '\\n' ' '); if [ -n \"$caps\" ] && [ \"$caps\" = \"$enf\" ] && [ \"$caps\" = \"$app\" ]; then echo same; else echo \"caps=$caps enf=$enf app=$app\"; fi"))
+    check!("the published range set equals the enforced range set (${range_parity})", range_parity == "same")?
+    _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_capabilities (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+    _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_views (id INTEGER PRIMARY KEY, name TEXT NOT NULL);")
+    _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_fields (field TEXT PRIMARY KEY, kind TEXT NOT NULL, accepts TEXT NOT NULL);")
+    _ = sql!(ctx.db, "INSERT INTO viz_capabilities (key, value) VALUES ('protocol','1'),('staleness_seconds','600'),('published_at',datetime('now'));")
+    _ = sql!(ctx.db, "INSERT INTO viz_views (id, name) VALUES (0,'form-board'),(1,'power');")
+    _ = sql!(ctx.db, "INSERT INTO viz_fields (field, kind, accepts) VALUES ('view','integer','0..7');")
+    check!("viz serves the published protocol as a NUMBER", strjq!(ctx, ["viz"], ".data.protocol | tojson") == "1")?
+    check!("...and the staleness as one", strjq!(ctx, ["viz"], ".data.staleness_seconds | tojson") == "600")?
+    check!("...every view row, id-ordered", strjq!(ctx, ["viz"], "[.data.views[] | (.id | tostring) + \":\" + .name] | join(\",\")") == "0:form-board,1:power")?
+    check!("...and the field row verbatim", strjq!(ctx, ["viz"], ".data.fields[0] | .name + \"/\" + .kind + \"/\" + .accepts") == "view/integer/0..7")?
+    check!("viz payload conforms to its schema", Str.is_empty(Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' viz | jq '.data' | jq -r --slurpfile schema schemas/v3/viz.json -f tools/validate.jq 2>&1"))))?
+    # a HALF-written publish — tables present, scalars gone — must refuse the
+    # same way as no publish at all: protocol 0 is not a protocol
+    _ = sql!(ctx.db, "DELETE FROM viz_capabilities;")
+    check!("a publish with no scalars refuses with the same code", strjq!(ctx, ["viz"], ".error.code") == "no_viz_capabilities")?
+    # leave no trace: later passes assert against the window-never-ran state
+    _ = sql!(ctx.db, "DROP TABLE viz_capabilities;")
+    _ = sql!(ctx.db, "DROP TABLE viz_views;")
+    _ = sql!(ctx.db, "DROP TABLE viz_fields;")
+    Ok({})
+}
+
 b_doctor! : Ctx => Try({}, _)
 b_doctor! = |ctx| {
     check!("doctor activities > 0", sfloat(strjq!(ctx, ["doctor"], ".data.activities")) > 0.0)?

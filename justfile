@@ -201,7 +201,7 @@ schema-check: build
             # catch-all and are loud at rc=1 rather than skipped.) What to watch: `progress`
             # or `reps` making its date required would derive the table's example, answer
             # `no_workout_on_date`, and silently skip.
-            no_activities|no_data|no_power_data|no_cp_fit|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals|no_intervals_on_date|unscorable|irregular_anchor)
+            no_activities|no_data|no_power_data|no_cp_fit|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals|no_intervals_on_date|unscorable|irregular_anchor|no_viz_capabilities)
                 echo "$inv: skipped ($code)"; checked=$((checked + 1)); continue ;;
             # DATA FAULTS — true statements about the DATABASE, not about the invocation,
             # so they must not get the rejection message below, which says the opposite and

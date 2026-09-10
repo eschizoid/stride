@@ -230,6 +230,39 @@ Db :: [].{
 		{}
 	}
 
+	# the window's half of capability discovery (#439): what an agent may put
+	# on the bus is a fact about THIS binary, so this binary states it. The
+	# three tables are rewritten wholesale on every model load - they always
+	# describe the build that last ran - and the CLI serves them read-only,
+	# treating their absence as "the window never ran against this database".
+	publish_caps! : Sqlite.Db, List({ id : I64, name : Str }), List({ name : Str, kind : Str, accepts : Str }) => {}
+	publish_caps! = |db, views, fields| {
+		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_capabilities (key TEXT PRIMARY KEY, value TEXT NOT NULL)", bindings: [] })
+		_ = Sqlite.execute!({ db, query: "BEGIN IMMEDIATE", bindings: [] })
+		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_views (id INTEGER PRIMARY KEY, name TEXT NOT NULL)", bindings: [] })
+		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_fields (field TEXT PRIMARY KEY, kind TEXT NOT NULL, accepts TEXT NOT NULL)", bindings: [] })
+		_ = Sqlite.execute!({ db, query: "DELETE FROM viz_capabilities", bindings: [] })
+		_ = Sqlite.execute!({ db, query: "DELETE FROM viz_views", bindings: [] })
+		_ = Sqlite.execute!({ db, query: "DELETE FROM viz_fields", bindings: [] })
+		_ = Sqlite.execute!({ db, query: "INSERT INTO viz_capabilities (key, value) VALUES ('protocol', '1'), ('staleness_seconds', '${(stale_secs).to_str()}'), ('published_at', datetime('now'))", bindings: [] })
+		List.for_each!(views, |v| {
+			_ = Sqlite.execute!({ db, query: "INSERT INTO viz_views (id, name) VALUES (:i, :n)", bindings: [{ name: ":i", value: Integer(v.id) }, { name: ":n", value: String(v.name) }] })
+			{}
+		})
+		List.for_each!(fields, |f| {
+			_ = Sqlite.execute!({ db, query: "INSERT INTO viz_fields (field, kind, accepts) VALUES (:f, :k, :a)", bindings: [{ name: ":f", value: String(f.name) }, { name: ":k", value: String(f.kind) }, { name: ":a", value: String(f.accepts) }] })
+			{}
+		})
+		_ = Sqlite.execute!({ db, query: "COMMIT", bindings: [] })
+		{}
+	}
+
+	# the ONE staleness constant: the freshness window the poll enforces and
+	# the number publish_caps! advertises both interpolate this value, so the
+	# published contract cannot drift from the enforced one.
+	stale_secs : I64
+	stale_secs = 600
+
 	Directive : { id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str }
 
 	# newest unconsumed directive, consumed AS READ — a directive the window
@@ -255,8 +288,8 @@ Db :: [].{
 		# as stale, applied by nobody. The SELECT below refuses stale rows
 		# independently, so one slipping past this sweep is labeled late but
 		# never applied.
-		_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET consumed = 1, status = 'stale', error = 'older than 10 minutes when read' WHERE consumed = 0 AND created_at < datetime('now', '-10 minutes')", bindings: [] })
-		match Sqlite.query!({ db, query: "SELECT id, COALESCE(view, -1) AS v, COALESCE(range, -1) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd FROM viz_directives WHERE consumed = 0 AND created_at >= datetime('now', '-10 minutes') ORDER BY id DESC LIMIT 1", bindings: [] }) {
+		_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET consumed = 1, status = 'stale', error = 'older than ' || ${(stale_secs).to_str()} || ' seconds when read' WHERE consumed = 0 AND created_at < datetime('now', '-${(stale_secs).to_str()} seconds')", bindings: [] })
+		match Sqlite.query!({ db, query: "SELECT id, COALESCE(view, -1) AS v, COALESCE(range, -1) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd FROM viz_directives WHERE consumed = 0 AND created_at >= datetime('now', '-${(stale_secs).to_str()} seconds') ORDER BY id DESC LIMIT 1", bindings: [] }) {
 			Err(_) => None
 			Ok(rows) => match List.first(rows) {
 				Err(_) => None

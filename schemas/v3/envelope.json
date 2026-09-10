@@ -56,6 +56,7 @@
             "no_intervals_on_date",
             "no_power_data",
             "no_scorable_workouts",
+            "no_viz_capabilities",
             "no_workout_on_date",
             "not_authenticated",
             "not_set",
