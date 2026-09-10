@@ -1,0 +1,14 @@
+{
+  "name": "stride",
+  "owner": {
+    "name": "Mariano Gonzalez",
+    "url": "https://github.com/eschizoid"
+  },
+  "plugins": [
+    {
+      "name": "stride",
+      "source": "./",
+      "description": "Local-first, deterministic multi-sport training analytics. The engine computes the numbers; the agent adds judgment."
+    }
+  ]
+}
