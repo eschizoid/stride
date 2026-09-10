@@ -128,7 +128,7 @@ jobs:
             gh release download "$TAG" --pattern SHA256SUMS.txt -O existing.txt --repo "${{ github.repository }}" || : > existing.txt
             if [ -s existing.txt ]; then
               built=$(ls dist/stride-* | xargs -n1 basename)
-              while IFS= read -r line; do
+              while IFS= read -r line || [ -n "$line" ]; do
                 f=${line##* }
                 keep=1
                 for b in $built; do [ "$f" = "$b" ] && keep=0; done
