@@ -16,7 +16,7 @@ pin=$(grep -oE 'roc: "nightly-[0-9a-z-]+"' src/viz/main.roc | grep -oE 'nightly-
 [ -n "$pin" ] || { echo "pin-check: could not read the roc pin from src/viz/main.roc's app header"; exit 4; }
 
 sites=$(grep -rn 'nightly-tag:' .github/workflows/ | wc -l | tr -d ' ')
-EXPECT_SITES=4
+EXPECT_SITES=5
 if [ "$sites" != "$EXPECT_SITES" ]; then
   echo "pin-check: found $sites nightly-tag sites in .github/workflows, expected $EXPECT_SITES."
   echo "pin-check: if a viz build job was added or removed, update the number here in the same commit;"

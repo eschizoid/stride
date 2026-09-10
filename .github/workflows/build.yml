@@ -203,6 +203,30 @@ jobs:
           test -s stride-viz-linux
           file stride-viz-linux
 
+  # The one Windows-shaped viz failure so far was resolution, not linking
+  # (#442: no printenv, so HOME came back empty and every view rendered its
+  # empty state). Linking here proves the roc-ray x64win host stays viable,
+  # and the grep proves the USERPROFILE fallback exists in the source that
+  # built - the window itself cannot run headless on a runner.
+  viz-link-windows:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Roc (the viz pin, not the engine pin)
+        uses: ./.github/actions/setup-roc
+        with:
+          nightly-tag: nightly-2026-08-23-fb208ba
+
+      - name: Link the window
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'USERPROFILE' src/viz/main.roc
+          roc build src/viz/main.roc --output=stride-viz.exe --opt=dev
+          test -s stride-viz.exe
+
   # ADR 0016's gate is pure shell over source text — no toolchain, no OS
   # variance to cover, so one dedicated job states exactly what it enforces.
   layer-check:

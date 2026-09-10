@@ -235,8 +235,10 @@ window's own rules. Focus writes are throttled
 
 - No F64→F32 narrowing exists, so the SQL query CASTs to integer tenths and
   the app divides by 10 — the numeric boundary belongs to SQL.
-- No Env module on the platform; `HOME` is read by capturing `printenv` output
-  through `Cmd` — on every load, which means at launch and again on each `R`.
+- No Env module on the platform; the home directory is read by capturing
+  shell output through `Cmd` — `printenv HOME` on unix, cmd's echo of
+  `%USERPROFILE%` on Windows (the same variable the CLI falls back to) — on
+  every load, which means at launch and again on each `R`.
 - `has` is a reserved word; uppercase identifiers are types.
 
 ## The power view (TAB)
