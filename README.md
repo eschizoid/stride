@@ -365,11 +365,11 @@ because an aerobic model does not fit it.
 
 The repo ships an agent skill at
 [`skills/stride/`](skills/stride/SKILL.md), written for any agent rather than one
-vendor. Claude Code picks it up automatically inside a checkout, through a tracked shim
-at `.claude/skills/stride/` that only redirects there (e2e pins the shim's routing
-description byte-equal to the canonical one, so the two cannot drift apart). For any
-agent outside a checkout, install the one canonical copy into whatever directory that
-agent reads skills from.
+vendor. For Claude Code, install it as a plugin — `/plugin marketplace add
+eschizoid/stride`, then install `stride` — and every session, inside or outside a
+checkout, resolves the one canonical copy (e2e pins that no second copy exists in the
+repo to drift). For any other agent, install that canonical copy into whatever
+directory the agent reads skills from.
 
 Codex reads `$CODEX_HOME/skills` (default `~/.codex/skills`), and its built-in
 skill-installer can fetch straight from GitHub, so the easiest route is to ask Codex
