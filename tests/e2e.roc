@@ -6658,8 +6658,10 @@ b_viz_caps! = |ctx| {
     # the payload's flagship guarantee is published == enforced, and the range
     # row once claimed a "-1 clears" the binary never performed. Both spellings
     # live in src/viz/main.roc (caps_fields and refusals_for); this compares the
-    # number sets, so widening either side alone fails here by name.
-    range_parity = Str.trim(sh!("caps=$(grep 'name: \"range\"' src/viz/main.roc | grep -oE '[0-9]+' | LC_ALL=C sort -n | tr '\\n' ' '); enf=$(grep 'not 30/60/90' src/viz/main.roc | grep -oE 'dv.range != [0-9]+' | grep -oE '[0-9]+$' | LC_ALL=C sort -n | tr '\\n' ' '); if [ -n \"$caps\" ] && [ \"$caps\" = \"$enf\" ]; then echo same; else echo \"caps=$caps enf=$enf\"; fi"))
+    # number sets across all three spellings — published (caps_fields), refused
+    # (refusals_for) and applied (the two directive.range arms) — so widening
+    # or narrowing any one alone fails here by name.
+    range_parity = Str.trim(sh!("caps=$(grep 'name: \"range\"' src/viz/main.roc | grep -oE '[0-9]+' | LC_ALL=C sort -n | tr '\\n' ' '); enf=$(grep 'not 30/60/90' src/viz/main.roc | grep -oE 'dv.range != [0-9]+' | grep -oE '[0-9]+$' | LC_ALL=C sort -nu | tr '\\n' ' '); app=$(grep -oE 'directive.range == [0-9]+' src/viz/main.roc | grep -oE '[0-9]+$' | LC_ALL=C sort -nu | tr '\\n' ' '); if [ -n \"$caps\" ] && [ \"$caps\" = \"$enf\" ] && [ \"$caps\" = \"$app\" ]; then echo same; else echo \"caps=$caps enf=$enf app=$app\"; fi"))
     check!("the published range set equals the enforced range set (${range_parity})", range_parity == "same")?
     _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_capabilities (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
     _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_views (id INTEGER PRIMARY KEY, name TEXT NOT NULL);")

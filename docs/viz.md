@@ -217,7 +217,7 @@ Every directive reaches a terminal state, readable back by id:
   refused field ("cursor_day 1999-01-01 not in the series").
 - `superseded` — a newer directive arrived before this one was applied;
   newest wins.
-- `stale` — older than 10 minutes when read. A directive written while no
+- `stale` — older than 600 seconds when read. A directive written while no
   window was open must not seize the one that eventually launches.
 
 The winning row stays `pending` until the frame that applied it reports
