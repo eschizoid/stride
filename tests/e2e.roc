@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1121)?
+    checks_ran_exactly!(1129)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -353,6 +353,7 @@ run_scenarios! = |ctx| {
     b_device_watts!(ctx)?
     b_doctor!(ctx)?
     b_viz_caps!(ctx)?
+    b_cross_surface!(ctx)?
     b_human!(ctx)?
     b_command_schemas!(ctx)?
     # LAST of the substantive scenarios: the loop needs a rich, analyzed fixture — real
@@ -6647,6 +6648,64 @@ b_compare! = |ctx| {
 }
 
 # ── doctor: coverage + provenance + honest gaps + time mode ─────────
+# ── #440: the numbers both surfaces publish, asserted equal through both, and
+# a hostile bus that must not move the CLI. The window itself cannot run here,
+# but post-#448 every cross-surface value has ONE definition in a SQL view, so
+# parity is provable as CLI JSON vs the very SELECTs the loaders run. The
+# window-side application of hostile directives is refusals_for's job, gated
+# by the #439 parity pin above; THIS pass proves the engine's answers do not
+# move no matter what lands on the bus.
+b_cross_surface! : Ctx => Try({}, _)
+b_cross_surface! = |ctx| {
+    # the CLI's power curve vs the ladder view, same cutoff, same family word,
+    # every rung the window would draw — both sides in tenths of a watt
+    cli_curve = strjq!(ctx, ["power-curve", "3650", "Ride"], "[.data.points[] | select(.watts > 0) | (.dur_s | tostring) + \":\" + ((.watts * 10 | round) | tostring)] | join(\",\")")
+    view_curve = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(s), '') FROM (SELECT secs || ':' || CAST(ROUND(MAX(watts) * 10) AS INTEGER) AS s FROM activity_power_ladder WHERE sport_family = 'Ride' AND start_local >= date('${ctx.today}', '-3650 days') GROUP BY rung, secs ORDER BY secs);"))
+    check!("the CLI power curve equals the ladder view at every rung (${cli_curve})", !Str.is_empty(cli_curve) and cli_curve == view_curve)?
+    # end-of-week CTL: weekly_ramp's newest week vs the load series on that
+    # week's last loaded day, both in thousandths
+    wk_ctl = Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(ctl_end * 1000) AS INTEGER) FROM weekly_ramp ORDER BY wk DESC LIMIT 1;"))
+    wk_day = Str.trim(sql!(ctx.db, "SELECT MAX(dl.day) FROM daily_load dl, (SELECT wk FROM weekly_ramp ORDER BY wk DESC LIMIT 1) w WHERE dl.day >= w.wk AND dl.day < date(w.wk, '+7 days');"))
+    cli_ctl = strjq!(ctx, ["load", "30"], "[.data[] | select(.day == \"${wk_day}\") | (.ctl * 1000 | round)] | first | tostring")
+    check!("the CLI load series and weekly_ramp agree on end-of-week CTL (${wk_ctl} on ${wk_day})", !Str.is_empty(wk_day) and wk_ctl == cli_ctl)?
+    # hard seconds through the LISTING (whose hard_s is the intensity view's
+    # number; the detail command's hard_s is deliberately the HR-zone
+    # quantity, with the power split under its own names) vs the view. The
+    # fixture's organic sessions all classify easy here, so a known-hard one
+    # is seeded (pi_* columns, so the view's pi-over-zones arm is the one
+    # exercised) and removed after — 0 == 0 cannot satisfy this vacuously.
+    _ = sql!(ctx.db, "INSERT INTO activities (id, name, sport_type, start_local, moving_time, distance, elevation) VALUES (9501, 'cross-surface hard ride', 'Ride', '${ctx.d2}T09:00:00Z', 3600, 30000, 0);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id, pi_easy_s, pi_moderate_s, pi_hard_s) VALUES (9501, 1800, 600, 1234);")
+    view_hard = Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(hard_s) AS INTEGER) FROM activity_intensity WHERE activity_id = 9501;"))
+    cli_hard = strjq!(ctx, ["activities", "30"], "[.data[] | select(.id == 9501) | .hard_s | round | tostring] | first")
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 9501;")
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 9501;")
+    check!("a hard session's listed hard seconds match its activity_intensity row (${cli_hard})", view_hard == "1234" and cli_hard == "1234")?
+
+    # ── the hostile matrix: nothing on the bus may move an engine answer.
+    # Baselines first, then every hostile shape the issue names, then the
+    # same questions again.
+    base_acts = strjq!(ctx, ["doctor"], ".data.activities")
+    base_ctl = strjq!(ctx, ["summary"], ".data.fitness_ctl | tostring")
+    _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_directives (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT (datetime('now')), view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT, ghost_day TEXT, consumed INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', error TEXT, applied_at TEXT);")
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (99);")
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view, cursor_day) VALUES (0, '2099-13-45');")
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (trace_day) VALUES ('1970-01-01');")
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view, created_at) VALUES (1, datetime('now', '-1 hour'));")
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES ('banana');")
+    _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_focus (id INTEGER PRIMARY KEY CHECK (id = 1), updated_at TEXT NOT NULL, view INTEGER NOT NULL, range INTEGER NOT NULL, cursor_day TEXT, trace_day TEXT, ghost_day TEXT);")
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO viz_focus (id, updated_at, view, range) VALUES (1, 'not a timestamp', -7, 12345);")
+    check!("doctor is unmoved by a hostile bus", strjq!(ctx, ["doctor"], ".data.activities") == base_acts)?
+    check!("summary is unmoved by a hostile bus", strjq!(ctx, ["summary"], ".data.fitness_ctl | tostring") == base_ctl)?
+    check!("plan still answers over a hostile bus", strjq!(ctx, ["plan"], ".data | has(\"summary\") | tostring") == "true")?
+    check!("viz still refuses honestly over a hostile bus", strjq!(ctx, ["viz"], ".error.code") == "no_viz_capabilities")?
+    # ...and with the bus tables deleted entirely
+    _ = sql!(ctx.db, "DROP TABLE viz_directives;")
+    _ = sql!(ctx.db, "DROP TABLE viz_focus;")
+    check!("summary is unmoved by the bus tables vanishing", strjq!(ctx, ["summary"], ".data.fitness_ctl | tostring") == base_ctl)?
+    Ok({})
+}
+
 # ── #439: bus capability discovery is served from the DATABASE, never a doc.
 # The window cannot run headless here, so this pass plays the window's part:
 # it writes a small publish in publish_caps!'s exact shape and spellings (a
