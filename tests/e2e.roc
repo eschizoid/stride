@@ -6652,9 +6652,9 @@ b_compare! = |ctx| {
 # a hostile bus that must not move the CLI. The window itself cannot run here,
 # but post-#448 every cross-surface value has ONE definition in a SQL view, so
 # parity is provable as CLI JSON vs the very SELECTs the loaders run. The
-# window-side application of hostile directives is refusals_for's job, gated
-# by the #439 parity pin above; THIS pass proves the engine's answers do not
-# move no matter what lands on the bus.
+# window-side application of hostile directives is refusals_for's job — its
+# range set is the one the #439 parity pin in b_viz_caps! gates; THIS pass
+# proves the engine's answers do not move no matter what lands on the bus.
 b_cross_surface! : Ctx => Try({}, _)
 b_cross_surface! = |ctx| {
     # the CLI's power curve vs the ladder view, same cutoff, same family word,
@@ -6686,7 +6686,10 @@ b_cross_surface! = |ctx| {
     # Baselines first, then every hostile shape the issue names, then the
     # same questions again.
     base_acts = strjq!(ctx, ["doctor"], ".data.activities")
-    base_ctl = strjq!(ctx, ["summary"], ".data.fitness_ctl | tostring")
+    # summary is compared as the WHOLE payload (sorted), so any field moving
+    # under a poisoned bus fails, not just the sentinel; doctor keeps a scalar
+    # because its payload carries a wall-clock field
+    base_ctl = strjq!(ctx, ["summary"], ".data | tojson")
     _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_directives (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT (datetime('now')), view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT, ghost_day TEXT, consumed INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', error TEXT, applied_at TEXT);")
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (99);")
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view, cursor_day) VALUES (0, '2099-13-45');")
@@ -6696,13 +6699,13 @@ b_cross_surface! = |ctx| {
     _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_focus (id INTEGER PRIMARY KEY CHECK (id = 1), updated_at TEXT NOT NULL, view INTEGER NOT NULL, range INTEGER NOT NULL, cursor_day TEXT, trace_day TEXT, ghost_day TEXT);")
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO viz_focus (id, updated_at, view, range) VALUES (1, 'not a timestamp', -7, 12345);")
     check!("doctor is unmoved by a hostile bus", strjq!(ctx, ["doctor"], ".data.activities") == base_acts)?
-    check!("summary is unmoved by a hostile bus", strjq!(ctx, ["summary"], ".data.fitness_ctl | tostring") == base_ctl)?
+    check!("summary is unmoved by a hostile bus", strjq!(ctx, ["summary"], ".data | tojson") == base_ctl)?
     check!("plan still answers over a hostile bus", strjq!(ctx, ["plan"], ".data | has(\"summary\") | tostring") == "true")?
     check!("viz still refuses honestly over a hostile bus", strjq!(ctx, ["viz"], ".error.code") == "no_viz_capabilities")?
     # ...and with the bus tables deleted entirely
     _ = sql!(ctx.db, "DROP TABLE viz_directives;")
     _ = sql!(ctx.db, "DROP TABLE viz_focus;")
-    check!("summary is unmoved by the bus tables vanishing", strjq!(ctx, ["summary"], ".data.fitness_ctl | tostring") == base_ctl)?
+    check!("summary is unmoved by the bus tables vanishing", strjq!(ctx, ["summary"], ".data | tojson") == base_ctl)?
     Ok({})
 }
 

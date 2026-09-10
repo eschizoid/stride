@@ -138,6 +138,11 @@ jobs:
       # a successful build anyway.
       - name: Check the commands the docs name against the command table
         run: sh tools/command-claims.sh
+      # The viz compiler pin's one definition is the app header; four workflow
+      # steps repeat it as nightly-tag inputs, and a missed bump surfaced only
+      # at release time, on the artifact itself (#443).
+      - name: Check the viz roc pin agrees across every workflow site
+        run: sh tools/pin-check.sh
       # Cheap, and it guards a class that has rotted twice: a comment asserting an issue
       # is still open when the tracker says closed (#165 found `#105 remains open` sitting
       # 560 lines above the same file saying it was fixed). GITHUB_TOKEN is enough — it
