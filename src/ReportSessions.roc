@@ -183,7 +183,7 @@ ReportSessions :: [].{
                 # rather than the series — a per-second array in every activity
                 # payload would dwarf everything else, and min/end answer the
                 # question ("how close to empty, and did it come back?").
-                cpfit = Report.cp_fit_as_of!(path, a.family, a.date, 90)?
+                cpfit = Report.cp_fit_as_of!(path, a.family, a.date, 90.U64)?
                 # ANNOTATED: this payload is encode-only, and an unconstrained
                 # tag serializes as the STRING "True" (the trap this repo keeps
                 # rediscovering — pinned in e2e for the other flags)
@@ -657,7 +657,6 @@ ReportSessions :: [].{
     # the right one: no such sport at all, or the sport exists but nothing in it
     # carries the asked-for data. Blaming the sport unconditionally once denied
     # the existence of runs while listing Run in the same sentence.
-    empty_hint! : Str, Str, Str => Try(Str, _)
     empty_hint! = |path, word, what| {
         sf = Report.sport_filter_sql(word)
         n = Sqlite.query!({

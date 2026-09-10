@@ -142,7 +142,7 @@ Table :: [].{
 				ztot = List.fold(x.ln.zones, 0, |a2, z| a2 + z)
 				if ztot > 0 {
 					bw2 = pw2 - 36.0
-					_ = List.fold(List.map_with_index(x.ln.zones, |z, zi| { z, zi }), 0.0, |xacc, zz| {
+					_ = List.fold_try!(List.map_with_index(x.ln.zones, |z, zi| { z, zi }), 0.0, |xacc, zz| {
 						seg = bw2 * I64.to_f32(zz.z) / I64.to_f32(ztot)
 						zc = match List.get(Theme.zone_ramp, zz.zi) { Ok(c2) => c2
 							Err(_) => Theme.ink_faint }
@@ -151,7 +151,7 @@ Table :: [].{
 							# keeps the drawn width strictly positive
 							frame.rectangle!({ x: px + 18.0 + xacc, y: ly + 56.0, width: seg - 1.0, height: 8.0, style: Draw.filled(zc) })
 						} else {}
-						xacc + seg
+						Ok(xacc + seg)
 					})
 					{}
 				} else {}

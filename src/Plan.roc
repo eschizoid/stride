@@ -829,7 +829,6 @@ Plan :: [].{
     # The supersession predicate here is the De Morgan dual of the one in the
     # unplanned query and the sessions query — the three MUST agree (see the
     # NOTE above the unplanned query).
-    live_claimant! : Str, I64, I64 => Try([CompletedBy(I64), SubstituteOf(I64), Free], _)
     live_claimant! = |path, activity_id, session_id| {
         rows = Sqlite.query_many!({
             path: Path.utf8(path),
@@ -863,7 +862,6 @@ Plan :: [].{
     # pre-existing dead-link state (self-healing on the next claim), never a
     # cleared link with nothing written in its place. Reports what it released
     # so the steal is never silent.
-    steal_dead_links! : Str, I64, I64 => Try([ReleasedFrom(I64), NothingReleased], _)
     steal_dead_links! = |path, activity_id, session_id| {
         holders = Sqlite.query_many!({
             path: Path.utf8(path),

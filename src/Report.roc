@@ -839,7 +839,6 @@ Report :: [].{
     # The family is the CALLER's, never a hardcoded Ride: a rowing session was
     # being scored against a cyclist's CP and flagged known, which is worse than
     # having no number at all.
-    cp_fit_as_of! : Str, Str, Str, U64 => Try({ cp : F64, w_prime : F64, points : I64, family : Str, r2 : F64, pts : List({ dur_s : F64, watts : F64 }) }, _)
     cp_fit_as_of! = |path, family, on_date, days| {
         row = Sqlite.query!({
             path: Path.utf8(path),
