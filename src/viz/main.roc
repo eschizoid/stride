@@ -82,7 +82,9 @@ brand_font! = |home, name, size, fallback| {
 # surfaces resolve the identical ~/.stride/db.sqlite (Windows accepts the
 # mixed-separator join, and the CLI writes that exact spelling already).
 # cmd echoes the pattern back verbatim when the variable is unset, so that
-# spelling means unresolved, not a home named %USERPROFILE%.
+# spelling means unresolved, not a home named %USERPROFILE%. A missing
+# binary surfaces as Err from the spawn, never a crash - the degraded state
+# #442 exhibited is this platform behaving that way.
 resolve_home! : {} => Str
 resolve_home! = |{}| {
 	unix = match Cmd.run_utf8!(Cmd.with_args(Cmd.new("printenv"), ["HOME"])) {

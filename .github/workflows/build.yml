@@ -206,8 +206,9 @@ jobs:
   # The one Windows-shaped viz failure so far was resolution, not linking
   # (#442: no printenv, so HOME came back empty and every view rendered its
   # empty state). Linking here proves the roc-ray x64win host stays viable,
-  # and the grep proves the USERPROFILE fallback exists in the source that
-  # built - the window itself cannot run headless on a runner.
+  # and the comment-stripped grep proves the USERPROFILE fallback exists in
+  # the CODE that built, not merely in a comment about it - the window
+  # itself cannot run headless on a runner.
   viz-link-windows:
     runs-on: windows-2025
     timeout-minutes: 20
@@ -223,7 +224,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -q 'USERPROFILE' src/viz/main.roc
+          sed 's/#.*//' src/viz/main.roc | grep -q 'echo %USERPROFILE%'
           roc build src/viz/main.roc --output=stride-viz.exe --opt=dev
           test -s stride-viz.exe
 
