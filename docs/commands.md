@@ -80,6 +80,10 @@ _Can I trust my data?_ Coverage (HR/power/streams/ratings), how each activity wa
 
 _What watts is each power zone for me?_ The 7 Coggan/Peloton power zones as watt ranges derived from your FTP (they shift when FTP changes). The targets you'd set on a Power Zone ride.
 
+### `stride viz`
+
+_How do I steer the window?_ The desktop window's self-published capabilities — protocol, view numbers and names, the directive fields with what each accepts, and the staleness window — served from the database the window wrote them to at its last launch. This is the discovery source for steering (the window's own claim about itself, never a doc's copy); an install where the window has never run answers with the `no_viz_capabilities` code rather than guessing. The bus itself is documented in [viz.md](viz.md).
+
 ### `stride reps [date]`
 
 _Am I riding the same workout harder?_ One level below `progress`: the anchor session's detected interval blocks beside the same-shaped blocks of earlier sessions — per-rep watts, the within-session fade, and the first-to-last HR rise. Comparability is stated in the payload rather than assumed: same sport family, same rep count, same rep-duration band, same signal, never later than the anchor. Each row also reports its OWN rep spread, because whether an uneven session counts as "the same workout" is a judgment stride leaves to you. A session whose blocks vary too much to be one repeated shape is refused as an anchor rather than compared against.

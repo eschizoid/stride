@@ -18,7 +18,7 @@ your own Strava history and computes the answers locally, into a SQLite file you
 
 Local-first and deterministic, written in [Roc](https://www.roc-lang.org). Strava is one
 ingestion layer, not the product. The engine does the math; attach an LLM and it does the
-judgment, never the arithmetic.
+judgment, never the arithmetic — and it can steer the desktop window while it coaches.
 
 ```terminaloutput
 $ stride summary
@@ -69,8 +69,9 @@ First-time setup takes about ten minutes.
 `Stride.app` is the same engine's data, read from the same SQLite file, in a window.
 It ships with every release — `stride-app-macos-arm64.zip`,
 `stride-app-macos-x86_64.zip`, `stride-app-linux-x86_64.tar.gz` (unpack and
-run `./stride-app/stride-app`) — and `just viz-app` builds it locally on
-macOS. Eight views, each answering one question.
+run `./stride-app/stride-app`), `stride-app-windows-x86_64.zip` (unzip and run
+`stride-app\stride-app.bat` — it seeds the fonts and starts the window) — and
+`just viz-app` builds it locally on macOS. Eight views, each answering one question.
 
 **Form board** — fitness, fatigue and form over 90 days, with each day's load underneath.
 Hover any day, or walk them with the arrow keys.
@@ -98,7 +99,10 @@ The rest: **power** (the window's curve against the all-time record book), **tab
 **heat** (a year of load, one cell per day). `TAB` cycles them, or click a pill.
 
 A coach can drive the window over the same database — `viz_directives` in, `viz_focus`
-out, no sockets — which is what makes it scriptable rather than only clickable. See
+out, no sockets — and every directive reaches a terminal status it can read back,
+which is what makes it scriptable rather than only clickable. `stride viz` serves the
+window's self-published capabilities (view numbers, directive fields, staleness), so
+a tool discovers how to steer by asking, not by reading docs. See
 [docs/viz.md](docs/viz.md).
 
 ## Why stride, if I already have Strava?
@@ -155,7 +159,7 @@ Pick a data path:
   archive Strava emails you from Settings → My Account → Download or Delete Your
   Account. Summary-level data only — the export carries no
   streams, so nothing derived from them (normalized power, the power-duration curve,
-  interval detection) exists for imported activities. No open issue tracks changing that.
+  interval detection) exists for imported activities — deliberately unplanned.
 
 ### Prebuilt binary (recommended)
 
@@ -290,6 +294,7 @@ against the parser's own verb list; it is the authoritative list and this table 
 | `load [days]`                                    | fitness/fatigue/form series (default 90)                    |
 | `zones` (alias `stride pz`)                      | power-zone watt ranges from your derived FTP                |
 | `compare [week\|month]`                          | this period vs the one before it                            |
+| `viz`                                            | the window's self-published steering capabilities           |
 | `season`                                         | training blocks, monthly load, polarization, FTP            |
 | `power-curve [days] [sport]` (alias `stride pc`) | power-duration curve + Critical Power                       |
 | `pace-curve [days] [sport]` (alias `stride cs`)  | speed-duration curve + Critical Speed; name a sport         |
@@ -327,8 +332,7 @@ is an error. Malformed invocations print a targeted `usage:` line for humans and
 The contract is a checked-in artifact, not prose: `schemas/v3/*.json` describes every
 published payload plus the envelope (including its error-code vocabulary) (required keys, types,
 enum values, and — via `additionalKeys: false` — the keys that are NOT part of the
-contract), and `tools/validate.jq` checks a payload against one. `just schema-check`
-validates your own database against them. `just schema-check` runs it
+contract), and `tools/validate.jq` checks a payload against one. `just schema-check` runs it
 against your own database; the e2e suite runs it against fixtures in CI, together
 with mutation checks proving the validator rejects a missing key, a wrong type, an
 undeclared key, and a bad enum value.
@@ -467,7 +471,7 @@ silently wipe it.
   2. **Pace** (rTSS), for any sport with a usable distance stream, once that sport has a
      derived 20-minute threshold speed. Altitude is optional: with it the pace is
      grade-adjusted, without it raw speed scores. This is why a meterless outdoor ride
-     scores by pace rather than falling to HR — dozens of rides in this database do.
+     scores by pace rather than falling to HR — the common case for meterless outdoor rides.
   3. **A fallback whose order depends on the sport's class**: endurance sports take
      HR → session-RPE → `relative_effort`; strength-class sports put the athlete's own
      **session-RPE ahead of HR**, because a heart rate says little about a lifting session.
@@ -564,14 +568,14 @@ check`, `roc test` and a full `roc build` all work. Install the pinned compiler 
   typed command parser), `Config.roc` (secret-key policy), `Sports.roc` (the sport
   vocabulary — families, class, pace routing and the pace-TSS exponent, gathered in one
   module rather than if-chains scattered through others),
-  `Streams.roc`, `Csv.roc` and `Backfill.roc`. `Output.roc` (the JSON envelope and
+  `Streams.roc`, `Csv.roc` and `Drain.roc`. `Output.roc` (the JSON envelope and
   `json_schema_version`) and `Schema.roc` (DDL) are effectful and DDL respectively — both
   type-checked rather than expect-tested. Query
   strings live next to their row decoders on purpose — the compiler can't check SQL
   aliases against decoders, so cohesion is the safeguard.
 - **Tests:** pure `expect` blocks across eight modules, run by `just test`. No count is
   quoted here — it would rot on the next commit that adds a test, `roc test`'s per-module
-  numbers overlap each other, and the app-wide run adds ~207 expects belonging to the
+  numbers overlap each other, and the app-wide run adds the platform's own expects to the count, belonging to the
   basic-cli platform rather than to stride. Plus an
   end-to-end suite (`just e2e`) that runs the real
   binary against a sandboxed `HOME` with seeded activities of known math (power TSS ~111
@@ -579,14 +583,15 @@ check`, `roc test` and a full `roc build` all work. Install the pinned compiler 
   full plan lifecycle, the
   versioned JSON envelope, timezone precedence, power-spike filtering, migration
   from a legacy db, error contracts, corrupt-data resilience). A separate
-  `just e2e-sync` runs that same `tests/e2e.roc` in two roles — a mock Strava server
-  (`E2E_MODE=mock`) and a sync driver — to exercise the real sync + token-refresh
-  path network-free.
+  `just e2e-sync` runs that same `tests/e2e.roc` as a mock Strava server plus a set
+  of drivers against it — the real sync + token-refresh path, the skip paths, the
+  stop outcomes — all network-free; read the recipe for the current set.
 - **CI:** on every push, `roc check` plus every pure module's expects on Linux, macOS and
   Windows; then a macOS job that builds the binary (`--opt=dev`) and runs the e2e suite.
-  The compiler is installed by `roc-lang/setup-roc` and pinned by exact nightly tag —
-  nine times across four workflow files, so `grep -rln nightly-tag .github/workflows`
-  before calling a bump done.
+  The compiler is installed by the repo's `setup-roc` action — the engine pin is its
+  default, the viz pin lives in `src/viz/main.roc`'s app header, and
+  `tools/pin-check.sh` fails CI on any workflow site that disagrees, so a bump
+  cannot miss one silently.
 
 ## What's next, and what never ships
 
