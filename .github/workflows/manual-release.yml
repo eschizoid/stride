@@ -113,6 +113,30 @@ jobs:
           set -euo pipefail
           ls stride-cli-* >/dev/null 2>&1 || { echo "::error::no binaries built"; exit 1; }
           sha256sum stride-* > SHA256SUMS.txt
+      # This workflow builds only the CLI binaries, but the tag it re-cuts may
+      # already carry app zips whose sums live in the release's SHA256SUMS.txt.
+      # A plain clobber replaced the whole file with the CLI-only rows, leaving
+      # the app zips attached but unverifiable (#444) - so rows for files this
+      # run did NOT rebuild are carried over before the upload below.
+      - name: Merge existing checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release download "$TAG" --pattern SHA256SUMS.txt -O existing.txt --repo "${{ github.repository }}" || : > existing.txt
+            if [ -s existing.txt ]; then
+              built=$(ls dist/stride-* | xargs -n1 basename)
+              while IFS= read -r line || [ -n "$line" ]; do
+                f=${line##* }
+                keep=1
+                for b in $built; do [ "$f" = "$b" ] && keep=0; done
+                [ "$keep" = "1" ] && printf '%s\n' "$line" >> dist/SHA256SUMS.txt
+              done < existing.txt
+              echo "merged $(wc -l < dist/SHA256SUMS.txt | tr -d ' ') checksum rows"
+            fi
+          fi
       - uses: taiki-e/install-action@v2
         with:
           tool: parse-changelog
