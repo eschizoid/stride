@@ -75,15 +75,36 @@ brand_font! = |home, name, size, fallback| {
 	}
 }
 
+# The home directory on every platform, without an Env module: the platform
+# has no Env, but Cmd captures stdout, so a shell answers. printenv serves
+# unix; Windows ships no printenv, so cmd's own echo of %USERPROFILE% answers
+# there — the same variable the CLI's home_dir! falls back to, so both
+# surfaces resolve the identical ~/.stride/db.sqlite (Windows accepts the
+# mixed-separator join, and the CLI writes that exact spelling already).
+# cmd echoes the pattern back verbatim when the variable is unset, so that
+# spelling means unresolved, not a home named %USERPROFILE%. A missing
+# binary surfaces as Err from the spawn, never a crash - the degraded state
+# #442 exhibited is this platform behaving that way.
+resolve_home! : {} => Str
+resolve_home! = |{}| {
+	unix = match Cmd.run_utf8!(Cmd.with_args(Cmd.new("printenv"), ["HOME"])) {
+		Ok(out) => Str.trim(out.stdout)
+		Err(_) => ""
+	}
+	if unix != "" unix
+	else match Cmd.run_utf8!(Cmd.with_args(Cmd.new("cmd"), ["/C", "echo %USERPROFILE%"])) {
+		Ok(out) => {
+			win = Str.trim(out.stdout)
+			if win == "%USERPROFILE%" "" else win
+		}
+		Err(_) => ""
+	}
+}
+
 load_model! : Text.Font, I64 => Try(Ui.Model, [ResourceLimit, ..])
 load_model! = |font, curve_days| {
-		# ~/.stride/db.sqlite, resolved on every load (launch and R alike) —
-		# the platform has no Env module, but Cmd captures stdout, so the
-		# shell answers for HOME.
-		home = match Cmd.run_utf8!(Cmd.with_args(Cmd.new("printenv"), ["HOME"])) {
-			Ok(out) => Str.trim(out.stdout)
-			Err(_) => ""
-		}
+		# ~/.stride/db.sqlite, resolved on every load (launch and R alike)
+		home = resolve_home!({})
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if home == "" {
 			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], prs: [], tcache: [] }
