@@ -66,7 +66,7 @@ summary.json	d14,d28,days_since_known,days_since_last,spacing_known,spacing_medi
 summary.json	d28,d7,d90,delta_28d,delta_7d,prior_d28,prior_d7	d28,d7,d90,delta_28d,delta_7d,prior_d28,prior_d7	doc	properties.load_windows
 summary.json	distance_m,easy_pct,hard_pct,hr_streams,intensity_streams,load_coverage,measured_pct,moderate_pct,moving_time,sessions,tss,z1_s,z2_s,z3_s,z4_s,z5_s	distance_m,easy_pct,hard_pct,hr_streams,intensity_streams,load_coverage,measured_pct,moderate_pct,moving_time,sessions,tss	-	properties.last_28d
 summary.json	distance_m,easy_pct,hard_pct,hr_streams,intensity_streams,load_coverage,measured_pct,moderate_pct,moving_time,sessions,tss,z1_s,z2_s,z3_s,z4_s,z5_s	distance_m,easy_pct,hard_pct,hr_streams,intensity_streams,load_coverage,moderate_pct,moving_time,sessions,tss	-	properties.last_7d
-summary.json	distance_m,last_date,moving_time,sessions,sport,tss	distance_m,last_date,moving_time,sessions,sport,tss	-	properties.sports_28d.items
+summary.json	distance_m,last_date,moving_time,sessions,sport,tss	distance_m,last_date,moving_time,sessions,sport,tss	doc	properties.sports_28d.items
 summary.json	high_pct,known,low_pct,medium_pct	high_pct,known,low_pct,medium_pct	doc	properties.form_coverage_90d
 summary.json	high_pct,known,low_pct,medium_pct	high_pct,known,low_pct,medium_pct	doc	properties.last_28d.properties.load_coverage
 summary.json	high_pct,known,low_pct,medium_pct	high_pct,known,low_pct,medium_pct	doc	properties.last_7d.properties.load_coverage
@@ -75,6 +75,9 @@ sync.json	new_activities,pending_streams,pruned,resumable,stopped,streams_fetche
 top.json	avg_hr,date,date_known,distance_m,hr_known,id,intensity,intensity_known,moving_time,name,np_w,output_kj,power_known,rankable,sport,tss	avg_hr,date,date_known,distance_m,hr_known,id,intensity,intensity_known,moving_time,name,np_w,output_kj,power_known,rankable,sport,tss	-	items
 tte.json	contradicts_model,cp,demonstrated_known,demonstrated_s,demonstrated_w,fit_points,fit_r2,known,seconds,sport_family,status,w_prime,watts,window_days	contradicts_model,cp,demonstrated_known,demonstrated_s,demonstrated_w,fit_points,fit_r2,known,seconds,sport_family,status,w_prime,watts,window_days	doc	$
 version.json	version	version	-	$
+viz.json	accepts,kind,name	accepts,kind,name	doc	properties.fields.items
+viz.json	fields,protocol,published_at,staleness_seconds,views	fields,protocol,published_at,staleness_seconds,views	doc	$
+viz.json	id,name	id,name	doc	properties.views.items
 week.json	activity_id,completed_activity_id,created_at,day,detail,done_date,id,rationale,session_type,skipped_reason,status,status_shown,substitute_activity_id,superseded_activity_id,target_date	activity_id,completed_activity_id,created_at,day,detail,done_date,id,rationale,session_type,skipped_reason,status,status_shown,substitute_activity_id,superseded_activity_id,target_date	-	items
 week_add.json	id,session_type,target_date,target_dur_s,target_known,target_reps,target_watts	id,session_type,target_date,target_dur_s,target_known,target_reps,target_watts	-	$
 zones.json	ftp,zones	ftp,zones	doc	$
