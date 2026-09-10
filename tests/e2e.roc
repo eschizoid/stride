@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1129)?
+    checks_ran_exactly!(1130)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2793,6 +2793,10 @@ b_seed_analyze! = |ctx| {
     plugin_version = Str.trim(sh!("jq -r '.version // empty' .codex-plugin/plugin.json"))
     check!("the release version is readable at all", !(Str.is_empty(rp_version)))?
     check!("...and the Codex plugin manifest names that same version", plugin_version == rp_version)?
+    # the Claude plugin manifest mirrors the Codex one - same canonical
+    # skills/ directory, same release-written version, same rot risk
+    claude_plugin_version = Str.trim(sh!("jq -r '.version // empty' .claude-plugin/plugin.json"))
+    check!("...and the Claude plugin manifest names it too", claude_plugin_version == rp_version)?
     # The repo-local Claude shim is a REAL file (a tracked symlink silently became a text
     # file on default Windows checkouts), so its routing `description` is a second copy of
     # the one string skill discovery reads — the exact drift the maintainer's own

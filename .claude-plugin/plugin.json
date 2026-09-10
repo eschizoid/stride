@@ -1,0 +1,20 @@
+{
+  "name": "stride",
+  "version": "0.12.0",
+  "description": "Local-first, deterministic multi-sport training analytics. The engine computes the numbers; the agent adds judgment.",
+  "author": {
+    "name": "Mariano Gonzalez",
+    "url": "https://github.com/eschizoid"
+  },
+  "homepage": "https://github.com/eschizoid/stride#readme",
+  "repository": "https://github.com/eschizoid/stride",
+  "license": "MIT",
+  "keywords": [
+    "training",
+    "cycling",
+    "running",
+    "strava",
+    "analytics",
+    "coaching"
+  ]
+}

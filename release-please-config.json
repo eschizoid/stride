@@ -5,7 +5,16 @@
       "release-type": "simple",
       "extra-files": [
         "src/main.roc",
-        { "type": "json", "path": ".codex-plugin/plugin.json", "jsonpath": "$.version" }
+        {
+          "type": "json",
+          "path": ".codex-plugin/plugin.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": ".claude-plugin/plugin.json",
+          "jsonpath": "$.version"
+        }
       ],
       "bump-minor-pre-major": true
     }

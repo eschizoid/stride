@@ -388,11 +388,13 @@ Restart the agent afterwards to pick it up. Whether every agent follows a symlin
 skill directory is untested — if a linked skill does not appear after a restart, copy
 the directory instead.
 
-The repo also carries a Codex plugin manifest — `.codex-plugin/plugin.json` declares the
-skill under the name `stride`, and a marketplace entry pointing at a checkout makes it
-installable via `codex plugin add`. The manifest's `skills` path is `./skills/`, the same
-canonical directory both install routes copy from, so there is no second copy in the repo
-for them to disagree via — an installed snapshot still only updates when reinstalled.
+The repo also carries two plugin manifests — `.codex-plugin/plugin.json` (installable
+via `codex plugin add`) and `.claude-plugin/plugin.json` (installable via Claude Code's
+plugin flow) — both declaring the skill under the name `stride`. Each resolves skills
+from the same canonical `skills/` directory, so there is no second copy of the skill in
+the repo for any install route to disagree via — an installed snapshot still only
+updates when reinstalled. Both manifests' versions are written by release-please and
+pinned to the release manifest by e2e.
 The LLM computes
 **none** of the metrics — it reads the engine's JSON, reasons about it in natural
 language, and writes its planned sessions back through the coaching-log
