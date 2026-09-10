@@ -498,8 +498,11 @@ ReportHealth :: [].{
         path = Db.open_db!({})?
         scalars = Sqlite.query!({
             path: Path.utf8(path),
-            # COALESCE to 0/'' so a half-written publish decodes and lands in
-            # the same refusal as a missing table, instead of a decode error
+            # COALESCE to 0/'' so a publish with missing scalars decodes and
+            # lands in the same refusal as a missing table, instead of a decode
+            # error. That covers the scalars-absent torn shape only: the window
+            # writes the whole publish in one transaction, so the other shapes
+            # last at most until its next launch republishes
             query: "SELECT CAST(COALESCE((SELECT CAST(value AS INTEGER) FROM viz_capabilities WHERE key = 'protocol'), 0) AS INTEGER) AS protocol, CAST(COALESCE((SELECT CAST(value AS INTEGER) FROM viz_capabilities WHERE key = 'staleness_seconds'), 0) AS INTEGER) AS staleness, CAST(COALESCE((SELECT value FROM viz_capabilities WHERE key = 'published_at'), '') AS TEXT) AS published",
             bindings: [],
             row: |cols| |stmt| {

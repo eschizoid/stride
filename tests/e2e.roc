@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1120)?
+    checks_ran_exactly!(1121)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6649,11 +6649,18 @@ b_compare! = |ctx| {
 # ── doctor: coverage + provenance + honest gaps + time mode ─────────
 # ── #439: bus capability discovery is served from the DATABASE, never a doc.
 # The window cannot run headless here, so this pass plays the window's part:
-# it writes exactly what viz/Db.publish_caps! writes and asserts the CLI
+# it writes a small publish in publish_caps!'s exact shape and spellings (a
+# 2-view/1-field subset, not the full eight-and-five) and asserts the CLI
 # relays it — and that every absence shape gets the refusal, not a crash.
 b_viz_caps! : Ctx => Try({}, _)
 b_viz_caps! = |ctx| {
     check!("viz before any window publish answers no_viz_capabilities", strjq!(ctx, ["viz"], ".error.code") == "no_viz_capabilities")?
+    # the payload's flagship guarantee is published == enforced, and the range
+    # row once claimed a "-1 clears" the binary never performed. Both spellings
+    # live in src/viz/main.roc (caps_fields and refusals_for); this compares the
+    # number sets, so widening either side alone fails here by name.
+    range_parity = Str.trim(sh!("caps=$(grep 'name: \"range\"' src/viz/main.roc | grep -oE '[0-9]+' | LC_ALL=C sort -n | tr '\\n' ' '); enf=$(grep 'not 30/60/90' src/viz/main.roc | grep -oE 'dv.range != [0-9]+' | grep -oE '[0-9]+$' | LC_ALL=C sort -n | tr '\\n' ' '); if [ -n \"$caps\" ] && [ \"$caps\" = \"$enf\" ]; then echo same; else echo \"caps=$caps enf=$enf\"; fi"))
+    check!("the published range set equals the enforced range set (${range_parity})", range_parity == "same")?
     _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_capabilities (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
     _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_views (id INTEGER PRIMARY KEY, name TEXT NOT NULL);")
     _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_fields (field TEXT PRIMARY KEY, kind TEXT NOT NULL, accepts TEXT NOT NULL);")

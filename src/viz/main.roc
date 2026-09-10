@@ -529,7 +529,7 @@ caps_views = List.map([0.U8, 1, 2, 3, 4, 5, 6, 7], |v| { id: U8.to_i64(v), name:
 caps_fields : List({ name : Str, kind : Str, accepts : Str })
 caps_fields = [
 	{ name: "view", kind: "integer", accepts: "0..7" },
-	{ name: "range", kind: "integer", accepts: "-1|30|60|90 (days; -1 clears)" },
+	{ name: "range", kind: "integer", accepts: "30|60|90 (days; omitted leaves the range unchanged)" },
 	{ name: "cursor_day", kind: "date", accepts: "YYYY-MM-DD present in the form-board series" },
 	{ name: "trace_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions" },
 	{ name: "ghost_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions, or 'none' to dismiss" },
