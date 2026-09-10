@@ -295,9 +295,99 @@ jobs:
           path: stride-app-linux-x86_64.tar.gz
           if-no-files-found: error
 
+  build-viz-windows:
+    name: build the app (windows-x86_64)
+    needs: release-please
+    # No bundle format here either: the zip carries the exe, the brand fonts
+    # and a .bat launcher that seeds %USERPROFILE%\.stride\fonts - the same
+    # directory the window reads, resolved by the USERPROFILE fallback #442
+    # added. The .bat is generated with CRLF endings on purpose: cmd's
+    # label/goto machinery misparses LF-only batch files.
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - name: Set up Roc (the viz pin, not the engine pin)
+        uses: ./.github/actions/setup-roc
+        with:
+          nightly-tag: nightly-2026-08-23-fb208ba
+
+      - name: Build and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p stage/stride-app/fonts
+          roc build src/viz/main.roc --output=stage/stride-app/stride-viz.exe --opt=dev
+          cp assets/fonts/*.ttf assets/fonts/OFL-*.txt stage/stride-app/fonts/
+          cat > launcher.lf <<'BAT'
+          @echo off
+          rem the window reads %USERPROFILE%\.stride\fonts; seed it from the
+          rem copies shipped beside this script, replacing any that differ in
+          rem size, then start the window from the home directory
+          set "here=%~dp0"
+          if not exist "%USERPROFILE%\.stride\fonts" mkdir "%USERPROFILE%\.stride\fonts" >nul 2>&1
+          for %%f in ("%here%fonts\*.ttf") do call :seed "%%~ff"
+          cd /d "%USERPROFILE%"
+          start "" "%here%stride-viz.exe"
+          exit /b 0
+          :seed
+          rem every %var% read below sits on its OWN line - cmd expands at
+          rem parse time per line, so no delayed expansion is needed; folding
+          rem these into a parenthesized block would break that property
+          set "src=%~1"
+          set "dst=%USERPROFILE%\.stride\fonts\%~nx1"
+          if not exist "%dst%" ( copy /y "%src%" "%dst%" >nul 2>&1 & goto :eof )
+          set "ssize=0"
+          set "dsize=0"
+          for %%A in ("%src%") do set "ssize=%%~zA"
+          for %%B in ("%dst%") do set "dsize=%%~zB"
+          if not "%ssize%"=="%dsize%" copy /y "%src%" "%dst%" >nul 2>&1
+          goto :eof
+          BAT
+          sed 's/$/\r/' launcher.lf > stage/stride-app/stride-app.bat
+          rm launcher.lf
+          test -s stage/stride-app/stride-viz.exe
+          for f in Quicksand-Medium.ttf JetBrainsMono-Regular.ttf; do
+            test -s "stage/stride-app/fonts/$f"
+          done
+          7z a -bso0 stride-app-windows-x86_64.zip ./stage/stride-app
+          # the archive must root at stride-app/ like the linux tarball; this
+          # job's first-ever execution is a real release, so the layout is
+          # asserted here rather than trusted
+          7z l stride-app-windows-x86_64.zip | grep -q 'stride-app.stride-app.bat'
+
+      - name: Prove the launcher seeds a fresh home
+        shell: bash
+        run: |
+          set -euo pipefail
+          fake="$(mktemp -d)"
+          fakewin="$(cygpath -w "$fake")"
+          USERPROFILE="$fakewin" cmd //C "$(cygpath -w "$PWD/stage/stride-app/stride-app.bat")" || true
+          sleep 3
+          taskkill //IM stride-viz.exe //F 2>/dev/null || true
+          for f in Quicksand-Medium.ttf JetBrainsMono-Regular.ttf; do
+            test -s "$fake/.stride/fonts/$f" || { echo "::error::launcher did not seed $f"; exit 1; }
+          done
+          printf 'x' > "$fake/.stride/fonts/Quicksand-Medium.ttf"
+          USERPROFILE="$fakewin" cmd //C "$(cygpath -w "$PWD/stage/stride-app/stride-app.bat")" || true
+          sleep 3
+          taskkill //IM stride-viz.exe //F 2>/dev/null || true
+          [ "$(wc -c < "$fake/.stride/fonts/Quicksand-Medium.ttf")" -gt 1000 ] || { echo "::error::a corrupt font was not repaired"; exit 1; }
+          rm -rf "$fake"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stride-app-windows-x86_64
+          path: stride-app-windows-x86_64.zip
+          if-no-files-found: error
+
   upload:
     name: attach binaries to the release
-    needs: [release-please, build, build-viz, build-viz-linux]
+    needs: [release-please, build, build-viz, build-viz-linux, build-viz-windows]
     # ENABLED with `build` above. `always()` so it still attaches whatever DID build even if some
     # target failed (fail-fast is off) — a partial binary set beats none.
     # always() fires on cancellation too; !cancelled() keeps a partial set
@@ -321,7 +411,7 @@ jobs:
           ls stride-cli-* >/dev/null 2>&1 || { echo "::error::no CLI binaries built"; exit 1; }
           # the CLI binaries satisfy stride-* alone, so a missing app zip
           # would pass unnoticed
-          for z in stride-app-macos-arm64.zip stride-app-macos-x86_64.zip stride-app-linux-x86_64.tar.gz; do
+          for z in stride-app-macos-arm64.zip stride-app-macos-x86_64.zip stride-app-linux-x86_64.tar.gz stride-app-windows-x86_64.zip; do
             [ -f "$z" ] || echo "::warning::$z is missing from this release - its build job failed"
           done
           sha256sum stride-* > SHA256SUMS.txt
