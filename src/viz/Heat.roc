@@ -48,7 +48,7 @@ Heat :: [].{
 			List.for_each!([{ t: "mon", r: 0 }, { t: "wed", r: 2 }, { t: "fri", r: 4 }], |lb|
 				Text.from(lb.t, model.font).size(10).draw!(frame, { pos: { x: gx - 10.0, y: gy + I64.to_f32(lb.r) * step + 3.0 }, color: ink_faint, align: (Top, Right) }))
 			# cells: week advances when the row wraps past Sunday
-			_ = List.fold(days, { col: 0.U64, prev_row: -1 }, |acc, h| {
+			_ = List.fold_try!(days, { col: 0.U64, prev_row: -1 }, |acc, h| {
 				r = row_of(h.dow)
 				col2 = if r <= acc.prev_row (acc.col + 1) else acc.col
 				x0 = gx + U64.to_f32(col2) * step
@@ -85,7 +85,7 @@ Heat :: [].{
 					frame.rounded_rectangle!({ x: 96.0, y: gy + 7.0 * step + 18.0, width: win_w - 132.0, height: 26.0, radius: 6.0, segments: 5, style: Draw.filled(Theme.card) })
 					Text.from(tip_short, model.font).size(12).draw!(frame, { pos: { x: 108.0, y: gy + 7.0 * step + 24.0 }, color: Color.white, align: (Top, Left) })
 				} else {}
-				{ col: col2, prev_row: r }
+				Ok({ col: col2, prev_row: r })
 			})
 			{}
 		}

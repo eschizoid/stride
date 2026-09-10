@@ -70,13 +70,13 @@ Zones :: [].{
 				Text.from("caps: the week's easy share     teal holds 80/20     red breaks it", model.font).size(11).draw!(frame, { pos: { x: pad, y: 96.0 }, color: ink_faint, align: (Top, Left) })
 			}
 			# the zone key rides its own row, clear of every cap
-			_ = List.fold([0.U64, 1, 2, 3, 4], 0.0, |lx, zi| {
+			_ = List.fold_try!([0.U64, 1, 2, 3, 4], 0.0, |lx, zi| {
 				zc = match List.get(Theme.zone_ramp, zi) { Ok(c2) => c2
 					Err(_) => ink_faint }
 				bx = pad + lx
 				frame.rounded_rectangle!({ x: bx, y: 120.0, width: 9.0, height: 9.0, radius: 2.0, segments: 3, style: Draw.filled(zc) })
 				Text.from("z${U64.to_str(zi + 1)}", model.font).size(10).draw!(frame, { pos: { x: bx + 13.0, y: 118.0 }, color: ink_faint, align: (Top, Left) })
-				lx + 42.0
+				Ok(lx + 42.0)
 			})
 			List.for_each!(List.map_with_index(model.zone_weeks, |w, i| { w, i }), |x| {
 				cx = pad + (U64.to_f32(x.i) + 0.5) * slot
@@ -86,14 +86,14 @@ Zones :: [].{
 				bh = I64.to_f32(tot) / I64.to_f32(peak) * bars_h
 				hovered = model.mouse_x >= cx - slot / 2.0 and model.mouse_x < cx + slot / 2.0 and model.mouse_y >= bars_top - 44.0 and model.mouse_y <= bars_bot
 				# z1 at the base, z5 on top, a hairline of ground between each
-				_ = List.fold(List.map_with_index([x.w.z1, x.w.z2, x.w.z3, x.w.z4, x.w.z5], |zs, zi| { zs, zi }), 0.0, |yacc, z| {
+				_ = List.fold_try!(List.map_with_index([x.w.z1, x.w.z2, x.w.z3, x.w.z4, x.w.z5], |zs, zi| { zs, zi }), 0.0, |yacc, z| {
 					seg = I64.to_f32(z.zs) / I64.to_f32(peak) * bars_h
 					zc = match List.get(Theme.zone_ramp, z.zi) { Ok(c2) => c2
 						Err(_) => ink_faint }
 					if seg > 1.5 {
 						frame.rectangle!({ x: x0, y: bars_bot - yacc - seg, width: bw, height: seg - 1.0, style: Draw.filled(Color.with_alpha(zc, if hovered (255.U8) else 235)) })
 					} else {}
-					yacc + seg
+					Ok(yacc + seg)
 				})
 				# depth over the whole stack, so the bars sit in the panel
 				if bh > 8.0 {

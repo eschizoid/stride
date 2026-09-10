@@ -124,7 +124,7 @@ jobs:
       - name: Set up Roc (the viz pin, not the engine pin)
         uses: ./.github/actions/setup-roc
         with:
-          nightly-tag: nightly-2026-08-23-fb208ba
+          nightly-tag: nightly-2026-09-07-14d9829
 
       - name: Build the .app bundle
         run: |
@@ -217,7 +217,7 @@ jobs:
       - name: Set up Roc (the viz pin, not the engine pin)
         uses: ./.github/actions/setup-roc
         with:
-          nightly-tag: nightly-2026-08-23-fb208ba
+          nightly-tag: nightly-2026-09-07-14d9829
 
       - name: raylib's link dependencies
         run: |
@@ -314,7 +314,7 @@ jobs:
       - name: Set up Roc (the viz pin, not the engine pin)
         uses: ./.github/actions/setup-roc
         with:
-          nightly-tag: nightly-2026-08-23-fb208ba
+          nightly-tag: nightly-2026-09-07-14d9829
 
       - name: Build and package
         shell: bash

@@ -162,7 +162,6 @@ Strava :: [].{
         })
     # returns a valid access token, refreshing if expired; NotAuthed if never
     # authorized (a genuinely absent token — NOT a db read failure, which propagates)
-    get_valid_token! : Str => Try(Str, _)
     get_valid_token! = |path| {
         access = token_field!(path, "strava_access_token")?
         refresh = token_field!(path, "strava_refresh_token")?
@@ -583,7 +582,6 @@ Strava :: [].{
     # that pair disagreeing was this feature's recurring bug. Narrower than
     # "unrepresentable": other sites still read the clock; this one function just
     # cannot be the site of the disagreement.
-    reads_today! : Str, I64 => Try(I64, _)
     reads_today! = |path, day_now| {
         # BOTH rows get the conservative reading. The count's Corrupt arm argues that
         # "cannot tell" must mean "may all be spent" — and the day STAMP went through
@@ -635,7 +633,6 @@ Strava :: [].{
     # headroom than an unparseable value, inverting the argument above. Swallowed
     # rather than raised — refusing to sync over a corrupt pacing counter is worse
     # than pacing badly — but no longer silent: see the caller.
-    config_reads! : Str, Str => Try([Known(I64), Corrupt(Str)], _)
     config_reads! = |path, key|
         match Db.config_opt!(path, key)? {
             NotFound => Ok(Known(0))
@@ -646,7 +643,6 @@ Strava :: [].{
                 }
         }
 
-    config_i64! : Str, Str => Try(I64, _)
     config_i64! = |path, key|
         match config_reads!(path, key)? {
             Known(n) => Ok(n)
@@ -964,7 +960,6 @@ Strava :: [].{
     # synced_at is deliberately NOT compared. It is re-stamped every run by design, so
     # including it would mark every row updated — which is precisely the misreporting this
     # exists to remove.
-    classify_activity! : Str, ActivitySummary => Try(UpsertOutcome, _)
     classify_activity! = |path, a| {
         rows = Sqlite.query_many!({
             path: Path.utf8(path),

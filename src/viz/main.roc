@@ -5,10 +5,10 @@
 ## init!, update!, and the view dispatch — view_basename enumerates the views
 ## and the nav list is their order.
 ##
-## NOTE the pin below: roc-ray's platform needs nightly-2026-08-23, not the
+## NOTE the pin below: roc-ray 0.10.0-rc5 declares nightly-2026-09-07, not the
 ## engine's toolchain pin. The header carries its own compiler version, so
 ## `roc src/viz/main.roc` with a matching nightly is the whole build.
-app [Model, program] { rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0-rc3/3vVeddfDE6rraq5j8v1cGHtFNaQhC6dij1zGRN63NGP1.tar.zst", roc: "nightly-2026-08-23-fb208ba" }
+app [Model, program] { rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0-rc5/8x22d4JXTKSiPvj3Bd3br2u7rEL3baUzEvmSBrCBDvqV.tar.zst", roc: "nightly-2026-09-07-14d9829" }
 
 import rr.App
 import rr.Capture
@@ -159,15 +159,15 @@ load_model! = |font, curve_days| {
 		mk! = |txt, sz| Text.from(txt, head).size(sz).prepare!()
 		mkm! = |txt, sz| Text.from(txt, mono).size(sz).prepare!()
 		mkb! = |txt, sz| Text.from(txt, mono_big).size(sz).prepare!()
-		curve_lbls = List.map_try(loaded.c, |c| {
+		curve_lbls = List.map_try!(loaded.c, |c| {
 			p = mkm!(I64.to_str(c.dur_s), 12)?
 			Ok({ p, d: c.dur_s })
 		})?
-		ylabels = List.map_try([-30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], |v| {
+		ylabels = List.map_try!([-30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], |v| {
 			p = mkm!(I64.to_str(v), 12)?
 			Ok({ p, v: I64.to_f32(v) })
 		})?
-		ends = List.map_try(
+		ends = List.map_try!(
 			[
 				{ s: "CTL ${Db.fmt1(loaded.s.last.c)}", k: 0.U8 },
 				{ s: "ATL ${Db.fmt1(loaded.s.last.a)}", k: 1.U8 },
