@@ -7,8 +7,8 @@
 > (backticked HERE so this sentence is not itself an import — Claude Code expands that
 > syntax recursively, and import paths resolve relative to the importing file). A fresh
 > clone therefore works for every agent with zero setup. Edit this file; the shim never
-> carries content. Do not also create a root `CLAUDE.md` — the docs warn against shipping
-> both locations at once.
+> carries content. Do not also create a root `CLAUDE.md` — both locations load and concatenate,
+> so a second import would put this whole file in context twice.
 >
 > The COACHING skill's one canonical copy is `skills/stride/SKILL.md`, and it is the
 > ONLY copy: e2e pins that no repo-local shim exists to drift. Claude Code consumes it
@@ -63,19 +63,17 @@ nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.ym
 `tools/pin-check.sh` holds every workflow site to it.
 
 - **Always `just test` in one command, read the result, commit in a separate command.**
-  Never chain `test && commit` — a mid-chain failure has shipped red commits before.
+  Never chain `test && commit` — a mid-chain failure commits red.
 - A failed build leaves a stale binary that e2e would happily "pass" against; `just
   test` orders steps to prevent this. Don't run `just e2e` after a failed build.
-- Toolchain: the new (Zig) compiler, pinned by exact nightly tag — engine pin in
-  `.github/actions/setup-roc/action.yml`'s default, viz pin in `src/viz/main.roc`'s
-  app header (`tools/pin-check.sh` holds the workflow sites to it) · basic-cli
-  **0.22** · builtin JSON. `~/.local/bin/roc` is a SYMLINK to the engine nightly;
-  a bare `roc` in the justfile rides it — pin the explicit path in anything that
-  must not depend on that link.
-- **Build with `--opt=dev`.** A speed build takes minutes against seconds, which is
-  the dev loop — that is the reason, not correctness: the era when `--opt=speed`
-  miscompiled this codebase (#32) ended with the 2026-08-17 nightly. `just build`,
-  CI, and the release workflow all pin dev.
+- Toolchain: the new (Zig) compiler, pinned by exact nightly tag (engine and viz
+  pins: see *Compiler pins* under Code conventions) · basic-cli **0.22** · builtin
+  JSON. `~/.local/bin/roc` is a SYMLINK to the engine nightly; a bare `roc` in the
+  justfile rides it — pin the explicit path in anything that must not depend on that
+  link.
+- **Build with `--opt=dev`** — build time (seconds vs minutes), not correctness:
+  `--opt=speed` is sound on the current pin (#32 is fixed) but too slow for the
+  loop. `just build`, CI, and the release workflow all pin dev.
 - **New-compiler flag gotcha: `=`, not a space.** `--output=x`, `--main=x`, `--opt=dev`.
   A space-separated `--output x` fails with a confusing error.
 
@@ -86,6 +84,7 @@ nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.ym
   schema/migrations), `Strava.roc` (OAuth + sync HTTP), `Analyze/Plan/Import` and the
   report family — `Report.roc` (summary/load/compare + the helpers the others share),
   `ReportSessions.roc`, `ReportHealth.roc`, `ReportSeason.roc` — each owning its commands;
+  `Output.roc` (the envelope boundary — `emit_ok!`/`emit_err!`, `json_schema_version`);
   `main.roc` is a thin argv → dispatch shell. The report modules depend INWARD on
   `Report.roc` and it imports none of them (#196, ADR 0001).
   Pure logic goes in `Metrics.roc` / `Sports.roc` (sport vocabulary: the four sport-varying policies — family filters, load-model class, pace routing, the pace-TSS exponent — gathered in one module rather than scattered through others; only the family filter is a table of rows, the class reads a list literal inside its own function, and the last two are name-substring predicates) / `Render.roc` / `Command.roc` (argv → typed
@@ -173,10 +172,32 @@ nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.ym
 - **Mermaid diagrams in the README**: `<br>` and commas only; other punctuation breaks
   the render.
 
+## The window (src/viz)
+
+A second Roc app shares the database: the roc-ray window (`src/viz/main.roc`;
+`just viz` opens it). It pins ITS OWN compiler in its app header —
+`tools/pin-check.sh` holds every workflow `nightly-tag:` site to that pin; set
+`ROC_VIZ` to a matching nightly locally. No Roc module can be imported by both
+binaries (two platforms, two pins — #458 tracks convergence), so every
+cross-surface definition lives in a SQL view (`activity_intensity`,
+`weekly_ramp`, `activity_power_ladder`, `plan_current`, `week_bounds` — ADR
+0017): change semantics in the view, never by copying its SQL into a query.
+
+The window is steered and observed through bus tables in the same database —
+`viz_directives` (write), `viz_focus` (read) — and it self-publishes its
+capabilities at every launch; `stride viz --json` serves them and is the
+discovery source for steering (view numbers, directive fields, staleness),
+never a doc's copy. `docs/viz.md` is the reference for all of it.
+
+The e2e suite cannot run the window (it is a GUI): its viz passes play the
+window's part by seeding exactly what the window would write, and CI proves
+the app still links per-OS. A window-side behavior change needs a live
+`just viz` run before it is called working.
+
 ## Idiomatic Roc (and the traps that actually bit us)
 
 Language- and toolchain-level, as opposed to the stride-specific conventions above.
-Every item here cost a debugging session at least once — they are not style opinions.
+These are measured toolchain behaviors, not style opinions.
 
 ### Shaping data
 
@@ -209,9 +230,6 @@ Every item here cost a debugging session at least once — they are not style op
 - **Interpolating a compile-time-constant `""` can crash the backend** in `str_concat`
   (heap-corruption SIGABRT, same class as #32). Bind values rather than splicing optional
   fragments into SQL; a bound `:flag = 0/1` in the WHERE beats a conditional string.
-- **`--opt=dev` is the default for build speed** (the `--opt=speed` miscompile era,
-  #32, ended with the 2026-08-17 nightly). Flags take `=`, not a space: `--output=x`,
-  not `--output x`.
 
 ### Testing
 
@@ -226,35 +244,27 @@ Every item here cost a debugging session at least once — they are not style op
   just that module's — so the number it prints is not that file's test count.
 - **The e2e harness aborts at the first failing `check!`.** A negative control that
   reverts two fixes at once only ever proves the first one. Revert one at a time.
-- **Prove a test before trusting it**: revert the fix, watch it fail, restore. Several
-  tests in this repo once passed against reverted code and proved nothing.
+- **Prove a test before trusting it**: revert the fix, watch it fail, restore — a
+  test that passes against reverted code guards nothing.
 
 ### Platform APIs
 
 - **Verify against the docs before writing** (basic-cli 0.22 docs, or package source in
-  `~/.cache/roc/packages/`) — alpha APIs drift; this habit has kept nearly every build at
-  0-errors-first-try.
+  `~/.cache/roc/packages/`) — alpha APIs drift.
 - **`Sqlite.query!` on a row that may not exist fails the command.** Use `query_many!`
   and match the empty list — this is how config loading must read any possibly-absent
   key (a zero-row `query!` returns `Err(NoRowsReturned)`, so an unhandled `?` exits 1).
 - **SQLite type affinity bites**: INTEGER columns reject `Sqlite.f64` decoders — `CAST(…
   AS REAL)` in the SELECT when unsure.
-- **Bind values normally; never splice text into SQL** (Bug C, #105, is fixed:
-  basic-cli ≥ 0.22.0 no longer double-frees heap `Str`s in bindings lists —
-  basic-cli#471/#472). The durable properties: a heap-corruption bug surfaces as
-  unrelated errors far from its cause, because the second free corrupts whatever
-  recycles the allocation; inline/literal strings live outside the heap path, which is
-  what makes such bugs intermittent and short-fixture mocks structurally blind to
-  them. If a platform bug ever forces a splice workaround again, PR #130/#131 hold the
-  complete playbook in both directions.
+- **Bind values; never splice text into SQL.** (The platform double-free that once
+  forced a splice workaround is fixed in basic-cli ≥ 0.22; #105/#130/#131 hold the
+  full forensics if a heap bug ever recurs.)
 - **A crash at a host-boundary symbol names where corruption SURFACED, not where it
   was caused** — a backtrace can accuse the HTTP layer while the cause is the bind
   path. Bisect by removing one ingredient at a time, and reach for guard-malloc early
   (`DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib` under lldb): it makes
   use-after-free deterministic and faults at the culprit instruction instead of the
-  next victim. Ruled out for the #105 class, don't re-litigate: SQL statement shape,
-  `Json.parse` alone, and COPYING decoded strings before binding — copies are fresh
-  heap strings, i.e. MORE double-free surface, never less.
+  next victim.
 - **Verify anything touching sync decode/bind against real Strava data**, not `just
   test` alone — the mock's inline-RocStr fixtures cannot exercise heap-string paths,
   so a mock-only validation proves nothing about real payloads.
@@ -316,8 +326,8 @@ Every item here cost a debugging session at least once — they are not style op
   scored as the GROUP's best EF. From #311 it is applied to `avg_hr_scored`, not to the stored
   `avg_hr`: when the surviving in-band samples span at least half the LONGER of the stream's own extent and the session's moving time, the engine scores from the
   MEAN of that stream's in-band samples, because a stored average computed from a lossy stream
-  can be plausible and still wrong — measured, three times more common than the impossible
-  kind. A stored value is still what the bound sees when no usable stream exists, and still
+  can be plausible and still wrong — the plausible-but-wrong average is the common
+  failure, not the impossible one. A stored value is still what the bound sees when no usable stream exists, and still
   what the display surfaces publish beside it — `progress`, `activity` and `activities` carry both fields, `plan` and `top hr` only the stored one.
 - `activity_metrics.ftp_used` drives auto-recompute on FTP change — any new metric
   input must join that invalidation story.
@@ -366,8 +376,39 @@ tests on linux/macOS/Windows, then build + e2e on macOS), `release-please.yml`
 
 - **Normal git history on `main`** — commit normally, push fast-forward; never amend
   or force-push a shared branch.
-- **`just command-claims` holds the docs to the command table.** Every `stride <cmd>` a doc NAMES is a claim that the binary HAS it; the oracle is `stride --json --help`, the same machine-readable table `just schema-check` uses. One direction only — a doc naming a command that does not exist fails, a command no doc mentions is a coverage question and is deliberately not checked. Occasionally a doc must name a command the binary lacks, because saying so is the point: a sentence explaining that `stride backfill` was retired is TRUE, and stripping its backticks to satisfy the linter would degrade the doc to serve the tool. Such a line opts out with the literal marker `command-claims: quoting`, which rides in an HTML comment and renders as nothing. The count is pinned in the script, so adding one is deliberate — and this very line carries such a marker itself, so the opt-out is exercised by being documented rather than sitting untested behind a pin of zero. <!-- command-claims: quoting -->
-- **`just skill-shapes` holds SKILL.md's payload shapes to the schemas.** `command-claims` resolves command NAMES; this resolves payload KEYS, which nothing did — a field could be added to a schema, marked required, shipped, and never reach the coaching agent's instruction sheet. The failure is silent in the direction that matters: an agent given an undocumented field does not error, it simply never uses it. Membership lives in `tools/skill-shapes.pins`, checked in, and NOT in a measurement of the document. The first cut decided which objects to enforce by how much of each one SKILL.md already listed — which makes the denominator the text being judged, so drift lowers the coverage and switches off the check that would have caught it. Dropping one field of six leaves 83% and is caught; dropping two leaves 66% and is silent — the coverage measure switches itself off fastest under the largest drift. With the pin, a schema's required set cannot move without this gate failing whatever the doc says, and refreshing the pin (`sh tools/skill-shapes.sh --refresh`) is the moment someone decides whether the new field belongs in SKILL.md. It also reaches past the table into prose, where `sync` documents its payload and the measured version could not see it. `analyze` is the known gap: its literal spans a paragraph break, so the line-scoped extractor finds nothing there — it stays pinned, so a schema change still fails the gate even though the doc side never runs. Two directions. Schema to doc checks each required field of a `doc`-pinned object against every line documenting that command, prose included, with the invocation cell stripped so an argument placeholder like `[date]` cannot silently satisfy a payload field. Doc to schema checks every key in a `{...}` literal against the schemas — and identifies no command at any point, deliberately. Attributing a literal to whichever command its line MENTIONS mis-files prose, because a bullet saying "run `stride analyze`" is not a statement about `analyze`'s payload; reading table rows only buys accuracy by going blind to every literal in prose, including `config unset`'s `{key, removed}`, a command with no table row at all. Asking instead whether the literal's key set is a SUBSET of some single schema object's properties needs no attribution and cannot be fooled by a mention. Both counts (`EXPECT_PINNED`, `EXPECT_LITERALS`) are asserted exactly rather than as floors, because under a floor a reworded row or a deleted schema stops matching while the gate prints the same clean line a healthy tree prints.
+- **`just command-claims` holds the docs to the command table.**
+  - Every `stride <cmd>` a doc NAMES is a claim that the binary HAS it; the oracle is
+    `stride --json --help`, the same machine-readable table `just schema-check` uses.
+    One direction only — a doc naming a nonexistent command fails; a command no doc
+    mentions is a coverage question and is deliberately not checked.
+  - A doc may legitimately name a command the binary lacks — "`stride backfill` was retired" is TRUE, and stripping its backticks to satisfy the linter would degrade the doc to serve the tool; this line opts out that way. <!-- command-claims: quoting -->
+    The opt-out is an HTML-comment marker (spelled `command-claims:
+    quoting`); the marker count is pinned in the script, so adding one is
+    deliberate — and this bullet's own marker keeps the opt-out exercised rather
+    than sitting untested behind a pin of zero.
+- **`just skill-shapes` holds SKILL.md's payload shapes to the schemas.**
+  `command-claims` resolves command NAMES; this resolves payload KEYS — the failure
+  it guards is silent in the direction that matters: an agent given an undocumented
+  field does not error, it simply never uses it.
+  - Membership lives in `tools/skill-shapes.pins`, checked in — NEVER measured from
+    the document, because a measured denominator turns the check off under exactly
+    the drift it should catch. Refreshing the pin (`sh tools/skill-shapes.sh
+    --refresh`) is the moment someone decides whether a new field belongs in
+    SKILL.md.
+  - Two directions, prose included. Schema→doc checks each required field of a
+    `doc`-pinned object against every line documenting that command, with the
+    invocation cell stripped so an argument placeholder like `[date]` cannot satisfy
+    a payload field. Doc→schema checks every `{...}` literal's key set for being a
+    SUBSET of some single schema object — attribution-free on purpose, since
+    attributing a literal to whichever command its line mentions mis-files prose,
+    and reading table rows only goes blind to every literal in prose (`config
+    unset`'s `{key, removed}` has no table row at all).
+  - Known gap: `analyze`'s literal spans a paragraph break, so the line-scoped
+    extractor never runs its doc side — the object stays pinned, so a schema change
+    still fails the gate.
+  - Both counts (`EXPECT_PINNED`, `EXPECT_LITERALS`) are asserted exactly, not as
+    floors: under a floor, a reworded row or deleted schema stops matching while the
+    gate prints the same clean line a healthy tree prints.
 
 ## Releases (release-please)
 
