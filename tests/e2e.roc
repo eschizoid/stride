@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1131)?
+    checks_ran_exactly!(1130)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2804,16 +2804,11 @@ b_seed_analyze! = |ctx| {
     desc_b = Str.trim(sh!("jq -r '.plugins[0].description // empty' .claude-plugin/marketplace.json"))
     desc_c = Str.trim(sh!("jq -r '.description // empty' .codex-plugin/plugin.json"))
     check!("the three plugin-manifest descriptions are one string", !(Str.is_empty(desc_a)) and desc_a == desc_b and desc_a == desc_c)?
-    # The repo-local Claude shim is a REAL file (a tracked symlink silently became a text
-    # file on default Windows checkouts), so its routing `description` is a second copy of
-    # the one string skill discovery reads — the exact drift the maintainer's own
-    # user-local pointer suffered twice. Byte-equality makes that drift a red suite
-    # instead of a silently mis-routed skill; the shim body must also name the canonical
-    # path, so the redirect cannot rot into a dead end.
-    canon_desc = Str.trim(sh!("grep '^description:' skills/stride/SKILL.md"))
-    shim_desc = Str.trim(sh!("grep '^description:' .claude/skills/stride/SKILL.md"))
-    check!("the Claude shim's routing description is byte-equal to the canonical one", !(Str.is_empty(canon_desc)) and shim_desc == canon_desc)?
-    check!("...and the shim redirects to the canonical path", Str.contains(sh!("cat .claude/skills/stride/SKILL.md"), "skills/stride/SKILL.md"))?
+    # the in-checkout shim (.claude/skills) is RETIRED: the Claude plugin
+    # resolves the canonical skills/ directory for every session, so the one
+    # copy of the routing description is SKILL.md's own frontmatter. A shim
+    # reappearing would resurrect the drift surface the plugin removed.
+    check!("no repo-local Claude shim exists to drift", Str.is_empty(Str.trim(sh!("ls .claude/skills 2>/dev/null || true"))))?
     # #181: the skill must TELL the coach to pass --json, and must not teach the
     # retired environment detection as a way to get machine output
     check!("skill instructs passing --json", Str.contains(skill_text, "PASS `--json` ON EVERY QUERY"))?
