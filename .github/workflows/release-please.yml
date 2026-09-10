@@ -335,6 +335,9 @@ jobs:
           start "" "%here%stride-viz.exe"
           exit /b 0
           :seed
+          rem every %var% read below sits on its OWN line - cmd expands at
+          rem parse time per line, so no delayed expansion is needed; folding
+          rem these into a parenthesized block would break that property
           set "src=%~1"
           set "dst=%USERPROFILE%\.stride\fonts\%~nx1"
           if not exist "%dst%" ( copy /y "%src%" "%dst%" >nul 2>&1 & goto :eof )
@@ -352,6 +355,10 @@ jobs:
             test -s "stage/stride-app/fonts/$f"
           done
           7z a -bso0 stride-app-windows-x86_64.zip ./stage/stride-app
+          # the archive must root at stride-app/ like the linux tarball; this
+          # job's first-ever execution is a real release, so the layout is
+          # asserted here rather than trusted
+          7z l stride-app-windows-x86_64.zip | grep -q 'stride-app.stride-app.bat'
 
       - name: Prove the launcher seeds a fresh home
         shell: bash
