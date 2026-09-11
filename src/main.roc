@@ -120,6 +120,8 @@ help_text =
         \\                                structured target, e.g. 3x12:00@230W
         \\    complete <session_id> [activity_id]
         \\                                mark done (bare = rest day)
+        \\    complete latest             close the open session on the latest activity's
+        \\                                day with that activity — the word, not an id
         \\    skip <session_id> <reason> [activity_id|none]
         \\                                mark skipped — name the activity done instead,
         \\                                or `none` to release an existing link
@@ -417,6 +419,7 @@ dispatch! = |cmd|
         Command.ProjectWith(date, plan) => Plan.project!(date, Hypothetical(plan))
         Command.Complete(session_id, activity_id) => Plan.complete!(session_id, activity_id)
         Command.CompleteRest(session_id) => Plan.complete_rest!(session_id)
+        Command.CompleteLatest => Plan.complete_latest!({})
         Command.Skip(session_id, reason) => Plan.skip!(session_id, reason, NoSub)
         Command.SkipWith(session_id, reason, activity_id) => Plan.skip!(session_id, reason, Sub(activity_id))
         Command.ConfigList => config_list!({})

@@ -45,6 +45,8 @@ Command := [
 	WeekAddT(Str, Str, Str, Str, Str),
 	Complete(Str, Str),
 	CompleteRest(Str),
+	## `complete latest`: the latest activity closing the open session on its day
+	CompleteLatest,
 	Skip(Str, Str),
 	SkipWith(Str, Str, Str),
 	Relabel(Str, Str, Str),
@@ -176,6 +178,12 @@ Command := [
 			# (#198, ADR 0014) — validated in Plan (bad_target), stored beside the prose
 			[_, "week", "add", date, session_type, detail, rationale, target] => Ok(WeekAddT(date, session_type, detail, rationale, target))
 			[_, "week", "add", date, session_type, detail, rationale] => Ok(WeekAdd(date, session_type, detail, rationale))
+			## the literal resolves BOTH ids - the latest activity and the open session
+			## on its day. BOTH literal arms sit above the id arms: patterns match in
+			## order, so `complete latest x` would otherwise read as a session id
+			## named "latest" and refuse with the wrong code.
+			[_, "complete", "latest"] => Ok(CompleteLatest)
+			[_, "complete", "latest", ..] => Err(Usage("complete latest — closes the open session on the latest activity's day; it takes no id"))
 			[_, "complete", session_id, activity_id] => Ok(Complete(session_id, activity_id))
 			[_, "complete", session_id] => Ok(CompleteRest(session_id))
 			[_, "skip", session_id, reason, activity_id] => Ok(SkipWith(session_id, reason, activity_id))
@@ -426,6 +434,9 @@ Command := [
 		errs(writes("rate", [req("<activity_id|latest>"), req("<1-10>")], "rate.json"), ["activity_not_found", "bad_id", "bad_rpe", "no_activities", "unreadable_activity_date"]),
 		errs(writes("week add", [req_ex("<YYYY-MM-DD>", "2099-01-01"), req_ex("<type>", "endurance"), req_ex("<detail>", "example"), req_ex("<rationale>", "example"), opt_ex("<RxMM:SS@WWWW>", "3x12:00@230W")], "week_add.json"), ["bad_date", "bad_target"]),
 		errs(writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"), ["activity_already_linked", "activity_not_found", "activity_required", "bad_id", "session_not_found"]),
+		## the resolving form: no arguments of its own, its own refusal when the
+		## day holds no open session, and the date guards `latest` always carries
+		errs(writes("complete latest", [], "complete.json"), ["activity_already_linked", "no_activities", "no_open_session", "unreadable_activity_date"]),
 		errs(writes("skip", [req("<session_id>"), req("<reason>"), opt("<activity_id|none>")], "skip.json"), ["activity_already_linked", "activity_not_found", "bad_id", "session_done", "session_not_found"]),
 		errs(writes("relabel", [req("<session_id>"), req_ex("<type>", "endurance"), req_ex("<detail>", "example"), opt_ex("<rationale>", "example")], "relabel.json"), ["bad_id", "session_not_found"]),
 		errs(writes("event add", [req_ex("<YYYY-MM-DD>", "2099-01-01"), req_ex("<name>", "example")], "event_add.json"), ["bad_date"]),

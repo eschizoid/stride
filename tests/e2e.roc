@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1130)?
+    checks_ran_exactly!(1137)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -365,6 +365,7 @@ run_scenarios! = |ctx| {
     # real dependencies are narrower and worth naming: b_plan!'s two skipped rows on
     # ctx.today, which supply the other 2 of the 5, and the three probe dates being free of
     # open sessions, which holds only because b_agent_loop! cleans up after itself.
+    b_complete_latest!(ctx)?
     b_week_plan!(ctx)?
     b_relabel!(ctx)?
     b_targets!(ctx)?
@@ -1350,7 +1351,7 @@ b_init_config! = |ctx| {
     _ = sh!("rm -rf '${help_dir}' && mkdir -p '${help_dir}' && ${spec_names} > '${help_dir}/spec' && ${human_help} > '${help_dir}/human'")
     # Fail-closed: an empty extraction on either side would make the loop below vacuous.
     help_sizes = Str.trim(sh!("wc -l < '${help_dir}/spec' | tr -d ' '"))
-    check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "39")?
+    check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "40")?
     missing_from_help = Str.trim(sh!("while IFS= read -r c; do grep -qw -- \"\$c\" '${help_dir}/human' || printf '%s ' \"\$c\"; done < '${help_dir}/spec'"))
     check!("every command in the table is named in `stride --help` (missing: ${missing_from_help})", missing_from_help == "")?
     _ = sh!("rm -rf '${help_dir}'")
@@ -4958,6 +4959,45 @@ b_agent_loop! = |ctx| {
 # Runs AFTER b_agent_loop! and before the database rebuilds, for the same reason it does:
 # the comparison needs a populated adherence window, and an empty one would make every set
 # equality below true.
+# ── #465: `complete latest` resolves BOTH ids - the latest activity and the
+# open session on that activity's own day - and hands them to the unchanged
+# completion path. The checks below pin the resolution, not the completion:
+# that it picks the right pair, refuses by name when the day holds no open
+# session, and still carries the date guards `latest` has always carried.
+b_complete_latest! : Ctx => Try({}, _)
+b_complete_latest! = |ctx| {
+    # An EMPTY database first, in its own sandbox: a first run is the state most
+    # likely to meet these commands, and both must name it. No other check runs
+    # either command against an empty database, and `internal_error` validates
+    # against the envelope like any other code - so these two are the only gate
+    # standing between a named refusal and the catch-all.
+    ehome = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+    _ = stride!(ctx.bin, ehome, ["init"])
+    empty_rate = Str.trim(sh!("HOME='${ehome}' STRIDE_FORMAT=json '${ctx.bin}' rate latest 5 | jq -r '.error.code'"))
+    empty_done = Str.trim(sh!("HOME='${ehome}' STRIDE_FORMAT=json '${ctx.bin}' complete latest | jq -r '.error.code'"))
+    check!("rate latest names an empty database rather than failing internally (${empty_rate})", empty_rate == "no_activities")?
+    check!("...and so does complete latest (${empty_done})", empty_done == "no_activities")?
+    _ = sh!("rm -rf '${ehome}'")
+
+    # seeded on its own far-future day so nothing else in the run competes for
+    # "latest", and removed at the end so later passes see the fixture as found
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation) VALUES (9601,'resolver ride','Ride','2097-04-02T09:00:00Z',3600,30000,0);")
+    check!("complete latest refuses by name when that day holds no open session", strjq!(ctx, ["complete", "latest"], ".error.code") == "no_open_session")?
+    _ = stride!(ctx.bin, ctx.home, ["week", "add", "2097-04-02", "endurance", "Z2 60min", "resolver probe"])
+    sid = Str.trim(sql!(ctx.db, "SELECT id FROM planned_sessions WHERE target_date='2097-04-02';"))
+    check!("...and links that day's open session to that day's activity", strjq!(ctx, ["complete", "latest"], ".data.activity | tostring") == "9601")?
+    check!("...the session it closed is the one seeded on the activity's day", Str.trim(sql!(ctx.db, "SELECT COALESCE(completed_activity_id,0) FROM planned_sessions WHERE id=${sid};")) == "9601")?
+    # a second run finds nothing open on that day - the same refusal, which is
+    # also what makes the command safe to re-run
+    check!("...and a re-run refuses rather than re-linking", strjq!(ctx, ["complete", "latest"], ".error.code") == "no_open_session")?
+    # the date guards travel with the resolver: one malformed row anywhere
+    # refuses the whole resolution rather than ranking around it
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation) VALUES (9602,'bad clock','Ride','2097-04-03T37:00:00Z',3600,30000,0);")
+    check!("complete latest carries the same date guard rate latest carries", strjq!(ctx, ["complete", "latest"], ".error.code") == "unreadable_activity_date")?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE target_date='2097-04-02'; DELETE FROM activities WHERE id IN (9601,9602);")
+    Ok({})
+}
+
 b_week_plan! : Ctx => Try({}, _)
 b_week_plan! = |ctx| {
     pj! = |q| Str.trim(strjq!(ctx, ["plan"], q))

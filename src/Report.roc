@@ -260,6 +260,88 @@ Report :: [].{
     # An absence, not a fabrication (compare's verdict crossed a category with one
     # date NULLed; stats said 474 under ALL TIME while holding 475), and a guard on
     # the filtering query cannot catch a row that is already gone.
+    # The one body of "latest" activity resolution, shared by `rate latest` and
+    # `complete latest` (#465). It returns the id AND the day, because a caller
+    # linking a session needs the date and a second query would be a second
+    # chance to disagree with this one.
+    latest_activity! : Str => Try({ id : I64, day : Str }, _)
+    latest_activity! = |path| {
+        # "latest" by PARSED day, not string max: `MAX(start_local)` is a byte
+        # comparison, so one malformed date outranks every real one — and `rate latest`
+        # then attached the rating to that row at exit 0. The worst instance of the
+        # class because it WRITES into `ratings`, one of the two tables prune refuses to
+        # touch (human judgment, unrecoverable), and the printed remedy — delete the
+        # malformed row — would destroy the rating meant for a different session.
+        # Not covered by summary's sweep: `rate!` dispatches straight from main.roc.
+        #
+        # TWO steps, and the split is the point: Roc GUARDS, SQL RANKS. The guard
+        # validates substr(start_local, 1, 19) and the ranker compares the SAME slice —
+        # not two lists that must agree. Positions 1..19 are the whole date and time;
+        # anything past them cannot reorder rows (a lowercase 'z' in position 20 once
+        # outranked an uppercase 'Z' on an identical timestamp).
+        # The date half needs Roc (round-trip + year bound), grouped by DAY — grouping
+        # by whole timestamp scaled with activities, ~870ms at 50k vs ~86ms. The time
+        # half is pure comparison and stays in SQL. This calls the shared sweep rather
+        # than restating it: a byte-identical copy once sat here, ~270 lines above a
+        # call to the helper whose comment claimed to be the one body.
+        _ = Report.guard_activity_dates!(path)?
+        # ...and the TIME half. No NULL arm, deliberately: a NULL start_local is already
+        # refused by the date sweep above, and a mutation test proved the arm could not
+        # fail — a guard that cannot fail is worse than none. The ORDERING is therefore
+        # load-bearing: the date sweep must run before this, or a NULL reaches the
+        # decoder as UnexpectedType(Null) — internal_error on a write path.
+        bad_time = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT id AS id, COALESCE(substr(CAST(start_local AS TEXT), 11, 9), '') AS t
+                \\FROM activities
+                \\WHERE NOT (
+                \\      length(start_local) >= 19
+                \\  AND substr(start_local, 11, 1) = 'T'
+                \\  AND substr(start_local, 14, 1) = ':'
+                \\  AND substr(start_local, 17, 1) = ':'
+                \\  AND substr(start_local, 12, 2) GLOB '[0-9][0-9]'
+                \\  AND substr(start_local, 15, 2) GLOB '[0-9][0-9]'
+                \\  AND substr(start_local, 18, 2) GLOB '[0-9][0-9]'
+                \\  AND CAST(substr(CAST(start_local AS TEXT), 12, 2) AS INTEGER) <= 23
+                \\  AND CAST(substr(CAST(start_local AS TEXT), 15, 2) AS INTEGER) <= 59
+                \\  AND CAST(substr(CAST(start_local AS TEXT), 18, 2) AS INTEGER) <= 59
+                \\)
+                \\ORDER BY id LIMIT 1
+            ,
+            bindings: [],
+            rows: |cols| |stmt| {
+                id = Sqlite.i64("id")(cols)(stmt)?
+                t = Sqlite.str("t")(cols)(stmt)?
+                Ok({ id, t })
+            },
+        })?
+        # names the component that FAILED, not the one that is fine: the message used to
+        # hand back the date half for a row whose time is T37. BadActivityTime's argument
+        # is the time COMPONENT — raising `('T37:00:00')` framed as a stored value
+        # matches zero rows for anyone who pastes it into a WHERE clause, so the empty
+        # case is worded rather than given a fake literal.
+        _ = match List.first(bad_time) {
+            Ok(r) => Err(BadActivityTime(r.t, r.id))
+            Err(_) => Ok({})
+        }?
+        top = Sqlite.query!({
+            path: Path.utf8(path),
+            query: "SELECT COALESCE(MAX(id), 0) AS id FROM activities WHERE substr(start_local, 1, 19) = (SELECT MAX(substr(start_local, 1, 19)) FROM activities)",
+            bindings: [],
+            row: Sqlite.i64("id"),
+        })?
+        id = if top == 0 (Err(NoActivities)?) else top
+
+        day = Sqlite.query!({
+            path: Path.utf8(path),
+            query: "SELECT CAST(substr(start_local, 1, 10) AS TEXT) AS d FROM activities WHERE id = :id",
+            bindings: [{ name: ":id", value: Integer(id) }],
+            row: Sqlite.str("d"),
+        })?
+        Ok({ id, day })
+    }
+
     guard_activity_dates! : Str => Try({}, _)
     guard_activity_dates! = |path| {
         act_days = Sqlite.query_many!({
