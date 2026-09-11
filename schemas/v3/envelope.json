@@ -54,6 +54,7 @@
             "no_database",
             "no_detected_intervals",
             "no_intervals_on_date",
+            "no_open_session",
             "no_power_data",
             "no_scorable_workouts",
             "no_viz_capabilities",
