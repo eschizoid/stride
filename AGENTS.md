@@ -79,18 +79,24 @@ nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.ym
 
 ## Code conventions
 
-- **A comment states a property of the WORLD, never an event in this project's
-  history.** SQLite takes a write lock when switching journal mode; `?` is a
-  function-level early return that lands on the catch-all; Strava's CSV has
-  duplicate `Distance` headers — those are properties, and they stay true. What
-  a review round caught, how many attempts a fix took, what a previous draft of
-  the comment said, how many times a defect recurred: those are events, and they
-  read as noise the moment the change merges. Keep the fact the incident taught;
-  drop the incident. Two corollaries: a number no assertion enforces will drift,
-  so assert it or delete it; and prose written at an imagined critic ("do NOT
-  'fix' this") argues with nobody. **Rewrite a comment block whole rather than
-  patching a line** — a partial edit leaves the old text spliced to the new,
-  which compiles, passes every gate, and describes something the code does not do.
+- **Guards are code here; prose only states properties.** A comment states a
+  property of the WORLD, never an event in this project's history: SQLite takes a
+  write lock when switching journal mode; `?` is a function-level early return
+  that lands on the catch-all; Strava's CSV has duplicate `Distance` headers —
+  those stay true. What a review round caught, how many attempts a fix took, what
+  a previous draft of the comment said, how many times a defect recurred: events,
+  and noise the moment the change merges. Keep the fact the incident taught; drop
+  the incident. Two corollaries: a number no assertion enforces will drift, so
+  assert it or delete it; and prose written at an imagined critic ("do NOT 'fix'
+  this") argues with nobody. **Rewrite a comment block whole rather than patching
+  a line** — a partial edit leaves the old text spliced to the new, which
+  compiles, passes every gate, and describes something the code does not do.
+  The converse matters as much: several things that LOOK decorative are the
+  guard, and tidying them breaks something. A `: Bool` annotation stops a field
+  serializing as the string `"True"`; a row decoder sitting beside its query is
+  the only check on `SELECT ... AS x` aliases; the `CAST(... AS TEXT)` around a
+  TEXT projection is what survives a BLOB in that column. Each is enforced below
+  or by a gate — none is documentation.
 
 - **Effects live in modules, by concern** — the new compiler lifted the alpha4
   monomorphic-module-param wall, so I/O is split out of main.roc: `Db.roc` (SQLite +
@@ -155,10 +161,9 @@ nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.ym
   modules only, and the e2e suite is a real Roc app (`tests/e2e.roc`, sandboxed HOME, no
   network) driven by `just e2e`. **Verify features with Roc expects + that harness, not
   throwaway awk/shell.** No python anywhere in this project.
-- **SQL queries stay next to their row decoders** in whichever module owns the query
-  (`Db.roc`, `Report.roc`, …) — the compiler can't check `SELECT ... AS x` aliases against
-  `Sqlite.i64("x")` decoders; adjacency is the guard. Only decoder-free SQL (DDL) lives
-  in Schema.roc.
+- **SQL queries stay next to their row decoders** in whichever module owns the
+  query (`Db.roc`, `Report.roc`, …). Only decoder-free SQL (DDL) lives in
+  Schema.roc.
 - **Every TEXT column read by `Sqlite.str` / `Sqlite.nullable_str` is projected through
   `CAST(... AS TEXT)`** — SQLite's dynamic typing lets a BLOB or a number sit in a TEXT
   column, and the decoder meets whatever is actually stored. `sh tools/blob-safety.sh`
@@ -175,9 +180,9 @@ nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.ym
   shifts the auto-increment and breaks later fixed-id checks — find them with
   `grep -nE '\["(complete|skip)", "[0-9]' tests/e2e.roc` rather than trusting a count. Add new
   fixtures at the END of a scenario, and delete what you insert.
-- **A bare `True`/`False` serializes as the STRING `"True"`** in an encode-only payload.
-  Annotate the field `: Bool` — the annotations scattered through `Report.roc` are there
-  for this, not for documentation.
+- **A bare `True`/`False` serializes as the STRING `"True"`** in an encode-only
+  payload. Annotate the field `: Bool`; that is why `Report.roc` carries the
+  annotations it does.
 - **Compiler pins have one definition each, and a gate holds the copies.** The engine
   pin is the `setup-roc` action's default; the viz pin is the app header, and
   `tools/pin-check.sh` (in CI) fails naming any workflow `nightly-tag:` site that
