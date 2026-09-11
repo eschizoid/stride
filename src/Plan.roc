@@ -29,9 +29,15 @@ Plan :: [].{
                 id_result =
                     if target == "latest" {
                         # the one body lives in Report.latest_activity! - rate wants
-                        # only the id, complete wants the day beside it
-                        r = Report.latest_activity!(path)?
-                        Ok(r.id)
+                        # only the id, complete wants the day beside it. Matched as a
+                        # VALUE, never `?`: the arms below are this function's whole
+                        # error vocabulary, and an early return jumps past them into
+                        # the catch-all - NoActivities reached the athlete as
+                        # "internal_error - please open an issue" that way.
+                        match Report.latest_activity!(path) {
+                            Ok(r) => Ok(r.id)
+                            Err(e) => Err(e)
+                        }
                     } else {
                         Metrics.arg_i64(target).map_err(|_| BadId)
                     }
@@ -545,17 +551,27 @@ Plan :: [].{
     complete_latest! : {} => Try({}, _)
     complete_latest! = |{}| {
         path = Db.open_db!({})?
-        latest = Report.latest_activity!(path)?
-        open_id = Sqlite.query!({
-            path: Path.utf8(path),
-            query: "SELECT COALESCE(MAX(id), 0) AS id FROM planned_sessions WHERE target_date = :date AND COALESCE(status, 'open') = 'open'",
-            bindings: [{ name: ":date", value: String(latest.day) }],
-            row: Sqlite.i64("id"),
-        })?
-        if open_id == 0
-            Output.err_out!("no_open_session", "no open planned session on ${latest.day}, the day of activity ${I64.to_str(latest.id)} — `stride week` lists what is open, or complete it by id")
-        else
-            complete!(I64.to_str(open_id), I64.to_str(latest.id))
+        match Report.latest_activity!(path) {
+            # an empty database is a first-run state, not a fault: it gets the same
+            # named refusal `rate latest` gives, never the catch-all
+            Err(NoActivities) => Output.err_out!("no_activities", "nothing to complete yet — `stride sync` or `stride import` first")
+            Err(other) => Err(other)
+            Ok(latest) => {
+                # MAX(id) is the tie-break for a hand-edited database holding more
+                # than one open session on the day - the same one `week add` uses.
+                # plan_add_checked! is the only INSERT path and it refuses the second.
+                open_id = Sqlite.query!({
+                    path: Path.utf8(path),
+                    query: "SELECT COALESCE(MAX(id), 0) AS id FROM planned_sessions WHERE target_date = :date AND COALESCE(status, 'open') = 'open'",
+                    bindings: [{ name: ":date", value: String(latest.day) }],
+                    row: Sqlite.i64("id"),
+                })?
+                if open_id == 0
+                    Output.err_out!("no_open_session", "no open planned session on ${latest.day}, the day of activity ${I64.to_str(latest.id)} — `stride week` lists what is open, or complete it by id")
+                else
+                    complete!(I64.to_str(open_id), I64.to_str(latest.id))
+            }
+        }
     }
 
     complete! : Str, Str => Try({}, _)

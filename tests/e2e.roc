@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1135)?
+    checks_ran_exactly!(1137)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -4966,6 +4966,19 @@ b_agent_loop! = |ctx| {
 # session, and still carries the date guards `latest` has always carried.
 b_complete_latest! : Ctx => Try({}, _)
 b_complete_latest! = |ctx| {
+    # An EMPTY database first, in its own sandbox: a first run is the state most
+    # likely to meet these commands, and both must name it. The regression this
+    # pins was invisible to every other check - an early return jumped past the
+    # friendly arm into the catch-all, and `internal_error` validates against the
+    # envelope like any other code.
+    ehome = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+    _ = stride!(ctx.bin, ehome, ["init"])
+    empty_rate = Str.trim(sh!("HOME='${ehome}' STRIDE_FORMAT=json '${ctx.bin}' rate latest 5 | jq -r '.error.code'"))
+    empty_done = Str.trim(sh!("HOME='${ehome}' STRIDE_FORMAT=json '${ctx.bin}' complete latest | jq -r '.error.code'"))
+    check!("rate latest names an empty database rather than failing internally (${empty_rate})", empty_rate == "no_activities")?
+    check!("...and so does complete latest (${empty_done})", empty_done == "no_activities")?
+    _ = sh!("rm -rf '${ehome}'")
+
     # seeded on its own far-future day so nothing else in the run competes for
     # "latest", and removed at the end so later passes see the fixture as found
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation) VALUES (9601,'resolver ride','Ride','2097-04-02T09:00:00Z',3600,30000,0);")
