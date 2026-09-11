@@ -4967,10 +4967,10 @@ b_agent_loop! = |ctx| {
 b_complete_latest! : Ctx => Try({}, _)
 b_complete_latest! = |ctx| {
     # An EMPTY database first, in its own sandbox: a first run is the state most
-    # likely to meet these commands, and both must name it. The regression this
-    # pins was invisible to every other check - an early return jumped past the
-    # friendly arm into the catch-all, and `internal_error` validates against the
-    # envelope like any other code.
+    # likely to meet these commands, and both must name it. No other check runs
+    # either command against an empty database, and `internal_error` validates
+    # against the envelope like any other code - so these two are the only gate
+    # standing between a named refusal and the catch-all.
     ehome = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
     _ = stride!(ctx.bin, ehome, ["init"])
     empty_rate = Str.trim(sh!("HOME='${ehome}' STRIDE_FORMAT=json '${ctx.bin}' rate latest 5 | jq -r '.error.code'"))

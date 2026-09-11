@@ -79,6 +79,19 @@ nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.ym
 
 ## Code conventions
 
+- **A comment states a property of the WORLD, never an event in this project's
+  history.** SQLite takes a write lock when switching journal mode; `?` is a
+  function-level early return that lands on the catch-all; Strava's CSV has
+  duplicate `Distance` headers — those are properties, and they stay true. What
+  a review round caught, how many attempts a fix took, what a previous draft of
+  the comment said, how many times a defect recurred: those are events, and they
+  read as noise the moment the change merges. Keep the fact the incident taught;
+  drop the incident. Two corollaries: a number no assertion enforces will drift,
+  so assert it or delete it; and prose written at an imagined critic ("do NOT
+  'fix' this") argues with nobody. **Rewrite a comment block whole rather than
+  patching a line** — a partial edit leaves the old text spliced to the new,
+  which compiles, passes every gate, and describes something the code does not do.
+
 - **Effects live in modules, by concern** — the new compiler lifted the alpha4
   monomorphic-module-param wall, so I/O is split out of main.roc: `Db.roc` (SQLite +
   schema/migrations), `Strava.roc` (OAuth + sync HTTP), `Analyze/Plan/Import` and the

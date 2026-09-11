@@ -31,9 +31,8 @@ Plan :: [].{
                         # the one body lives in Report.latest_activity! - rate wants
                         # only the id, complete wants the day beside it. Matched as a
                         # VALUE, never `?`: the arms below are this function's whole
-                        # error vocabulary, and an early return jumps past them into
-                        # the catch-all - NoActivities reached the athlete as
-                        # "internal_error - please open an issue" that way.
+                        # error vocabulary, and `?` is a function-level early return
+                        # that lands on run_command!'s catch-all instead.
                         match Report.latest_activity!(path) {
                             Ok(r) => Ok(r.id)
                             Err(e) => Err(e)
