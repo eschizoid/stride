@@ -422,7 +422,7 @@ Db :: [].{
 						Err(_) => -1 }
 					cd = match r.str("cd") { Ok(x) => x
 						Err(_) => "" }
-					vn = if v == 0 "form" else if v == 1 "power" else if v == 2 "trace" else if v == 3 "table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else if v == 7 "ramp" else if v >= 0 "view ${I64.to_str(v)} (ignored)" else ""
+					vn = if v == 0 "form" else if v == 1 "power" else if v == 2 "trace" else if v == 3 "table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else if v == 7 "ramp" else if v == 8 "career" else if v >= 0 "view ${I64.to_str(v)} (ignored)" else ""
 					rgp = if rg > 0 "${I64.to_str(rg)}d" else ""
 					joined = Str.join_with(List.keep_if([vn, rgp], |s2| s2 != ""), " / ")
 					parts = if joined == "" "steer" else joined
@@ -487,6 +487,41 @@ Db :: [].{
 					c10 = r.i64("ctl10") ? |_| "bad"
 					r10 = r.i64("ramp10") ? |_| "bad"
 					Ok({ wk, tss: ts, ctl10: c10, ramp10: r10 })
+				})
+		}
+
+	# The career, assembled from the three v32 views: per-sport totals, the
+	# calendar-month load spine, and the month-close ride FTP. Months come from
+	# monthly_load's rows only - a month with no training produces no bar, and
+	# an ftp of 0 means "not measured that month": the line breaks rather than
+	# inventing a value. partial marks the month still in progress.
+	CareerMonth : { month : Str, load : I64, ftp10 : I64, partial : Bool }
+	CareerSport : { sport : Str, sessions : I64, hours10 : I64, km : I64 }
+	load_career_months! : Sqlite.Db => List(CareerMonth)
+	load_career_months! = |db|
+		match Sqlite.query!({ db, query: "SELECT CAST(l.month AS TEXT) AS m, CAST(ROUND(l.load) AS INTEGER) AS ld, CAST(ROUND(COALESCE(f.ftp, 0) * 10) AS INTEGER) AS f10, CASE WHEN l.month = strftime('%Y-%m', 'now') THEN 1 ELSE 0 END AS pt FROM monthly_load l LEFT JOIN monthly_ride_ftp f ON f.month = l.month ORDER BY l.month ASC", bindings: [] }) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(rows, |r| {
+					m = r.str("m") ? |_| "bad"
+					ld = r.i64("ld") ? |_| "bad"
+					f10 = r.i64("f10") ? |_| "bad"
+					pt = r.i64("pt") ? |_| "bad"
+					Ok({ month: m, load: ld, ftp10: f10, partial: pt == 1 })
+				})
+		}
+
+	load_career_sports! : Sqlite.Db => List(CareerSport)
+	load_career_sports! = |db|
+		match Sqlite.query!({ db, query: "SELECT CAST(sport AS TEXT) AS s, sessions AS n, CAST(ROUND(secs / 360.0) AS INTEGER) AS h10, CAST(ROUND(meters / 1000.0) AS INTEGER) AS km FROM career_totals ORDER BY sessions DESC, sport", bindings: [] }) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(rows, |r| {
+					s = r.str("s") ? |_| "bad"
+					n = r.i64("n") ? |_| "bad"
+					h10 = r.i64("h10") ? |_| "bad"
+					km = r.i64("km") ? |_| "bad"
+					Ok({ sport: s, sessions: n, hours10: h10, km })
 				})
 		}
 

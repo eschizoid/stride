@@ -159,8 +159,8 @@ ReportSeason :: [].{
             month_load = Sqlite.query_many!({
                 path: Path.utf8(path),
                 query:
-                    \\SELECT substr(CAST(day AS TEXT), 1, 7) AS month, CAST(COALESCE(SUM(tss), 0) AS REAL) AS load
-                    \\FROM daily_load GROUP BY month ORDER BY month
+                    \\-- the monthly_load view's definition, shared with the career view
+                    \\SELECT CAST(month AS TEXT) AS month, load FROM monthly_load ORDER BY month
                 ,
                 bindings: [],
                 rows: |cols| |stmt| {

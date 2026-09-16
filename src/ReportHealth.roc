@@ -47,7 +47,21 @@ ReportHealth :: [].{
         # totals, but the date decides MEMBERSHIP in an aggregate here, so a wrong date is
         # a wrong total — the compute side of #249's split.
         _ = Report.guard_activity_dates!(path)?
-        all_time = stats_rows!(path, "0000-01-01")?
+        # all-time reads the career_totals view - the one definition the
+        # window's career view draws from; ytd keeps the cutoff query below
+        # because a view cannot take a parameter
+        all_time = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "SELECT CAST(sport AS TEXT) AS sport, sessions, CAST(secs / 3600.0 AS REAL) AS hours, CAST(meters / 1000.0 AS REAL) AS km FROM career_totals ORDER BY sessions DESC, sport",
+            bindings: [],
+            rows: |cols| |stmt| {
+                sport = Sqlite.str("sport")(cols)(stmt)?
+                sessions = Sqlite.i64("sessions")(cols)(stmt)?
+                hours = Sqlite.f64("hours")(cols)(stmt)?
+                km = Sqlite.f64("km")(cols)(stmt)?
+                Ok({ sport, sessions, hours, km })
+            },
+        })?
         ytd = stats_rows!(path, "${(year).to_str()}-01-01")?
         if Output.json_mode!({})
             Output.emit_ok!({ all_time, ytd, ytd_year: year })

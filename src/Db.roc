@@ -258,7 +258,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 31
+    schema_version = 32
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -467,6 +467,13 @@ Db :: [].{
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_power_ladder, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.weekly_ramp_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.weekly_ramp, bindings: [] })?
+        # v32: the career trio - totals per sport, month load, month-close FTP
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.career_totals_drop, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.career_totals, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_load_drop, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_load, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_ride_ftp_drop, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_ride_ftp, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_planned_sessions_date_id ON planned_sessions (target_date, id)", bindings: [] })
     }
 

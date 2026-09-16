@@ -89,6 +89,8 @@ Ui :: [].{
 		heat_title : Text.Prepared,
 		heat_hint : Text.Prepared,
 		zone_weeks : List(Db.ZoneWeek),
+		career_months : List(Db.CareerMonth),
+		career_sports : List(Db.CareerSport),
 		zones_title : Text.Prepared,
 		zones_hint : Text.Prepared,
 		ramp_weeks : List(Db.RampWeek),
