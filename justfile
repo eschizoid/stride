@@ -417,7 +417,7 @@ e2e:
 # matching nightly, or leave it and hope the PATH roc is close enough.
 # defaults to the pinned viz nightly when installed (tools/make-viz-app.sh and
 # the docs both point there); ROC_VIZ still overrides, PATH roc is the last resort
-viz_pin := `sh -c 'P="$HOME/.local/share/roc/nightly-2026-09-16-a49a16f/roc"; [ -x "$P" ] && echo "$P" || echo roc'`
+viz_pin := `sh -c 'P="$HOME/.local/share/roc/nightly-2026-09-07-14d9829/roc"; [ -x "$P" ] && echo "$P" || echo roc'`
 roc_viz := env("ROC_VIZ", viz_pin)
 
 # open the app window (reads ~/.stride/db.sqlite at launch; ESC quits)
