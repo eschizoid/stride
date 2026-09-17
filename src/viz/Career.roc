@@ -154,9 +154,8 @@ Career :: [].{
 			card!(frame, model.font, cx0(2), 96.0, I64.to_str(ease_i(tot.ss)), "sessions")
 			# months TRAINED, not months elapsed: the axis spans every month
 			# daily_load carries, and it carries decay days after the last
-			# session too, so a month with no session is on the axis and is
-			# not a month trained. Counting the axis called seven empty months
-			# training.
+			# session too, so a month with no session is on the axis and
+			# must not count as trained.
 			trained = List.fold(months, 0.I64, |a, m| if m.load > 0 (a + 1) else a)
 			card!(frame, model.font, cx0(3), 96.0, I64.to_str(ease_i(trained)), "months trained")
 
