@@ -88,16 +88,19 @@ Hud :: [].{
 		else if tsb < 25.0 ({ label: "primed", c: Theme.gold_c })
 		else { label: "coasting", c: Theme.tsb_c }
 
-	# a small flame at (x, y): two stacked drops flickering on the tick.
-	# Geometry, not a glyph - the font atlas is ascii-only.
+	# a small flame at (x, y): a tapering stack of embers, wide at the base
+	# and narrowing to a flickering tip, so the silhouette reads as fire and
+	# not as a heart. Geometry, not a glyph - the font atlas is ascii-only.
 	flame! : Draw.Frame, F32, F32, U64 => {}
 	flame! = |frame, x, y, tick| {
 		t = tick % 30
 		tri = (if t < 15 (U64.to_f32(t)) else U64.to_f32(30 - t)) / 15.0
-		wob = (tri - 0.5) * 1.6
-		frame.circle!({ center: { x: x + wob * 0.5, y: y + 1.0 }, radius: 4.2 + tri * 1.4, style: Draw.filled(Color.with_alpha(Theme.ember_c, 170)) })
-		frame.circle!({ center: { x: x + wob, y: y - 2.0 }, radius: 2.6 + tri * 1.0, style: Draw.filled(Color.with_alpha(Theme.ember_c, 220)) })
-		frame.circle!({ center: { x: x + wob * 0.6, y: y + 1.5 }, radius: 2.0 + tri * 0.8, style: Draw.filled(Color.with_alpha(Theme.gold_c, 230)) })
+		wob = (tri - 0.5) * 1.4
+		frame.circle!({ center: { x, y: y + 2.0 }, radius: 3.4, style: Draw.filled(Color.with_alpha(Theme.ember_c, 160)) })
+		frame.circle!({ center: { x: x + wob * 0.4, y: y - 0.8 }, radius: 2.5, style: Draw.filled(Color.with_alpha(Theme.ember_c, 200)) })
+		frame.circle!({ center: { x: x + wob * 0.8, y: y - 3.2 }, radius: 1.7 + tri * 0.3, style: Draw.filled(Color.with_alpha(Theme.ember_c, 235)) })
+		frame.circle!({ center: { x: x + wob, y: y - 5.4 - tri * 1.2 }, radius: 1.0 + tri * 0.3, style: Draw.filled(Color.with_alpha(Theme.ember_c, 255)) })
+		frame.circle!({ center: { x, y: y + 2.2 }, radius: 1.9, style: Draw.filled(Color.with_alpha(Theme.gold_c, 235)) })
 		{}
 	}
 
