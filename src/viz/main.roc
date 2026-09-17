@@ -27,6 +27,7 @@ import Ramp
 import Zones
 import Table
 import Curve
+import Career
 import Db
 import Theme
 import Trace
@@ -107,7 +108,7 @@ load_model! = |font, curve_days| {
 		home = resolve_home!({})
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], prs: [], tcache: [] }
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [] }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				Db.publish_caps!(db, caps_views, caps_fields)
@@ -134,12 +135,15 @@ load_model! = |font, curve_days| {
 				ht = Db.load_heat!(db)
 				hev = Db.load_event_days!(db)
 				zw = Db.load_zone_weeks!(db)
+				sfs = Db.load_spine_fams!(db)
+				csp = Db.load_career_spines!(db, sfs)
+				cs = Db.load_career_sports!(db)
 				rw = Db.load_ramp_weeks!(db)
 				prs = Db.load_prs!(db)
 				nts = Db.load_day_notes!(db)
-				{ s, e, c, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, rw, prs, tcache }
+				{ s, e, c, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, rw, csp, cs, prs, tcache }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], prs: [], tcache: [] }
+			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [] }
 		}
 		ev = Db.find_idx(loaded.s.days, loaded.e.day)
 		fit = Db.load_fit!(curve_days)
@@ -272,6 +276,9 @@ load_model! = |font, curve_days| {
 			heat: loaded.ht,
 			heat_events: loaded.hev,
 			zone_weeks: loaded.zw,
+			career_spines: loaded.csp,
+			career_sports: loaded.cs,
+			spine_idx: 0,
 			ramp_weeks: loaded.rw,
 			prs: loaded.prs,
 			rec_status: Idle,
@@ -295,6 +302,7 @@ load_model! = |font, curve_days| {
 				{ p: mk!("heat", 13)?, v: 5.U8 },
 				{ p: mk!("zones", 13)?, v: 6.U8 },
 				{ p: mk!("ramp", 13)?, v: 7.U8 },
+				{ p: mk!("career", 13)?, v: 8.U8 },
 			],
 			status: mk!(loaded.s.err, 16)?,
 			has_error: loaded.s.err != "",
@@ -454,7 +462,7 @@ poll_task! = |home|
 refusals_for : { has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str }, I64, U64, U64, List({ id : I64, day : Str }) -> Str
 refusals_for = |dv, cdir, wsel, cur_sel, ids| {
 	segs = List.keep_if([
-		(if dv.view > 7 or dv.view < -1 ("view ${I64.to_str(dv.view)} unknown") else ""),
+		(if dv.view > 8 or dv.view < -1 ("view ${I64.to_str(dv.view)} unknown") else ""),
 		(if dv.range != -1 and dv.range != 30 and dv.range != 60 and dv.range != 90 ("range ${I64.to_str(dv.range)} not 30/60/90") else ""),
 		(if dv.cursor_day != "" and cdir == -2 ("cursor_day ${dv.cursor_day} not in the series") else ""),
 		(if dv.trace_day != "" and wsel == cur_sel and (match List.get(ids, wsel) { Ok(te9) => te9.day != dv.trace_day
@@ -536,20 +544,27 @@ load_tcache! = |db, ids|
 
 # ONE view->basename map for every capture format: png and webm derive
 # from it, so the "named for the view" invariant cannot drift per-path
+# the focus row's view code, hoisted to a pure top-level function: a
+# multi-arm conditional built inline inside a task closure is the shape the
+# pinned compiler has miscompiled before - a call is the shape that survives.
+focus_view_code : U8 -> I64
+focus_view_code = |v|
+	if v == 0 (0) else if v == 1 (1) else if v == 2 (2) else if v == 3 (3) else if v == 4 (4) else if v == 5 (5) else if v == 6 (6) else if v == 7 (7) else 8
+
 view_basename : U8 -> Str
 view_basename = |v|
-	if v == 0 "form-board" else if v == 1 "power" else if v == 2 "session-trace" else if v == 3 "data-table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else "ramp"
+	if v == 0 "form-board" else if v == 1 "power" else if v == 2 "session-trace" else if v == 3 "data-table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else if v == 7 "ramp" else "career"
 
 # what the bus accepts, as data (#439). caps_views derives from view_basename
 # so the published list can never drift from the dispatch; caps_fields must
 # move together with refusals_for - the accepts column states the same rules
 # that function enforces, and both live in this file so an edit sees both.
 caps_views : List({ id : I64, name : Str })
-caps_views = List.map([0.U8, 1, 2, 3, 4, 5, 6, 7], |v| { id: U8.to_i64(v), name: view_basename(v) })
+caps_views = List.map([0.U8, 1, 2, 3, 4, 5, 6, 7, 8], |v| { id: U8.to_i64(v), name: view_basename(v) })
 
 caps_fields : List({ name : Str, kind : Str, accepts : Str })
 caps_fields = [
-	{ name: "view", kind: "integer", accepts: "0..7" },
+	{ name: "view", kind: "integer", accepts: "0..8" },
 	{ name: "range", kind: "integer", accepts: "30|60|90 (days; omitted leaves the range unchanged)" },
 	{ name: "cursor_day", kind: "date", accepts: "YYYY-MM-DD present in the form-board series" },
 	{ name: "trace_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions" },
@@ -582,7 +597,7 @@ update! = |model0, program_input| {
 			DayDetail(dd) => if dd.day == acc.detail_day ({ ..acc, detail: dd.lines }) else acc
 			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" } }
 			Directive(d2) => { ..acc, bus_note: d2.note }
-			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim }
+			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim }
 			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day }
 		})
 	# the coach's word arrives beside the human's input and steers only what
@@ -624,8 +639,8 @@ update! = |model0, program_input| {
 		view_input =
 			if nav_click >= 0 (match I64.to_u8_try(nav_click) { Ok(v9) => v9
 				Err(_) => model.view })
-			else if d.key_pressed(KeyTab) (if model.view == 7 0 else model.view + 1) else model.view
-		view = if directive.has_d and directive.view >= 0 and directive.view <= 7 (match I64.to_u8_try(directive.view) { Ok(v8) => v8
+			else if d.key_pressed(KeyTab) (if model.view == 8 0 else model.view + 1) else model.view
+		view = if directive.has_d and directive.view >= 0 and directive.view <= 8 (match I64.to_u8_try(directive.view) { Ok(v8) => v8
 			Err(_) => view_input }) else view_input
 		# chips hit-test against the frame-true view render will draw
 		clicked_chip =
@@ -891,7 +906,12 @@ update! = |model0, program_input| {
 		}))
 		Mouse.set_cursor!(if over_chip or over_row or over_nav PointingHand else Default)
 		# a view switch stamps this frame; render fades the new view in from it
-		view_anim = if view != model.view model.tick + 1 else model.view_anim
+		# a click settles the career sweep instantly - zero means "no animation"
+		# to every consumer of view_anim, so the twentieth arrival never pays
+		# the first arrival's price
+		# F cycles the career view's sport; harmless elsewhere
+		spine_idx = if view == 8 and d.key_pressed(KeyF) (model.spine_idx + 1) else model.spine_idx
+		view_anim = if view != model.view (model.tick + 1) else if view == 8 and Mouse.button_pressed(d.mouse, Left) (0) else model.view_anim
 		tick = model.tick + 1
 		# no HOME means no database path means no bus — spawning would only
 		# manufacture failing tasks every tick, forever
@@ -915,14 +935,7 @@ update! = |model0, program_input| {
 				}
 			}
 		focus_now = {
-			view: match view2 { 0 => 0
-				1 => 1
-				2 => 2
-				3 => 3
-				4 => 4
-				5 => 5
-				6 => 6
-				_ => 7 },
+			view: focus_view_code(view2),
 			# the curve view's window IS its range; the other views report the
 			# form board's
 			range:
@@ -961,7 +974,7 @@ update! = |model0, program_input| {
 				Unavailable(u9) => if u9.gw == win.w and u9.gh == win.h (model.glow) else build_glow!(win)
 			}
 		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
-		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, tick, view_anim, spine_idx, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
@@ -1076,7 +1089,9 @@ scene! = |model, frame| {
 		model.leg_form.draw!(frame, { pos: { x: 246.0, y: 70.0 }, color: Theme.tsb_c, align: (Top, Left) })
 	} else {}
 	drawn =
-		if model.view == 7 {
+		if model.view == 8 {
+			Career.draw!(model, frame)
+		} else if model.view == 7 {
 			Ramp.draw!(model, frame)
 		} else if model.view == 6 {
 			Zones.draw!(model, frame)

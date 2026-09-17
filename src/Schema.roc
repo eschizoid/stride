@@ -205,4 +205,74 @@ Schema :: [].{
         \\LEFT JOIN daily_load dl ON dl.day = wc.last_day
         \\LEFT JOIN wctl pwc ON pwc.awk = date(m.wk, '-7 days')
         \\LEFT JOIN daily_load prev ON prev.day = pwc.last_day
+
+    # the career, per sport: every session ever, its moving seconds and its
+    # meters. The one definition `stats`' all-time table and the window's
+    # career view both read; `stats`' year-to-date arm keeps its own cutoff
+    # query because a view cannot take a parameter.
+    career_totals_drop =
+        \\DROP VIEW IF EXISTS career_totals
+    career_totals =
+        \\CREATE VIEW career_totals AS
+        \\SELECT COALESCE(CAST(sport_type AS TEXT), '') AS sport, COUNT(*) AS sessions,
+        \\       COALESCE(SUM(moving_time), 0) AS secs,
+        \\       COALESCE(SUM(distance), 0) AS meters
+        \\FROM activities GROUP BY sport_type
+
+    # calendar-month load off daily_load - the month spine `season` sums and
+    # the career view draws. Empty months produce no row; a reader that wants
+    # a gapless month axis builds its own spine and joins.
+    monthly_load_drop =
+        \\DROP VIEW IF EXISTS monthly_load
+    monthly_load =
+        \\CREATE VIEW monthly_load AS
+        \\SELECT substr(CAST(day AS TEXT), 1, 7) AS month, CAST(COALESCE(SUM(tss), 0) AS REAL) AS load
+        \\FROM daily_load GROUP BY month ORDER BY month
+
+    # every family's month-close threshold: the value the engine scored that
+    # month's LAST scored activity of that family with. `kind` says which
+    # quantity it is - 'power' (watts: cycling FTP, rowing erg threshold) or
+    # 'pace' (metres per second) - because a reader must format and label them
+    # differently and must never plot two kinds on one axis. Stored as SPEED
+    # rather than seconds-per-distance on purpose: higher is better for both
+    # kinds, so an improving athlete's line rises whatever the sport.
+    monthly_threshold_drop =
+        \\DROP VIEW IF EXISTS monthly_threshold
+    monthly_threshold =
+        \\CREATE VIEW monthly_threshold AS
+        \\SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month,
+        \\       CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS fam,
+        \\       CASE WHEN COALESCE(m.ftp_used, 0) > 0 THEN 'power' ELSE 'pace' END AS kind,
+        \\       CAST(CASE WHEN COALESCE(m.ftp_used, 0) > 0 THEN m.ftp_used ELSE m.threshold_pace_used END AS REAL) AS value
+        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
+        \\WHERE (COALESCE(m.ftp_used, 0) > 0 OR COALESCE(m.threshold_pace_used, 0) > 0)
+        \\  AND a.id = (SELECT a2.id FROM activities a2
+        \\              JOIN activity_metrics m2 ON m2.activity_id = a2.id
+        \\              WHERE (COALESCE(m2.ftp_used, 0) > 0 OR COALESCE(m2.threshold_pace_used, 0) > 0)
+        \\                AND COALESCE(a2.sport_family, a2.sport_type) = COALESCE(a.sport_family, a.sport_type)
+        \\                AND substr(CAST(a2.start_local AS TEXT), 1, 7) = substr(CAST(a.start_local AS TEXT), 1, 7)
+        \\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)
+
+    # the FTP the engine scored each month's LAST power-scored Ride-family
+    # activity with. Deliberately NOT season's ftp_end - that is a
+    # chronological per-day fold with family weighting and has its one body in
+    # ReportSeason - this is a different, simpler quantity with its own name:
+    # the threshold in force when the month closed. A correlated subquery with
+    # an id tie-break rather than a window function: the window's bundled
+    # SQLite must be able to read every shared view, and window functions are
+    # the one modern feature this repo does not assume. One database names
+    # one row either way.
+    monthly_ride_ftp_drop =
+        \\DROP VIEW IF EXISTS monthly_ride_ftp
+    monthly_ride_ftp =
+        \\CREATE VIEW monthly_ride_ftp AS
+        \\SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month,
+        \\       CAST(m.ftp_used AS REAL) AS ftp
+        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
+        \\WHERE COALESCE(m.ftp_used, 0) > 0 AND a.sport_family = 'Ride'
+        \\  AND a.id = (SELECT a2.id FROM activities a2
+        \\              JOIN activity_metrics m2 ON m2.activity_id = a2.id
+        \\              WHERE COALESCE(m2.ftp_used, 0) > 0 AND a2.sport_family = 'Ride'
+        \\                AND substr(CAST(a2.start_local AS TEXT), 1, 7) = substr(CAST(a.start_local AS TEXT), 1, 7)
+        \\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)
 }

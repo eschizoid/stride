@@ -89,6 +89,10 @@ Ui :: [].{
 		heat_title : Text.Prepared,
 		heat_hint : Text.Prepared,
 		zone_weeks : List(Db.ZoneWeek),
+		career_spines : List(Db.CareerSpine),
+		career_sports : List(Db.CareerSport),
+		# which family's arc the career view is drawing; F cycles it
+		spine_idx : U64,
 		zones_title : Text.Prepared,
 		zones_hint : Text.Prepared,
 		ramp_weeks : List(Db.RampWeek),
