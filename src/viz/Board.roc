@@ -2,6 +2,7 @@ import rr.Color
 import rr.Draw
 import rr.Text
 import Db
+import Hud
 import Theme
 import Ui
 
@@ -33,6 +34,19 @@ Board :: [].{
 		ctl_c = Theme.ctl_c
 		atl_c = Theme.atl_c
 		tsb_c = Theme.tsb_c
+		# ── the form verdict, worn as a status chip: the same TSB the teal
+		# line ends on, said in a word - cooked / building / steady / primed
+		# / coasting - so the board answers "how am I?" before any axis does
+		_ = match List.last(model.data) {
+			Ok(lp) => {
+				band = Hud.form_band(lp.tsb)
+				frame.rounded_rectangle!({ x: win_w - 40.0 - 92.0, y: 64.0, width: 92.0, height: 22.0, radius: 7.0, segments: 6, style: Draw.filled(Theme.card) })
+				frame.circle!({ center: { x: win_w - 40.0 - 78.0, y: 75.0 }, radius: 4.0, style: Draw.filled(band.c) })
+				Text.from(band.label, model.font).size(12).draw!(frame, { pos: { x: win_w - 40.0 - 66.0, y: 69.0 }, color: band.c, align: (Top, Left) })
+				{}
+			}
+			Err(_) => {}
+		}
 	# the artifact's tile cards: a lifted rounded panel behind each number
 	List.for_each!([0.U64, 1, 2, 3], |i| {
 		cx0 = 30.0 + U64.to_f32(i) * 234.0

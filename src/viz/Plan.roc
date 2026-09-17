@@ -50,6 +50,37 @@ Plan :: [].{
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
 		model.plan_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		# ── the week as a quest: one gold pip per prescribed session, lit
+		# as it is completed, and the whole row celebrates when the last one
+		# lands. The same done/total the strip below states, made visible.
+		qt = model.plan_week.total
+		qd = model.plan_week.done
+		if qt > 0 {
+			pipw = 18.0
+			qx0 = win_w - 36.0 - I64.to_f32(qt) * (pipw + 4.0)
+			complete = qd >= qt
+			t9 = model.tick % 40
+			tri9 = (if t9 < 20 (U64.to_f32(t9)) else U64.to_f32(40 - t9)) / 20.0
+			label = if complete "week complete" else "quest ${I64.to_str(qd)}/${I64.to_str(qt)}"
+			lc9 = if complete (Theme.gold_c) else ink_muted
+			Text.from(label, model.font).size(11).draw!(frame, { pos: { x: qx0 - 10.0, y: 72.0 }, color: lc9, align: (Top, Right) })
+			pn = match I64.to_u64_try(qt) { Ok(u9) => u9
+				Err(_) => 0.U64 }
+			pulse_a = match F32.round_to_u64_try(200.0 + tri9 * 55.0) { Ok(u8v) => (match U64.to_u8_try(u8v) { Ok(a9) => a9
+				Err(_) => 255.U8 })
+				Err(_) => 255.U8 }
+			qdu = if qd <= 0 (0.U64) else match I64.to_u64_try(qd) { Ok(u1) => u1
+				Err(_) => 0.U64 }
+			List.for_each!(List.map_with_index(List.repeat({}, pn), |_q, qi| qi), |qi| {
+				px = qx0 + U64.to_f32(qi) * (pipw + 4.0)
+				lit = qi < qdu
+				st = if lit and complete (Draw.filled(Color.with_alpha(Theme.gold_c, pulse_a)))
+					else if lit (Draw.filled(Theme.gold_c))
+					else Draw.filled(Color.with_alpha(Theme.ink_faint, 70))
+				frame.rounded_rectangle!({ x: px, y: 70.0, width: pipw, height: 8.0, radius: 4.0, segments: 4, style: st })
+			})
+			{}
+		} else {}
 
 		# today's card: the one answer that matters most, in full - the card
 		# grows with the wrapped prescription instead of truncating it

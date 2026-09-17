@@ -38,6 +38,12 @@ Theme :: [].{
 	# the ramp's hot end, reused wherever something broke a rule
 	alarm_c : Color.Rgba
 	alarm_c = Color.from_hex_rgb(0xe0645b)
+	# the reward pair: gold for earned things (levels, records, a finished
+	# week), ember under the gold wherever a flame burns
+	gold_c : Color.Rgba
+	gold_c = Color.from_hex_rgb(0xffc857)
+	ember_c : Color.Rgba
+	ember_c = Color.from_hex_rgb(0xff6b35)
 	# the intensity ramp for time-in-zone bars: easy cool to hard hot
 	zone_ramp : List(Color.Rgba)
 	zone_ramp = [Color.from_hex_rgb(0x4d5a68), Color.from_hex_rgb(0x4f8ef7), Color.from_hex_rgb(0x2dd4bf), Color.from_hex_rgb(0xd8c27a), Color.from_hex_rgb(0xe0645b)]

@@ -3,6 +3,7 @@ import rr.Draw
 import rr.Text
 import core.Fmt
 import core.Sports
+import Hud
 import Theme
 import Ui
 
@@ -111,6 +112,30 @@ Career :: [].{
 		switch_note = if nspines > 1 "   F  next sport" else ""
 		subtitle = if sp.fam == "" "career - every month since the first session" else "career - ${Str.with_ascii_lowercased(sp.fam)} ${unit_note}${switch_note}"
 		Text.from(subtitle, model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		# ── the character sheet: level and streak, earned by the same
+		# career the chart below tells. The XP bar eases in with the sweep.
+		hours = Hud.total_hours(model.career_sports)
+		if hours > 0 {
+			lvl = Hud.level_of(hours)
+			lx = win_w - 36.0 - 196.0
+			frame.rounded_rectangle!({ x: lx, y: 62.0, width: 196.0, height: 26.0, radius: 7.0, segments: 6, style: Draw.filled(Theme.card) })
+			Text.from("LVL ${I64.to_str(lvl)}", model.font).size(13).draw!(frame, { pos: { x: lx + 10.0, y: 68.0 }, color: Theme.gold_c, align: (Top, Left) })
+			Text.from(Hud.tier(lvl), model.font).size(11).draw!(frame, { pos: { x: lx + 62.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+			bar_x = lx + 118.0
+			frame.rounded_rectangle!({ x: bar_x, y: 72.0, width: 66.0, height: 6.0, radius: 3.0, segments: 4, style: Draw.filled(Color.with_alpha(Theme.ink_faint, 70)) })
+			bw9 = 66.0 * Hud.xp_frac(hours) * progress(model)
+			if bw9 > 2.0 {
+				frame.rounded_rectangle!({ x: bar_x, y: 72.0, width: bw9, height: 6.0, radius: 3.0, segments: 4, style: Draw.filled(Theme.gold_c) })
+			} else {}
+			sk = Hud.streak_weeks(model.heat)
+			if sk > 0 {
+				sx = lx - 110.0
+				frame.rounded_rectangle!({ x: sx, y: 62.0, width: 100.0, height: 26.0, radius: 7.0, segments: 6, style: Draw.filled(Theme.card) })
+				Hud.flame!(frame, sx + 14.0, 75.0, model.tick)
+				Text.from("${I64.to_str(sk)} wk streak", model.font).size(11).draw!(frame, { pos: { x: sx + 26.0, y: 70.0 }, color: Theme.ember_c, align: (Top, Left) })
+			} else {}
+			{}
+		} else {}
 		if n < 2 {
 			Text.from("no history yet - sync, analyze, and come back", model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 130.0 }, color: ink_muted, align: (Top, Left) })
 		} else {
@@ -129,9 +154,8 @@ Career :: [].{
 			card!(frame, model.font, cx0(2), 96.0, I64.to_str(ease_i(tot.ss)), "sessions")
 			# months TRAINED, not months elapsed: the axis spans every month
 			# daily_load carries, and it carries decay days after the last
-			# session too, so a month with no session is on the axis and is
-			# not a month trained. Counting the axis called seven empty months
-			# training.
+			# session too, so a month with no session is on the axis and
+			# must not count as trained.
 			trained = List.fold(months, 0.I64, |a, m| if m.load > 0 (a + 1) else a)
 			card!(frame, model.font, cx0(3), 96.0, I64.to_str(ease_i(trained)), "months trained")
 
@@ -306,8 +330,23 @@ Career :: [].{
 				} else {}
 				{}
 			}
+			# a peak that IS the current month is a record in progress, and it
+			# celebrates in gold with a breathing halo - for every family, the
+			# way the power view celebrates a fresh ride record. Past peaks
+			# stay teal: the party is for now, not for 2024.
+			peak_is_now = peak.i == last_known.i and peak.f > 0
 			mark!(valley.i, valley.f, Theme.alarm_c, "valley")
-			mark!(peak.i, peak.f, Theme.tsb_c, "peak")
+			mark!(peak.i, peak.f, if peak_is_now (Theme.gold_c) else Theme.tsb_c, "peak")
+			if peak_is_now and p >= 1.0 {
+				gt = model.tick % 40
+				gtri = (if gt < 20 (U64.to_f32(gt)) else U64.to_f32(40 - gt)) / 20.0
+				halo_a = match F32.to_u8_try(40.0 + gtri * 50.0) { Ok(ga) => ga
+					Err(_) => 40 }
+				frame.circle!({ center: { x: xf(peak.i), y: yf(peak.f) }, radius: 8.0 + gtri * 3.0, style: Draw.filled(Color.with_alpha(Theme.gold_c, halo_a)) })
+				# a full line-height of clearance above the size-13 value label
+				# at lift -34, which itself clears the dot and halo
+				Text.from("all-time high", model.font).size(11).draw!(frame, { pos: { x: xf(peak.i), y: yf(peak.f) - 64.0 }, color: Theme.gold_c, align: (Top, Center) })
+			} else {}
 			if last_known.i != peak.i and last_known.i != valley.i {
 				mark!(last_known.i, last_known.f, Theme.ctl_c, "today")
 			}

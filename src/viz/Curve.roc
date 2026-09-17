@@ -106,8 +106,21 @@ Curve :: [].{
 					Ok(nxt) => if r.now_w > 0 and nxt.now_w > 0 (frame.line!({ start: { x: cx(r.i), y: cy(I64.to_f32(r.now_w)) }, end: { x: cx(nxt.i), y: cy(I64.to_f32(nxt.now_w)) }, stroke: Draw.stroke(Color.with_alpha(ctl_c, 150), 2) })) else {}
 					Err(_) => {}
 				})
+			# a record set in the last seven calendar days is NEWS: the rung
+			# earns a pulsing gold ring. Heat carries one row per day, so its
+			# last seven entries ARE the last seven days.
+			recent7 = List.take_last(model.heat, 7)
+			nt = model.tick % 40
+			ntri = (if nt < 20 (U64.to_f32(nt)) else U64.to_f32(40 - nt)) / 20.0
 			List.for_each!(rungs, |r| {
 				rec_y = cy(I64.to_f32(r.pr.w))
+				fresh = r.pr.w > 0 and List.fold(recent7, Bool.False, |a9, hd| a9 or hd.day == r.pr.day)
+				if fresh {
+					halo_a = match F32.to_u8_try(50.0 + ntri * 50.0) { Ok(ha) => ha
+						Err(_) => 50 }
+					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 9.0 + ntri * 3.0, style: Draw.filled(Color.with_alpha(Theme.gold_c, halo_a)) })
+					Text.from("new record", model.font).size(11).draw!(frame, { pos: { x: cx(r.i), y: rec_y - 34.0 }, color: Theme.gold_c, align: (Top, Center) })
+				} else {}
 				if r.pr.w == 0 {
 					# a rung never ridden keeps its label and rail, nothing else
 					{}
