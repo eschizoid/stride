@@ -224,6 +224,35 @@ Career :: [].{
 			# unmeasured month ends one run and starts another.
 			pts = List.map(idx, |x| { x: xf(x.i), y: yf(x.m.ftp10), ok: x.m.ftp10 > 0 })
 			steps = 10.U64
+
+			# A gap is months with no session of this sport, and a broken line
+			# reads as a broken renderer. A dashed bridge joins the last
+			# measured month to the next one so the career reads as continuous,
+			# while staying visibly NOT the curve: dashes carry no value, and
+			# the eye does not read a level off them. Drawn first, so the solid
+			# spine covers it wherever both would fall.
+			_ = List.fold_try!(List.map_with_index(pts, |pt, i| { pt, i }), { lx: -1.0, ly: 0.0 }, |acc, e|
+				if !e.pt.ok Ok(acc)
+				else if acc.lx < 0.0 Ok({ lx: e.pt.x, ly: e.pt.y })
+				else {
+					# adjacent months are the curve's job; only a real gap bridges
+					span = e.pt.x - acc.lx
+					step = plot_w / nf
+					_ = if span > step * 1.5 {
+						dashes = 14.U64
+						List.for_each!([0.U64, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], |dsh|
+							if dsh % 2 == 0 {
+								t0 = U64.to_f32(dsh) / U64.to_f32(dashes)
+								t1 = (U64.to_f32(dsh) + 0.8) / U64.to_f32(dashes)
+								ax = acc.lx + span * t0
+								bx = acc.lx + span * t1
+								if bx <= head_x {
+									frame.line!({ start: { x: ax, y: acc.ly + (e.pt.y - acc.ly) * t0 }, end: { x: bx, y: acc.ly + (e.pt.y - acc.ly) * t1 }, stroke: Draw.stroke(Color.with_alpha(Theme.ctl_c, 60), 1) })
+								}
+							})
+					} else {}
+					Ok({ lx: e.pt.x, ly: e.pt.y })
+				})
 			List.for_each!(List.map_with_index(pts, |pt, i| { pt, i }), |e| {
 				nxt = match List.get(pts, e.i + 1) { Ok(v) => v
 					Err(_) => { x: 0.0, y: 0.0, ok: Bool.False } }
@@ -268,7 +297,11 @@ Career :: [].{
 					frame.circle!({ center: { x: mx, y: yf(mf) }, radius: 3.0 + 9.0 * ring, style: Draw.filled(Color.with_alpha(col, (match F32.to_u8_try(90.0 * (1.0 - ring)) { Ok(a) => a
 						Err(_) => 0 }))) })
 					frame.circle!({ center: { x: mx, y: yf(mf) }, radius: 3.5, style: Draw.filled(col) })
-					lift = if tag == "valley" (18.0) else -24.0
+					# a peak label goes ABOVE and a valley label BELOW, far enough
+					# that the stroke and its own halo clear the glyphs - the
+					# curve rises steeply into its extremes, so a tight offset
+					# puts the text on the line it is naming
+					lift = if tag == "valley" (26.0) else -34.0
 					Text.from(spine_label(mf, sp.kind, sp.fam), model.font).size(13).draw!(frame, { pos: { x: mx, y: yf(mf) + lift }, color: col, align: (Top, Center) })
 				} else {}
 				{}
