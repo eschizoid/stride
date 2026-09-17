@@ -1,82 +1,128 @@
-# ADR 0008 — interval detection: a reporting-only detector, segments as computed tier
+# ADR 0008. Interval detection: a reporting-only detector, segments as computed tier
 
-Status: accepted · 2026-08-09 — Mariano approved it; unblocks #95. Parameters in
-"Parameters (initial, expect tuning)" are a starting point, not settled numbers —
-the validation bar below governs whether they ship.
+Status: Accepted
+Date: 2026-08-09
+Note: Mariano approved the decision, and it unblocks #95. The parameters under
+"Parameters (initial, expect tuning)" are a starting point rather than settled
+numbers, and the validation bar below governs whether they ship.
 
 ## Context
 
-The engine trusts session *names* and free-text prescriptions; it never reads the
-stream to see what actually happened. Whether a VO2 session actually reached its
-target range is judged today by a human eyeballing `activity` output. Detection turns
-that from a claim into a measurement — and it is the flagship of the roadmap's
-foreground track, which makes its boundaries worth fixing in an ADR before any code.
+The engine trusts session names and free-text prescriptions, and it never reads the stream
+to see what actually happened. Whether a VO2 session reached its target range is judged
+today by a human reading `activity` output. Detection turns that judgment from a claim into
+a measurement. Detection is also the largest item on the roadmap's foreground track, so its
+boundaries are fixed in an ADR before any code is written.
 
 ## Decision
 
-**1. The detector reports; it never acts.** Output is structure — `5×[3:01 @ 258W /
-3:04 easy]` — surfaced on `activity` (human table + JSON). Matching structure to a
-prescription and completing it remains a coach/human act. Auto-completing, and even
-emitting match *candidates*, was considered and rejected: prescriptions are free text,
-so structure-matching means parsing prose, which is judgment, which belongs to the
-coach (ADR 0000). If structured prescription targets ever ship, re-argue then.
+### Decision 1. The detector reports and never acts
 
-**2. Power and pace place edges; HR never does.** One signal-agnostic detector over a
-1 Hz series: smooth → find sustained level shifts → drop segments shorter than a
-minimum duration → label work/recovery relative to the session's own distribution.
-Deterministic; no ML; same input, same output.
+The output is structure, such as `5×[3:01 @ 258W / 3:04 easy]`, surfaced on `activity` in
+both the human table and the JSON. Matching structure to a prescription and completing it
+remains an act for the coach or the human. Auto-completing was considered and rejected, and
+so was emitting match candidates. Prescriptions are free text, so matching structure
+against them means parsing prose, which is judgment, and judgment belongs to the coach
+under ADR 0000. If structured prescription targets ever ship, re-argue the decision then.
 
-- **Power** covers rides AND rows (both carry meters here).
-- **Pace** covers runs and swims via the existing 1 Hz grade-adjusted speed stream —
-  the same series rTSS already consumes — with more smoothing and longer minimum
-  durations, because GPS wobble must not invent efforts.
-- **HR-derived edges would be fiction** (HR lags effort by 30+ s) and are permanently
-  out. Sensor-less sessions detect nothing; `hard_s`/zones already tell their story.
+### Decision 2. Power and pace place edges, and HR never does
 
-**3. HR enriches detected segments.** Within edges placed by power/pace, per-rep HR is
-computed: peak and average per work rep, drift across reps (the fatigue signature),
-and post-rep 60 s recovery drop (a validated fitness marker). Also corroboration: work
-reps at target watts that never raise HR past Z3 are visible evidence of a mis-set FTP
-or a wrong zone config — reported as numbers, never as a verdict.
+One signal-agnostic detector runs over a 1 Hz series. First it smooths the series. Second
+it finds sustained level shifts. Third it drops segments shorter than a minimum duration.
+Fourth it labels work and recovery relative to the session's own distribution. The detector
+is deterministic, uses no machine learning, and returns the same output for the same input.
 
-**4. Segments are computed-tier data.** A new `activity_segments` table (activity_id,
-ordinal, kind work|recovery|warmup|cooldown, start_s, dur_s, avg_signal, signal
-power|pace, plus the HR enrichment columns), rebuilt by `analyze`, deletable at will —
-exactly like `activity_metrics`. It joins the invalidation story: stream arrival and
-Strava edits already delete metrics and will delete segments the same way, and the
-detection parameters are versioned by `metrics_rev` so a tuning change recomputes
-history honestly.
+Power covers rides and rows, because both carry meters here.
+
+Pace covers runs and swims through the existing 1 Hz grade-adjusted speed stream, which is
+the same series rTSS already consumes. Pace uses more smoothing and longer minimum
+durations, because GPS wobble must not invent efforts.
+
+Edges derived from HR would be inaccurate, because HR lags effort by 30 s or more, and they
+are permanently out of scope. Sessions recorded without a sensor detect nothing, and
+`hard_s` and the zone numbers already describe them.
+
+### Decision 3. HR enriches detected segments
+
+Within edges placed by power or pace, per-rep HR is computed. The computed values are peak
+and average HR per work rep, drift across reps, which is the fatigue signature, and the
+60 s recovery drop after each rep, which is a validated fitness marker. HR also corroborates
+the power reading. Work reps at target watts that never raise HR past Z3 are visible
+evidence of a mis-set FTP or a wrong zone configuration, and they are reported as numbers
+rather than as a verdict.
+
+### Decision 4. Segments are computed-tier data
+
+A new `activity_segments` table holds activity_id, ordinal,
+kind (work|recovery|warmup|cooldown), start_s, dur_s, avg_signal, signal (power|pace), and
+the HR enrichment columns. `analyze` rebuilds the table, and it can be deleted at any time,
+exactly like
+`activity_metrics`. Segments join the existing invalidation story, because stream arrival
+and Strava edits already delete metrics and will delete segments the same way. The
+detection parameters are versioned by `metrics_rev`, so a tuning change recomputes history
+honestly.
 
 ## Parameters (initial, expect tuning)
 
-Smoothing 15 s rolling mean (power), 30 s (pace) · a level shift counts when the
-smoothed mean moves ≥ 20% of the session's interquartile spread and holds ≥ 60 s
-(power) / ≥ 90 s (pace) · segments gap-bridged across pauses per the existing
-`max_sample_gap_s` rules. These constants live in `Metrics.roc` beside their expects,
+Smoothing uses a 15 s rolling mean for power and a 30 s rolling mean for pace. A level shift
+counts when the smoothed mean moves ≥ 20% of the session's interquartile spread and holds
+for ≥ 60 s in power or ≥ 90 s in pace. Segments are gap-bridged across pauses under the
+existing `max_sample_gap_s` rules. The constants live in `Metrics.roc` beside their expects,
 and every change to them bumps `metrics_rev`.
 
-## Risk, stated plainly
+## Risk and the acceptance bar
 
-The clean description above will meet messy reality: traffic stops mid-interval,
-Peloton resistance drift, fartlek-shaped noise. The acceptance bar is validation
-against sessions where the truth is known — the athlete's own recent VO2/threshold
-rides — before the feature ships in any release. A detector that mislabels the
-maintainer's own workout erodes exactly the trust it exists to build.
+The description above will meet conditions it does not cover, such as traffic stops
+mid-interval, Peloton resistance drift, and irregular fartlek noise. The acceptance bar is
+validation against sessions where the truth is known, meaning the athlete's own recent VO2
+and threshold rides, before the feature ships in any release. A detector that mislabels the
+maintainer's own workout removes the trust it exists to build.
 
 ## Not doing
 
-- No match candidates against prescriptions (see Decision 1).
-- No HR-only detection, ever.
-- No per-sport bespoke detectors — one algorithm, per-signal parameters.
-- No natural-language workout summaries in the engine ("great 5×3!") — structure is
-  numbers; prose is the coach's.
+- There are no match candidates against prescriptions, as decision 1 states.
+- There is no HR-only detection, ever.
+- There are no bespoke per-sport detectors, because there is one algorithm with per-signal
+  parameters.
+- There are no natural-language workout summaries in the engine, such as "great 5×3!",
+  because structure is numbers and prose belongs to the coach.
 
-## Amended 2026-08-16 — structure gates replace the distribution gate (#170, PR pending)
+## Amendment of 2026-08-16, structure gates replace the distribution gate (#170, PR pending)
 
-The v1 `min_spread` IQR gate judged the ride's GLOBAL value distribution and failed in both directions on real rides: a textbook 3×12 threshold session (the maintainer's, 2026-08-16) is ~80% work samples, so its IQR sat inside the work band and the gate reported ZERO segments, while a progressive endurance ride's ramp inflated IQR past the gate and its hot back half was sliced into seven back-to-back pseudo-reps. The v1 work/recovery labeling threshold (quantile midpoint) had the same disease — on the 3×12 it landed ABOVE the reps and labeled everything recovery.
+The v1 `min_spread` IQR gate judged the ride's global value distribution and failed in both
+directions on real rides. A textbook 3×12 threshold session, the maintainer's own on
+2026-08-16, is about 80% work samples, so its IQR sat inside the work band and the gate
+reported zero segments. A progressive endurance ride's ramp inflated IQR past the gate, and
+the ride's harder second half was sliced into seven consecutive pseudo-reps. The v1 work and
+recovery labeling threshold, which was the quantile midpoint, had the same fault. On the
+3×12 it landed above the reps and labeled everything recovery.
 
-Detection is now judged on STRUCTURE, after segmentation: the edge threshold keeps its adaptive `shift_frac × IQR` term but gains a `min_shift` floor (30 W power, 0.3 m/s pace) so steady rides produce no edges; the work/recovery threshold is a two-cluster Otsu split over segment level means, gated on cluster-mean separation (never a global quantile; largest-adjacent-gap was tried first and failed on real rowing intervals, whose dense levels sort quasi-continuously); adjacent work pieces merge into one effort so a sliced continuous block cannot read as reps; and a contrast gate requires the easy parts to be easy — median(non-work)/median(work) ≤ 0.80 for multi-rep structure, ≤ 0.65 for a single sustained effort (a weaker structural claim needs stronger separation). Measured anchors: the 3×12 separates at 0.53, a real surge ride at 0.75, and the false-positive repro's "recoveries" sit at 0.83; and a WORK-FRACTION ceiling requires
-the work to be a fraction of the ride — `work_frac ≤ 0.93` — because rescoring history
-surfaced dozens of steady rides reporting one 44-minute "rep" covering 0.98 of the session.
+Detection is now judged on structure, after segmentation. Five changes make that judgment.
 
-The three cases are frozen as pins in Metrics.roc — one REAL ride at 15 s resolution (behavior verified identical to full resolution, and the anchor because no synthetic reproduced the false negative) plus two synthetics built at 1 Hz: the 3×12 MUST detect three ~12-minute reps, the progressive ride MUST report nothing, and the surge ride MUST stay detected. `metrics_rev` 31 rescores history under the new gates.
+First, the edge threshold keeps its adaptive `shift_frac × IQR` term and gains a
+`min_shift` floor of 30 W in power and 0.3 m/s in pace, so steady rides produce no edges.
+
+Second, the work and recovery threshold is a two-cluster Otsu split over segment level
+means, gated on cluster-mean separation, and it is never a global quantile.
+Largest-adjacent-gap was tried first and failed on real rowing intervals, whose dense levels
+sort quasi-continuously.
+
+Third, adjacent work pieces merge into one effort, so a sliced continuous block cannot read
+as reps.
+
+Fourth, a contrast gate requires the easy parts to be easy. The gate is
+median(non-work)/median(work) ≤ 0.80 for multi-rep structure and ≤ 0.65 for a single
+sustained effort, because a weaker structural claim needs stronger separation. The measured
+anchors are 0.53 for the 3×12, 0.75 for a real surge ride, and 0.83 for the "recoveries" in
+the false-positive reproduction.
+
+Fifth, a work-fraction ceiling requires the work to be a fraction of the ride, at
+`work_frac ≤ 0.93`. Rescoring history surfaced dozens of steady rides reporting one
+44-minute "rep" covering 0.98 of the session.
+
+The three cases are frozen as pins in Metrics.roc. One is a real ride at 15 s resolution,
+whose behavior was verified identical to full resolution, and it is the anchor because no
+synthetic reproduced the false negative. The other two are synthetics built at 1 Hz. The
+3×12 must detect three reps of about 12 minutes, the progressive ride must report nothing,
+and the surge ride must stay detected. `metrics_rev` 31 rescores history under the new
+gates.
