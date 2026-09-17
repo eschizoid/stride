@@ -6,7 +6,7 @@ import pf.OsStr
 import pf.Path
 import Schema
 import Metrics
-import Sports
+import core.Sports
 import Config
 
 Db :: [].{

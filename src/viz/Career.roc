@@ -1,6 +1,8 @@
 import rr.Color
 import rr.Draw
 import rr.Text
+import core.Fmt
+import core.Sports
 import Theme
 import Ui
 
@@ -35,16 +37,6 @@ Career :: [].{
 		}
 	}
 
-	# the distance a pace family reads its threshold over: rowers speak
-	# seconds per 500m, runners per kilometre, swimmers per 100m. Anything
-	# else falls to the kilometre - a wrong UNIT is visible, a wrong number
-	# would not be.
-	pace_unit : Str -> { d : F32, label : Str }
-	pace_unit = |fam|
-		if fam == "Rowing" ({ d: 500.0, label: "/500m" })
-		else if fam == "Swim" ({ d: 100.0, label: "/100m" })
-		else { d: 1000.0, label: "/km" }
-
 	# a spine value in tenths, in its family's own units. Power reads as
 	# watts; pace converts the stored SPEED to time over the family's
 	# distance, which is what an athlete in that sport actually says.
@@ -53,14 +45,41 @@ Career :: [].{
 		if kind == "power" "${I64.to_str(v10 // 10)}w"
 		else {
 			spd = I64.to_f32(v10) / 10.0
-			u = pace_unit(fam)
-			secs = if spd <= 0.0 (0.0) else u.d / spd
+			u = Sports.pace_unit(fam)
+			secs = if spd <= 0.0 (0.0) else I64.to_f32(u.dist_m) / spd
 			total = match F32.to_i64_try(secs) { Ok(x) => x
 				Err(_) => 0 }
 			mm = total // 60
 			ss = total % 60
 			"${I64.to_str(mm)}:${if ss < 10 "0" else ""}${I64.to_str(ss)}"
 		}
+
+	# The tangent at one month for a MONOTONE cubic (Fritsch-Carlson), in
+	# spine-units per month. Monotone and not Catmull-Rom on purpose: a
+	# Catmull-Rom curve overshoots its own control points, so a smooth line
+	# through 239 and 271 can bulge above 271 - drawing a threshold the
+	# athlete never held. This flattens the tangent at every local extremum
+	# and limits it to three times the smaller neighbouring slope, which is
+	# exactly the condition that keeps the curve inside the data. Smoothing
+	# is presentation; inventing a peak would not be.
+	tangent : List(Ui.SpinePt), U64 -> F32
+	tangent = |pts, i| {
+		at = |k| match List.get(pts, k) { Ok(v) => v
+			Err(_) => { x: 0.0, y: 0.0, ok: Bool.False } }
+		here = at(i)
+		prev = if i == 0 here else at(i - 1)
+		next = at(i + 1)
+		d_prev = if i == 0 or !prev.ok (0.0) else here.y - prev.y
+		d_next = if !next.ok (0.0) else next.y - here.y
+		if d_prev == 0.0 (d_next)
+		else if d_next == 0.0 (d_prev)
+		else if d_prev * d_next <= 0.0 (0.0)
+		else {
+			m = (d_prev + d_next) / 2.0
+			lim = 3.0 * (d_prev).abs().min((d_next).abs())
+			if (m).abs() > lim ((if m < 0.0 (-1.0) else 1.0) * lim) else m
+		}
+	}
 
 	# one KPI card: a racked-up value, its unit, its caption
 	card! : Draw.Frame, Text.Font, F32, F32, Str, Str => {}
@@ -88,7 +107,7 @@ Career :: [].{
 		months = cur.rows
 		n = List.len(months)
 		sp = { fam: cur.fam, kind: cur.kind }
-		unit_note = if sp.kind == "power" "threshold watts" else "threshold pace${pace_unit(sp.fam).label}"
+		unit_note = if sp.kind == "power" "threshold watts" else "threshold pace${Sports.pace_unit(sp.fam).label}"
 		switch_note = if nspines > 1 "   F  next sport" else ""
 		subtitle = if sp.fam == "" "career - every month since the first session" else "career - ${Str.with_ascii_lowercased(sp.fam)} ${unit_note}${switch_note}"
 		Text.from(subtitle, model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
@@ -108,8 +127,13 @@ Career :: [].{
 			card!(frame, model.font, cx0(0), 96.0, "${I64.to_str(ease_i(tot.h10) // 10)}h", "moving time")
 			card!(frame, model.font, cx0(1), 96.0, "${I64.to_str(ease_i(tot.km))} km", "distance")
 			card!(frame, model.font, cx0(2), 96.0, I64.to_str(ease_i(tot.ss)), "sessions")
-			card!(frame, model.font, cx0(3), 96.0, I64.to_str(ease_i(match U64.to_i64_try(n) { Ok(v) => v
-				Err(_) => 0 })), "months trained")
+			# months TRAINED, not months elapsed: the axis spans every month
+			# daily_load carries, and it carries decay days after the last
+			# session too, so a month with no session is on the axis and is
+			# not a month trained. Counting the axis called seven empty months
+			# training.
+			trained = List.fold(months, 0.I64, |a, m| if m.load > 0 (a + 1) else a)
+			card!(frame, model.font, cx0(3), 96.0, I64.to_str(ease_i(trained)), "months trained")
 
 			# ── geometry: months on x, the spine value on the one y axis
 			plot_l = pad
@@ -195,15 +219,35 @@ Career :: [].{
 			# ── the spine: month-close FTP, drawn only between measured
 			# neighbors - a gap is the engine saying "not measured", and a
 			# line across it would invent the value
-			List.for_each!(idx, |x| {
-				if x.i + 1 < n {
-					match List.get(months, x.i + 1) {
-						Ok(nxt) =>
-							if x.m.ftp10 > 0 and nxt.ftp10 > 0 and xf(x.i + 1) <= head_x {
-								frame.line!({ start: { x: xf(x.i), y: yf(x.m.ftp10) }, end: { x: xf(x.i + 1), y: yf(nxt.ftp10) }, stroke: Draw.stroke(Theme.ctl_c, 2) })
-							} else {}
-						Err(_) => {}
-					}
+			# screen-space points, ok marking a measured month. A gap keeps its
+			# break: the curve is drawn per adjacent MEASURED pair, so an
+			# unmeasured month ends one run and starts another.
+			pts = List.map(idx, |x| { x: xf(x.i), y: yf(x.m.ftp10), ok: x.m.ftp10 > 0 })
+			steps = 10.U64
+			List.for_each!(List.map_with_index(pts, |pt, i| { pt, i }), |e| {
+				nxt = match List.get(pts, e.i + 1) { Ok(v) => v
+					Err(_) => { x: 0.0, y: 0.0, ok: Bool.False } }
+				if e.pt.ok and nxt.ok {
+					m0 = tangent(pts, e.i)
+					m1 = tangent(pts, e.i + 1)
+					dx = nxt.x - e.pt.x
+					# this stdlib has no List.range; the sample count is small and
+					# fixed, so the steps are a literal
+					_ = List.fold_try!([1.U64, 2, 3, 4, 5, 6, 7, 8, 9, 10], { px: e.pt.x, py: e.pt.y }, |acc, s| {
+						tt = U64.to_f32(s) / U64.to_f32(steps)
+						t2 = tt * tt
+						t3 = t2 * tt
+						h00 = 2.0 * t3 - 3.0 * t2 + 1.0
+						h10 = t3 - 2.0 * t2 + tt
+						h01 = -2.0 * t3 + 3.0 * t2
+						h11 = t3 - t2
+						cy = h00 * e.pt.y + h10 * m0 + h01 * nxt.y + h11 * m1
+						cx = e.pt.x + dx * tt
+						if cx <= head_x {
+							frame.line!({ start: { x: acc.px, y: acc.py }, end: { x: cx, y: cy }, stroke: Draw.stroke(Theme.ctl_c, 2) })
+						} else {}
+						Ok({ px: cx, py: cy })
+					})
 				} else {}
 			})
 
@@ -233,7 +277,7 @@ Career :: [].{
 			mark!(peak.i, peak.f, Theme.tsb_c, "peak")
 			if last_known.i != peak.i and last_known.i != valley.i {
 				mark!(last_known.i, last_known.f, Theme.ctl_c, "today")
-			} else {}
+			}
 
 			# ── the comet: a bright head riding the spine, halo fading behind
 			# it. Gone when settled - the finished view is a chart, not a show.
@@ -244,8 +288,8 @@ Career :: [].{
 					frame.circle!({ center: { x: head_x, y: hy }, radius: 10.0, style: Draw.filled(Color.with_alpha(Color.white, 26)) })
 					frame.circle!({ center: { x: head_x, y: hy }, radius: 6.0, style: Draw.filled(Color.with_alpha(Theme.ctl_c, 120)) })
 					frame.circle!({ center: { x: head_x, y: hy }, radius: 3.0, style: Draw.filled(Color.white) })
-				} else {}
-			} else {}
+				}
+			}
 
 			# ── composition: one stacked bar of every sport by session count,
 			# widest first, filling as the sweep runs. Segments narrower than a

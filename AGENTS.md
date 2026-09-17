@@ -242,6 +242,13 @@ These are measured toolchain behaviors, not style opinions.
 
 ### Compiler behavior that reads like a bug
 
+- **`if` without `else` is legal as a STATEMENT, required as an EXPRESSION.**
+  The compiler says so itself: "You can only use if without else when it's a
+  statement." So a guard with more code after it drops the `} else {}`, and one
+  that IS the block's value keeps it — which is why the draw loops are full of
+  them, each being the lambda's tail. Adding a bare `{}` after such an if turns
+  it into a statement, trading one noise for another; leave those alone.
+
 - **A compile-time-known condition is an ERROR, not a warning.** `if False { … }` fails
   with UNCONDITIONAL CONDITION, so you cannot stub a guard off that way to run a negative
   control. Delete the guard instead — that is the truer pre-fix state anyway.

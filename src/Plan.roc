@@ -8,7 +8,7 @@ import pf.Path
 import Analyze
 import Metrics
 import Render
-import Sports
+import core.Sports
 
 Plan :: [].{
     # session-RPE rating: the athlete is the sensor for sports without power meters.

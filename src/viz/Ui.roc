@@ -4,6 +4,9 @@ import rr.Text
 import Db
 
 Ui :: [].{
+	# one month as the career view draws it: screen position, and whether the
+	# month was measured at all - an unmeasured one breaks the curve
+	SpinePt : { x : F32, y : F32, ok : Bool }
 	YLabel : { p : Text.Prepared, v : F32 }
 	EndLabel : { p : Text.Prepared, sel : U8 }
 
