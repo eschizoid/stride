@@ -16,13 +16,10 @@ Db :: [].{
 	Fit : { cp : F32, w_prime : F32, r2 : F32, points : F32, ok : Bool }
 
 	Point : { ctl : F32, atl : F32, tsb : F32, tss : F32 }
-	# integer tenths -> "41.9" / "-8.9"
+	# integer tenths -> "41.9" / "-8.9"; the rule lives in core.Fmt so the CLI
+	# and the window cannot drift on the zero-crossing sign
 	fmt1 : I64 -> Str
-	fmt1 = |t| {
-		sign = if t < 0 "-" else ""
-		a = if t < 0 0 - t else t
-		"${sign}${I64.to_str(a // 10)}.${I64.to_str(a % 10)}"
-	}
+	fmt1 = |t| Fmt.tenths(t)
 
 	# F32 -> "41.9", through the same integer-tenths door as fmt1
 	# A COUNT, not a magnitude: fmt_f would render 3 bests as "3.0".

@@ -1,6 +1,7 @@
 import rr.Color
 import rr.Draw
 import rr.Text
+import core.Fmt
 import Theme
 import Ui
 
@@ -17,14 +18,6 @@ Ramp :: [].{
 	# grey with the sheds: a flat week is not a build.
 	verdict : F32 -> Color.Rgba
 	verdict = |rv| if rv > danger (Theme.alarm_c) else if rv > 0.0 (Theme.tsb_c) else Theme.ink_faint
-
-	# a tenths integer as a signed decimal: 25 -> "+2.5", -10 -> "-1.0"
-	tenths : I64 -> Str
-	tenths = |v| {
-		s = if v >= 0 "+" else "-"
-		a = I64.abs(v)
-		"${s}${I64.to_str(a // 10)}.${I64.to_str(a % 10)}"
-	}
 
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
 	draw! = |model, frame| {
@@ -47,9 +40,9 @@ Ramp :: [].{
 			lc = verdict(I64.to_f32(last.ramp10) / 10.0)
 			card_x = win_w - pad - 260.0
 			frame.rounded_rectangle!({ x: card_x, y: 60.0, width: 260.0, height: 64.0, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
-			Text.from("${I64.to_str(last.ctl10 // 10)}.${I64.to_str(I64.abs(last.ctl10) % 10)}", model.font).size(28).draw!(frame, { pos: { x: card_x + 16.0, y: 68.0 }, color: Theme.ctl_c, align: (Top, Left) })
+			Text.from(Fmt.tenths(last.ctl10), model.font).size(28).draw!(frame, { pos: { x: card_x + 16.0, y: 68.0 }, color: Theme.ctl_c, align: (Top, Left) })
 			Text.from("ctl now", model.font).size(11).draw!(frame, { pos: { x: card_x + 16.0, y: 102.0 }, color: ink_faint, align: (Top, Left) })
-			Text.from(tenths(last.ramp10), model.font).size(28).draw!(frame, { pos: { x: win_w - pad - 16.0, y: 68.0 }, color: lc, align: (Top, Right) })
+			Text.from(Fmt.tenths_signed(last.ramp10), model.font).size(28).draw!(frame, { pos: { x: win_w - pad - 16.0, y: 68.0 }, color: lc, align: (Top, Right) })
 			Text.from("ctl per week", model.font).size(11).draw!(frame, { pos: { x: win_w - pad - 16.0, y: 102.0 }, color: ink_faint, align: (Top, Right) })
 			bars_top = 168.0
 			bars_bot = win_h - 96.0
@@ -83,12 +76,12 @@ Ramp :: [].{
 				# the ramp chip rides above its bar, never above the panel
 				chip_y = F32.max(bars_top - 30.0, top_y - 30.0)
 				frame.rounded_rectangle!({ x: cx - 27.0, y: chip_y, width: 54.0, height: 20.0, radius: 6.0, segments: 5, style: Draw.filled(Color.with_alpha(vc, if hovered (70.U8) else 42)) })
-				Text.from(tenths(x.w.ramp10), model.font).size(11).draw!(frame, { pos: { x: cx, y: chip_y + 4.0 }, color: vc, align: (Top, Center) })
+				Text.from(Fmt.tenths_signed(x.w.ramp10), model.font).size(11).draw!(frame, { pos: { x: cx, y: chip_y + 4.0 }, color: vc, align: (Top, Center) })
 				if x.i % 2 == 0 {
 					Text.from(Str.from_utf8_lossy(List.drop_first(Str.to_utf8(x.w.wk), 5)), model.font).size(10).draw!(frame, { pos: { x: cx, y: bars_bot + 10.0 }, color: ink_faint, align: (Top, Center) })
 				} else {}
 				if hovered {
-					Text.from("wk of ${x.w.wk}   ${I64.to_str(x.w.tss)} tss   ctl ${I64.to_str(x.w.ctl10 // 10)}.${I64.to_str(I64.abs(x.w.ctl10) % 10)}   ramp ${tenths(x.w.ramp10)}/wk", model.font).size(12).draw!(frame, { pos: { x: pad, y: 96.0 }, color: Color.white, align: (Top, Left) })
+					Text.from("wk of ${x.w.wk}   ${I64.to_str(x.w.tss)} tss   ctl ${Fmt.tenths(x.w.ctl10)}   ramp ${Fmt.tenths_signed(x.w.ramp10)}/wk", model.font).size(12).draw!(frame, { pos: { x: pad, y: 96.0 }, color: Color.white, align: (Top, Left) })
 				} else {}
 			})
 			{}
