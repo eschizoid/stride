@@ -229,6 +229,30 @@ Schema :: [].{
         \\SELECT substr(CAST(day AS TEXT), 1, 7) AS month, CAST(COALESCE(SUM(tss), 0) AS REAL) AS load
         \\FROM daily_load GROUP BY month ORDER BY month
 
+    # every family's month-close threshold: the value the engine scored that
+    # month's LAST scored activity of that family with. `kind` says which
+    # quantity it is - 'power' (watts: cycling FTP, rowing erg threshold) or
+    # 'pace' (metres per second) - because a reader must format and label them
+    # differently and must never plot two kinds on one axis. Stored as SPEED
+    # rather than seconds-per-distance on purpose: higher is better for both
+    # kinds, so an improving athlete's line rises whatever the sport.
+    monthly_threshold_drop =
+        \\DROP VIEW IF EXISTS monthly_threshold
+    monthly_threshold =
+        \\CREATE VIEW monthly_threshold AS
+        \\SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month,
+        \\       CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS fam,
+        \\       CASE WHEN COALESCE(m.ftp_used, 0) > 0 THEN 'power' ELSE 'pace' END AS kind,
+        \\       CAST(CASE WHEN COALESCE(m.ftp_used, 0) > 0 THEN m.ftp_used ELSE m.threshold_pace_used END AS REAL) AS value
+        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
+        \\WHERE (COALESCE(m.ftp_used, 0) > 0 OR COALESCE(m.threshold_pace_used, 0) > 0)
+        \\  AND a.id = (SELECT a2.id FROM activities a2
+        \\              JOIN activity_metrics m2 ON m2.activity_id = a2.id
+        \\              WHERE (COALESCE(m2.ftp_used, 0) > 0 OR COALESCE(m2.threshold_pace_used, 0) > 0)
+        \\                AND COALESCE(a2.sport_family, a2.sport_type) = COALESCE(a.sport_family, a.sport_type)
+        \\                AND substr(CAST(a2.start_local AS TEXT), 1, 7) = substr(CAST(a.start_local AS TEXT), 1, 7)
+        \\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)
+
     # the FTP the engine scored each month's LAST power-scored Ride-family
     # activity with. Deliberately NOT season's ftp_end - that is a
     # chronological per-day fold with family weighting and has its one body in

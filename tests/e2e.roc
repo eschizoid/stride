@@ -1626,7 +1626,11 @@ b_auth! = |ctx| {
     # A stub `open` that EXITS 1 drives it, with no PATH surgery beyond what is already
     # here — `open_browser!` tries `open` first and falls through on Err.
     _ = sh!("printf '#!/bin/sh\\nexit 1\\n' > '${stub}/open'; printf '#!/bin/sh\\ntouch \"${stub}/xdg\"\\n' > '${stub}/xdg-open'; chmod +x '${stub}/open' '${stub}/xdg-open'")
-    check!("...and a failing `open` falls through to xdg-open, the arm nothing else reaches", Str.trim(sh!("rm -f '${stub}/xdg'; PATH=\"${stub}:$PATH\" env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret HOME='${ctx.home}' '${ctx.bin}' auth < /dev/null 2>&1 | grep -qi 'stdin closed' && { sleep 1; [ -e '${stub}/xdg' ] && echo fellthrough || echo quiet; } || echo 'auth did not run'")) == "fellthrough")?
+    # The stub is touched by a process this command SPAWNS, so its appearance
+    # is concurrent with the command's own exit: a fixed sleep is a race whose
+    # margin any change to startup cost can erase. Poll to a ceiling instead -
+    # the assertion is unchanged, only the waiting is.
+    check!("...and a failing `open` falls through to xdg-open, the arm nothing else reaches", Str.trim(sh!("rm -f '${stub}/xdg'; PATH=\"${stub}:$PATH\" env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret HOME='${ctx.home}' '${ctx.bin}' auth < /dev/null 2>&1 | grep -qi 'stdin closed' && { i=0; while [ $i -lt 50 ] && [ ! -e '${stub}/xdg' ]; do sleep 0.1; i=$((i+1)); done; [ -e '${stub}/xdg' ] && echo fellthrough || echo quiet; } || echo 'auth did not run'")) == "fellthrough")?
     _ = sh!("rm -rf '${stub}'")
     Ok({})
 }

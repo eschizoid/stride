@@ -108,7 +108,7 @@ load_model! = |font, curve_days| {
 		home = resolve_home!({})
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], cm: [], cs: [], prs: [], tcache: [] }
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [] }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				Db.publish_caps!(db, caps_views, caps_fields)
@@ -135,14 +135,15 @@ load_model! = |font, curve_days| {
 				ht = Db.load_heat!(db)
 				hev = Db.load_event_days!(db)
 				zw = Db.load_zone_weeks!(db)
-				cm = Db.load_career_months!(db)
+				sfs = Db.load_spine_fams!(db)
+				csp = Db.load_career_spines!(db, sfs)
 				cs = Db.load_career_sports!(db)
 				rw = Db.load_ramp_weeks!(db)
 				prs = Db.load_prs!(db)
 				nts = Db.load_day_notes!(db)
-				{ s, e, c, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, rw, cm, cs, prs, tcache }
+				{ s, e, c, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, rw, csp, cs, prs, tcache }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], cm: [], cs: [], prs: [], tcache: [] }
+			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [] }
 		}
 		ev = Db.find_idx(loaded.s.days, loaded.e.day)
 		fit = Db.load_fit!(curve_days)
@@ -275,8 +276,9 @@ load_model! = |font, curve_days| {
 			heat: loaded.ht,
 			heat_events: loaded.hev,
 			zone_weeks: loaded.zw,
-			career_months: loaded.cm,
+			career_spines: loaded.csp,
 			career_sports: loaded.cs,
+			spine_idx: 0,
 			ramp_weeks: loaded.rw,
 			prs: loaded.prs,
 			rec_status: Idle,
@@ -595,7 +597,7 @@ update! = |model0, program_input| {
 			DayDetail(dd) => if dd.day == acc.detail_day ({ ..acc, detail: dd.lines }) else acc
 			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" } }
 			Directive(d2) => { ..acc, bus_note: d2.note }
-			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim }
+			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim }
 			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day }
 		})
 	# the coach's word arrives beside the human's input and steers only what
@@ -907,6 +909,8 @@ update! = |model0, program_input| {
 		# a click settles the career sweep instantly - zero means "no animation"
 		# to every consumer of view_anim, so the twentieth arrival never pays
 		# the first arrival's price
+		# F cycles the career view's sport; harmless elsewhere
+		spine_idx = if view == 8 and d.key_pressed(KeyF) (model.spine_idx + 1) else model.spine_idx
 		view_anim = if view != model.view (model.tick + 1) else if view == 8 and Mouse.button_pressed(d.mouse, Left) (0) else model.view_anim
 		tick = model.tick + 1
 		# no HOME means no database path means no bus — spawning would only
@@ -970,7 +974,7 @@ update! = |model0, program_input| {
 				Unavailable(u9) => if u9.gw == win.w and u9.gh == win.h (model.glow) else build_glow!(win)
 			}
 		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
-		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, tick, view_anim, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, tick, view_anim, spine_idx, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 

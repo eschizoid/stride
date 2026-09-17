@@ -5,11 +5,13 @@ import Theme
 import Ui
 
 Career :: [].{
-	# The whole story: every month since the first ride, assembled in the
-	# order it happened. The spine is the month-close ride FTP (the
-	# monthly_ride_ftp view's quantity - NOT season's ftp_end, which is its
-	# own fold in ReportSeason); the ground is monthly load; year bands give
-	# the axis its eras. A comet rides the spine on arrival and the header
+	# The whole story: every month since the first session, assembled in the
+	# order it happened. The spine is the month-close threshold of whichever
+	# family the athlete trains most (monthly_threshold) - watts for a power
+	# family, metres per second for a pace one, so the line rises with fitness
+	# either way and only its LABELS change. Deliberately not season's ftp_end,
+	# which is a family-weighted daily fold with its own body in ReportSeason.
+	# The ground is monthly load; year bands give the axis its eras. A comet rides the spine on arrival and the header
 	# digits rack up beneath it - the reveal animates, the values never do:
 	# every drawn height and position is the datum, only WHEN it appears is
 	# staged. Tick-driven throughout so the V-key recording stays regenerable.
@@ -33,6 +35,33 @@ Career :: [].{
 		}
 	}
 
+	# the distance a pace family reads its threshold over: rowers speak
+	# seconds per 500m, runners per kilometre, swimmers per 100m. Anything
+	# else falls to the kilometre - a wrong UNIT is visible, a wrong number
+	# would not be.
+	pace_unit : Str -> { d : F32, label : Str }
+	pace_unit = |fam|
+		if fam == "Rowing" ({ d: 500.0, label: "/500m" })
+		else if fam == "Swim" ({ d: 100.0, label: "/100m" })
+		else { d: 1000.0, label: "/km" }
+
+	# a spine value in tenths, in its family's own units. Power reads as
+	# watts; pace converts the stored SPEED to time over the family's
+	# distance, which is what an athlete in that sport actually says.
+	spine_label : I64, Str, Str -> Str
+	spine_label = |v10, kind, fam|
+		if kind == "power" "${I64.to_str(v10 // 10)}w"
+		else {
+			spd = I64.to_f32(v10) / 10.0
+			u = pace_unit(fam)
+			secs = if spd <= 0.0 (0.0) else u.d / spd
+			total = match F32.to_i64_try(secs) { Ok(x) => x
+				Err(_) => 0 }
+			mm = total // 60
+			ss = total % 60
+			"${I64.to_str(mm)}:${if ss < 10 "0" else ""}${I64.to_str(ss)}"
+		}
+
 	# one KPI card: a racked-up value, its unit, its caption
 	card! : Draw.Frame, Text.Font, F32, F32, Str, Str => {}
 	card! = |frame, font, x, y, value, caption| {
@@ -48,9 +77,21 @@ Career :: [].{
 		win_h = model.win.h
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
-		months = model.career_months
+		# the arc on screen is one of the loaded families; F cycles them, so an
+		# athlete who rides AND rows sees each story rather than only the one
+		# they have trained longest
+		nspines = List.len(model.career_spines)
+		cur = match List.get(model.career_spines, (if nspines == 0 (0) else model.spine_idx % nspines)) {
+			Ok(c) => c
+			Err(_) => { fam: "", kind: "", rows: [] }
+		}
+		months = cur.rows
 		n = List.len(months)
-		Text.from("career - every month since the first ride", model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		sp = { fam: cur.fam, kind: cur.kind }
+		unit_note = if sp.kind == "power" "threshold watts" else "threshold pace${pace_unit(sp.fam).label}"
+		switch_note = if nspines > 1 "   F  next sport" else ""
+		subtitle = if sp.fam == "" "career - every month since the first session" else "career - ${Str.with_ascii_lowercased(sp.fam)} ${unit_note}${switch_note}"
+		Text.from(subtitle, model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		if n < 2 {
 			Text.from("no history yet - sync, analyze, and come back", model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 130.0 }, color: ink_muted, align: (Top, Left) })
 		} else {
@@ -70,7 +111,7 @@ Career :: [].{
 			card!(frame, model.font, cx0(3), 96.0, I64.to_str(ease_i(match U64.to_i64_try(n) { Ok(v) => v
 				Err(_) => 0 })), "months trained")
 
-			# ── geometry: months on x, FTP on the one y axis
+			# ── geometry: months on x, the spine value on the one y axis
 			plot_l = pad
 			plot_r = win_w - Theme.pad_r
 			plot_w = plot_r - plot_l
@@ -79,23 +120,31 @@ Career :: [].{
 			bars_top = win_h - 168.0
 			bars_bot = win_h - 92.0
 			nf = U64.to_f32(n)
-			xf = |i| plot_l + (U64.to_f32(i) + 0.5) / nf * plot_w
-			head_x = plot_l + p * plot_w
+			# the camera pulls back: early in the sweep the axis frames only the
+			# months that have arrived, and widens to the true full range as more
+			# do. It MUST land exactly on the full range - the settled view is
+			# the honest one, and a camera still moving at rest would misreport
+			# the x axis. The floor keeps a two-month career from filling the
+			# window at one bar per screen.
+			shown = (nf * p).max(8.0).min(nf)
+			xf = |i| plot_l + (U64.to_f32(i) + 0.5) / shown * plot_w
+			head_x = plot_l + (if shown >= nf (p) else 1.0) * plot_w
 
-			# FTP scale from the known points only; 0 means unmeasured
+			# spine scale from the measured points only; 0 means that family had
+			# no scored session that month
 			fmax = List.fold(months, 0.I64, |a, m| if m.ftp10 > a m.ftp10 else a)
 			fmin = List.fold(months, fmax, |a, m| if m.ftp10 > 0 and m.ftp10 < a m.ftp10 else a)
 			frange = (I64.to_f32(fmax - fmin)).max(10.0)
 			yf = |f10| line_bot - (I64.to_f32(f10 - fmin) / frange) * (line_bot - line_top)
 			lmax = List.fold(months, 1.I64, |a, m| if m.load > a m.load else a)
 
-			# faint watt gridlines at the quarter marks, labeled at the axis
+			# faint gridlines at the quarter marks, labeled in the family's units
 			List.for_each!([0.0, 0.25, 0.5, 0.75, 1.0], |q| {
 				gy = line_bot - q * (line_bot - line_top)
 				frame.line!({ start: { x: plot_l, y: gy }, end: { x: plot_r, y: gy }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 40), 1) })
 				w = fmin + (match F32.to_i64_try(q * I64.to_f32(fmax - fmin)) { Ok(v) => v
 					Err(_) => 0 })
-				Text.from("${I64.to_str(w // 10)}w", model.font).size(10).draw!(frame, { pos: { x: plot_l - 8.0, y: gy - 5.0 }, color: ink_faint, align: (Top, Right) })
+				Text.from(spine_label(w, sp.kind, sp.fam), model.font).size(10).draw!(frame, { pos: { x: plot_l - 8.0, y: gy - 5.0 }, color: ink_faint, align: (Top, Right) })
 			})
 
 			# ── year bands rise from the baseline as the head crosses into them.
@@ -176,7 +225,7 @@ Career :: [].{
 						Err(_) => 0 }))) })
 					frame.circle!({ center: { x: mx, y: yf(mf) }, radius: 3.5, style: Draw.filled(col) })
 					lift = if tag == "valley" (18.0) else -24.0
-					Text.from("${I64.to_str(mf // 10)}w", model.font).size(13).draw!(frame, { pos: { x: mx, y: yf(mf) + lift }, color: col, align: (Top, Center) })
+					Text.from(spine_label(mf, sp.kind, sp.fam), model.font).size(13).draw!(frame, { pos: { x: mx, y: yf(mf) + lift }, color: col, align: (Top, Center) })
 				} else {}
 				{}
 			}
@@ -198,12 +247,30 @@ Career :: [].{
 				} else {}
 			} else {}
 
-			# ── the sports, one line: top three by sessions
-			top3 = List.take_first(model.career_sports, 3)
-			legend = List.fold(top3, "", |acc, s| Str.concat(acc, "${s.sport} ${I64.to_str(s.sessions)}   "))
-			Text.from(legend, model.font).size(11).draw!(frame, { pos: { x: 36.0, y: win_h - 62.0 }, color: ink_faint, align: (Top, Left) })
+			# ── composition: one stacked bar of every sport by session count,
+			# widest first, filling as the sweep runs. Segments narrower than a
+			# label keep their colour and lose their text - the bar still totals
+			# the whole career either way. Never a pie: an angle is harder to
+			# compare than a length.
+			comp_y = win_h - 66.0
+			comp_w = plot_r - 36.0
+			tot_ss = List.fold(model.career_sports, 0.I64, |a, s| a + s.sessions)
+			if tot_ss > 0 {
+				_ = List.fold_try!(List.map_with_index(model.career_sports, |s, i| { s, i }), 36.0, |x0, y| {
+					seg = I64.to_f32(y.s.sessions) / I64.to_f32(tot_ss) * comp_w * p
+					col = match List.get(Theme.zone_ramp, y.i % 5) { Ok(c) => c
+						Err(_) => ink_faint }
+					if seg > 1.0 {
+						frame.rounded_rectangle!({ x: x0, y: comp_y, width: (seg - 1.5).max(1.0), height: 12.0, radius: 3.0, segments: 3, style: Draw.filled(Color.with_alpha(col, 190)) })
+						if seg > 64.0 {
+							Text.from("${y.s.sport} ${I64.to_str(y.s.sessions)}", model.font).size(10).draw!(frame, { pos: { x: x0 + 6.0, y: comp_y + 15.0 }, color: Color.with_alpha(col, 220), align: (Top, Left) })
+						} else {}
+					} else {}
+					Ok(x0 + seg)
+				})
+			} else {}
 		}
-		Text.from("click to settle   TAB  form board   R  reload   S  screenshot   ESC  quit", model.font).size(13).draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
+		Text.from("click to settle   F  sport   TAB  form board   R  reload   S  screenshot   ESC  quit", model.font).size(13).draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 		Ok({})
 	}
 }

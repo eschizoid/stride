@@ -496,10 +496,48 @@ Db :: [].{
 	# an ftp of 0 means "not measured that month": the line breaks rather than
 	# inventing a value. partial marks the month still in progress.
 	CareerMonth : { month : Str, load : I64, ftp10 : I64, partial : Bool }
+	# the spine family: whichever family has the most months of threshold data,
+	# with the kind that says how to read and label it. An athlete who only
+	# runs gets pace, one who only rides gets power, and the arc means the same
+	# thing either way because the stored value is a SPEED in both.
+	SpineFam : { fam : Str, kind : Str, months : I64 }
+	# one family's whole arc, ready to draw. Every family with threshold data
+	# is loaded at launch, widest career first, so switching between them is a
+	# memory read rather than a task round-trip - the same reason the trace
+	# picker caches its sessions.
+	CareerSpine : { fam : Str, kind : Str, rows : List(CareerMonth) }
 	CareerSport : { sport : Str, sessions : I64, hours10 : I64, km : I64 }
-	load_career_months! : Sqlite.Db => List(CareerMonth)
-	load_career_months! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(l.month AS TEXT) AS m, CAST(ROUND(l.load) AS INTEGER) AS ld, CAST(ROUND(COALESCE(f.ftp, 0) * 10) AS INTEGER) AS f10, CASE WHEN l.month = strftime('%Y-%m', 'now') THEN 1 ELSE 0 END AS pt FROM monthly_load l LEFT JOIN monthly_ride_ftp f ON f.month = l.month ORDER BY l.month ASC", bindings: [] }) {
+	load_spine_fams! : Sqlite.Db => List(SpineFam)
+	load_spine_fams! = |db|
+		match Sqlite.query!({ db, query: "SELECT CAST(fam AS TEXT) AS f, CAST(kind AS TEXT) AS k, COUNT(*) AS n FROM monthly_threshold GROUP BY fam, kind ORDER BY n DESC, fam", bindings: [] }) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(rows, |r| {
+					f = r.str("f") ? |_| "bad"
+					k = r.str("k") ? |_| "bad"
+					n = r.i64("n") ? |_| "bad"
+					Ok({ fam: f, kind: k, months: n })
+				})
+		}
+
+	# every family's arc, loaded once. Prepend on the recursion because this
+	# stdlib has no List.reverse; the caller re-sorts if order matters.
+	load_career_spines! : Sqlite.Db, List(SpineFam) => List(CareerSpine)
+	load_career_spines! = |db, fams|
+		match List.first(fams) {
+			Err(_) => []
+			Ok(f0) => {
+				rows0 = load_career_months!(db, f0.fam)
+				List.prepend(load_career_spines!(db, List.drop_first(fams, 1)), { fam: f0.fam, kind: f0.kind, rows: rows0 })
+			}
+		}
+
+	# ftp10 is the spine value in tenths - watts for a power family, metres per
+	# second for a pace one. 0 means the family had no scored session that
+	# month, and the renderer breaks the line rather than inventing a value.
+	load_career_months! : Sqlite.Db, Str => List(CareerMonth)
+	load_career_months! = |db, fam|
+		match Sqlite.query!({ db, query: "SELECT CAST(l.month AS TEXT) AS m, CAST(ROUND(l.load) AS INTEGER) AS ld, CAST(ROUND(COALESCE(t.value, 0) * 10) AS INTEGER) AS f10, CASE WHEN l.month = strftime('%Y-%m', 'now') THEN 1 ELSE 0 END AS pt FROM monthly_load l LEFT JOIN monthly_threshold t ON t.month = l.month AND t.fam = :fam ORDER BY l.month ASC", bindings: [{ name: ":fam", value: String(fam) }] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
