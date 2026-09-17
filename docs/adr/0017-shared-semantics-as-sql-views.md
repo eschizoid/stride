@@ -68,3 +68,32 @@ no Roc module can be imported by both binaries today. A platform-independent
 compiler where that works, the database is the only module system the two
 binaries share, and this ADR is deferred-until-the-toolchain-allows, not
 chosen forever.
+
+## Amendment (2026-09-16): the toolchain allows it, so `stride-core` exists
+
+The deferral above has ended. `nightly-2026-09-16-a49a16f` builds both binaries
+— the inference livelock that made 09-07/08 unusable for the engine stayed
+fixed, and the codegen crash that made 09-09 unusable for the window was fixed
+upstream — so both apps now pin one compiler and import one package,
+`src/core`.
+
+**This does not retire the views.** The two mechanisms answer different
+questions, and the test for which to use is where the definition has to be
+true:
+
+- **A SQL view** is right when the definition is about ROWS — which rows count,
+  how they group, what joins them. `plan_current`, `week_bounds`,
+  `activity_intensity`, `activity_power_ladder`, `weekly_ramp`,
+  `career_totals`, `monthly_load`, `monthly_threshold` all decide something
+  about the shape of a query, and moving them into Roc would mean each binary
+  running its own SQL and agreeing by luck.
+- **A core module** is right when the definition is about a VALUE — arithmetic,
+  formatting, classification of something already in hand. `Fmt.mmss` and
+  `Fmt.hundredths` are the first two: both surfaces formatted m:ss and
+  two-decimal fractions in their own bodies, so a padding rule could reach one
+  and miss the other.
+
+The layer rule extends accordingly: `src/core` sits beneath both homes and may
+import neither. That direction needs no gate, because a package importing an
+app's modules is not expressible in Roc; `tools/layer-check.sh` scans core for
+strays and gives it no layer row.

@@ -1,3 +1,4 @@
+import core.Fmt
 import Metrics
 import Drain
 
@@ -391,11 +392,7 @@ Render :: [].{
     fmt2 : F64 -> Str
     fmt2 = |x| {
         n = (x * 100.0).round_to_i64_try().ok_or(0)
-        whole = n // 100
-        frac = (n % 100).abs()
-        frac_str = if frac < 10 "0${I64.to_str(frac)}" else I64.to_str(frac)
-        sign = if n < 0 and whole == 0 "-" else ""
-        "${sign}${I64.to_str(whole)}.${frac_str}"
+        Fmt.hundredths(n)
     }
 
     # ── Units ───────────────────────────────────────────────────────────────────────
@@ -435,10 +432,7 @@ Render :: [].{
             "-"
         } else {
             total = (moving_time.to_f64() / dist_value(units, distance_m)).round_to_i64_try().ok_or(0)
-            m = total // 60
-            s = total % 60
-            ss = if s < 10 "0${I64.to_str(s)}" else I64.to_str(s)
-            "${I64.to_str(m)}:${ss}"
+            Fmt.mmss(total)
         }
 
     # seconds -> "62m"

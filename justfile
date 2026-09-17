@@ -36,9 +36,13 @@ build:
 
 # full suite: pure expects -> fresh build (must succeed!) -> effectful e2e
 test:
+    # core first: both binaries depend on it, so its expects gate theirs
+    {{roc}} test src/core/Fmt.roc
     {{roc}} test src/Metrics.roc
     {{roc}} test src/Sports.roc
-    {{roc}} test src/Render.roc
+    # --main: Render imports core.Fmt, and a bare module run carries no
+    # package map (same reason Streams needs it below)
+    {{roc}} test --main=src/main.roc src/Render.roc
     {{roc}} test src/Drain.roc
     {{roc}} test src/Csv.roc
     {{roc}} test src/Command.roc
@@ -413,7 +417,7 @@ e2e:
 # matching nightly, or leave it and hope the PATH roc is close enough.
 # defaults to the pinned viz nightly when installed (tools/make-viz-app.sh and
 # the docs both point there); ROC_VIZ still overrides, PATH roc is the last resort
-viz_pin := `sh -c 'P="$HOME/.local/share/roc/nightly-2026-09-07-14d9829/roc"; [ -x "$P" ] && echo "$P" || echo roc'`
+viz_pin := `sh -c 'P="$HOME/.local/share/roc/nightly-2026-09-16-a49a16f/roc"; [ -x "$P" ] && echo "$P" || echo roc'`
 roc_viz := env("ROC_VIZ", viz_pin)
 
 # open the app window (reads ~/.stride/db.sqlite at launch; ESC quits)
