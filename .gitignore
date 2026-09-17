@@ -32,3 +32,6 @@
 
 # roc build output at the repo root
 /main
+
+# the app's local screenshot dropbox - curated copies live in docs/img
+/captures/
