@@ -106,10 +106,12 @@ The views are not retired, and the test for which mechanism to reach for is
 where the definition has to be true.
 
 - A SQL view holds a definition about rows, meaning which rows count, how they
-  group, and what joins them. The views are `plan_current`, `week_bounds`,
-  `activity_intensity`, `activity_power_ladder`, `weekly_ramp`,
+  group, and what joins them. The views both binaries read are `plan_current`,
+  `week_bounds`, `activity_intensity`, `activity_power_ladder`, `weekly_ramp`,
   `career_totals`, `monthly_load` and `monthly_threshold`. Moving those into
   Roc would mean each binary running its own SQL and agreeing by luck.
+  `src/Schema.roc` defines one more, `monthly_ride_ftp`, which only the engine
+  reads, so nothing has to agree about it.
 - A core module holds a definition about a value already in hand. `Fmt.mmss`
   and `Fmt.hundredths` are the first two, because both surfaces had written
   each rule out separately, so a padding change could reach one and miss the
