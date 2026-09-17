@@ -29,6 +29,7 @@ import Table
 import Curve
 import Career
 import Db
+import Hud
 import Theme
 import Trace
 import Ui
@@ -1108,6 +1109,9 @@ scene! = |model, frame| {
 		} else {
 			Board.draw!(model, frame)
 		}
+	# the XP rail rides the panel's left edge on every view - under the
+	# crossfade veil, so it arrives with the view rather than over it
+	Hud.rail!(model, frame)
 	# the crossfade: for ten frames after a switch, a panel-colored veil
 	# fades off the incoming view - ease-out, cheap, and one rectangle
 	age = model.tick - model.view_anim

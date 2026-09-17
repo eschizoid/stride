@@ -3,6 +3,7 @@ import rr.Draw
 import rr.Text
 import core.Fmt
 import core.Sports
+import Hud
 import Theme
 import Ui
 
@@ -111,6 +112,30 @@ Career :: [].{
 		switch_note = if nspines > 1 "   F  next sport" else ""
 		subtitle = if sp.fam == "" "career - every month since the first session" else "career - ${Str.with_ascii_lowercased(sp.fam)} ${unit_note}${switch_note}"
 		Text.from(subtitle, model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		# ── the character sheet: level and streak, earned by the same
+		# career the chart below tells. The XP bar eases in with the sweep.
+		hours = Hud.total_hours(model.career_sports)
+		if hours > 0 {
+			lvl = Hud.level_of(hours)
+			lx = win_w - 36.0 - 196.0
+			frame.rounded_rectangle!({ x: lx, y: 62.0, width: 196.0, height: 26.0, radius: 7.0, segments: 6, style: Draw.filled(Theme.card) })
+			Text.from("LVL ${I64.to_str(lvl)}", model.font).size(13).draw!(frame, { pos: { x: lx + 10.0, y: 68.0 }, color: Theme.gold_c, align: (Top, Left) })
+			Text.from(Hud.tier(lvl), model.font).size(11).draw!(frame, { pos: { x: lx + 62.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+			bar_x = lx + 118.0
+			frame.rounded_rectangle!({ x: bar_x, y: 72.0, width: 66.0, height: 6.0, radius: 3.0, segments: 4, style: Draw.filled(Color.with_alpha(Theme.ink_faint, 70)) })
+			bw9 = 66.0 * Hud.xp_frac(hours) * progress(model)
+			if bw9 > 2.0 {
+				frame.rounded_rectangle!({ x: bar_x, y: 72.0, width: bw9, height: 6.0, radius: 3.0, segments: 4, style: Draw.filled(Theme.gold_c) })
+			} else {}
+			sk = Hud.streak_weeks(model.heat)
+			if sk > 0 {
+				sx = lx - 110.0
+				frame.rounded_rectangle!({ x: sx, y: 62.0, width: 100.0, height: 26.0, radius: 7.0, segments: 6, style: Draw.filled(Theme.card) })
+				Hud.flame!(frame, sx + 14.0, 75.0, model.tick)
+				Text.from("${I64.to_str(sk)} wk streak", model.font).size(11).draw!(frame, { pos: { x: sx + 26.0, y: 70.0 }, color: Theme.ember_c, align: (Top, Left) })
+			} else {}
+			{}
+		} else {}
 		if n < 2 {
 			Text.from("no history yet - sync, analyze, and come back", model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 130.0 }, color: ink_muted, align: (Top, Left) })
 		} else {

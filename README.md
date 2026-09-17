@@ -105,7 +105,14 @@ click a pill.
     <td><img src="docs/img/session-trace.png" alt="The session trace" /></td>
     <td><img src="docs/img/power-curve.png" alt="The power view" /></td>
   </tr>
+  <tr>
+    <td colspan="2"><img src="docs/img/career.png" alt="The career view" /></td>
+  </tr>
 </table>
+
+Training is also a game: career hours set an athlete level, an XP rail rides the
+panel edge on every view, the career view wears the streak flame, and the plan
+view turns the week into a quest row that lights up as sessions land.
 
 A coach can drive the window over the same database — `viz_directives` in, `viz_focus`
 out, no sockets — and every directive reaches a terminal status it can read back,

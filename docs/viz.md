@@ -16,6 +16,21 @@ the SQLite — no export step, no baked data, nothing the CLI has to prepare.
   usually takes the tile form — the series ends on the last analyzed day, so
   there is rarely a column to mark.
 
+## The athlete HUD
+
+Every view carries a thin XP rail on the panel's left edge. Career hours set
+an athlete level (reaching level L takes 5·L·(L+1) hours, so each level costs
+ten hours more than the last), the rail fills with progress through the
+current level, and the level number sits at its foot. Hovering the rail opens
+the sheet: level and tier, hours to the next level, and the current training
+streak in consecutive Mon–Sun weeks with any load. The detail lives where it
+belongs — the career view wears the level chip, XP bar and streak flame; the
+plan view turns the week into a quest row of gold pips (one per prescribed
+session, lit as completed, pulsing when the week is done); the power view
+rings a record set in the last seven days in gold; and the form board wears
+the form verdict as a status chip (cooked / building / steady / primed /
+coasting, from the same TSB the teal line ends on).
+
 ## What the form board shows
 
 Big-number tiles carry the artifact's reading aids: fitness, fatigue and form
