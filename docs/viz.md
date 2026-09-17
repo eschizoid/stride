@@ -138,12 +138,12 @@ On first launch the bundle copies its fonts to `~/.stride/fonts`. Failed
 copies are logged to `~/.stride/fonts-seed.log`; if the directory itself
 cannot be created, the window falls back to its default font.
 
-The viz pins **its own compiler** — roc-ray's platform needs
-`nightly-2026-09-07-14d9829`, not the engine's pin. The pin lives in the app header of
-`src/viz/main.roc`; point `ROC_VIZ` at a matching nightly if your PATH `roc` is the
-engine's. CI builds with that same tag in its own job (`viz-check` in
-`build.yml`), and `tools/pin-check.sh` asserts every workflow site carries
-the header's pin, so a bump cannot miss one silently.
+Both binaries build on **one compiler** — the tag is the `setup-roc` action's
+default, mirrored in `src/viz/main.roc`'s app header, and `tools/pin-check.sh`
+holds those two copies together while refusing any per-job override. roc-ray
+itself declares an older compiler in its own header, so a viz build emits one
+mismatch warning; `tools/roc-viz.sh` tolerates exactly that warning and nothing
+else, and comes out the day roc-ray names the compiler stride pins.
 
 ## Typography
 

@@ -146,9 +146,9 @@ jobs:
       # a successful build anyway.
       - name: Check the commands the docs name against the command table
         run: sh tools/command-claims.sh
-      # The viz compiler pin's one definition is the app header; four workflow
-      # steps repeat it as nightly-tag inputs, and a missed bump surfaced only
-      # at release time, on the artifact itself (#443).
+      # Both binaries build on one compiler, so every job takes the setup-roc
+      # action's default and no workflow repeats the tag. This holds the app
+      # header to that default - the only two copies left (#443, #458).
       - name: Check the viz roc pin agrees across every workflow site
         run: sh tools/pin-check.sh
       # Cheap, and it guards a class that has rotted twice: a comment asserting an issue
@@ -160,9 +160,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # The app window (src/viz/main.roc) rides a different platform (roc-ray) and a
-  # different nightly than the engine — its own pin lives in its app header.
-  # Nothing above imports it, so without this job it would land unchecked.
+  # The app window (src/viz/main.roc) rides a different platform (roc-ray) on
+  # the same compiler as the engine. Nothing above imports it, so without this
+  # job it would land unchecked. It goes through tools/roc-viz.sh because
+  # roc-ray declares an older compiler in its own header, and that lone
+  # mismatch warning would otherwise fail the job.
   viz-check:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -171,11 +173,9 @@ jobs:
 
       - name: Set up Roc (the viz pin, not the engine pin)
         uses: ./.github/actions/setup-roc
-        with:
-          nightly-tag: nightly-2026-09-07-14d9829
 
       - name: Type-check the app window
-        run: roc check src/viz/main.roc
+        run: sh tools/roc-viz.sh check src/viz/main.roc
 
   # roc-ray ships an x64glibc host, so the window can LINK on linux - which is
   # a different question from type-checking it. This job answers it on every
@@ -189,8 +189,6 @@ jobs:
 
       - name: Set up Roc (the viz pin, not the engine pin)
         uses: ./.github/actions/setup-roc
-        with:
-          nightly-tag: nightly-2026-09-07-14d9829
 
       - name: raylib's link dependencies
         run: |
@@ -207,7 +205,7 @@ jobs:
       - name: Link the window
         run: |
           set -euo pipefail
-          roc build src/viz/main.roc --output=stride-viz-linux --opt=dev
+          sh tools/roc-viz.sh build src/viz/main.roc --output=stride-viz-linux --opt=dev
           test -s stride-viz-linux
           file stride-viz-linux
 
@@ -225,15 +223,13 @@ jobs:
 
       - name: Set up Roc (the viz pin, not the engine pin)
         uses: ./.github/actions/setup-roc
-        with:
-          nightly-tag: nightly-2026-09-07-14d9829
 
       - name: Link the window
         shell: bash
         run: |
           set -euo pipefail
           sed 's/#.*//' src/viz/main.roc | grep -q 'echo %USERPROFILE%'
-          roc build src/viz/main.roc --output=stride-viz.exe --opt=dev
+          sh tools/roc-viz.sh build src/viz/main.roc --output=stride-viz.exe --opt=dev
           test -s stride-viz.exe
 
   # ADR 0016's gate is pure shell over source text — no toolchain, no OS

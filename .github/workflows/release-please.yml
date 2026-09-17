@@ -123,8 +123,6 @@ jobs:
 
       - name: Set up Roc (the viz pin, not the engine pin)
         uses: ./.github/actions/setup-roc
-        with:
-          nightly-tag: nightly-2026-09-07-14d9829
 
       - name: Build the .app bundle
         run: |
@@ -216,8 +214,6 @@ jobs:
 
       - name: Set up Roc (the viz pin, not the engine pin)
         uses: ./.github/actions/setup-roc
-        with:
-          nightly-tag: nightly-2026-09-07-14d9829
 
       - name: raylib's link dependencies
         run: |
@@ -235,7 +231,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p stage/stride-app/fonts
-          roc build src/viz/main.roc --output=stage/stride-app/stride-viz --opt=dev
+          sh tools/roc-viz.sh build src/viz/main.roc --output=stage/stride-app/stride-viz --opt=dev
           cp assets/fonts/*.ttf assets/fonts/OFL-*.txt stage/stride-app/fonts/
           cat > stage/stride-app/stride-app <<'SH'
           #!/bin/sh
@@ -313,15 +309,13 @@ jobs:
 
       - name: Set up Roc (the viz pin, not the engine pin)
         uses: ./.github/actions/setup-roc
-        with:
-          nightly-tag: nightly-2026-09-07-14d9829
 
       - name: Build and package
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p stage/stride-app/fonts
-          roc build src/viz/main.roc --output=stage/stride-app/stride-viz.exe --opt=dev
+          sh tools/roc-viz.sh build src/viz/main.roc --output=stage/stride-app/stride-viz.exe --opt=dev
           cp assets/fonts/*.ttf assets/fonts/OFL-*.txt stage/stride-app/fonts/
           cat > launcher.lf <<'BAT'
           @echo off
