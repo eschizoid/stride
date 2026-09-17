@@ -330,8 +330,21 @@ Career :: [].{
 				} else {}
 				{}
 			}
+			# a peak that IS the current month is a record in progress, and it
+			# celebrates in gold with a breathing halo - for every family, the
+			# way the power view celebrates a fresh ride record. Past peaks
+			# stay teal: the party is for now, not for 2024.
+			peak_is_now = peak.i == last_known.i and peak.f > 0
 			mark!(valley.i, valley.f, Theme.alarm_c, "valley")
-			mark!(peak.i, peak.f, Theme.tsb_c, "peak")
+			mark!(peak.i, peak.f, if peak_is_now (Theme.gold_c) else Theme.tsb_c, "peak")
+			if peak_is_now and p >= 1.0 {
+				gt = model.tick % 40
+				gtri = (if gt < 20 (U64.to_f32(gt)) else U64.to_f32(40 - gt)) / 20.0
+				halo_a = match F32.to_u8_try(40.0 + gtri * 50.0) { Ok(ga) => ga
+					Err(_) => 40 }
+				frame.circle!({ center: { x: xf(peak.i), y: yf(peak.f) }, radius: 8.0 + gtri * 3.0, style: Draw.filled(Color.with_alpha(Theme.gold_c, halo_a)) })
+				Text.from("all-time high", model.font).size(11).draw!(frame, { pos: { x: xf(peak.i), y: yf(peak.f) - 50.0 }, color: Theme.gold_c, align: (Top, Center) })
+			} else {}
 			if last_known.i != peak.i and last_known.i != valley.i {
 				mark!(last_known.i, last_known.f, Theme.ctl_c, "today")
 			}

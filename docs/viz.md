@@ -27,7 +27,10 @@ streak in consecutive Mon–Sun weeks with any load. The detail lives where it
 belongs — the career view wears the level chip, XP bar and streak flame; the
 plan view turns the week into a quest row of gold pips (one per prescribed
 session, lit as completed, pulsing when the week is done); the power view
-rings a record set in the last seven days in gold; and the form board wears
+rings a ride record set in the last seven days in gold; the career view
+turns the spine's peak gold with a breathing "all-time high" halo when the
+peak is the current month, which celebrates a threshold record for EVERY
+family the athlete trains, not only ride power; and the form board wears
 the form verdict as a status chip (cooked / building / steady / primed /
 coasting, from the same TSB the teal line ends on).
 
