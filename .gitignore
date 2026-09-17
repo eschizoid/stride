@@ -29,3 +29,6 @@
 # grep for any check name returns alongside the real one.
 *.orig
 *.rej
+
+# roc build output at the repo root
+/main
