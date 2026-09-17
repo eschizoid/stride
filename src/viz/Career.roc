@@ -343,7 +343,9 @@ Career :: [].{
 				halo_a = match F32.to_u8_try(40.0 + gtri * 50.0) { Ok(ga) => ga
 					Err(_) => 40 }
 				frame.circle!({ center: { x: xf(peak.i), y: yf(peak.f) }, radius: 8.0 + gtri * 3.0, style: Draw.filled(Color.with_alpha(Theme.gold_c, halo_a)) })
-				Text.from("all-time high", model.font).size(11).draw!(frame, { pos: { x: xf(peak.i), y: yf(peak.f) - 50.0 }, color: Theme.gold_c, align: (Top, Center) })
+				# a full line-height of clearance above the size-13 value label
+				# at lift -34, which itself clears the dot and halo
+				Text.from("all-time high", model.font).size(11).draw!(frame, { pos: { x: xf(peak.i), y: yf(peak.f) - 64.0 }, color: Theme.gold_c, align: (Top, Center) })
 			} else {}
 			if last_known.i != peak.i and last_known.i != valley.i {
 				mark!(last_known.i, last_known.f, Theme.ctl_c, "today")
