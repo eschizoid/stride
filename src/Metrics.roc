@@ -1,4 +1,4 @@
-import Sports
+import core.Sports
 Metrics :: [].{
     # ── pure training-science math. no I/O, fully unit-tested. ──────────
 

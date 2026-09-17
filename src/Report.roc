@@ -8,7 +8,7 @@ import pf.Sqlite
 import pf.Stdout
 import pf.Path
 import Metrics
-import Sports
+import core.Sports
 import Render
 
 Report :: [].{

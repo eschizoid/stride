@@ -95,6 +95,24 @@ Sports :: [].{
 
     # rTSS/sTSS intensity exponent: running 2, swimming 3 (drag rises faster
     # with speed in water).
+    # the distance a family reads its pace over, and how that reads aloud.
+    # Rowers speak seconds per 500m, swimmers per 100m, everyone else per
+    # kilometre - a fact about the SPORT, so it lives with the rest of the
+    # vocabulary rather than in whichever surface is drawing at the time.
+    # The window labels a threshold with it; the CLI is free to.
+    pace_unit : Str -> { dist_m : I64, label : Str }
+    pace_unit = |fam|
+        if fam == "Rowing" ({ dist_m: 500, label: "/500m" })
+        else if fam == "Swim" ({ dist_m: 100, label: "/100m" })
+        else { dist_m: 1000, label: "/km" }
+
+    expect Sports.pace_unit("Rowing").dist_m == 500
+    expect Sports.pace_unit("Swim").label == "/100m"
+    expect Sports.pace_unit("Run").dist_m == 1000
+    # an unknown family gets the kilometre rather than a refusal: a wrong UNIT
+    # is visible on screen, where a missing label would just look broken
+    expect Sports.pace_unit("Kayaking").label == "/km"
+
     pace_tss_exponent : Str -> F64
     pace_tss_exponent = |sport|
         if Str.contains(Str.with_ascii_lowercased(sport), "swim") 3.0 else 2.0

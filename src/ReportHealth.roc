@@ -23,7 +23,7 @@ import Db
 import Output
 import Metrics
 import Render
-import Sports
+import core.Sports
 import pf.Sqlite
 import pf.Stdout
 import pf.Path

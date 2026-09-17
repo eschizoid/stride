@@ -83,15 +83,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "--- roc test src/core/Fmt.roc (the package both binaries import) ---"
-          roc test src/core/Fmt.roc
-          for m in Config Command Csv Drain Metrics Sports; do
-            echo "--- roc test src/$m.roc ---"
-            roc test "src/$m.roc"
+          for m in Fmt Sports; do
+            echo "--- roc test src/core/$m.roc (the package both binaries import) ---"
+            roc test "src/core/$m.roc"
           done
-          # Render and Streams import beyond their own module, so a bare run
-          # carries no package map and every expect in them fails to resolve
-          for m in Render Streams; do
+          # --main on every engine module: core is imported transitively, and a
+          # bare module run carries no package map
+          for m in Metrics Render Drain Csv Command Config Streams; do
             echo "--- roc test --main=src/main.roc src/$m.roc ---"
             roc test --main=src/main.roc "src/$m.roc"
           done
