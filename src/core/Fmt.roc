@@ -29,6 +29,37 @@ Fmt :: [].{
     # 75 minutes per kilometre is a walk, not an error, and "75:00" says so
     expect mmss(4500) == "75:00"
 
+    # tenths as a one-decimal string: 419 -> "41.9", -89 -> "-8.9". Three
+    # separate bodies wrote this rule out (the engine's fmt1, the window's
+    # data-row formatter, the ramp view's signed variant) and agreed only by
+    # luck. Between -1 and 0 the whole part rounds to 0, so "-0.5" needs the
+    # minus that I64.to_str(0) cannot carry - same edge as hundredths.
+    tenths : I64 -> Str
+    tenths = |n| {
+        whole = n // 10
+        frac = I64.abs(n % 10)
+        sign = if n < 0 and whole == 0 "-" else ""
+        "${sign}${I64.to_str(whole)}.${I64.to_str(frac)}"
+    }
+
+    expect tenths(419) == "41.9"
+    expect tenths(-89) == "-8.9"
+    expect tenths(-5) == "-0.5"
+    expect tenths(0) == "0.0"
+    expect tenths(100) == "10.0"
+
+    # the always-signed variant: a ramp or delta reads "+2.5" so gain and
+    # loss are distinguishable at a glance, and zero reads "+0.0" because a
+    # flat week is the good case, not the missing one.
+    tenths_signed : I64 -> Str
+    tenths_signed = |n|
+        if n < 0 tenths(n) else "+${tenths(n)}"
+
+    expect tenths_signed(25) == "+2.5"
+    expect tenths_signed(-10) == "-1.0"
+    expect tenths_signed(0) == "+0.0"
+    expect tenths_signed(-5) == "-0.5"
+
     # hundredths as a two-decimal string: 98 -> "0.98", 105 -> "1.05". The
     # engine reaches it through a float (fmt2 rounds first), the window
     # through an already-scaled integer - a value the SQL rounded - so the

@@ -381,10 +381,7 @@ Render :: [].{
     fmt1 : F64 -> Str
     fmt1 = |x| {
         n = (x * 10.0).round_to_i64_try().ok_or(0)
-        whole = n // 10
-        frac = (n % 10).abs()
-        sign = if n < 0 and whole == 0 "-" else ""
-        "${sign}${I64.to_str(whole)}.${I64.to_str(frac)}"
+        Fmt.tenths(n)
     }
 
     # two-decimal float, e.g. 0.979 -> "0.98". Preserves the sign for -1 < x < 0
