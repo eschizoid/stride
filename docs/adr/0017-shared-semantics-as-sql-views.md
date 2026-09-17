@@ -112,3 +112,46 @@ The layer rule extends accordingly: `src/core` sits beneath both homes and may
 import neither. That direction needs no gate, because a package importing an
 app's modules is not expressible in Roc; `tools/layer-check.sh` scans core for
 strays and gives it no layer row.
+
+## What cannot move into `stride-core`, and what can (tested 2026-09-17)
+
+"Why not put `Db.roc` in core?" is the obvious next question, and the answer
+was measured rather than reasoned, because the last assumption in this ADR was
+wrong.
+
+**The driver cannot move.** A package module may write `import pf.Sqlite`, but
+calling into it fails at the first use:
+
+```
+Nothing is named query! in this scope.
+```
+
+`pf` is a name an APP binds to its platform; a package has none. The engine
+binds basic-cli's `Sqlite` (path-based) and the window binds roc-ray's
+(handle-based), so the effectful layer stays in each binary. This is the half
+of the old constraint that is real.
+
+**SQL text and driver-parameterised shapes can move.** Both of these compile in
+a package today:
+
+```roc
+count_sql : Str
+counted! : (Str => Try(I64, [Failed])), Str => I64
+```
+
+**But there is nothing to move.** Of the engine's 24 queries and the window's
+38, not one pair shares even a 45-character prefix, and the two files touch
+mostly different tables: migration, schema versioning and config on one side;
+view loaders and the agent bus on the other. They share a filename, not a job.
+
+So the boundary is:
+
+- **core takes VALUES** — arithmetic, formatting, vocabulary (`Fmt`, `Sports`).
+- **the database takes ROWS** — every cross-surface definition, as a view.
+- **each binary keeps its own thin driver**, because the platform makes that
+  unavoidable.
+
+Should a genuinely shared query ever appear, core can hold the string and each
+side can run it. Until one does, centralising `Db.roc` would build an
+abstraction over two drivers that share no queries: cost with no duplication
+retired.
