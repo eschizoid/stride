@@ -83,9 +83,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for m in Config Command Csv Drain Metrics Render Sports Streams; do
+          echo "--- roc test src/core/Fmt.roc (the package both binaries import) ---"
+          roc test src/core/Fmt.roc
+          for m in Config Command Csv Drain Metrics Sports; do
             echo "--- roc test src/$m.roc ---"
             roc test "src/$m.roc"
+          done
+          # Render and Streams import beyond their own module, so a bare run
+          # carries no package map and every expect in them fails to resolve
+          for m in Render Streams; do
+            echo "--- roc test --main=src/main.roc src/$m.roc ---"
+            roc test --main=src/main.roc "src/$m.roc"
           done
           echo "--- roc check src/Schema.roc (DDL-only, no expects) ---"
           roc check src/Schema.roc

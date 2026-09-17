@@ -46,14 +46,18 @@ rank_of() { case "$1" in core) echo 0 ;; io) echo 1 ;; analytics) echo 2 ;; app)
 
 fail=0
 
-# ── the gate scans two homes: src/*.roc and src/viz/*.roc. A module anywhere
-# else means the layout changed under the gate — fail loudly rather than let
-# an unscanned file ride along (subdir imports do not even compile on the
-# pinned nightlies, so such a file is at best dead and at worst the first
-# sign the foldering ticket has come due and this script must be taught).
-# exclude only DIRECT children of src/viz/ — a nested src/viz/sub/X.roc is
-# outside the scan too and must trip like any other stray
-stray=$(find src -mindepth 2 -name '*.roc' ! \( -path 'src/viz/*' ! -path 'src/viz/*/*' \))
+# ── the gate scans three homes: src/*.roc (the engine), src/viz/*.roc (the
+# window) and src/core/*.roc (the package BOTH import). A module anywhere else
+# means the layout changed under the gate — fail loudly rather than let an
+# unscanned file ride along. Only DIRECT children of the two subdirectories
+# count; a nested src/viz/sub/X.roc is outside the scan and must trip like any
+# other stray.
+#
+# core is scanned for STRAYS but has no layer row: it sits beneath both homes
+# by construction, since a package cannot import an app's modules. The
+# direction it must not take — core importing engine or viz code — is not
+# expressible in Roc, so no rule here has to enforce it.
+stray=$(find src -mindepth 2 -name '*.roc' ! \( -path 'src/viz/*' ! -path 'src/viz/*/*' \) ! \( -path 'src/core/*' ! -path 'src/core/*/*' \))
 if [ -n "$stray" ]; then
   echo "layer-check: .roc files outside the scanned homes:" >&2
   echo "$stray" >&2

@@ -36,9 +36,13 @@ build:
 
 # full suite: pure expects -> fresh build (must succeed!) -> effectful e2e
 test:
+    # core first: both binaries depend on it, so its expects gate theirs
+    {{roc}} test src/core/Fmt.roc
     {{roc}} test src/Metrics.roc
     {{roc}} test src/Sports.roc
-    {{roc}} test src/Render.roc
+    # --main: Render imports core.Fmt, and a bare module run carries no
+    # package map (same reason Streams needs it below)
+    {{roc}} test --main=src/main.roc src/Render.roc
     {{roc}} test src/Drain.roc
     {{roc}} test src/Csv.roc
     {{roc}} test src/Command.roc

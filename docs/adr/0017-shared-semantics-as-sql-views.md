@@ -68,3 +68,47 @@ no Roc module can be imported by both binaries today. A platform-independent
 compiler where that works, the database is the only module system the two
 binaries share, and this ADR is deferred-until-the-toolchain-allows, not
 chosen forever.
+
+
+## Amendment (2026-09-16): `stride-core` exists, and it never needed the pins to converge
+
+The earlier amendment said a shared package was "deferred until the toolchain
+allows it." That rested on an assumption nobody had tested: that two apps on
+different compiler nightlies could not import one package. **Measured, the
+assumption is false.** A package declares no compiler of its own, and both
+binaries import `src/core` on the pins they already had:
+
+| | imports `src/core` |
+| --- | --- |
+| engine on `nightly-2026-09-09` | yes |
+| window on `nightly-2026-09-07` | yes |
+
+So `src/core` is in, on today's pins, with no convergence involved. The cost of
+the untested assumption was months of a workaround presented as a constraint —
+the lesson being that "the toolchain will not let us" is a claim like any other
+and deserves the ten minutes it takes to try.
+
+Convergence is still worth having for its own sake (one tag, one gate, one
+thing to bump), and both binaries do build on `nightly-2026-09-16`. It is
+blocked for now on something unrelated to this decision: roc-ray 0.10.0-rc5
+declares `nightly-2026-09-07` in its own header, so a 09-16 build warns, and CI
+treats that warning as an error. That waits for a roc-ray release naming a
+newer compiler.
+
+**The views are not retired**, and the test for which mechanism to reach for is
+where the definition has to be true:
+
+- **A SQL view** when the definition is about ROWS — which rows count, how they
+  group, what joins them. `plan_current`, `week_bounds`, `activity_intensity`,
+  `activity_power_ladder`, `weekly_ramp`, `career_totals`, `monthly_load`,
+  `monthly_threshold`. Moving those into Roc would mean each binary running its
+  own SQL and agreeing by luck.
+- **A core module** when the definition is about a VALUE already in hand.
+  `Fmt.mmss` and `Fmt.hundredths` are the first two: both surfaces had written
+  each rule out separately, so a padding change could reach one and miss the
+  other.
+
+The layer rule extends accordingly: `src/core` sits beneath both homes and may
+import neither. That direction needs no gate, because a package importing an
+app's modules is not expressible in Roc; `tools/layer-check.sh` scans core for
+strays and gives it no layer row.
