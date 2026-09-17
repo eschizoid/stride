@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.14.0](https://github.com/eschizoid/stride/compare/v0.13.0...v0.14.0) (2026-09-17)
+
+
+### Features
+
+* a career view - five years of training as one arc (v32) ([#469](https://github.com/eschizoid/stride/issues/469)) ([1a18f0b](https://github.com/eschizoid/stride/commit/1a18f0b72e0c12a65ecef44a4e2a909ce71aa899))
+* athlete HUD - levels, streaks, quests, and record celebrations ([#477](https://github.com/eschizoid/stride/issues/477)) ([816dfbb](https://github.com/eschizoid/stride/commit/816dfbbd83f1b67fbb2ccbecec08004104aa710d))
+* complete latest closes the open session on the latest activity's day ([#466](https://github.com/eschizoid/stride/issues/466)) ([b78f882](https://github.com/eschizoid/stride/commit/b78f882bdd1ac600ff3438a6063c12d9dd2317dd))
+* run the engine on basic-cli 0.23.0-rc1 ([#481](https://github.com/eschizoid/stride/issues/481)) ([5fc3731](https://github.com/eschizoid/stride/commit/5fc3731b06d9970aad0791886991527562601cf2))
+* stride-core, on the pins we already had ([#470](https://github.com/eschizoid/stride/issues/470)) ([9e11ec6](https://github.com/eschizoid/stride/commit/9e11ec6f27182ed15c70b98bbf3d0f72126dfc5b))
+* the plan view shows every prescription in full ([#463](https://github.com/eschizoid/stride/issues/463)) ([42e5681](https://github.com/eschizoid/stride/commit/42e56813332755fa75eaf3c0af8ecf3c38c84753))
+* the plan view shows every prescription in full ([#463](https://github.com/eschizoid/stride/issues/463)) ([fe86470](https://github.com/eschizoid/stride/commit/fe86470e7994668e093202ef9113b445ec6fc2b0))
+
+
+### Bug Fixes
+
+* smooth the career spine, count months trained, and give core real content ([#472](https://github.com/eschizoid/stride/issues/472)) ([8d8cc6f](https://github.com/eschizoid/stride/commit/8d8cc6f6cbd320be8a091e8e1c55ea499525d0b7))
+
 ## [0.13.0](https://github.com/eschizoid/stride/compare/v0.12.0...v0.13.0) (2026-09-10)
 
 
