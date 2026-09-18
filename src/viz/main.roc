@@ -293,7 +293,6 @@ load_model! = |font, curve_days, boot| {
 			trace_pan: 0.0,
 			trace_cache: loaded.tcache,
 			segs: loaded.sg,
-			trace_title: mk!("last structured session - detected blocks shaded behind the power trace", 15)?,
 			trace_dur: loaded.du,
 			fit_cp: if fit.ok (fit.cp) else 0.0,
 			cp_lbl: mkm!("CP ${Db.fmt_f(fit.cp)}W", 12)?,

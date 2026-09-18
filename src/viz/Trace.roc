@@ -86,11 +86,22 @@ Trace :: [].{
 		ink_faint = Theme.ink_faint
 		ctl_c = Theme.ctl_c
 		tsb_c = Theme.tsb_c
-		model.trace_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		# The subtitle is built per frame rather than prepared once, because it
+		# describes THIS session: a fixed string claimed every trace was power
+		# with blocks behind it, which stopped being true when the picker began
+		# offering sessions the detector found no structure in, and sessions
+		# carrying no watts at all.
+		nsegs = List.len(List.keep_if(model.segs, |sg| sg.kind == "work"))
+		what = if model.trace_unit == "bpm" ("heart rate") else "power"
+		blocks =
+			if List.is_empty(model.trace) ("")
+			else if nsegs == 0 (" - no intervals detected")
+			else if nsegs == 1 (" - 1 detected block shaded behind it") else " - ${U64.to_str(nsegs)} detected blocks shaded behind it"
+		Text.from("${what} trace${blocks}", model.font).size(15).draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		# which session, and where in the picker it sits
 		if List.is_empty(model.trace_ids) {} else {
 			n_ids = List.len(model.trace_ids)
-			sel_note = if n_ids == 1 ("${model.trace_day}   the only structured session") else "${model.trace_day}   session ${U64.to_str(model.trace_sel + 1)} of the last ${U64.to_str(n_ids)}"
+			sel_note = if n_ids == 1 ("${model.trace_day}   the only session") else "${model.trace_day}   session ${U64.to_str(model.trace_sel + 1)} of the last ${U64.to_str(n_ids)}"
 			Text.from(sel_note, model.font).size(13).draw!(frame, { pos: { x: model.win.w - 34.0, y: 70.0 }, color: Color.white, align: (Top, Right) })
 			if model.ghost_day != "" {
 				Text.from("vs ${model.ghost_day} (purple)   shift+] dismisses", model.font).size(13).draw!(frame, { pos: { x: model.win.w - 34.0, y: 90.0 }, color: Theme.atl_c, align: (Top, Right) })
