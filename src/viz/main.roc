@@ -1183,82 +1183,70 @@ splash! = |model, frame| {
 			y: v * v * v * y0 + 3.0 * v * v * u * y1 + 3.0 * v * u * u * y2 + u * u * u * y3,
 		}
 	}
-	n = 56
+	# the route is ONE continuous smooth path, exactly as the mark draws it:
+	# the S's two bends, then a rounded upward curl that turns back LEFT into
+	# a squared-off ledge nested inside the peak's V. The route never touches
+	# the mountain - the mountain is its own stroke, and it appears only when
+	# the route completes. E is where the S hands over to the curl.
+	ex = cx + 18.0
+	ey = cy - 96.0
+	n = 72
 	pt = |i| {
 		t = U64.to_f32(i) / U64.to_f32(n)
-		b =
-			if t < 0.5 {
-				bez(cx - 85.0, cy + 85.0, cx + 85.0, cy + 78.0, cx + 98.0, cy + 18.0, cx + 2.0, cy - 6.0, t * 2.0)
-			} else {
-				bez(cx + 2.0, cy - 6.0, cx - 94.0, cy - 30.0, cx - 66.0, cy - 98.0, cx + 30.0, cy - 105.0, (t - 0.5) * 2.0)
-			}
-		{ x: b.x, y: b.y, t }
+		if t < 0.36 {
+			b = bez(cx - 85.0, cy + 85.0, cx + 85.0, cy + 78.0, cx + 98.0, cy + 18.0, cx + 2.0, cy - 6.0, t / 0.36)
+			{ x: b.x, y: b.y, t }
+		} else if t < 0.72 {
+			b = bez(cx + 2.0, cy - 6.0, cx - 98.0, cy - 36.0, cx - 40.0, cy - 92.0, ex, ey, (t - 0.36) / 0.36)
+			{ x: b.x, y: b.y, t }
+		} else if t < 0.90 {
+			# the curl: a semicircle from heading-right to heading-left
+			a = pi * (t - 0.72) / 0.18
+			{ x: ex + 14.0 * F32.sin(a), y: (ey - 14.0) + 14.0 * F32.cos(a), t }
+		} else {
+			{ x: ex - 30.0 * (t - 0.90) / 0.10, y: ey - 28.0, t }
+		}
 	}
-	# reveal loops: 120 ticks of drawing, 50 of holding the finished figure
-	cyc = model.tick % 170
-	p_raw = U64.to_f32(cyc) / 120.0
+	# reveal loops: 56 ticks of drawing, 34 of holding - frames run well below
+	# 60fps while the load task works, so a longer cycle would never finish
+	# inside the loading window and the mountain would never be seen
+	cyc = model.tick % 90
+	p_raw = U64.to_f32(cyc) / 56.0
 	p1 = if p_raw > 1.0 (1.0) else p_raw
 	p = 1.0 - (1.0 - p1) * (1.0 - p1)
 	start = pt(0)
 	# the start marker is a RING in the logo, not a dot
 	frame.circle!({ center: { x: start.x, y: start.y }, radius: 9.0, style: Draw.filled(Theme.tsb_c) })
 	frame.circle!({ center: { x: start.x, y: start.y }, radius: 5.0, style: Draw.filled(Theme.bg) })
-	sp = p / 0.76
-	sp1 = if sp > 1.0 (1.0) else sp
 	List.for_each!(List.map_with_index(List.repeat({}, n), |_u, i| i), |i| {
 		a = pt(i)
 		b = pt(i + 1)
-		if b.t <= sp1 {
-			frame.line!({ start: { x: a.x, y: a.y }, end: { x: b.x, y: b.y }, stroke: Draw.stroke(mixc(a.t * 0.76), 4) })
+		if b.t <= p {
+			frame.line!({ start: { x: a.x, y: a.y }, end: { x: b.x, y: b.y }, stroke: Draw.stroke(mixc(a.t), 4) })
 		}
 	})
-	# the tail, joint by joint from the S's end: up-right to the ledge, the
-	# switchback (left, then up), the left slope to the apex, the long right
-	# slope, and the base line under it - the logo's own mountain
-	endp = pt(n)
-	vio = mixc(0.95)
-	j0 = { x: endp.x, y: endp.y }
-	j1 = { x: j0.x + 24.0, y: j0.y - 8.0 }
-	j2 = { x: j1.x - 28.0, y: j1.y }
-	j3 = { x: j2.x, y: j2.y - 17.0 }
-	j4 = { x: j3.x + 32.0, y: j3.y - 32.0 }
-	j5 = { x: j4.x + 56.0, y: j4.y + 56.0 }
-	j6 = { x: j5.x - 42.0, y: j5.y }
-	tail = [
-		{ a: j0, b: j1, at: 0.76 },
-		{ a: j1, b: j2, at: 0.80 },
-		{ a: j2, b: j3, at: 0.84 },
-		{ a: j3, b: j4, at: 0.88 },
-		{ a: j4, b: j5, at: 0.92 },
-		{ a: j5, b: j6, at: 0.96 },
-	]
-	List.for_each!(tail, |sg|
-		if p >= sg.at + 0.05 {
-			frame.line!({ start: { x: sg.a.x, y: sg.a.y }, end: { x: sg.b.x, y: sg.b.y }, stroke: Draw.stroke(vio, 4) })
-		} else if p >= sg.at {
-			k = (p - sg.at) / 0.05
-			frame.line!({ start: { x: sg.a.x, y: sg.a.y }, end: { x: sg.a.x + (sg.b.x - sg.a.x) * k, y: sg.a.y + (sg.b.y - sg.a.y) * k }, stroke: Draw.stroke(vio, 4) })
-		})
+	# the mountain: apex, a left slope ending in a short downward foot, and
+	# the long open right slope - separate from the route, arriving with a
+	# pop once the route has finished drawing
+	vio = mixc(1.0)
+	ax = ex - 24.0
+	ay = ey - 74.0
 	if p >= 1.0 {
-		hold = U64.to_f32(cyc - 120) / 50.0
+		l1 = { x: ax - 56.0, y: ay + 56.0 }
+		frame.line!({ start: { x: ax, y: ay }, end: { x: l1.x, y: l1.y }, stroke: Draw.stroke(vio, 4) })
+		frame.line!({ start: { x: l1.x, y: l1.y }, end: { x: l1.x, y: l1.y + 14.0 }, stroke: Draw.stroke(vio, 4) })
+		frame.line!({ start: { x: ax, y: ay }, end: { x: ax + 72.0, y: ay + 72.0 }, stroke: Draw.stroke(vio, 4) })
+		frame.circle!({ center: { x: ax, y: ay }, radius: 2.0, style: Draw.filled(vio) })
+		frame.circle!({ center: { x: l1.x, y: l1.y }, radius: 2.0, style: Draw.filled(vio) })
+		hold = U64.to_f32(cyc - 56) / 34.0
 		pop = F32.sin(hold * pi)
-		frame.circle!({ center: { x: j4.x, y: j4.y }, radius: 5.0 + pop * 9.0, style: Draw.filled(Color.with_alpha(vio, match F32.to_u8_try(70.0 * (1.0 - hold)) { Ok(pa) => pa
+		frame.circle!({ center: { x: ax, y: ay }, radius: 5.0 + pop * 9.0, style: Draw.filled(Color.with_alpha(vio, match F32.to_u8_try(70.0 * (1.0 - hold)) { Ok(pa) => pa
 			Err(_) => 0 })) })
 	} else {
 		# the comet at the pen, the same one the career view rides
-		hp = if p < 0.76 {
-			head_i = match F32.round_to_u64_try(sp1 * U64.to_f32(n)) { Ok(hi) => hi
-				Err(_) => 0.U64 }
-			hq = pt(head_i)
-			{ x: hq.x, y: hq.y }
-		} else {
-			List.fold(tail, { x: j0.x, y: j0.y }, |acc, sg|
-				if p >= sg.at {
-					k9 = (p - sg.at) / 0.05
-					k = if k9 > 1.0 (1.0) else k9
-					{ x: sg.a.x + (sg.b.x - sg.a.x) * k, y: sg.a.y + (sg.b.y - sg.a.y) * k }
-				} else acc)
-		}
+		head_i = match F32.round_to_u64_try(p * U64.to_f32(n)) { Ok(hi) => hi
+			Err(_) => 0.U64 }
+		hp = pt(head_i)
 		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 11.0, style: Draw.filled(Color.with_alpha(Color.white, 26)) })
 		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 6.0, style: Draw.filled(Color.with_alpha(mixc(p), 140)) })
 		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 3.0, style: Draw.filled(Color.white) })
