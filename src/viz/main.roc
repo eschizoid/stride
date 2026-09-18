@@ -49,7 +49,7 @@ init! = App.init(
 		.with_output_dir("captures"),
 	|_startup| {
 		font = Draw.default_font!()
-		load_model!(font, 90)
+		load_model!(font, 90, Bool.True)
 	},
 )
 
@@ -103,10 +103,13 @@ resolve_home! = |{}| {
 	}
 }
 
-load_model! : Text.Font, I64 => Try(Ui.Model, [ResourceLimit, ..])
-load_model! = |font, curve_days| {
+# boot=True builds the instant skeleton the splash renders over: no home
+# resolution, no database, no engine call - the window opens on frame one
+# and the real load runs in a spawned task that answers with Reloaded.
+load_model! : Text.Font, I64, Bool => Try(Ui.Model, [ResourceLimit, ..])
+load_model! = |font, curve_days, boot| {
 		# ~/.stride/db.sqlite, resolved on every load (launch and R alike)
-		home = resolve_home!({})
+		home = if boot "" else resolve_home!({})
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if home == "" {
 			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [] }
@@ -147,7 +150,8 @@ load_model! = |font, curve_days| {
 			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [] }
 		}
 		ev = Db.find_idx(loaded.s.days, loaded.e.day)
-		fit = Db.load_fit!(curve_days)
+		# the fit shells out to the engine; the skeleton cannot afford it
+		fit = if boot ({ cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }) else Db.load_fit!(curve_days)
 		fit_text =
 			if fit.ok
 				"CP ${Db.fmt_f(fit.cp)} W · W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${Db.fmt_f(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
@@ -305,8 +309,9 @@ load_model! = |font, curve_days| {
 				{ p: mk!("ramp", 13)?, v: 7.U8 },
 				{ p: mk!("career", 13)?, v: 8.U8 },
 			],
-			status: mk!(loaded.s.err, 16)?,
-			has_error: loaded.s.err != "",
+			status: mk!(if boot "" else loaded.s.err, 16)?,
+			has_error: !boot and loaded.s.err != "",
+			booting: boot,
 			font: mono,
 			hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   G glow   ESC quit", 13)?,
 			empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
@@ -582,7 +587,9 @@ update! = |model0, program_input| {
 			Shot(_) => acc
 			RecCmd(_) => acc
 			MarkDone(_) => acc
-			ReloadFailed => acc
+			# also the boot task's failure exit: the splash must never spin
+			# forever, so a dead load hands over to the skeleton's own screens
+			ReloadFailed => { ..acc, booting: Bool.False }
 			TraceSwitchFailed => acc
 			GhostSwitchFailed => acc
 			# a slow load must not resurrect a dismissed ghost or overwrite a
@@ -890,7 +897,7 @@ update! = |model0, program_input| {
 			} else model.trace_day
 		_ = if want_days != model.curve_days or d.key_pressed(KeyR) {
 			f2 = model.font
-			Task.spawn!(program_input, || match load_model!(f2, want_days) {
+			Task.spawn!(program_input, || match load_model!(f2, want_days, Bool.False) {
 				Ok(m2) => Reloaded(m2)
 				Err(_) => ReloadFailed
 			})
@@ -914,6 +921,15 @@ update! = |model0, program_input| {
 		spine_idx = if view == 8 and d.key_pressed(KeyF) (model.spine_idx + 1) else model.spine_idx
 		view_anim = if view != model.view (model.tick + 1) else if view == 8 and Mouse.button_pressed(d.mouse, Left) (0) else model.view_anim
 		tick = model.tick + 1
+		# frame one of a boot: the window is already on screen showing the
+		# splash - kick the real load exactly once, the same task R runs
+		_ = if model.booting and model.tick == 0 {
+			f0 = model.font
+			Task.spawn!(program_input, || match load_model!(f0, 90, Bool.False) {
+				Ok(m2) => Reloaded(m2)
+				Err(_) => ReloadFailed
+			})
+		}
 		# no HOME means no database path means no bus — spawning would only
 		# manufacture failing tasks every tick, forever
 		_ = if tick % 60 == 0 and model.home != "" {
@@ -1120,6 +1136,82 @@ scene! = |model, frame| {
 	drawn
 }
 
+# The boot splash: the stride route drawing itself while the real load runs
+# in its task. The S sweeps bottom-left to top-right through the brand
+# gradient with a comet at the pen, the mountain peak pops when a sweep
+# completes, and the whole figure loops until Reloaded lands. Everything is
+# geometry over the tick - no asset, nothing to load before the loader.
+splash! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
+splash! = |model, frame| {
+	frame.rectangle!({ x: 0.0, y: 0.0, width: model.win.w, height: model.win.h, style: Draw.filled(Theme.bg) })
+	cx = model.win.w / 2.0
+	cy = model.win.h / 2.0 - 30.0
+	pi = 3.14159265
+	# brand gradient along the path: teal through blue to violet
+	mixc = |t| {
+		lerp = |a, b, k| {
+			v = a + (b - a) * k
+			match F32.round_to_u64_try(if v < 0.0 (0.0) else if v > 255.0 (255.0) else v) {
+				Ok(u) => match U64.to_u8_try(u) { Ok(c8) => c8
+					Err(_) => 255.U8 }
+				Err(_) => 0.U8
+			}
+		}
+		if t < 0.5 {
+			k = t * 2.0
+			Color.rgb(lerp(45.0, 79.0, k), lerp(212.0, 142.0, k), lerp(191.0, 247.0, k))
+		} else {
+			k = (t - 0.5) * 2.0
+			Color.rgb(lerp(79.0, 166.0, k), lerp(142.0, 107.0, k), lerp(247.0, 250.0, k))
+		}
+	}
+	# the route: y climbs, x swings once left-right-left - an S
+	n = 56
+	pt = |i| {
+		t = U64.to_f32(i) / U64.to_f32(n)
+		{ x: cx + 72.0 * F32.sin(4.712 * t + 1.1), y: cy + 88.0 - 176.0 * t, t }
+	}
+	# reveal loops: 120 ticks of drawing, 50 of holding the finished figure
+	cyc = model.tick % 170
+	p_raw = U64.to_f32(cyc) / 120.0
+	p1 = if p_raw > 1.0 (1.0) else p_raw
+	p = 1.0 - (1.0 - p1) * (1.0 - p1)
+	start = pt(0)
+	# the start dot: where every career begins
+	frame.circle!({ center: { x: start.x, y: start.y }, radius: 7.0, style: Draw.filled(Color.with_alpha(Theme.tsb_c, 60)) })
+	frame.circle!({ center: { x: start.x, y: start.y }, radius: 4.0, style: Draw.filled(Theme.tsb_c) })
+	List.for_each!(List.map_with_index(List.repeat({}, n), |_u, i| i), |i| {
+		a = pt(i)
+		b = pt(i + 1)
+		if b.t <= p {
+			frame.line!({ start: { x: a.x, y: a.y }, end: { x: b.x, y: b.y }, stroke: Draw.stroke(mixc(a.t), 4) })
+		}
+	})
+	endp = pt(n)
+	if p >= 1.0 {
+		# the peak: the mountain the route was always climbing toward
+		vio = mixc(1.0)
+		frame.line!({ start: { x: endp.x - 24.0, y: endp.y - 2.0 }, end: { x: endp.x + 2.0, y: endp.y - 26.0 }, stroke: Draw.stroke(vio, 4) })
+		frame.line!({ start: { x: endp.x + 2.0, y: endp.y - 26.0 }, end: { x: endp.x + 26.0, y: endp.y - 2.0 }, stroke: Draw.stroke(vio, 4) })
+		hold = U64.to_f32(cyc - 120) / 50.0
+		pop = F32.sin(hold * pi)
+		frame.circle!({ center: { x: endp.x + 2.0, y: endp.y - 26.0 }, radius: 5.0 + pop * 9.0, style: Draw.filled(Color.with_alpha(vio, match F32.to_u8_try(70.0 * (1.0 - hold)) { Ok(pa) => pa
+			Err(_) => 0 })) })
+	} else {
+		# the comet at the pen, the same one the career view rides
+		head_i = match F32.round_to_u64_try(p * U64.to_f32(n)) { Ok(hi) => hi
+			Err(_) => 0.U64 }
+		hp = pt(head_i)
+		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 11.0, style: Draw.filled(Color.with_alpha(Color.white, 26)) })
+		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 6.0, style: Draw.filled(Color.with_alpha(mixc(p), 140)) })
+		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 3.0, style: Draw.filled(Color.white) })
+	}
+	Text.from("Stride", model.font).size(30).draw!(frame, { pos: { x: cx, y: cy + 124.0 }, color: Color.white, align: (Top, Center) })
+	dots = if model.tick % 90 < 30 "." else if model.tick % 90 < 60 ".." else "..."
+	Text.from("loading your training story${dots}", model.font).size(13).draw!(frame, { pos: { x: cx, y: cy + 164.0 }, color: Theme.ink_muted, align: (Top, Center) })
+	Ok({})
+}
+
 # The frame's last word: with a working pipeline and the glow on, the scene
 # draws DIRECTLY to the screen first - at the framebuffer's full pixel
 # density - and the offscreen target feeds only the additive bloom layer.
@@ -1131,7 +1223,9 @@ scene! = |model, frame| {
 # before shaders existed.
 render! : Model, Draw.Frame => Try({}, [Exit(I64), ..])
 render! = |model, frame| {
-	match model.glow {
+	if model.booting {
+		splash!(model, frame)
+	} else match model.glow {
 		Ready(g) =>
 			if model.glow_on {
 				scene!(model, frame)?

@@ -71,6 +71,9 @@ Ui :: [].{
 		last_focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str },
 		status : Text.Prepared,
 		has_error : Bool,
+		# True from launch until the first background load lands: the window
+		# opens instantly and renders the splash instead of empty views
+		booting : Bool,
 		font : Text.Font,
 		hint : Text.Prepared,
 		empty : Text.Prepared,
