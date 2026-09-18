@@ -263,8 +263,13 @@ load_model! = |font, curve_days, boot| {
 				Ok(x) => x.day
 				Err(_) => ""
 			},
+			trace_unit: match List.first(loaded.tcache) {
+				Ok(t1) => t1.un
+				Err(_) => "W"
+			},
+			trace_sport: "",
 			curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-			trace_hint: mk!("[ / ]  session      shift+[ / shift+]  ghost      wheel zoom  drag pan  0 reset      TAB  data table      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+			trace_hint: mk!("[ / ]  session      shift+[ / shift+]  ghost      X  sport      wheel zoom  drag pan  0 reset      TAB  data table      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			table_title: mk!("data table", 15)?,
 			table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
@@ -420,7 +425,7 @@ build_glow! = |win|
 # session's trace and duration (no segments - the ghost is a line, not a
 # block chart). The caller already cleared the drawn overlay when the
 # selection moved, so a failure leaves no ghost, never a stale one.
-ghost_task! : Str, List({ id : I64, day : Str }), I64 => Msg
+ghost_task! : Str, List(TraceId), I64 => Msg
 ghost_task! = |home, ids, gsel|
 	if home == "" GhostSwitchFailed
 	else match I64.to_u64_try(gsel) {
@@ -431,7 +436,7 @@ ghost_task! = |home, ids, gsel|
 				match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
 					Err(_) => GhostSwitchFailed
 					Ok(db) => {
-						tr = Db.load_trace!(db, entry.id)
+						tr = Db.load_trace!(db, entry.id, entry.chan)
 						du = Db.load_dur!(db, entry.id)
 						GhostSwitched({ tr, du, sel: gsel, day: entry.day })
 					}
@@ -442,7 +447,7 @@ ghost_task! = |home, ids, gsel|
 # Same task lane, the live session: re-reads one session's trace, segments
 # and duration and reports back as a message. Any failure keeps the session
 # the window already had.
-trace_task! : Str, List({ id : I64, day : Str }), U64 => Msg
+trace_task! : Str, List(TraceId), U64 => Msg
 trace_task! = |home, ids, sel|
 	if home == "" TraceSwitchFailed
 	else match List.get(ids, sel) {
@@ -451,10 +456,10 @@ trace_task! = |home, ids, sel|
 			match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
 				Err(_) => TraceSwitchFailed
 				Ok(db) => {
-					tr = Db.load_trace!(db, entry.id)
+					tr = Db.load_trace!(db, entry.id, entry.chan)
 					sg = Db.load_segs!(db, entry.id)
 					du = Db.load_dur!(db, entry.id)
-					TraceSwitched({ tr, sg, du, sel, day: entry.day })
+					TraceSwitched({ tr, sg, du, sel, day: entry.day, un: Db.trace_unit(entry.chan) })
 				}
 			}
 	}
@@ -491,7 +496,96 @@ poll_task! = |home|
 # an inline block: this nightly miscompiles a large conditional binding
 # captured by a task closure to its empty default (the #371 family), and a
 # call is the shape that survives.
-refusals_for : { has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str }, I64, U64, U64, List({ id : I64, day : Str }) -> Str
+TraceId : { id : I64, day : Str, sport : Str, chan : Str }
+
+# An empty filter admits every sport, which is what makes "" the whole menu.
+sport_ok : Str, Str -> Bool
+sport_ok = |filt, sp| filt == "" or filt == sp
+
+# The nearest picker index past `cur` in one direction whose sport the filter
+# admits. `older` walks toward earlier sessions, which is toward HIGHER indices:
+# the menu is newest-first. Returning `cur` when nothing further qualifies makes
+# a key press at either end a no-op rather than a wrap-around jump.
+next_admitted : List(TraceId), U64, Str, Bool -> U64
+next_admitted = |ids, cur, filt, older|
+	List.fold(List.map_with_index(ids, |e, i| { e, i }), cur, |acc, x|
+		if !(sport_ok(filt, x.e.sport)) acc
+		else if older (if x.i > cur and (acc == cur or x.i < acc) x.i else acc)
+		else if x.i < cur and (acc == cur or x.i > acc) x.i else acc)
+
+# The newest session a filter admits, for snapping the selection when the
+# filter changes under it. `fallback` stands when the filter admits nothing,
+# so an empty result leaves the window on the session it already had.
+first_admitted : List(TraceId), Str, U64 -> U64
+first_admitted = |ids, filt, fallback|
+	match List.first(List.keep_oks(List.map_with_index(ids, |e, i| { e, i }), |x| if sport_ok(filt, x.e.sport) (Ok(x.i)) else Err({}))) {
+		Ok(h) => h
+		Err(_) => fallback
+	}
+
+# The filter cycle: "" first, then each sport the menu actually holds, in the
+# menu's own newest-first order. Built from the menu rather than from a fixed
+# list of sports, so X can never land on a filter that admits nothing.
+sport_cycle : List(TraceId) -> List(Str)
+sport_cycle = |ids|
+	List.fold(ids, [""], |acc, e| if e.sport != "" and !(List.contains(acc, e.sport)) (List.append(acc, e.sport)) else acc)
+
+next_sport : List(TraceId), Str -> Str
+next_sport = |ids, cur| {
+	cyc = sport_cycle(ids)
+	idx = List.fold(List.map_with_index(cyc, |s, i| { s, i }), 0.U64, |acc, x| if x.s == cur x.i else acc)
+	match List.get(cyc, (idx + 1) % List.len(cyc)) {
+		Ok(s9) => s9
+		Err(_) => ""
+	}
+}
+
+expect {
+	sport_ok("", "Ride")
+	and sport_ok("Ride", "Ride")
+	and !(sport_ok("Ride", "Rowing"))
+}
+
+expect {
+	# a mixed menu, newest first, as the picker orders it
+	m = [{ id: 1, day: "d1", sport: "Ride", chan: Db.watts_chan }, { id: 2, day: "d2", sport: "Rowing", chan: Db.watts_chan }, { id: 3, day: "d3", sport: "Ride", chan: Db.watts_chan }]
+	# unfiltered, "older" is simply the next index
+	next_admitted(m, 0, "", Bool.True) == 1
+	# filtered to Ride, the Rowing entry between them is skipped entirely
+	and next_admitted(m, 0, "Ride", Bool.True) == 2
+	# and the same skip walking back toward newer sessions
+	and next_admitted(m, 2, "Ride", Bool.False) == 0
+	# nothing older than the last admitted entry: the selection holds rather
+	# than wrapping
+	and next_admitted(m, 2, "Ride", Bool.True) == 2
+	and next_admitted(m, 0, "", Bool.False) == 0
+}
+
+expect {
+	m = [{ id: 1, day: "d1", sport: "Ride", chan: Db.watts_chan }, { id: 2, day: "d2", sport: "Rowing", chan: Db.watts_chan }, { id: 3, day: "d3", sport: "Ride", chan: Db.watts_chan }]
+	first_admitted(m, "Rowing", 0) == 1
+	and first_admitted(m, "", 2) == 0
+	# a filter the menu cannot satisfy leaves the selection where it was
+	and first_admitted(m, "Run", 2) == 2
+}
+
+expect {
+	m = [{ id: 1, day: "d1", sport: "Ride", chan: Db.watts_chan }, { id: 2, day: "d2", sport: "Rowing", chan: Db.watts_chan }, { id: 3, day: "d3", sport: "Ride", chan: Db.watts_chan }]
+	sport_cycle(m) == ["", "Ride", "Rowing"]
+	and next_sport(m, "") == "Ride"
+	and next_sport(m, "Ride") == "Rowing"
+	# the cycle closes back to the unfiltered menu
+	and next_sport(m, "Rowing") == ""
+}
+
+expect {
+	# an empty menu still cycles, so X on a database with no streams is a
+	# no-op rather than a filter nothing can satisfy
+	sport_cycle([]) == [""]
+	and next_sport([], "") == ""
+}
+
+refusals_for : { has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str }, I64, U64, U64, List(TraceId) -> Str
 refusals_for = |dv, cdir, wsel, cur_sel, ids| {
 	segs = List.keep_if([
 		(if dv.view > 8 or dv.view < -1 ("view ${I64.to_str(dv.view)} unknown") else ""),
@@ -535,7 +629,7 @@ Msg : [
 	MarkDone({}),
 	Reloaded(Ui.Model),
 	ReloadFailed,
-	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, sel : U64, day : Str }),
+	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, sel : U64, day : Str, un : Str }),
 	TraceSwitchFailed,
 	Directive({ dv : Db.Directive, note : Str }),
 	Polled(Str),
@@ -560,17 +654,20 @@ nav_width = |w, n| if nav_iconic(w, n) 80.0 else 68.0
 # One entry per pickable session, loaded eagerly: switching and ghost
 # summons read this list instead of a task round-trip per keypress.
 # Recursion because an effectful body cannot reassign an outer var.
-load_tcache! : Sqlite.Db, List({ id : I64, day : Str }) => List({ tr : List(F32), sg : List(Db.Seg), du : F32 })
+load_tcache! : Sqlite.Db, List(TraceId) => List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str })
 load_tcache! = |db, ids|
 	match List.first(ids) {
 		Err(_) => []
 		Ok(te) => {
-			tr9 = Db.load_trace!(db, te.id)
+			tr9 = Db.load_trace!(db, te.id, te.chan)
 			sg9 = Db.load_segs!(db, te.id)
 			du9 = Db.load_dur!(db, te.id)
+			# the unit travels with the samples: a cache entry read back later
+			# cannot re-derive it without the sport, and the axis must not
+			# label heart rate as watts
 			# prepend so picker order survives without List.reverse, which
 			# this stdlib lacks
-			List.prepend(load_tcache!(db, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9 })
+			List.prepend(load_tcache!(db, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9, un: Db.trace_unit(te.chan) })
 		}
 	}
 
@@ -632,7 +729,7 @@ update! = |model0, program_input| {
 			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" } }
 			Directive(d2) => { ..acc, bus_note: d2.note }
 			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim }
-			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day }
+			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day, trace_unit: sw.un }
 		})
 	# the coach's word arrives beside the human's input and steers only what
 	# it names: view, range, a day for the crosshair, a session for the trace
@@ -750,12 +847,16 @@ update! = |model0, program_input| {
 				Err(_) => model.curve_days })
 			else if view == 1 (if d.key_pressed(Key1) 30 else if d.key_pressed(Key2) 60 else if d.key_pressed(Key3) 90 else model.curve_days)
 			else model.curve_days
-		# on the trace view, [ and ] walk the last dozen structured sessions
+		# on the trace view, [ and ] walk the picker, X narrows it to one sport.
+		# A filter change moves the selection itself, because the session the
+		# window is showing may be one the new filter does not admit.
 		shifted = d.key_down(KeyLeftShift) or d.key_down(KeyRightShift)
+		want_sport = if view == 2 and !shifted and d.key_pressed(KeyX) (next_sport(model.trace_ids, model.trace_sport)) else model.trace_sport
 		want_sel =
 			if view != 2 or shifted model.trace_sel
-			else if d.key_pressed(KeyLeftBracket) (if model.trace_sel + 1 < List.len(model.trace_ids) (model.trace_sel + 1) else model.trace_sel)
-			else if d.key_pressed(KeyRightBracket) (if model.trace_sel > 0 (model.trace_sel - 1) else model.trace_sel)
+			else if want_sport != model.trace_sport (first_admitted(model.trace_ids, want_sport, model.trace_sel))
+			else if d.key_pressed(KeyLeftBracket) (next_admitted(model.trace_ids, model.trace_sel, want_sport, Bool.True))
+			else if d.key_pressed(KeyRightBracket) (next_admitted(model.trace_ids, model.trace_sel, want_sport, Bool.False))
 			else model.trace_sel
 		# shift+[ summons/ages the ghost; shift+] youngs it and clears it when
 		# it would pass the newest session. -1 is no ghost.
@@ -921,6 +1022,14 @@ update! = |model0, program_input| {
 				match List.get(model.trace_ids, want_sel2) { Ok(se) => se.day
 					Err(_) => model.trace_day }
 			} else model.trace_day
+		# the unit comes from the SPORT rather than from the cache entry, so it
+		# is right on a cache miss too - the axis must never label a heart-rate
+		# trace in watts while the samples load
+		trace_unit2 =
+			if switching {
+				match List.get(model.trace_ids, want_sel2) { Ok(se) => Db.trace_unit(se.chan)
+					Err(_) => model.trace_unit }
+			} else model.trace_unit
 		_ = if want_days != model.curve_days or d.key_pressed(KeyR) {
 			f2 = model.font
 			Task.spawn!(program_input, || match load_model!(f2, want_days, Bool.False) {
@@ -1017,7 +1126,7 @@ update! = |model0, program_input| {
 				Unavailable(u9) => if u9.gw == win.w and u9.gh == win.h (model.glow) else build_glow!(win)
 			}
 		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
-		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, tick, view_anim, spine_idx, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_sport: want_sport, tick, view_anim, spine_idx, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
