@@ -430,6 +430,12 @@ viz:
 viz-check:
     {{roc_viz}} check src/viz/main.roc
 
+# run the viz's pure expects (picker filters, ghost rules, axis steps) - the
+# window itself stays human-judged, but these are ordinary unit tests and no
+# other gate executes them
+viz-test:
+    ROC="{{roc_viz}}" sh tools/roc-viz.sh test src/viz/main.roc
+
 # ADR 0016: every engine import points down the layer table; viz stays behind the DB
 layer-check:
     bash tools/layer-check.sh
