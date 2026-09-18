@@ -71,9 +71,11 @@ Trace :: [].{
 	}
 
 	# ── session trace view (TAB) ────────────────────────────────────────────
-	# The detector's blocks shaded BEHIND the real power trace, so the two can
-	# be compared by eye — which is the whole point: a table of segments cannot
-	# show you that a "work" block started thirty seconds before the power did.
+	# One session's measured trace, with the detector's blocks shaded BEHIND it
+	# where it found any, so the two can be compared by eye — which is the
+	# whole point: a table of segments cannot show you that a "work" block
+	# started thirty seconds before the effort did. The plotted channel varies
+	# per session; model.trace_unit names what the samples count.
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
 	draw! = |model, frame| {
 		win_w = model.win.w
@@ -87,10 +89,8 @@ Trace :: [].{
 		ctl_c = Theme.ctl_c
 		tsb_c = Theme.tsb_c
 		# The subtitle is built per frame rather than prepared once, because it
-		# describes THIS session: a fixed string claimed every trace was power
-		# with blocks behind it, which stopped being true when the picker began
-		# offering sessions the detector found no structure in, and sessions
-		# carrying no watts at all.
+		# describes THIS session: both the channel it plots and whether the
+		# detector found any blocks in it vary from one session to the next.
 		nsegs = List.len(List.keep_if(model.segs, |sg| sg.kind == "work"))
 		what = if model.trace_unit == "bpm" ("heart rate") else "power"
 		blocks =
@@ -116,12 +116,19 @@ Trace :: [].{
 			}
 		}
 		if List.is_empty(model.trace) {
+			# a session can be IN the picker and still yield no samples for its
+			# chosen channel; a silent blank reads as data loss, so the blank
+			# says why it is blank. An empty picker stays quiet - there is no
+			# session for the message to be about.
+			if !(List.is_empty(model.trace_ids)) {
+				Text.from("this session's stream holds no plottable samples", model.font).size(13).draw!(frame, { pos: { x: win_w / 2.0, y: win_h / 2.0 }, color: ink_muted, align: (Top, Center) })
+			}
 			model.trace_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 			Ok({})
 		} else {
 			pw = win_w - pad_l - pad_r
 			ph = win_h - pad_t - pad_b
-			# the shared watts scale: both traces judged against one ceiling,
+			# the shared scale: both traces judged against one ceiling,
 			# or the comparison lies
 			w_hi = F32.max(List.fold(model.trace, 1.0, |a, v| F32.max(a, v)), List.fold(model.ghost, 1.0, |a, v| F32.max(a, v))) * 1.1
 			nlast = List.len(model.trace) - 1

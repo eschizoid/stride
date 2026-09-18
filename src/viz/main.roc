@@ -145,9 +145,10 @@ load_model! = |font, curve_days, boot| {
 				e = Db.load_event!(db)
 				c = Db.load_curve!(db, curve_days)
 				tids = Db.load_trace_ids!(db)
-				# the whole picker loads up front (~3ms of SQL per session), so
-				# every later switch and ghost summon is a memory read, not a
-				# task round-trip - the trace view answers keys instantly
+				# the whole picker loads up front, per-session SQL paid once in
+				# this boot task, so every later switch and ghost summon is a
+				# memory read, not a task round-trip - the trace view answers
+				# keys instantly
 				tcache = load_tcache!(db, tids)
 				tr = match List.first(tcache) { Ok(t0) => t0.tr
 					Err(_) => [] }
@@ -543,20 +544,28 @@ ghost_matches : TraceId, TraceId -> Bool
 ghost_matches = |live, cand| live.sport == cand.sport and live.chan == cand.chan
 
 # The next compatible ghost candidate past `cur`, or -1 for none. Candidates
-# of another kind are stepped over, and running out of them dismisses the
+# of another kind are stepped over, and so is the live session's own index —
+# ghost_matches is reflexive, and a session compared against itself is the
+# one pairing that answers nothing. Running out of candidates dismisses the
 # ghost rather than freezing on the last compatible one.
-next_ghost : List(TraceId), I64, TraceId, Bool -> I64
-next_ghost = |ids, cur, live, older|
+next_ghost : List(TraceId), I64, U64, Bool -> I64
+next_ghost = |ids, cur, sel, older| {
+	live = entry_at(ids, sel)
+	sel_i = match U64.to_i64_try(sel) { Ok(v) => v
+		Err(_) => -1 }
 	List.fold(List.map_with_index(ids, |e, i| { e, i }), -1, |acc, x| {
 		xi = match U64.to_i64_try(x.i) { Ok(v) => v
 			Err(_) => -1 }
-		if xi < 0 or !(ghost_matches(live, x.e)) acc
+		if xi < 0 or xi == sel_i or !(ghost_matches(live, x.e)) acc
 		else if older (if xi > cur and (acc < 0 or xi < acc) xi else acc)
 		else if xi < cur and (acc < 0 or xi > acc) xi else acc
 	})
+}
 
 # The picker entry at `sel`. The fallback's empty channel matches no real
-# session, so an out-of-range selection admits no ghost at all.
+# session, so an out-of-range LIVE selection admits no ghost; the ghost's own
+# index is bounds-checked directly where it is judged, never through this
+# fallback, because the fallback compares equal to itself.
 entry_at : List(TraceId), U64 -> TraceId
 entry_at = |ids, sel|
 	match List.get(ids, sel) {
@@ -568,12 +577,20 @@ entry_at = |ids, sel|
 # solid session, a directive, or a filter snap all move the live trace
 # while the ghost index stays where it was. Compatibility is therefore a
 # property of the PAIR, re-judged against each frame's own selection - a
-# pairing of two kinds cannot survive a switch; -1 dismisses.
+# pairing of two kinds cannot survive a switch, a ghost sitting ON the
+# selection is dismissed rather than drawn under itself, and the ghost
+# index is bounds-checked here directly because entry_at's fallback would
+# compare equal to itself. -1 dismisses.
 ghost_for_sel : List(TraceId), U64, I64 -> I64
 ghost_for_sel = |ids, sel, ghost|
 	match I64.to_u64_try(ghost) {
 		Err(_) => -1
-		Ok(gu) => if ghost_matches(entry_at(ids, sel), entry_at(ids, gu)) ghost else -1
+		Ok(gu) =>
+			if gu == sel (-1)
+			else match List.get(ids, gu) {
+				Err(_) => -1
+				Ok(ge) => if ghost_matches(entry_at(ids, sel), ge) ghost else -1
+			}
 	}
 
 expect {
@@ -590,6 +607,32 @@ expect {
 	and ghost_for_sel(m, 0, 1) == -1
 	# no ghost stays no ghost
 	and ghost_for_sel(m, 0, -1) == -1
+	# a ghost ON the selection is a session compared against itself
+	and ghost_for_sel(m, 2, 2) == -1
+	# an out-of-range ghost cannot ride entry_at's self-equal fallback
+	and ghost_for_sel(m, 0, 99) == -1
+	and ghost_for_sel([], 5, 3) == -1
+}
+
+# The filter and the selection are stored as a pair, and a directive can move
+# the selection without consulting the filter. Reconciled the same way the
+# ghost pair is: a filter the shown session violates resets to the whole
+# menu, so the header can never claim "Rowing only" over a Ride.
+sport_for_sel : List(TraceId), U64, Str -> Str
+sport_for_sel = |ids, sel, filt|
+	if sport_ok(filt, entry_at(ids, sel).sport) filt else ""
+
+expect {
+	m = [
+		{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan },
+		{ id: 2, day: "d2", name: "n2", sport: "Rowing", chan: Db.watts_chan },
+	]
+	# a filter the shown session satisfies survives
+	sport_for_sel(m, 1, "Rowing") == "Rowing"
+	# a directive landed a Ride under a Rowing filter: the filter resets
+	and sport_for_sel(m, 0, "Rowing") == ""
+	# the whole-menu filter admits anything, itself included
+	and sport_for_sel(m, 0, "") == ""
 }
 
 expect {
@@ -601,18 +644,21 @@ expect {
 		{ id: 4, day: "d4", name: "n4", sport: "Rowing", chan: Db.watts_chan },
 	]
 	# stepping older from the watts ride at 0 SKIPS the bpm ride at 1
-	next_ghost(m, 0, entry_at(m, 0), Bool.True) == 2
+	next_ghost(m, 0, 0, Bool.True) == 2
 	# ...and stops short of the row at 3: same watts, different sport
-	and next_ghost(m, 2, entry_at(m, 0), Bool.True) == -1
+	and next_ghost(m, 2, 0, Bool.True) == -1
 	# the bpm ride's only company is itself
-	and next_ghost(m, 1, entry_at(m, 1), Bool.True) == -1
+	and next_ghost(m, 1, 1, Bool.True) == -1
 	# the row matches nothing else in the menu, in either direction
-	and next_ghost(m, 3, entry_at(m, 3), Bool.False) == -1
-	# stepping back toward newer between the two matching rides
-	and next_ghost(m, 2, entry_at(m, 2), Bool.False) == 0
+	and next_ghost(m, 3, 3, Bool.False) == -1
+	# stepping newer from cur=2 with the live session AT 0: its own index is
+	# skipped, so the walk ends instead of landing the ghost on the live trace
+	and next_ghost(m, 2, 0, Bool.False) == -1
+	# and the honest newer step, live at 2, finds the ride at 0
+	and next_ghost(m, 2, 2, Bool.False) == 0
 	and entry_at(m, 1).chan == Db.hr_chan
 	# an out-of-range selection matches no real session
-	and next_ghost(m, 0, entry_at(m, 99), Bool.True) == -1
+	and next_ghost(m, 0, 99, Bool.True) == -1
 }
 
 next_sport : List(TraceId), Str -> Str
@@ -756,11 +802,9 @@ load_tcache! = |db, ids|
 			tr9 = Db.load_trace!(db, te.id, te.chan)
 			sg9 = Db.load_segs!(db, te.id)
 			du9 = Db.load_dur!(db, te.id)
-			# the unit travels with the samples: a cache entry read back later
-			# cannot re-derive it without the sport, and the axis must not
-			# label heart rate as watts
-			# prepend so picker order survives without List.reverse, which
-			# this stdlib lacks
+			# the unit travels with the samples so a cache read needs no second
+			# lookup into the picker row; prepend so picker order survives
+			# without List.reverse, which this stdlib lacks
 			List.prepend(load_tcache!(db, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9, un: Db.trace_unit(te.chan) })
 		}
 	}
@@ -954,9 +998,9 @@ update! = |model0, program_input| {
 			else model.trace_sel
 		# shift+[ summons/ages the ghost; shift+] youngs it and clears it when
 		# it would pass the newest candidate. -1 is no ghost. next_ghost owns
-		# the bounds, so running off either end dismisses rather than sticks,
-		# and it admits only sessions of the live one's kind (ghost_matches).
-		live_entry = entry_at(model.trace_ids, model.trace_sel)
+		# the bounds, so running off either end dismisses rather than sticks;
+		# it admits only sessions of the live one's kind, never the live
+		# session's own index.
 		want_ghost =
 			if view != 2 model.ghost_sel
 			# C clears in ONE press from any state - stepping the ghost off the
@@ -967,9 +1011,9 @@ update! = |model0, program_input| {
 			else if d.key_pressed(KeyLeftBracket) {
 				start = if model.ghost_sel < 0 (match U64.to_i64_try(model.trace_sel) { Ok(ts9) => ts9
 					Err(_) => -1 }) else model.ghost_sel
-				next_ghost(model.trace_ids, start, live_entry, Bool.True)
+				next_ghost(model.trace_ids, start, model.trace_sel, Bool.True)
 			}
-			else if d.key_pressed(KeyRightBracket) (if model.ghost_sel >= 0 (next_ghost(model.trace_ids, model.ghost_sel, live_entry, Bool.False)) else -1)
+			else if d.key_pressed(KeyRightBracket) (if model.ghost_sel >= 0 (next_ghost(model.trace_ids, model.ghost_sel, model.trace_sel, Bool.False)) else -1)
 			else model.ghost_sel
 		# clicking a table row jumps to that day's crosshair on the form board
 		# -2 = no directive OR day not in the series: both leave the cursor
@@ -1092,6 +1136,10 @@ update! = |model0, program_input| {
 		# selection: a ghost summoned beside one session must not outlive a
 		# switch to a session of another kind
 		want_ghost2 = ghost_for_sel(model.trace_ids, want_sel2, want_ghost_raw)
+		# the filter is re-judged against the same frame-true selection: a
+		# directive can land a session the filter excludes, and the reset
+		# keeps the header honest instead of claiming a sport the trace is not
+		want_sport2 = sport_for_sel(model.trace_ids, want_sel2, want_sport)
 		ghost_hit =
 			if want_ghost2 != model.ghost_sel and want_ghost2 >= 0 {
 				match I64.to_u64_try(want_ghost2) { Ok(gu9) => List.get(model.trace_cache, gu9)
@@ -1128,9 +1176,9 @@ update! = |model0, program_input| {
 				match List.get(model.trace_ids, want_sel2) { Ok(se) => se.day
 					Err(_) => model.trace_day }
 			} else model.trace_day
-		# the unit comes from the SPORT rather than from the cache entry, so it
-		# is right on a cache miss too - the axis must never label a heart-rate
-		# trace in watts while the samples load
+		# the unit is re-derived from the picker row's CHANNEL, not read from
+		# the cache entry, so it is right on a cache miss too - the axis must
+		# never label a heart-rate trace in watts while the samples load
 		trace_unit2 =
 			if switching {
 				match List.get(model.trace_ids, want_sel2) { Ok(se) => Db.trace_unit(se.chan)
@@ -1232,7 +1280,7 @@ update! = |model0, program_input| {
 				Unavailable(u9) => if u9.gw == win.w and u9.gh == win.h (model.glow) else build_glow!(win)
 			}
 		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
-		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_sport: want_sport, tick, view_anim, spine_idx, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 

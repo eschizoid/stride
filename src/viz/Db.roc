@@ -644,13 +644,11 @@ Db :: [].{
 					})
 		}
 
-	# How many sessions the picker offers. The whole menu is downsampled once at
-	# startup, and that cost grows far slower than the count — the per-session
-	# work is small beside the fixed overhead of the scan, so tripling the menu
-	# does not triple the wait. The bound is therefore about how far back a
-	# comparison can reach, not about speed: a season's worth of sessions is
-	# what makes "the same workout in the spring" a question the window can
-	# answer at all.
+	# How many sessions the picker offers. The bound is about how far back a
+	# comparison can reach: a season's worth of sessions is what makes "the
+	# same workout in the spring" a question the window can answer at all.
+	# Every one is downsampled in the boot task, three queries per session,
+	# so the bound is also that task's cost — linear in the count.
 	trace_menu_limit : I64
 	trace_menu_limit = 120
 
@@ -658,7 +656,7 @@ Db :: [].{
 	# stream this window can plot", NOT "has detected work blocks": the
 	# detector finds no structure in a large share of real sessions, and a
 	# ride held at one effort is still a ride worth looking at. Gating on
-	# blocks also hid every sport whose sessions rarely trip the detector.
+	# blocks would also hide any sport whose sessions rarely trip the detector.
 	#
 	# `chan` is decided per ROW by which stream that session actually carries,
 	# preferring power, rather than guessed from the sport. Sports do not
@@ -667,7 +665,11 @@ Db :: [].{
 	# whichever sessions the guess gets wrong. `sport` still rides along, for
 	# the picker's filter rather than for the channel.
 	trace_menu_q : Str
-	trace_menu_q = "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day, CAST(COALESCE(a.name,'') AS TEXT) AS name, CAST(COALESCE(a.sport_family,'') AS TEXT) AS sport, CASE WHEN json_extract(st.raw_json,'$.watts.data') IS NOT NULL THEN '$.watts.data' ELSE '$.heartrate.data' END AS chan FROM activities a JOIN streams st ON st.activity_id = a.id WHERE json_extract(st.raw_json,'$.watts.data') IS NOT NULL OR json_extract(st.raw_json,'$.heartrate.data') IS NOT NULL ORDER BY a.start_local DESC LIMIT :lim"
+	# The name is capped at the source because the header draws it on the same
+	# line as the left-aligned subtitle, and Strava names are unbounded free
+	# text: at the 980px window floor, 52 characters is the widest name that
+	# clears the longest subtitle the view can produce.
+	trace_menu_q = "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day, CAST(substr(COALESCE(a.name,''), 1, 52) AS TEXT) AS name, CAST(COALESCE(a.sport_family,'') AS TEXT) AS sport, CASE WHEN json_extract(st.raw_json,'$.watts.data') IS NOT NULL THEN '$.watts.data' ELSE '$.heartrate.data' END AS chan FROM activities a JOIN streams st ON st.activity_id = a.id WHERE json_extract(st.raw_json,'$.watts.data') IS NOT NULL OR json_extract(st.raw_json,'$.heartrate.data') IS NOT NULL ORDER BY a.start_local DESC LIMIT :lim"
 
 	watts_chan : Str
 	watts_chan = "$.watts.data"
@@ -702,8 +704,9 @@ Db :: [].{
 	# carries ~2700 samples against ~830 pixels of plot, so drawing them all costs
 	# three line segments per pixel and shows nothing more. json_each reads the
 	# stored stream directly — SQLite has JSON1, and this platform has no JSON
-	# decoder. `chan` is a json path from trace_chan, BOUND rather than spliced:
-	# json_extract takes its path as an ordinary expression.
+	# decoder. `chan` is one of watts_chan / hr_chan, picked per picker row by
+	# trace_menu_q's CASE, and BOUND rather than spliced — json_extract takes
+	# its path as an ordinary expression.
 	load_trace! : Sqlite.Db, I64, Str => List(F32)
 	load_trace! = |db, aid, chan| {
 		# json_each's key column IS the array index for a JSON array, and for an
