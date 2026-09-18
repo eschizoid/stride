@@ -70,11 +70,19 @@ Career :: [].{
 		here = at(i)
 		prev = if i == 0 here else at(i - 1)
 		next = at(i + 1)
-		d_prev = if i == 0 or !prev.ok (0.0) else here.y - prev.y
-		d_next = if !next.ok (0.0) else next.y - here.y
-		if d_prev == 0.0 (d_next)
-		else if d_next == 0.0 (d_prev)
-		else if d_prev * d_next <= 0.0 (0.0)
+		has_prev = i > 0 and prev.ok
+		has_next = next.ok
+		d_prev = if has_prev (here.y - prev.y) else 0.0
+		d_next = if has_next (next.y - here.y) else 0.0
+		# a missing neighbour makes this an endpoint of its run, so the
+		# tangent is one-sided. A FLAT neighbouring segment is different:
+		# Fritsch-Carlson requires a zero tangent there, or the cubic
+		# between two equal values bulges above a plateau (a two-month
+		# 271w top drew an apex the athlete never reached).
+		if !has_prev (d_next)
+		else if !has_next (d_prev)
+		else if d_prev == 0.0 or d_next == 0.0 (0.0)
+		else if d_prev * d_next < 0.0 (0.0)
 		else {
 			m = (d_prev + d_next) / 2.0
 			lim = 3.0 * (d_prev).abs().min((d_next).abs())
