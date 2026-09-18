@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1137)?
+    checks_ran_exactly!(1138)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2779,8 +2779,13 @@ b_seed_analyze! = |ctx| {
     check!("skill names the real ftp keys", Str.contains(skill_text, "best_20min_w_60d") and Str.contains(skill_text, "estimated_ftp_w"))?
     check!("skill names the real pc/summary keys", Str.contains(skill_text, "dur_s") and !(Str.contains(skill_text, "duration_s")) and Str.contains(skill_text, "form_delta_known") and !(Str.contains(skill_text, "form_delta_7d_known")))?
     check!("skill documents the envelope", Str.contains(skill_text, "schema_version"))?
-    # if this fails after a platform bump: update the skill's toolchain line too
-    check!("skill names the current platform", Str.contains(skill_text, "basic-cli 0.22"))?
+    # derived from the engine's own platform URL, never pinned here: a pinned
+    # string enforces whatever the skill said when the pin was written, so a
+    # platform bump stayed green while the skill kept naming the old version.
+    # major.minor is the claim (a patch or rc suffix is not a different line).
+    platform_mm = Str.trim(sh!("grep -o 'basic-cli/releases/download/[^/]*' src/main.roc | head -1 |  cut -d/ -f4 | cut -d. -f1-2"))
+    check!("the engine's platform version is readable at all", !(Str.is_empty(platform_mm)))?
+    check!("skill names the current platform", Str.contains(skill_text, "basic-cli ${platform_mm}"))?
     # ...and the commands it teaches exist: spot-check the ones this guard grew from
     check!("skill documents the derived-key refusal", Str.contains(skill_text, "derived_key"))?
     # The Codex plugin manifest carries its OWN version, which is a second place the
