@@ -175,10 +175,10 @@ jobs:
       - name: Type-check the app window
         run: sh tools/roc-viz.sh check src/viz/main.roc
 
-      # the window's pure expects (picker filters, ghost rules, axis steps)
-      # run only here - `just test` enumerates engine modules by name and the
-      # e2e suite cannot open a window, so without this step every viz expect
-      # is dead weight that no gate executes
+      # the window's pure expects: `just test` enumerates engine modules by
+      # name with no viz module among them, so these run only through the
+      # roc-viz.sh wrapper - this step and the local viz-test recipe. The
+      # wrapper itself carries the expected-count pin both invocations share.
       - name: Run the app window's pure expects
         run: sh tools/roc-viz.sh test src/viz/main.roc
 

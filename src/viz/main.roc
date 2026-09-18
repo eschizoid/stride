@@ -725,6 +725,11 @@ refusals_for = |dv, cdir, wsel, cur_sel, ids| {
 		(if dv.trace_day != "" and wsel == cur_sel and (match List.get(ids, wsel) { Ok(te9) => te9.day != dv.trace_day
 			Err(_) => Bool.True }) ("trace_day ${dv.trace_day} not in the picker") else ""),
 		(if dv.ghost_day != "" and dv.ghost_day != "none" and !(List.any(ids, |ge9| ge9.day == dv.ghost_day)) ("ghost_day ${dv.ghost_day} not in the picker") else ""),
+		# the session on screen cannot be its own ghost: the kind test below
+		# stays quiet on it (a session trivially matches itself), and the
+		# dismissal in ghost_for_sel is silent, so without this segment the
+		# directive would report applied while drawing nothing
+		(if dv.ghost_day != "" and dv.ghost_day != "none" and dv.ghost_day == entry_at(ids, wsel).day ("ghost_day ${dv.ghost_day} is the session on screen") else ""),
 		# in the picker but the wrong KIND of session: naming what differs -
 		# the sport, or failing that the unit - is what makes this actionable,
 		# since "refused" alone reads as a missing day
@@ -736,6 +741,23 @@ refusals_for = |dv, cdir, wsel, cur_sel, ids| {
 		} else ""),
 	], |s9| s9 != "")
 	Str.join_with(segs, "; ")
+}
+
+expect {
+	m = [
+		{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan },
+		{ id: 2, day: "d2", name: "n2", sport: "Rowing", chan: Db.watts_chan },
+	]
+	dv = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "d1" }
+	# naming the shown session as its own ghost is refused BY NAME - the kind
+	# test cannot catch it (a session trivially matches itself) and the
+	# dismissal downstream is silent
+	refusals_for(dv, -2, 0, 0, m) == "ghost_day d1 is the session on screen"
+	# the same day as a ghost for the OTHER session is a kind question, and
+	# these two differ by sport
+	and refusals_for(dv, -2, 1, 1, m) == "ghost_day d1 is Ride, the session is Rowing"
+	# a clean directive refuses nothing
+	and refusals_for({ has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "" }, -2, 0, 0, m) == ""
 }
 
 # Reports a directive's terminal outcome from the task lane.

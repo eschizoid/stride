@@ -101,7 +101,7 @@ the `weekly_ramp` view - the one definition of weekly ramp. A directive with vie
 | nav pills (top right) | click any view directly; the active one is filled - each wears its vector mark, drawn from primitives (no sprite sheet, crisp at any DPI) |
 | `TAB` | cycle views: form board / power view / session trace / data table / plan / heat / zones / ramp |
 | `1` / `2` / `3` or the chips (power view) | re-window the blue ladder and CP fit to 30/60/90 days |
-| `shift+[` / `shift+]` (trace view) | summon / walk the ghost overlay through sessions of the live one's KIND - same sport, same unit - stepping past the last compatible one dismisses it |
+| `shift+[` / `shift+]` (trace view) | summon / walk the ghost overlay through sessions of the live one's KIND - same sport, same unit; the walk skips the live session itself, and stepping past the last compatible one dismisses it |
 | `C` (trace view) | clear the ghost in one press, from any state |
 | `X` (trace view) | cycle the picker's sport filter (all / each sport the menu holds); the header names the active filter |
 | wheel / drag / `0` (trace view) | zoom anchored at the cursor's moment, pan while held, reset - the window is [pan, pan+1/zoom] of the session |
@@ -204,11 +204,16 @@ VALUES (0, 30, '2026-09-02', NULL, NULL);
 -- directive lands on: named view if set, else the visible one — on the power
 -- view it re-windows the ladder+fit, on every other view it sets the form board's
 -- range.
--- cursor_day parks the crosshair, trace_day picks the session.
+-- cursor_day parks the crosshair, trace_day picks the session - and resets
+-- the window's sport filter when the landed session sits outside it, so the
+-- header never claims a filter the trace violates.
 -- ghost_day overlays a second session on the trace view at reduced alpha
--- (same watts scale, same seconds-per-pixel); the literal word 'none'
--- dismisses the ghost. A database that predates the column gains it on
--- the window's first poll (ALTER TABLE, failure-on-present discarded).
+-- (same scale, same seconds-per-pixel), and only if it is the same KIND of
+-- session as the one shown - same sport, same unit - and not the shown
+-- session itself; a mismatch is refused with what differs spelled out.
+-- The literal word 'none' dismisses the ghost. A database that predates
+-- the column gains it on the window's first poll (ALTER TABLE,
+-- failure-on-present discarded).
 
 -- the window creates this too; a coach may pre-create it the same way:
 CREATE TABLE IF NOT EXISTS viz_focus (

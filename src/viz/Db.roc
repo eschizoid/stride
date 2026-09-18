@@ -664,12 +664,16 @@ Db :: [].{
 	# run may carry either, and picking by sport draws an empty plot for
 	# whichever sessions the guess gets wrong. `sport` still rides along, for
 	# the picker's filter rather than for the channel.
+	# The name is capped at the source, and a capped name is MARKED: Strava
+	# names are unbounded free text, the header draws the name right-aligned
+	# on the same line as the subtitle, so an uncapped name overruns it at
+	# narrow widths - and a bare cut reads as a complete name that is wrong,
+	# which is why the marker is not optional. ".." rather than an ellipsis
+	# glyph because the brand atlases carry ASCII. substr counts characters,
+	# not display columns, so a wide-glyph name can still exceed the pixel
+	# budget the cap aims at; the names this database holds are ASCII.
 	trace_menu_q : Str
-	# The name is capped at the source because the header draws it on the same
-	# line as the left-aligned subtitle, and Strava names are unbounded free
-	# text: at the 980px window floor, 52 characters is the widest name that
-	# clears the longest subtitle the view can produce.
-	trace_menu_q = "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day, CAST(substr(COALESCE(a.name,''), 1, 52) AS TEXT) AS name, CAST(COALESCE(a.sport_family,'') AS TEXT) AS sport, CASE WHEN json_extract(st.raw_json,'$.watts.data') IS NOT NULL THEN '$.watts.data' ELSE '$.heartrate.data' END AS chan FROM activities a JOIN streams st ON st.activity_id = a.id WHERE json_extract(st.raw_json,'$.watts.data') IS NOT NULL OR json_extract(st.raw_json,'$.heartrate.data') IS NOT NULL ORDER BY a.start_local DESC LIMIT :lim"
+	trace_menu_q = "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day, CAST(CASE WHEN length(COALESCE(a.name,'')) > 52 THEN substr(a.name, 1, 50) || '..' ELSE COALESCE(a.name,'') END AS TEXT) AS name, CAST(COALESCE(a.sport_family,'') AS TEXT) AS sport, CASE WHEN json_extract(st.raw_json,'$.watts.data') IS NOT NULL THEN '$.watts.data' ELSE '$.heartrate.data' END AS chan FROM activities a JOIN streams st ON st.activity_id = a.id WHERE json_extract(st.raw_json,'$.watts.data') IS NOT NULL OR json_extract(st.raw_json,'$.heartrate.data') IS NOT NULL ORDER BY a.start_local DESC LIMIT :lim"
 
 	watts_chan : Str
 	watts_chan = "$.watts.data"

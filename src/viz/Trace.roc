@@ -116,10 +116,14 @@ Trace :: [].{
 			}
 		}
 		if List.is_empty(model.trace) {
-			# a session can be IN the picker and still yield no samples for its
-			# chosen channel; a silent blank reads as data loss, so the blank
-			# says why it is blank. An empty picker stays quiet - there is no
-			# session for the message to be about.
+			# A session can be IN the picker and still yield no samples: the
+			# menu gates on the stream key being present, and an empty array
+			# passes that. A silent blank reads as data loss, so the blank says
+			# why it is blank. This cannot fire on a mid-load frame - every
+			# picker entry's samples are cached at boot, the cache is
+			# index-aligned with the menu, and switches read it synchronously.
+			# An empty picker stays quiet - there is no session for the
+			# message to be about.
 			if !(List.is_empty(model.trace_ids)) {
 				Text.from("this session's stream holds no plottable samples", model.font).size(13).draw!(frame, { pos: { x: win_w / 2.0, y: win_h / 2.0 }, color: ink_muted, align: (Top, Center) })
 			}
