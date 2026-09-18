@@ -79,13 +79,16 @@ cat > "$C/Info.plist" <<PLIST
 PLIST
 sed -i '' "s/__VERSION__/$VERSION/g" "$C/Info.plist"
 
-# icon: the symbol badge, not the banner - a wordmark does not survive 16px
+# icon: the symbol badge, not the banner - a wordmark does not survive 16px.
+# The -macos variant carries the Big Sur template: artwork inset to 824/1024
+# on a transparent canvas, corners pre-rounded - a full-bleed square shows
+# hard corners in the Dock, where every other icon is a rounded tile.
 ICONSET="$WORK/stride.iconset"
 mkdir -p "$ICONSET"
 for s in 16 32 64 128 256 512; do
-  sips -z $s $s img/stride-icon.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+  sips -z $s $s img/stride-icon-macos.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
   d=$((s * 2))
-  sips -z $d $d img/stride-icon.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+  sips -z $d $d img/stride-icon-macos.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$C/Resources/stride.icns"
 
