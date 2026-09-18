@@ -1172,13 +1172,27 @@ splash! = |model, frame| {
 			fy = |k| cy + ct.y0 + 14.0 * F32.sin(U64.to_f32(k) * 0.31 + ct.ph) + 7.0 * F32.sin(U64.to_f32(k) * 0.73 + ct.ph * 2.0)
 			frame.line!({ start: { x: fx(i), y: fy(i) }, end: { x: fx(i + 1), y: fy(i + 1) }, stroke: Draw.stroke(Color.with_alpha(Theme.ink_faint, 22), 1) })
 		}))
-	# the route: y climbs, x swings once left-right-left - an S. The S is
-	# the first 76% of the reveal; the logo's signature tail takes the rest:
-	# the ledge, the switchback hook, and the mountain with its base line.
+	# the route, as the logo draws it: the ring sits bottom-LEFT, the S is
+	# two big rounded bends (a right bulge low, a left bulge high) climbing
+	# to the ledge, and the tail adds the switchback hook and the mountain.
+	# Two cubic beziers carry the S - a sine reads cramped and mirrored.
+	bez = |x0, y0, x1, y1, x2, y2, x3, y3, u| {
+		v = 1.0 - u
+		{
+			x: v * v * v * x0 + 3.0 * v * v * u * x1 + 3.0 * v * u * u * x2 + u * u * u * x3,
+			y: v * v * v * y0 + 3.0 * v * v * u * y1 + 3.0 * v * u * u * y2 + u * u * u * y3,
+		}
+	}
 	n = 56
 	pt = |i| {
 		t = U64.to_f32(i) / U64.to_f32(n)
-		{ x: cx + 72.0 * F32.sin(4.712 * t + 1.1), y: cy + 78.0 - 150.0 * t, t }
+		b =
+			if t < 0.5 {
+				bez(cx - 85.0, cy + 85.0, cx + 85.0, cy + 78.0, cx + 98.0, cy + 18.0, cx + 2.0, cy - 6.0, t * 2.0)
+			} else {
+				bez(cx + 2.0, cy - 6.0, cx - 94.0, cy - 30.0, cx - 66.0, cy - 98.0, cx + 30.0, cy - 105.0, (t - 0.5) * 2.0)
+			}
+		{ x: b.x, y: b.y, t }
 	}
 	# reveal loops: 120 ticks of drawing, 50 of holding the finished figure
 	cyc = model.tick % 170
@@ -1204,17 +1218,19 @@ splash! = |model, frame| {
 	endp = pt(n)
 	vio = mixc(0.95)
 	j0 = { x: endp.x, y: endp.y }
-	j1 = { x: j0.x + 22.0, y: j0.y - 13.0 }
-	j2 = { x: j1.x - 22.0, y: j1.y }
-	j3 = { x: j2.x, y: j2.y - 15.0 }
-	j4 = { x: j3.x + 26.0, y: j3.y - 26.0 }
-	j5 = { x: j4.x + 40.0, y: j4.y + 40.0 }
+	j1 = { x: j0.x + 24.0, y: j0.y - 8.0 }
+	j2 = { x: j1.x - 28.0, y: j1.y }
+	j3 = { x: j2.x, y: j2.y - 17.0 }
+	j4 = { x: j3.x + 32.0, y: j3.y - 32.0 }
+	j5 = { x: j4.x + 56.0, y: j4.y + 56.0 }
+	j6 = { x: j5.x - 42.0, y: j5.y }
 	tail = [
 		{ a: j0, b: j1, at: 0.76 },
-		{ a: j1, b: j2, at: 0.81 },
-		{ a: j2, b: j3, at: 0.86 },
-		{ a: j3, b: j4, at: 0.90 },
-		{ a: j4, b: j5, at: 0.95 },
+		{ a: j1, b: j2, at: 0.80 },
+		{ a: j2, b: j3, at: 0.84 },
+		{ a: j3, b: j4, at: 0.88 },
+		{ a: j4, b: j5, at: 0.92 },
+		{ a: j5, b: j6, at: 0.96 },
 	]
 	List.for_each!(tail, |sg|
 		if p >= sg.at + 0.05 {
