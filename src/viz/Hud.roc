@@ -101,7 +101,6 @@ Hud :: [].{
 		frame.circle!({ center: { x: x + wob * 0.8, y: y - 3.2 }, radius: 1.7 + tri * 0.3, style: Draw.filled(Color.with_alpha(Theme.ember_c, 235)) })
 		frame.circle!({ center: { x: x + wob, y: y - 5.4 - tri * 1.2 }, radius: 1.0 + tri * 0.3, style: Draw.filled(Color.with_alpha(Theme.ember_c, 255)) })
 		frame.circle!({ center: { x, y: y + 2.2 }, radius: 1.9, style: Draw.filled(Color.with_alpha(Theme.gold_c, 235)) })
-		{}
 	}
 
 	# ── the XP rail: the panel's left edge, filled to level progress ──
@@ -129,7 +128,7 @@ Hud :: [].{
 				t = model.tick % 40
 				tri = (if t < 20 (U64.to_f32(t)) else U64.to_f32(40 - t)) / 20.0
 				frame.circle!({ center: { x: 23.0, y: bot - fill }, radius: 3.0 + tri * 1.2, style: Draw.filled(Color.with_alpha(Theme.gold_c, 200)) })
-			} else {}
+			}
 			Text.from(I64.to_str(lvl), model.font).size(10).draw!(frame, { pos: { x: 23.0, y: bot + 6.0 }, color: Theme.gold_c, align: (Top, Center) })
 			# hover the rail: the character sheet
 			if model.mouse_in and model.mouse_x < 34.0 and model.mouse_y >= top and model.mouse_y <= bot {
@@ -138,8 +137,7 @@ Hud :: [].{
 				Text.from("level ${I64.to_str(lvl)} - ${tier(lvl)}", model.font).size(14).draw!(frame, { pos: { x: 54.0, y: bot - 72.0 }, color: Theme.gold_c, align: (Top, Left) })
 				Text.from("${I64.to_str(hours_to_next(hours))}h to level ${I64.to_str(lvl + 1)}", model.font).size(11).draw!(frame, { pos: { x: 54.0, y: bot - 52.0 }, color: Theme.ink_muted, align: (Top, Left) })
 				Text.from("${I64.to_str(sk)} week streak", model.font).size(11).draw!(frame, { pos: { x: 54.0, y: bot - 36.0 }, color: Theme.ink_muted, align: (Top, Left) })
-			} else {}
-			{}
+			}
 		}
 	}
 }

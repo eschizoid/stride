@@ -79,12 +79,11 @@ Ramp :: [].{
 				Text.from(Fmt.tenths_signed(x.w.ramp10), model.font).size(11).draw!(frame, { pos: { x: cx, y: chip_y + 4.0 }, color: vc, align: (Top, Center) })
 				if x.i % 2 == 0 {
 					Text.from(Str.from_utf8_lossy(List.drop_first(Str.to_utf8(x.w.wk), 5)), model.font).size(10).draw!(frame, { pos: { x: cx, y: bars_bot + 10.0 }, color: ink_faint, align: (Top, Center) })
-				} else {}
+				}
 				if hovered {
 					Text.from("wk of ${x.w.wk}   ${I64.to_str(x.w.tss)} tss   ctl ${Fmt.tenths(x.w.ctl10)}   ramp ${Fmt.tenths_signed(x.w.ramp10)}/wk", model.font).size(12).draw!(frame, { pos: { x: pad, y: 96.0 }, color: Color.white, align: (Top, Left) })
-				} else {}
+				}
 			})
-			{}
 		}
 		model.ramp_hint.draw!(frame, { pos: { x: pad, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 		Ok({})

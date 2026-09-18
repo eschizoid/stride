@@ -43,7 +43,6 @@ Board :: [].{
 				frame.rounded_rectangle!({ x: win_w - 40.0 - 92.0, y: 64.0, width: 92.0, height: 22.0, radius: 7.0, segments: 6, style: Draw.filled(Theme.card) })
 				frame.circle!({ center: { x: win_w - 40.0 - 78.0, y: 75.0 }, radius: 4.0, style: Draw.filled(band.c) })
 				Text.from(band.label, model.font).size(12).draw!(frame, { pos: { x: win_w - 40.0 - 66.0, y: 69.0 }, color: band.c, align: (Top, Left) })
-				{}
 			}
 			Err(_) => {}
 		}
@@ -62,7 +61,7 @@ Board :: [].{
 	model.ev_tile_sub.draw!(frame, { pos: { x: win_w - 236.0, y: 122.0 }, color: ink_faint, align: (Top, Left) })
 	if model.ridden_found {
 		model.ridden_note.draw!(frame, { pos: { x: win_w - 236.0, y: 136.0 }, color: ink_faint, align: (Top, Left) })
-	} else {}
+	}
 	# which range is live: three chips, the active one filled
 	List.for_each!(List.map_with_index(model.subs, |s, i| { s, i }), |x| {
 		chx = win_w - 420.0 + U64.to_f32(x.i) * 54.0
@@ -81,12 +80,12 @@ Board :: [].{
 
 	if model.ev_warn_found {
 		model.ev_warn.draw!(frame, { pos: { x: win_w - 40.0, y: 52.0 }, color: atl_c, align: (Top, Right) })
-	} else {}
+	}
 	if model.stale_found {
 		# bottom-right status corner, mirroring the hint line: the header has
 		# no free band (pills y30..54, chips y64..86, legend and subtitle y70)
 		model.stale.draw!(frame, { pos: { x: win_w - 40.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Right) })
-	} else {}
+	}
 
 		if model.has_error {
 			model.status.draw!(frame, { pos: { x: 36.0, y: pad_t + 20.0 }, color: atl_c, align: (Top, Left) })
@@ -131,7 +130,7 @@ Board :: [].{
 				dx = pad_l + U64.to_f32(k) * 10.0
 				if dx + 4.0 <= win_w - pad_r {
 					frame.line!({ start: { x: dx, y: yf(0.0) }, end: { x: dx + 4.0, y: yf(0.0) }, stroke: Draw.stroke(Color.with_alpha(Color.white, 55), 1) })
-				} else {}
+				}
 			})
 			model.zero_note.draw!(frame, { pos: { x: win_w - pad_r - 6.0, y: yf(0.0) - 16.0 }, color: ink_faint, align: (Top, Right) })
 
@@ -164,10 +163,10 @@ Board :: [].{
 					y0 = pad_t + U64.to_f32(k) * 12.0
 					if y0 + 6.0 <= pad_t + ph {
 						frame.line!({ start: { x: ex, y: y0 }, end: { x: ex, y: y0 + 6.0 }, stroke: Draw.stroke(Color.with_alpha(Color.white, 70), 1) })
-					} else {}
+					}
 				})
 				model.ev_label.draw!(frame, { pos: { x: ex - 6.0, y: pad_t + 4.0 }, color: ink_muted, align: (Top, Right) })
-			} else {}
+			}
 
 			# the draw-in: for half a second after arriving on this view, each
 			# series sweeps left to right - segments beyond the eased progress
@@ -257,7 +256,7 @@ Board :: [].{
 					}
 					Err(_) => {}
 				}
-			} else {}
+			}
 
 			model.hint.draw!(frame, { pos: { x: 34.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 			Ok({})

@@ -225,7 +225,6 @@ Db :: [].{
 		_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET status = 'unknown' WHERE consumed = 1 AND status = 'pending'", bindings: [] })
 		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_focus (id INTEGER PRIMARY KEY CHECK (id = 1), updated_at TEXT NOT NULL, view INTEGER NOT NULL, range INTEGER NOT NULL, cursor_day TEXT, trace_day TEXT, ghost_day TEXT)", bindings: [] })
 		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_focus ADD COLUMN ghost_day TEXT", bindings: [] })
-		{}
 	}
 
 	# the window's half of capability discovery (#439): what an agent may put
@@ -245,14 +244,11 @@ Db :: [].{
 		_ = Sqlite.execute!({ db, query: "INSERT INTO viz_capabilities (key, value) VALUES ('protocol', '1'), ('staleness_seconds', '${(stale_secs).to_str()}'), ('published_at', datetime('now'))", bindings: [] })
 		List.for_each!(views, |v| {
 			_ = Sqlite.execute!({ db, query: "INSERT INTO viz_views (id, name) VALUES (:i, :n)", bindings: [{ name: ":i", value: Integer(v.id) }, { name: ":n", value: String(v.name) }] })
-			{}
 		})
 		List.for_each!(fields, |f| {
 			_ = Sqlite.execute!({ db, query: "INSERT INTO viz_fields (field, kind, accepts) VALUES (:f, :k, :a)", bindings: [{ name: ":f", value: String(f.name) }, { name: ":k", value: String(f.kind) }, { name: ":a", value: String(f.accepts) }] })
-			{}
 		})
 		_ = Sqlite.execute!({ db, query: "COMMIT", bindings: [] })
-		{}
 	}
 
 	# the ONE staleness constant: the freshness window the poll enforces and
@@ -325,7 +321,6 @@ Db :: [].{
 	mark_directive! = |db, id, refused| {
 		st = if refused == "" "applied" else "applied_partial"
 		_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET consumed = 1, status = :st, error = NULLIF(:e, ''), applied_at = datetime('now') WHERE id = :id AND consumed = 0", bindings: [{ name: ":st", value: String(st) }, { name: ":e", value: String(refused) }, { name: ":id", value: Integer(id) }] })
-		{}
 	}
 
 	# the window's answer: what the human is looking at, one row, upserted
