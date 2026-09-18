@@ -18,10 +18,11 @@ rc=$?
 printf '%s\n' "$out"
 
 # A test run gets two gates. The first never reads roc's output at all:
-# the SOURCE count of assertions under src/viz - `expect` lines AND the
-# `and` continuation lines inside their blocks - must equal its pin. The
+# the SOURCE count of assertion lines under src/viz - lines beginning
+# with `expect` or `and ` (today every one of the latter is an expect
+# continuation) - must equal its pin. The
 # summary pin below counts the whole import graph, so alone it is
-# satisfiable by arithmetic (a deleted viz assertion paid for by a new
+# satisfiable by arithmetic (a deleted viz expect paid for by a new
 # core expect leaves the pinned count standing while the viz's own
 # coverage shrinks), and a block count alone is blind to a single
 # assertion deleted from inside a multi-line block; counting continuation
@@ -43,7 +44,7 @@ printf '%s\n' "$out"
 # assertion means updating the matching pin ON PURPOSE.
 case "${1:-}" in test)
   want="${EXPECT_TESTS:-48}"
-  want_viz="${EXPECT_VIZ_ASSERTS:-56}"
+  want_viz="${EXPECT_VIZ_ASSERTS:-57}"
   have_viz=$(grep -ch '^[[:space:]]*\(expect\|and \)' src/viz/*.roc 2>/dev/null | awk '{s+=$1} END {print s+0}')
   if [ "$have_viz" != "$want_viz" ]; then
     echo "roc-viz: src/viz declares $have_viz assertion lines (expect + and), the pin says $want_viz - update the pin ON PURPOSE or restore the assertion" >&2

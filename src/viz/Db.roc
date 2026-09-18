@@ -674,20 +674,26 @@ Db :: [].{
 	# right-aligned on the same line as the subtitle, so an uncapped name
 	# overruns it at narrow widths, and a bare cut reads as a complete name
 	# that is wrong. ".." rather than an ellipsis glyph because the brand
-	# atlases carry ASCII. The count is BYTES, so a glyph ascii_safe does not
-	# map is cut harder than its display width requires - the bound still
-	# holds, which is the property that matters.
+	# atlases carry ASCII. The count is BYTES, taking 48 so the bound
+	# survives the worst input: a cut landing mid-sequence becomes a 3-byte
+	# replacement character, and 48 + 3 + 2 marker bytes still sits inside
+	# the 52-byte budget. A glyph a byte count over-counts is cut harder
+	# than its display width requires - the bound holds for every input,
+	# which is the property the layout needs.
 	cap_name : Str -> Str
 	cap_name = |s|
-		if Str.count_utf8_bytes(s) > 52 (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(s), 50)), "..")) else s
+		if Str.count_utf8_bytes(s) > 52 (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(s), 48)), "..")) else s
 
 	expect {
 		cap_name("short") == "short"
 		# 52 exactly passes untouched: the cap marks only what it shortens
 		and cap_name(Str.repeat("a", 52)) == Str.repeat("a", 52)
-		and cap_name(Str.repeat("a", 53)) == Str.concat(Str.repeat("a", 50), "..")
+		and cap_name(Str.repeat("a", 53)) == Str.concat(Str.repeat("a", 48), "..")
 		# the marker fits INSIDE the bound rather than pushing past it
-		and Str.count_utf8_bytes(cap_name(Str.repeat("a", 200))) == 52
+		and Str.count_utf8_bytes(cap_name(Str.repeat("a", 200))) == 50
+		# and the bound holds when the cut lands mid-sequence: the partial
+		# character becomes a 3-byte replacement, not an overrun
+		and Str.count_utf8_bytes(cap_name(Str.concat("a", Str.repeat("é", 26)))) <= 52
 	}
 
 	watts_chan : Str
