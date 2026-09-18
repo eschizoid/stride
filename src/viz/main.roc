@@ -11,6 +11,7 @@
 app [Model, program] { rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0-rc5/8x22d4JXTKSiPvj3Bd3br2u7rEL3baUzEvmSBrCBDvqV.tar.zst", core: "../core/main.roc", roc: "nightly-2026-09-16-a49a16f" }
 
 import rr.App
+import rr.Assets
 import rr.Capture
 import rr.Cmd
 import rr.Color
@@ -20,6 +21,7 @@ import rr.Mouse
 import rr.Sqlite
 import rr.Task
 import rr.Text
+import rr.Texture
 import Board
 import Heat
 import Plan
@@ -87,6 +89,27 @@ brand_font! = |home, name, size, fallback| {
 # spelling means unresolved, not a home named %USERPROFILE%. A missing
 # binary surfaces as Err from the spawn, never a crash - the degraded state
 # #442 exhibited is this platform behaving that way.
+# the mark, from the authored file: the repo's img/ in a dev checkout,
+# ~/.stride/img when launched as the app bundle (the launcher seeds it the
+# way it seeds fonts). Splash-only, so nothing loads it outside boot.
+load_logo! : Str, Bool => [NoLogo, Logo(Texture.Texture)]
+load_logo! = |home, boot|
+	if !boot NoLogo
+	else {
+		bytes = match Files.read_bytes!("img/stride-icon.png") {
+			Ok(b) => b
+			Err(_) => if home == "" [] else match Files.read_bytes!("${home}/.stride/img/stride-icon.png") {
+				Ok(b) => b
+				Err(_) => []
+			}
+		}
+		if List.is_empty(bytes) NoLogo
+		else match Assets.texture_from_bytes!({ format: Png, bytes }) {
+			Ok(t) => Logo(t)
+			Err(_) => NoLogo
+		}
+	}
+
 resolve_home! : {} => Str
 resolve_home! = |{}| {
 	unix = match Cmd.run_utf8!(Cmd.with_args(Cmd.new("printenv"), ["HOME"])) {
@@ -108,10 +131,12 @@ resolve_home! = |{}| {
 # and the real load runs in a spawned task that answers with Reloaded.
 load_model! : Text.Font, I64, Bool => Try(Ui.Model, [ResourceLimit, ..])
 load_model! = |font, curve_days, boot| {
-		# ~/.stride/db.sqlite, resolved on every load (launch and R alike)
-		home = if boot "" else resolve_home!({})
+		# ~/.stride/db.sqlite, resolved on every load. Resolution is one
+		# printenv - cheap enough for the boot skeleton, which needs it to
+		# find the seeded logo; only the database and engine work are slow.
+		home = resolve_home!({})
 		db_path = Str.concat(home, "/.stride/db.sqlite")
-		loaded = if home == "" {
+		loaded = if boot or home == "" {
 			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [] }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
@@ -312,6 +337,7 @@ load_model! = |font, curve_days, boot| {
 			status: mk!(if boot "" else loaded.s.err, 16)?,
 			has_error: !boot and loaded.s.err != "",
 			booting: boot,
+			logo: load_logo!(home, boot),
 			font: mono,
 			hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   G glow   ESC quit", 13)?,
 			empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
@@ -1172,10 +1198,34 @@ splash! = |model, frame| {
 			fy = |k| cy + ct.y0 + 14.0 * F32.sin(U64.to_f32(k) * 0.31 + ct.ph) + 7.0 * F32.sin(U64.to_f32(k) * 0.73 + ct.ph * 2.0)
 			frame.line!({ start: { x: fx(i), y: fy(i) }, end: { x: fx(i + 1), y: fy(i + 1) }, stroke: Draw.stroke(Color.with_alpha(Theme.ink_faint, 22), 1) })
 		}))
-	# the route, as the logo draws it: the ring sits bottom-LEFT, the S is
-	# two big rounded bends (a right bulge low, a left bulge high) climbing
-	# to the ledge, and the tail adds the switchback hook and the mountain.
-	# Two cubic beziers carry the S - a sine reads cramped and mirrored.
+	_ = match model.logo {
+		Logo(lt) => {
+			# the authored mark itself - hand-drawn approximations kept
+			# drifting from the artwork, so the artwork renders. It fades
+			# in over the first moments and breathes gently while the
+			# load works; the glow shader has nothing to add here.
+			tf = U64.to_f32(model.tick)
+			ar = if tf > 42.0 (255.0) else tf * 6.0
+			a8 = match F32.to_u8_try(ar) { Ok(av) => av
+				Err(_) => 255.U8 }
+			sc = 1.0 + 0.015 * F32.sin(tf / 25.0)
+			side = 264.0 * sc
+			frame.texture!({ texture: lt, source: { x: 0.0, y: 0.0, width: lt.width, height: lt.height }, dest: { x: cx - side / 2.0, y: (cy - 16.0) - side / 2.0, width: side, height: side }, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.with_alpha(Color.white, a8) })
+			{}
+		}
+		NoLogo => splash_route!(model, frame, cx, cy, pi, mixc)
+	}
+	Text.from("Stride", model.font).size(30).draw!(frame, { pos: { x: cx, y: cy + 124.0 }, color: Color.white, align: (Top, Center) })
+	dots = if model.tick % 90 < 30 "." else if model.tick % 90 < 60 ".." else "..."
+	Text.from("loading your training story${dots}", model.font).size(13).draw!(frame, { pos: { x: cx, y: cy + 164.0 }, color: Theme.ink_muted, align: (Top, Center) })
+	Ok({})
+}
+
+# the geometric fallback when the authored PNG cannot be found: the route
+# drawing itself with a comet, the mountain popping in on completion
+splash_route! : Ui.Model, Draw.Frame, F32, F32, F32, (F32 -> Color.Rgba) => {}
+splash_route! = |model, frame, cx, cy, pi, mixc| {
+	# two cubic beziers carry the S - a sine reads cramped and mirrored
 	bez = |x0, y0, x1, y1, x2, y2, x3, y3, u| {
 		v = 1.0 - u
 		{
@@ -1254,10 +1304,7 @@ splash! = |model, frame| {
 		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 6.0, style: Draw.filled(Color.with_alpha(mixc(p), 140)) })
 		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 3.0, style: Draw.filled(Color.white) })
 	}
-	Text.from("Stride", model.font).size(30).draw!(frame, { pos: { x: cx, y: cy + 124.0 }, color: Color.white, align: (Top, Center) })
-	dots = if model.tick % 90 < 30 "." else if model.tick % 90 < 60 ".." else "..."
-	Text.from("loading your training story${dots}", model.font).size(13).draw!(frame, { pos: { x: cx, y: cy + 164.0 }, color: Theme.ink_muted, align: (Top, Center) })
-	Ok({})
+	{}
 }
 
 # The frame's last word: with a working pipeline and the glow on, the scene
