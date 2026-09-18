@@ -1567,7 +1567,7 @@ Plan :: [].{
                     if fresh_line != "" {
                         Stdout.line!(fresh_line)?
                         Stdout.line!("")?
-                    } else {}
+                    }
                     # one descriptive line of plan memory (#158) — raw counts only
                     Stdout.line!("28d PLAN: ${I64.to_str(adh.planned)} planned · ${I64.to_str(adh.completed)} done · ${I64.to_str(adh.skipped)} skipped (${I64.to_str(adh.substituted)} substituted) · ${I64.to_str(unplanned_n)} unplanned activities")?
                     Stdout.line!("")?

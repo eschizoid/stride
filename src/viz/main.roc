@@ -618,7 +618,7 @@ update! = |model0, program_input| {
 		rid = model.last_directive.id
 		rref = model.last_directive.refused
 		Task.spawn!(program_input, || MarkDone(mark_task!(homer, rid, rref)))
-	} else {}
+	}
 	directive = if is_redelivery ({ has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" }) else directive0
 	if d.key_pressed(KeyEscape) {
 		Err(Exit(0))
@@ -691,7 +691,7 @@ update! = |model0, program_input| {
 		_ = if d.key_pressed(KeyS) {
 			shot_name = Str.concat(view_basename(view), ".png")
 			Task.spawn!(program_input, || Shot(Capture.screenshot!(shot_name)))
-		} else {}
+		}
 		# V toggles a recording of whatever is on screen: WebM, full scale,
 		# 30fps, FixedStep timing - the deterministic regenerable session
 		# graphic #372 promised. Named for the view it started on.
@@ -706,7 +706,7 @@ update! = |model0, program_input| {
 					Task.spawn!(program_input, || RecCmd(Capture.start!(rec)))
 				}
 			}
-		} else {}
+		}
 		# on the curve view, 1/2/3 re-window the curve AND its CP fit — a full
 		# reload through the same path as R, keeping what the user was looking at
 		# on the curve view "range" MEANS the curve window — a directive saying
@@ -792,7 +792,7 @@ update! = |model0, program_input| {
 			homed = model.home
 			dayd = detail_day2
 			Task.spawn!(program_input, || detail_task!(homed, dayd))
-		} else {}
+		}
 		view2 = view
 		# a directive naming a day parks the crosshair there
 		cursor2 = if row_hit.hit row_hit.cb else cursor_pre
@@ -819,7 +819,7 @@ update! = |model0, program_input| {
 			home2 = model.home
 			ids2 = model.trace_ids
 			Task.spawn!(program_input, || trace_task!(home2, ids2, want_sel2))
-		} else {}
+		}
 		# the trace camera: wheel zooms anchored at the cursor's moment, a held
 		# left drag pans, 0 resets - and a session switch resets (the window
 		# belonged to the old ride)
@@ -862,7 +862,7 @@ update! = |model0, program_input| {
 			home3 = model.home
 			ids3 = model.trace_ids
 			Task.spawn!(program_input, || ghost_task!(home3, ids3, want_ghost2))
-		} else {}
+		}
 		# any ghost change clears the overlay this frame: a failed load leaves
 		# no ghost rather than the previous one
 		ghost2 = match ghost_hit { Ok(gc) => gc.tr
@@ -894,7 +894,7 @@ update! = |model0, program_input| {
 				Ok(m2) => Reloaded(m2)
 				Err(_) => ReloadFailed
 			})
-		} else {}
+		}
 		chip0h = win.w - 420.0
 		# per-chip, not one wide band: the 8px gaps between chips are not
 		# clickable and must not claim the pointer
@@ -919,7 +919,7 @@ update! = |model0, program_input| {
 		_ = if tick % 60 == 0 and model.home != "" {
 			homep = model.home
 			Task.spawn!(program_input, || poll_task!(homep))
-		} else {}
+		}
 		# focus mirrors the screen: view, range, the crosshair day, the session
 		cur_day =
 			if cursor3 < 0 ""
@@ -966,7 +966,7 @@ update! = |model0, program_input| {
 			did = directive.id
 			refm = refused9
 			Task.spawn!(program_input, || MarkDone(mark_task!(homem, did, refm)))
-		} else {}
+		}
 		glow2 =
 			match model.glow {
 				Ready(g9) => if g9.gw == win.w and g9.gh == win.h (model.glow) else build_glow!(win)
@@ -1025,7 +1025,6 @@ nav_icon! = |frame, v, x, y, c| {
 		frame.line!({ start: { x: x, y: y + 11.0 }, end: { x: x + 12.0, y: y + 2.0 }, stroke: Draw.stroke(c, 1.5) })
 		frame.circle!({ center: { x: x + 9.0, y: y + 4.0 }, radius: 2.0, style: Draw.filled(c) })
 	}
-	{}
 }
 
 scene! : Model, Draw.Frame => Try({}, [Exit(I64), ..])
@@ -1043,11 +1042,9 @@ scene! = |model, frame| {
 		Active(af) => {
 			frame.circle!({ center: { x: model.win.w - 148.0, y: 64.0 }, radius: 4.0, style: Draw.filled(Theme.alarm_c) })
 			Text.from("rec ${U64.to_str(af.frames)}f   V stops", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 138.0, y: 58.0 }, color: Theme.alarm_c, align: (Top, Left) })
-			{}
 		}
 		Finished(ff) => {
 			Text.from("recording saved to captures/ (${U64.to_str(ff.bytes / 1024)}kb)", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 40.0, y: 58.0 }, color: Theme.tsb_c, align: (Top, Right) })
-			{}
 		}
 		Failed(ff2) => {
 			why = match ff2.reason {
@@ -1059,7 +1056,6 @@ scene! = |model, frame| {
 				_ => "unknown"
 			}
 			Text.from("recording failed: ${why}   V retries", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 40.0, y: 58.0 }, color: Theme.alarm_c, align: (Top, Right) })
-			{}
 		}
 		Idle => {}
 	}
@@ -1088,7 +1084,7 @@ scene! = |model, frame| {
 		model.leg_fit.draw!(frame, { pos: { x: 56.0, y: 70.0 }, color: Theme.ctl_c, align: (Top, Left) })
 		model.leg_fat.draw!(frame, { pos: { x: 148.0, y: 70.0 }, color: Theme.atl_c, align: (Top, Left) })
 		model.leg_form.draw!(frame, { pos: { x: 246.0, y: 70.0 }, color: Theme.tsb_c, align: (Top, Left) })
-	} else {}
+	}
 	drawn =
 		if model.view == 8 {
 			Career.draw!(model, frame)
@@ -1120,38 +1116,41 @@ scene! = |model, frame| {
 		a = match U64.to_u8_try(fade * fade * 2) { Ok(v) => v
 			Err(_) => 0 }
 		frame.rectangle!({ x: 16.0, y: 16.0, width: model.win.w - 32.0, height: model.win.h - 32.0, style: Draw.filled(Color.with_alpha(Theme.panel, a)) })
-	} else {}
+	}
 	drawn
 }
 
 # The frame's last word: with a working pipeline and the glow on, the scene
-# renders into the offscreen target and comes back twice - the base image,
-# then the bright parts blurred and added on top. Any other state draws the
-# scene directly, exactly as the app rendered before shaders existed.
+# draws DIRECTLY to the screen first - at the framebuffer's full pixel
+# density - and the offscreen target feeds only the additive bloom layer.
+# The target is logical-sized, which on a HiDPI screen is half the pixels;
+# routing the base image through it (the shape this replaced) blitted the
+# whole UI back upscaled, so glow-on cost every glyph its sharpness. The
+# bloom layer is blurred by construction, so ITS resolution cannot show.
+# Any other state draws the scene directly, exactly as the app rendered
+# before shaders existed.
 render! : Model, Draw.Frame => Try({}, [Exit(I64), ..])
 render! = |model, frame| {
 	match model.glow {
 		Ready(g) =>
 			if model.glow_on {
-				# a refused scope means nothing was drawn - fall back to the
-				# direct path; scene errors (Exit) pass through untouched
-				match frame.with_render_texture!(g.rt, |f| scene!(model, f)) {
-					Err(_) => scene!(model, frame)
+				scene!(model, frame)?
+				# a refused scope leaves the sharp base standing alone -
+				# glow degrades, never the image under it
+				_ = match frame.with_render_texture!(g.rt, |f| scene!(model, f)) {
+					Err(_) => {}
 					Ok(_) => {
 						td = { texture: g.rt.texture(), source: g.rt.source(), dest: { x: 0.0, y: 0.0, width: model.win.w, height: model.win.h }, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.white }
-						frame.texture!(td)
 						g.rx.set!(model.win.w)
 						g.ry.set!(model.win.h)
-						# the glow blits over the base; if either scope refuses,
-						# the base image already stands and the discard is safe
 						_ = frame.with_blend_mode!(Additive, |f2|
 							f2.with_shader!(g.shader, |f3| {
 								f3.texture!(td)
 								Ok({})
 							}))
-						Ok({})
 					}
 				}
+				Ok({})
 			} else scene!(model, frame)
 		_ => scene!(model, frame)
 	}

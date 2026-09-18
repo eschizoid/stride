@@ -96,7 +96,6 @@ Career :: [].{
 		frame.rounded_rectangle!({ x, y, width: 196.0, height: 64.0, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
 		Text.from(value, font).size(22).draw!(frame, { pos: { x: x + 16.0, y: y + 10.0 }, color: Color.white, align: (Top, Left) })
 		Text.from(caption, font).size(11).draw!(frame, { pos: { x: x + 16.0, y: y + 42.0 }, color: Theme.ink_faint, align: (Top, Left) })
-		{}
 	}
 
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
@@ -134,16 +133,15 @@ Career :: [].{
 			bw9 = 66.0 * Hud.xp_frac(hours) * progress(model)
 			if bw9 > 2.0 {
 				frame.rounded_rectangle!({ x: bar_x, y: 72.0, width: bw9, height: 6.0, radius: 3.0, segments: 4, style: Draw.filled(Theme.gold_c) })
-			} else {}
+			}
 			sk = Hud.streak_weeks(model.heat)
 			if sk > 0 {
 				sx = lx - 110.0
 				frame.rounded_rectangle!({ x: sx, y: 62.0, width: 100.0, height: 26.0, radius: 7.0, segments: 6, style: Draw.filled(Theme.card) })
 				Hud.flame!(frame, sx + 14.0, 75.0, model.tick)
 				Text.from("${I64.to_str(sk)} wk streak", model.font).size(11).draw!(frame, { pos: { x: sx + 26.0, y: 70.0 }, color: Theme.ember_c, align: (Top, Left) })
-			} else {}
-			{}
-		} else {}
+			}
+		}
 		if n < 2 {
 			Text.from("no history yet - sync, analyze, and come back", model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 130.0 }, color: ink_muted, align: (Top, Left) })
 		} else {
@@ -245,7 +243,7 @@ Career :: [].{
 					} else {
 						frame.rectangle!({ x: bx, y: bars_bot - bh, width: bw, height: bh, style: Draw.filled(Color.with_alpha(Theme.ctl_c, 90)) })
 					}
-				} else {}
+				}
 			})
 
 			# ── the spine: month-close FTP, drawn only between measured
@@ -282,7 +280,7 @@ Career :: [].{
 									frame.line!({ start: { x: ax, y: acc.ly + (e.pt.y - acc.ly) * t0 }, end: { x: bx, y: acc.ly + (e.pt.y - acc.ly) * t1 }, stroke: Draw.stroke(Color.with_alpha(Theme.ctl_c, 60), 1) })
 								}
 							})
-					} else {}
+					}
 					Ok({ lx: e.pt.x, ly: e.pt.y })
 				})
 			List.for_each!(List.map_with_index(pts, |pt, i| { pt, i }), |e| {
@@ -306,10 +304,10 @@ Career :: [].{
 						cx = e.pt.x + dx * tt
 						if cx <= head_x {
 							frame.line!({ start: { x: acc.px, y: acc.py }, end: { x: cx, y: cy }, stroke: Draw.stroke(Theme.ctl_c, 2) })
-						} else {}
+						}
 						Ok({ px: cx, py: cy })
 					})
-				} else {}
+				}
 			})
 
 			# ── milestones: the valley, the peak, and today, each punching in
@@ -335,8 +333,7 @@ Career :: [].{
 					# puts the text on the line it is naming
 					lift = if tag == "valley" (26.0) else -34.0
 					Text.from(spine_label(mf, sp.kind, sp.fam), model.font).size(13).draw!(frame, { pos: { x: mx, y: yf(mf) + lift }, color: col, align: (Top, Center) })
-				} else {}
-				{}
+				}
 			}
 			# a peak that IS the current month is a record in progress, and it
 			# celebrates in gold with a breathing halo - for every family, the
@@ -354,7 +351,7 @@ Career :: [].{
 				# a full line-height of clearance above the size-13 value label
 				# at lift -34, which itself clears the dot and halo
 				Text.from("all-time high", model.font).size(11).draw!(frame, { pos: { x: xf(peak.i), y: yf(peak.f) - 64.0 }, color: Theme.gold_c, align: (Top, Center) })
-			} else {}
+			}
 			if last_known.i != peak.i and last_known.i != valley.i {
 				mark!(last_known.i, last_known.f, Theme.ctl_c, "today")
 			}
@@ -388,11 +385,11 @@ Career :: [].{
 						frame.rounded_rectangle!({ x: x0, y: comp_y, width: (seg - 1.5).max(1.0), height: 12.0, radius: 3.0, segments: 3, style: Draw.filled(Color.with_alpha(col, 190)) })
 						if seg > 64.0 {
 							Text.from("${y.s.sport} ${I64.to_str(y.s.sessions)}", model.font).size(10).draw!(frame, { pos: { x: x0 + 6.0, y: comp_y + 15.0 }, color: Color.with_alpha(col, 220), align: (Top, Left) })
-						} else {}
-					} else {}
+						}
+					}
 					Ok(x0 + seg)
 				})
-			} else {}
+			}
 		}
 		Text.from("click to settle   F  sport   TAB  form board   R  reload   S  screenshot   ESC  quit", model.font).size(13).draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 		Ok({})

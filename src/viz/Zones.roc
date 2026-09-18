@@ -92,13 +92,13 @@ Zones :: [].{
 						Err(_) => ink_faint }
 					if seg > 1.5 {
 						frame.rectangle!({ x: x0, y: bars_bot - yacc - seg, width: bw, height: seg - 1.0, style: Draw.filled(Color.with_alpha(zc, if hovered (255.U8) else 235)) })
-					} else {}
+					}
 					Ok(yacc + seg)
 				})
 				# depth over the whole stack, so the bars sit in the panel
 				if bh > 8.0 {
 					frame.rectangle_gradient_v!({ x: x0, y: bars_bot - bh, width: bw, height: bh, color_top: Color.with_alpha(Theme.bg, 0), color_bottom: Color.with_alpha(Theme.bg, 90) })
-				} else {}
+				}
 				# the cap: this week's easy share, in its verdict color
 				if bh > 3.0 {} else {
 					frame.rounded_rectangle!({ x: x0, y: bars_bot - 3.0, width: bw, height: 3.0, radius: 1.5, segments: 3, style: Draw.filled(Color.with_alpha(ink_faint, 90)) })
@@ -108,16 +108,15 @@ Zones :: [].{
 					vc = verdict(x.w.easy, itot)
 					frame.rounded_rectangle!({ x: cx - 27.0, y: cap_y, width: 54.0, height: 20.0, radius: 6.0, segments: 5, style: Draw.filled(Color.with_alpha(vc, if hovered (70.U8) else 42)) })
 					Text.from("${I64.to_str(x.w.easy * 100 // itot)}%", model.font).size(11).draw!(frame, { pos: { x: cx, y: cap_y + 4.0 }, color: vc, align: (Top, Center) })
-				} else {}
+				}
 				if x.i % 2 == 0 {
 					Text.from(Str.from_utf8_lossy(List.drop_first(Str.to_utf8(x.w.wk), 5)), model.font).size(10).draw!(frame, { pos: { x: cx, y: bars_bot + 10.0 }, color: ink_faint, align: (Top, Center) })
-				} else {}
+				}
 				if hovered {
 					shr = if itot > 0 ("easy ${I64.to_str(x.w.easy * 100 // itot)}%") else "no classified time"
 					Text.from("wk of ${x.w.wk}   ${hours(tot)} in zones   ${shr}", model.font).size(12).draw!(frame, { pos: { x: pad, y: 96.0 }, color: Color.white, align: (Top, Left) })
-				} else {}
+				}
 			})
-			{}
 		}
 		model.zones_hint.draw!(frame, { pos: { x: pad, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 		Ok({})

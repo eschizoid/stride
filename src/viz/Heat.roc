@@ -63,7 +63,7 @@ Heat :: [].{
 				# past event days ringed: a white halo under the cell reads as an outline
 				if List.contains(model.heat_events, h.day) {
 					frame.rounded_rectangle!({ x: x0 - 2.0, y: y0 - 2.0, width: cell + 4.0, height: cell + 4.0, radius: 4.0, segments: 3, style: Draw.filled(Color.with_alpha(Color.white, 160)) })
-				} else {}
+				}
 				frame.rounded_rectangle!({ x: x0, y: y0, width: cell, height: cell, radius: 3.0, segments: 3, style: sty })
 				# month tick above each month's first Monday (day-of-month 01..07:
 				# every month has exactly one Monday there, so every column band
@@ -75,7 +75,7 @@ Heat :: [].{
 					Err(_) => 57 }
 				if r == 0 and d1 == 48 and d2 >= 49 and d2 <= 55 {
 					Text.from(Str.from_utf8_lossy(List.take_first(List.drop_first(db2, 5), 2)), model.font).size(10).draw!(frame, { pos: { x: x0, y: gy - 16.0 }, color: ink_faint, align: (Top, Left) })
-				} else {}
+				}
 				# hover: tooltip with the day's story
 				if model.mouse_x >= x0 and model.mouse_x < x0 + cell and model.mouse_y >= y0 and model.mouse_y < y0 + cell {
 					note = Db.note_for(model.day_notes, h.day)
@@ -84,10 +84,9 @@ Heat :: [].{
 					tip_short = if Str.count_utf8_bytes(tip) > 70 (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(tip), 68)), "..")) else tip
 					frame.rounded_rectangle!({ x: 96.0, y: gy + 7.0 * step + 18.0, width: win_w - 132.0, height: 26.0, radius: 6.0, segments: 5, style: Draw.filled(Theme.card) })
 					Text.from(tip_short, model.font).size(12).draw!(frame, { pos: { x: 108.0, y: gy + 7.0 * step + 24.0 }, color: Color.white, align: (Top, Left) })
-				} else {}
+				}
 				Ok({ col: col2, prev_row: r })
 			})
-			{}
 		}
 		model.heat_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 		Ok({})

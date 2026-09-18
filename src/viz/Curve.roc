@@ -78,18 +78,17 @@ Curve :: [].{
 					frame.line!({ start: { x: x0, y: cpy }, end: { x: x0 + pw / 120.0, y: cpy }, stroke: Draw.stroke(Color.with_alpha(tsb_c, 120), 1) })
 				})
 				model.cp_lbl.draw!(frame, { pos: { x: pad_l + pw + 8.0, y: cpy }, color: tsb_c, align: (Middle, Left) })
-			} else {}
+			}
 			# each line introduces itself at its first rung - the chart must be
 			# readable with no narrator
 			_ = match List.first(rungs) {
 				Ok(r0) => {
 					if r0.pr.w > 0 {
 						Text.from("best ever", model.font).size(11).draw!(frame, { pos: { x: cx(r0.i) + 14.0, y: cy(I64.to_f32(r0.pr.w)) - 8.0 }, color: ink_muted, align: (Top, Left) })
-					} else {}
+					}
 					if r0.now_w > 0 and r0.now_w < r0.pr.w {
 						Text.from("this window", model.font).size(11).draw!(frame, { pos: { x: cx(r0.i) + 14.0, y: cy(I64.to_f32(r0.now_w)) + 6.0 }, color: Theme.ctl_c, align: (Top, Left) })
-					} else {}
-					{}
+					}
 				}
 				Err(_) => {}
 			}
@@ -120,10 +119,9 @@ Curve :: [].{
 						Err(_) => 50 }
 					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 9.0 + ntri * 3.0, style: Draw.filled(Color.with_alpha(Theme.gold_c, halo_a)) })
 					Text.from("new record", model.font).size(11).draw!(frame, { pos: { x: cx(r.i), y: rec_y - 34.0 }, color: Theme.gold_c, align: (Top, Center) })
-				} else {}
+				}
 				if r.pr.w == 0 {
 					# a rung never ridden keeps its label and rail, nothing else
-					{}
 				} else if r.now_w >= r.pr.w and r.now_w > 0 {
 					# the window best IS the record: one teal dot, the good news
 					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 5.0, style: Draw.filled(tsb_c) })
@@ -135,9 +133,8 @@ Curve :: [].{
 						frame.circle!({ center: { x: cx(r.i), y: now_y }, radius: 4.0, style: Draw.filled(ctl_c) })
 						# the gap, said in watts right where it lives
 						Text.from("-${I64.to_str(r.pr.w - r.now_w)}w", model.font).size(10).draw!(frame, { pos: { x: cx(r.i) + 10.0, y: (rec_y + now_y) / 2.0 - 6.0 }, color: Theme.alarm_c, align: (Top, Left) })
-					} else {}
+					}
 				}
-				{}
 				Text.from(r.pr.rung, model.font).size(12).draw!(frame, { pos: { x: cx(r.i), y: pad_t + ph - 18.0 }, color: ink_faint, align: (Top, Center) })
 				# hover the rung's column: the full story under the title
 				half = if nlast == 0 (pw / 2.0) else pw / U64.to_f32(nlast) / 2.0
@@ -145,9 +142,8 @@ Curve :: [].{
 					now_txt = if r.now_w > 0 ("   now ${I64.to_str(r.now_w)}w") else "   not ridden this window"
 					tip = if r.pr.w > 0 ("${r.pr.rung}   best ${I64.to_str(r.pr.w)}w set ${r.pr.day}${now_txt}") else "${r.pr.rung}   never ridden"
 					Text.from(tip, model.font).size(12).draw!(frame, { pos: { x: 36.0, y: 92.0 }, color: Color.white, align: (Top, Left) })
-				} else {}
+				}
 			})
-			{}
 		}
 		model.curve_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 		Ok({})

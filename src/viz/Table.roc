@@ -66,7 +66,7 @@ Table :: [].{
 				Err(_) => 36.0 }
 			if hx < edge - 60.0 {
 				x.h.draw!(frame, { pos: { x: hx, y: 108.0 }, color: ink_faint, align: (Top, Left) })
-			} else {}
+			}
 		})
 		# the arrow cursor scrolls the window back through the whole series:
 		# cursor N shows the fitted rows ending N days before the latest
@@ -80,7 +80,7 @@ Table :: [].{
 		if total > 0 {
 			pos_note = "days ${U64.to_str(if kept > fit (kept - fit + 1) else 1)}-${U64.to_str(kept)} of ${U64.to_str(total)}"
 			Text.from(pos_note, model.font).size(13).draw!(frame, { pos: { x: edge, y: 70.0 }, color: ink_muted, align: (Top, Right) })
-		} else {}
+		}
 		# the session column runs to the table's right edge; ~8px per mono
 		# glyph at this size - one computation per frame, not per row
 		budget = match F32.round_to_u64_try(F32.div_floor_by(edge - session_x - 10.0, 8.0)) {
@@ -94,7 +94,7 @@ Table :: [].{
 			row_right = edge
 			if model.mouse_y >= ry and model.mouse_y < ry + 24.0 and model.mouse_x >= 36.0 and model.mouse_x < row_right {
 				frame.rectangle!({ x: 34.0, y: ry - 2.0, width: row_right - 34.0, height: 23.0, style: Draw.filled(Color.with_alpha(Color.white, 10)) })
-			} else {}
+			}
 			day = match List.get(days, x.i) { Ok(d) => d
 				Err(_) => "" }
 			note = Db.note_for(model.day_notes, day)
@@ -108,7 +108,7 @@ Table :: [].{
 				col = if cell.j == 3 (Theme.tsb_c) else if cell.j == 5 (Theme.ink_muted) else Color.white
 				if cx < edge - 60.0 {
 					Text.from(cell.c, model.font).size(13).draw!(frame, { pos: { x: cx, y: ry }, color: col, align: (Top, Left) })
-				} else {}
+				}
 			})
 		})
 		# the day-detail panel: opens over the right half when a row is clicked,
@@ -124,7 +124,7 @@ Table :: [].{
 			Text.from(model.detail_day, model.font).size(15).draw!(frame, { pos: { x: px + 18.0, y: 116.0 }, color: Color.white, align: (Top, Left) })
 			if List.is_empty(model.detail) {
 				Text.from("loading...", model.font).size(12).draw!(frame, { pos: { x: px + 18.0, y: 148.0 }, color: ink_muted, align: (Top, Left) })
-			} else {}
+			}
 			# only the lines that fit the panel draw; the tail becomes a count
 			# each activity block: title, load line, physiology line, zone bar
 			line_fit = match F32.round_to_u64_try(F32.div_floor_by(win_h - 150.0 - 48.0 - 20.0, 92.0)) {
@@ -150,17 +150,16 @@ Table :: [].{
 							# -1 leaves a hairline gap between segments; the guard
 							# keeps the drawn width strictly positive
 							frame.rectangle!({ x: px + 18.0 + xacc, y: ly + 56.0, width: seg - 1.0, height: 8.0, style: Draw.filled(zc) })
-						} else {}
+						}
 						Ok(xacc + seg)
 					})
-					{}
-				} else {}
+				}
 			})
 			hidden = List.len(model.detail) - List.len(shown)
 			if hidden > 0 {
 				Text.from("+ ${U64.to_str(hidden)} more (enlarge the window)", model.font).size(11).draw!(frame, { pos: { x: px + 18.0, y: 148.0 + U64.to_f32(List.len(shown)) * 92.0 }, color: ink_faint, align: (Top, Left) })
-			} else {}
-		} else {}
+			}
+		}
 		model.table_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 		Ok({})
 	}

@@ -79,8 +79,7 @@ Plan :: [].{
 					else Draw.filled(Color.with_alpha(Theme.ink_faint, 70))
 				frame.rounded_rectangle!({ x: px, y: 70.0, width: pipw, height: 8.0, radius: 4.0, segments: 4, style: st })
 			})
-			{}
-		} else {}
+		}
 
 		# today's card: the one answer that matters most, in full - the card
 		# grows with the wrapped prescription instead of truncating it
@@ -117,7 +116,7 @@ Plan :: [].{
 				ly = acc.y
 				if x.p.today {
 					frame.rectangle!({ x: 34.0, y: ly - 4.0, width: win_w - 68.0, height: row_h - 3.0, style: Draw.filled(Color.with_alpha(Color.white, 14)) })
-				} else {}
+				}
 				Text.from(x.p.day, model.font).size(12).draw!(frame, { pos: { x: 44.0, y: ly }, color: if x.p.today Color.white else ink_muted, align: (Top, Left) })
 				frame.rounded_rectangle!({ x: 150.0, y: ly + 2.0, width: 92.0, height: 16.0, radius: 5.0, segments: 4, style: Draw.filled(Color.with_alpha(type_color(x.p.typ), 45)) })
 				Text.from(x.p.typ, model.font).size(11).draw!(frame, { pos: { x: 196.0, y: ly + 3.0 }, color: type_color(x.p.typ), align: (Top, Center) })
@@ -131,7 +130,7 @@ Plan :: [].{
 		})?
 		if end.hidden > 0 {
 			Text.from("… ${U64.to_str(end.hidden)} more - grow the window", model.font).size(11).draw!(frame, { pos: { x: 260.0, y: (end.y).min(floor_y) }, color: ink_faint, align: (Top, Left) })
-		} else {}
+		}
 
 		# progress strip + coach corner
 		# the strip speaks Monday-aligned week terms on BOTH sides - the ladder
