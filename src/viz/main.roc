@@ -1222,7 +1222,10 @@ splash! = |model, frame| {
 		a = pt(i)
 		b = pt(i + 1)
 		if b.t <= p {
-			frame.line!({ start: { x: a.x, y: a.y }, end: { x: b.x, y: b.y }, stroke: Draw.stroke(mixc(a.t), 4) })
+			# a round cap at every joint: bare segment ends leave a notch
+			# per joint that reads as a speckled edge under magnification
+			frame.line!({ start: { x: a.x, y: a.y }, end: { x: b.x, y: b.y }, stroke: Draw.stroke(mixc(a.t), 6) })
+			frame.circle!({ center: { x: b.x, y: b.y }, radius: 2.9, style: Draw.filled(mixc(b.t)) })
 		}
 	})
 	# the mountain: apex, a left slope ending in a short downward foot, and
@@ -1233,11 +1236,11 @@ splash! = |model, frame| {
 	ay = ey - 74.0
 	if p >= 1.0 {
 		l1 = { x: ax - 56.0, y: ay + 56.0 }
-		frame.line!({ start: { x: ax, y: ay }, end: { x: l1.x, y: l1.y }, stroke: Draw.stroke(vio, 4) })
-		frame.line!({ start: { x: l1.x, y: l1.y }, end: { x: l1.x, y: l1.y + 14.0 }, stroke: Draw.stroke(vio, 4) })
-		frame.line!({ start: { x: ax, y: ay }, end: { x: ax + 72.0, y: ay + 72.0 }, stroke: Draw.stroke(vio, 4) })
-		frame.circle!({ center: { x: ax, y: ay }, radius: 2.0, style: Draw.filled(vio) })
-		frame.circle!({ center: { x: l1.x, y: l1.y }, radius: 2.0, style: Draw.filled(vio) })
+		frame.line!({ start: { x: ax, y: ay }, end: { x: l1.x, y: l1.y }, stroke: Draw.stroke(vio, 6) })
+		frame.line!({ start: { x: l1.x, y: l1.y }, end: { x: l1.x, y: l1.y + 14.0 }, stroke: Draw.stroke(vio, 6) })
+		frame.line!({ start: { x: ax, y: ay }, end: { x: ax + 72.0, y: ay + 72.0 }, stroke: Draw.stroke(vio, 6) })
+		frame.circle!({ center: { x: ax, y: ay }, radius: 2.9, style: Draw.filled(vio) })
+		frame.circle!({ center: { x: l1.x, y: l1.y }, radius: 2.9, style: Draw.filled(vio) })
 		hold = U64.to_f32(cyc - 56) / 34.0
 		pop = F32.sin(hold * pi)
 		frame.circle!({ center: { x: ax, y: ay }, radius: 5.0 + pop * 9.0, style: Draw.filled(Color.with_alpha(vio, match F32.to_u8_try(70.0 * (1.0 - hold)) { Ok(pa) => pa
