@@ -98,13 +98,21 @@ Trace :: [].{
 			else if nsegs == 0 (" - no intervals detected")
 			else if nsegs == 1 (" - 1 detected block shaded behind it") else " - ${U64.to_str(nsegs)} detected blocks shaded behind it"
 		Text.from("${what} trace${blocks}", model.font).size(15).draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
-		# which session, and where in the picker it sits
+		# Which session, said the way a human remembers one: its NAME first,
+		# then the date, sport and picker position, then the filter X is
+		# holding - a mode key with no visible mode reads as a dead key.
 		if List.is_empty(model.trace_ids) {} else {
 			n_ids = List.len(model.trace_ids)
-			sel_note = if n_ids == 1 ("${model.trace_day}   the only session") else "${model.trace_day}   session ${U64.to_str(model.trace_sel + 1)} of the last ${U64.to_str(n_ids)}"
-			Text.from(sel_note, model.font).size(13).draw!(frame, { pos: { x: model.win.w - 34.0, y: 70.0 }, color: Color.white, align: (Top, Right) })
+			sel = match List.get(model.trace_ids, model.trace_sel) {
+				Ok(te) => te
+				Err(_) => { id: 0, day: model.trace_day, name: "", sport: "", chan: "" }
+			}
+			Text.from(sel.name, model.font).size(13).draw!(frame, { pos: { x: model.win.w - 34.0, y: 70.0 }, color: Color.white, align: (Top, Right) })
+			filt = if model.trace_sport == "" ("all sports") else "${model.trace_sport} only"
+			Text.from("${sel.day}   ${sel.sport}   ${U64.to_str(model.trace_sel + 1)}/${U64.to_str(n_ids)}   showing ${filt} (X cycles)", model.font).size(12).draw!(frame, { pos: { x: model.win.w - 34.0, y: 90.0 }, color: ink_muted, align: (Top, Right) })
 			if model.ghost_day != "" {
-				Text.from("vs ${model.ghost_day} (purple)   shift+] dismisses", model.font).size(13).draw!(frame, { pos: { x: model.win.w - 34.0, y: 90.0 }, color: Theme.atl_c, align: (Top, Right) })
+				gname = List.fold(model.trace_ids, "", |acc, ge| if ge.day == model.ghost_day ge.name else acc)
+				Text.from("ghost (purple): ${gname}  ${model.ghost_day}   C clears", model.font).size(12).draw!(frame, { pos: { x: model.win.w - 34.0, y: 110.0 }, color: Theme.atl_c, align: (Top, Right) })
 			}
 		}
 		if List.is_empty(model.trace) {
@@ -200,7 +208,7 @@ Trace :: [].{
 			if model.trace_zoom > 1.01 {
 				zoom10 = match F32.round_to_u64_try(model.trace_zoom * 10.0) { Ok(z9) => z9
 					Err(_) => 10 }
-				Text.from("zoom ${U64.to_str(zoom10 // 10)}.${U64.to_str(zoom10 % 10)}x   0 resets", model.font).size(11).draw!(frame, { pos: { x: win_w - 34.0, y: 110.0 }, color: ink_muted, align: (Top, Right) })
+				Text.from("zoom ${U64.to_str(zoom10 // 10)}.${U64.to_str(zoom10 % 10)}x   0 resets", model.font).size(11).draw!(frame, { pos: { x: win_w - 34.0, y: 130.0 }, color: ink_muted, align: (Top, Right) })
 			}
 			model.trace_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 			Ok({})

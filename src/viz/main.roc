@@ -269,7 +269,7 @@ load_model! = |font, curve_days, boot| {
 			},
 			trace_sport: "",
 			curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-			trace_hint: mk!("[ / ]  session      shift+[ / shift+]  ghost      X  sport      wheel zoom  drag pan  0 reset      TAB  data table      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+			trace_hint: mk!("[ / ]  older/newer session      X  sport filter      shift+[ / shift+]  ghost older/newer      C  clear ghost      wheel zoom  drag pan  0 reset      TAB  data table      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			table_title: mk!("data table", 15)?,
 			table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
@@ -495,7 +495,7 @@ poll_task! = |home|
 # an inline block: this nightly miscompiles a large conditional binding
 # captured by a task closure to its empty default (the #371 family), and a
 # call is the shape that survives.
-TraceId : { id : I64, day : Str, sport : Str, chan : Str }
+TraceId : { id : I64, day : Str, name : Str, sport : Str, chan : Str }
 
 # An empty filter admits every sport, which is what makes "" the whole menu.
 sport_ok : Str, Str -> Bool
@@ -558,10 +558,10 @@ chan_at = |ids, sel|
 expect {
 	# a watts session, a bpm session, then two more watts
 	m = [
-		{ id: 1, day: "d1", sport: "Ride", chan: Db.watts_chan },
-		{ id: 2, day: "d2", sport: "Ride", chan: Db.hr_chan },
-		{ id: 3, day: "d3", sport: "Ride", chan: Db.watts_chan },
-		{ id: 4, day: "d4", sport: "Rowing", chan: Db.watts_chan },
+		{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan },
+		{ id: 2, day: "d2", name: "n2", sport: "Ride", chan: Db.hr_chan },
+		{ id: 3, day: "d3", name: "n3", sport: "Ride", chan: Db.watts_chan },
+		{ id: 4, day: "d4", name: "n4", sport: "Rowing", chan: Db.watts_chan },
 	]
 	# stepping older from the watts session at 0 SKIPS the bpm session at 1
 	next_ghost(m, 0, Db.watts_chan, Bool.True) == 2
@@ -595,7 +595,7 @@ expect {
 
 expect {
 	# a mixed menu, newest first, as the picker orders it
-	m = [{ id: 1, day: "d1", sport: "Ride", chan: Db.watts_chan }, { id: 2, day: "d2", sport: "Rowing", chan: Db.watts_chan }, { id: 3, day: "d3", sport: "Ride", chan: Db.watts_chan }]
+	m = [{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan }, { id: 2, day: "d2", name: "n2", sport: "Rowing", chan: Db.watts_chan }, { id: 3, day: "d3", name: "n3", sport: "Ride", chan: Db.watts_chan }]
 	# unfiltered, "older" is simply the next index
 	next_admitted(m, 0, "", Bool.True) == 1
 	# filtered to Ride, the Rowing entry between them is skipped entirely
@@ -609,7 +609,7 @@ expect {
 }
 
 expect {
-	m = [{ id: 1, day: "d1", sport: "Ride", chan: Db.watts_chan }, { id: 2, day: "d2", sport: "Rowing", chan: Db.watts_chan }, { id: 3, day: "d3", sport: "Ride", chan: Db.watts_chan }]
+	m = [{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan }, { id: 2, day: "d2", name: "n2", sport: "Rowing", chan: Db.watts_chan }, { id: 3, day: "d3", name: "n3", sport: "Ride", chan: Db.watts_chan }]
 	first_admitted(m, "Rowing", 0) == 1
 	and first_admitted(m, "", 2) == 0
 	# a filter the menu cannot satisfy leaves the selection where it was
@@ -617,7 +617,7 @@ expect {
 }
 
 expect {
-	m = [{ id: 1, day: "d1", sport: "Ride", chan: Db.watts_chan }, { id: 2, day: "d2", sport: "Rowing", chan: Db.watts_chan }, { id: 3, day: "d3", sport: "Ride", chan: Db.watts_chan }]
+	m = [{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan }, { id: 2, day: "d2", name: "n2", sport: "Rowing", chan: Db.watts_chan }, { id: 3, day: "d3", name: "n3", sport: "Ride", chan: Db.watts_chan }]
 	sport_cycle(m) == ["", "Ride", "Rowing"]
 	and next_sport(m, "") == "Ride"
 	and next_sport(m, "Ride") == "Rowing"
@@ -915,7 +915,12 @@ update! = |model0, program_input| {
 		# drawn against an axis measuring something else.
 		live_chan = chan_at(model.trace_ids, model.trace_sel)
 		want_ghost =
-			if view != 2 or !shifted model.ghost_sel
+			if view != 2 model.ghost_sel
+			# C clears in ONE press from any state - stepping the ghost off the
+			# end also clears, but from deep in the menu that is many presses,
+			# each one looking like nothing happened
+			else if d.key_pressed(KeyC) (-1)
+			else if !shifted model.ghost_sel
 			else if d.key_pressed(KeyLeftBracket) {
 				start = if model.ghost_sel < 0 (match U64.to_i64_try(model.trace_sel) { Ok(ts9) => ts9
 					Err(_) => -1 }) else model.ghost_sel

@@ -667,7 +667,7 @@ Db :: [].{
 	# whichever sessions the guess gets wrong. `sport` still rides along, for
 	# the picker's filter rather than for the channel.
 	trace_menu_q : Str
-	trace_menu_q = "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day, CAST(COALESCE(a.sport_family,'') AS TEXT) AS sport, CASE WHEN json_extract(st.raw_json,'$.watts.data') IS NOT NULL THEN '$.watts.data' ELSE '$.heartrate.data' END AS chan FROM activities a JOIN streams st ON st.activity_id = a.id WHERE json_extract(st.raw_json,'$.watts.data') IS NOT NULL OR json_extract(st.raw_json,'$.heartrate.data') IS NOT NULL ORDER BY a.start_local DESC LIMIT :lim"
+	trace_menu_q = "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day, CAST(COALESCE(a.name,'') AS TEXT) AS name, CAST(COALESCE(a.sport_family,'') AS TEXT) AS sport, CASE WHEN json_extract(st.raw_json,'$.watts.data') IS NOT NULL THEN '$.watts.data' ELSE '$.heartrate.data' END AS chan FROM activities a JOIN streams st ON st.activity_id = a.id WHERE json_extract(st.raw_json,'$.watts.data') IS NOT NULL OR json_extract(st.raw_json,'$.heartrate.data') IS NOT NULL ORDER BY a.start_local DESC LIMIT :lim"
 
 	watts_chan : Str
 	watts_chan = "$.watts.data"
@@ -683,7 +683,7 @@ Db :: [].{
 	expect trace_unit(watts_chan) == "W"
 	expect trace_unit(hr_chan) == "bpm"
 
-	load_trace_ids! : Sqlite.Db => List({ id : I64, day : Str, sport : Str, chan : Str })
+	load_trace_ids! : Sqlite.Db => List({ id : I64, day : Str, name : Str, sport : Str, chan : Str })
 	load_trace_ids! = |db|
 		match Sqlite.query!({ db, query: trace_menu_q, bindings: [{ name: ":lim", value: Integer(trace_menu_limit) }] }) {
 			Err(_) => []
@@ -691,9 +691,10 @@ Db :: [].{
 				List.keep_oks(rows, |r| {
 					i = r.i64("id") ? |_| "bad id"
 					d = r.str("day") ? |_| "bad day"
+					nm = r.str("name") ? |_| "bad name"
 					sp = r.str("sport") ? |_| "bad sport"
 					ch = r.str("chan") ? |_| "bad chan"
-					Ok({ id: i, day: d, sport: sp, chan: ch })
+					Ok({ id: i, day: d, name: nm, sport: sp, chan: ch })
 				})
 		}
 

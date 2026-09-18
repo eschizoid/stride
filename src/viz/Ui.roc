@@ -46,7 +46,7 @@ Ui :: [].{
 		trace : List(F32),
 		segs : List(Db.Seg),
 		trace_dur : F32,
-		trace_ids : List({ id : I64, day : Str, sport : Str, chan : Str }),
+		trace_ids : List({ id : I64, day : Str, name : Str, sport : Str, chan : Str }),
 		trace_sel : U64,
 		trace_day : Str,
 		# what the y axis is counting for the SELECTED session, which follows
