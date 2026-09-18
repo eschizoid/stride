@@ -1165,11 +1165,20 @@ splash! = |model, frame| {
 			Color.rgb(lerp(79.0, 166.0, k), lerp(142.0, 107.0, k), lerp(247.0, 250.0, k))
 		}
 	}
-	# the route: y climbs, x swings once left-right-left - an S
+	# the topographic contours the logo's ground carries, faint and still
+	List.for_each!([{ y0: -120.0, ph: 0.0 }, { y0: -55.0, ph: 2.1 }, { y0: 10.0, ph: 4.3 }, { y0: 75.0, ph: 1.2 }, { y0: 140.0, ph: 3.4 }], |ct|
+		List.for_each!(List.map_with_index(List.repeat({}, 44.U64), |_u, i| i), |i| {
+			fx = |k| cx - 264.0 + U64.to_f32(k) * 12.0
+			fy = |k| cy + ct.y0 + 14.0 * F32.sin(U64.to_f32(k) * 0.31 + ct.ph) + 7.0 * F32.sin(U64.to_f32(k) * 0.73 + ct.ph * 2.0)
+			frame.line!({ start: { x: fx(i), y: fy(i) }, end: { x: fx(i + 1), y: fy(i + 1) }, stroke: Draw.stroke(Color.with_alpha(Theme.ink_faint, 22), 1) })
+		}))
+	# the route: y climbs, x swings once left-right-left - an S. The S is
+	# the first 76% of the reveal; the logo's signature tail takes the rest:
+	# the ledge, the switchback hook, and the mountain with its base line.
 	n = 56
 	pt = |i| {
 		t = U64.to_f32(i) / U64.to_f32(n)
-		{ x: cx + 72.0 * F32.sin(4.712 * t + 1.1), y: cy + 88.0 - 176.0 * t, t }
+		{ x: cx + 72.0 * F32.sin(4.712 * t + 1.1), y: cy + 78.0 - 150.0 * t, t }
 	}
 	# reveal loops: 120 ticks of drawing, 50 of holding the finished figure
 	cyc = model.tick % 170
@@ -1177,31 +1186,63 @@ splash! = |model, frame| {
 	p1 = if p_raw > 1.0 (1.0) else p_raw
 	p = 1.0 - (1.0 - p1) * (1.0 - p1)
 	start = pt(0)
-	# the start dot: where every career begins
-	frame.circle!({ center: { x: start.x, y: start.y }, radius: 7.0, style: Draw.filled(Color.with_alpha(Theme.tsb_c, 60)) })
-	frame.circle!({ center: { x: start.x, y: start.y }, radius: 4.0, style: Draw.filled(Theme.tsb_c) })
+	# the start marker is a RING in the logo, not a dot
+	frame.circle!({ center: { x: start.x, y: start.y }, radius: 9.0, style: Draw.filled(Theme.tsb_c) })
+	frame.circle!({ center: { x: start.x, y: start.y }, radius: 5.0, style: Draw.filled(Theme.bg) })
+	sp = p / 0.76
+	sp1 = if sp > 1.0 (1.0) else sp
 	List.for_each!(List.map_with_index(List.repeat({}, n), |_u, i| i), |i| {
 		a = pt(i)
 		b = pt(i + 1)
-		if b.t <= p {
-			frame.line!({ start: { x: a.x, y: a.y }, end: { x: b.x, y: b.y }, stroke: Draw.stroke(mixc(a.t), 4) })
+		if b.t <= sp1 {
+			frame.line!({ start: { x: a.x, y: a.y }, end: { x: b.x, y: b.y }, stroke: Draw.stroke(mixc(a.t * 0.76), 4) })
 		}
 	})
+	# the tail, joint by joint from the S's end: up-right to the ledge, the
+	# switchback (left, then up), the left slope to the apex, the long right
+	# slope, and the base line under it - the logo's own mountain
 	endp = pt(n)
+	vio = mixc(0.95)
+	j0 = { x: endp.x, y: endp.y }
+	j1 = { x: j0.x + 22.0, y: j0.y - 13.0 }
+	j2 = { x: j1.x - 22.0, y: j1.y }
+	j3 = { x: j2.x, y: j2.y - 15.0 }
+	j4 = { x: j3.x + 26.0, y: j3.y - 26.0 }
+	j5 = { x: j4.x + 40.0, y: j4.y + 40.0 }
+	tail = [
+		{ a: j0, b: j1, at: 0.76 },
+		{ a: j1, b: j2, at: 0.81 },
+		{ a: j2, b: j3, at: 0.86 },
+		{ a: j3, b: j4, at: 0.90 },
+		{ a: j4, b: j5, at: 0.95 },
+	]
+	List.for_each!(tail, |sg|
+		if p >= sg.at + 0.05 {
+			frame.line!({ start: { x: sg.a.x, y: sg.a.y }, end: { x: sg.b.x, y: sg.b.y }, stroke: Draw.stroke(vio, 4) })
+		} else if p >= sg.at {
+			k = (p - sg.at) / 0.05
+			frame.line!({ start: { x: sg.a.x, y: sg.a.y }, end: { x: sg.a.x + (sg.b.x - sg.a.x) * k, y: sg.a.y + (sg.b.y - sg.a.y) * k }, stroke: Draw.stroke(vio, 4) })
+		})
 	if p >= 1.0 {
-		# the peak: the mountain the route was always climbing toward
-		vio = mixc(1.0)
-		frame.line!({ start: { x: endp.x - 24.0, y: endp.y - 2.0 }, end: { x: endp.x + 2.0, y: endp.y - 26.0 }, stroke: Draw.stroke(vio, 4) })
-		frame.line!({ start: { x: endp.x + 2.0, y: endp.y - 26.0 }, end: { x: endp.x + 26.0, y: endp.y - 2.0 }, stroke: Draw.stroke(vio, 4) })
 		hold = U64.to_f32(cyc - 120) / 50.0
 		pop = F32.sin(hold * pi)
-		frame.circle!({ center: { x: endp.x + 2.0, y: endp.y - 26.0 }, radius: 5.0 + pop * 9.0, style: Draw.filled(Color.with_alpha(vio, match F32.to_u8_try(70.0 * (1.0 - hold)) { Ok(pa) => pa
+		frame.circle!({ center: { x: j4.x, y: j4.y }, radius: 5.0 + pop * 9.0, style: Draw.filled(Color.with_alpha(vio, match F32.to_u8_try(70.0 * (1.0 - hold)) { Ok(pa) => pa
 			Err(_) => 0 })) })
 	} else {
 		# the comet at the pen, the same one the career view rides
-		head_i = match F32.round_to_u64_try(p * U64.to_f32(n)) { Ok(hi) => hi
-			Err(_) => 0.U64 }
-		hp = pt(head_i)
+		hp = if p < 0.76 {
+			head_i = match F32.round_to_u64_try(sp1 * U64.to_f32(n)) { Ok(hi) => hi
+				Err(_) => 0.U64 }
+			hq = pt(head_i)
+			{ x: hq.x, y: hq.y }
+		} else {
+			List.fold(tail, { x: j0.x, y: j0.y }, |acc, sg|
+				if p >= sg.at {
+					k9 = (p - sg.at) / 0.05
+					k = if k9 > 1.0 (1.0) else k9
+					{ x: sg.a.x + (sg.b.x - sg.a.x) * k, y: sg.a.y + (sg.b.y - sg.a.y) * k }
+				} else acc)
+		}
 		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 11.0, style: Draw.filled(Color.with_alpha(Color.white, 26)) })
 		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 6.0, style: Draw.filled(Color.with_alpha(mixc(p), 140)) })
 		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 3.0, style: Draw.filled(Color.white) })
