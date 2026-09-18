@@ -101,9 +101,11 @@ the `weekly_ramp` view - the one definition of weekly ramp. A directive with vie
 | nav pills (top right) | click any view directly; the active one is filled - each wears its vector mark, drawn from primitives (no sprite sheet, crisp at any DPI) |
 | `TAB` | cycle views: form board / power view / session trace / data table / plan / heat / zones / ramp |
 | `1` / `2` / `3` or the chips (power view) | re-window the blue ladder and CP fit to 30/60/90 days |
-| `shift+[` / `shift+]` (trace view) | summon / walk / dismiss the ghost overlay (past newest = off) |
+| `shift+[` / `shift+]` (trace view) | summon / walk the ghost overlay through sessions of the live one's KIND - same sport, same unit - stepping past the last compatible one dismisses it |
+| `C` (trace view) | clear the ghost in one press, from any state |
+| `X` (trace view) | cycle the picker's sport filter (all / each sport the menu holds); the header names the active filter |
 | wheel / drag / `0` (trace view) | zoom anchored at the cursor's moment, pan while held, reset - the window is [pan, pan+1/zoom] of the session |
-| `[` / `]` (trace view) | older / newer structured session, last 12 - every one is cached at load, so a switch is a memory read, not a query |
+| `[` / `]` (trace view) | older / newer session among the last 120 carrying a plottable stream - every one is cached at load, so a switch is a memory read, not a query |
 | `←` / `→` (table view) | scroll the window through the whole series (rows fill the window height) |
 | click a date (table view) | open that day's detail panel: sessions, minutes, km, TSS, NP |
 | window edges | drag to resize; every view reflows live (980x600 floor) |
@@ -288,9 +290,20 @@ set, and a linear time axis piles the six short rungs onto the left edge.
 
 ## Session trace view (TAB)
 
-The third screen: the most recent session that has detected work blocks, drawn as
-its power trace with the detector's blocks shaded behind it — work in the accent,
-recovery and warm-up/cool-down in grey.
+The third screen: one session drawn as its measured trace, with the detector's
+blocks shaded behind it when the detector found any — work in the accent,
+recovery and warm-up/cool-down in grey. The picker offers the last 120 sessions
+carrying a stream this window can plot, whatever their sport; the plotted
+channel is chosen per session by what the stream actually holds, watts where a
+power meter recorded them and heart rate otherwise, and the y axis names its
+unit so the two can never be confused. Both axes carry labelled gridlines, and
+the x step follows the VISIBLE span, so zooming in earns finer ticks.
+
+The ghost overlay compares the live session against an earlier one of the same
+KIND — same sport, same unit — because an honest axis is not yet a meaningful
+comparison: a workout and a ride both plot bpm and still answer no question
+side by side. The pair is re-judged whenever the live session changes, so a
+ghost cannot outlive a switch to a session of another kind.
 
 This is the view #372 calls "auditable". A table of segments can tell you the
 detector found seven work blocks; only the overlay tells you whether a block
