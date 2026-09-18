@@ -1125,33 +1125,37 @@ scene! = |model, frame| {
 }
 
 # The frame's last word: with a working pipeline and the glow on, the scene
-# renders into the offscreen target and comes back twice - the base image,
-# then the bright parts blurred and added on top. Any other state draws the
-# scene directly, exactly as the app rendered before shaders existed.
+# draws DIRECTLY to the screen first - at the framebuffer's full pixel
+# density - and the offscreen target feeds only the additive bloom layer.
+# The target is logical-sized, which on a HiDPI screen is half the pixels;
+# routing the base image through it (the shape this replaced) blitted the
+# whole UI back upscaled, so glow-on cost every glyph its sharpness. The
+# bloom layer is blurred by construction, so ITS resolution cannot show.
+# Any other state draws the scene directly, exactly as the app rendered
+# before shaders existed.
 render! : Model, Draw.Frame => Try({}, [Exit(I64), ..])
 render! = |model, frame| {
 	match model.glow {
 		Ready(g) =>
 			if model.glow_on {
-				# a refused scope means nothing was drawn - fall back to the
-				# direct path; scene errors (Exit) pass through untouched
-				match frame.with_render_texture!(g.rt, |f| scene!(model, f)) {
-					Err(_) => scene!(model, frame)
+				scene!(model, frame)?
+				# a refused scope leaves the sharp base standing alone -
+				# glow degrades, never the image under it
+				_ = match frame.with_render_texture!(g.rt, |f| scene!(model, f)) {
+					Err(_) => {}
 					Ok(_) => {
 						td = { texture: g.rt.texture(), source: g.rt.source(), dest: { x: 0.0, y: 0.0, width: model.win.w, height: model.win.h }, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.white }
-						frame.texture!(td)
 						g.rx.set!(model.win.w)
 						g.ry.set!(model.win.h)
-						# the glow blits over the base; if either scope refuses,
-						# the base image already stands and the discard is safe
 						_ = frame.with_blend_mode!(Additive, |f2|
 							f2.with_shader!(g.shader, |f3| {
 								f3.texture!(td)
 								Ok({})
 							}))
-						Ok({})
+						{}
 					}
 				}
+				Ok({})
 			} else scene!(model, frame)
 		_ => scene!(model, frame)
 	}
