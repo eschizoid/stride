@@ -88,19 +88,30 @@ Hud :: [].{
 		else if tsb < 25.0 ({ label: "primed", c: Theme.gold_c })
 		else { label: "coasting", c: Theme.tsb_c }
 
-	# a small flame at (x, y): a tapering stack of embers, wide at the base
-	# and narrowing to a flickering tip, so the silhouette reads as fire and
-	# not as a heart. Geometry, not a glyph - the font atlas is ascii-only.
+	# a small flame at (x, y): a tall teardrop of embers tapering to a tip
+	# that sways on two out-of-phase sines, with a gold core low in the body.
+	# Geometry, not a glyph - the font atlas is ascii-only. The base barely
+	# moves and the sway grows toward the tip, which is what makes the
+	# silhouette read as fire rather than a blob.
 	flame! : Draw.Frame, F32, F32, U64 => {}
 	flame! = |frame, x, y, tick| {
-		t = tick % 30
-		tri = (if t < 15 (U64.to_f32(t)) else U64.to_f32(30 - t)) / 15.0
-		wob = (tri - 0.5) * 1.4
-		frame.circle!({ center: { x, y: y + 2.0 }, radius: 3.4, style: Draw.filled(Color.with_alpha(Theme.ember_c, 160)) })
-		frame.circle!({ center: { x: x + wob * 0.4, y: y - 0.8 }, radius: 2.5, style: Draw.filled(Color.with_alpha(Theme.ember_c, 200)) })
-		frame.circle!({ center: { x: x + wob * 0.8, y: y - 3.2 }, radius: 1.7 + tri * 0.3, style: Draw.filled(Color.with_alpha(Theme.ember_c, 235)) })
-		frame.circle!({ center: { x: x + wob, y: y - 5.4 - tri * 1.2 }, radius: 1.0 + tri * 0.3, style: Draw.filled(Color.with_alpha(Theme.ember_c, 255)) })
-		frame.circle!({ center: { x, y: y + 2.2 }, radius: 1.9, style: Draw.filled(Color.with_alpha(Theme.gold_c, 235)) })
+		tf = U64.to_f32(tick)
+		fl = F32.sin(tf / 4.3) * 0.6 + F32.sin(tf / 7.1) * 0.4
+		List.for_each!(
+			[
+				{ dy: 2.6, r: 3.3, sw: 0.0, a: 170.U8 },
+				{ dy: 0.4, r: 2.9, sw: 0.15, a: 195.U8 },
+				{ dy: -1.8, r: 2.3, sw: 0.35, a: 215.U8 },
+				{ dy: -3.8, r: 1.7, sw: 0.6, a: 235.U8 },
+				{ dy: -5.5, r: 1.2, sw: 0.85, a: 250.U8 },
+				{ dy: -7.0, r: 0.7, sw: 1.0, a: 255.U8 },
+			],
+			|rw|
+				frame.circle!({ center: { x: x + fl * 2.2 * rw.sw, y: y + rw.dy - fl * 0.5 * rw.sw }, radius: rw.r, style: Draw.filled(Color.with_alpha(Theme.ember_c, rw.a)) }),
+		)
+		frame.circle!({ center: { x: x + fl * 0.4, y: y + 2.4 }, radius: 1.9, style: Draw.filled(Theme.gold_c) })
+		frame.circle!({ center: { x: x + fl * 0.7, y: y + 0.4 }, radius: 1.3, style: Draw.filled(Color.with_alpha(Theme.gold_c, 220)) })
+		frame.circle!({ center: { x: x + fl * 1.0, y: y - 1.4 }, radius: 0.8, style: Draw.filled(Color.with_alpha(Theme.gold_c, 180)) })
 	}
 
 	# ── the XP rail: the panel's left edge, filled to level progress ──

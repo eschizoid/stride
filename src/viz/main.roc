@@ -11,6 +11,7 @@
 app [Model, program] { rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0-rc5/8x22d4JXTKSiPvj3Bd3br2u7rEL3baUzEvmSBrCBDvqV.tar.zst", core: "../core/main.roc", roc: "nightly-2026-09-16-a49a16f" }
 
 import rr.App
+import rr.Assets
 import rr.Capture
 import rr.Cmd
 import rr.Color
@@ -20,6 +21,7 @@ import rr.Mouse
 import rr.Sqlite
 import rr.Task
 import rr.Text
+import rr.Texture
 import Board
 import Heat
 import Plan
@@ -49,7 +51,7 @@ init! = App.init(
 		.with_output_dir("captures"),
 	|_startup| {
 		font = Draw.default_font!()
-		load_model!(font, 90)
+		load_model!(font, 90, Bool.True)
 	},
 )
 
@@ -87,6 +89,27 @@ brand_font! = |home, name, size, fallback| {
 # spelling means unresolved, not a home named %USERPROFILE%. A missing
 # binary surfaces as Err from the spawn, never a crash - the degraded state
 # #442 exhibited is this platform behaving that way.
+# the mark, from the authored file: the repo's img/ in a dev checkout,
+# ~/.stride/img when launched as the app bundle (the launcher seeds it the
+# way it seeds fonts). Splash-only, so nothing loads it outside boot.
+load_logo! : Str, Bool => [NoLogo, Logo(Texture.Texture)]
+load_logo! = |home, boot|
+	if !boot NoLogo
+	else {
+		bytes = match Files.read_bytes!("img/stride-icon.png") {
+			Ok(b) => b
+			Err(_) => if home == "" [] else match Files.read_bytes!("${home}/.stride/img/stride-icon.png") {
+				Ok(b) => b
+				Err(_) => []
+			}
+		}
+		if List.is_empty(bytes) NoLogo
+		else match Assets.texture_from_bytes!({ format: Png, bytes }) {
+			Ok(t) => Logo(t)
+			Err(_) => NoLogo
+		}
+	}
+
 resolve_home! : {} => Str
 resolve_home! = |{}| {
 	unix = match Cmd.run_utf8!(Cmd.with_args(Cmd.new("printenv"), ["HOME"])) {
@@ -103,12 +126,17 @@ resolve_home! = |{}| {
 	}
 }
 
-load_model! : Text.Font, I64 => Try(Ui.Model, [ResourceLimit, ..])
-load_model! = |font, curve_days| {
-		# ~/.stride/db.sqlite, resolved on every load (launch and R alike)
+# boot=True builds the instant skeleton the splash renders over: no home
+# resolution, no database, no engine call - the window opens on frame one
+# and the real load runs in a spawned task that answers with Reloaded.
+load_model! : Text.Font, I64, Bool => Try(Ui.Model, [ResourceLimit, ..])
+load_model! = |font, curve_days, boot| {
+		# ~/.stride/db.sqlite, resolved on every load. Resolution is one
+		# printenv - cheap enough for the boot skeleton, which needs it to
+		# find the seeded logo; only the database and engine work are slow.
 		home = resolve_home!({})
 		db_path = Str.concat(home, "/.stride/db.sqlite")
-		loaded = if home == "" {
+		loaded = if boot or home == "" {
 			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [] }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
@@ -147,7 +175,8 @@ load_model! = |font, curve_days| {
 			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [] }
 		}
 		ev = Db.find_idx(loaded.s.days, loaded.e.day)
-		fit = Db.load_fit!(curve_days)
+		# the fit shells out to the engine; the skeleton cannot afford it
+		fit = if boot ({ cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }) else Db.load_fit!(curve_days)
 		fit_text =
 			if fit.ok
 				"CP ${Db.fmt_f(fit.cp)} W · W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${Db.fmt_f(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
@@ -305,8 +334,10 @@ load_model! = |font, curve_days| {
 				{ p: mk!("ramp", 13)?, v: 7.U8 },
 				{ p: mk!("career", 13)?, v: 8.U8 },
 			],
-			status: mk!(loaded.s.err, 16)?,
-			has_error: loaded.s.err != "",
+			status: mk!(if boot "" else loaded.s.err, 16)?,
+			has_error: !boot and loaded.s.err != "",
+			booting: boot,
+			logo: load_logo!(home, boot),
 			font: mono,
 			hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   G glow   ESC quit", 13)?,
 			empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
@@ -582,7 +613,9 @@ update! = |model0, program_input| {
 			Shot(_) => acc
 			RecCmd(_) => acc
 			MarkDone(_) => acc
-			ReloadFailed => acc
+			# also the boot task's failure exit: the splash must never spin
+			# forever, so a dead load hands over to the skeleton's own screens
+			ReloadFailed => { ..acc, booting: Bool.False }
 			TraceSwitchFailed => acc
 			GhostSwitchFailed => acc
 			# a slow load must not resurrect a dismissed ghost or overwrite a
@@ -890,7 +923,7 @@ update! = |model0, program_input| {
 			} else model.trace_day
 		_ = if want_days != model.curve_days or d.key_pressed(KeyR) {
 			f2 = model.font
-			Task.spawn!(program_input, || match load_model!(f2, want_days) {
+			Task.spawn!(program_input, || match load_model!(f2, want_days, Bool.False) {
 				Ok(m2) => Reloaded(m2)
 				Err(_) => ReloadFailed
 			})
@@ -914,6 +947,15 @@ update! = |model0, program_input| {
 		spine_idx = if view == 8 and d.key_pressed(KeyF) (model.spine_idx + 1) else model.spine_idx
 		view_anim = if view != model.view (model.tick + 1) else if view == 8 and Mouse.button_pressed(d.mouse, Left) (0) else model.view_anim
 		tick = model.tick + 1
+		# frame one of a boot: the window is already on screen showing the
+		# splash - kick the real load exactly once, the same task R runs
+		_ = if model.booting and model.tick == 0 {
+			f0 = model.font
+			Task.spawn!(program_input, || match load_model!(f0, 90, Bool.False) {
+				Ok(m2) => Reloaded(m2)
+				Err(_) => ReloadFailed
+			})
+		}
 		# no HOME means no database path means no bus — spawning would only
 		# manufacture failing tasks every tick, forever
 		_ = if tick % 60 == 0 and model.home != "" {
@@ -1120,6 +1162,151 @@ scene! = |model, frame| {
 	drawn
 }
 
+# The boot splash: the stride route drawing itself while the real load runs
+# in its task. The S sweeps bottom-left to top-right through the brand
+# gradient with a comet at the pen, the mountain peak pops when a sweep
+# completes, and the whole figure loops until Reloaded lands. Everything is
+# geometry over the tick - no asset, nothing to load before the loader.
+splash! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
+splash! = |model, frame| {
+	frame.rectangle!({ x: 0.0, y: 0.0, width: model.win.w, height: model.win.h, style: Draw.filled(Theme.bg) })
+	cx = model.win.w / 2.0
+	cy = model.win.h / 2.0 - 30.0
+	pi = 3.14159265
+	# brand gradient along the path: teal through blue to violet
+	mixc = |t| {
+		lerp = |a, b, k| {
+			v = a + (b - a) * k
+			match F32.round_to_u64_try(if v < 0.0 (0.0) else if v > 255.0 (255.0) else v) {
+				Ok(u) => match U64.to_u8_try(u) { Ok(c8) => c8
+					Err(_) => 255.U8 }
+				Err(_) => 0.U8
+			}
+		}
+		if t < 0.5 {
+			k = t * 2.0
+			Color.rgb(lerp(45.0, 79.0, k), lerp(212.0, 142.0, k), lerp(191.0, 247.0, k))
+		} else {
+			k = (t - 0.5) * 2.0
+			Color.rgb(lerp(79.0, 166.0, k), lerp(142.0, 107.0, k), lerp(247.0, 250.0, k))
+		}
+	}
+	# the topographic contours the logo's ground carries, faint and still
+	List.for_each!([{ y0: -120.0, ph: 0.0 }, { y0: -55.0, ph: 2.1 }, { y0: 10.0, ph: 4.3 }, { y0: 75.0, ph: 1.2 }, { y0: 140.0, ph: 3.4 }], |ct|
+		List.for_each!(List.map_with_index(List.repeat({}, 44.U64), |_u, i| i), |i| {
+			fx = |k| cx - 264.0 + U64.to_f32(k) * 12.0
+			fy = |k| cy + ct.y0 + 14.0 * F32.sin(U64.to_f32(k) * 0.31 + ct.ph) + 7.0 * F32.sin(U64.to_f32(k) * 0.73 + ct.ph * 2.0)
+			frame.line!({ start: { x: fx(i), y: fy(i) }, end: { x: fx(i + 1), y: fy(i + 1) }, stroke: Draw.stroke(Color.with_alpha(Theme.ink_faint, 22), 1) })
+		}))
+	_ = match model.logo {
+		Logo(lt) => {
+			# the authored mark itself - hand-drawn approximations kept
+			# drifting from the artwork, so the artwork renders. It fades
+			# in over the first moments and breathes gently while the
+			# load works; the glow shader has nothing to add here.
+			tf = U64.to_f32(model.tick)
+			ar = if tf > 42.0 (255.0) else tf * 6.0
+			a8 = match F32.to_u8_try(ar) { Ok(av) => av
+				Err(_) => 255.U8 }
+			sc = 1.0 + 0.015 * F32.sin(tf / 25.0)
+			side = 264.0 * sc
+			frame.texture!({ texture: lt, source: { x: 0.0, y: 0.0, width: lt.width, height: lt.height }, dest: { x: cx - side / 2.0, y: (cy - 16.0) - side / 2.0, width: side, height: side }, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.with_alpha(Color.white, a8) })
+			{}
+		}
+		NoLogo => splash_route!(model, frame, cx, cy, pi, mixc)
+	}
+	Text.from("Stride", model.font).size(30).draw!(frame, { pos: { x: cx, y: cy + 124.0 }, color: Color.white, align: (Top, Center) })
+	dots = if model.tick % 90 < 30 "." else if model.tick % 90 < 60 ".." else "..."
+	Text.from("loading your training story${dots}", model.font).size(13).draw!(frame, { pos: { x: cx, y: cy + 164.0 }, color: Theme.ink_muted, align: (Top, Center) })
+	Ok({})
+}
+
+# the geometric fallback when the authored PNG cannot be found: the route
+# drawing itself with a comet, the mountain popping in on completion
+splash_route! : Ui.Model, Draw.Frame, F32, F32, F32, (F32 -> Color.Rgba) => {}
+splash_route! = |model, frame, cx, cy, pi, mixc| {
+	# two cubic beziers carry the S - a sine reads cramped and mirrored
+	bez = |x0, y0, x1, y1, x2, y2, x3, y3, u| {
+		v = 1.0 - u
+		{
+			x: v * v * v * x0 + 3.0 * v * v * u * x1 + 3.0 * v * u * u * x2 + u * u * u * x3,
+			y: v * v * v * y0 + 3.0 * v * v * u * y1 + 3.0 * v * u * u * y2 + u * u * u * y3,
+		}
+	}
+	# the route is ONE continuous smooth path, exactly as the mark draws it:
+	# the S's two bends, then a rounded upward curl that turns back LEFT into
+	# a squared-off ledge nested inside the peak's V. The route never touches
+	# the mountain - the mountain is its own stroke, and it appears only when
+	# the route completes. E is where the S hands over to the curl.
+	ex = cx + 18.0
+	ey = cy - 96.0
+	n = 72
+	pt = |i| {
+		t = U64.to_f32(i) / U64.to_f32(n)
+		if t < 0.36 {
+			b = bez(cx - 85.0, cy + 85.0, cx + 85.0, cy + 78.0, cx + 98.0, cy + 18.0, cx + 2.0, cy - 6.0, t / 0.36)
+			{ x: b.x, y: b.y, t }
+		} else if t < 0.72 {
+			b = bez(cx + 2.0, cy - 6.0, cx - 98.0, cy - 36.0, cx - 40.0, cy - 92.0, ex, ey, (t - 0.36) / 0.36)
+			{ x: b.x, y: b.y, t }
+		} else if t < 0.90 {
+			# the curl: a semicircle from heading-right to heading-left
+			a = pi * (t - 0.72) / 0.18
+			{ x: ex + 14.0 * F32.sin(a), y: (ey - 14.0) + 14.0 * F32.cos(a), t }
+		} else {
+			{ x: ex - 30.0 * (t - 0.90) / 0.10, y: ey - 28.0, t }
+		}
+	}
+	# reveal loops: 56 ticks of drawing, 34 of holding - frames run well below
+	# 60fps while the load task works, so a longer cycle would never finish
+	# inside the loading window and the mountain would never be seen
+	cyc = model.tick % 90
+	p_raw = U64.to_f32(cyc) / 56.0
+	p1 = if p_raw > 1.0 (1.0) else p_raw
+	p = 1.0 - (1.0 - p1) * (1.0 - p1)
+	start = pt(0)
+	# the start marker is a RING in the logo, not a dot
+	frame.circle!({ center: { x: start.x, y: start.y }, radius: 9.0, style: Draw.filled(Theme.tsb_c) })
+	frame.circle!({ center: { x: start.x, y: start.y }, radius: 5.0, style: Draw.filled(Theme.bg) })
+	List.for_each!(List.map_with_index(List.repeat({}, n), |_u, i| i), |i| {
+		a = pt(i)
+		b = pt(i + 1)
+		if b.t <= p {
+			# a round cap at every joint: bare segment ends leave a notch
+			# per joint that reads as a speckled edge under magnification
+			frame.line!({ start: { x: a.x, y: a.y }, end: { x: b.x, y: b.y }, stroke: Draw.stroke(mixc(a.t), 6) })
+			frame.circle!({ center: { x: b.x, y: b.y }, radius: 2.9, style: Draw.filled(mixc(b.t)) })
+		}
+	})
+	# the mountain: apex, a left slope ending in a short downward foot, and
+	# the long open right slope - separate from the route, arriving with a
+	# pop once the route has finished drawing
+	vio = mixc(1.0)
+	ax = ex - 24.0
+	ay = ey - 74.0
+	if p >= 1.0 {
+		l1 = { x: ax - 56.0, y: ay + 56.0 }
+		frame.line!({ start: { x: ax, y: ay }, end: { x: l1.x, y: l1.y }, stroke: Draw.stroke(vio, 6) })
+		frame.line!({ start: { x: l1.x, y: l1.y }, end: { x: l1.x, y: l1.y + 14.0 }, stroke: Draw.stroke(vio, 6) })
+		frame.line!({ start: { x: ax, y: ay }, end: { x: ax + 72.0, y: ay + 72.0 }, stroke: Draw.stroke(vio, 6) })
+		frame.circle!({ center: { x: ax, y: ay }, radius: 2.9, style: Draw.filled(vio) })
+		frame.circle!({ center: { x: l1.x, y: l1.y }, radius: 2.9, style: Draw.filled(vio) })
+		hold = U64.to_f32(cyc - 56) / 34.0
+		pop = F32.sin(hold * pi)
+		frame.circle!({ center: { x: ax, y: ay }, radius: 5.0 + pop * 9.0, style: Draw.filled(Color.with_alpha(vio, match F32.to_u8_try(70.0 * (1.0 - hold)) { Ok(pa) => pa
+			Err(_) => 0 })) })
+	} else {
+		# the comet at the pen, the same one the career view rides
+		head_i = match F32.round_to_u64_try(p * U64.to_f32(n)) { Ok(hi) => hi
+			Err(_) => 0.U64 }
+		hp = pt(head_i)
+		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 11.0, style: Draw.filled(Color.with_alpha(Color.white, 26)) })
+		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 6.0, style: Draw.filled(Color.with_alpha(mixc(p), 140)) })
+		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 3.0, style: Draw.filled(Color.white) })
+	}
+	{}
+}
+
 # The frame's last word: with a working pipeline and the glow on, the scene
 # draws DIRECTLY to the screen first - at the framebuffer's full pixel
 # density - and the offscreen target feeds only the additive bloom layer.
@@ -1131,7 +1318,9 @@ scene! = |model, frame| {
 # before shaders existed.
 render! : Model, Draw.Frame => Try({}, [Exit(I64), ..])
 render! = |model, frame| {
-	match model.glow {
+	if model.booting {
+		splash!(model, frame)
+	} else match model.glow {
 		Ready(g) =>
 			if model.glow_on {
 				scene!(model, frame)?
