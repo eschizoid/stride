@@ -105,7 +105,7 @@ the `weekly_ramp` view - the one definition of weekly ramp. A directive with vie
 | `C` (trace view) | clear the ghost in one press, from any state |
 | `X` (trace view) | cycle the picker's sport filter (all / each sport the menu holds); the header names the active filter |
 | wheel / drag / `0` (trace view) | zoom anchored at the cursor's moment, pan while held, reset - the window is [pan, pan+1/zoom] of the session |
-| `[` / `]` (trace view) | older / newer session among the last 120 carrying a plottable stream - every one is cached at load, so a switch is a memory read, not a query |
+| `[` / `]` (trace view) | older / newer session among those the active sport filter admits - every one is cached at load, so a switch is a memory read, not a query |
 | `←` / `→` (table view) | scroll the window through the whole series (rows fill the window height) |
 | click a date (table view) | open that day's detail panel: sessions, minutes, km, TSS, NP |
 | window edges | drag to resize; every view reflows live (980x600 floor) |
@@ -118,6 +118,7 @@ the `weekly_ramp` view - the one definition of weekly ramp. A directive with vie
 ```
 just viz          # opens the window
 just viz-check    # type-check only, no window
+just viz-test     # the window's pure expects (picker filters, ghost rules, axes)
 just viz-app      # installs ~/Applications/Stride.app
 ```
 
@@ -299,7 +300,7 @@ power meter recorded them and heart rate otherwise, and the y axis names its
 unit so the two can never be confused. Both axes carry labelled gridlines, and
 the x step follows the VISIBLE span, so zooming in earns finer ticks.
 
-The ghost overlay compares the live session against an earlier one of the same
+The ghost overlay compares the live session against another of the same
 KIND — same sport, same unit — because an honest axis is not yet a meaningful
 comparison: a workout and a ride both plot bpm and still answer no question
 side by side. The pair is re-judged whenever the live session changes, so a
