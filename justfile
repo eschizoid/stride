@@ -434,11 +434,8 @@ viz-check:
 # window itself stays human-judged, but these are ordinary unit tests, and
 # `just test` enumerates engine modules by name with no viz module among
 # them, so they run only through this wrapper invocation - here and in the
-# viz-check CI job. The wrapper pins the expected summary count the same way
-# e2e pins checks_ran_exactly!: the target imports core modules whose expects
-# swell the total, so without the pin, deleting every viz expect leaves a
-# smaller summary that still reads plausible. Adding or removing an expect
-# means updating the pin ON PURPOSE.
+# viz-check CI job. The wrapper carries the count pins both invocations
+# share, and its own comment holds the rationale.
 viz-test:
     ROC="{{roc_viz}}" sh tools/roc-viz.sh test src/viz/main.roc
 
