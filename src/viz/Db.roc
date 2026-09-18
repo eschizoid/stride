@@ -664,17 +664,31 @@ Db :: [].{
 	# run may carry either, and picking by sport draws an empty plot for
 	# whichever sessions the guess gets wrong. `sport` still rides along, for
 	# the picker's filter rather than for the channel.
-	#
-	# The name is capped at the source, and a capped name is MARKED: Strava
-	# names are unbounded free text, the header draws the name right-aligned
-	# on the same line as the subtitle, so an uncapped name overruns it at
-	# narrow widths - and a bare cut reads as a complete name that is wrong,
-	# which is why the marker is not optional. ".." rather than an ellipsis
-	# glyph because the brand atlases carry ASCII. substr counts characters,
-	# not display columns, so a glyph ascii_safe does not map can still
-	# render as '?' and exceed the pixel budget the cap aims at.
 	trace_menu_q : Str
-	trace_menu_q = "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day, CAST(CASE WHEN length(COALESCE(a.name,'')) > 52 THEN substr(a.name, 1, 50) || '..' ELSE COALESCE(a.name,'') END AS TEXT) AS name, CAST(COALESCE(a.sport_family,'') AS TEXT) AS sport, CASE WHEN json_extract(st.raw_json,'$.watts.data') IS NOT NULL THEN '$.watts.data' ELSE '$.heartrate.data' END AS chan FROM activities a JOIN streams st ON st.activity_id = a.id WHERE json_extract(st.raw_json,'$.watts.data') IS NOT NULL OR json_extract(st.raw_json,'$.heartrate.data') IS NOT NULL ORDER BY a.start_local DESC LIMIT :lim"
+	trace_menu_q = "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day, CAST(COALESCE(a.name,'') AS TEXT) AS name, CAST(COALESCE(a.sport_family,'') AS TEXT) AS sport, CASE WHEN json_extract(st.raw_json,'$.watts.data') IS NOT NULL THEN '$.watts.data' ELSE '$.heartrate.data' END AS chan FROM activities a JOIN streams st ON st.activity_id = a.id WHERE json_extract(st.raw_json,'$.watts.data') IS NOT NULL OR json_extract(st.raw_json,'$.heartrate.data') IS NOT NULL ORDER BY a.start_local DESC LIMIT :lim"
+
+	# The cap runs AFTER the ascii_safe gate, because the gate can grow what
+	# it maps (an arrow becomes "->"): capping first would let a gated name
+	# outgrow the bound the cap exists to hold. A capped name is MARKED -
+	# Strava names are unbounded free text, the header draws the name
+	# right-aligned on the same line as the subtitle, so an uncapped name
+	# overruns it at narrow widths, and a bare cut reads as a complete name
+	# that is wrong. ".." rather than an ellipsis glyph because the brand
+	# atlases carry ASCII. The count is BYTES, so a glyph ascii_safe does not
+	# map is cut harder than its display width requires - the bound still
+	# holds, which is the property that matters.
+	cap_name : Str -> Str
+	cap_name = |s|
+		if Str.count_utf8_bytes(s) > 52 (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(s), 50)), "..")) else s
+
+	expect {
+		cap_name("short") == "short"
+		# 52 exactly passes untouched: the cap marks only what it shortens
+		and cap_name(Str.repeat("a", 52)) == Str.repeat("a", 52)
+		and cap_name(Str.repeat("a", 53)) == Str.concat(Str.repeat("a", 50), "..")
+		# the marker fits INSIDE the bound rather than pushing past it
+		and Str.count_utf8_bytes(cap_name(Str.repeat("a", 200))) == 52
+	}
 
 	watts_chan : Str
 	watts_chan = "$.watts.data"
@@ -701,9 +715,10 @@ Db :: [].{
 					nm = r.str("name") ? |_| "bad name"
 					sp = r.str("sport") ? |_| "bad sport"
 					ch = r.str("chan") ? |_| "bad chan"
-					# names pass the ascii_safe gate like every human-authored
-					# string this window draws - the brand atlases carry ASCII
-					Ok({ id: i, day: d, name: ascii_safe(nm), sport: sp, chan: ch })
+					# names pass the ascii_safe gate - the brand atlases carry
+					# ASCII, and an unmapped glyph draws as '?'. Gate first,
+					# THEN cap: the gate can grow what it maps
+					Ok({ id: i, day: d, name: cap_name(ascii_safe(nm)), sport: sp, chan: ch })
 				})
 		}
 
