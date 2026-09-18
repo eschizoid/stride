@@ -268,6 +268,19 @@ means for every date below. `stride config unset <key> --json` REMOVES a stored 
 - **Training weeks run Monday–Sunday by default.** Plan and present weeks Mon-first;
   when computing day-of-week from dates, verify against a known anchor
   (2026-07-27 was a Monday).
+- **The window's game layer is display-only — no command surfaces it, so know
+  the rules when the athlete asks.** Athlete LEVEL comes from career hours
+  across every sport (reaching level L costs 5·L·(L+1) cumulative hours, so
+  each level costs ten hours more than the last; tiers every ten levels:
+  rookie / grinder / engine / machine / legend) — the hours are the same
+  career totals `stats` reports, so you can derive the level and hours-to-next
+  yourself. The STREAK is consecutive Mon–Sun weeks with any load, every sport
+  counting, and a loadless week still in progress does not break it. The plan
+  view's quest pips are the week's done/total from the plan bundle. Gold
+  celebrations fire for a ride power record set in the last seven days (power
+  view) and for any family whose threshold peak IS the current month (career
+  view). None of this is steerable over the bus and none of it appears in any
+  `--json` payload — it lives in the window, documented in docs/viz.md.
 - **Missing-value contract (ADR 0009):** JSON null is not expressible (encoder
   stringifies tags), so absence is flagged, not nulled. Impossible-zero fields
   (`np_w`, `avg_hr`, `intensity`, `ftp_used`): 0 = not available. `activity`,
