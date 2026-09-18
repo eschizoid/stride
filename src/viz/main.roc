@@ -564,6 +564,34 @@ entry_at = |ids, sel|
 		Err(_) => { id: 0, day: "", name: "", sport: "", chan: "" }
 	}
 
+# A ghost is chosen against one selection and outlives it: stepping the
+# solid session, a directive, or a filter snap all move the live trace
+# while the ghost index stays where it was. Compatibility is therefore a
+# property of the PAIR, re-judged against each frame's own selection - a
+# pairing of two kinds cannot survive a switch; -1 dismisses.
+ghost_for_sel : List(TraceId), U64, I64 -> I64
+ghost_for_sel = |ids, sel, ghost|
+	match I64.to_u64_try(ghost) {
+		Err(_) => -1
+		Ok(gu) => if ghost_matches(entry_at(ids, sel), entry_at(ids, gu)) ghost else -1
+	}
+
+expect {
+	m = [
+		{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan },
+		{ id: 2, day: "d2", name: "n2", sport: "WeightTraining", chan: Db.hr_chan },
+		{ id: 3, day: "d3", name: "n3", sport: "Ride", chan: Db.watts_chan },
+	]
+	# a compatible pair survives the re-judgment
+	ghost_for_sel(m, 0, 2) == 2
+	# the solid session moved to the workout: the ride ghost is dismissed
+	and ghost_for_sel(m, 1, 2) == -1
+	# and the reverse pairing dies the same way
+	and ghost_for_sel(m, 0, 1) == -1
+	# no ghost stays no ghost
+	and ghost_for_sel(m, 0, -1) == -1
+}
+
 expect {
 	# a metered ride, an unmetered ride, another metered ride, a metered row
 	m = [
@@ -1054,12 +1082,16 @@ update! = |model0, program_input| {
 		trace_pan2 = F32.min(1.0 - 1.0 / trace_zoom2, F32.max(0.0, pan_raw))
 		# a directive naming a ghost of another kind is refused rather than
 		# honoured: ghost_matches is the same test the keyboard path applies
-		want_ghost2 =
+		want_ghost_raw =
 			if directive.has_d and directive.ghost_day == "none" (-1)
 			else if directive.has_d and directive.ghost_day != "" {
 				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_ghost, |acc, x| if x.e.day == directive.ghost_day and ghost_matches(entry_at(model.trace_ids, want_sel2), x.e) (match U64.to_i64_try(x.ei) { Ok(gi) => gi
 					Err(_) => acc }) else acc)
 			} else want_ghost
+		# whatever chose the ghost, the PAIR is re-judged against this frame's
+		# selection: a ghost summoned beside one session must not outlive a
+		# switch to a session of another kind
+		want_ghost2 = ghost_for_sel(model.trace_ids, want_sel2, want_ghost_raw)
 		ghost_hit =
 			if want_ghost2 != model.ghost_sel and want_ghost2 >= 0 {
 				match I64.to_u64_try(want_ghost2) { Ok(gu9) => List.get(model.trace_cache, gu9)
