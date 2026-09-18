@@ -529,52 +529,62 @@ sport_cycle : List(TraceId) -> List(Str)
 sport_cycle = |ids|
 	List.fold(ids, [""], |acc, e| if e.sport != "" and !(List.contains(acc, e.sport)) (List.append(acc, e.sport)) else acc)
 
-# The next ghost candidate past `cur` whose channel matches the live session's,
-# or -1 for none. A ghost is drawn against the LIVE session's axis and scale, so
-# one measured in another unit plots heart rate against watts — the comparison
-# the view exists for silently becomes a lie, and a plausible-looking one, since
-# both are three-digit numbers. Candidates that cannot share the axis are
-# stepped over, and running out of them dismisses the ghost rather than
-# freezing on the last compatible one.
-next_ghost : List(TraceId), I64, Str, Bool -> I64
-next_ghost = |ids, cur, chan, older|
+# A ghost candidate must be the SAME KIND of session as the live one: same
+# sport AND same measured channel. The two tests guard different lies. The
+# channel alone keeps the axis honest — heart rate drawn on a watts scale is
+# a plausible-looking three-digit fraud — but an honest axis is not yet a
+# meaningful comparison: a strength workout and a road ride both plot bpm,
+# and overlaying them answers no question, because "is this better than
+# last time" only means anything against the same kind of session. The
+# sport alone is not enough either, since one sport spans both units — a
+# metered ride is watts, the same rider's road ride without a meter is
+# heart rate — and those two cannot share a scale.
+ghost_matches : TraceId, TraceId -> Bool
+ghost_matches = |live, cand| live.sport == cand.sport and live.chan == cand.chan
+
+# The next compatible ghost candidate past `cur`, or -1 for none. Candidates
+# of another kind are stepped over, and running out of them dismisses the
+# ghost rather than freezing on the last compatible one.
+next_ghost : List(TraceId), I64, TraceId, Bool -> I64
+next_ghost = |ids, cur, live, older|
 	List.fold(List.map_with_index(ids, |e, i| { e, i }), -1, |acc, x| {
 		xi = match U64.to_i64_try(x.i) { Ok(v) => v
 			Err(_) => -1 }
-		if xi < 0 or x.e.chan != chan acc
+		if xi < 0 or !(ghost_matches(live, x.e)) acc
 		else if older (if xi > cur and (acc < 0 or xi < acc) xi else acc)
 		else if xi < cur and (acc < 0 or xi > acc) xi else acc
 	})
 
-# The channel of the session at `sel`; "" when there is none, which matches
-# nothing and so admits no ghost at all.
-chan_at : List(TraceId), U64 -> Str
-chan_at = |ids, sel|
+# The picker entry at `sel`. The fallback's empty channel matches no real
+# session, so an out-of-range selection admits no ghost at all.
+entry_at : List(TraceId), U64 -> TraceId
+entry_at = |ids, sel|
 	match List.get(ids, sel) {
-		Ok(te) => te.chan
-		Err(_) => ""
+		Ok(te) => te
+		Err(_) => { id: 0, day: "", name: "", sport: "", chan: "" }
 	}
 
 expect {
-	# a watts session, a bpm session, then two more watts
+	# a metered ride, an unmetered ride, another metered ride, a metered row
 	m = [
 		{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan },
 		{ id: 2, day: "d2", name: "n2", sport: "Ride", chan: Db.hr_chan },
 		{ id: 3, day: "d3", name: "n3", sport: "Ride", chan: Db.watts_chan },
 		{ id: 4, day: "d4", name: "n4", sport: "Rowing", chan: Db.watts_chan },
 	]
-	# stepping older from the watts session at 0 SKIPS the bpm session at 1
-	next_ghost(m, 0, Db.watts_chan, Bool.True) == 2
-	# the bpm session's only company is itself: nothing older matches, so the
-	# ghost is dismissed rather than drawn in the wrong unit
-	and next_ghost(m, 1, Db.hr_chan, Bool.True) == -1
-	# stepping back toward newer, still skipping the mismatch
-	and next_ghost(m, 3, Db.watts_chan, Bool.False) == 2
-	and next_ghost(m, 2, Db.watts_chan, Bool.False) == 0
-	and chan_at(m, 1) == Db.hr_chan
-	# an out-of-range selection matches no channel at all
-	and chan_at(m, 99) == ""
-	and next_ghost(m, 0, "", Bool.True) == -1
+	# stepping older from the watts ride at 0 SKIPS the bpm ride at 1
+	next_ghost(m, 0, entry_at(m, 0), Bool.True) == 2
+	# ...and stops short of the row at 3: same watts, different sport
+	and next_ghost(m, 2, entry_at(m, 0), Bool.True) == -1
+	# the bpm ride's only company is itself
+	and next_ghost(m, 1, entry_at(m, 1), Bool.True) == -1
+	# the row matches nothing else in the menu, in either direction
+	and next_ghost(m, 3, entry_at(m, 3), Bool.False) == -1
+	# stepping back toward newer between the two matching rides
+	and next_ghost(m, 2, entry_at(m, 2), Bool.False) == 0
+	and entry_at(m, 1).chan == Db.hr_chan
+	# an out-of-range selection matches no real session
+	and next_ghost(m, 0, entry_at(m, 99), Bool.True) == -1
 }
 
 next_sport : List(TraceId), Str -> Str
@@ -641,9 +651,15 @@ refusals_for = |dv, cdir, wsel, cur_sel, ids| {
 		(if dv.trace_day != "" and wsel == cur_sel and (match List.get(ids, wsel) { Ok(te9) => te9.day != dv.trace_day
 			Err(_) => Bool.True }) ("trace_day ${dv.trace_day} not in the picker") else ""),
 		(if dv.ghost_day != "" and dv.ghost_day != "none" and !(List.any(ids, |ge9| ge9.day == dv.ghost_day)) ("ghost_day ${dv.ghost_day} not in the picker") else ""),
-		# in the picker but measuring something else: naming the units is what
-		# makes this actionable, since "refused" alone reads as a missing day
-		(if dv.ghost_day != "" and dv.ghost_day != "none" and List.any(ids, |ge8| ge8.day == dv.ghost_day) and !(List.any(ids, |ge7| ge7.day == dv.ghost_day and ge7.chan == chan_at(ids, wsel))) ("ghost_day ${dv.ghost_day} is ${Db.trace_unit(List.fold(ids, "", |acc, g6| if g6.day == dv.ghost_day g6.chan else acc))}, the session is ${Db.trace_unit(chan_at(ids, wsel))}") else ""),
+		# in the picker but the wrong KIND of session: naming what differs -
+		# the sport, or failing that the unit - is what makes this actionable,
+		# since "refused" alone reads as a missing day
+		(if dv.ghost_day != "" and dv.ghost_day != "none" and List.any(ids, |ge8| ge8.day == dv.ghost_day) and !(List.any(ids, |ge7| ge7.day == dv.ghost_day and ghost_matches(entry_at(ids, wsel), ge7))) {
+			live6 = entry_at(ids, wsel)
+			gh6 = List.fold(ids, live6, |acc, g6| if g6.day == dv.ghost_day g6 else acc)
+			if gh6.sport != live6.sport ("ghost_day ${dv.ghost_day} is ${gh6.sport}, the session is ${live6.sport}")
+			else "ghost_day ${dv.ghost_day} is ${Db.trace_unit(gh6.chan)}, the session is ${Db.trace_unit(live6.chan)}"
+		} else ""),
 	], |s9| s9 != "")
 	Str.join_with(segs, "; ")
 }
@@ -910,10 +926,9 @@ update! = |model0, program_input| {
 			else model.trace_sel
 		# shift+[ summons/ages the ghost; shift+] youngs it and clears it when
 		# it would pass the newest candidate. -1 is no ghost. next_ghost owns
-		# the bounds, so running off either end dismisses rather than sticks.
-		# Every candidate must share the live session's channel, or it would be
-		# drawn against an axis measuring something else.
-		live_chan = chan_at(model.trace_ids, model.trace_sel)
+		# the bounds, so running off either end dismisses rather than sticks,
+		# and it admits only sessions of the live one's kind (ghost_matches).
+		live_entry = entry_at(model.trace_ids, model.trace_sel)
 		want_ghost =
 			if view != 2 model.ghost_sel
 			# C clears in ONE press from any state - stepping the ghost off the
@@ -924,9 +939,9 @@ update! = |model0, program_input| {
 			else if d.key_pressed(KeyLeftBracket) {
 				start = if model.ghost_sel < 0 (match U64.to_i64_try(model.trace_sel) { Ok(ts9) => ts9
 					Err(_) => -1 }) else model.ghost_sel
-				next_ghost(model.trace_ids, start, live_chan, Bool.True)
+				next_ghost(model.trace_ids, start, live_entry, Bool.True)
 			}
-			else if d.key_pressed(KeyRightBracket) (if model.ghost_sel >= 0 (next_ghost(model.trace_ids, model.ghost_sel, live_chan, Bool.False)) else -1)
+			else if d.key_pressed(KeyRightBracket) (if model.ghost_sel >= 0 (next_ghost(model.trace_ids, model.ghost_sel, live_entry, Bool.False)) else -1)
 			else model.ghost_sel
 		# clicking a table row jumps to that day's crosshair on the form board
 		# -2 = no directive OR day not in the series: both leave the cursor
@@ -1037,12 +1052,12 @@ update! = |model0, program_input| {
 				} else model.trace_pan
 			}
 		trace_pan2 = F32.min(1.0 - 1.0 / trace_zoom2, F32.max(0.0, pan_raw))
-		# a directive naming a ghost in another unit is refused rather than
-		# honoured: the channel test is the same one the keyboard path applies
+		# a directive naming a ghost of another kind is refused rather than
+		# honoured: ghost_matches is the same test the keyboard path applies
 		want_ghost2 =
 			if directive.has_d and directive.ghost_day == "none" (-1)
 			else if directive.has_d and directive.ghost_day != "" {
-				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_ghost, |acc, x| if x.e.day == directive.ghost_day and x.e.chan == chan_at(model.trace_ids, want_sel2) (match U64.to_i64_try(x.ei) { Ok(gi) => gi
+				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_ghost, |acc, x| if x.e.day == directive.ghost_day and ghost_matches(entry_at(model.trace_ids, want_sel2), x.e) (match U64.to_i64_try(x.ei) { Ok(gi) => gi
 					Err(_) => acc }) else acc)
 			} else want_ghost
 		ghost_hit =
