@@ -6017,7 +6017,13 @@ b_period_pace! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
 
     # A stalled stream - cumulative distance repeating every fifth second, the
-    # shape every real outdoor run has - must still produce the pace ladder:
+    # shape every real outdoor run has - must still produce the pace ladder.
+    # The sample count and stall rate are COUPLED to the 20-minute window:
+    # 1560 samples at one stall in five leaves 1248 moving seconds against
+    # the 1200-second best, 48 seconds of headroom - thin on purpose (the
+    # fixture must be mostly holes to mean anything), but tightening the
+    # stall rate without growing n makes this fail WITH the fix in place.
+    # Also:
     # grade_step drops each stalled second, so the speed series carries
     # scattered one-second holes, and a wall-contiguity rolling best finds no
     # window of any useful length in it. The bests roll over moving seconds
