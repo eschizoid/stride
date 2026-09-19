@@ -1664,7 +1664,12 @@ Render :: [].{
         # after nothing is "resumed", nothing after nothing is not a change at all.
         # Defaulting to 0.0 here reports the second case as "load steady (0%)", which
         # claims a measurement that was never taken.
-        "${table}\n\n→ ${compare_verdict(pr.tss, c.tss, c.ctl - pr.ctl, lab)}"
+        # the verdict's ctl delta follows the same displayed-value rule as the
+        # table's: a raw 23.6 -> 24.4 rounds both cells to 24 and the row's
+        # delta to +0, and a verdict saying "fitness building" one line below
+        # that row is the same self-contradiction the rounded deltas removed,
+        # moved down a row
+        "${table}\n\n→ ${compare_verdict(pr.tss, c.tss, (rf(c.ctl) - rf(pr.ctl)).to_f64(), lab)}"
     }
 }
 
@@ -2147,11 +2152,22 @@ expect {
 # real week beside a zoneless week keeps its own numbers, while the delta,
 # which needs both sides, goes dark with the darker one. The sentinels 88 and
 # 99 exist nowhere else in the fixture, so their absence is the gating and
-# nothing else.
+# nothing else — and the DELTA cells must go dark too, because +76 and +62
+# beside a suppressed cell hand the reader the suppressed values back by
+# subtraction (12 + 76 and 37 + 62 recover exactly what the "-" hid).
 expect {
     w = |tss, sessions, hard, easy, ctl, zk| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, zones_known: zk }
     s = Render.compare_screen({ period: "week", window_label: "7d", current: w(200.0, 4.I64, 88.I64, 99.I64, 20.0, Bool.False), prior: w(193.0, 5.I64, 12.I64, 37.I64, 24.0, Bool.True) })
-    Str.contains(s, "-") and Str.contains(s, "37") and Str.contains(s, "12") and !(Str.contains(s, "88")) and !(Str.contains(s, "99"))
+    Str.contains(s, "-") and Str.contains(s, "37") and Str.contains(s, "12") and !(Str.contains(s, "88")) and !(Str.contains(s, "99")) and !(Str.contains(s, "+76")) and !(Str.contains(s, "+62"))
+}
+
+# the verdict agrees with the row above it: 23.6 -> 24.4 prints both ctl cells
+# as 24 and the delta as +0, so the verdict must say holding — the raw delta
+# 0.8 crosses the ±0.5 threshold and would say building under a +0
+expect {
+    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, zones_known: Bool.True }
+    s = Render.compare_screen({ period: "week", window_label: "7d", current: w(200.0, 5.I64, 10.I64, 40.I64, 24.4), prior: w(195.0, 5.I64, 10.I64, 40.I64, 23.6) })
+    Str.contains(s, "+0") and Str.contains(s, "fitness holding") and !(Str.contains(s, "building"))
 }
 
 # ── interval structure rendering ────────────────────────────────────
