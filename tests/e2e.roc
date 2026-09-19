@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1141)?
+    checks_ran_exactly!(1144)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6015,6 +6015,29 @@ b_period_pace! = |ctx| {
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (811,812);")
     _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id IN (811,812);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
+
+    # A stalled stream - cumulative distance repeating every fifth second, the
+    # shape every real outdoor run has - must still produce the pace ladder.
+    # The sample count and stall rate are COUPLED to the 20-minute window:
+    # 1560 samples at one stall in five leaves 1248 moving seconds against
+    # the 1200-second best, 48 seconds of headroom - thin on purpose (the
+    # fixture must be mostly holes to mean anything), but tightening the
+    # stall rate without growing n makes this fail WITH the fix in place.
+    # Also:
+    # grade_step drops each stalled second, so the speed series carries
+    # scattered one-second holes, and a wall-contiguity rolling best finds no
+    # window of any useful length in it. The bests roll over moving seconds
+    # (bounded per break), so this fixture pins the whole cascade: best 20-min
+    # speed present, a threshold derived from it, and the session scored rtss
+    # rather than falling silently to a lesser rung.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (813,'Stalled Run','Run','2026-03-01T09:00:00Z',1560,2496);")
+    _ = seed_stalled_pace_stream!(ctx.db, 813, 1560, 2)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("a stalled stream still yields a 20-min pace best", sfloat(Str.trim(sql!(ctx.db, "SELECT COALESCE(best_20min_speed, 0) FROM activity_metrics WHERE activity_id=813;"))) > 0.0)?
+    check!("...and a threshold pace derived from it", sfloat(Str.trim(sql!(ctx.db, "SELECT COALESCE(threshold_pace_used, 0) FROM activity_metrics WHERE activity_id=813;"))) > 0.0)?
+    check!("...and the session scores rtss, not a silent fallback", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=813;")) == "rtss")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 813; DELETE FROM activity_metrics WHERE activity_id = 813; DELETE FROM streams WHERE activity_id = 813;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     Ok({})
 }
 
@@ -7209,6 +7232,20 @@ seed_pace_stream! : Str, I64, U64, U64 => {}
 seed_pace_stream! = |db, id, n, mps| {
     times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
     dist = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i * mps)), ",")
+    raw = "{\"time\":{\"data\":[${times}]},\"distance\":{\"data\":[${dist}]}}"
+    _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
+    {}
+}
+
+# the same pace stream with a one-second stall every fifth sample: cumulative
+# distance repeats, so grade_step's Stopped arm drops that second and the
+# speed series carries scattered one-second holes - the shape every real
+# outdoor run has (GPS quantization, stoplights) and the clean seeder above
+# can never produce
+seed_stalled_pace_stream! : Str, I64, U64, U64 => {}
+seed_stalled_pace_stream! = |db, id, n, mps| {
+    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
+    dist = Str.join_with(List.map(int_seq(n), |i| U64.to_str((i - (i // 5)) * mps)), ",")
     raw = "{\"time\":{\"data\":[${times}]},\"distance\":{\"data\":[${dist}]}}"
     _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
     {}
