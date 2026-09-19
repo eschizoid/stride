@@ -202,6 +202,11 @@ Render :: [].{
     # deciding the sign afterwards silently turned every small unload into a flat zero —
     # and left the two directions asymmetric, since +0.4 still printed "+0". A magnitude
     # that rounds away is still a direction that did not.
+    #
+    # The companion rule: sign-from-value is for a delta standing ALONE. When a delta
+    # prints beside its own operands, the caller computes it from the operands as
+    # DISPLAYED (compare_screen's rounded-difference deltas), because three individually
+    # correct roundings can contradict each other and a table must agree with itself.
     signed : F64 -> Str
     signed = |x| {
         mag = fmt0((x).abs())
@@ -1627,15 +1632,30 @@ Render :: [].{
         c = p.current
         pr = p.prior
         lab = p.window_label
-        df = |cur, prev| signed(cur - prev)
+        # The delta is computed from the values AS DISPLAYED, not from the raw
+        # F64s: each cell rounds independently, so three individually-correct
+        # roundings can contradict each other (276.4 and 232.9 print 276, 233
+        # and a raw delta of -44 - every reader subtracts the columns, gets
+        # 43, and concludes the arithmetic is wrong). A table must agree with
+        # itself; signed() on the raw value remains right for a delta with no
+        # columns beside it, like the summary ramp line.
+        rf = |x| x.round_to_i64_try().ok_or(0)
+        df = |cur, prev| signed((rf(cur) - rf(prev)).to_f64())
         di = |cur, prev| signed(cur.to_f64() - prev.to_f64())
+        # hard (min) and easy % are measurements only when the window holds
+        # zone data at all: an athlete with no HR zones would otherwise read
+        # "easy % 0" as zero easy training, when no measurement exists - the
+        # season block table renders the same absence as "-", and ADR 0009's
+        # rule is that absence is flagged or discriminated, never zeroed.
+        zc = |known, v| if known v else "-"
+        zd = |v| if c.zones_known and pr.zones_known v else "-"
         table = render_table(
             ["metric", "prior ${lab}", "last ${lab}", "Δ"],
             [
                 ["load", fmt0(pr.tss), fmt0(c.tss), df(c.tss, pr.tss)],
                 ["sessions", I64.to_str(pr.sessions), I64.to_str(c.sessions), di(c.sessions, pr.sessions)],
-                ["hard (min)", I64.to_str(pr.hard_min), I64.to_str(c.hard_min), di(c.hard_min, pr.hard_min)],
-                ["easy %", I64.to_str(pr.easy_pct), I64.to_str(c.easy_pct), di(c.easy_pct, pr.easy_pct)],
+                ["hard (min)", zc(pr.zones_known, I64.to_str(pr.hard_min)), zc(c.zones_known, I64.to_str(c.hard_min)), zd(di(c.hard_min, pr.hard_min))],
+                ["easy %", zc(pr.zones_known, I64.to_str(pr.easy_pct)), zc(c.zones_known, I64.to_str(c.easy_pct)), zd(di(c.easy_pct, pr.easy_pct))],
                 ["fitness (ctl)", fmt0(pr.ctl), fmt0(c.ctl), df(c.ctl, pr.ctl)],
             ],
         )
@@ -2100,16 +2120,38 @@ expect Render.dist_value(Imperial, 1609.344) == 1.0
 
 # compare table + verdict render; ramp shows in the load word
 expect {
-    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl }
+    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, zones_known: Bool.True }
     s = Render.compare_screen({ period: "week", window_label: "7d", current: w(227.0, 6.I64, 18.I64, 17.I64, 26.0), prior: w(193.0, 5.I64, 12.I64, 37.I64, 24.0) })
     Str.contains(s, "load") and Str.contains(s, "+34") and Str.contains(s, "ramping") and Str.contains(s, "building")
 }
 
 # zero prior TSS must NOT read as "steady 0%" — it's a resumption
 expect {
-    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl }
+    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, zones_known: Bool.True }
     s = Render.compare_screen({ period: "week", window_label: "7d", current: w(200.0, 4.I64, 10.I64, 40.I64, 20.0), prior: w(0.0, 0.I64, 0.I64, 0.I64, 18.0) })
     Str.contains(s, "load resumed") and !(Str.contains(s, "steady"))
+}
+
+# the delta agrees with the columns it sits beside: 276.4 and 232.8 display as
+# 276 and 233, and the delta is computed from THOSE, so it reads -43 — the raw
+# delta -43.6 rounds to -44, which contradicts the subtraction every reader
+# performs on the printed cells
+expect {
+    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, zones_known: Bool.True }
+    s = Render.compare_screen({ period: "week", window_label: "7d", current: w(232.8, 5.I64, 10.I64, 40.I64, 24.0), prior: w(276.4, 6.I64, 12.I64, 38.I64, 24.0) })
+    Str.contains(s, "276") and Str.contains(s, "233") and Str.contains(s, "-43") and !(Str.contains(s, "-44"))
+}
+
+# a window with no zone data renders hard (min) and easy % as "-", never as a
+# number that claims a measurement — and only the zoneless SIDE goes dark: a
+# real week beside a zoneless week keeps its own numbers, while the delta,
+# which needs both sides, goes dark with the darker one. The sentinels 88 and
+# 99 exist nowhere else in the fixture, so their absence is the gating and
+# nothing else.
+expect {
+    w = |tss, sessions, hard, easy, ctl, zk| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, zones_known: zk }
+    s = Render.compare_screen({ period: "week", window_label: "7d", current: w(200.0, 4.I64, 88.I64, 99.I64, 20.0, Bool.False), prior: w(193.0, 5.I64, 12.I64, 37.I64, 24.0, Bool.True) })
+    Str.contains(s, "-") and Str.contains(s, "37") and Str.contains(s, "12") and !(Str.contains(s, "88")) and !(Str.contains(s, "99"))
 }
 
 # ── interval structure rendering ────────────────────────────────────

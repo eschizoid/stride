@@ -196,11 +196,18 @@ Report :: [].{
                     # accrued fitness) from a real all-easy/zero week. Without it the prior
                     # block reads as "0 TSS, 0% easy, 0 ctl" — indistinguishable from a rest
                     # week — and the current-vs-prior delta looks like a phantom spike.
+                    # zones_known is the ambiguous-zero discriminator (ADR 0009):
+                    # an all-zero zone vector cannot distinguish "no zone data"
+                    # from "a week of unzonable sessions", so hard_min and
+                    # easy_pct are only measurements when some zone second
+                    # exists in the window - the same count test the summary
+                    # zone vector uses, at window grain.
                     block = |w, ctl| {
                         tss: w.tss,
                         sessions: w.sessions,
                         hard_min: (w.z4 + w.z5) // 60,
                         easy_pct: pct_num(w.z1 + w.z2, w.z1 + w.z2 + w.z3 + w.z4 + w.z5),
+                        zones_known: (w.z1 + w.z2 + w.z3 + w.z4 + w.z5) > 0,
                         ctl,
                         has_data: w.sessions > 0 or ctl > 0.0,
                     }
