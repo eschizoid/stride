@@ -644,41 +644,104 @@ Db :: [].{
 					})
 		}
 
-	# the last dozen structured sessions, newest first — the trace picker's menu
-	load_trace_ids! : Sqlite.Db => List({ id : I64, day : Str })
+	# How many sessions the picker offers. The bound is about how far back a
+	# comparison can reach: a season's worth of sessions is what makes "the
+	# same workout in the spring" a question the window can answer at all.
+	# Every one is downsampled in the boot task, three queries per session,
+	# so the bound is also that task's cost — linear in the count.
+	trace_menu_limit : I64
+	trace_menu_limit = 120
+
+	# The sessions the picker offers, newest first. The gate is "carries a
+	# stream this window can plot", NOT "has detected work blocks": the
+	# detector finds no structure in a large share of real sessions, and a
+	# ride held at one effort is still a ride worth looking at. Gating on
+	# blocks would also hide any sport whose sessions rarely trip the detector.
+	#
+	# `chan` is decided per ROW by which stream that session actually carries,
+	# preferring power, rather than guessed from the sport. Sports do not
+	# divide cleanly: strength work carries heart rate and never watts, but a
+	# run may carry either, and picking by sport draws an empty plot for
+	# whichever sessions the guess gets wrong. `sport` still rides along, for
+	# the picker's filter rather than for the channel.
+	trace_menu_q : Str
+	trace_menu_q = "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day, CAST(COALESCE(a.name,'') AS TEXT) AS name, CAST(COALESCE(a.sport_family,'') AS TEXT) AS sport, CASE WHEN json_extract(st.raw_json,'$.watts.data') IS NOT NULL THEN '$.watts.data' ELSE '$.heartrate.data' END AS chan FROM activities a JOIN streams st ON st.activity_id = a.id WHERE json_extract(st.raw_json,'$.watts.data') IS NOT NULL OR json_extract(st.raw_json,'$.heartrate.data') IS NOT NULL ORDER BY a.start_local DESC LIMIT :lim"
+
+	# The cap runs AFTER the ascii_safe gate, because the gate can grow what
+	# it maps (an arrow becomes "->"): capping first would let a gated name
+	# outgrow the bound the cap exists to hold. A capped name is MARKED -
+	# Strava names are unbounded free text, the header draws the name
+	# right-aligned on the same line as the subtitle, so an uncapped name
+	# overruns it at narrow widths, and a bare cut reads as a complete name
+	# that is wrong. ".." rather than an ellipsis glyph because the brand
+	# atlases carry ASCII. The count is BYTES, taking 48 so the bound
+	# survives the worst input: a cut landing mid-sequence becomes a 3-byte
+	# replacement character, and 48 + 3 + 2 marker bytes still sits inside
+	# the 52-byte budget. A glyph a byte count over-counts is cut harder
+	# than its display width requires - the bound holds for every input,
+	# which is the property the layout needs.
+	cap_name : Str -> Str
+	cap_name = |s|
+		if Str.count_utf8_bytes(s) > 52 (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(s), 48)), "..")) else s
+
+	expect {
+		cap_name("short") == "short"
+		# 52 exactly passes untouched: the cap marks only what it shortens
+		and cap_name(Str.repeat("a", 52)) == Str.repeat("a", 52)
+		and cap_name(Str.repeat("a", 53)) == Str.concat(Str.repeat("a", 48), "..")
+		# the marker fits INSIDE the bound rather than pushing past it
+		and Str.count_utf8_bytes(cap_name(Str.repeat("a", 200))) == 50
+		# and the bound holds when the cut lands mid-sequence: the partial
+		# character becomes a 3-byte replacement, not an overrun
+		and Str.count_utf8_bytes(cap_name(Str.concat("a", Str.repeat("é", 26)))) <= 52
+	}
+
+	watts_chan : Str
+	watts_chan = "$.watts.data"
+
+	hr_chan : Str
+	hr_chan = "$.heartrate.data"
+
+	# The y axis names what the chosen channel counts, so the label cannot
+	# disagree with the samples underneath it.
+	trace_unit : Str -> Str
+	trace_unit = |chan| if chan == hr_chan ("bpm") else "W"
+
+	expect trace_unit(watts_chan) == "W"
+	expect trace_unit(hr_chan) == "bpm"
+
+	load_trace_ids! : Sqlite.Db => List({ id : I64, day : Str, name : Str, sport : Str, chan : Str })
 	load_trace_ids! = |db|
-		match Sqlite.query!({ db, query: "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day FROM activity_segments s JOIN activities a ON a.id = s.activity_id WHERE s.kind = 'work' GROUP BY a.id ORDER BY a.start_local DESC LIMIT 12", bindings: [] }) {
+		match Sqlite.query!({ db, query: trace_menu_q, bindings: [{ name: ":lim", value: Integer(trace_menu_limit) }] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
 					i = r.i64("id") ? |_| "bad id"
 					d = r.str("day") ? |_| "bad day"
-					Ok({ id: i, day: d })
+					nm = r.str("name") ? |_| "bad name"
+					sp = r.str("sport") ? |_| "bad sport"
+					ch = r.str("chan") ? |_| "bad chan"
+					# names pass the ascii_safe gate - the brand atlases carry
+					# ASCII, and an unmapped glyph draws as '?'. Gate first,
+					# THEN cap: the gate can grow what it maps
+					Ok({ id: i, day: d, name: cap_name(ascii_safe(nm)), sport: sp, chan: ch })
 				})
 		}
 
-	load_trace_id! : Sqlite.Db => I64
-	load_trace_id! = |db|
-		match Sqlite.query!({ db, query: "SELECT a.id AS id FROM activity_segments s JOIN activities a ON a.id = s.activity_id WHERE s.kind = 'work' GROUP BY a.id ORDER BY a.start_local DESC LIMIT 1", bindings: [] }) {
-			Err(_) => 0
-			Ok(rows) => match List.first(rows) {
-				Err(_) => 0
-				Ok(r) => match r.i64("id") { Ok(v) => v
-					Err(_) => 0 }
-			}
-		}
-
-	# The power trace, DOWNSAMPLED in SQL to ~800 points. A 45-minute ride carries
-	# ~2700 samples against ~830 pixels of plot, so drawing them all costs three
-	# line segments per pixel and shows nothing more. json_each reads the stored
-	# stream directly — SQLite has JSON1, and this platform has no JSON decoder.
-	load_trace! : Sqlite.Db, I64 => List(F32)
-	load_trace! = |db, aid| {
+	# One session's trace, DOWNSAMPLED in SQL to ~800 points. A 45-minute ride
+	# carries ~2700 samples against ~830 pixels of plot, so drawing them all costs
+	# three line segments per pixel and shows nothing more. json_each reads the
+	# stored stream directly — SQLite has JSON1, and this platform has no JSON
+	# decoder. `chan` is one of watts_chan / hr_chan, picked per picker row by
+	# trace_menu_q's CASE, and BOUND rather than spliced — json_extract takes
+	# its path as an ordinary expression.
+	load_trace! : Sqlite.Db, I64, Str => List(F32)
+	load_trace! = |db, aid, chan| {
 		# json_each's key column IS the array index for a JSON array, and for an
 		# array it is an INTEGER value (objects yield text keys), so MAX(i) and
 		# ORDER BY i are numeric — no window function, nothing left unspecified.
-		q = "WITH w AS (SELECT json_each.key AS i, CAST(json_each.value AS INTEGER) AS v FROM streams, json_each(json_extract(streams.raw_json,'$.watts.data')) WHERE streams.activity_id = :aid), n AS (SELECT MAX(i)+1 AS c FROM w) SELECT v FROM w, n WHERE i % (MAX(n.c/800,1)) = 0 ORDER BY i"
-		match Sqlite.query!({ db, query: q, bindings: [{ name: ":aid", value: Integer(aid) }] }) {
+		q = "WITH w AS (SELECT json_each.key AS i, CAST(json_each.value AS INTEGER) AS v FROM streams, json_each(json_extract(streams.raw_json, :chan)) WHERE streams.activity_id = :aid), n AS (SELECT MAX(i)+1 AS c FROM w) SELECT v FROM w, n WHERE i % (MAX(n.c/800,1)) = 0 ORDER BY i"
+		match Sqlite.query!({ db, query: q, bindings: [{ name: ":aid", value: Integer(aid) }, { name: ":chan", value: String(chan) }] }) {
 			Err(_) => []
 			Ok(rows) => List.keep_oks(rows, |r| {
 				v = r.i64("v") ? |_| "bad v"

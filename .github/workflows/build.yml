@@ -175,6 +175,13 @@ jobs:
       - name: Type-check the app window
         run: sh tools/roc-viz.sh check src/viz/main.roc
 
+      # the window's pure expects: `just test` enumerates engine modules by
+      # name with no viz module among them, so these run only through the
+      # roc-viz.sh wrapper - this step and the local viz-test recipe. The
+      # wrapper itself carries the expected-count pin both invocations share.
+      - name: Run the app window's pure expects
+        run: sh tools/roc-viz.sh test src/viz/main.roc
+
   # roc-ray ships an x64glibc host, so the window can LINK on linux - which is
   # a different question from type-checking it. This job answers it on every
   # PR, because the release job that packages a linux app must not be the

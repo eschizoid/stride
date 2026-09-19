@@ -45,11 +45,19 @@ Ui :: [].{
 		curve_empty : Text.Prepared,
 		trace : List(F32),
 		segs : List(Db.Seg),
-		trace_title : Text.Prepared,
 		trace_dur : F32,
-		trace_ids : List({ id : I64, day : Str }),
+		trace_ids : List({ id : I64, day : Str, name : Str, sport : Str, chan : Str }),
 		trace_sel : U64,
 		trace_day : Str,
+		# what the y axis is counting for the SELECTED session, which follows
+		# the stream it actually carries rather than its sport: watts where a
+		# power meter recorded them, heart rate otherwise. Strength work never
+		# has watts, and neither does a road ride without a meter.
+		trace_unit : Str,
+		# the picker's sport filter; "" offers every sport. [ and ] step to
+		# the next session this filter admits, so the selection index still
+		# addresses the full menu and every cache lookup stays valid
+		trace_sport : Str,
 		ghost : List(F32),
 		ghost_dur : F32,
 		ghost_sel : I64,
@@ -59,7 +67,7 @@ Ui :: [].{
 		trace_pan : F32,
 		# every pickable session, loaded once - switching and ghosts read this
 		# instead of a task round-trip per keypress
-		trace_cache : List({ tr : List(F32), sg : List(Db.Seg), du : F32 }),
+		trace_cache : List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str }),
 		curve_days : I64,
 		fit_cp : F32,
 		cp_lbl : Text.Prepared,

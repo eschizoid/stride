@@ -430,6 +430,15 @@ viz:
 viz-check:
     {{roc_viz}} check src/viz/main.roc
 
+# Run the viz's pure expects (picker filters, ghost rules, axis steps): the
+# window itself stays human-judged, but these are ordinary unit tests, and
+# `just test` enumerates engine modules by name with no viz module among
+# them, so they run only through this wrapper invocation - here and in the
+# viz-check CI job. The wrapper carries the count pins both invocations
+# share, and its own comment holds the rationale.
+viz-test:
+    ROC="{{roc_viz}}" sh tools/roc-viz.sh test src/viz/main.roc
+
 # ADR 0016: every engine import points down the layer table; viz stays behind the DB
 layer-check:
     bash tools/layer-check.sh
