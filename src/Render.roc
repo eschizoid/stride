@@ -425,6 +425,21 @@ Render :: [].{
             Imperial => "min/mi"
         }
 
+    # 0.3048 is the international foot in metres, exact by definition.
+    elev_value : [Metric, Imperial], F64 -> F64
+    elev_value = |units, m|
+        match units {
+            Metric => m
+            Imperial => m / 0.3048
+        }
+
+    elev_unit : [Metric, Imperial] -> Str
+    elev_unit = |units|
+        match units {
+            Metric => "m"
+            Imperial => "ft"
+        }
+
     # m:ss per km or per mile. Was `pace_per_km`, renamed when it stopped always being
     # per km: a name asserting a unit while returning the other is exactly the drift this
     # codebase keeps paying for.
@@ -2133,6 +2148,9 @@ expect Render.dist_unit(Metric) == "km" and Render.dist_unit(Imperial) == "mi"
 expect Render.pace_unit(Metric) == "min/km" and Render.pace_unit(Imperial) == "min/mi"
 expect Render.dist_value(Metric, 1609.344) == 1.609344
 expect Render.dist_value(Imperial, 1609.344) == 1.0
+expect (Render.elev_value(Imperial, 30.48) - 100.0).abs() < 0.001
+expect (Render.elev_value(Metric, 30.48) - 30.48).abs() < 0.001
+expect Render.elev_unit(Imperial) == "ft" and Render.elev_unit(Metric) == "m"
 
 # compare table + verdict render; ramp shows in the load word
 expect {

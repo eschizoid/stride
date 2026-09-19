@@ -174,9 +174,27 @@ ReportSessions :: [].{
                                         Err(_) => 0.0
                                     }
                                 pi = Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
-                                { max_hr: List.fold(hr_pairs, 0.0.F64, |acc, p| (acc).max(p.v)), best_60: best(60), best_180: best(180), best_300: best(300), best_1200: best(1200), easy_s: pi.easy_s, moderate_s: pi.moderate_s, hard_s: pi.hard_s, failed: decoded.failed, has_watts: !(List.is_empty(watts_pairs)), has_dist: !(List.is_empty(Streams.stream_pairs(streams.time, streams.distance))) }
+                                # Splits, same units contract as interval_summary: the
+                                # payload copy is ALWAYS per kilometre - the coaching
+                                # agent's contract - and the display copy re-segments at
+                                # the reader's unit, because an imperial athlete's mile
+                                # splits have mile BOUNDARIES, not km rows relabelled.
+                                # The altitude pairs ride the graded triple so a stored
+                                # null never reaches the gain sum; the flat fallback
+                                # supplies distance when no altitude stream exists.
+                                flat = Streams.dist_time(streams.time, streams.distance)
+                                dist_pairs = List.map2(flat.time, flat.dist, |t, dv| { t: (t).round_to_i64_try().ok_or(0), v: dv })
+                                gtrip = Streams.dist_alt_time(streams.time, streams.distance, streams.altitude)
+                                alt_pairs = List.map2(gtrip.time, gtrip.alt, |t, av| { t: (t).round_to_i64_try().ok_or(0), v: av })
+                                splits_payload = Metrics.splits(dist_pairs, alt_pairs, hr_pairs, 1000.0)
+                                splits_display =
+                                    match units {
+                                        Metric => splits_payload
+                                        Imperial => Metrics.splits(dist_pairs, alt_pairs, hr_pairs, 1609.344)
+                                    }
+                                { max_hr: List.fold(hr_pairs, 0.0.F64, |acc, p| (acc).max(p.v)), best_60: best(60), best_180: best(180), best_300: best(300), best_1200: best(1200), easy_s: pi.easy_s, moderate_s: pi.moderate_s, hard_s: pi.hard_s, failed: decoded.failed, has_watts: !(List.is_empty(watts_pairs)), has_dist: !(List.is_empty(Streams.stream_pairs(streams.time, streams.distance))), splits_payload, splits_display }
                             }
-                        Null => { max_hr: 0.0, best_60: 0.0, best_180: 0.0, best_300: 0.0, best_1200: 0.0, easy_s: 0, moderate_s: 0, hard_s: 0, failed: False, has_watts: False, has_dist: False }
+                        Null => { max_hr: 0.0, best_60: 0.0, best_180: 0.0, best_300: 0.0, best_1200: 0.0, easy_s: 0, moderate_s: 0, hard_s: 0, failed: False, has_watts: False, has_dist: False, splits_payload: [], splits_display: [] }
                     }
                 # W' balance (#186): what the ride did to the anaerobic tank,
                 # against the fit as it stood on the ride's own date. Summary
@@ -342,6 +360,11 @@ ReportSessions :: [].{
                         # true = stored streams exist but wouldn't decode, so the 0s
                         # above are "unreadable", NOT "no power meter / no strap"
                         streams_unreadable: detail.failed,
+                        # per-kilometre splits from the distance stream, SI throughout
+                        # (the human table re-segments at the athlete's unit). Empty
+                        # when no distance stream exists; each row's elev_known and
+                        # hr_known gate its own absences.
+                        splits: detail.splits_payload,
                         # aerobic decoupling (#94), ADDITIVE so the envelope version stays.
                         # The flag is load-bearing rather than decorative: 0.0 here is a
                         # real, good result (no drift), so the house "0 = not available"
@@ -429,6 +452,23 @@ ReportSessions :: [].{
                             Err(_) => ""
                         }
                         Stdout.line!("shape  ${interval_summary_display}\n${Render.segments_block(units, seg_rows)}${drift_line}")
+                    })?
+                    # splits — absent section when no distance stream (honest absence);
+                    # segmented at the READER's unit, converted at the last moment, and
+                    # a cell whose measurement is absent renders "-" per ADR 0009. The
+                    # pace divides WALL time (elapsed_s carries intra-split stops), so a
+                    # stoplight-heavy run reads slower per split than the session's
+                    # moving-time pace over the same ground — that is the split's story
+                    (if List.is_empty(detail.splits_display)
+                        Ok({})
+                    else {
+                        split_rows = List.map(detail.splits_display, |r| [
+                            Render.fmt1(Render.dist_value(units, r.distance_m)),
+                            Render.pace_per_dist(units, r.distance_m, r.elapsed_s),
+                            if r.elev_known Str.concat(Render.signed(Render.elev_value(units, r.elev_gain_m)), Render.elev_unit(units)) else "-",
+                            if r.hr_known Render.fmt0(r.avg_hr) else "-",
+                        ])
+                        Stdout.line!(Render.render_table([Render.dist_unit(units), "pace (${Render.pace_unit(units)})", "elev", "hr"], split_rows))
                     })?
                     # aerobic decoupling (#94). Printed ONLY when it was computable —
                     # an absent line is honest, a "drift 0%" line on a session with no

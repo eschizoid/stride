@@ -277,6 +277,183 @@ Metrics :: [].{
         })
     }
 
+    # ── splits ──────────────────────────────────────────────────────────
+    # Distance splits from the cumulative-distance stream: one row per
+    # split_m metres, plus a partial tail when meaningful. Everything SI -
+    # the caller picks the split length (1000 for a metric athlete, the
+    # international mile for an imperial one) and the renderer converts at
+    # the last moment, per the units contract.
+    #
+    # elapsed_s is WALL seconds between boundary crossings: a stop inside a
+    # split belongs to that split's story, the way a runner reads a slow
+    # mile. Boundaries land on the 1 Hz resampled sample that crosses the
+    # line - between adjacent samples that overshoots split_m by at most
+    # one second of travel. Across an unfillable recording pause (the
+    # resampler leaves gaps longer than max_fill_gap unfilled) one sample
+    # can land several split lengths past the line; the row then spans
+    # them all, because the stream holds no evidence of where inside the
+    # dropout each line was crossed, and n advances by the whole split
+    # lengths the row covered so later rows keep their distance position.
+    # A tail under 2% of split_m is boundary noise and is dropped - its
+    # wall seconds then belong to no row, so summing elapsed_s can come up
+    # short of the activity's own elapsed time.
+    #
+    # elev_gain_m sums only positive altitude deltas between samples at
+    # most max_fill_gap apart - after interpolation that means adjacent
+    # seconds the resampler vouched for, since any longer adjacency is a
+    # gap it refused to fill. A rise across an unfilled gap is a sensor
+    # dropout or an ascent made while paused, and crediting it would
+    # assert a climb the stream disclaims; time_in_zones can afford its
+    # looser max_sample_gap_s bound because it caps the SECONDS it
+    # credits, while gain books the full magnitude, so the gate is the
+    # resampler's own.
+    # elev_known is false when no altitude stream exists at all, and the
+    # zeros then are absence, not flat ground. avg_hr is the plain mean of
+    # the valid samples inside the span - readings, not seconds, unlike
+    # the dt-weighted zone machinery - and hr_known follows the count, the
+    # same ambiguous-zero discipline every other absent measurement gets.
+    Split : { n : I64, distance_m : F64, elapsed_s : I64, elev_gain_m : F64, elev_known : Bool, avg_hr : F64, hr_known : Bool }
+
+    # how many whole split lengths fit in d, by exact subtraction - a
+    # crossing guarantees d >= s, and the count per crossing stays small
+    whole_splits : F64, F64, I64 -> I64
+    whole_splits = |d, s, k| if d >= s whole_splits(d - s, s, k + 1) else k
+
+    splits : List({ t : I64, v : F64 }), List({ t : I64, v : F64 }), List({ t : I64, v : F64 }), F64 -> List(Split)
+    splits = |dist_pairs, alt_pairs, hr_pairs, split_m| {
+        d1 = resample_1s_linear(sorted_by_t(dist_pairs))
+        if List.is_empty(d1) or split_m <= 0.0 {
+            []
+        } else {
+            alt_1s = resample_1s_linear(sorted_by_t(alt_pairs))
+            has_alt = !(List.is_empty(alt_1s))
+            row_for = |n, start_t, start_d, end_t, end_d| {
+                gain = List.fold(List.map2(alt_1s, List.drop_first(alt_1s, 1), |a, b| { a, b }), 0.0.F64, |acc, x|
+                    if x.b.t > start_t and x.b.t <= end_t and x.b.t - x.a.t <= max_fill_gap and x.b.v > x.a.v (acc + (x.b.v - x.a.v)) else acc)
+                in_span = List.keep_if(hr_pairs, |p| p.t > start_t and p.t <= end_t)
+                n_hr = List.len(in_span)
+                mean_hr = if n_hr == 0 0.0 else List.fold(in_span, 0.0.F64, |acc, p| acc + p.v) / (n_hr).to_f64()
+                { n, distance_m: end_d - start_d, elapsed_s: end_t - start_t, elev_gain_m: gain, elev_known: has_alt, avg_hr: mean_hr, hr_known: n_hr > 0 }
+            }
+            first_t = (List.first(d1)).map_ok(|p| p.t).ok_or(0.I64)
+            first_d = (List.first(d1)).map_ok(|p| p.v).ok_or(0.0.F64)
+            walked = List.fold(d1, { rows: [], n: 1.I64, start_t: first_t, start_d: first_d }, |acc, p|
+                if p.v - acc.start_d >= split_m {
+                    { rows: List.append(acc.rows, row_for(acc.n, acc.start_t, acc.start_d, p.t, p.v)), n: acc.n + whole_splits(p.v - acc.start_d, split_m, 0), start_t: p.t, start_d: p.v }
+                } else {
+                    acc
+                })
+            last_t = (List.last(d1)).map_ok(|p| p.t).ok_or(0.I64)
+            last_d = (List.last(d1)).map_ok(|p| p.v).ok_or(0.0.F64)
+            # a tail under 2% of a split is boundary noise, not a partial split
+            if last_d - walked.start_d > split_m * 0.02 {
+                List.append(walked.rows, row_for(walked.n, walked.start_t, walked.start_d, last_t, last_d))
+            } else {
+                walked.rows
+            }
+        }
+    }
+
+    expect {
+        # 100 m every second: 300 m splits close at t=3,6,9 with no tail -
+        # the last boundary lands exactly on the final sample
+        dist = Iter.fold((0.U64..<10).iter(), [], |acc, i| List.append(acc, { t: (i).to_i64_wrap(), v: (i).to_f64() * 100.0 }))
+        hr = Iter.fold((0.U64..<10).iter(), [], |acc, i| List.append(acc, { t: (i).to_i64_wrap(), v: 150.0 }))
+        rows = splits(dist, [], hr, 300.0)
+        List.len(rows) == 3
+        and (match List.first(rows) {
+            Ok(r) => r.elapsed_s == 3 and (r.distance_m - 300.0).abs() < 0.001 and r.hr_known and (r.avg_hr - 150.0).abs() < 0.001 and !r.elev_known
+            Err(_) => Bool.False
+        })
+    }
+
+    expect {
+        # a stop inside a split belongs to that split: 100 m at t=1, then the
+        # stream resumes at t=21 having reached 300 m - the split's 20 wall
+        # seconds are its story, not edited out. A meaningful tail emits as a
+        # partial row.
+        dist = [{ t: 0.I64, v: 0.0 }, { t: 1.I64, v: 100.0 }, { t: 21.I64, v: 300.0 }, { t: 22.I64, v: 400.0 }]
+        rows = splits(dist, [], [], 300.0)
+        List.len(rows) == 2
+        and (match List.first(rows) {
+            Ok(r) => r.elapsed_s == 21 and !r.hr_known
+            Err(_) => Bool.False
+        })
+        and (match List.last(rows) {
+            Ok(r) => (r.distance_m - 100.0).abs() < 0.5 and r.n == 2
+            Err(_) => Bool.False
+        })
+    }
+
+    expect {
+        # climbing 2 m per second for the first 300 m only: the first split
+        # carries the gain, the second is flat, and both know the altitude
+        # stream exists
+        dist = Iter.fold((0.U64..<7).iter(), [], |acc, i| List.append(acc, { t: (i).to_i64_wrap(), v: (i).to_f64() * 100.0 }))
+        alt = Iter.fold((0.U64..<7).iter(), [], |acc, i| List.append(acc, { t: (i).to_i64_wrap(), v: if i <= 3 ((i).to_f64() * 2.0) else 6.0 }))
+        rows = splits(dist, alt, [], 300.0)
+        List.len(rows) == 2
+        and (match List.first(rows) {
+            Ok(r) => (r.elev_gain_m - 6.0).abs() < 0.001 and r.elev_known
+            Err(_) => Bool.False
+        })
+        and (match List.last(rows) {
+            Ok(r) => (r.elev_gain_m).abs() < 0.001 and r.elev_known
+            Err(_) => Bool.False
+        })
+    }
+
+    expect splits([], [], [], 1000.0) == []
+
+    expect {
+        # a >max_fill_gap dropout jumping 2100 m emits ONE row spanning all
+        # seven crossed 300 m lines - no evidence says where inside the
+        # dropout each was crossed - and n advances by the splits covered,
+        # so the next row is numbered by its true distance position
+        dist = [{ t: 0.I64, v: 0.0 }, { t: 1.I64, v: 100.0 }, { t: 21.I64, v: 2100.0 }, { t: 22.I64, v: 2200.0 }, { t: 23.I64, v: 2300.0 }, { t: 24.I64, v: 2400.0 }]
+        rows = splits(dist, [], [], 300.0)
+        List.len(rows) == 2
+        and (match List.first(rows) {
+            Ok(r) => r.n == 1 and (r.distance_m - 2100.0).abs() < 0.001
+            Err(_) => Bool.False
+        })
+        and (match List.last(rows) {
+            Ok(r) => r.n == 8 and (r.distance_m - 300.0).abs() < 0.001
+            Err(_) => Bool.False
+        })
+    }
+
+    expect {
+        # altitude rising across a gap the resampler refused to fill
+        # (>max_fill_gap) is a dropout or a paused ascent, not climbing:
+        # only the adjacent +10 m step is credited, never the +190 m step
+        # across the 20 s hole - a hole short enough that a looser bound
+        # like max_sample_gap_s would wrongly book the whole rise
+        dist = [{ t: 0.I64, v: 0.0 }, { t: 1.I64, v: 100.0 }, { t: 21.I64, v: 2100.0 }]
+        alt = [{ t: 0.I64, v: 100.0 }, { t: 1.I64, v: 110.0 }, { t: 21.I64, v: 300.0 }]
+        rows = splits(dist, alt, [], 300.0)
+        List.len(rows) == 1
+        and (match List.first(rows) {
+            Ok(r) => (r.elev_gain_m - 10.0).abs() < 0.001 and r.elev_known
+            Err(_) => Bool.False
+        })
+    }
+
+    expect {
+        # the 2% tail floor, pinned from both sides on a 300 m split
+        # (floor 6 m): a 5 m tail is boundary noise and drops, a 7 m tail
+        # is a partial split and emits
+        base = [{ t: 0.I64, v: 0.0 }, { t: 1.I64, v: 100.0 }, { t: 2.I64, v: 200.0 }, { t: 3.I64, v: 300.0 }]
+        noise = splits(List.append(base, { t: 4.I64, v: 305.0 }), [], [], 300.0)
+        tail = splits(List.append(base, { t: 4.I64, v: 307.0 }), [], [], 300.0)
+        List.len(noise) == 1
+        and List.len(tail) == 2
+        and (match List.last(tail) {
+            Ok(r) => (r.distance_m - 7.0).abs() < 0.001
+            Err(_) => Bool.False
+        })
+    }
+
     # does the window starting at i cover `window` consecutive real seconds?
     contiguous = |pairs, i, window| {
         lo = List.get(pairs, i).map_ok(|p| p.t).ok_or(0.I64)
