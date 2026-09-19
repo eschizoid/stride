@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1138)?
+    checks_ran_exactly!(1141)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6696,9 +6696,30 @@ b_compare! = |ctx| {
     check!("compare window 7d", Str.contains(cmp_raw, "\"window_label\":\"7d\""))?
     check!("compare current has >=1 session", sfloat(strjq!(ctx, ["compare", "week"], ".data.current.sessions")) >= 1.0)?
     check!("compare exposes a prior window", is_nonempty(strjq!(ctx, ["compare", "week"], ".data.prior.sessions")))?
-    check!("compare current carries all metric fields", strjq!(ctx, ["compare", "week"], ".data.current | [has(\"tss\"),has(\"sessions\"),has(\"hard_min\"),has(\"easy_pct\"),has(\"ctl\")] | all") == "true")?
-    check!("compare prior carries all metric fields", strjq!(ctx, ["compare", "week"], ".data.prior | [has(\"tss\"),has(\"sessions\"),has(\"hard_min\"),has(\"easy_pct\"),has(\"ctl\")] | all") == "true")?
+    check!("compare current carries all metric fields", strjq!(ctx, ["compare", "week"], ".data.current | [has(\"tss\"),has(\"sessions\"),has(\"hard_min\"),has(\"easy_pct\"),has(\"ctl\"),(.polarization_known | type == \"boolean\")] | all") == "true")?
+    check!("compare prior carries all metric fields", strjq!(ctx, ["compare", "week"], ".data.prior | [has(\"tss\"),has(\"sessions\"),has(\"hard_min\"),has(\"easy_pct\"),has(\"ctl\"),(.polarization_known | type == \"boolean\")] | all") == "true")?
     check!("compare rejects unknown period", Str.contains(stride!(ctx.bin, ctx.home, ["compare", "year"]), "bad_period"))?
+    # polarization_known derives from the window's zone seconds, so it must FLIP in
+    # both directions - pinning only one value would also pass a discriminator
+    # hardcoded to it, which is the dishonest-zero bug returning silently. The
+    # probe seeds its OWN zone-bearing session (the fixture's window is not
+    # trusted to carry zone seconds), proves the flag lit, zeroes every zone
+    # column, proves it dark, restores, proves it lit again, and deletes what
+    # it seeded. compare only READS activity_metrics, so the restore below is
+    # sufficient - ON THE PASSING PATH. A failing check!'s ? returns before
+    # the restore runs, so a red run leaves every zone column zeroed and the
+    # seed in place, and later zone checks cascade: read the FIRST failure,
+    # not the pile behind it.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation) VALUES (9602,'zone probe ride','Ride','${ctx.today}T04:00:00Z',3600,30000,0);")
+    _ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,z2_s,metrics_rev) VALUES (9602,40.0,190.0,1200,1);")
+    check!("polarization_known lights when the window holds zone seconds", strjq!(ctx, ["compare", "week"], ".data.current.polarization_known") == "true")?
+    _ = sql!(ctx.db, "CREATE TABLE zsave AS SELECT activity_id, z1_s, z2_s, z3_s, z4_s, z5_s FROM activity_metrics;")
+    _ = sql!(ctx.db, "UPDATE activity_metrics SET z1_s=0, z2_s=0, z3_s=0, z4_s=0, z5_s=0;")
+    check!("compare discriminates a zoneless window (both sides false)", strjq!(ctx, ["compare", "week"], "[.data.current.polarization_known, .data.prior.polarization_known] | all(. == false)") == "true")?
+    _ = sql!(ctx.db, "UPDATE activity_metrics SET z1_s=(SELECT z1_s FROM zsave WHERE zsave.activity_id=activity_metrics.activity_id), z2_s=(SELECT z2_s FROM zsave WHERE zsave.activity_id=activity_metrics.activity_id), z3_s=(SELECT z3_s FROM zsave WHERE zsave.activity_id=activity_metrics.activity_id), z4_s=(SELECT z4_s FROM zsave WHERE zsave.activity_id=activity_metrics.activity_id), z5_s=(SELECT z5_s FROM zsave WHERE zsave.activity_id=activity_metrics.activity_id);")
+    _ = sql!(ctx.db, "DROP TABLE zsave;")
+    check!("polarization_known lights back up once the zone seconds return", strjq!(ctx, ["compare", "week"], ".data.current.polarization_known") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 9602; DELETE FROM activities WHERE id = 9602;")
     Ok({})
 }
 
