@@ -2169,8 +2169,8 @@ b_seed_analyze! = |ctx| {
     #
     # The asserted string pins `reps=2` deliberately, and that is a third coupling rather
     # than an escape from the other two: adding a rep to 9003 fails this check. It is kept
-    # for two reasons. It is how this leg already works (`swept=14`, `screens=11`,
-    # `examined=17` all pin the same way), and it is load-bearing for SAFETY — a `$reps`
+    # for two reasons. It is how this leg already works (the `swept`, `screens` and
+    # `examined` counts all pin the same way), and it is load-bearing for SAFETY — a `$reps`
     # containing a regex metacharacter would make the pattern accept a payload the count
     # does not justify, and only the echoed literal catches that. Unreachable today, since
     # sqlite3 writes errors to stderr and `count(*)` yields digits or nothing, but anyone
@@ -2212,9 +2212,11 @@ b_seed_analyze! = |ctx| {
     # render, since `units` is already in scope there. A hand-list lets a whole FILE
     # escape, which is wider than what `formatted` closes.
     #
-    # Four sites depend on this check rather than on expects: `activity`, `top`, `stats`,
-    # and `progress_section`'s distance cell — the last because it lives in the `SpeedHr`
-    # arm and no `progress_section` expect passes `SpeedHr`, so nothing reaches it. The
+    # Five sites depend on this check rather than on expects: `activity`, `top`, `stats`,
+    # the splits elevation cell (a `signed(` + `elev_unit(` line — both patterns are in
+    # the filters for its sake), and `progress_section`'s distance cell — the last because
+    # it lives in the `SpeedHr` arm and no `progress_section` expect passes `SpeedHr`, so
+    # nothing reaches it. The
     # legend and `top`'s header name a unit and render no number. The pace column renders
     # one — a pace string — and DOES convert, via `pace_per_dist`, which the fmt filter does
     # not match; it is exempt for that reason, not for rendering nothing. `pace-curve`
@@ -2235,8 +2237,8 @@ b_seed_analyze! = |ctx| {
     # nothing wrong — the sites run to 204 characters, so it is a live risk. Rejoin the
     # line; do not lower the number. A comment containing `dist_unit(` would also count
     # toward `examined`. Both are loud false positives, which is the safe direction.
-    units_static = Str.trim(sh!("n=0; fmt=0; bad=0; for f in src/*.roc; do while IFS= read -r l; do case \"$l\" in expect*) continue;; esac; case \"$l\" in *'dist_unit('*|*'pace_unit('*|*'seg_unit('*) ;; *) continue;; esac; n=$((n+1)); case \"$l\" in *'fmt0('*|*'fmt1('*|*'fmt2('*|*'seg_value('*) fmt=$((fmt+1));; *) continue;; esac; case \"$l\" in *'dist_value(units'*|*'pace_per_dist(units'*|*'seg_value(units'*) ;; *) bad=$((bad+1));; esac; done < $f; done; echo \"examined=$n formatted=$fmt unconverted=$bad\""))
-    check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=18 formatted=11 unconverted=0")?
+    units_static = Str.trim(sh!("n=0; fmt=0; bad=0; for f in src/*.roc; do while IFS= read -r l; do case \"$l\" in expect*) continue;; esac; case \"$l\" in *'dist_unit('*|*'pace_unit('*|*'seg_unit('*|*'elev_unit('*) ;; *) continue;; esac; n=$((n+1)); case \"$l\" in *'fmt0('*|*'fmt1('*|*'fmt2('*|*'seg_value('*|*'signed('*) fmt=$((fmt+1));; *) continue;; esac; case \"$l\" in *'dist_value(units'*|*'pace_per_dist(units'*|*'seg_value(units'*|*'elev_value(units'*) ;; *) bad=$((bad+1));; esac; done < $f; done; echo \"examined=$n formatted=$fmt unconverted=$bad\""))
+    check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=19 formatted=12 unconverted=0")?
     check!("coverage tiers discriminate (high and medium both live)", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct > 0) and (.medium_pct > 0)") == "true")?
     check!("form coverage carries the 90d window", strjq!(ctx, ["summary"], ".data.form_coverage_90d | (.high_pct + .medium_pct + .low_pct == 100) and ((.known | type) == \"boolean\")") == "true")?
     # with fixtures loaded TSB is known, so the enum arm is required here; the

@@ -420,7 +420,7 @@
     },
     "splits": {
       "type": "array",
-      "description": "per-kilometre splits from the distance stream, SI throughout (the human table re-segments at the athlete unit); empty when no distance stream exists",
+      "description": "per-kilometre splits from the distance stream, SI throughout (the human table re-segments at the athlete unit); one row can span several kilometres when a recording dropout hides the boundaries inside it; empty when no distance stream exists",
       "items": {
         "type": "object",
         "required": [
@@ -435,7 +435,8 @@
         "additionalKeys": false,
         "properties": {
           "n": {
-            "type": "integer"
+            "type": "integer",
+            "description": "split ordinal by distance position: advances by the whole split lengths a row covered, so a row spanning a recording dropout leaves a gap in the numbering rather than shifting later rows"
           },
           "distance_m": {
             "type": "number"

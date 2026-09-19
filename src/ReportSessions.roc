@@ -455,17 +455,20 @@ ReportSessions :: [].{
                     })?
                     # splits — absent section when no distance stream (honest absence);
                     # segmented at the READER's unit, converted at the last moment, and
-                    # a cell whose measurement is absent renders "-" per ADR 0009
+                    # a cell whose measurement is absent renders "-" per ADR 0009. The
+                    # pace divides WALL time (elapsed_s carries intra-split stops), so a
+                    # stoplight-heavy run reads slower per split than the session's
+                    # moving-time pace over the same ground — that is the split's story
                     (if List.is_empty(detail.splits_display)
                         Ok({})
                     else {
                         split_rows = List.map(detail.splits_display, |r| [
                             Render.fmt1(Render.dist_value(units, r.distance_m)),
                             Render.pace_per_dist(units, r.distance_m, r.elapsed_s),
-                            if r.elev_known Str.concat(Render.signed(r.elev_gain_m), "m") else "-",
+                            if r.elev_known Str.concat(Render.signed(Render.elev_value(units, r.elev_gain_m)), Render.elev_unit(units)) else "-",
                             if r.hr_known Render.fmt0(r.avg_hr) else "-",
                         ])
-                        Stdout.line!(Render.render_table([Render.dist_unit(units), "pace", "elev", "hr"], split_rows))
+                        Stdout.line!(Render.render_table([Render.dist_unit(units), "pace (${Render.pace_unit(units)})", "elev", "hr"], split_rows))
                     })?
                     # aerobic decoupling (#94). Printed ONLY when it was computable —
                     # an absent line is honest, a "drift 0%" line on a session with no
