@@ -113,7 +113,9 @@ Db :: [].{
 					if d == "" or nm == "" or ag < 0 {
 						{ day: "", name: "", ago: -1, err: "event record unreadable" }
 					} else {
-						{ day: d, name: nm, ago: ag, err: "" }
+						# the gate every drawn human-authored string passes: an
+						# em-dash in an event name would render as unmapped glyphs do
+						{ day: d, name: ascii_safe(nm), ago: ag, err: "" }
 					}
 				}
 			}
@@ -132,7 +134,7 @@ Db :: [].{
 					decoded = match r.str("event_date") {
 						Ok(d) => match r.str("name") {
 							Ok(nm) => match r.i64("ahead") {
-								Ok(ah) => { day: d, name: nm, ahead: ah, err: "" }
+								Ok(ah) => { day: d, name: ascii_safe(nm), ahead: ah, err: "" }
 								Err(_) => { day: "", name: "", ahead: 0, err: "event record unreadable" }
 							}
 							Err(_) => { day: "", name: "", ahead: 0, err: "event record unreadable" }
