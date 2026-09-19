@@ -1664,12 +1664,18 @@ Render :: [].{
         # after nothing is "resumed", nothing after nothing is not a change at all.
         # Defaulting to 0.0 here reports the second case as "load steady (0%)", which
         # claims a measurement that was never taken.
-        # the verdict's ctl delta follows the same displayed-value rule as the
-        # table's: a raw 23.6 -> 24.4 rounds both cells to 24 and the row's
-        # delta to +0, and a verdict saying "fitness building" one line below
-        # that row is the same self-contradiction the rounded deltas removed,
-        # moved down a row
-        "${table}\n\n→ ${compare_verdict(pr.tss, c.tss, (rf(c.ctl) - rf(pr.ctl)).to_f64(), lab)}"
+        # The verdict reads DISPLAYED values on both halves, the same rule as
+        # the table's deltas. The ctl half: a raw 23.6 -> 24.4 rounds both
+        # cells to 24 and the row's delta to +0, and "fitness building" one
+        # line below that row is the self-contradiction the rounded deltas
+        # removed, moved down a row. The load half: a prior in (0, 0.5)
+        # displays as 0, and a percentage computed against it bypasses the
+        # NoBaseline branch whose whole job is to speak when the table shows
+        # none - rounding first sends that case to "vs none", agreeing with
+        # the column. The ±0.5 thresholds inside compare_verdict therefore
+        # receive integer-valued deltas and mean "any nonzero displayed
+        # change"; a finer constant there could not express more.
+        "${table}\n\n→ ${compare_verdict(rf(pr.tss).to_f64(), rf(c.tss).to_f64(), (rf(c.ctl) - rf(pr.ctl)).to_f64(), lab)}"
     }
 }
 
@@ -2168,6 +2174,15 @@ expect {
     w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, zones_known: Bool.True }
     s = Render.compare_screen({ period: "week", window_label: "7d", current: w(200.0, 5.I64, 10.I64, 40.I64, 24.4), prior: w(195.0, 5.I64, 10.I64, 40.I64, 23.6) })
     Str.contains(s, "+0") and Str.contains(s, "fitness holding") and !(Str.contains(s, "building"))
+}
+
+# ...and the LOAD half follows the same rule: a prior of 0.4 TSS displays as
+# 0, so the verdict must say "vs none" — a percentage against a baseline the
+# table prints as none (250% here) would contradict the column it sits under
+expect {
+    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, zones_known: Bool.True }
+    s = Render.compare_screen({ period: "week", window_label: "7d", current: w(1.4, 1.I64, 0.I64, 50.I64, 5.0), prior: w(0.4, 1.I64, 0.I64, 50.I64, 5.0) })
+    Str.contains(s, "vs none") and !(Str.contains(s, "250"))
 }
 
 # ── interval structure rendering ────────────────────────────────────
