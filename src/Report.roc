@@ -196,12 +196,16 @@ Report :: [].{
                     # accrued fitness) from a real all-easy/zero week. Without it the prior
                     # block reads as "0 TSS, 0% easy, 0 ctl" — indistinguishable from a rest
                     # week — and the current-vs-prior delta looks like a phantom spike.
-                    # polarization_known is the ambiguous-zero discriminator (ADR 0009):
-                    # an all-zero zone vector cannot distinguish "no zone data"
-                    # from "a week of unzonable sessions", so hard_min and
-                    # easy_pct are only measurements when some zone second
-                    # exists in the window - the same count test the summary
-                    # zone vector uses, at window grain.
+                    # polarization_known is the ambiguous-zero discriminator
+                    # (ADR 0009) for the two intensity rows: an all-zero zone
+                    # sum cannot distinguish "no zone data" from "a week whose
+                    # sessions produced none", so hard_min and easy_pct are
+                    # measurements only when the window holds some zone second.
+                    # Same name and same split-sum-over-zero predicate class as
+                    # season's block-level polarization_known - and deliberately
+                    # NOT zones_known, which on every payload carrying it tests
+                    # hr_samples_total and means "an HR stream existed", the
+                    # opposite reading of an all-zero sum.
                     block = |w, ctl| {
                         tss: w.tss,
                         sessions: w.sessions,
