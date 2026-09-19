@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1147)?
+    checks_ran_exactly!(1148)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1187,6 +1187,11 @@ b_init_config! = |ctx| {
     # IS a shape change, and the envelope version is how a caller detects one
     check!("summary envelope is versioned", strjq!(ctx, ["summary"], ".schema_version") == "3")?
     check!("missing-config error code", Str.contains(stride!(ctx.bin, ctx.home, ["summary"]), "missing_config"))?
+    # the MACHINE message must carry the same onboarding content the human help
+    # does: an agent-driven install sees only this string, and a bare "see
+    # `stride config`" leaves it one hop short of the four keys (#498)
+    mc_out = stride!(ctx.bin, ctx.home, ["summary"])
+    check!("missing-config envelope names the four keys and where to find them", Str.contains(mc_out, "hr_z1_max") and Str.contains(mc_out, "hr_z4_max") and Str.contains(mc_out, "strava.com/settings/heartrate"))?
     # doctor's MissingConfig arm, reached here because the harness is already in exactly
     # that state — no zones set. This is the first screen a new user sees, and until this
     # check the arm could be garbled with nothing noticing.
