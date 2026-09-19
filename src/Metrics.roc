@@ -299,9 +299,14 @@ Metrics :: [].{
     # short of the activity's own elapsed time.
     #
     # elev_gain_m sums only positive altitude deltas between samples at
-    # most max_sample_gap_s apart - the same bound the zone machinery
-    # applies, because a rise across a longer gap is a sensor dropout or
-    # an ascent made while paused, and crediting it would invent climbing.
+    # most max_fill_gap apart - after interpolation that means adjacent
+    # seconds the resampler vouched for, since any longer adjacency is a
+    # gap it refused to fill. A rise across an unfilled gap is a sensor
+    # dropout or an ascent made while paused, and crediting it would
+    # assert a climb the stream disclaims; time_in_zones can afford its
+    # looser max_sample_gap_s bound because it caps the SECONDS it
+    # credits, while gain books the full magnitude, so the gate is the
+    # resampler's own.
     # elev_known is false when no altitude stream exists at all, and the
     # zeros then are absence, not flat ground. avg_hr is the plain mean of
     # the valid samples inside the span - readings, not seconds, unlike
@@ -324,7 +329,7 @@ Metrics :: [].{
             has_alt = !(List.is_empty(alt_1s))
             row_for = |n, start_t, start_d, end_t, end_d| {
                 gain = List.fold(List.map2(alt_1s, List.drop_first(alt_1s, 1), |a, b| { a, b }), 0.0.F64, |acc, x|
-                    if x.b.t > start_t and x.b.t <= end_t and x.b.t - x.a.t <= max_sample_gap_s and x.b.v > x.a.v (acc + (x.b.v - x.a.v)) else acc)
+                    if x.b.t > start_t and x.b.t <= end_t and x.b.t - x.a.t <= max_fill_gap and x.b.v > x.a.v (acc + (x.b.v - x.a.v)) else acc)
                 in_span = List.keep_if(hr_pairs, |p| p.t > start_t and p.t <= end_t)
                 n_hr = List.len(in_span)
                 mean_hr = if n_hr == 0 0.0 else List.fold(in_span, 0.0.F64, |acc, p| acc + p.v) / (n_hr).to_f64()
@@ -419,11 +424,13 @@ Metrics :: [].{
     }
 
     expect {
-        # altitude rising across a gap longer than max_sample_gap_s is a
-        # dropout or a paused ascent, not climbing: only the adjacent +10 m
-        # step is credited, never the +190 m step across the 40 s hole
-        dist = [{ t: 0.I64, v: 0.0 }, { t: 1.I64, v: 100.0 }, { t: 41.I64, v: 4100.0 }]
-        alt = [{ t: 0.I64, v: 100.0 }, { t: 1.I64, v: 110.0 }, { t: 41.I64, v: 300.0 }]
+        # altitude rising across a gap the resampler refused to fill
+        # (>max_fill_gap) is a dropout or a paused ascent, not climbing:
+        # only the adjacent +10 m step is credited, never the +190 m step
+        # across the 20 s hole - a hole short enough that a looser bound
+        # like max_sample_gap_s would wrongly book the whole rise
+        dist = [{ t: 0.I64, v: 0.0 }, { t: 1.I64, v: 100.0 }, { t: 21.I64, v: 2100.0 }]
+        alt = [{ t: 0.I64, v: 100.0 }, { t: 1.I64, v: 110.0 }, { t: 21.I64, v: 300.0 }]
         rows = splits(dist, alt, [], 300.0)
         List.len(rows) == 1
         and (match List.first(rows) {
