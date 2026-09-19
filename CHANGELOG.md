@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.15.0](https://github.com/eschizoid/stride/compare/v0.14.0...v0.15.0) (2026-09-19)
+
+
+### Features
+
+* distance splits on stride activity, in the athlete's own units ([#499](https://github.com/eschizoid/stride/issues/499)) ([ddb354a](https://github.com/eschizoid/stride/commit/ddb354ad5edb05f94c18c3f08c7fd1d40580f811))
+* open the window instantly with an animated splash, and reshape the flame ([#487](https://github.com/eschizoid/stride/issues/487)) ([3ce822f](https://github.com/eschizoid/stride/commit/3ce822f432c1b8b6a8e86875b3a4efd431de118e))
+* **viz:** multi-sport session traces with labelled axes and honest ghosts ([#490](https://github.com/eschizoid/stride/issues/490)) ([6b4fda8](https://github.com/eschizoid/stride/commit/6b4fda8a03aeb7951416657996ac7d9a60380c11))
+
+
+### Bug Fixes
+
+* **compare:** honest zones and a delta that agrees with its columns ([#492](https://github.com/eschizoid/stride/issues/492)) ([8a9a80f](https://github.com/eschizoid/stride/commit/8a9a80f228c644f26f6671f8a950ca9015b4f106))
+* draw a flat plateau flat, and make the streak flame read as fire ([#482](https://github.com/eschizoid/stride/issues/482)) ([2dacbd6](https://github.com/eschizoid/stride/commit/2dacbd6baaa409d2995a81bf5ce3476b920019c5))
+* keep the base image at full pixel density when glow is on ([#486](https://github.com/eschizoid/stride/issues/486)) ([03e7458](https://github.com/eschizoid/stride/commit/03e74581c99c042f3daa6a77e43ac651f2494b84))
+* machine missing_config error names the zone keys and where to find them ([#501](https://github.com/eschizoid/stride/issues/501)) ([00730df](https://github.com/eschizoid/stride/commit/00730df1b848709d1b3b8e9ac29acbe2dc48634c))
+* pace bests roll over moving seconds, so real-world runs score rTSS ([#496](https://github.com/eschizoid/stride/issues/496)) ([6f1d6c8](https://github.com/eschizoid/stride/commit/6f1d6c8560e8ed17fa23a87ede1dfc94e6a1a6d3))
+* **viz:** event and ridden names pass the ascii_safe gate ([#493](https://github.com/eschizoid/stride/issues/493)) ([3b9ba2e](https://github.com/eschizoid/stride/commit/3b9ba2e1c217cc3b9723d0168dc185e074373e2b))
+
 ## [0.14.0](https://github.com/eschizoid/stride/compare/v0.13.0...v0.14.0) (2026-09-17)
 
 
