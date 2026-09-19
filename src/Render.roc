@@ -1634,11 +1634,14 @@ Render :: [].{
         lab = p.window_label
         # The delta is computed from the values AS DISPLAYED, not from the raw
         # F64s: each cell rounds independently, so three individually-correct
-        # roundings can contradict each other (276.4 and 232.9 print 276, 233
+        # roundings can contradict each other (276.4 and 232.8 print 276, 233
         # and a raw delta of -44 - every reader subtracts the columns, gets
         # 43, and concludes the arithmetic is wrong). A table must agree with
         # itself; signed() on the raw value remains right for a delta with no
-        # columns beside it, like the summary ramp line.
+        # columns beside it, like the summary ramp line. The agreement rests
+        # on rf sharing fmt0's exact body, ok_or(0) fallback included - change
+        # how fmt0 rounds and this rounding must move with it, or the deltas
+        # quietly stop describing the cells beside them.
         rf = |x| x.round_to_i64_try().ok_or(0)
         df = |cur, prev| signed((rf(cur) - rf(prev)).to_f64())
         di = |cur, prev| signed(cur.to_f64() - prev.to_f64())
@@ -1648,14 +1651,14 @@ Render :: [].{
         # season block table renders the same absence as "-", and ADR 0009's
         # rule is that absence is flagged or discriminated, never zeroed.
         zc = |known, v| if known v else "-"
-        zd = |v| if c.zones_known and pr.zones_known v else "-"
+        zd = |v| if c.polarization_known and pr.polarization_known v else "-"
         table = render_table(
             ["metric", "prior ${lab}", "last ${lab}", "Δ"],
             [
                 ["load", fmt0(pr.tss), fmt0(c.tss), df(c.tss, pr.tss)],
                 ["sessions", I64.to_str(pr.sessions), I64.to_str(c.sessions), di(c.sessions, pr.sessions)],
-                ["hard (min)", zc(pr.zones_known, I64.to_str(pr.hard_min)), zc(c.zones_known, I64.to_str(c.hard_min)), zd(di(c.hard_min, pr.hard_min))],
-                ["easy %", zc(pr.zones_known, I64.to_str(pr.easy_pct)), zc(c.zones_known, I64.to_str(c.easy_pct)), zd(di(c.easy_pct, pr.easy_pct))],
+                ["hard (min)", zc(pr.polarization_known, I64.to_str(pr.hard_min)), zc(c.polarization_known, I64.to_str(c.hard_min)), zd(di(c.hard_min, pr.hard_min))],
+                ["easy %", zc(pr.polarization_known, I64.to_str(pr.easy_pct)), zc(c.polarization_known, I64.to_str(c.easy_pct)), zd(di(c.easy_pct, pr.easy_pct))],
                 ["fitness (ctl)", fmt0(pr.ctl), fmt0(c.ctl), df(c.ctl, pr.ctl)],
             ],
         )
@@ -1672,9 +1675,11 @@ Render :: [].{
         # displays as 0, and a percentage computed against it bypasses the
         # NoBaseline branch whose whole job is to speak when the table shows
         # none - rounding first sends that case to "vs none", agreeing with
-        # the column. The ±0.5 thresholds inside compare_verdict therefore
-        # receive integer-valued deltas and mean "any nonzero displayed
-        # change"; a finer constant there could not express more.
+        # the column. compare_verdict itself still takes raw F64s; THIS, its
+        # only caller, rounds first, so its ±0.5 thresholds see integer-valued
+        # deltas here and mean "any nonzero displayed change" - a second
+        # caller passing raw deltas would reopen the contradiction this line
+        # closes.
         "${table}\n\n→ ${compare_verdict(rf(pr.tss).to_f64(), rf(c.tss).to_f64(), (rf(c.ctl) - rf(pr.ctl)).to_f64(), lab)}"
     }
 }
@@ -2131,14 +2136,14 @@ expect Render.dist_value(Imperial, 1609.344) == 1.0
 
 # compare table + verdict render; ramp shows in the load word
 expect {
-    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, zones_known: Bool.True }
+    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, polarization_known: Bool.True }
     s = Render.compare_screen({ period: "week", window_label: "7d", current: w(227.0, 6.I64, 18.I64, 17.I64, 26.0), prior: w(193.0, 5.I64, 12.I64, 37.I64, 24.0) })
     Str.contains(s, "load") and Str.contains(s, "+34") and Str.contains(s, "ramping") and Str.contains(s, "building")
 }
 
 # zero prior TSS must NOT read as "steady 0%" — it's a resumption
 expect {
-    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, zones_known: Bool.True }
+    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, polarization_known: Bool.True }
     s = Render.compare_screen({ period: "week", window_label: "7d", current: w(200.0, 4.I64, 10.I64, 40.I64, 20.0), prior: w(0.0, 0.I64, 0.I64, 0.I64, 18.0) })
     Str.contains(s, "load resumed") and !(Str.contains(s, "steady"))
 }
@@ -2148,7 +2153,7 @@ expect {
 # delta -43.6 rounds to -44, which contradicts the subtraction every reader
 # performs on the printed cells
 expect {
-    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, zones_known: Bool.True }
+    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, polarization_known: Bool.True }
     s = Render.compare_screen({ period: "week", window_label: "7d", current: w(232.8, 5.I64, 10.I64, 40.I64, 24.0), prior: w(276.4, 6.I64, 12.I64, 38.I64, 24.0) })
     Str.contains(s, "276") and Str.contains(s, "233") and Str.contains(s, "-43") and !(Str.contains(s, "-44"))
 }
@@ -2162,7 +2167,7 @@ expect {
 # beside a suppressed cell hand the reader the suppressed values back by
 # subtraction (12 + 76 and 37 + 62 recover exactly what the "-" hid).
 expect {
-    w = |tss, sessions, hard, easy, ctl, zk| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, zones_known: zk }
+    w = |tss, sessions, hard, easy, ctl, zk| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, polarization_known: zk }
     s = Render.compare_screen({ period: "week", window_label: "7d", current: w(200.0, 4.I64, 88.I64, 99.I64, 20.0, Bool.False), prior: w(193.0, 5.I64, 12.I64, 37.I64, 24.0, Bool.True) })
     Str.contains(s, "-") and Str.contains(s, "37") and Str.contains(s, "12") and !(Str.contains(s, "88")) and !(Str.contains(s, "99")) and !(Str.contains(s, "+76")) and !(Str.contains(s, "+62"))
 }
@@ -2171,7 +2176,7 @@ expect {
 # as 24 and the delta as +0, so the verdict must say holding — the raw delta
 # 0.8 crosses the ±0.5 threshold and would say building under a +0
 expect {
-    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, zones_known: Bool.True }
+    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, polarization_known: Bool.True }
     s = Render.compare_screen({ period: "week", window_label: "7d", current: w(200.0, 5.I64, 10.I64, 40.I64, 24.4), prior: w(195.0, 5.I64, 10.I64, 40.I64, 23.6) })
     Str.contains(s, "+0") and Str.contains(s, "fitness holding") and !(Str.contains(s, "building"))
 }
@@ -2180,7 +2185,7 @@ expect {
 # 0, so the verdict must say "vs none" — a percentage against a baseline the
 # table prints as none (250% here) would contradict the column it sits under
 expect {
-    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, zones_known: Bool.True }
+    w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, polarization_known: Bool.True }
     s = Render.compare_screen({ period: "week", window_label: "7d", current: w(1.4, 1.I64, 0.I64, 50.I64, 5.0), prior: w(0.4, 1.I64, 0.I64, 50.I64, 5.0) })
     Str.contains(s, "vs none") and !(Str.contains(s, "250"))
 }

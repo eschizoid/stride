@@ -13,8 +13,8 @@ auth.json	authorized,expires_at	authorized,expires_at	-	$
 commands.json	args,error_codes,interactive,mutates,name,network,schema	args,error_codes,interactive,mutates,name,network,schema	-	properties.commands.items
 commands.json	commands,flags,universal_error_codes	commands,flags,universal_error_codes	-	$
 commands.json	example,name,required	example,name,required	-	properties.commands.items.properties.args.items
-compare.json	ctl,easy_pct,hard_min,has_data,sessions,tss,zones_known	ctl,easy_pct,hard_min,has_data,sessions,tss,zones_known	doc	properties.current
-compare.json	ctl,easy_pct,hard_min,has_data,sessions,tss,zones_known	ctl,easy_pct,hard_min,has_data,sessions,tss,zones_known	doc	properties.prior
+compare.json	ctl,easy_pct,hard_min,has_data,polarization_known,sessions,tss	ctl,easy_pct,hard_min,has_data,polarization_known,sessions,tss	doc	properties.current
+compare.json	ctl,easy_pct,hard_min,has_data,polarization_known,sessions,tss	ctl,easy_pct,hard_min,has_data,polarization_known,sessions,tss	doc	properties.prior
 compare.json	current,period,prior,window_label	current,period,prior,window_label	doc	$
 complete.json	activity,completed_session,detected_known,detected_mean_dur_s,detected_mean_watts,detected_reps,dropped_substitute,released_substitute_of,replaced_activity,reps_delta,rest,target_dur_s,target_known,target_reps,target_watts,watts_pct	completed_session,dropped_substitute,replaced_activity	-	$
 config.json	key,redacted,value	key,value	doc	$

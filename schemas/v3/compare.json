@@ -17,9 +17,9 @@
         "easy_pct",
         "hard_min",
         "has_data",
+        "polarization_known",
         "sessions",
-        "tss",
-        "zones_known"
+        "tss"
       ],
       "additionalKeys": false,
       "properties": {
@@ -41,7 +41,7 @@
         "tss": {
           "type": "number"
         },
-        "zones_known": {
+        "polarization_known": {
           "type": "boolean",
           "description": "true when the window holds any zone seconds; hard_min and easy_pct are measurements only then - an all-zero zone vector cannot distinguish no-zone-data from unzonable sessions"
         }
@@ -57,9 +57,9 @@
         "easy_pct",
         "hard_min",
         "has_data",
+        "polarization_known",
         "sessions",
-        "tss",
-        "zones_known"
+        "tss"
       ],
       "additionalKeys": false,
       "properties": {
@@ -81,7 +81,7 @@
         "tss": {
           "type": "number"
         },
-        "zones_known": {
+        "polarization_known": {
           "type": "boolean",
           "description": "true when the window holds any zone seconds; hard_min and easy_pct are measurements only then - an all-zero zone vector cannot distinguish no-zone-data from unzonable sessions"
         }
