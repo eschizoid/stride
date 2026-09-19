@@ -97,6 +97,8 @@ Ui :: [].{
 		mouse_x : F32,
 		mouse_y : F32,
 		win : { w : F32, h : F32 },
+		ui_percent : I64,
+		ui_scale : F32,
 		detail_day : Str,
 		detail : List(Db.DayLine),
 		plan : List(Db.PlanRow),
