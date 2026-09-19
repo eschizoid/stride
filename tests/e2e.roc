@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1148)?
+    checks_ran_exactly!(1149)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -1192,10 +1192,17 @@ b_init_config! = |ctx| {
     # `stride config`" leaves it one hop short of the four keys (#498)
     mc_out = stride!(ctx.bin, ctx.home, ["summary"])
     check!("missing-config envelope names the four keys and where to find them", Str.contains(mc_out, "hr_z1_max") and Str.contains(mc_out, "hr_z4_max") and Str.contains(mc_out, "strava.com/settings/heartrate"))?
+    # ...and the HUMAN help stays gated too: every key name it offers must be one
+    # `config set` accepts (a bare "z4_max" sat in this screen and was refused
+    # when copied), so pin the accepted spelling and the URL in human mode
+    mc_human = stride_human!(ctx.bin, ctx.home, ["summary"])
+    check!("human zone help names an accepted key spelling and where to find the values", Str.contains(mc_human, "hr_z4_max 183") and Str.contains(mc_human, "above hr_z4_max") and Str.contains(mc_human, "strava.com/settings/heartrate"))?
     # doctor's MissingConfig arm, reached here because the harness is already in exactly
     # that state — no zones set. This is the first screen a new user sees, and until this
-    # check the arm could be garbled with nothing noticing.
-    check!("doctor names the absent zone bounds rather than reporting a count", Str.contains(stride!(ctx.bin, ctx.home, ["doctor"]), "hr zone bounds are not set"))?
+    # check the arm could be garbled with nothing noticing. Pinned at the FIELD, not the
+    # bare phrase: the missing_config envelope opens with the same words, so a phrase-level
+    # match could be satisfied by the wrong surface.
+    check!("doctor names the absent zone bounds rather than reporting a count", Str.contains(stride!(ctx.bin, ctx.home, ["doctor"]), "\"config_error\":\"hr zone bounds are not set"))?
     # ── platform failures reach the caller as the contract (#183) ────────
     # A query before `stride init` used to die with `Program exited with error:
     # SqliteErr(CanNotOpen, …)` on stderr and EMPTY stdout — no code, no
