@@ -735,12 +735,12 @@ Analyze :: [].{
             }
         gas_speeds = List.map(gas_1s_pairs, |p| p.v)
         ngp_speed = Metrics.normalized_power(gas_speeds)
-        best20_speed = Metrics.best_rolling_mean_1s(gas_1s_pairs, 1200)
+        best20_speed = Metrics.best_rolling_mean_moving(gas_1s_pairs, 1200)
         # the 300 s and 600 s rungs of the same grade-adjusted ladder (#188). Same source
         # stream as best20_speed, so a hilly rep is comparable with a flat one; together
         # the three points are what critical speed fits S(t) = D'/t + CS against.
-        best300_speed = Metrics.best_rolling_mean_1s(gas_1s_pairs, 300)
-        best600_speed = Metrics.best_rolling_mean_1s(gas_1s_pairs, 600)
+        best300_speed = Metrics.best_rolling_mean_moving(gas_1s_pairs, 300)
+        best600_speed = Metrics.best_rolling_mean_moving(gas_1s_pairs, 600)
         # ADR 0005 as amended: the threshold in force on THIS activity's date, carried on the
         # row by the SELECT — not one global current threshold applied to all of history.
         threshold_speed = row.pthr
@@ -1107,5 +1107,5 @@ Analyze :: [].{
     # on every row already in the db, so the feature reading it is inert for exactly the
     # history that would make it useful — the whole activity archive. 33 adds the #188
     # speed ladder (best_300s_speed / best_600s_speed).
-    metrics_rev = 33
+    metrics_rev = 34
 }

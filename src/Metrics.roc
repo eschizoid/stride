@@ -206,6 +206,40 @@ Metrics :: [].{
         }
     }
 
+    # The pace variant: rolls over MOVING seconds, not wall seconds. The graded
+    # speed series is defined on moving time — grade_step re-anchors across a
+    # stopped or jittering sample precisely so stopped time cannot deflate
+    # speed — so its timestamps carry a one-second hole at every stall. Judged
+    # by wall-clock contiguity, a real outdoor run's scattered stalls shatter
+    # the series into stretches far shorter than any best window, and every
+    # pace best, and the threshold pace derived from the 20-minute one, comes
+    # out absent on data that plainly contains the effort. Re-indexing to the
+    # moving-second axis makes a window of n samples exactly n moving seconds,
+    # which is what a pace best means on a series that has already excised its
+    # stops. POWER bests stay on wall time on purpose: watts pairs are
+    # resampled with Hold and never dropped, so there a broken window is a
+    # real pause, not jitter.
+    best_rolling_mean_moving : List({ t : I64, v : F64 }), U64 -> Try(F64, [TooShort])
+    best_rolling_mean_moving = |pairs, window|
+        best_rolling_mean_1s(List.map_with_index(pairs, |p, i| { t: (i).to_i64_wrap(), v: p.v }), window)
+
+    expect {
+        # a moving-time series with a hole after every second sample: wall
+        # contiguity finds no 3-second window anywhere, the moving axis finds
+        # them all and picks the fastest
+        holey = [{ t: 10.I64, v: 2.0 }, { t: 11.I64, v: 2.0 }, { t: 13.I64, v: 4.0 }, { t: 14.I64, v: 4.0 }, { t: 16.I64, v: 6.0 }, { t: 17.I64, v: 6.0 }]
+        wall = best_rolling_mean_1s(holey, 3)
+        moving = best_rolling_mean_moving(holey, 3)
+        (match wall {
+            Ok(_) => Bool.False
+            Err(_) => Bool.True
+        })
+        and (match moving {
+            Ok(m) => (m - 16.0 / 3.0).abs() < 0.001
+            Err(_) => Bool.False
+        })
+    }
+
     # does the window starting at i cover `window` consecutive real seconds?
     contiguous = |pairs, i, window| {
         lo = List.get(pairs, i).map_ok(|p| p.t).ok_or(0.I64)
