@@ -13,6 +13,7 @@ app [Model, program] { rr: platform "https://github.com/lukewilliamboswell/roc-r
 import rr.App
 import rr.Assets
 import rr.Capture
+import rr.Camera
 import rr.Cmd
 import rr.Color
 import rr.Draw
@@ -31,6 +32,7 @@ import Table
 import Curve
 import Career
 import Db
+import DisplayScale
 import Hud
 import Theme
 import Trace
@@ -47,7 +49,7 @@ init! = App.init(
 		.with_size({ width: Theme.win_w, height: Theme.win_h })
 		.with_frame_pacing(Capped(60))
 		.with_resizable(Bool.True)
-		.with_min_size({ width: 980, height: 600 })
+		.with_min_size({ width: DisplayScale.min_width, height: DisplayScale.min_height })
 		.with_output_dir("captures"),
 	|_startup| {
 		font = Draw.default_font!()
@@ -182,16 +184,16 @@ load_model! = |font, curve_days, boot| {
 			if fit.ok
 				"CP ${Db.fmt_f(fit.cp)} W · W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${Db.fmt_f(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
 			else "CP fit unavailable - the engine did not answer"
-		# the brand: Quicksand (the wordmark's rounded face) carries PROSE —
-		# titles, legends, captions, hints; JetBrains Mono (the tagline's
-		# voice) carries DATA SURFACES — KPI digits, ticks, end labels, and
-		# every immediate readout/table cell, mixed words included, so a data
-		# line never switches face mid-string. The platform default appears
-		# only when neither file can be found
-		head = brand_font!(home, "Quicksand-Medium.ttf", 64, font)
-		mono_big = brand_font!(home, "JetBrainsMono-Regular.ttf", 60, font)
-		mono = brand_font!(home, "JetBrainsMono-Regular.ttf", 32, font)
-		mk! = |txt, sz| Text.from(txt, head).size(sz).prepare!()
+		# Quicksand carries prose; JetBrains Mono carries data. Small labels
+		# use an atlas close to their displayed size: shrinking title-sized
+		# glyphs to captions loses thin strokes between samples. Titles and
+		# KPI digits have their own larger atlases. Missing fonts fall back
+		# to the platform's built-in face.
+		head = brand_font!(home, "Quicksand-Medium.ttf", 24, font)
+		title_font = brand_font!(home, "Quicksand-Medium.ttf", 48, font)
+		mono_big = brand_font!(home, "JetBrainsMono-Regular.ttf", 48, font)
+		mono = brand_font!(home, "JetBrainsMono-Regular.ttf", 24, font)
+		mk! = |txt, sz| Text.from(txt, if sz >= 24 title_font else head).size(sz).prepare!()
 		mkm! = |txt, sz| Text.from(txt, mono).size(sz).prepare!()
 		mkb! = |txt, sz| Text.from(txt, mono_big).size(sz).prepare!()
 		curve_lbls = List.map_try!(loaded.c, |c| {
@@ -227,6 +229,7 @@ load_model! = |font, curve_days, boot| {
 			} else {
 				{ top: "no event planned", sub: "stride event add <date> <name>" }
 			}
+		initial_layout = DisplayScale.layout(DisplayScale.default_percent, { w: I32.to_f32(Theme.win_w), h: I32.to_f32(Theme.win_h) })
 		Ok({
 			title: mk!("Stride", 30)?,
 			subs: [
@@ -349,7 +352,9 @@ load_model! = |font, curve_days, boot| {
 			range: 90.U64,
 			mouse_x: 0.0,
 			mouse_y: 0.0,
-			win: { w: I32.to_f32(Theme.win_w), h: I32.to_f32(Theme.win_h) },
+			win: { w: initial_layout.w, h: initial_layout.h },
+			ui_percent: DisplayScale.default_percent,
+			ui_scale: initial_layout.scale,
 			detail_day: "",
 			detail: [],
 			mouse_in: Bool.False,
@@ -888,7 +893,7 @@ update! = |model0, program_input| {
 			DayDetail(dd) => if dd.day == acc.detail_day ({ ..acc, detail: dd.lines }) else acc
 			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" } }
 			Directive(d2) => { ..acc, bus_note: d2.note }
-			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim }
+			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim }
 			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day, trace_unit: sw.un }
 		})
 	# the coach's word arrives beside the human's input and steers only what
@@ -913,8 +918,13 @@ update! = |model0, program_input| {
 	if d.key_pressed(KeyEscape) {
 		Err(Exit(0))
 	} else {
-		win = { w: I32.to_f32(program_input.window.size.width), h: I32.to_f32(program_input.window.size.height) }
-		m0 = d.mouse.position()
+		pixels = { w: I32.to_f32(program_input.window.size.width), h: I32.to_f32(program_input.window.size.height) }
+		ctrl = d.key_down(KeyLeftControl) or d.key_down(KeyRightControl)
+		ui_action = if !ctrl Keep else if d.key_pressed(KeyEqual) Larger else if d.key_pressed(KeyMinus) Smaller else if d.key_pressed(Key0) Reset else Keep
+		ui_percent = DisplayScale.adjust(model.ui_percent, ui_action)
+		layout = DisplayScale.layout(ui_percent, pixels)
+		win = { w: layout.w, h: layout.h }
+		m0 = DisplayScale.point(d.mouse.position(), layout.scale)
 		# the range chips are buttons: a left click inside one selects it. Chip
 		# geometry mirrors Board's row exactly - right-anchored at
 		# win.w - 420 + i*54, y 64, each 46x22 - and must move with it.
@@ -1126,14 +1136,14 @@ update! = |model0, program_input| {
 		wheel = Mouse.wheel_delta(d.mouse)
 		zoom_raw =
 			if view != 2 model.trace_zoom
-			else if d.key_pressed(Key0) 1.0
+			else if d.key_pressed(Key0) and !ctrl 1.0
 			else if wheel.y > 0.1 (model.trace_zoom * 1.15)
 			else if wheel.y < -0.1 (model.trace_zoom / 1.15)
 			else model.trace_zoom
 		trace_zoom2 = if want_sel2 != model.trace_sel (1.0) else F32.min(20.0, F32.max(1.0, zoom_raw))
 		pan_raw =
 			if view != 2 model.trace_pan
-			else if d.key_pressed(Key0) or want_sel2 != model.trace_sel 0.0
+			else if (d.key_pressed(Key0) and !ctrl) or want_sel2 != model.trace_sel 0.0
 			else {
 				pw9 = win.w - Theme.pad_l - Theme.pad_r
 				u9 = F32.min(1.0, F32.max(0.0, (m.x - Theme.pad_l) / pw9))
@@ -1141,7 +1151,7 @@ update! = |model0, program_input| {
 					# hold the moment under the cursor still through the zoom
 					t9 = model.trace_pan + u9 / model.trace_zoom
 					t9 - u9 / trace_zoom2
-				} else if Mouse.button_down(d.mouse, Left) and m.y > Theme.pad_t and m.y < win.h - Theme.pad_b {
+				} else if layout.scale == model.ui_scale and Mouse.button_down(d.mouse, Left) and m.y > Theme.pad_t and m.y < win.h - Theme.pad_b {
 					model.trace_pan - (m.x - model.mouse_x) / pw9 / trace_zoom2
 				} else model.trace_pan
 			}
@@ -1296,13 +1306,13 @@ update! = |model0, program_input| {
 		}
 		glow2 =
 			match model.glow {
-				Ready(g9) => if g9.gw == win.w and g9.gh == win.h (model.glow) else build_glow!(win)
-				Unbuilt => build_glow!(win)
+				Ready(g9) => if g9.gw == pixels.w and g9.gh == pixels.h (model.glow) else build_glow!(pixels)
+				Unbuilt => build_glow!(pixels)
 				# a refusal is sticky at the size it happened; a resize retries
-				Unavailable(u9) => if u9.gw == win.w and u9.gh == win.h (model.glow) else build_glow!(win)
+				Unavailable(u9) => if u9.gw == pixels.w and u9.gh == pixels.h (model.glow) else build_glow!(pixels)
 			}
 		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
-		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
@@ -1363,6 +1373,7 @@ scene! = |model, frame| {
 	frame.rectangle_gradient_v!({ x: 16.0, y: 16.0, width: model.win.w - 32.0, height: (model.win.h - 32.0) * 0.4, color_top: Color.with_alpha(Color.from_hex_rgb(0x232332), 40), color_bottom: Color.with_alpha(Theme.panel, 0) })
 	frame.rectangle_gradient_v!({ x: 16.0, y: model.win.h - 96.0, width: model.win.w - 32.0, height: 80.0, color_top: Color.with_alpha(Theme.bg, 0), color_bottom: Color.with_alpha(Theme.bg, 90) })
 	model.title.draw!(frame, { pos: { x: 34.0, y: 30.0 }, color: Color.white, align: (Top, Left) })
+	Text.from("${Db.fmt_i(model.ui_scale * 100.0)}%  Ctrl +/-", model.font).size(11).draw!(frame, { pos: { x: 152.0, y: 40.0 }, color: Theme.ink_muted, align: (Top, Left) })
 	# the recording badge lives below the pills on every view: a red dot
 	# while filming, a quiet confirmation once the file is written
 	_ = match model.rec_status {
@@ -1592,31 +1603,29 @@ splash_route! = |model, frame, cx, cy, pi, mixc| {
 	{}
 }
 
-# The frame's last word: with a working pipeline and the glow on, the scene
-# draws DIRECTLY to the screen first - at the framebuffer's full pixel
-# density - and the offscreen target feeds only the additive bloom layer.
-# The target is logical-sized, which on a HiDPI screen is half the pixels;
-# routing the base image through it (the shape this replaced) blitted the
-# whole UI back upscaled, so glow-on cost every glyph its sharpness. The
-# bloom layer is blurred by construction, so ITS resolution cannot show.
-# Any other state draws the scene directly, exactly as the app rendered
-# before shaders existed.
-render! : Model, Draw.Frame => Try({}, [Exit(I64), ..])
+# UI zoom transforms geometry directly into the framebuffer. The optional
+# bloom target uses window coordinates, with the same camera inside it;
+# only the additive halo is sampled from a texture, never the base text.
+scaled_scene! : Model, Draw.Frame => Try({}, [Exit(I64), ScopeLimit, ..])
+scaled_scene! = |model, frame|
+	frame.with_camera!(Camera.default.with_zoom(model.ui_scale), |f| scene!(model, f))
+
+render! : Model, Draw.Frame => Try({}, [Exit(I64), ScopeLimit, ..])
 render! = |model, frame| {
 	if model.booting {
-		splash!(model, frame)
+		frame.with_camera!(Camera.default.with_zoom(model.ui_scale), |f| splash!(model, f))
 	} else match model.glow {
 		Ready(g) =>
 			if model.glow_on {
-				scene!(model, frame)?
+				scaled_scene!(model, frame)?
 				# a refused scope leaves the sharp base standing alone -
 				# glow degrades, never the image under it
-				_ = match frame.with_render_texture!(g.rt, |f| scene!(model, f)) {
+				_ = match frame.with_render_texture!(g.rt, |f| scaled_scene!(model, f)) {
 					Err(_) => {}
 					Ok(_) => {
-						td = { texture: g.rt.texture(), source: g.rt.source(), dest: { x: 0.0, y: 0.0, width: model.win.w, height: model.win.h }, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.white }
-						g.rx.set!(model.win.w)
-						g.ry.set!(model.win.h)
+						td = { texture: g.rt.texture(), source: g.rt.source(), dest: { x: 0.0, y: 0.0, width: g.gw, height: g.gh }, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.white }
+						g.rx.set!(g.gw)
+						g.ry.set!(g.gh)
 						_ = frame.with_blend_mode!(Additive, |f2|
 							f2.with_shader!(g.shader, |f3| {
 								f3.texture!(td)
@@ -1625,7 +1634,7 @@ render! = |model, frame| {
 					}
 				}
 				Ok({})
-			} else scene!(model, frame)
-		_ => scene!(model, frame)
+			} else scaled_scene!(model, frame)
+		_ => scaled_scene!(model, frame)
 	}
 }

@@ -3,9 +3,9 @@ import rr.Color
 Theme :: [].{
 	# window geometry — every view maps through the same paddings
 	win_w : I32
-	win_w = 980
+	win_w = 1470
 	win_h : I32
-	win_h = 600
+	win_h = 900
 	pad_l : F32
 	pad_l = 64
 	pad_r : F32
@@ -26,9 +26,9 @@ Theme :: [].{
 	card : Color.Rgba
 	card = Color.from_hex_rgb(0x1b1b22)
 	ink_muted : Color.Rgba
-	ink_muted = Color.from_hex_rgb(0x8593a2)
+	ink_muted = Color.from_hex_rgb(0xb1bccb)
 	ink_faint : Color.Rgba
-	ink_faint = Color.from_hex_rgb(0x4d5a68)
+	ink_faint = Color.from_hex_rgb(0x8998aa)
 	ctl_c : Color.Rgba
 	ctl_c = Color.from_hex_rgb(0x4f8ef7)
 	atl_c : Color.Rgba

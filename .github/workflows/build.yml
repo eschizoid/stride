@@ -83,6 +83,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          roc test src/viz/DisplayScale.roc
           for m in Fmt Sports; do
             echo "--- roc test src/core/$m.roc (the package both binaries import) ---"
             roc test "src/core/$m.roc"

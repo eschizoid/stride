@@ -93,6 +93,8 @@ the `weekly_ramp` view - the one definition of weekly ramp. A directive with vie
 
 | key / gesture | effect |
 |---|---|
+| `Ctrl` + `+` / `-` | increase / decrease UI size in 25% steps, from 100% to 200%; the scale fits the window so navigation remains visible |
+| `Ctrl` + `0` | reset UI size to the 150% default; reloads preserve the chosen size until the app closes |
 | `1` / `2` / `3` | range 30 / 60 / 90 days (form board) |
 | `←` / `→` | walk the day cursor (form board; ← older, → newer, past newest turns it off) |
 | `R` | reload everything from the database without reopening |
