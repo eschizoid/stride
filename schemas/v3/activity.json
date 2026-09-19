@@ -3,43 +3,44 @@
   "type": "object",
   "additionalKeys": false,
   "required": [
-    "id",
+    "avg_hr",
+    "baselines",
     "date",
-    "sport",
-    "name",
-    "moving_time",
+    "decoupling_known",
+    "decoupling_pct",
+    "decoupling_signal",
+    "detection_attempted",
     "distance_m",
-    "tss",
-    "load_model",
-    "np_w",
-    "power_known",
+    "ftp_used",
+    "hard_by_power_s",
+    "hard_s",
+    "hr_drift",
+    "hr_drift_known",
+    "hr_known",
+    "id",
     "intensity",
     "intensity_known",
-    "ftp_used",
+    "interval_summary",
+    "load_model",
+    "max_hr",
+    "moving_time",
+    "name",
+    "np_w",
+    "power_bests",
+    "power_intensity",
+    "power_known",
+    "segments",
+    "splits",
+    "sport",
+    "streams_unreadable",
+    "tss",
+    "w_prime_balance",
     "z1_s",
     "z2_s",
     "z3_s",
     "z4_s",
     "z5_s",
-    "zones_known",
-    "hard_s",
-    "avg_hr",
-    "hr_known",
-    "max_hr",
-    "power_bests",
-    "power_intensity",
-    "hard_by_power_s",
-    "streams_unreadable",
-    "decoupling_pct",
-    "decoupling_known",
-    "decoupling_signal",
-    "interval_summary",
-    "detection_attempted",
-    "segments",
-    "hr_drift",
-    "hr_drift_known",
-    "baselines",
-    "w_prime_balance"
+    "zones_known"
   ],
   "properties": {
     "id": {
@@ -411,11 +412,53 @@
           "type": "number"
         }
       },
-      "description": " `fit_family` names whose model this is (the session's own sport family, fitted on the 90 days STRICTLY BEFORE it, so a session is never inside its own fit). A NEGATIVE `min_j` is the model failing, not depth achieved \u2014 it means more above-CP work was done than the fitted tank holds, so the fit is stale or degenerate; `model_exceeded` flags exactly that. Normalize with `min_j / w_prime_used` before comparing sessions, since `w_prime_used` moves between dates. When `model_exceeded` is true, ONLY `min_j` is meaningful: the recovery term drives on the deficit against the CURRENT balance, so a balance far below zero reconstitutes faster than the model's own ceiling allows and `end_j` is arithmetic on a broken premise. `fit_r2` is how well the CP line fit its own points (1 by construction at `fit_points` 2). CP jumps at window edges as rides enter and leave the 90 days, so treat these as WITHIN-session measures rather than a comparable series."
+      "description": " `fit_family` names whose model this is (the session's own sport family, fitted on the 90 days STRICTLY BEFORE it, so a session is never inside its own fit). A NEGATIVE `min_j` is the model failing, not depth achieved — it means more above-CP work was done than the fitted tank holds, so the fit is stale or degenerate; `model_exceeded` flags exactly that. Normalize with `min_j / w_prime_used` before comparing sessions, since `w_prime_used` moves between dates. When `model_exceeded` is true, ONLY `min_j` is meaningful: the recovery term drives on the deficit against the CURRENT balance, so a balance far below zero reconstitutes faster than the model's own ceiling allows and `end_j` is arithmetic on a broken premise. `fit_r2` is how well the CP line fit its own points (1 by construction at `fit_points` 2). CP jumps at window edges as rides enter and leave the 90 days, so treat these as WITHIN-session measures rather than a comparable series."
     },
     "avg_hr_scored": {
       "type": "number",
-      "description": "The heart rate `baselines.ef.current` was DIVIDED BY: the stream's in-band mean when the session carried a usable stream, the stored summary average otherwise (#311). Equal to `avg_hr` whenever no usable stream mean exists — which INCLUDES the most damaged streams, because a stream lossy enough to corrupt Strava's summary is also lossy enough to fail the coverage gate and fall back. The three worst on the reference database dropped 99.7%, 79% and 76% of their samples and publish both fields identical. They differ when a stream DID pass the gate and its mean differs from the summary: 669 of 738 rows differ at all, almost always by the one decimal Strava stores against a full-precision mean, and only 11 differ by more than 15 bpm. A large gap is the signal; any gap is not. Published so the divisor behind an EF verdict is reachable rather than inferred \u2014 `avg_hr` is still the raw reading and `hr_known` still answers whether one was recorded at all."
+      "description": "The heart rate `baselines.ef.current` was DIVIDED BY: the stream's in-band mean when the session carried a usable stream, the stored summary average otherwise (#311). Equal to `avg_hr` whenever no usable stream mean exists — which INCLUDES the most damaged streams, because a stream lossy enough to corrupt Strava's summary is also lossy enough to fail the coverage gate and fall back. The three worst on the reference database dropped 99.7%, 79% and 76% of their samples and publish both fields identical. They differ when a stream DID pass the gate and its mean differs from the summary: 669 of 738 rows differ at all, almost always by the one decimal Strava stores against a full-precision mean, and only 11 differ by more than 15 bpm. A large gap is the signal; any gap is not. Published so the divisor behind an EF verdict is reachable rather than inferred — `avg_hr` is still the raw reading and `hr_known` still answers whether one was recorded at all."
+    },
+    "splits": {
+      "type": "array",
+      "description": "per-kilometre splits from the distance stream, SI throughout (the human table re-segments at the athlete unit); empty when no distance stream exists",
+      "items": {
+        "type": "object",
+        "required": [
+          "n",
+          "distance_m",
+          "elapsed_s",
+          "elev_gain_m",
+          "elev_known",
+          "avg_hr",
+          "hr_known"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "n": {
+            "type": "integer"
+          },
+          "distance_m": {
+            "type": "number"
+          },
+          "elapsed_s": {
+            "type": "integer",
+            "description": "wall seconds between boundary crossings - a stop inside a split belongs to that split"
+          },
+          "elev_gain_m": {
+            "type": "number"
+          },
+          "elev_known": {
+            "type": "boolean",
+            "description": "false = no altitude stream, the zero is absence not flat ground"
+          },
+          "avg_hr": {
+            "type": "number"
+          },
+          "hr_known": {
+            "type": "boolean"
+          }
+        }
+      }
     }
   }
 }
