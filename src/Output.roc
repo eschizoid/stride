@@ -39,7 +39,7 @@ Output :: [].{
             \\    stride config set hr_z3_max 168
             \\    stride config set hr_z4_max 183
             \\
-            \\(find yours at strava.com/settings/heartrate — z5 is everything above z4_max)
+            \\(find yours at strava.com/settings/heartrate — z5 is everything above hr_z4_max)
     # ── machine interface (JSON output for LLM/tool consumption) ────────
     # Missing-value contract (#156, ADR 0009): literal JSON null is NOT expressible —
     # the builtin encoder stringifies tags ("None"/"Null"), verified by probe. So the
@@ -317,7 +317,7 @@ Output :: [].{
     missing_config! : {} => Try({}, _)
     missing_config! = |{}| {
         (if json_mode!({})
-            emit_err!("missing_config", "set your HR zone bounds first — see `stride config` (FTP is derived automatically)")
+            emit_err!("missing_config", "hr zone bounds are not set — run `stride config set hr_z1_max <bpm>` through hr_z4_max (z5 is everything above hr_z4_max; find yours at strava.com/settings/heartrate; FTP is derived from your power history, never configured)")
         else
             Stdout.line!(zone_config_help))?
         Err(Exit(error_status))
