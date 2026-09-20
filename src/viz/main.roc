@@ -466,13 +466,16 @@ trace_task! = |home, ids, sel|
 			}
 	}
 
-# One day's story, fetched when a table row is clicked
-detail_task! : Str, Str => Msg
-detail_task! = |home, day|
+# One day's story, fetched when a table row is clicked. Units come from the
+# model, not a fresh config read: the window's setting is what launch (or R)
+# loaded, and one panel re-reading it mid-session would disagree with every
+# other surface until the next reload.
+detail_task! : Str, [Metric, Imperial], Str => Msg
+detail_task! = |home, units, day|
 	if home == "" DayDetail({ day, lines: [{ title: "no database path", stats: "", extra: "", zones: [] }] })
 	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
 		Err(_) => DayDetail({ day, lines: [{ title: "cannot open the database", stats: "", extra: "", zones: [] }] })
-		Ok(db) => DayDetail({ day, lines: Db.load_day_detail!(db, Db.units!(db), day) })
+		Ok(db) => DayDetail({ day, lines: Db.load_day_detail!(db, units, day) })
 	}
 
 # The coach's poll: read-and-consume the newest directive, every 60
@@ -1092,8 +1095,9 @@ update! = |model0, program_input| {
 		# so a missing HOME shows that instead of loading... forever
 		_ = if row_hit.hit and detail_day2 != "" {
 			homed = model.home
+			unitsd = model.units
 			dayd = detail_day2
-			Task.spawn!(program_input, || detail_task!(homed, dayd))
+			Task.spawn!(program_input, || detail_task!(homed, unitsd, dayd))
 		}
 		view2 = view
 		# a directive naming a day parks the crosshair there

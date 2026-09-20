@@ -42,17 +42,21 @@ Career :: [].{
 	# a spine value in tenths, in its family's own units - and, for the
 	# kilometre family, the ATHLETE's units. Power reads as watts; pace
 	# converts the stored SPEED to time over the family's distance, which is
-	# what an athlete in that sport actually says.
+	# what an athlete in that sport actually says. The km family goes through
+	# Units.pace_from_speed - the same body the CLI renders with, so the two
+	# surfaces cannot disagree on a label by a rounding mode or a constant -
+	# and the fixed-distance families round the same way beside it.
 	spine_label : [Metric, Imperial], I64, Str, Str -> Str
 	spine_label = |units, v10, kind, fam|
 		if kind == "power" "${I64.to_str(v10 // 10)}w"
 		else {
-			spd = I64.to_f32(v10) / 10.0
-			u = Sports.pace_unit_for(units, fam)
-			secs = if spd <= 0.0 (0.0) else I64.to_f32(u.dist_m) / spd
-			total = match F32.to_i64_try(secs) { Ok(x) => x
-				Err(_) => 0 }
-			Fmt.mmss(total)
+			spd = I64.to_f64(v10) / 10.0
+			if fam == "Rowing" or fam == "Swim" {
+				u = Sports.pace_unit(fam)
+				if spd <= 0.0 "-" else Fmt.mmss((I64.to_f64(u.dist_m) / spd).round_to_i64_try().ok_or(0))
+			} else {
+				Units.pace_from_speed(units, spd)
+			}
 		}
 
 	# The tangent at one month for a MONOTONE cubic (Fritsch-Carlson), in
@@ -115,7 +119,7 @@ Career :: [].{
 		months = cur.rows
 		n = List.len(months)
 		sp = { fam: cur.fam, kind: cur.kind }
-		unit_note = if sp.kind == "power" "threshold watts" else "threshold pace${Sports.pace_unit_for(model.units, sp.fam).label}"
+		unit_note = if sp.kind == "power" "threshold watts" else "threshold pace${Sports.pace_label_for(model.units, sp.fam)}"
 		switch_note = if nspines > 1 "   F  next sport" else ""
 		subtitle = if sp.fam == "" "career - every month since the first session" else "career - ${Str.with_ascii_lowercased(sp.fam)} ${unit_note}${switch_note}"
 		Text.from(subtitle, model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
