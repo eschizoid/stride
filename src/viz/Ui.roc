@@ -54,6 +54,9 @@ Ui :: [].{
 		# power meter recorded them, heart rate otherwise. Strength work never
 		# has watts, and neither does a road ride without a meter.
 		trace_unit : Str,
+		# the athlete's unit preference, read once at load; every surface
+		# converts at the last moment through core.Units, never in SQL
+		units : [Metric, Imperial],
 		# the picker's sport filter; "" offers every sport. [ and ] step to
 		# the next session this filter admits, so the selection index still
 		# addresses the full menu and every cache lookup stays valid

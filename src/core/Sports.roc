@@ -113,6 +113,28 @@ Sports :: [].{
     # is visible on screen, where a missing label would just look broken
     expect Sports.pace_unit("Kayaking").label == "/km"
 
+    # The athlete's unit preference reshapes only the kilometre family: rowing
+    # splits are per 500m and swim paces per 100m in every unit culture, while
+    # the mile replaces the kilometre. dist_m 1609, not 1609.344 - these
+    # labels round to whole seconds, where a third of a metre cannot show.
+    pace_unit_for : [Metric, Imperial], Str -> { dist_m : I64, label : Str }
+    pace_unit_for = |units, fam|
+        if fam == "Rowing" or fam == "Swim" {
+            pace_unit(fam)
+        } else {
+            match units {
+                Metric => { dist_m: 1000, label: "/km" }
+                Imperial => { dist_m: 1609, label: "/mi" }
+            }
+        }
+
+    expect Sports.pace_unit_for(Imperial, "Run").label == "/mi"
+    expect Sports.pace_unit_for(Imperial, "Run").dist_m == 1609
+    expect Sports.pace_unit_for(Metric, "Run") == Sports.pace_unit("Run")
+    # imperial does not reach the fixed-distance families
+    expect Sports.pace_unit_for(Imperial, "Rowing").label == "/500m"
+    expect Sports.pace_unit_for(Imperial, "Swim").label == "/100m"
+
     pace_tss_exponent : Str -> F64
     pace_tss_exponent = |sport|
         if Str.contains(Str.with_ascii_lowercased(sport), "swim") 3.0 else 2.0
