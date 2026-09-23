@@ -170,6 +170,26 @@ Db :: [].{
 		}
 	}
 
+	# the window BEFORE the one on screen, same length: [2N days ago, N days
+	# ago). The curve view's deltas argue against this, not the record book -
+	# progress is a comparison with recent self, and the all-time envelope
+	# stays as a faint reference rather than the antagonist.
+	load_curve_prev! : Sqlite.Db, I64 => List(CurvePt)
+	load_curve_prev! = |db, days| {
+		q = "SELECT secs AS d, CAST(ROUND(MAX(watts)) AS INTEGER) AS p FROM activity_power_ladder WHERE sport_family = 'Ride' AND start_local >= date('now', '-' || :d2 || ' days') AND start_local < date('now', '-' || :d || ' days') GROUP BY rung, secs ORDER BY secs"
+
+		match Sqlite.query!({ db, query: q, bindings: [{ name: ":d", value: Integer(days) }, { name: ":d2", value: Integer(days * 2) }] }) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(rows, |r| {
+					d = r.i64("d") ? |_| "bad d"
+					p = r.i64("p") ? |_| "bad p"
+
+					Ok({ dur_s: d, watts: I64.to_f32(p) })
+				})
+		}
+	}
+
 	# The most recent activity that HAS detected work blocks — the only kind this
 	# view can say anything about. Its id anchors both loaders below.
 	# one line per day: what was actually done, for tooltips and the table.

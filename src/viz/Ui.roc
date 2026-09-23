@@ -28,6 +28,9 @@ Ui :: [].{
 		stale_found : Bool,
 		view : U8,
 		curve : List(Db.CurvePt),
+		# the same rungs over the window immediately BEFORE the visible one -
+		# what the curve view's deltas argue against
+		curve_prev : List(Db.CurvePt),
 		curve_lbls : List({ p : Text.Prepared, d : I64 }),
 		fit_lbl : Text.Prepared,
 		curve_title : Text.Prepared,
@@ -73,6 +76,9 @@ Ui :: [].{
 		trace_cache : List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str }),
 		curve_days : I64,
 		fit_cp : F32,
+		# the fit's own quality, carried so the CP line can dim when the fit
+		# is too weak to deserve a confident stroke
+		fit_r2 : F32,
 		cp_lbl : Text.Prepared,
 		data : List(Db.Point),
 		days : List(Str),

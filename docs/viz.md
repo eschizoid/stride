@@ -278,13 +278,20 @@ window's own rules. Focus writes are throttled
 
 ## The power view (TAB)
 
-A second screen, and the one that answers "where am I against my best":
-the window's power-duration ladder (blue) drawn over the all-time record
-envelope (grey), eight rungs from 5s to 60min. The gap at each rung is
-printed in watts right where it lives; a rung whose window best IS the
-record collapses to one teal dot marked "pr". Hovering a rung reads back
-the record, the day it was set, and the window's value. The CP fit
-reports from the bottom-right status corner, its dashed line on the chart.
+A second screen, and the one that answers "am I holding power?": the
+window's power-duration ladder (blue) drawn over the SAME-LENGTH window
+before it (grey), eight rungs from 5s to 60min. The signed change at each
+rung is printed in watts right where it lives — teal going up, alarm
+going down, nothing when either window lacks the rung. The all-time
+record envelope stays as a faint reference above; a rung whose window
+best IS the record still collapses to one teal dot marked "pr" - with
+its delta printed beside it, since a record rung's change is the best
+news on the chart - and a record set in the last seven days still rings
+gold. Hovering a rung reads
+back the record, the day it was set, and both windows' values. The CP fit
+reports from the bottom-right status corner, its dashed line on the
+chart — dimmed when the fit's own r2 is under 0.9, so a shaky fit cannot
+outrank the footer that admits it.
 The ladder itself - which columns, which family, that zero and NULL both mean unrecorded - is
 the `activity_power_ladder` view's, shared with the record book and the
 CLI's health report.
