@@ -43,7 +43,7 @@ printf '%s\n' "$out"
 # the pins for a one-off, never disable them. Adding or removing an
 # assertion means updating the matching pin ON PURPOSE.
 case "${1:-}" in test)
-  want="${EXPECT_TESTS:-48}"
+  want="${EXPECT_TESTS:-71}"
   want_viz="${EXPECT_VIZ_ASSERTS:-57}"
   have_viz=$(grep -ch '^[[:space:]]*\(expect\|and \)' src/viz/*.roc 2>/dev/null | awk '{s+=$1} END {print s+0}')
   if [ "$have_viz" != "$want_viz" ]; then

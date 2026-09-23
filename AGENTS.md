@@ -195,11 +195,14 @@ nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.ym
 A second Roc app shares the database: the roc-ray window (`src/viz/main.roc`;
 `just viz` opens it). It pins ITS OWN compiler in its app header —
 `tools/pin-check.sh` holds every workflow `nightly-tag:` site to that pin; set
-`ROC_VIZ` to a matching nightly locally. No Roc module can be imported by both
-binaries (two platforms, two pins — #458 tracks convergence), so every
-cross-surface definition lives in a SQL view (`activity_intensity`,
-`weekly_ramp`, `activity_power_ladder`, `plan_current`, `week_bounds` — ADR
-0017): change semantics in the view, never by copying its SQL into a query.
+`ROC_VIZ` to a matching nightly locally. The two apps bind different PLATFORMS
+(basic-cli vs roc-ray), so effectful modules cannot be shared — each carries
+its own `Db` — but both build on one compiler and import the pure `src/core`
+package (#458): a definition BOTH surfaces state goes there (Fmt, Sports,
+Units), one only a single binary uses stays in that binary. Cross-surface
+QUERY semantics still live in SQL views (`activity_intensity`, `weekly_ramp`,
+`activity_power_ladder`, `plan_current`, `week_bounds` — ADR 0017): change
+semantics in the view, never by copying its SQL into a query.
 
 The window is steered and observed through bus tables in the same database —
 `viz_directives` (write), `viz_focus` (read) — and it self-publishes its

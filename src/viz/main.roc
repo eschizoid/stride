@@ -137,7 +137,7 @@ load_model! = |font, curve_days, boot| {
 		home = resolve_home!({})
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if boot or home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [] }
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [], un: Metric }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				Db.publish_caps!(db, caps_views, caps_fields)
@@ -171,9 +171,10 @@ load_model! = |font, curve_days, boot| {
 				rw = Db.load_ramp_weeks!(db)
 				prs = Db.load_prs!(db)
 				nts = Db.load_day_notes!(db)
-				{ s, e, c, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, rw, csp, cs, prs, tcache }
+				un = Db.units!(db)
+				{ s, e, c, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, rw, csp, cs, prs, tcache, un }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [] }
+			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [], un: Metric }
 		}
 		ev = Db.find_idx(loaded.s.days, loaded.e.day)
 		# the fit shells out to the engine; the skeleton cannot afford it
@@ -268,6 +269,7 @@ load_model! = |font, curve_days, boot| {
 				Ok(t1) => t1.un
 				Err(_) => "W"
 			},
+			units: loaded.un,
 			trace_sport: "",
 			curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 			trace_hint: mk!("[ / ]  older/newer session      X  sport filter      shift+[ / shift+]  ghost older/newer      C  clear ghost      wheel zoom  drag pan  0 reset      TAB  data table      R  reload      S  screenshot      V  record      ESC quit", 13)?,
@@ -464,13 +466,16 @@ trace_task! = |home, ids, sel|
 			}
 	}
 
-# One day's story, fetched when a table row is clicked
-detail_task! : Str, Str => Msg
-detail_task! = |home, day|
+# One day's story, fetched when a table row is clicked. Units come from the
+# model, not a fresh config read: the window's setting is what launch (or R)
+# loaded, and one panel re-reading it mid-session would disagree with every
+# other surface until the next reload.
+detail_task! : Str, [Metric, Imperial], Str => Msg
+detail_task! = |home, units, day|
 	if home == "" DayDetail({ day, lines: [{ title: "no database path", stats: "", extra: "", zones: [] }] })
 	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
 		Err(_) => DayDetail({ day, lines: [{ title: "cannot open the database", stats: "", extra: "", zones: [] }] })
-		Ok(db) => DayDetail({ day, lines: Db.load_day_detail!(db, day) })
+		Ok(db) => DayDetail({ day, lines: Db.load_day_detail!(db, units, day) })
 	}
 
 # The coach's poll: read-and-consume the newest directive, every 60
@@ -1090,8 +1095,9 @@ update! = |model0, program_input| {
 		# so a missing HOME shows that instead of loading... forever
 		_ = if row_hit.hit and detail_day2 != "" {
 			homed = model.home
+			unitsd = model.units
 			dayd = detail_day2
-			Task.spawn!(program_input, || detail_task!(homed, dayd))
+			Task.spawn!(program_input, || detail_task!(homed, unitsd, dayd))
 		}
 		view2 = view
 		# a directive naming a day parks the crosshair there

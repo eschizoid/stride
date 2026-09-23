@@ -1,4 +1,5 @@
 import core.Fmt
+import core.Units
 import rr.Sqlite
 import rr.Cmd
 
@@ -501,7 +502,7 @@ Db :: [].{
 	# memory read rather than a task round-trip - the same reason the trace
 	# picker caches its sessions.
 	CareerSpine : { fam : Str, kind : Str, rows : List(CareerMonth) }
-	CareerSport : { sport : Str, sessions : I64, hours10 : I64, km : I64 }
+	CareerSport : { sport : Str, sessions : I64, hours10 : I64, dist_m : F64 }
 	load_spine_fams! : Sqlite.Db => List(SpineFam)
 	load_spine_fams! = |db|
 		match Sqlite.query!({ db, query: "SELECT CAST(fam AS TEXT) AS f, CAST(kind AS TEXT) AS k, COUNT(*) AS n FROM monthly_threshold GROUP BY fam, kind ORDER BY n DESC, fam", bindings: [] }) {
@@ -544,17 +545,38 @@ Db :: [].{
 				})
 		}
 
+	# the athlete's unit preference from config, resolved by the shared rule in
+	# core.Units. Absent, unreadable, or a failed read all land on Metric, the
+	# storage unit - the same honest floor every loader here takes, and a
+	# display preference must never be the reason a view fails.
+	units! : Sqlite.Db => [Metric, Imperial]
+	units! = |db|
+		match Sqlite.query!({ db, query: "SELECT CAST(value AS TEXT) AS v FROM config WHERE key = 'units'", bindings: [] }) {
+			Err(_) => Metric
+			Ok(rows) =>
+				match List.first(rows) {
+					Err(_) => Metric
+					Ok(r) =>
+						match r.str("v") {
+							Ok(v) => Units.units_of(v)
+							Err(_) => Metric
+						}
+				}
+		}
+
+	# distance leaves SQL in METRES: rounding to a display unit here would bake
+	# the athlete's setting into the loader, and the renderer is the last moment
 	load_career_sports! : Sqlite.Db => List(CareerSport)
 	load_career_sports! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(sport AS TEXT) AS s, sessions AS n, CAST(ROUND(secs / 360.0) AS INTEGER) AS h10, CAST(ROUND(meters / 1000.0) AS INTEGER) AS km FROM career_totals ORDER BY sessions DESC, sport", bindings: [] }) {
+		match Sqlite.query!({ db, query: "SELECT CAST(sport AS TEXT) AS s, sessions AS n, CAST(ROUND(secs / 360.0) AS INTEGER) AS h10, CAST(COALESCE(meters, 0) AS REAL) AS m FROM career_totals ORDER BY sessions DESC, sport", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
 					s = r.str("s") ? |_| "bad"
 					n = r.i64("n") ? |_| "bad"
 					h10 = r.i64("h10") ? |_| "bad"
-					km = r.i64("km") ? |_| "bad"
-					Ok({ sport: s, sessions: n, hours10: h10, km })
+					m = r.f64("m") ? |_| "bad"
+					Ok({ sport: s, sessions: n, hours10: h10, dist_m: m })
 				})
 		}
 
@@ -604,13 +626,14 @@ Db :: [].{
 		List.fold(notes, "rest day", |acc, x| if x.day == dy x.note else acc)
 
 	# one day's full story for the detail panel: each activity with its type,
-	# duration, distance and load - pre-formatted lines, coach-legible
-	decode_activity_row : Sqlite.Row -> Try(DayLine, [BadRow])
-	decode_activity_row = |r| {
+	# duration, distance and load - pre-formatted lines, coach-legible, in the
+	# athlete's own units (distance arrives in SI metres and converts here)
+	decode_activity_row : [Metric, Imperial], Sqlite.Row -> Try(DayLine, [BadRow])
+	decode_activity_row = |units, r| {
 		nm = r.str("name") ? |_| BadRow
 		sp = r.str("sport") ? |_| BadRow
 		secs = r.i64("secs") ? |_| BadRow
-		km = r.str("km") ? |_| BadRow
+		dist_m = r.f64("dist_m") ? |_| BadRow
 		tss = r.i64("tss") ? |_| BadRow
 		np = r.i64("np") ? |_| BadRow
 		if100 = r.i64("if100") ? |_| BadRow
@@ -622,7 +645,9 @@ Db :: [].{
 		z4 = r.i64("z4") ? |_| BadRow
 		z5 = r.i64("z5") ? |_| BadRow
 		mins = secs // 60
-		stats = if np > 0 "${I64.to_str(mins)}min  ${km}km  ${I64.to_str(tss)} tss  ${I64.to_str(np)}w np" else "${I64.to_str(mins)}min  ${km}km  ${I64.to_str(tss)} tss"
+		dk = Fmt.tenths((Units.dist_value(units, dist_m) * 10.0).round_to_i64_try().ok_or(0))
+		du = Units.dist_unit(units)
+		stats = if np > 0 "${I64.to_str(mins)}min  ${dk}${du}  ${I64.to_str(tss)} tss  ${I64.to_str(np)}w np" else "${I64.to_str(mins)}min  ${dk}${du}  ${I64.to_str(tss)} tss"
 		# if100 is intensity_factor * 100 rounded: 98 -> "IF 0.98", 105 -> "IF 1.05"
 		p1 = if if100 > 0 "IF ${Fmt.hundredths(if100)}" else ""
 		p2 = if hr > 0 "${I64.to_str(hr)} bpm avg" else ""
@@ -631,16 +656,16 @@ Db :: [].{
 		Ok({ title: ascii_safe("${nm} [${sp}]"), stats, extra, zones: [z1, z2, z3, z4, z5] })
 	}
 
-	load_day_detail! : Sqlite.Db, Str => List(DayLine)
-	load_day_detail! = |db, day|
-		match Sqlite.query!({ db, query: "SELECT CAST(a.name AS TEXT) AS name, CAST(a.sport_type AS TEXT) AS sport, CAST(COALESCE(a.moving_time, 0) AS INTEGER) AS secs, CAST(ROUND(COALESCE(a.distance, 0) / 1000.0, 1) AS TEXT) AS km, CAST(ROUND(COALESCE(m.tss, 0)) AS INTEGER) AS tss, CAST(ROUND(COALESCE(m.normalized_power, 0)) AS INTEGER) AS np, CAST(ROUND(COALESCE(m.intensity_factor, 0) * 100) AS INTEGER) AS if100, CAST(ROUND(COALESCE(a.avg_hr, 0)) AS INTEGER) AS hr, CAST(ROUND(COALESCE(r.rpe, 0), 1) AS TEXT) AS rpe, CAST(COALESCE(m.z1_s, 0) AS INTEGER) AS z1, CAST(COALESCE(m.z2_s, 0) AS INTEGER) AS z2, CAST(COALESCE(m.z3_s, 0) AS INTEGER) AS z3, CAST(COALESCE(m.z4_s, 0) AS INTEGER) AS z4, CAST(COALESCE(m.z5_s, 0) AS INTEGER) AS z5 FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id LEFT JOIN ratings r ON r.activity_id = a.id WHERE a.start_local >= :d AND a.start_local < date(:d, '+1 day') ORDER BY a.start_local", bindings: [{ name: ":d", value: String(day) }] }) {
+	load_day_detail! : Sqlite.Db, [Metric, Imperial], Str => List(DayLine)
+	load_day_detail! = |db, units, day|
+		match Sqlite.query!({ db, query: "SELECT CAST(a.name AS TEXT) AS name, CAST(a.sport_type AS TEXT) AS sport, CAST(COALESCE(a.moving_time, 0) AS INTEGER) AS secs, CAST(COALESCE(a.distance, 0) AS REAL) AS dist_m, CAST(ROUND(COALESCE(m.tss, 0)) AS INTEGER) AS tss, CAST(ROUND(COALESCE(m.normalized_power, 0)) AS INTEGER) AS np, CAST(ROUND(COALESCE(m.intensity_factor, 0) * 100) AS INTEGER) AS if100, CAST(ROUND(COALESCE(a.avg_hr, 0)) AS INTEGER) AS hr, CAST(ROUND(COALESCE(r.rpe, 0), 1) AS TEXT) AS rpe, CAST(COALESCE(m.z1_s, 0) AS INTEGER) AS z1, CAST(COALESCE(m.z2_s, 0) AS INTEGER) AS z2, CAST(COALESCE(m.z3_s, 0) AS INTEGER) AS z3, CAST(COALESCE(m.z4_s, 0) AS INTEGER) AS z4, CAST(COALESCE(m.z5_s, 0) AS INTEGER) AS z5 FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id LEFT JOIN ratings r ON r.activity_id = a.id WHERE a.start_local >= :d AND a.start_local < date(:d, '+1 day') ORDER BY a.start_local", bindings: [{ name: ":d", value: String(day) }] }) {
 			Err(_) => [{ title: "detail query failed", stats: "", extra: "", zones: [] }]
 			Ok(rows) =>
 				if List.is_empty(rows) [{ title: "rest day - no activities", stats: "", extra: "", zones: [] }]
 				else
 					# corruption surfaces PER ROW: an unreadable activity renders as
 					# its own error line while its neighbors still show
-					List.map(rows, |r| match decode_activity_row(r) {
+					List.map(rows, |r| match decode_activity_row(units, r) {
 						Ok(line) => line
 						Err(_) => { title: "activity record unreadable", stats: "", extra: "", zones: [] }
 					})

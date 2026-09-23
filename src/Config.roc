@@ -1,3 +1,5 @@
+import core.Units
+
 ## Credential config keys. These live in the db so sync can auto-refresh tokens,
 ## but they must NEVER be surfaced back through `config get` or any JSON payload —
 ## reading them through the query interface would defeat storing them at all. This
@@ -99,8 +101,10 @@ Config :: [].{
 	# value, so an unrecognised one here means a row written before this key existed or by
 	# something bypassing `config set` — metric is what the docs promise as the default, so
 	# it is what an unreadable setting must resolve to rather than an error at render time.
+	# The resolution itself lives in core.Units: the window reads the same row, and two
+	# copies of the rule is how the two surfaces disagree about one athlete's setting.
 	units_of : Str -> [Metric, Imperial]
-	units_of = |v| if v == "imperial" Imperial else Metric
+	units_of = Units.units_of
 
 	# `hr_z1_max` .. `hr_z4_max`, optionally suffixed with a sport family
 	# (`hr_z2_max_ride`) — exactly what `Metrics.hr_zone_key_global` and

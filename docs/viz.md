@@ -16,6 +16,12 @@ the SQLite — no export step, no baked data, nothing the CLI has to prepare.
   usually takes the tile form — the series ends on the last analyzed day, so
   there is rarely a column to mark.
 
+Distance and pace surfaces (the career distance card, the km-family pace
+spine, the table's day-detail line) render in the athlete's `units` config —
+mi and /mi under imperial — read once at launch through the same shared rule
+the CLI uses (`core.Units`); storage stays SI. Rowing and swim paces keep
+/500m and /100m in every unit culture.
+
 ## The athlete HUD
 
 Every view carries a thin XP rail on the panel's left edge. Career hours set
@@ -196,11 +202,12 @@ CREATE TABLE IF NOT EXISTS viz_directives (
 -- consumes everything up to it. NULL fields mean "leave that alone".
 INSERT INTO viz_directives (view, range, cursor_day, trace_day, ghost_day)
 VALUES (0, 30, '2026-09-02', NULL, NULL);
--- view 0..7 (form/power/trace/table/plan/heat/zones/ramp). A directive
--- naming the retired view 8 leaves the VIEW unchanged (the record book
--- merged into the power view at 1); its other fields still land, because
--- every directive field applies independently - NULL means leave alone,
--- and that contract does not change when one field is out of range. range 30|60|90 lands on the view the
+-- view 0..8 (form/power/trace/table/plan/heat/zones/ramp/career) - but read
+-- the list from `stride viz --json`, which the running binary publishes,
+-- rather than from this comment. A directive naming a view outside the
+-- published range leaves the VIEW unchanged; its other fields still land,
+-- because every directive field applies independently - NULL means leave
+-- alone, and that contract does not change when one field is out of range. range 30|60|90 lands on the view the
 -- directive lands on: named view if set, else the visible one — on the power
 -- view it re-windows the ladder+fit, on every other view it sets the form board's
 -- range.

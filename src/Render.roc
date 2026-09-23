@@ -1,4 +1,5 @@
 import core.Fmt
+import core.Units
 import Metrics
 import Drain
 
@@ -398,59 +399,31 @@ Render :: [].{
     }
 
     # ── Units ───────────────────────────────────────────────────────────────────────
-    # Storage and every computation stay SI (metres, m/s); these convert at the LAST
-    # moment, for human tables only. JSON payloads keep `distance_m` whatever the setting
-    # says — the envelope is the coaching agent's contract, and a display preference must
-    # not change what a tool reads (#349).
-    #
-    # 1609.344 is the international mile, exact by definition.
+    # The conversion rule lives in core.Units, one implementation for BOTH binaries:
+    # the window renders the same quantities, and a second copy of a conversion
+    # constant is how two surfaces drift apart while each looks right alone. These
+    # bindings keep the Render.* spelling every CLI call site and unit expect uses —
+    # the e2e unit source-sweep greps those spellings, so delegation must not
+    # rename them. `pace_per_dist` was `pace_per_km`, renamed when it stopped
+    # always being per km: a name asserting a unit while returning the other is
+    # exactly the drift this codebase keeps paying for.
     dist_value : [Metric, Imperial], F64 -> F64
-    dist_value = |units, m|
-        match units {
-            Metric => m / 1000.0
-            Imperial => m / 1609.344
-        }
+    dist_value = Units.dist_value
 
     dist_unit : [Metric, Imperial] -> Str
-    dist_unit = |units|
-        match units {
-            Metric => "km"
-            Imperial => "mi"
-        }
+    dist_unit = Units.dist_unit
 
     pace_unit : [Metric, Imperial] -> Str
-    pace_unit = |units|
-        match units {
-            Metric => "min/km"
-            Imperial => "min/mi"
-        }
+    pace_unit = Units.pace_unit
 
-    # 0.3048 is the international foot in metres, exact by definition.
     elev_value : [Metric, Imperial], F64 -> F64
-    elev_value = |units, m|
-        match units {
-            Metric => m
-            Imperial => m / 0.3048
-        }
+    elev_value = Units.elev_value
 
     elev_unit : [Metric, Imperial] -> Str
-    elev_unit = |units|
-        match units {
-            Metric => "m"
-            Imperial => "ft"
-        }
+    elev_unit = Units.elev_unit
 
-    # m:ss per km or per mile. Was `pace_per_km`, renamed when it stopped always being
-    # per km: a name asserting a unit while returning the other is exactly the drift this
-    # codebase keeps paying for.
     pace_per_dist : [Metric, Imperial], F64, I64 -> Str
-    pace_per_dist = |units, distance_m, moving_time|
-        if distance_m <= 0.0 or moving_time <= 0 {
-            "-"
-        } else {
-            total = (moving_time.to_f64() / dist_value(units, distance_m)).round_to_i64_try().ok_or(0)
-            Fmt.mmss(total)
-        }
+    pace_per_dist = Units.pace_per_dist
 
     # seconds -> "62m"
     mins : I64 -> Str
@@ -486,21 +459,10 @@ Render :: [].{
 
     SegRow : { ordinal : I64, kind : Str, start_s : I64, dur_s : I64, avg_signal : F64, signal : Str, peak_hr : F64, avg_hr : F64, rec_drop : F64, rec_drop_known : Bool }
 
-    # A speed in m/s (SI, like every other distance in the engine), rendered as
-    # time-per-distance, which is what a runner reads. #351: `m/s` was a raw engine
-    # value leaking into a human screen — the defect was the QUANTITY, not the unit,
-    # so converting it to mph would have preserved the wrong presentation in a new unit.
+    # A speed in m/s rendered as time-per-distance, which is what a runner reads
+    # (#351; the rule and its rationale live with the body in core.Units).
     pace_from_speed : [Metric, Imperial], F64 -> Str
-    pace_from_speed = |units, mps|
-        if mps <= 0.0 {
-            "-"
-        } else {
-            per = match units {
-                Metric => 1000.0
-                Imperial => 1609.344
-            }
-            mmss((per / mps).round_to_i64_try().ok_or(0))
-        }
+    pace_from_speed = Units.pace_from_speed
 
     seg_unit : [Metric, Imperial], Str -> Str
     seg_unit = |units, signal|

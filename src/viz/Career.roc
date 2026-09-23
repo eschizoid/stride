@@ -3,6 +3,7 @@ import rr.Draw
 import rr.Text
 import core.Fmt
 import core.Sports
+import core.Units
 import Hud
 import Theme
 import Ui
@@ -38,21 +39,24 @@ Career :: [].{
 		}
 	}
 
-	# a spine value in tenths, in its family's own units. Power reads as
-	# watts; pace converts the stored SPEED to time over the family's
-	# distance, which is what an athlete in that sport actually says.
-	spine_label : I64, Str, Str -> Str
-	spine_label = |v10, kind, fam|
+	# a spine value in tenths, in its family's own units - and, for the
+	# kilometre family, the ATHLETE's units. Power reads as watts; pace
+	# converts the stored SPEED to time over the family's distance, which is
+	# what an athlete in that sport actually says. The km family goes through
+	# Units.pace_from_speed - the same body the CLI renders with, so the two
+	# surfaces cannot disagree on a label by a rounding mode or a constant -
+	# and the fixed-distance families round the same way beside it.
+	spine_label : [Metric, Imperial], I64, Str, Str -> Str
+	spine_label = |units, v10, kind, fam|
 		if kind == "power" "${I64.to_str(v10 // 10)}w"
 		else {
-			spd = I64.to_f32(v10) / 10.0
-			u = Sports.pace_unit(fam)
-			secs = if spd <= 0.0 (0.0) else I64.to_f32(u.dist_m) / spd
-			total = match F32.to_i64_try(secs) { Ok(x) => x
-				Err(_) => 0 }
-			mm = total // 60
-			ss = total % 60
-			"${I64.to_str(mm)}:${if ss < 10 "0" else ""}${I64.to_str(ss)}"
+			spd = I64.to_f64(v10) / 10.0
+			if fam == "Rowing" or fam == "Swim" {
+				u = Sports.pace_unit(fam)
+				if spd <= 0.0 "-" else Fmt.mmss((I64.to_f64(u.dist_m) / spd).round_to_i64_try().ok_or(0))
+			} else {
+				Units.pace_from_speed(units, spd)
+			}
 		}
 
 	# The tangent at one month for a MONOTONE cubic (Fritsch-Carlson), in
@@ -115,7 +119,7 @@ Career :: [].{
 		months = cur.rows
 		n = List.len(months)
 		sp = { fam: cur.fam, kind: cur.kind }
-		unit_note = if sp.kind == "power" "threshold watts" else "threshold pace${Sports.pace_unit(sp.fam).label}"
+		unit_note = if sp.kind == "power" "threshold watts" else "threshold pace${Sports.pace_label_for(model.units, sp.fam)}"
 		switch_note = if nspines > 1 "   F  next sport" else ""
 		subtitle = if sp.fam == "" "career - every month since the first session" else "career - ${Str.with_ascii_lowercased(sp.fam)} ${unit_note}${switch_note}"
 		Text.from(subtitle, model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
@@ -149,14 +153,16 @@ Career :: [].{
 
 			# ── header: the career racking up. The final figures are the true
 			# ones; the count-up is the feeling of accumulation, nothing else.
-			tot = List.fold(model.career_sports, { h10: 0.I64, km: 0.I64, ss: 0.I64 }, |a, s| { h10: a.h10 + s.hours10, km: a.km + s.km, ss: a.ss + s.sessions })
+			tot = List.fold(model.career_sports, { h10: 0.I64, m: 0.0.F64, ss: 0.I64 }, |a, s| { h10: a.h10 + s.hours10, m: a.m + s.dist_m, ss: a.ss + s.sessions })
+			# metres held until here; the card is the last moment (core.Units)
+			dist_whole = (Units.dist_value(model.units, tot.m)).round_to_i64_try().ok_or(0)
 			ease_i = |v| match F32.to_i64_try(I64.to_f32(v) * p) { Ok(x) => x
 				Err(_) => v }
 			cw = 196.0
 			gap = (win_w - 72.0 - cw * 4.0) / 3.0
 			cx0 = |i| 36.0 + I64.to_f32(i) * (cw + gap)
 			card!(frame, model.font, cx0(0), 96.0, "${I64.to_str(ease_i(tot.h10) // 10)}h", "moving time")
-			card!(frame, model.font, cx0(1), 96.0, "${I64.to_str(ease_i(tot.km))} km", "distance")
+			card!(frame, model.font, cx0(1), 96.0, "${I64.to_str(ease_i(dist_whole))} ${Units.dist_unit(model.units)}", "distance")
 			card!(frame, model.font, cx0(2), 96.0, I64.to_str(ease_i(tot.ss)), "sessions")
 			# months TRAINED, not months elapsed: the axis spans every month
 			# daily_load carries, and it carries decay days after the last
@@ -198,7 +204,7 @@ Career :: [].{
 				frame.line!({ start: { x: plot_l, y: gy }, end: { x: plot_r, y: gy }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 40), 1) })
 				w = fmin + (match F32.to_i64_try(q * I64.to_f32(fmax - fmin)) { Ok(v) => v
 					Err(_) => 0 })
-				Text.from(spine_label(w, sp.kind, sp.fam), model.font).size(10).draw!(frame, { pos: { x: plot_l - 8.0, y: gy - 5.0 }, color: ink_faint, align: (Top, Right) })
+				Text.from(spine_label(model.units, w, sp.kind, sp.fam), model.font).size(10).draw!(frame, { pos: { x: plot_l - 8.0, y: gy - 5.0 }, color: ink_faint, align: (Top, Right) })
 			})
 
 			# ── year bands rise from the baseline as the head crosses into them.
@@ -332,7 +338,7 @@ Career :: [].{
 					# curve rises steeply into its extremes, so a tight offset
 					# puts the text on the line it is naming
 					lift = if tag == "valley" (26.0) else -34.0
-					Text.from(spine_label(mf, sp.kind, sp.fam), model.font).size(13).draw!(frame, { pos: { x: mx, y: yf(mf) + lift }, color: col, align: (Top, Center) })
+					Text.from(spine_label(model.units, mf, sp.kind, sp.fam), model.font).size(13).draw!(frame, { pos: { x: mx, y: yf(mf) + lift }, color: col, align: (Top, Center) })
 				}
 			}
 			# a peak that IS the current month is a record in progress, and it
