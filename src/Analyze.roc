@@ -803,9 +803,12 @@ Analyze :: [].{
                 Err(_) => Null
 
             }
+        # the intensity the ladder actually scored with — never re-derived here,
+        # so a ratio the plausibility bound refused cannot be stored beside the
+        # humbler rung's honest tss
         if_binding =
-            match ladder.np {
-                Ok(npv) => (if pi_ftp > 0.0 Real(npv / pi_ftp) else Null)
+            match ladder.power_if {
+                Ok(v) => Real(v)
                 Err(_) => Null
 
             }

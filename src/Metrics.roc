@@ -824,7 +824,10 @@ Metrics :: [].{
             # rungs (pace/HR/RPE/RE), so all three power candidates are skipped (#73).
             device_watts : Bool,
         }
-        -> { tss : F64, np : Try(F64, [NoPower]), model : Str }
+        # power_if is the intensity the POWER rung actually scored with — absent
+        # whenever any other rung won, so a ratio the plausibility bound refused
+        # can never be published as a stored measurement beside an honest tss.
+        -> { tss : F64, np : Try(F64, [NoPower]), model : Str, power_if : Try(F64, [NoPowerIf]) }
     tss_ladder = |input| {
         np_like =
             if !input.device_watts
@@ -918,12 +921,12 @@ Metrics :: [].{
                 # ladder with an invented number. Both fall through to pace / HR / RPE / RE.
                 Ok(p) =>
                     if input.ftp > 0.0 and p.w / input.ftp <= max_plausible_if
-                        { t: tss_from_power({ np: p.w, ftp: input.ftp, dur_s: input.dur_s }), m: p.m }
+                        { t: tss_from_power({ np: p.w, ftp: input.ftp, dur_s: input.dur_s }), m: p.m, pif: Ok(p.w / input.ftp) }
                     else
-                        pace_or_fallback
-                Err(_) => pace_or_fallback
+                        { t: pace_or_fallback.t, m: pace_or_fallback.m, pif: Err(NoPowerIf) }
+                Err(_) => { t: pace_or_fallback.t, m: pace_or_fallback.m, pif: Err(NoPowerIf) }
             }
-        { tss: scored.t, np: Try.map_ok(np_like, |p| p.w), model: scored.m }
+        { tss: scored.t, np: Try.map_ok(np_like, |p| p.w), model: scored.m, power_if: scored.pif }
     }
 
     all_seconds_in_zone : I64, U8 -> ZoneSeconds
@@ -3361,6 +3364,13 @@ expect {
     over = Metrics.tss_ladder({ ..Metrics.ladder_base, weighted_watts: Ok(400.0), zones: { ..Metrics.test_zeroz, z2: 3600 } })
     hard = Metrics.tss_ladder({ ..Metrics.ladder_base, weighted_watts: Ok(290.0), zones: { ..Metrics.test_zeroz, z2: 3600 } })
     over.model == "hr_zones" and hard.model == "weighted_watts"
+    # the refused ratio must not surface as an intensity either - power_if
+    # follows the rung, so only the scored 1.45 exists as a measurement
+    and over.power_if.is_err()
+    and (match hard.power_if {
+        Ok(v) => (v - 1.45).abs() < 0.001
+        Err(_) => Bool.False
+    })
 }
 
 # an implausible power intensity falls THROUGH the pace rung, not past it: with a

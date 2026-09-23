@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1154)?
+    checks_ran_exactly!(1158)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6089,6 +6089,22 @@ b_period_pace! = |ctx| {
     tss816 = sfloat(Str.trim(sql!(ctx.db, "SELECT COALESCE(tss,0) FROM activity_metrics WHERE activity_id=816;")))
     check!("...at a sane magnitude", tss816 > 60.0 and tss816 < 90.0)?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (814,815,816); DELETE FROM activity_metrics WHERE activity_id IN (814,815,816); DELETE FROM streams WHERE activity_id IN (814,815,816);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+
+    # The power mirror of the same failure: an FTP anchored by one soft-pedalled
+    # stream (40 min at 60 W -> FTP 57) meets a summary-only ride whose weighted
+    # watts imply IF ~4.2. The power rung refuses, HR scores it, and - the leak
+    # this pins - the refused ratio must not be stored as intensity_factor: a
+    # NULL there is what keeps intensity_known honest in the payload. The
+    # anchor itself scores power_stream at its own sane intensity (control).
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr,weighted_avg_watts,device_watts) VALUES (817,'Soft Pedal','Ride','2020-03-01T09:00:00Z',2400,10000,NULL,NULL,1),(818,'Summary Only Ride','Ride','2020-03-05T09:00:00Z',1800,15000,150,240,1);")
+    _ = seed_power_stream!(ctx.db, 817, 2400, 60)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("a broken FTP cannot score a ride at an impossible intensity", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=818;")) == "hr_avg")?
+    check!("...its load is the humble rung's", sfloat(Str.trim(sql!(ctx.db, "SELECT COALESCE(tss,0) FROM activity_metrics WHERE activity_id=818;"))) < 100.0)?
+    check!("...and the refused ratio is not stored as an intensity", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=818 AND intensity_factor IS NULL;")) == "1")?
+    check!("the anchor still scores its own stream at a sane intensity", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=817;")) == "power_stream")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (817,818); DELETE FROM activity_metrics WHERE activity_id IN (817,818); DELETE FROM streams WHERE activity_id IN (817,818);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     Ok({})
 }
