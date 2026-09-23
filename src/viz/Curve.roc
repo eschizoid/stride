@@ -6,11 +6,14 @@ import Ui
 
 Curve :: [].{
 	# ── the power view (TAB) ────────────────────────────────────────────────
-	# The window's curve drawn against the all-time record envelope, one
-	# chart: grey dots are the best EVER at each rung, blue dots are the best
-	# inside the chosen window, and the number between them is the gap. A
-	# rung whose window best IS the record collapses to one teal dot - a PR
-	# set recently enough to still be in the window.
+	# The window's curve drawn against the SAME-LENGTH window before it, one
+	# chart: blue dots are the best inside the chosen window, grey dots the
+	# best of the previous window, and the signed number between them is the
+	# change - progress argues with the recent self, not the record book. The
+	# all-time envelope stays as a faint reference above; a rung whose window
+	# best IS the record still collapses to one teal dot and a fresh record
+	# still rings gold. The CP line dims when its own fit is too weak to
+	# deserve a confident stroke.
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
 	draw! = |model, frame| {
 		win_w = model.win.w
@@ -49,13 +52,15 @@ Curve :: [].{
 			# the record ladder is the master axis; the window's value joins by
 			# duration. Index spacing, not time: a linear axis piles the short
 			# rungs onto the left edge.
+			joined = |pts, secs| List.fold(pts, 0.I64, |a, c| if c.dur_s == secs (match F32.round_to_u64_try(c.watts) { Ok(cw) => (match U64.to_i64_try(cw) { Ok(ci) => ci
+				Err(_) => a })
+				Err(_) => a }) else a)
 			rungs = List.map_with_index(model.prs, |pr, i| {
-				now_w = List.fold(model.curve, 0.I64, |a, c| if c.dur_s == pr.secs (match F32.round_to_u64_try(c.watts) { Ok(cw) => (match U64.to_i64_try(cw) { Ok(ci) => ci
-					Err(_) => a })
-					Err(_) => a }) else a)
-				{ pr, now_w, i }
+				now_w = joined(model.curve, pr.secs)
+				prev_w = joined(model.curve_prev, pr.secs)
+				{ pr, now_w, prev_w, i }
 			})
-			w_hi = List.fold(rungs, 1.0, |a, r| F32.max(a, F32.max(I64.to_f32(r.pr.w), I64.to_f32(r.now_w)))) * 1.08
+			w_hi = List.fold(rungs, 1.0, |a, r| F32.max(a, F32.max(I64.to_f32(r.pr.w), F32.max(I64.to_f32(r.now_w), I64.to_f32(r.prev_w))))) * 1.08
 			nlast = List.len(rungs) - 1
 			cx = |i| if nlast == 0 (pad_l + pw / 2.0) else pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
 			cy = |w| pad_t + ph * (1.0 - w / w_hi)
@@ -70,21 +75,28 @@ Curve :: [].{
 						Err(_) => "" }, model.font).size(10).draw!(frame, { pos: { x: pad_l - 8.0, y: cy(gw) - 6.0 }, color: ink_faint, align: (Top, Right) })
 				} else {})
 			# CP from the window's fit, dashed - the blue curve should flatten
-			# toward it, and a fit far from the long rungs is visibly wrong
+			# toward it, and a fit far from the long rungs is visibly wrong.
+			# A weak fit (r2 under 0.9) draws dimmed: the footer already admits
+			# the r2, and a confident stroke over a shaky fit would outrank it.
 			if model.fit_cp > 0.0 and model.fit_cp < w_hi {
 				cpy = cy(model.fit_cp)
+				cp_a = if model.fit_r2 < 0.9 (55) else 120
+				cp_lbl_c = if model.fit_r2 < 0.9 (Color.with_alpha(tsb_c, 140)) else tsb_c
 				List.for_each!(List.map_with_index(List.repeat({}, 60), |_u, k| k), |k| {
 					x0 = pad_l + U64.to_f32(k) * (pw / 60.0)
-					frame.line!({ start: { x: x0, y: cpy }, end: { x: x0 + pw / 120.0, y: cpy }, stroke: Draw.stroke(Color.with_alpha(tsb_c, 120), 1) })
+					frame.line!({ start: { x: x0, y: cpy }, end: { x: x0 + pw / 120.0, y: cpy }, stroke: Draw.stroke(Color.with_alpha(tsb_c, cp_a), 1) })
 				})
-				model.cp_lbl.draw!(frame, { pos: { x: pad_l + pw + 8.0, y: cpy }, color: tsb_c, align: (Middle, Left) })
+				model.cp_lbl.draw!(frame, { pos: { x: pad_l + pw + 8.0, y: cpy }, color: cp_lbl_c, align: (Middle, Left) })
 			}
 			# each line introduces itself at its first rung - the chart must be
 			# readable with no narrator
 			_ = match List.first(rungs) {
 				Ok(r0) => {
 					if r0.pr.w > 0 {
-						Text.from("best ever", model.font).size(11).draw!(frame, { pos: { x: cx(r0.i) + 14.0, y: cy(I64.to_f32(r0.pr.w)) - 8.0 }, color: ink_muted, align: (Top, Left) })
+						Text.from("best ever", model.font).size(11).draw!(frame, { pos: { x: cx(r0.i) + 14.0, y: cy(I64.to_f32(r0.pr.w)) - 8.0 }, color: Color.with_alpha(ink_muted, 130), align: (Top, Left) })
+					}
+					if r0.prev_w > 0 and r0.prev_w < r0.pr.w {
+						Text.from("previous window", model.font).size(11).draw!(frame, { pos: { x: cx(r0.i) + 14.0, y: cy(I64.to_f32(r0.prev_w)) - 8.0 }, color: ink_muted, align: (Top, Left) })
 					}
 					if r0.now_w > 0 and r0.now_w < r0.pr.w {
 						Text.from("this window", model.font).size(11).draw!(frame, { pos: { x: cx(r0.i) + 14.0, y: cy(I64.to_f32(r0.now_w)) + 6.0 }, color: Theme.ctl_c, align: (Top, Left) })
@@ -92,12 +104,19 @@ Curve :: [].{
 				}
 				Err(_) => {}
 			}
-			# record envelope first (it sits above), then the window curve
-			# envelope segments only between rungs that HAVE records - a 0 rung
-			# must not drag the grey line to the floor
+			# three envelopes back to front: the record book faintest (a
+			# reference, no longer the antagonist), the previous window in
+			# quiet grey, this window loudest. Envelope segments only between
+			# rungs that HAVE values - a 0 rung must not drag a line to the
+			# floor.
 			List.for_each!(rungs, |r|
 				match List.get(rungs, r.i + 1) {
-					Ok(nxt) => if r.pr.w > 0 and nxt.pr.w > 0 (frame.line!({ start: { x: cx(r.i), y: cy(I64.to_f32(r.pr.w)) }, end: { x: cx(nxt.i), y: cy(I64.to_f32(nxt.pr.w)) }, stroke: Draw.stroke(Color.with_alpha(ink_muted, 90), 1) })) else {}
+					Ok(nxt) => if r.pr.w > 0 and nxt.pr.w > 0 (frame.line!({ start: { x: cx(r.i), y: cy(I64.to_f32(r.pr.w)) }, end: { x: cx(nxt.i), y: cy(I64.to_f32(nxt.pr.w)) }, stroke: Draw.stroke(Color.with_alpha(ink_muted, 45), 1) })) else {}
+					Err(_) => {}
+				})
+			List.for_each!(rungs, |r|
+				match List.get(rungs, r.i + 1) {
+					Ok(nxt) => if r.prev_w > 0 and nxt.prev_w > 0 (frame.line!({ start: { x: cx(r.i), y: cy(I64.to_f32(r.prev_w)) }, end: { x: cx(nxt.i), y: cy(I64.to_f32(nxt.prev_w)) }, stroke: Draw.stroke(Color.with_alpha(ink_muted, 110), 1) })) else {}
 					Err(_) => {}
 				})
 			List.for_each!(rungs, |r|
@@ -127,12 +146,20 @@ Curve :: [].{
 					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 5.0, style: Draw.filled(tsb_c) })
 					Text.from("pr", model.font).size(10).draw!(frame, { pos: { x: cx(r.i), y: rec_y - 20.0 }, color: tsb_c, align: (Top, Center) })
 				} else {
-					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 4.0, style: Draw.filled(Color.with_alpha(ink_muted, 160)) })
+					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 3.0, style: Draw.filled(Color.with_alpha(ink_muted, 80)) })
+					if r.prev_w > 0 and r.prev_w < r.pr.w {
+						frame.circle!({ center: { x: cx(r.i), y: cy(I64.to_f32(r.prev_w)) }, radius: 4.0, style: Draw.filled(Color.with_alpha(ink_muted, 150)) })
+					}
 					if r.now_w > 0 {
 						now_y = cy(I64.to_f32(r.now_w))
 						frame.circle!({ center: { x: cx(r.i), y: now_y }, radius: 4.0, style: Draw.filled(ctl_c) })
-						# the gap, said in watts right where it lives
-						Text.from("-${I64.to_str(r.pr.w - r.now_w)}w", model.font).size(10).draw!(frame, { pos: { x: cx(r.i) + 10.0, y: (rec_y + now_y) / 2.0 - 6.0 }, color: Theme.alarm_c, align: (Top, Left) })
+						# the change against the PREVIOUS window, signed, right
+						# where it lives - green-teal going up, alarm going down
+						d_txt = delta_label(r.now_w, r.prev_w)
+						if d_txt != "" {
+							d_col = if r.now_w > r.prev_w tsb_c else Theme.alarm_c
+							Text.from(d_txt, model.font).size(10).draw!(frame, { pos: { x: cx(r.i) + 10.0, y: (cy(I64.to_f32(r.prev_w)) + now_y) / 2.0 - 6.0 }, color: d_col, align: (Top, Left) })
+						}
 					}
 				}
 				Text.from(r.pr.rung, model.font).size(12).draw!(frame, { pos: { x: cx(r.i), y: pad_t + ph - 18.0 }, color: ink_faint, align: (Top, Center) })
@@ -140,7 +167,8 @@ Curve :: [].{
 				half = if nlast == 0 (pw / 2.0) else pw / U64.to_f32(nlast) / 2.0
 				if model.mouse_x >= cx(r.i) - half and model.mouse_x < cx(r.i) + half and model.mouse_y >= pad_t and model.mouse_y <= pad_t + ph {
 					now_txt = if r.now_w > 0 ("   now ${I64.to_str(r.now_w)}w") else "   not ridden this window"
-					tip = if r.pr.w > 0 ("${r.pr.rung}   best ${I64.to_str(r.pr.w)}w set ${r.pr.day}${now_txt}") else "${r.pr.rung}   never ridden"
+					prev_txt = if r.prev_w > 0 ("   prev ${I64.to_str(r.prev_w)}w") else ""
+					tip = if r.pr.w > 0 ("${r.pr.rung}   best ${I64.to_str(r.pr.w)}w set ${r.pr.day}${now_txt}${prev_txt}") else "${r.pr.rung}   never ridden"
 					Text.from(tip, model.font).size(12).draw!(frame, { pos: { x: 36.0, y: 92.0 }, color: Color.white, align: (Top, Left) })
 				}
 			})
@@ -148,4 +176,21 @@ Curve :: [].{
 		model.curve_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 		Ok({})
 	}
+
+	# the window-over-window change, said in watts with its sign - the number
+	# this view argues with. Empty when either side is absent (a comparison
+	# with nothing is not a delta) and when equal (the dots already overlap,
+	# and a "+0w" would claim a precision the rounding does not carry).
+	delta_label : I64, I64 -> Str
+	delta_label = |now, prev|
+		if now <= 0 or prev <= 0 ""
+		else if now > prev "+${I64.to_str(now - prev)}w"
+		else if now < prev "-${I64.to_str(prev - now)}w"
+		else ""
 }
+
+expect Curve.delta_label(354, 340) == "+14w"
+expect Curve.delta_label(300, 333) == "-33w"
+expect Curve.delta_label(300, 300) == ""
+expect Curve.delta_label(0, 300) == ""
+expect Curve.delta_label(300, 0) == ""

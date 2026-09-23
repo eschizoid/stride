@@ -139,7 +139,7 @@ load_model! = |font, curve_days, boot| {
 		home = resolve_home!({})
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if boot or home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [], un: Metric }
+			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [], un: Metric }
 		} else match Sqlite.Db.open!(db_path) {
 			Ok(db) => {
 				Db.publish_caps!(db, caps_views, caps_fields)
@@ -174,9 +174,10 @@ load_model! = |font, curve_days, boot| {
 				prs = Db.load_prs!(db)
 				nts = Db.load_day_notes!(db)
 				un = Db.units!(db)
-				{ s, e, c, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, rw, csp, cs, prs, tcache, un }
+				cpv = Db.load_curve_prev!(db, curve_days)
+				{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, rw, csp, cs, prs, tcache, un }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [], un: Metric }
+			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], prs: [], tcache: [], un: Metric }
 		}
 		ev = Db.find_idx(loaded.s.days, loaded.e.day)
 		# the fit shells out to the engine; the skeleton cannot afford it
@@ -258,9 +259,10 @@ load_model! = |font, curve_days, boot| {
 			stale_found: loaded.st > 0,
 			view: 0,
 			curve: loaded.c,
+			curve_prev: loaded.cpv,
 			curve_lbls: curve_lbls,
 			fit_lbl: mk!(Db.ascii_safe(fit_text), 14)?,
-			curve_title: mk!("power - last ${I64.to_str(curve_days)} days against the record book", 15)?,
+			curve_title: mk!("power - this ${I64.to_str(curve_days)}d vs the ${I64.to_str(curve_days)}d before it", 15)?,
 			curve_days,
 			trace_ids: loaded.tids,
 			trace_sel: 0.U64,
@@ -301,6 +303,7 @@ load_model! = |font, curve_days, boot| {
 			segs: loaded.sg,
 			trace_dur: loaded.du,
 			fit_cp: if fit.ok (fit.cp) else 0.0,
+			fit_r2: if fit.ok (fit.r2) else 0.0,
 			cp_lbl: mkm!("CP ${Db.fmt_f(fit.cp)}W", 12)?,
 			data: loaded.s.data,
 			days: loaded.s.days,
