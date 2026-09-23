@@ -1115,9 +1115,13 @@ update! = |model0, program_input| {
 		# moving the mouse over the form board's plot un-parks the crosshair:
 		# the hover takes over while inside, and nothing lingers on the way
 		# out. Only a cursor NOT re-parked this same frame (arrow, directive,
-		# row click) clears - deliberate parks always win over drift.
+		# row click) clears - deliberate parks always win over drift. The
+		# scale-equality guard is load-bearing: last frame's mouse_x/y were
+		# computed at the PREVIOUS scale, so on a Ctrl +/- frame the same
+		# physical pointer yields different logical coordinates and a still
+		# mouse would read as drift - same hazard the trace drag guards below.
 		cursor3 =
-			if view2 == 0 and cursor2 == model.cursor and cursor2 >= 0 and (m.x != model.mouse_x or m.y != model.mouse_y) and m.y > Theme.pad_t + 56.0 and m.y < win.h - Theme.pad_b and m.x >= Theme.pad_l and m.x <= win.w - Theme.pad_r {
+			if view2 == 0 and layout.scale == model.ui_scale and cursor2 == model.cursor and cursor2 >= 0 and (m.x != model.mouse_x or m.y != model.mouse_y) and m.y > Theme.pad_t + 56.0 and m.y < win.h - Theme.pad_b and m.x >= Theme.pad_l and m.x <= win.w - Theme.pad_r {
 				-1
 			} else cursor2
 		# reloads and trace switches SPAWN — Cmd panics in update!, and the

@@ -24,6 +24,11 @@ DisplayScale :: [].{
 		{ scale, w: pixels.w / scale, h: pixels.h / scale }
 	}
 
+	# the exact inverse of the draw transform ONLY because the draw side is
+	# Camera.default.with_zoom(scale) and Camera.default is the identity
+	# (zero target/offset, rotation 0) - screen = world x zoom, so the divide
+	# below inverts it. A camera gaining an offset or target breaks every hit
+	# test that funnels through here.
 	point : { x : F32, y : F32 }, F32 -> { x : F32, y : F32 }
 	point = |p, scale| { x: p.x / scale, y: p.y / scale }
 }
@@ -45,6 +50,13 @@ expect {
 expect {
 	l = DisplayScale.layout(150, { w: 980, h: 600 })
 	(l.scale - 1).abs() < 0.001
+}
+# below the minimum layout the scale floors at 1.0 rather than shrinking:
+# min-size hints are advisory (tiling window managers ignore them), and a
+# sub-1.0 scale would inflate logical space instead of clipping honestly
+expect {
+	l = DisplayScale.layout(150, { w: 490, h: 300 })
+	(l.scale - 1).abs() < 0.001 and (l.w - 490).abs() < 0.001
 }
 expect {
 	l = DisplayScale.layout(200, { w: 1960, h: 750 })

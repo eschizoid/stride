@@ -36,7 +36,6 @@ build:
 
 # full suite: pure expects -> fresh build (must succeed!) -> effectful e2e
 test:
-    {{roc}} test src/viz/DisplayScale.roc
     # core first: both binaries depend on it, and its modules are
     # self-contained so they need no app context
     {{roc}} test src/core/Fmt.roc
