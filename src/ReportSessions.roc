@@ -413,7 +413,13 @@ ReportSessions :: [].{
                     Stdout.line!("${a.date} · ${a.sport} · ${Render.mins(a.moving_time)}${dist_str}")?
                     Stdout.line!("")?
                     load_str = if a.tss >= 1.0 "${Render.fmt0(a.tss)} TSS" else "no usable data"
-                    np_str = if a.np_w > 0 " · np ${Render.fmt0(a.np_w)}W @ ftp ${Render.fmt0(a.ftp_used)} (if ${Render.fmt2(a.intensity)})" else ""
+                    # the intensity parenthetical only when it was MEASURED: a refused or
+                    # underivable ratio reads back as intensity 0 with the flag false, and
+                    # "(if 0.00)" beside a real NP and a plausible ftp is an impossible
+                    # zero dressed as a reading — the payload three lines down already
+                    # discriminates on the same flag
+                    if_str = if a.intensity_known " (if ${Render.fmt2(a.intensity)})" else ""
+                    np_str = if a.np_w > 0 " · np ${Render.fmt0(a.np_w)}W @ ftp ${Render.fmt0(a.ftp_used)}${if_str}" else ""
                     Stdout.line!("load   ${load_str}${np_str}")?
                     Stdout.line!("zones  Z1 ${(a.z1_s // 60).to_str()}m · Z2 ${(a.z2_s // 60).to_str()}m · Z3 ${(a.z3_s // 60).to_str()}m · Z4 ${(a.z4_s // 60).to_str()}m · Z5 ${(a.z5_s // 60).to_str()}m")?
                     (if has_power_intensity

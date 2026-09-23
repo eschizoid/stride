@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1158)?
+    checks_ran_exactly!(1159)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6104,6 +6104,10 @@ b_period_pace! = |ctx| {
     check!("...its load is the humble rung's", sfloat(Str.trim(sql!(ctx.db, "SELECT COALESCE(tss,0) FROM activity_metrics WHERE activity_id=818;"))) < 100.0)?
     check!("...and the refused ratio is not stored as an intensity", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=818 AND intensity_factor IS NULL;")) == "1")?
     check!("the anchor still scores its own stream at a sane intensity", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=817;")) == "power_stream")?
+    # ...and the HUMAN line makes the same discrimination the payload does: np and
+    # ftp are measurements and stay, but no "(if 0.00)" dressed as a reading
+    act818 = stride_human!(ctx.bin, ctx.home, ["activity", "818"])
+    check!("...and the human line withholds the impossible zero beside the real NP", Str.contains(act818, "@ ftp 57") and !Str.contains(act818, "(if "))?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (817,818); DELETE FROM activity_metrics WHERE activity_id IN (817,818); DELETE FROM streams WHERE activity_id IN (817,818);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     Ok({})
