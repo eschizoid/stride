@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1150)?
+    checks_ran_exactly!(1154)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6068,6 +6068,28 @@ b_period_pace! = |ctx| {
     check!("...and the session scores rtss, not a silent fallback", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=813;")) == "rtss")?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 813; DELETE FROM activity_metrics WHERE activity_id = 813; DELETE FROM streams WHERE activity_id = 813;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
+
+    # The #505 shape, end to end: a threshold window whose only best is a stroll
+    # logged as a run must not turn a short hard session into four-figure TSS.
+    # The stroll (40 min at 0.6 m/s) anchors the window; the 15-minute session
+    # (900 moving seconds, under the 1200-second best window) has no best of its
+    # own to outvote it, so its implied IF is ~7 — the plausibility bound refuses
+    # the pace rung and the summary HR scores it instead. The long control (40
+    # min at 4.0 m/s) carries its own best, so its threshold is honest and rtss
+    # still scores it — the guard must not break the healthy case. A 2020 era so
+    # no other fixture's Run best sits inside these trailing windows.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (814,'Stroll As Run','Run','2020-02-01T09:00:00Z',2400,1440,NULL),(815,'Short Hard Run','Run','2020-02-10T09:00:00Z',900,3600,150),(816,'Long Hard Run','Run','2020-02-12T09:00:00Z',2400,9600,NULL);")
+    _ = seed_steady_pace_stream!(ctx.db, 814, 2400, 3, 5)
+    _ = seed_steady_pace_stream!(ctx.db, 815, 900, 4, 1)
+    _ = seed_steady_pace_stream!(ctx.db, 816, 2400, 4, 1)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("a stroll-anchored threshold cannot score a short session at four figures", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=815;")) == "hr_avg")?
+    check!("...its load is the humble rung's, not an invented intensity", sfloat(Str.trim(sql!(ctx.db, "SELECT COALESCE(tss,0) FROM activity_metrics WHERE activity_id=815;"))) < 100.0)?
+    check!("a long run outvotes the stroll through its own best and still scores rtss", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=816;")) == "rtss")?
+    tss816 = sfloat(Str.trim(sql!(ctx.db, "SELECT COALESCE(tss,0) FROM activity_metrics WHERE activity_id=816;")))
+    check!("...at a sane magnitude", tss816 > 60.0 and tss816 < 90.0)?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (814,815,816); DELETE FROM activity_metrics WHERE activity_id IN (814,815,816); DELETE FROM streams WHERE activity_id IN (814,815,816);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     Ok({})
 }
 
@@ -7276,6 +7298,18 @@ seed_stalled_pace_stream! : Str, I64, U64, U64 => {}
 seed_stalled_pace_stream! = |db, id, n, mps| {
     times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
     dist = Str.join_with(List.map(int_seq(n), |i| U64.to_str((i - (i // 5)) * mps)), ",")
+    raw = "{\"time\":{\"data\":[${times}]},\"distance\":{\"data\":[${dist}]}}"
+    _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
+    {}
+}
+
+# seed a steady-pace stream (n 1 Hz samples advancing num/den metres per second,
+# integer-truncated per sample) as Strava-style raw_json - the clean-motion
+# counterpart of the stalled seed above, with a fractional speed expressible
+# (3/5 is the stroll the #505 scenario anchors its broken threshold with)
+seed_steady_pace_stream! = |db, id, n, num, den| {
+    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
+    dist = Str.join_with(List.map(int_seq(n), |i| U64.to_str((i * num) // den)), ",")
     raw = "{\"time\":{\"data\":[${times}]},\"distance\":{\"data\":[${dist}]}}"
     _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
     {}

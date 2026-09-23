@@ -1107,5 +1107,5 @@ Analyze :: [].{
     # on every row already in the db, so the feature reading it is inert for exactly the
     # history that would make it useful — the whole activity archive. 33 adds the #188
     # speed ladder (best_300s_speed / best_600s_speed).
-    metrics_rev = 34
+    metrics_rev = 35
 }
