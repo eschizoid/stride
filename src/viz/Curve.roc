@@ -142,9 +142,18 @@ Curve :: [].{
 				if r.pr.w == 0 {
 					# a rung never ridden keeps its label and rail, nothing else
 				} else if r.now_w >= r.pr.w and r.now_w > 0 {
-					# the window best IS the record: one teal dot, the good news
+					# the window best IS the record: one teal dot - and the
+					# delta still prints, because a record rung's change is the
+					# best news on the chart, not a case to suppress. Teal for
+					# both is a decision: it is the house "good" accent, and
+					# the dot and the text differ in shape.
 					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 5.0, style: Draw.filled(tsb_c) })
 					Text.from("pr", model.font).size(10).draw!(frame, { pos: { x: cx(r.i), y: rec_y - 20.0 }, color: tsb_c, align: (Top, Center) })
+					dpr_txt = delta_label(r.now_w, r.prev_w)
+					if dpr_txt != "" {
+						dpr_col = if r.now_w > r.prev_w tsb_c else Theme.alarm_c
+						Text.from(dpr_txt, model.font).size(10).draw!(frame, { pos: { x: cx(r.i) + 10.0, y: (cy(I64.to_f32(r.prev_w)) + rec_y) / 2.0 - 6.0 }, color: dpr_col, align: (Top, Left) })
+					}
 				} else {
 					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 3.0, style: Draw.filled(Color.with_alpha(ink_muted, 80)) })
 					if r.prev_w > 0 and r.prev_w < r.pr.w {
