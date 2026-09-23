@@ -786,6 +786,17 @@ Metrics :: [].{
     #   systematically underestimates lifting: the aerobic model doesn't see bar weight.
     #   `Sports.class` decides which order applies.
     # Returns the tss and the power figure used (Err NoPower if HR/RE path).
+    # The highest session-wide intensity factor a real athlete can produce. FTP and
+    # threshold pace are 20-minute-best-derived, hour-scale limits, so a WHOLE session
+    # normalized to 1.5x threshold is not a performance — it is the tell of a broken
+    # denominator: a threshold derived from a window whose only best was a stroll
+    # logged as a run. Genuine all-out short sessions top out near 1.3; the broken
+    # case announces itself at 4-7 (#505 measured 7.0). Beyond the bound, the
+    # power/pace rung refuses and the ladder falls to HR/RPE/RE — a humbler rung
+    # over an invented number, the same rule ADR 0009 applies to absent data.
+    max_plausible_if : F64
+    max_plausible_if = 1.5
+
     tss_ladder :
         {
             np_stream : Try(F64, [TooShort]),
@@ -813,7 +824,10 @@ Metrics :: [].{
             # rungs (pace/HR/RPE/RE), so all three power candidates are skipped (#73).
             device_watts : Bool,
         }
-        -> { tss : F64, np : Try(F64, [NoPower]), model : Str }
+        # power_if is the intensity the POWER rung actually scored with — absent
+        # whenever any other rung won, so a ratio the plausibility bound refused
+        # can never be published as a stored measurement beside an honest tss.
+        -> { tss : F64, np : Try(F64, [NoPower]), model : Str, power_if : Try(F64, [NoPowerIf]) }
     tss_ladder = |input| {
         np_like =
             if !input.device_watts
@@ -884,14 +898,14 @@ Metrics :: [].{
                 })
         # pace rung, slotting in as power -> PACE -> HR -> RPE -> RE. Scores when a normalized
         # graded pace SPEED was computed (any distance sport; graded when altitude exists,
-        # flat otherwise)
-        # AND a threshold speed exists; otherwise falls through to HR/RPE/RE. rTSS/sTSS is
-        # IF^exp * hours * 100 with IF = ngp_speed / threshold_speed; the exponent is
-        # per-sport (running 2, swimming 3 — see Sports.pace_tss_exponent).
+        # flat otherwise), a threshold speed exists, AND the implied intensity is one a
+        # human can produce (max_plausible_if); otherwise falls through to HR/RPE/RE.
+        # rTSS/sTSS is IF^exp * hours * 100 with IF = ngp_speed / threshold_speed; the
+        # exponent is per-sport (running 2, swimming 3 — see Sports.pace_tss_exponent).
         pace_or_fallback =
             match input.ngp {
                 Ok(ngp_speed) =>
-                    if input.threshold_speed > 0.0
+                    if input.threshold_speed > 0.0 and ngp_speed / input.threshold_speed <= max_plausible_if
                         { t: pace_tss({ ngp_speed, threshold_speed: input.threshold_speed, dur_s: input.dur_s, exponent: Sports.pace_tss_exponent(input.sport_type) }), m: "rtss" }
                     else
                         fallback
@@ -899,18 +913,20 @@ Metrics :: [].{
             }
         scored =
             match np_like {
-                # power scores ONLY with a usable FTP. Without one (no stream to derive it —
-                # CSV imports, pre-backfill syncs), power would compute TSS 0 and, by winning
-                # the ladder, BLOCK the rest — silently scoring a real ride 0. So fall through
-                # to the pace rung / HR / RPE / RE when ftp <= 0.
+                # power scores ONLY with a usable FTP and a plausible intensity. Without an
+                # FTP (no stream to derive it — CSV imports, pre-backfill syncs), power would
+                # compute TSS 0 and, by winning the ladder, BLOCK the rest — silently scoring
+                # a real ride 0. An IMPLAUSIBLE intensity (np/ftp beyond max_plausible_if) is
+                # the mirror failure: the FTP itself is broken, and power would win the
+                # ladder with an invented number. Both fall through to pace / HR / RPE / RE.
                 Ok(p) =>
-                    if input.ftp > 0.0
-                        { t: tss_from_power({ np: p.w, ftp: input.ftp, dur_s: input.dur_s }), m: p.m }
+                    if input.ftp > 0.0 and p.w / input.ftp <= max_plausible_if
+                        { t: tss_from_power({ np: p.w, ftp: input.ftp, dur_s: input.dur_s }), m: p.m, pif: Ok(p.w / input.ftp) }
                     else
-                        pace_or_fallback
-                Err(_) => pace_or_fallback
+                        { t: pace_or_fallback.t, m: pace_or_fallback.m, pif: Err(NoPowerIf) }
+                Err(_) => { t: pace_or_fallback.t, m: pace_or_fallback.m, pif: Err(NoPowerIf) }
             }
-        { tss: scored.t, np: Try.map_ok(np_like, |p| p.w), model: scored.m }
+        { tss: scored.t, np: Try.map_ok(np_like, |p| p.w), model: scored.m, power_if: scored.pif }
     }
 
     all_seconds_in_zone : I64, U8 -> ZoneSeconds
@@ -3325,6 +3341,43 @@ expect {
 expect {
     r = Metrics.tss_ladder({ ..Metrics.ladder_base, zones: { ..Metrics.test_zeroz, z2: 3600 } })
     (r.tss - 55.0).abs() < 0.001 and r.np.is_err()
+}
+
+# the #505 shape: a threshold anchored by a stroll makes a real run's implied IF
+# 7 — the pace rung refuses and the hour of Z2 HR scores instead, 55 not ~4900
+expect {
+    r = Metrics.tss_ladder({ ..Metrics.ladder_base, ngp: Ok(4.0), threshold_speed: 0.57, zones: { ..Metrics.test_zeroz, z2: 3600 } })
+    (r.tss - 55.0).abs() < 0.001 and r.model == "hr_zones"
+}
+
+# the plausibility bound from both sides: exactly max_plausible_if still scores
+# the pace rung, a hair beyond refuses it
+expect {
+    at = Metrics.tss_ladder({ ..Metrics.ladder_base, ngp: Ok(1.5), threshold_speed: 1.0, zones: { ..Metrics.test_zeroz, z2: 3600 } })
+    over = Metrics.tss_ladder({ ..Metrics.ladder_base, ngp: Ok(1.51), threshold_speed: 1.0, zones: { ..Metrics.test_zeroz, z2: 3600 } })
+    at.model == "rtss" and over.model == "hr_zones"
+}
+
+# the power mirror: np/ftp beyond the bound refuses the power rung the same way
+# (a broken FTP from a sparse window), while a hard-but-human 1.45 still scores
+expect {
+    over = Metrics.tss_ladder({ ..Metrics.ladder_base, weighted_watts: Ok(400.0), zones: { ..Metrics.test_zeroz, z2: 3600 } })
+    hard = Metrics.tss_ladder({ ..Metrics.ladder_base, weighted_watts: Ok(290.0), zones: { ..Metrics.test_zeroz, z2: 3600 } })
+    over.model == "hr_zones" and hard.model == "weighted_watts"
+    # the refused ratio must not surface as an intensity either - power_if
+    # follows the rung, so only the scored 1.45 exists as a measurement
+    and over.power_if.is_err()
+    and (match hard.power_if {
+        Ok(v) => (v - 1.45).abs() < 0.001
+        Err(_) => Bool.False
+    })
+}
+
+# an implausible power intensity falls THROUGH the pace rung, not past it: with a
+# sane pace beside the broken FTP, pace scores rather than HR
+expect {
+    r = Metrics.tss_ladder({ ..Metrics.ladder_base, weighted_watts: Ok(400.0), ngp: Ok(3.0), threshold_speed: 3.0, zones: { ..Metrics.test_zeroz, z2: 3600 } })
+    r.model == "rtss"
 }
 
 # no power, no zone seconds: avg HR classifies the whole session (150 -> Z2)

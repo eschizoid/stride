@@ -803,9 +803,12 @@ Analyze :: [].{
                 Err(_) => Null
 
             }
+        # the intensity the ladder actually scored with — never re-derived here,
+        # so a ratio the plausibility bound refused cannot be stored beside the
+        # humbler rung's honest tss
         if_binding =
-            match ladder.np {
-                Ok(npv) => (if pi_ftp > 0.0 Real(npv / pi_ftp) else Null)
+            match ladder.power_if {
+                Ok(v) => Real(v)
                 Err(_) => Null
 
             }
@@ -1107,5 +1110,5 @@ Analyze :: [].{
     # on every row already in the db, so the feature reading it is inert for exactly the
     # history that would make it useful — the whole activity archive. 33 adds the #188
     # speed ladder (best_300s_speed / best_600s_speed).
-    metrics_rev = 34
+    metrics_rev = 35
 }
