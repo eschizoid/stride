@@ -141,6 +141,20 @@ Trace :: [].{
 				Text.from("ghost (purple): ${gname}  ${model.ghost_day}   C clears", model.font).size(12).draw!(frame, { pos: { x: model.win.w - 34.0, y: 110.0 }, color: Theme.atl_c, align: (Top, Right) })
 			}
 		}
+		# ── the splits panel: the pace channel's companion - the same rows
+		# the CLI's activity screen prints, in the athlete's units. Capped to
+		# what fits beside the plot; the overflow line says how many rows it
+		# holds back rather than letting the run appear to end early.
+		if pace_axis(model.trace_unit) and !(List.is_empty(model.trace_splits)) {
+			Text.from("splits (${Units.dist_unit(model.units)})", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 34.0, y: 136.0 }, color: ink_muted, align: (Top, Right) })
+			shown = List.take_first(model.trace_splits, 14)
+			List.for_each!(List.map_with_index(shown, |r, i| { r, i }), |x|
+				Text.from("${I64.to_str(x.r.n)}  ${Units.pace_per_dist(model.units, x.r.distance_m, x.r.elapsed_s)}", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 34.0, y: 154.0 + U64.to_f32(x.i) * 16.0 }, color: ink_faint, align: (Top, Right) }))
+			extra = List.len(model.trace_splits) - List.len(shown)
+			if extra > 0 {
+				Text.from("+${U64.to_str(extra)} more", model.font).size(10).draw!(frame, { pos: { x: model.win.w - 34.0, y: 154.0 + 14.0 * 16.0 }, color: ink_faint, align: (Top, Right) })
+			}
+		}
 		if List.is_empty(model.trace) {
 			# A session can be IN the picker and still yield no samples FOR ITS
 			# CHOSEN CHANNEL: the menu gates on the stream key being present,

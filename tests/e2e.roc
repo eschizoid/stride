@@ -2249,8 +2249,8 @@ b_seed_analyze! = |ctx| {
     # nothing wrong — the sites run to 204 characters, so it is a live risk. Rejoin the
     # line; do not lower the number. A comment containing `dist_unit(` would also count
     # toward `examined`. Both are loud false positives, which is the safe direction.
-    units_static = Str.trim(sh!("n=0; fmt=0; bad=0; for f in src/*.roc; do while IFS= read -r l; do case \"$l\" in expect*) continue;; esac; case \"$l\" in *'dist_unit('*|*'pace_unit('*|*'seg_unit('*|*'elev_unit('*) ;; *) continue;; esac; n=$((n+1)); case \"$l\" in *'fmt0('*|*'fmt1('*|*'fmt2('*|*'seg_value('*|*'signed('*) fmt=$((fmt+1));; *) continue;; esac; case \"$l\" in *'dist_value(units'*|*'pace_per_dist(units'*|*'seg_value(units'*|*'elev_value(units'*) ;; *) bad=$((bad+1));; esac; done < $f; done; echo \"examined=$n formatted=$fmt unconverted=$bad\""))
-    check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=19 formatted=12 unconverted=0")?
+    units_static = Str.trim(sh!("n=0; fmt=0; bad=0; for f in src/*.roc; do while IFS= read -r l; do case \"$l\" in expect*) continue;; esac; case \"$l\" in *'dist_unit('*|*'pace_unit('*|*'seg_unit('*|*'elev_unit('*) ;; *) continue;; esac; n=$((n+1)); case \"$l\" in *'fmt0('*|*'fmt1('*|*'fmt2('*|*'seg_value('*|*'signed('*|*'pace_per_dist('*) fmt=$((fmt+1));; *) continue;; esac; case \"$l\" in *'dist_value(units'*|*'pace_per_dist(units'*|*'seg_value(units'*|*'elev_value(units'*) ;; *) bad=$((bad+1));; esac; done < $f; done; echo \"examined=$n formatted=$fmt unconverted=$bad\""))
+    check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=19 formatted=13 unconverted=0")?
     # The window's own half of the same rule. `src/*.roc` above is non-recursive
     # on purpose, so src/viz never enters that sweep; since the window converts
     # (career card, pace spine, day-detail line) it needs its own pins. Two
@@ -2259,8 +2259,8 @@ b_seed_analyze! = |ctx| {
     # beside it survives drops the count and fails loud - and `literals` is
     # zero lines carrying a hardcoded metric unit string, the regression that
     # motivated the sweep. Comment lines are skipped the same way as above.
-    viz_units_static = Str.trim(sh!("s=0; l=0; for f in src/viz/*.roc; do while read -r ln; do case \"$ln\" in \\#*) continue;; esac; case \"$ln\" in *'Units.dist_value('*|*'Units.dist_unit('*|*'Units.pace_from_speed('*|*'pace_label_for('*) s=$((s+1));; esac; case \"$ln\" in *'km\"'*|*'\" km'*|*'/km'*|*'min/km'*) l=$((l+1));; esac; done < $f; done; echo \"sites=$s literals=$l\""))
-    check!("the window names distance and pace units through core.Units, never a literal", viz_units_static == "sites=7 literals=0")?
+    viz_units_static = Str.trim(sh!("s=0; l=0; for f in src/viz/*.roc; do while read -r ln; do case \"$ln\" in \\#*) continue;; esac; case \"$ln\" in *'Units.dist_value('*|*'Units.dist_unit('*|*'Units.pace_from_speed('*|*'Units.pace_per_dist('*|*'pace_label_for('*) s=$((s+1));; esac; case \"$ln\" in *'km\"'*|*'\" km'*|*'/km'*|*'min/km'*) l=$((l+1));; esac; done < $f; done; echo \"sites=$s literals=$l\""))
+    check!("the window names distance and pace units through core.Units, never a literal", viz_units_static == "sites=9 literals=0")?
     check!("coverage tiers discriminate (high and medium both live)", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct > 0) and (.medium_pct > 0)") == "true")?
     check!("form coverage carries the 90d window", strjq!(ctx, ["summary"], ".data.form_coverage_90d | (.high_pct + .medium_pct + .low_pct == 100) and ((.known | type) == \"boolean\")") == "true")?
     # with fixtures loaded TSB is known, so the enum arm is required here; the

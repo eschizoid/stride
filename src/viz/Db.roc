@@ -851,14 +851,27 @@ Db :: [].{
 		}
 	}
 
-	load_trace_pace! : Sqlite.Db, I64 => List(F32)
-	load_trace_pace! = |db, aid| {
+	# the (elapsed_second, cumulative_metres) pairs both pace consumers read
+	load_dist_pairs! : Sqlite.Db, I64 => List({ t : I64, v : F64 })
+	load_dist_pairs! = |db, aid| {
 		times = load_stream_arr!(db, aid, "$.time.data")
 		dists = load_stream_arr!(db, aid, "$.distance.data")
-		pairs = List.map2(times, dists, |tt, dv| { t: (tt).round_to_i64_try().ok_or(0), v: dv })
-		speeds = List.map(Series.speed_1s(pairs), |p| p.v)
+		List.map2(times, dists, |tt, dv| { t: (tt).round_to_i64_try().ok_or(0), v: dv })
+	}
+
+	load_trace_pace! : Sqlite.Db, I64 => List(F32)
+	load_trace_pace! = |db, aid| {
+		speeds = List.map(Series.speed_1s(load_dist_pairs!(db, aid)), |p| p.v)
 		bucket_mean(speeds, 800)
 	}
+
+	# the same rows the CLI's activity screen prints, computed by the same
+	# core.Series body; the split length comes from the caller, who owns the
+	# athlete's units. Altitude and HR pass empty - the panel beside a trace
+	# says distance and pace, and the trace itself already tells the effort.
+	load_splits! : Sqlite.Db, I64, F64 => List(Series.Split)
+	load_splits! = |db, aid, split_m|
+		Series.splits(load_dist_pairs!(db, aid), [], [], split_m)
 
 	# mean each consecutive bucket so n values become at most `cap` - the
 	# downsample that keeps a noisy series' LEVEL instead of sampling its
