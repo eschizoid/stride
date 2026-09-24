@@ -1493,10 +1493,13 @@ splash! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
 splash! = |model, frame| {
 	# the splash clears to the ARTWORK's own ground - RGB(5, 6, 9), measured
 	# at all four corners of img/stride-icon.png - not Theme.bg (0x0b0b0e).
-	# The mark bakes its ground into the asset and nothing at runtime can
-	# read a texture's pixels back, so a mismatched clear frames the tile in
-	# a slightly different black. A re-exported asset needs a re-measure or
-	# the seam returns; the app views still clear to Theme.bg.
+	# Corners are the ground; the centre is the mark itself and reads
+	# differently, so a re-measure samples corners. The asset is RGB with no
+	# alpha channel - the ground is baked in at the format level - and
+	# nothing at runtime can read a texture's pixels back, so a mismatched
+	# clear frames the tile in a slightly different black. A re-exported
+	# asset needs a re-measure or the seam returns; the app views still
+	# clear to Theme.bg.
 	frame.rectangle!({ x: 0.0, y: 0.0, width: model.win.w, height: model.win.h, style: Draw.filled(Color.rgb(5, 6, 9)) })
 	cx = model.win.w / 2.0
 	cy = model.win.h / 2.0 - 30.0
