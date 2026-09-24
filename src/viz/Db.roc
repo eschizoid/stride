@@ -1,4 +1,5 @@
 import core.Fmt
+import core.Series
 import core.Units
 import rr.Sqlite
 import rr.Cmd
@@ -711,8 +712,13 @@ Db :: [].{
 	# run may carry either, and picking by sport draws an empty plot for
 	# whichever sessions the guess gets wrong. `sport` still rides along, for
 	# the picker's filter rather than for the channel.
+	# A pace-family session carrying a distance stream plots PACE - what a
+	# runner actually reads - even when it also carries heart rate; power
+	# still outranks everything (a meter is the most direct measurement on
+	# the chart). The family gate keeps rides off the pace channel: a ride's
+	# distance stream is real but nobody reads a ride in min/km.
 	trace_menu_q : Str
-	trace_menu_q = "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day, CAST(COALESCE(a.name,'') AS TEXT) AS name, CAST(COALESCE(a.sport_family,'') AS TEXT) AS sport, CASE WHEN json_extract(st.raw_json,'$.watts.data') IS NOT NULL THEN '$.watts.data' ELSE '$.heartrate.data' END AS chan FROM activities a JOIN streams st ON st.activity_id = a.id WHERE json_extract(st.raw_json,'$.watts.data') IS NOT NULL OR json_extract(st.raw_json,'$.heartrate.data') IS NOT NULL ORDER BY a.start_local DESC LIMIT :lim"
+	trace_menu_q = "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day, CAST(COALESCE(a.name,'') AS TEXT) AS name, CAST(COALESCE(a.sport_family,'') AS TEXT) AS sport, CASE WHEN json_extract(st.raw_json,'$.watts.data') IS NOT NULL THEN '$.watts.data' WHEN a.sport_family IN ('Run','Walk','Swim') AND json_extract(st.raw_json,'$.distance.data') IS NOT NULL AND json_extract(st.raw_json,'$.time.data') IS NOT NULL THEN 'pace' ELSE '$.heartrate.data' END AS chan FROM activities a JOIN streams st ON st.activity_id = a.id WHERE json_extract(st.raw_json,'$.watts.data') IS NOT NULL OR json_extract(st.raw_json,'$.heartrate.data') IS NOT NULL OR (a.sport_family IN ('Run','Walk','Swim') AND json_extract(st.raw_json,'$.distance.data') IS NOT NULL AND json_extract(st.raw_json,'$.time.data') IS NOT NULL) ORDER BY a.start_local DESC LIMIT :lim"
 
 	# The cap runs AFTER the ascii_safe gate, because the gate can grow what
 	# it maps (an arrow becomes "->"): capping first would let a gated name
@@ -749,13 +755,33 @@ Db :: [].{
 	hr_chan : Str
 	hr_chan = "$.heartrate.data"
 
-	# The y axis names what the chosen channel counts, so the label cannot
-	# disagree with the samples underneath it.
-	trace_unit : Str -> Str
-	trace_unit = |chan| if chan == hr_chan ("bpm") else "W"
+	# NOT a json path: the pace channel reads two arrays (time + distance)
+	# and differences them, so the loader branches on this sentinel instead
+	# of binding it into json_extract.
+	pace_chan : Str
+	pace_chan = "pace"
 
-	expect trace_unit(watts_chan) == "W"
-	expect trace_unit(hr_chan) == "bpm"
+	# The y axis names what the chosen channel counts, so the label cannot
+	# disagree with the samples underneath it. Pace speaks the athlete's
+	# units - the samples stay SI m/s, only the label converts.
+	trace_unit : Str, [Metric, Imperial] -> Str
+	trace_unit = |chan, units|
+		if chan == hr_chan ("bpm") else if chan == pace_chan (Units.pace_unit(units)) else "W"
+
+	expect trace_unit(watts_chan, Metric) == "W"
+	expect trace_unit(hr_chan, Imperial) == "bpm"
+	expect trace_unit(pace_chan, Metric) == Units.pace_unit(Metric)
+	expect trace_unit(pace_chan, Imperial) == Units.pace_unit(Imperial)
+
+	# the channel said as a word - for prose (the subtitle, a ghost refusal)
+	# where a unit string would beg the units question prose does not have
+	chan_name : Str -> Str
+	chan_name = |chan|
+		if chan == hr_chan ("heart rate") else if chan == pace_chan ("pace") else "power"
+
+	expect chan_name(watts_chan) == "power"
+	expect chan_name(hr_chan) == "heart rate"
+	expect chan_name(pace_chan) == "pace"
 
 	load_trace_ids! : Sqlite.Db => List({ id : I64, day : Str, name : Str, sport : Str, chan : Str })
 	load_trace_ids! = |db|
@@ -784,18 +810,88 @@ Db :: [].{
 	# its path as an ordinary expression.
 	load_trace! : Sqlite.Db, I64, Str => List(F32)
 	load_trace! = |db, aid, chan| {
-		# json_each's key column IS the array index for a JSON array, and for an
-		# array it is an INTEGER value (objects yield text keys), so MAX(i) and
-		# ORDER BY i are numeric — no window function, nothing left unspecified.
-		q = "WITH w AS (SELECT json_each.key AS i, CAST(json_each.value AS INTEGER) AS v FROM streams, json_each(json_extract(streams.raw_json, :chan)) WHERE streams.activity_id = :aid), n AS (SELECT MAX(i)+1 AS c FROM w) SELECT v FROM w, n WHERE i % (MAX(n.c/800,1)) = 0 ORDER BY i"
-		match Sqlite.query!({ db, query: q, bindings: [{ name: ":aid", value: Integer(aid) }, { name: ":chan", value: String(chan) }] }) {
+		if chan == pace_chan {
+			load_trace_pace!(db, aid)
+		} else {
+			# json_each's key column IS the array index for a JSON array, and for an
+			# array it is an INTEGER value (objects yield text keys), so MAX(i) and
+			# ORDER BY i are numeric — no window function, nothing left unspecified.
+			q = "WITH w AS (SELECT json_each.key AS i, CAST(json_each.value AS INTEGER) AS v FROM streams, json_each(json_extract(streams.raw_json, :chan)) WHERE streams.activity_id = :aid), n AS (SELECT MAX(i)+1 AS c FROM w) SELECT v FROM w, n WHERE i % (MAX(n.c/800,1)) = 0 ORDER BY i"
+			match Sqlite.query!({ db, query: q, bindings: [{ name: ":aid", value: Integer(aid) }, { name: ":chan", value: String(chan) }] }) {
+				Err(_) => []
+				Ok(rows) => List.keep_oks(rows, |r| {
+					v = r.i64("v") ? |_| "bad v"
+					Ok(I64.to_f32(v))
+				})
+			}
+		}
+	}
+
+	# The pace channel's samples: (time, distance) pairs read together,
+	# differenced to per-second SPEED by the same core.Series discipline the
+	# engine scores with (gaps over max_fill_gap are pauses and emit
+	# nothing), then bucket-MEANED down to ~800 points. Meaning the bucket
+	# instead of picking every kth sample matters here and not on watts/HR:
+	# 1 Hz GPS speed jitters by whole m/s, and a picked sample aliases the
+	# jitter into the line where a mean draws the pace the athlete held.
+	# One json_each per query, zipped in Roc - the single-table shape is the
+	# one load_trace! has always run, so the pace channel adds no new query
+	# shape to the platform. Positional zip is correct because both arrays
+	# come from the same stream document: Strava emits them index-aligned,
+	# and a length mismatch truncates to the shorter side.
+	load_stream_arr! : Sqlite.Db, I64, Str => List(F64)
+	load_stream_arr! = |db, aid, path| {
+		q = "SELECT CAST(json_each.value AS REAL) AS v FROM streams, json_each(json_extract(streams.raw_json, :p)) WHERE streams.activity_id = :aid ORDER BY json_each.key"
+		match Sqlite.query!({ db, query: q, bindings: [{ name: ":aid", value: Integer(aid) }, { name: ":p", value: String(path) }] }) {
 			Err(_) => []
 			Ok(rows) => List.keep_oks(rows, |r| {
-				v = r.i64("v") ? |_| "bad v"
-				Ok(I64.to_f32(v))
+				v = r.f64("v") ? |_| "bad v"
+				Ok(v)
 			})
 		}
 	}
+
+	load_trace_pace! : Sqlite.Db, I64 => List(F32)
+	load_trace_pace! = |db, aid| {
+		times = load_stream_arr!(db, aid, "$.time.data")
+		dists = load_stream_arr!(db, aid, "$.distance.data")
+		pairs = List.map2(times, dists, |tt, dv| { t: (tt).round_to_i64_try().ok_or(0), v: dv })
+		speeds = List.map(Series.speed_1s(pairs), |p| p.v)
+		bucket_mean(speeds, 800)
+	}
+
+	# mean each consecutive bucket so n values become at most `cap` - the
+	# downsample that keeps a noisy series' LEVEL instead of sampling its
+	# jitter. Pure, so the property is pinned here rather than eyeballed.
+	bucket_mean : List(F64), U64 -> List(F32)
+	bucket_mean = |xs, cap| {
+		n = List.len(xs)
+		if n == 0 or cap == 0 {
+			[]
+		} else {
+			size = (n + cap - 1) // cap
+			walked = List.fold(xs, { out: [], acc: 0.0.F64, m: 0.U64 }, |st, x|
+				if st.m + 1 == size {
+					{ out: List.append(st.out, mean_mm(st.acc + x, size)), acc: 0.0.F64, m: 0.U64 }
+				} else {
+					{ out: st.out, acc: st.acc + x, m: st.m + 1 }
+				})
+			if walked.m > 0 (List.append(walked.out, mean_mm(walked.acc, walked.m))) else walked.out
+		}
+	}
+
+	# F64 reaches F32 through a millimetre-per-second integer - this
+	# toolchain has no direct narrowing, and mm/s sits far beneath what a
+	# 1 Hz GPS speed actually carries
+	mean_mm : F64, U64 -> F32
+	mean_mm = |s, m|
+		I64.to_f32(((s / (m).to_f64()) * 1000.0).round_to_i64_try().ok_or(0)) / 1000.0
+
+	expect bucket_mean([1.0, 3.0, 5.0, 7.0], 2) == [2.0, 6.0]
+	expect bucket_mean([1.0, 2.0], 800) == [1.0, 2.0]
+	expect bucket_mean([], 800) == []
+	# a partial tail bucket is meaned over ITS OWN length, not the full size
+	expect bucket_mean([2.0, 4.0, 9.0], 2) == [3.0, 9.0]
 
 	# The detector's blocks for the same activity, in seconds from the start.
 	load_segs! : Sqlite.Db, I64 => List(Seg)

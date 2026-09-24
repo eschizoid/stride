@@ -402,6 +402,10 @@ tests on linux/macOS/Windows, then build + e2e on macOS), `release-please.yml`
 (automated releases, below), `manual-release.yml` (dispatch-only re-cut), and
 `verify-arm64.yml` (dispatch-only linux-arm64 re-check).
 
+- **No agent-session links in PR or issue bodies** — a claude.ai (or any
+  agent-console) session URL is noise to every reader of a public repo and
+  dangles once the session ends. Commit-message trailers are fine; bodies
+  are not.
 - **Normal git history on `main`** — commit normally, push fast-forward; never amend
   or force-push a shared branch.
 - **`just command-claims` holds the docs to the command table.**

@@ -1,6 +1,7 @@
 import rr.Color
 import rr.Draw
 import rr.Text
+import core.Units
 import Theme
 import Ui
 
@@ -17,6 +18,31 @@ Trace :: [].{
 		else if hi <= 600.0 (100.0)
 		else if hi <= 1500.0 (250.0)
 		else 500.0
+
+	# The pace channel's samples are metres per second, spanning single
+	# digits where watts span hundreds - so it gets its own step, and its
+	# gridline labels render as pace through core.Units rather than as bare
+	# small integers nobody runs by. Higher on the axis is faster; the pace
+	# strings shrink going up, which is the direction a runner expects
+	# "better" to read.
+	y_step_pace : F32 -> F32
+	y_step_pace = |hi|
+		if hi <= 2.0 (0.25)
+		else if hi <= 4.0 (0.5)
+		else 1.0
+
+	# the pace channel is recognized by its unit label - the one channel
+	# whose unit begins "min/" in either unit culture
+	pace_axis : Str -> Bool
+	pace_axis = |unit| Str.starts_with(unit, "min/")
+
+	# tested against the REAL labels the channel carries, so the predicate
+	# cannot drift from what Units actually emits
+	expect pace_axis(Units.pace_unit(Metric)) and pace_axis(Units.pace_unit(Imperial))
+	expect !pace_axis("W") and !pace_axis("bpm")
+	expect y_step_pace(3.5) == 0.5
+	expect y_step_pace(1.4) == 0.25
+	expect y_step_pace(6.0) == 1.0
 
 	# The x grid step in SECONDS. The visible span is the session divided by
 	# the zoom, so zooming in earns finer ticks instead of holding the
@@ -92,7 +118,7 @@ Trace :: [].{
 		# describes THIS session: both the channel it plots and whether the
 		# detector found any blocks in it vary from one session to the next.
 		nsegs = List.len(List.keep_if(model.segs, |sg| sg.kind == "work"))
-		what = if model.trace_unit == "bpm" ("heart rate") else "power"
+		what = if model.trace_unit == "bpm" ("heart rate") else if pace_axis(model.trace_unit) ("pace") else "power"
 		blocks =
 			if List.is_empty(model.trace) ("")
 			else if nsegs == 0 (" - no intervals detected")
@@ -173,15 +199,27 @@ Trace :: [].{
 			# The y grid: a faint rule and a value at each step, so a level can
 			# be read off the plot instead of guessed. The axis starts at zero
 			# — the same origin the trace itself is scaled against.
-			ystep = y_step(w_hi)
+			is_pace = pace_axis(model.trace_unit)
+			ystep = if is_pace (y_step_pace(w_hi)) else y_step(w_hi)
 			ycount = match F32.round_to_u64_try(F32.div_floor_by(w_hi, ystep)) { Ok(yn) => yn
 				Err(_) => 0.U64 }
-			List.for_each!(List.map_with_index(List.repeat({}, ycount), |_u, k| (U64.to_f32(k) + 1.0) * ystep), |gv|
-				if gv < w_hi {
-					frame.line!({ start: { x: x_min, y: ty(gv) }, end: { x: x_max, y: ty(gv) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 36), 1) })
-					Text.from(match F32.round_to_u64_try(gv) { Ok(gi) => U64.to_str(gi)
-						Err(_) => "" }, model.font).size(10).draw!(frame, { pos: { x: x_min - 8.0, y: ty(gv) - 6.0 }, color: ink_faint, align: (Top, Right) })
-				} else {})
+			# the step reaches F64 through a millimetre integer - exact for
+			# every step this file chooses, and the label math wants F64
+			ystep64 = ((match F32.round_to_u64_try(ystep * 1000.0) { Ok(u) => u
+				Err(_) => 0.U64 })).to_f64() / 1000.0
+			List.for_each!(List.map_with_index(List.repeat({}, ycount), |_u, k| k), |k|
+				{
+					gv = (U64.to_f32(k) + 1.0) * ystep
+					if gv < w_hi {
+						frame.line!({ start: { x: x_min, y: ty(gv) }, end: { x: x_max, y: ty(gv) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 36), 1) })
+						# a pace gridline says the pace, not the raw m/s the
+						# samples are stored in - the same last-moment rule
+						# every other surface follows
+						lbl = if is_pace (Units.pace_from_speed(model.units, ((k).to_f64() + 1.0) * ystep64)) else (match F32.round_to_u64_try(gv) { Ok(gi) => U64.to_str(gi)
+							Err(_) => "" })
+						Text.from(lbl, model.font).size(10).draw!(frame, { pos: { x: x_min - 8.0, y: ty(gv) - 6.0 }, color: ink_faint, align: (Top, Right) })
+					} else {}
+				})
 			# the unit names itself once, above the column of values it governs,
 			# rather than repeating on every rule
 			Text.from(model.trace_unit, model.font).size(10).draw!(frame, { pos: { x: x_min - 8.0, y: pad_t - 15.0 }, color: ink_muted, align: (Top, Right) })

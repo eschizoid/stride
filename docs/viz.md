@@ -121,6 +121,17 @@ the `weekly_ramp` view - the one definition of weekly ramp. A directive with vie
 | mouse hover | crosshair + per-day dots + a top-right readout (form board) |
 | `ESC` | quit |
 
+The trace picks each session's channel by what its stream carries: power
+when watts exist; PACE for a run, walk or swim carrying distance and time
+(per-second speed differenced by the same `core.Series` discipline the
+engine scores with — pauses emit nothing — then bucket-meaned to the plot,
+so the line draws the pace held rather than GPS jitter); heart rate
+otherwise. A pace axis labels its gridlines as pace in the athlete's units
+while the samples stay SI, and faster sits higher — "up is better" holds on
+every channel. The detector's blocks shade behind whichever channel draws,
+and the ghost's same-kind rule compares channels, so a pace session ghosts
+only against pace.
+
 ## Running it
 
 ```
