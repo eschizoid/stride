@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1172)?
+    checks_ran_exactly!(1175)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -4907,6 +4907,18 @@ b_agent_loop! = |ctx| {
     rid3 = Str.trim(strjq!(ctx, ["week", "add", "${ctx.today}", "rest", "off", "recovery"], ".data.id"))
     check!("a rest day dated today is not aged, so it stays open", str_to_i64(pj!(".data.adherence_28d.rested")) == rested_r + 1 and str_to_i64(pj!(".data.adherence_28d.still_open")) == open_r + 2)?
     check!("...and week does not reframe it either", strjq!(ctx, ["week", "all"], "[.data[] | select(.id == ${rid3}) | .status_shown] | join(\",\")") == "open")?
+    # an UNKNOWN day is not a rested day: a date daily_load has not covered has no
+    # row, and the COALESCEd 0 behind it means "the engine has not looked" — the
+    # athlete may have trained hard there. daily_load is computed tier, so deleting
+    # the row IS the uncovered state, not a simulation of it. Both surfaces must
+    # refuse the reframe: week's day_load_known flag and the bundle's EXISTS clause
+    # fail independently (one is a decoded column, the other is inside rested_sql).
+    _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = '${d_empty}';")
+    check!("a day the load series has not covered stays open in week — unknown is not rested", strjq!(ctx, ["week", "all"], "[.data[] | select(.id == ${rid}) | .status_shown] | join(\",\")") == "open")?
+    check!("...and leaves the bundle's rested count, from its own EXISTS clause", str_to_i64(pj!(".data.adherence_28d.rested")) == rested_r and str_to_i64(pj!(".data.adherence_28d.still_open")) == open_r + 3)?
+    # analyze rebuilds the computed tier, which restores the measured zero
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("...and analyze restores the measured zero, so the row reads rested again", str_to_i64(pj!(".data.adherence_28d.rested")) == rested_r + 1)?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${rid}, ${rid2}, ${rid3});")
     check!("...and the leg cleans up after itself", str_to_i64(pj!(".data.adherence_28d.rested")) == rested_r and str_to_i64(pj!(".data.adherence_28d.still_open")) == open_r)?
 
@@ -5532,8 +5544,8 @@ b_plan! = |ctx| {
     check!("history row carries the skip reason", strjq!(ctx, ["plan"], ".data.plan_history_28d[] | select(.id == ${ph1}) | .status == \"skipped\" and .skipped_reason == \"weather\"") == "true")?
     check!("history row carries the substitute link AND its date", strjq!(ctx, ["plan"], ".data.plan_history_28d[] | select(.id == ${ph2}) | (.substitute_activity_id == 102) and (.completed_on | length == 10)") == "true")?
     # the adherence identity: every in-window session is exactly one of
-    # completed / skipped / still_open — leftover-proof, no magic totals
-    check!("adherence counts partition the planned set", strjq!(ctx, ["plan"], ".data.adherence_28d | .planned == (.completed + .skipped + .still_open)") == "true")?
+    # completed / skipped / rested / still_open — leftover-proof, no magic totals
+    check!("adherence counts partition the planned set", strjq!(ctx, ["plan"], ".data.adherence_28d | .planned == (.completed + .skipped + .rested + .still_open)") == "true")?
     check!("substituted is a subset of skipped", strjq!(ctx, ["plan"], ".data.adherence_28d | .substituted <= .skipped and .substituted >= 1") == "true")?
     check!("completion_pct is a raw number", strjq!(ctx, ["plan"], ".data.adherence_28d.completion_pct | type") == "number")?
     # 101 and 102 are both LINKED at this point (completion + substitute), so an

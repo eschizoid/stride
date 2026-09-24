@@ -108,7 +108,8 @@ Plan :: [].{
                 \\       COALESCE(CAST(status AS TEXT),'open') AS status, COALESCE(CAST(skipped_reason AS TEXT),'') AS skipped_reason,
                 \\       COALESCE(substitute_activity_id,0) AS substitute_activity_id,
                 \\       COALESCE(CAST((SELECT substr(a.start_local,1,10) FROM activities a WHERE a.id = planned_sessions.completed_activity_id) AS TEXT), '') AS done_date,
-                \\       CAST(COALESCE((SELECT dl.tss FROM daily_load dl WHERE dl.day = planned_sessions.target_date), 0) AS REAL) AS day_tss
+                \\       CAST(COALESCE((SELECT dl.tss FROM daily_load dl WHERE dl.day = planned_sessions.target_date), 0) AS REAL) AS day_tss,
+                \\       CASE WHEN EXISTS (SELECT 1 FROM daily_load dl WHERE dl.day = planned_sessions.target_date) THEN 1 ELSE 0 END AS day_load_known
                 \\FROM planned_sessions
                 \\WHERE (:all = 1 OR (target_date >= :mon AND target_date <= :sun AND id IN (SELECT id FROM plan_current)))
                 \\ORDER BY target_date DESC, id DESC LIMIT :lim
@@ -128,7 +129,8 @@ Plan :: [].{
                 substitute_activity_id = Sqlite.i64("substitute_activity_id")(cols)(stmt)?
                 done_date = Sqlite.str("done_date")(cols)(stmt)?
                 day_tss = Sqlite.f64("day_tss")(cols)(stmt)?
-                Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, superseded_activity_id, status, skipped_reason, substitute_activity_id, done_date, day_tss })
+                day_load_known = Sqlite.i64("day_load_known")(cols)(stmt)?
+                Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, superseded_activity_id, status, skipped_reason, substitute_activity_id, done_date, day_tss, day_load_known })
             },
         })?
         # newest-first from SQL, flipped to calendar order for display. `Render.reverse_list`
@@ -177,13 +179,18 @@ Plan :: [].{
             # The same-day threshold (>= 1.0 load counts as trained) is the one the
             # summary table uses to print a day as rest. A rest day WITH load stays
             # `open`: training through a rest day is a plan deviation, not a completion.
+            # day_load_known is what separates a measured zero from an absent row:
+            # daily_load covers every day up to the last analyze, so a date past that
+            # coverage has no row, and its COALESCEd 0 is "the engine has not looked",
+            # not "the athlete rested" — the athlete may have trained hard on it. An
+            # unknown day stays `open` (the ADR 0009 discipline, applied to a view).
             status_shown:
                 if p.status == "done" and p.done_date != "" and p.done_date != p.target_date {
                     # Full date, year included: `week all` spans years, so a bare month-day
                     # would be ambiguous exactly where the log is longest. The wider cell
                     # costs a line of wrapping in the detail column; that is the cheaper loss.
                     "done (${dow(p.done_date)} ${p.done_date})"
-                } else if p.status == "open" and p.session_type == "rest" and p.day_tss < 1.0 and (match Metrics.date_str_to_days(p.target_date) { Ok(d) => d < today Err(_) => False }) {
+                } else if p.status == "open" and p.session_type == "rest" and p.day_load_known == 1 and p.day_tss < 1.0 and (match Metrics.date_str_to_days(p.target_date) { Ok(d) => d < today Err(_) => False }) {
                     "rested"
                 } else {
                     p.status
@@ -1456,7 +1463,13 @@ Plan :: [].{
                 # serves both columns so they cannot drift apart. A rest day WITH
                 # load fails the predicate and stays in still_open: training through
                 # a rest day is a deviation adherence must keep visible.
-                rested_sql = "COALESCE(status,'open') = 'open' AND session_type = 'rest' AND target_date < :today AND COALESCE((SELECT dl.tss FROM daily_load dl WHERE dl.day = planned_sessions.target_date), 0) < 1.0"
+                #
+                # The EXISTS clause separates a measured zero from an absent row: a
+                # day daily_load has not covered is unknown, not rested. Inside this
+                # query it is defence in depth — :today is s.as_of, the last day the
+                # load series covers, so every date the window admits has a row —
+                # but the predicate should not owe its soundness to that alignment.
+                rested_sql = "COALESCE(status,'open') = 'open' AND session_type = 'rest' AND target_date < :today AND EXISTS (SELECT 1 FROM daily_load dl WHERE dl.day = planned_sessions.target_date) AND COALESCE((SELECT dl.tss FROM daily_load dl WHERE dl.day = planned_sessions.target_date), 0) < 1.0"
                 adh = Sqlite.query!({
                     path: Path.utf8(path),
                     query:
